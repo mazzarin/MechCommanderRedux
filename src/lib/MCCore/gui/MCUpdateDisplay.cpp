@@ -194,8 +194,29 @@ namespace
     /// <summary>The connect shape at the screen's centre, with a progress bar of <paramref name="progress"/> percent.</summary>
     void DrawProgress(int32_t progress)
     {
-        const int32_t centerY = GuiSystem().Height() >> 1;
-        const int32_t centerX = GuiSystem().Width() >> 1;
+        // Port fix: centre on the part of the screen that is shown. While a mission loads, the screen already has
+        // the mission's size (e.g. 1280x720) but the display still shows the menus' 640x480 view of it, which put the
+        // bar half off the screen.
+        int32_t width = GuiSystem().Width();
+        int32_t height = GuiSystem().Height();
+        int32_t viewX = 0;
+        int32_t viewY = 0;
+
+        if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
+        {
+            const SDL_Rect view = display->View();
+
+            if (view.w > 0 && view.h > 0)
+            {
+                viewX = view.x;
+                viewY = view.y;
+                width = std::min(width - viewX, view.w);
+                height = std::min(height - viewY, view.h);
+            }
+        }
+
+        const int32_t centerY = viewY + (height >> 1);
+        const int32_t centerX = viewX + (width >> 1);
         AGShapeDraw(ScreenPort()->Frame(), ConnectShape().Bytes(), 0, centerX, centerY);
         const int32_t left = centerX - 0x5f;
         const auto right = static_cast<int32_t>(progress * 0.01 * 188.0 + left);

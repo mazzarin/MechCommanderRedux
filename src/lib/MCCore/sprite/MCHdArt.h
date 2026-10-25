@@ -214,6 +214,12 @@ namespace MCHdArt
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
 
     /// <summary>
+    /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
+    /// none when it isn't attached (or its owner is gone).
+    /// </summary>
+    std::optional<std::filesystem::path> AttachedFolder(const uint8_t* table);
+
+    /// <summary>
     /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its
     /// <paramref name="width"/> x <paramref name="height"/> palette indices, the same whichever file or packet they came
     /// from. A picture the game has drawn into has another, so it is shown as it is.

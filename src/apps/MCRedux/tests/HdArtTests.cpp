@@ -4014,7 +4014,7 @@ namespace
 
     /// <summary>
     /// What drew <paramref name="data"/>, where the audit can tell: a terrain overlay (a fast shape: roads, rivers...), a
-    /// crater shape, a cursor, or none.
+    /// crater shape, a cursor, the pack folder an attached shape's frames come from, or none.
     /// </summary>
     std::string AuditOwner(std::span<const uint8_t> data)
     {
@@ -4049,6 +4049,12 @@ namespace
             {
                 return std::format("cursor {}", cursor);
             }
+        }
+
+        if (const std::optional<std::filesystem::path> folder = MCHdArt::AttachedFolder(data.data());
+            folder.has_value())
+        {
+            return std::filesystem::relative(*folder, MCHdArt::PackFolder()).generic_string();
         }
 
         return "?";

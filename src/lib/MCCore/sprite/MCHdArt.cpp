@@ -1098,6 +1098,19 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
     return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
 }
 
+std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)
+{
+    const State& state = TheState();
+    const auto found = state.Sequences.find(table);
+
+    if (found == state.Sequences.end() || found->second.Owner.expired())
+    {
+        return std::nullopt;
+    }
+
+    return state.Folders[found->second.Folder].Path;
+}
+
 uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
 {
     // FNV-1a over the size, then eight bytes at a time (the rest one at a time).

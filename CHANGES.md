@@ -15,6 +15,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
     - [Platform](#platform)
     - [Display](#display)
     - [Mouse](#mouse)
+    - [Keyboard](#keyboard)
     - [Sound](#sound)
     - [Multiplayer](#multiplayer)
     - [Files and Saves](#files-and-saves)
@@ -75,6 +76,14 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   scroll bar (mechs, pilots, vehicles, inventory, a mech's weapon list in the repair bay and briefing, saved games, the
   tactical map's info and salvage pages, the mission results, the multiplayer game list) it scrolls a row or line per
   notch, as the scroll arrows do. A list inside another list scrolls first.
+
+### Keyboard
+
+- The mission keys can be changed: the preferences screen has a CONTROLS button listing every command with its key and
+  an alternate key. Click a key and press the new one, with Ctrl, Alt or Shift if you like; a key another command had
+  moves, and the screen says which command lost it. Right-click clears a key, and DEFAULTS brings back the original
+  keys. Handy on keyboards without a numeric keypad, Home or Page Up and Down. Keys that differ from the original are
+  kept in `PREFS.CFG`'s `Controls` block.
 
 ### Sound
 

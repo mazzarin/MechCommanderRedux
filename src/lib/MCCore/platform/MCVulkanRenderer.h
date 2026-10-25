@@ -4,6 +4,8 @@
 #include "platform/MCSdlHandle.h"
 #include "platform/MCSoftwareRenderer.h"
 
+#include <unordered_set>
+
 namespace MCHdArt
 {
     struct Frame;
@@ -584,6 +586,8 @@ private:
     /// <summary>The HD art frames on the GPU (RGBA8), by their frame's number, and the bytes they take.</summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
+    /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
+    std::unordered_set<uint64_t> _HdRefused;
     int64_t _HdDrawn = 0;
 
     /// <summary>

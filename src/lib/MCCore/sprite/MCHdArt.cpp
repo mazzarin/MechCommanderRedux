@@ -18,6 +18,15 @@ namespace
     /// <summary>Shapes attached between sweeps of those that are gone.</summary>
     constexpr size_t SweepInterval = 256;
     constexpr int32_t BytesPerPixel = 4;
+    /// <summary>
+    /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its GPU texture (colours
+    /// and indices side by side, so twice as wide) may have: SDL GPU guarantees 8192.
+    /// </summary>
+    constexpr int32_t MaxScale = 8;
+    constexpr int32_t MaxTextureSide = 8192;
+    /// <summary>A PNG file's signature and IHDR chunk header, then the width and height (big-endian).</summary>
+    constexpr std::array<uint8_t, 16> PngHeader = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n',
+                                                   0,    0,   0,   13,  'I',  'H',  'D',  'R'};
 
     /// <summary>A shape the pack has frames for, and their folder.</summary>
     struct Sequence
@@ -106,6 +115,35 @@ namespace
         return image;
     }
 
+    /// <summary>The size a PNG file declares in its header, read before decoding it; none when it isn't a PNG.</summary>
+    std::optional<std::pair<int32_t, int32_t>> PngSize(const std::filesystem::path& path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::array<uint8_t, PngHeader.size() + 8> bytes{};
+
+        if (!in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())) ||
+            !std::equal(PngHeader.begin(), PngHeader.end(), bytes.begin()))
+        {
+            return std::nullopt;
+        }
+
+        const auto bigEndian = [&](size_t at)
+        {
+            return (static_cast<uint32_t>(bytes[at]) << 24) | (static_cast<uint32_t>(bytes[at + 1]) << 16) |
+                   (static_cast<uint32_t>(bytes[at + 2]) << 8) | static_cast<uint32_t>(bytes[at + 3]);
+        };
+
+        const uint32_t width = bigEndian(PngHeader.size());
+        const uint32_t height = bigEndian(PngHeader.size() + 4);
+
+        if (width > static_cast<uint32_t>(INT32_MAX) || height > static_cast<uint32_t>(INT32_MAX))
+        {
+            return std::nullopt;
+        }
+
+        return std::pair{static_cast<int32_t>(width), static_cast<int32_t>(height)};
+    }
+
     /// <summary>
     /// Frame <paramref name="frame"/> of <paramref name="folder"/> for a shape of <paramref name="width"/> x
     /// <paramref name="height"/>; none when the pack has no such frame, or what is wrong with the one it has.
@@ -122,6 +160,26 @@ namespace
             return nullptr;
         }
 
+        // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
+        const std::filesystem::path indexPath = folder / std::format("{}{}.png", frame, IndexSuffix);
+        const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
+
+        if (!declared.has_value() || PngSize(indexPath) != declared)
+        {
+            return std::unexpected(std::format("frame {}'s pictures aren't two PNGs of one size", frame));
+        }
+
+        const auto [declaredWidth, declaredHeight] = *declared;
+        const int32_t declaredScale = declaredWidth / std::max(width, 1);
+
+        if (width <= 0 || height <= 0 || declaredScale < 1 || declaredScale > MaxScale ||
+            declaredWidth != declaredScale * width || declaredHeight != declaredScale * height ||
+            declaredWidth > MaxTextureSide / 2 || declaredHeight > MaxTextureSide)
+        {
+            return std::unexpected(std::format("frame {} is {}x{}: not 1 to {} times the shape's {}x{}, or too large",
+                                               frame, declaredWidth, declaredHeight, MaxScale, width, height));
+        }
+
         auto color = LoadRgba(colorPath);
 
         if (!color)
@@ -129,7 +187,7 @@ namespace
             return std::unexpected(color.error());
         }
 
-        auto index = LoadRgba(folder / std::format("{}{}.png", frame, IndexSuffix));
+        auto index = LoadRgba(indexPath);
 
         if (!index)
         {

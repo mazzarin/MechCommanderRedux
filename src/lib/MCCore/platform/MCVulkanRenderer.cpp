@@ -1805,6 +1805,11 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     BeginRecording();
     auto found = _HdPictures.find(frame.Id);
 
+    if (found == _HdPictures.end() && _HdRefused.contains(frame.Id))
+    {
+        return std::nullopt;
+    }
+
     if (found == _HdPictures.end())
     {
         const auto width = static_cast<uint32_t>(frame.Width) * HdColumnsPerPixel;
@@ -1824,6 +1829,7 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
             !made)
         {
             SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
+            _HdRefused.insert(frame.Id);
             return std::nullopt;
         }
 

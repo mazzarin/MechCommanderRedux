@@ -98,6 +98,59 @@ namespace
     };
 
     /// <summary>
+    /// What <see cref="MCKeyBindings::Laptop"/> changes from the original's keys (DirectInput scan codes; NoKey for a
+    /// command left without one). Each group keeps its pattern: the aimed shots keep the keypad's 3x3 shape on the
+    /// letters right of the hand's home row, the lances take the number row's first keys as RTS groups do (shift adds,
+    /// ctrl makes), and the support strikes its last ones.
+    /// </summary>
+    constexpr MCDefaultKey LaptopChanges[] = {
+        {MCKeyCommand::AimLeftTorso, 0x16, KeyShift},   // U (keypad 7)
+        {MCKeyCommand::AimHead, 0x17, KeyShift},        // I (keypad 8)
+        {MCKeyCommand::AimRightTorso, 0x18, KeyShift},  // O (keypad 9)
+        {MCKeyCommand::AimLeftArm, 0x24, KeyShift},     // J (keypad 4)
+        {MCKeyCommand::AimCenterTorso, 0x25, KeyShift}, // K (keypad 5)
+        {MCKeyCommand::AimRightArm, 0x26, KeyShift},    // L (keypad 6)
+        {MCKeyCommand::AimLeftLeg, 0x32, KeyShift},     // M (keypad 1)
+        {MCKeyCommand::AimRightLeg, 0x34, KeyShift},    // . (keypad 3)
+        {MCKeyCommand::SelectLance1, 0x02, 0},
+        {MCKeyCommand::SelectLance2, 0x03, 0},
+        {MCKeyCommand::SelectLance3, 0x04, 0},
+        {MCKeyCommand::SelectLance4, 0x05, 0},
+        {MCKeyCommand::AddLance1, 0x02, KeyShift},
+        {MCKeyCommand::AddLance2, 0x03, KeyShift},
+        {MCKeyCommand::AddLance3, 0x04, KeyShift},
+        {MCKeyCommand::AddLance4, 0x05, KeyShift},
+        {MCKeyCommand::LinkLance1, 0x02, KeyCtrl},
+        {MCKeyCommand::LinkLance2, 0x03, KeyCtrl},
+        {MCKeyCommand::LinkLance3, 0x04, KeyCtrl},
+        {MCKeyCommand::LinkLance4, 0x05, KeyCtrl},
+        {MCKeyCommand::BreakLances, 0x06, 0},       // 5
+        {MCKeyCommand::Artillery1, 0x08, 0},        // 7
+        {MCKeyCommand::Artillery2, 0x09, 0},        // 8
+        {MCKeyCommand::Artillery3, 0x0a, 0},        // 9
+        {MCKeyCommand::Artillery4, 0x0b, 0},        // 0
+        {MCKeyCommand::ForcedOrder, 0x1d, KeyCtrl}, // ctrl alone, which forces orders anyway
+        {MCKeyCommand::ForcedOrderAlternate, NoKey, 0},
+        {MCKeyCommand::ForcedRun, 0x13, 0},        // R (a Mac's ctrl+space may switch input sources)
+        {MCKeyCommand::ForcedJump, 0x23, 0},       // H, for hop (ctrl+J also forces a jump)
+        {MCKeyCommand::PowerUp, 0x19, 0},          // P
+        {MCKeyCommand::PowerDown, 0x19, KeyShift}, // shift+P
+        {MCKeyCommand::Eject, 0x12, KeyShift},     // shift+E (a mode: the mech is still clicked)
+        {MCKeyCommand::ZoomIn, 0x0d, 0},           // =
+        {MCKeyCommand::ZoomOut, 0x0c, 0},          // -
+        {MCKeyCommand::ZoomInAlternate, NoKey, 0},
+        {MCKeyCommand::ZoomOutAlternate, NoKey, 0},
+        {MCKeyCommand::TacticalMapZoomIn, 0x0d, KeyCtrl},
+        {MCKeyCommand::TacticalMapZoomOut, 0x0c, KeyCtrl},
+        {MCKeyCommand::TacticalMapZoomInAlternate, NoKey, 0},
+        {MCKeyCommand::TacticalMapZoomOutAlternate, NoKey, 0},
+        {MCKeyCommand::TacticalMapScrollUp, 0x148, KeyShift},
+        {MCKeyCommand::TacticalMapScrollDown, 0x150, KeyShift},
+        {MCKeyCommand::TacticalMapScrollLeft, 0x14b, KeyShift},
+        {MCKeyCommand::TacticalMapScrollRight, 0x14d, KeyShift},
+    };
+
+    /// <summary>
     /// The CONTROLS screen's rows. The debug strike (B with the bunny-strikes switch) isn't listed: it is a cheat's, and
     /// its key gives nothing without it.
     /// </summary>
@@ -506,6 +559,24 @@ auto MCKeyBindings::Defaults() -> const MCKeyTable&
     }();
 
     return defaults;
+}
+
+auto MCKeyBindings::Laptop() -> const MCKeyTable&
+{
+    static const MCKeyTable laptop = []
+    {
+        MCKeyTable keys = Defaults();
+
+        for (const MCDefaultKey& change : LaptopChanges)
+        {
+            uint32_t& key = keys[static_cast<size_t>(change.Command)];
+            key = change.Code == NoKey ? NoKey : change.Code | change.Modifiers;
+        }
+
+        return keys;
+    }();
+
+    return laptop;
 }
 
 auto MCKeyBindings::Player() -> const MCKeyTable&

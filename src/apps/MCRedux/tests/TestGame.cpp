@@ -442,13 +442,14 @@ namespace MCTestGame
     }
 }
 
-std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
+std::vector<std::pair<std::string, int32_t>> MCTestGame::MechTrees()
 {
+    std::vector<std::pair<std::string, int32_t>> trees;
     MCPacketFile pak;
 
     if (pak.Open(GamePath(SpritePath, "sprites", ".pak")) != 0)
     {
-        return nullptr;
+        return trees;
     }
 
     for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
@@ -462,9 +463,20 @@ std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
             continue;
         }
 
-        const MCFitResult<std::string> treeName = fit.Read<std::string>("Name");
+        if (const MCFitResult<std::string> treeName = fit.Read<std::string>("Name"); treeName.has_value())
+        {
+            trees.emplace_back(*treeName, packet);
+        }
+    }
 
-        if (treeName.has_value() && *treeName == name)
+    return trees;
+}
+
+std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
+{
+    for (const auto& [treeName, packet] : MechTrees())
+    {
+        if (treeName == name)
         {
             return std::static_pointer_cast<MCSpriteTree>(
                 AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));

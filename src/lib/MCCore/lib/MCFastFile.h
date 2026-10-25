@@ -53,6 +53,12 @@ public:
     /// <returns>The bytes read, or 0 when a packed entry didn't unpack to its full size.</returns>
     int32_t ReadEntry(int32_t index, std::span<uint8_t> data);
 
+    /// <summary>
+    /// Port-only: entry <paramref name="index"/>'s stored bytes as they lie in the archive (Size of them; packed or not),
+    /// for an archive whose entries another packer packed (the HD art pack's).
+    /// </summary>
+    std::vector<uint8_t> ReadStored(int32_t index);
+
     /// <summary>The number of entries in the archive.</summary>
     int32_t GetNumFiles() const { return static_cast<int32_t>(_Entries.size()); }
 

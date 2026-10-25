@@ -1,8 +1,13 @@
 #include "stdafx.h"
 #include "sprite/MCHdArt.h"
+#include "lib/MCFastFile.h"
+#include "lib/MCInflate.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
+#include "sprite/MCBc7.h"
 #include "sprite/MCShape.h"
+
+#include <unordered_set>
 
 int GHdArt = 0;
 
@@ -11,10 +16,39 @@ namespace
     /// <summary>The pack's folder in the user folder, and its folder of mech part frames.</summary>
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
+    constexpr std::string_view TerrainFolder = "terrain";
+    constexpr std::string_view PaletteFile = "palette.rgb";
+    /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
+    constexpr std::string_view ArchiveExtension = ".hda";
+    constexpr char ArchiveSeparator = '\\';
+
+    /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
+    struct MCHdArchive
+    {
+        std::unique_ptr<MCFastFile> File;
+        std::unordered_set<std::string> Folders;
+    };
+
+    std::string Upper(std::string_view text)
+    {
+        std::string upper(text);
+        std::ranges::transform(upper, upper.begin(), [](char c) { return static_cast<char>(std::toupper(c)); });
+        return upper;
+    }
+
+    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName).</summary>
+    constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
+    constexpr uint64_t FnvPrime = 0x100000001b3ull;
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
-    /// <summary>The index picture's green where a pixel has an index.</summary>
-    constexpr uint8_t HasIndex = 255;
+    /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
+    constexpr std::string_view HdfExtension = ".hdf";
+    constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
+    constexpr uint32_t HdfVersion = 1;
+    constexpr uint32_t HdfBc7 = 1;
+    constexpr size_t HdfHeaderBytes = 16;
+    constexpr size_t MaxHdfBytes = 64u * 1024u * 1024u;
+    using MCHdArt::HasIndex;
     /// <summary>Shapes attached between sweeps of those that are gone.</summary>
     constexpr size_t SweepInterval = 256;
     constexpr int32_t BytesPerPixel = 4;
@@ -43,7 +77,8 @@ namespace
         bool Looked = false;
     };
 
-    using FrameKey = std::pair<std::filesystem::path, int32_t>;
+    /// <summary>A frame's file in the pack, without its extension.</summary>
+    using FrameKey = std::filesystem::path;
 
     struct State
     {
@@ -60,6 +95,14 @@ namespace
         std::chrono::nanoseconds ReadTime{0};
         /// <summary>The folders whose problems were logged (once each).</summary>
         std::set<std::filesystem::path> Logged;
+        /// <summary>The pack's palette.rgb, once read (Looked), and the pack's version.</summary>
+        std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>> MadeWith;
+        bool PaletteLooked = false;
+        uint64_t Version = 1;
+        /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
+        std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
+        /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
+        std::unordered_set<const uint8_t*> SmoothTables;
     };
 
     State& TheState()
@@ -145,103 +188,251 @@ namespace
     }
 
     /// <summary>
-    /// Frame <paramref name="frame"/> of <paramref name="folder"/> for a shape of <paramref name="width"/> x
-    /// <paramref name="height"/>; none when the pack has no such frame, or what is wrong with the one it has.
+    /// Whether an HD frame of <paramref name="hdWidth"/> x <paramref name="hdHeight"/> at <paramref name="scale"/> fits a
+    /// shape of <paramref name="width"/> x <paramref name="height"/> and the GPU's textures.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const std::filesystem::path& folder,
-                                                                                int32_t frame, int32_t width,
-                                                                                int32_t height)
+    bool FitsShape(int32_t hdWidth, int32_t hdHeight, int32_t scale, int32_t width, int32_t height)
     {
-        const std::filesystem::path colorPath = folder / std::format("{}.png", frame);
+        return width > 0 && height > 0 && scale >= 1 && scale <= MaxScale && hdWidth == scale * width &&
+               hdHeight == scale * height && MCBc7::Padded(hdWidth) <= MaxTextureSide &&
+               MCBc7::Padded(hdHeight) <= MaxTextureSide;
+    }
+
+    /// <summary>The little-endian value of <paramref name="size"/> bytes at <paramref name="at"/>.</summary>
+    uint32_t ReadLittle(std::span<const uint8_t> bytes, size_t at, size_t size)
+    {
+        uint32_t value = 0;
+
+        for (size_t i = 0; i < size; i++)
+        {
+            value |= static_cast<uint32_t>(bytes[at + i]) << (8 * i);
+        }
+
+        return value;
+    }
+
+    void WriteLittle(std::vector<uint8_t>& bytes, uint32_t value, size_t size)
+    {
+        for (size_t i = 0; i < size; i++)
+        {
+            bytes.push_back(static_cast<uint8_t>(value >> (8 * i)));
+        }
+    }
+
+    /// <summary>The whole file at <paramref name="path"/>, up to <paramref name="limit"/> bytes, or what went wrong.</summary>
+    std::expected<std::vector<uint8_t>, std::string> ReadFile(const std::filesystem::path& path, size_t limit)
+    {
+        std::error_code error;
+        const uintmax_t size = std::filesystem::file_size(path, error);
+
+        if (error || size > limit)
+        {
+            return std::unexpected(std::format("{} can't be read or is too large", path.filename().string()));
+        }
+
+        std::vector<uint8_t> bytes(static_cast<size_t>(size));
+        std::ifstream in(path, std::ios::binary);
+
+        if (!in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+        {
+            return std::unexpected(std::format("{} can't be read", path.filename().string()));
+        }
+
+        return bytes;
+    }
+
+    /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
+    MCHdArchive* ArchiveFor(const std::filesystem::path& folder)
+    {
+        auto [found, fresh] = TheState().Archives.try_emplace(folder);
+
+        if (!fresh)
+        {
+            return found->second.get();
+        }
+
+        const std::filesystem::path path = std::filesystem::path(folder).concat(ArchiveExtension);
         std::error_code error;
 
-        if (!std::filesystem::is_regular_file(colorPath, error))
+        if (!std::filesystem::is_regular_file(path, error))
         {
             return nullptr;
         }
 
-        // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
-        const std::filesystem::path indexPath = folder / std::format("{}{}.png", frame, IndexSuffix);
-        const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
+        auto file = MCFastFile::Create(path.string());
 
-        if (!declared.has_value() || PngSize(indexPath) != declared)
+        if (!file)
         {
-            return std::unexpected(std::format("frame {}'s pictures aren't two PNGs of one size", frame));
+            LogOnce(path, file.error());
+            return nullptr;
         }
 
-        const auto [declaredWidth, declaredHeight] = *declared;
-        const int32_t declaredScale = declaredWidth / std::max(width, 1);
+        auto archive = std::make_shared<MCHdArchive>();
+        archive->File = std::move(*file);
 
-        if (width <= 0 || height <= 0 || declaredScale < 1 || declaredScale > MaxScale ||
-            declaredWidth != declaredScale * width || declaredHeight != declaredScale * height ||
-            declaredWidth > MaxTextureSide / 2 || declaredHeight > MaxTextureSide)
+        for (const MCFileEntry& entry : archive->File->GetEntries())
         {
-            return std::unexpected(std::format("frame {} is {}x{}: not 1 to {} times the shape's {}x{}, or too large",
-                                               frame, declaredWidth, declaredHeight, MaxScale, width, height));
+            const std::string_view name = entry.GetName();
+            archive->Folders.insert(Upper(name.substr(0, name.find(ArchiveSeparator))));
         }
 
-        auto color = LoadRgba(colorPath);
+        found->second = std::move(archive);
+        return found->second.get();
+    }
 
-        if (!color)
+    /// <summary>
+    /// The frame at <paramref name="key"/> from the nearest archive standing for one of its folders (up to the pack's):
+    /// its entry <c>&lt;the rest of the path&gt;.hdf</c>, inflated when packed; none when there is no such entry.
+    /// </summary>
+    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(const FrameKey& key, int32_t width,
+                                                                           int32_t height)
+    {
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+
+        for (std::filesystem::path folder = key.parent_path(); folder.has_relative_path() && folder != pack;
+             folder = folder.parent_path())
         {
-            return std::unexpected(color.error());
-        }
+            MCHdArchive* archive = ArchiveFor(folder);
 
-        auto index = LoadRgba(indexPath);
-
-        if (!index)
-        {
-            return std::unexpected(index.error());
-        }
-
-        const int32_t scale = color->Width / std::max(width, 1);
-
-        if (width <= 0 || height <= 0 || scale < 1 || color->Width != scale * width || color->Height != scale * height)
-        {
-            return std::unexpected(std::format("frame {} is {}x{}, not a whole multiple of the shape's {}x{}", frame,
-                                               color->Width, color->Height, width, height));
-        }
-
-        if (index->Width != color->Width || index->Height != color->Height)
-        {
-            return std::unexpected(std::format("frame {}'s index picture is {}x{}, its colours {}x{}", frame,
-                                               index->Width, index->Height, color->Width, color->Height));
-        }
-
-        auto made = std::make_shared<MCHdArt::Frame>();
-        made->Id = ++TheState().LastId;
-        made->Width = color->Width;
-        made->Height = color->Height;
-        made->Scale = scale;
-        made->Pixels.resize(static_cast<size_t>(made->Width) * 2 * static_cast<size_t>(made->Height) * BytesPerPixel);
-        const size_t row = static_cast<size_t>(made->Width) * BytesPerPixel;
-
-        for (int32_t y = 0; y < made->Height; ++y)
-        {
-            const uint8_t* colors = color->Pixels.data() + row * static_cast<size_t>(y);
-            const uint8_t* indices = index->Pixels.data() + row * static_cast<size_t>(y);
-            uint8_t* out = made->Pixels.data() + row * 2 * static_cast<size_t>(y);
-
-            for (int32_t x = 0; x < made->Width; ++x)
+            if (archive == nullptr)
             {
-                // Premultiplied, so the GPU's blend and filtering need no division.
-                const uint32_t alpha = colors[x * BytesPerPixel + 3];
+                continue;
+            }
 
-                for (int32_t channel = 0; channel < 3; ++channel)
+            std::string name = key.lexically_relative(folder).generic_string();
+            std::ranges::replace(name, '/', ArchiveSeparator);
+            const std::optional<int32_t> index = archive->File->Find(name + std::string(HdfExtension));
+
+            if (!index.has_value())
+            {
+                return std::optional<MCHdArt::Frame>();
+            }
+
+            const MCFileEntry& entry = archive->File->GetEntries()[static_cast<size_t>(*index)];
+
+            if (entry.RealSize < 0 || static_cast<size_t>(entry.RealSize) > MaxHdfBytes)
+            {
+                return std::unexpected(std::format("{} is too large", name));
+            }
+
+            std::vector<uint8_t> stored = archive->File->ReadStored(*index);
+
+            if (entry.Size != entry.RealSize)
+            {
+                auto inflated = MCInflate::Inflate(stored, static_cast<size_t>(entry.RealSize));
+
+                if (!inflated)
                 {
-                    out[x * BytesPerPixel + channel] =
-                        static_cast<uint8_t>((colors[x * BytesPerPixel + channel] * alpha + 127) / 255);
+                    return std::unexpected(std::format("{} doesn't unpack: {}", name, inflated.error()));
                 }
 
-                out[x * BytesPerPixel + 3] = static_cast<uint8_t>(alpha);
-                uint8_t* indexOut = out + row + static_cast<size_t>(x) * BytesPerPixel;
-                indexOut[0] = indices[x * BytesPerPixel];
-                indexOut[1] = indices[x * BytesPerPixel + 1] == HasIndex ? HasIndex : 0;
-                indexOut[2] = 0;
-                indexOut[3] = HasIndex;
+                stored = std::move(*inflated);
             }
+
+            auto frame = MCHdArt::DecodeHdf(stored, width, height);
+
+            if (!frame)
+            {
+                return std::unexpected(frame.error());
+            }
+
+            return std::optional<MCHdArt::Frame>(std::move(*frame));
         }
 
+        return std::optional<MCHdArt::Frame>();
+    }
+
+    /// <summary>Whether the pack has <paramref name="folder"/>'s frames: the folder, or an archive holding it.</summary>
+    bool HasFolder(const std::filesystem::path& folder)
+    {
+        std::error_code error;
+
+        if (std::filesystem::is_directory(folder, error))
+        {
+            return true;
+        }
+
+        const MCHdArchive* archive = ArchiveFor(folder.parent_path());
+        return archive != nullptr && archive->Folders.contains(Upper(folder.filename().string()));
+    }
+
+    /// <summary>
+    /// The frame at <paramref name="key"/> for a shape of <paramref name="width"/> x <paramref name="height"/>: its
+    /// <c>.hdf</c> file, else its PNG pair, else its entry in an archive; none when the pack has no such frame, or what
+    /// is wrong with the one it has.
+    /// </summary>
+    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
+                                                                                int32_t height)
+    {
+        std::error_code error;
+        std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
+        const std::string frame = key.filename().string();
+
+        if (const std::filesystem::path hdfPath = std::filesystem::path(key).concat(HdfExtension);
+            std::filesystem::is_regular_file(hdfPath, error))
+        {
+            auto bytes = ReadFile(hdfPath, MaxHdfBytes);
+
+            if (!bytes)
+            {
+                return std::unexpected(bytes.error());
+            }
+
+            read = MCHdArt::DecodeHdf(*bytes, width, height);
+        }
+        else
+        {
+            const std::filesystem::path colorPath = std::filesystem::path(key).concat(".png");
+
+            if (!std::filesystem::is_regular_file(colorPath, error))
+            {
+                auto archived = ReadArchived(key, width, height);
+
+                if (!archived)
+                {
+                    return std::unexpected(std::format("frame {}: {}", frame, archived.error()));
+                }
+
+                if (!archived->has_value())
+                {
+                    return nullptr;
+                }
+
+                auto made = std::make_shared<MCHdArt::Frame>(std::move(**archived));
+                made->Id = ++TheState().LastId;
+                return made;
+            }
+
+            // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
+            const std::filesystem::path indexPath =
+                std::filesystem::path(key).concat(std::format("{}.png", IndexSuffix));
+            const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
+
+            if (!declared.has_value() || PngSize(indexPath) != declared)
+            {
+                return std::unexpected(std::format("frame {}'s pictures aren't two PNGs of one size", frame));
+            }
+
+            const auto [declaredWidth, declaredHeight] = *declared;
+            const int32_t scale = declaredWidth / std::max(width, 1);
+
+            if (!FitsShape(declaredWidth, declaredHeight, scale, width, height))
+            {
+                return std::unexpected(
+                    std::format("frame {} is {}x{}: not 1 to {} times the shape's {}x{}, or too large", frame,
+                                declaredWidth, declaredHeight, MaxScale, width, height));
+            }
+
+            read = MCHdArt::FrameFromPngs(colorPath, indexPath, scale);
+        }
+
+        if (!read)
+        {
+            return std::unexpected(std::format("frame {}: {}", frame, read.error()));
+        }
+
+        auto made = std::make_shared<MCHdArt::Frame>(std::move(*read));
+        made->Id = ++TheState().LastId;
         return made;
     }
 
@@ -270,10 +461,164 @@ namespace
                 return;
             }
 
-            state.Bytes -= oldest->second.Frame->Pixels.size();
+            state.Bytes -= oldest->second.Frame->Bytes();
             state.Frames.erase(oldest);
         }
     }
+}
+
+auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::filesystem::path& indexPath,
+                            int32_t scale) -> std::expected<Frame, std::string>
+{
+    auto color = LoadRgba(colorPath);
+
+    if (!color)
+    {
+        return std::unexpected(color.error());
+    }
+
+    auto index = LoadRgba(indexPath);
+
+    if (!index)
+    {
+        return std::unexpected(index.error());
+    }
+
+    if (scale < 1 || scale > MaxScale || color->Width % scale != 0 || color->Height % scale != 0 ||
+        index->Width != color->Width || index->Height != color->Height)
+    {
+        return std::unexpected(std::format("{} and {} are {}x{} and {}x{}: not one size, a whole {} times the original",
+                                           colorPath.filename().string(), indexPath.filename().string(), color->Width,
+                                           color->Height, index->Width, index->Height, scale));
+    }
+
+    Frame made;
+    made.Width = color->Width;
+    made.Height = color->Height;
+    made.Scale = scale;
+    made.Format = ColorFormat::Rgba8;
+    made.Colors = std::move(color->Pixels);
+
+    // Premultiplied, so the GPU's blend and filtering need no division.
+    for (size_t at = 0; at < made.Colors.size(); at += BytesPerPixel)
+    {
+        const uint32_t alpha = made.Colors[at + 3];
+
+        for (size_t channel = 0; channel < 3; ++channel)
+        {
+            made.Colors[at + channel] = static_cast<uint8_t>((made.Colors[at + channel] * alpha + 127) / 255);
+        }
+    }
+
+    const int32_t width = made.OriginalWidth();
+    const int32_t height = made.OriginalHeight();
+    made.Indices.resize(static_cast<size_t>(width) * height * IndexBytes);
+
+    for (int32_t y = 0; y < height; ++y)
+    {
+        for (int32_t x = 0; x < width; ++x)
+        {
+            const size_t from =
+                (static_cast<size_t>(y) * scale * index->Width + static_cast<size_t>(x) * scale) * BytesPerPixel;
+            const size_t to = (static_cast<size_t>(y) * width + x) * IndexBytes;
+            made.Indices[to] = index->Pixels[from];
+            made.Indices[to + 1] = index->Pixels[from + 1] == HasIndex ? HasIndex : 0;
+        }
+    }
+
+    return made;
+}
+
+namespace
+{
+    /// <summary>The frame at <paramref name="key"/>, from the cache or read the first time it is asked for.</summary>
+    std::shared_ptr<const MCHdArt::Frame> Cache(const FrameKey& key, int32_t width, int32_t height)
+    {
+        State& state = TheState();
+        Cached& cached = state.Frames[key];
+        cached.LastUse = ++state.Uses;
+
+        if (!cached.Looked)
+        {
+            cached.Looked = true;
+            const auto started = std::chrono::steady_clock::now();
+            auto read = ReadFrame(key, width, height);
+            state.ReadTime += std::chrono::steady_clock::now() - started;
+
+            if (!read)
+            {
+                LogOnce(key.parent_path(), read.error());
+            }
+            else if (*read != nullptr)
+            {
+                cached.Frame = std::move(*read);
+                state.Bytes += cached.Frame->Bytes();
+                ++state.Read;
+                std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
+                Trim(key);
+                return kept;
+            }
+        }
+
+        return cached.Frame;
+    }
+}
+
+std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame)
+{
+    const std::vector<uint8_t> blocks =
+        frame.Format == ColorFormat::Bc7 ? frame.Colors : MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+    std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
+    WriteLittle(bytes, HdfVersion, 2);
+    WriteLittle(bytes, HdfBc7, 1);
+    WriteLittle(bytes, static_cast<uint32_t>(frame.Scale), 1);
+    WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalWidth()), 2);
+    WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalHeight()), 2);
+    WriteLittle(bytes, static_cast<uint32_t>(blocks.size()), 4);
+    bytes.insert(bytes.end(), blocks.begin(), blocks.end());
+    bytes.insert(bytes.end(), frame.Indices.begin(), frame.Indices.end());
+    return bytes;
+}
+
+auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t height)
+    -> std::expected<Frame, std::string>
+{
+    if (bytes.size() < HdfHeaderBytes || !std::equal(HdfMagic.begin(), HdfMagic.end(), bytes.begin()) ||
+        ReadLittle(bytes, 4, 2) != HdfVersion || ReadLittle(bytes, 6, 1) != HdfBc7)
+    {
+        return std::unexpected(std::string("not a version 1 BC7 HD frame"));
+    }
+
+    Frame frame;
+    frame.Scale = static_cast<int32_t>(ReadLittle(bytes, 7, 1));
+    const auto originalWidth = static_cast<int32_t>(ReadLittle(bytes, 8, 2));
+    const auto originalHeight = static_cast<int32_t>(ReadLittle(bytes, 10, 2));
+    const size_t colorBytes = ReadLittle(bytes, 12, 4);
+    frame.Width = originalWidth * frame.Scale;
+    frame.Height = originalHeight * frame.Scale;
+
+    if ((width != 0 || height != 0) && (originalWidth != width || originalHeight != height))
+    {
+        return std::unexpected(
+            std::format("made for a {}x{} shape, not {}x{}", originalWidth, originalHeight, width, height));
+    }
+
+    const size_t blocks = static_cast<size_t>(MCBc7::Padded(frame.Width) / MCBc7::BlockSide) *
+                          static_cast<size_t>(MCBc7::Padded(frame.Height) / MCBc7::BlockSide);
+    const size_t indexBytes = static_cast<size_t>(originalWidth) * originalHeight * IndexBytes;
+
+    if (!FitsShape(frame.Width, frame.Height, frame.Scale, originalWidth, originalHeight) ||
+        colorBytes != blocks * MCBc7::BlockBytes || bytes.size() != HdfHeaderBytes + colorBytes + indexBytes)
+    {
+        return std::unexpected(std::format("a {}x{} frame at {}x with {} colour bytes in a {}-byte file", originalWidth,
+                                           originalHeight, frame.Scale, colorBytes, bytes.size()));
+    }
+
+    frame.Format = ColorFormat::Bc7;
+    frame.Colors.assign(bytes.begin() + HdfHeaderBytes,
+                        bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes));
+    frame.Indices.assign(bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes), bytes.end());
+    return frame;
 }
 
 std::filesystem::path MCHdArt::PackFolder()
@@ -291,6 +636,55 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Frames.clear();
     state.Bytes = 0;
     state.Logged.clear();
+    state.MadeWith.reset();
+    state.PaletteLooked = false;
+    state.Archives.clear();
+    ++state.Version;
+}
+
+const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& MCHdArt::MadeWith()
+{
+    State& state = TheState();
+
+    if (!state.PaletteLooked)
+    {
+        state.PaletteLooked = true;
+        const std::filesystem::path path = PackFolder() / PaletteFile;
+        std::error_code error;
+
+        if (std::filesystem::is_regular_file(path, error))
+        {
+            std::array<uint8_t, PaletteBytes> colors{};
+            std::ifstream in(path, std::ios::binary);
+
+            if (in.read(reinterpret_cast<char*>(colors.data()), static_cast<std::streamsize>(colors.size())) &&
+                in.peek() == std::char_traits<char>::eof())
+            {
+                state.MadeWith = colors;
+            }
+            else
+            {
+                LogOnce(path, std::format("{} isn't {} bytes of colours", PaletteFile, PaletteBytes));
+            }
+        }
+    }
+
+    return state.MadeWith;
+}
+
+void MCHdArt::SetSmoothEdgeTables(std::span<const uint8_t* const> tables)
+{
+    TheState().SmoothTables = std::unordered_set<const uint8_t*>(tables.begin(), tables.end());
+}
+
+bool MCHdArt::SmoothEdges(const uint8_t* table)
+{
+    return GHdArt != 0 && TheState().SmoothTables.contains(table);
+}
+
+uint64_t MCHdArt::PackVersion()
+{
+    return TheState().Version;
 }
 
 bool MCHdArt::Active()
@@ -320,9 +714,8 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& 
 
     const std::filesystem::path folder =
         PackFolder() / MechFolder / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
-    std::error_code error;
 
-    if (!std::filesystem::is_directory(folder, error))
+    if (!HasFolder(folder))
     {
         return;
     }
@@ -362,33 +755,30 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    const FrameKey key{found->second.Folder, frame};
-    Cached& cached = state.Frames[key];
-    cached.LastUse = ++state.Uses;
+    return Cache(found->second.Folder / std::to_string(frame), width, height);
+}
 
-    if (!cached.Looked)
+std::string MCHdArt::TerrainTileName(std::span<const uint8_t> tile)
+{
+    uint64_t hash = FnvOffset;
+
+    for (const uint8_t byte : tile)
     {
-        cached.Looked = true;
-        const auto started = std::chrono::steady_clock::now();
-        auto read = ReadFrame(key.first, frame, width, height);
-        state.ReadTime += std::chrono::steady_clock::now() - started;
-
-        if (!read)
-        {
-            LogOnce(key.first, read.error());
-        }
-        else if (*read != nullptr)
-        {
-            cached.Frame = std::move(*read);
-            state.Bytes += cached.Frame->Pixels.size();
-            ++state.Read;
-            std::shared_ptr<const Frame> kept = cached.Frame;
-            Trim(key);
-            return kept;
-        }
+        hash = (hash ^ byte) * FnvPrime;
     }
 
-    return cached.Frame;
+    return std::format("{:016x}", hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const uint8_t> tile, int32_t width,
+                                                               int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(PackFolder() / TerrainFolder / TerrainTileName(tile), width, height);
 }
 
 size_t MCHdArt::FramesRead()

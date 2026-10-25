@@ -156,6 +156,7 @@
     <ClCompile Include="lib\MCFatal.cpp" />
     <ClCompile Include="lib\MCFile.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
+    <ClCompile Include="lib\MCInflate.cpp" />
     <ClCompile Include="lib\MCLzCompress.cpp" />
     <ClCompile Include="lib\MCLzDecompress.cpp" />
     <ClCompile Include="lib\MCPacketFile.cpp" />
@@ -405,6 +406,7 @@
     <ClCompile Include="sound\MCSoundSystem.cpp" />
     <ClCompile Include="sprite\MCArmAppearance.cpp" />
     <ClCompile Include="sprite\MCArmAppearanceType.cpp" />
+    <ClCompile Include="sprite\MCBc7.cpp" />
     <ClCompile Include="sprite\MCElementalActor.cpp" />
     <ClCompile Include="sprite\MCElementalTree.cpp" />
     <ClCompile Include="sprite\MCGVAppearance.cpp" />
@@ -557,6 +559,7 @@
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />
     <ClInclude Include="lib\MCIDString.h" />
+    <ClInclude Include="lib\MCInflate.h" />
     <ClInclude Include="lib\MCLz.h" />
     <ClInclude Include="lib\MCMsvcSort.h" />
     <ClInclude Include="lib\MCOptionalRef.h" />
@@ -798,6 +801,7 @@
     <ClInclude Include="sound\MCSoundSystem.h" />
     <ClInclude Include="sprite\MCArmAppearance.h" />
     <ClInclude Include="sprite\MCArmAppearanceType.h" />
+    <ClInclude Include="sprite\MCBc7.h" />
     <ClInclude Include="sprite\MCElementalActor.h" />
     <ClInclude Include="sprite\MCElementalTree.h" />
     <ClInclude Include="sprite\MCGVAppearance.h" />

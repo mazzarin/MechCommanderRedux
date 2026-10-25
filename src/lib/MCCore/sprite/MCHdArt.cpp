@@ -13,9 +13,12 @@ int GHdArt = 0;
 
 namespace
 {
-    /// <summary>The pack's folder in the user folder, and its folder of mech part frames.</summary>
+    /// <summary>
+    /// The pack's folder in the user folder, its folders of mech part frames and of the other appearances' frames.
+    /// </summary>
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
+    constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view PaletteFile = "palette.rgb";
     /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
@@ -788,30 +791,57 @@ bool MCHdArt::Active()
     return *state.FolderExists;
 }
 
+namespace
+{
+    /// <summary>
+    /// Ties <paramref name="shape"/> to the pack's folder <paramref name="folder"/> (relative to the pack) when the pack
+    /// has it and HD art is on.
+    /// </summary>
+    void AttachTo(const std::shared_ptr<MCShape>& shape, const std::filesystem::path& folder)
+    {
+        if (shape == nullptr || !MCHdArt::Active() || shape->FrameList().empty())
+        {
+            return;
+        }
+
+        const std::filesystem::path path = MCHdArt::PackFolder() / folder;
+
+        if (!HasFolder(path))
+        {
+            return;
+        }
+
+        State& state = TheState();
+
+        // The cache drops shapes; their entries go now and then (a lookup checks that the shape still lives).
+        if (++state.Attached % SweepInterval == 0)
+        {
+            std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Shape.expired(); });
+        }
+
+        state.Sequences[shape->FrameList().data()] = Sequence{shape, FolderIndex(path, Naming::Number)};
+    }
+}
+
+std::filesystem::path MCHdArt::FolderOf(const MechShapeKey& key)
+{
+    return std::filesystem::path(MechFolder) / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
+}
+
+std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)
+{
+    return std::filesystem::path(ObjectFolder) / key.ShapeFile / std::to_string(key.Appearance) /
+           std::to_string(key.Packet);
+}
+
 void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key)
 {
-    if (shape == nullptr || !Active() || shape->FrameList().empty())
-    {
-        return;
-    }
+    AttachTo(shape, FolderOf(key));
+}
 
-    const std::filesystem::path folder =
-        PackFolder() / MechFolder / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
-
-    if (!HasFolder(folder))
-    {
-        return;
-    }
-
-    State& state = TheState();
-
-    // The cache drops shapes; their entries go now and then (a lookup checks that the shape still lives).
-    if (++state.Attached % SweepInterval == 0)
-    {
-        std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Shape.expired(); });
-    }
-
-    state.Sequences[shape->FrameList().data()] = Sequence{shape, FolderIndex(folder, Naming::Number)};
+void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key)
+{
+    AttachTo(shape, FolderOf(key));
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)

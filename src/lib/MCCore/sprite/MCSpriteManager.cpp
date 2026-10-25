@@ -16,6 +16,19 @@ namespace
     /// <summary>The part PAKs' names, in <see cref="MCMechPart"/> order.</summary>
     constexpr std::array<std::string_view, MechPartCount> PartFileNames = {"legs", "torsos", "rArms", "lArms"};
 
+    /// <summary>The sprite PAKs' places in MCSpriteManager::_SpriteFiles: the preferred one, then the fallback.</summary>
+    constexpr uint8_t PreferredSprites = 0;
+    constexpr uint8_t FallbackSprites = 1;
+
+    /// <summary><paramref name="text"/> in lower case (a PAK's name, as the HD art pack's folders spell it).</summary>
+    std::string LowerCase(std::string_view text)
+    {
+        std::string lower(text);
+        std::ranges::transform(lower, lower.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return lower;
+    }
+
     /// <summary>
     /// Opens the PAK <paramref name="name"/><paramref name="ext"/> from the sprite path, else
     /// <paramref name="name"/><paramref name="cdExt"/> from the CD's.
@@ -71,8 +84,9 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     auto manager = std::make_unique<MCSpriteManager>(Key{});
 
     // The preferred PAK is "<name>90.pak" ("<name>.pak" in the demo); faithful: the CD retry always adds "90.pak".
+    const std::string_view preferredSuffix = InDemo == 0 ? "90" : "";
     std::expected<std::unique_ptr<MCPacketFile>, std::string> preferred =
-        OpenSpriteFile(spriteFileName, InDemo == 0 ? "90.pak" : ".pak", "90.pak");
+        OpenSpriteFile(spriteFileName, std::format("{}.pak", preferredSuffix), "90.pak");
 
     if (!preferred.has_value())
     {
@@ -87,8 +101,10 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     }
 
     manager->_NumAppearances = (*preferred)->GetNumPackets() + 1;
-    manager->_SpriteFiles[0] = std::move(*preferred);
-    manager->_SpriteFiles[1] = std::move(*fallback);
+    manager->_SpriteFiles[PreferredSprites] = std::move(*preferred);
+    manager->_SpriteFiles[FallbackSprites] = std::move(*fallback);
+    manager->_SpriteFileNames[PreferredSprites] = LowerCase(std::format("{}{}", spriteFileName, preferredSuffix));
+    manager->_SpriteFileNames[FallbackSprites] = LowerCase(spriteFileName);
 
     for (int32_t part = 0; part < MechPartCount; part++)
     {
@@ -141,8 +157,8 @@ auto MCSpriteManager::OpenAppearanceFile(uint32_t appearanceNum) -> bool
     }
 
     // The first sprite PAK with a nonempty packet for it holds it: the preferred one, then the fallback.
-    MCPacketFile& preferred = *_SpriteFiles[0];
-    MCPacketFile& fallback = *_SpriteFiles[1];
+    MCPacketFile& preferred = *_SpriteFiles[PreferredSprites];
+    MCPacketFile& fallback = *_SpriteFiles[FallbackSprites];
 
     if (preferred.SeekPacket(static_cast<int32_t>(appearanceNum)) != 0 ||
         fallback.SeekPacket(static_cast<int32_t>(appearanceNum)) != 0)
@@ -169,10 +185,17 @@ auto MCSpriteManager::OpenAppearanceFile(uint32_t appearanceNum) -> bool
     if (_AppearanceFiles.size() <= appearanceNum)
     {
         _AppearanceFiles.resize(appearanceNum + 1);
+        _AppearanceSources.resize(appearanceNum + 1);
     }
 
     _AppearanceFiles[appearanceNum] = std::move(file);
+    _AppearanceSources[appearanceNum] = usePreferred ? PreferredSprites : FallbackSprites;
     return true;
+}
+
+auto MCSpriteManager::ShapeFileName(uint32_t appearanceNum) -> std::string
+{
+    return OpenAppearanceFile(appearanceNum) ? _SpriteFileNames[_AppearanceSources[appearanceNum]] : std::string();
 }
 
 auto MCSpriteManager::LoadShape(MCPacketFile& file, uint32_t packetNum, uint32_t size, int32_t turnUsed,
@@ -226,7 +249,11 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
         return nullptr;
     }
 
-    return LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
+    std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
+    // Port-only: the HD art pack's frames for it, if it has them (it has none for effects).
+    MCHdArt::Attach(
+        shape, MCHdArt::ObjectShapeKey{_SpriteFileNames[_AppearanceSources[appearanceNum]], appearanceNum, packetNum});
+    return shape;
 }
 
 auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,

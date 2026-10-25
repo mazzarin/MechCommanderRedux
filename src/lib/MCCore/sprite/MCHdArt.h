@@ -17,6 +17,11 @@ class MCShape;
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured.</para>
+/// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
+/// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
+/// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
+/// appearance being its packet in the shape PAK (its type id's low 24 bits). Only the appearances the pack has folders
+/// for are drawn from it: the extractor writes no effects.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -97,6 +102,20 @@ namespace MCHdArt
         uint32_t Packet = 0;
     };
 
+    /// <summary>Where a shape of any other appearance comes from (MCSpriteManager::GetShapeData).</summary>
+    struct ObjectShapeKey
+    {
+        /// <summary>The shape PAK's name, lower case ("shapes90"...).</summary>
+        std::string ShapeFile;
+        /// <summary>The appearance's packet in it, and the shape's packet in the appearance's.</summary>
+        uint32_t Appearance = 0;
+        uint32_t Packet = 0;
+    };
+
+    /// <summary>The folder in a pack that holds the frames of the shape loaded from <paramref name="key"/>.</summary>
+    std::filesystem::path FolderOf(const MechShapeKey& key);
+    std::filesystem::path FolderOf(const ObjectShapeKey& key);
+
     /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
     inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
 
@@ -114,6 +133,7 @@ namespace MCHdArt
     /// from the pack's when it has them. Does nothing while HD art is off.
     /// </summary>
     void Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key);
+    void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table starting at <paramref name="table"/> (whose

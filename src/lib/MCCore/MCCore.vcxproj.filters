@@ -354,6 +354,9 @@
     <ClCompile Include="iface\MCFriendlyMechIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
+    <ClCompile Include="iface\MCKeyBindings.cpp">
+      <Filter>iface</Filter>
+    </ClCompile>
     <ClCompile Include="iface\MCLanceIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
@@ -1526,6 +1529,9 @@
       <Filter>iface</Filter>
     </ClInclude>
     <ClInclude Include="iface\MCInterfaceTypes.h">
+      <Filter>iface</Filter>
+    </ClInclude>
+    <ClInclude Include="iface\MCKeyBindings.h">
       <Filter>iface</Filter>
     </ClInclude>
     <ClInclude Include="iface\MCLanceIcon.h">

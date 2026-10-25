@@ -139,6 +139,7 @@
     <ClCompile Include="iface\MCCommandParser.cpp" />
     <ClCompile Include="iface\MCConsoleCommands.cpp" />
     <ClCompile Include="iface\MCFriendlyMechIcon.cpp" />
+    <ClCompile Include="iface\MCKeyBindings.cpp" />
     <ClCompile Include="iface\MCLanceIcon.cpp" />
     <ClCompile Include="iface\MCMechBar.cpp" />
     <ClCompile Include="iface\MCMechIcon.cpp" />
@@ -537,6 +538,7 @@
     <ClInclude Include="iface\MCConsoleCommands.h" />
     <ClInclude Include="iface\MCFriendlyMechIcon.h" />
     <ClInclude Include="iface\MCInterfaceTypes.h" />
+    <ClInclude Include="iface\MCKeyBindings.h" />
     <ClInclude Include="iface\MCLanceIcon.h" />
     <ClInclude Include="iface\MCMechBar.h" />
     <ClInclude Include="iface\MCMechIcon.h" />

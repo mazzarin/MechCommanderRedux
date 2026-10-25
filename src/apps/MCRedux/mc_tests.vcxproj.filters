@@ -42,6 +42,9 @@
     <ClCompile Include="tests\ConsoleTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ControlsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ControlTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

@@ -2383,10 +2383,15 @@ namespace
 
             for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
             {
+                // The packet's size once it is sought (as the crater manager reads it).
+                if (pak.SeekPacket(packet) != 0)
+                {
+                    continue;
+                }
+
                 std::vector<uint8_t> table(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)));
 
-                if (pak.SeekPacket(packet) != 0 || table.empty() || pak.ReadPacket(packet, table) < 0 ||
-                    !VfxIsShapeTable(table))
+                if (table.empty() || pak.ReadPacket(packet, table) < 0 || !VfxIsShapeTable(table))
                 {
                     continue;
                 }
@@ -4014,7 +4019,8 @@ namespace
 
     /// <summary>
     /// What drew <paramref name="data"/>, where the audit can tell: a terrain overlay (a fast shape: roads, rivers...), a
-    /// crater shape, a cursor, the pack folder an attached shape's frames come from, or none.
+    /// crater shape, a cursor, the pack folder an attached shape's frames come from, the one a shape table's hash names,
+    /// or none.
     /// </summary>
     std::string AuditOwner(std::span<const uint8_t> data)
     {
@@ -4057,6 +4063,12 @@ namespace
             return std::filesystem::relative(*folder, MCHdArt::PackFolder()).generic_string();
         }
 
+        // The data is the table to its block's end: the bytes MCVulkanRenderer::HdShape hashes.
+        if (VfxIsShapeTable(data))
+        {
+            return MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(data)).generic_string() + " (by hash)";
+        }
+
         return "?";
     }
 }
@@ -4064,7 +4076,7 @@ namespace
 /// <summary>
 /// Tool: <c>--hd-audit &lt;pack&gt; --shots &lt;folder&gt;</c> lists what is still drawn from the original's pixels
 /// with HD art on: mission 1 drawn by the GPU as --hd-pack's pictures are, the player's lance selected and sent at the
-/// Uller for <c>--frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
+/// Uller for <c>--hd-audit-frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
 /// tallied by what it drew and
 /// whether it was sharp (from the pack, the ground's HD atlas or text redrawn sharp). Prints each command's share of
 /// sharp pixels, then the data drawn from the original's pixels, most pixels first, each shape table's first frame
@@ -4102,7 +4114,7 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
 
     int32_t frames = DefaultFrames;
 
-    if (const std::optional<std::string_view> given = MCTest::Option("frames"); given.has_value())
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-audit-frames"); given.has_value())
     {
         std::from_chars(given->data(), given->data() + given->size(), frames);
     }
@@ -4660,9 +4672,15 @@ namespace
 
                 for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
                 {
+                    // The packet's size once it is sought: the bytes its loader reads.
+                    if (pak.SeekPacket(packet) != 0)
+                    {
+                        continue;
+                    }
+
                     std::vector<uint8_t> bytes(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)));
 
-                    if (pak.SeekPacket(packet) == 0 && !bytes.empty() && pak.ReadPacket(packet, bytes) >= 0)
+                    if (!bytes.empty() && pak.ReadPacket(packet, bytes) >= 0)
                     {
                         add(bytes, std::format("{} packet {}", path, packet));
                     }

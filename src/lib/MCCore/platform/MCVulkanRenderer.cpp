@@ -6,6 +6,7 @@
 #include "lib/MCFatal.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
+#include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 
 namespace
@@ -48,6 +49,12 @@ namespace
     /// the draw's walk (shaders/draw.pshader). Bit 16 is the terrain shader's HdColors.
     /// </summary>
     constexpr uint32_t SmoothEdges = 1u << 17;
+    /// <summary>
+    /// Port-only, for a translucent shape drawn from the HD art pack: only its opaque pixels, or only its blended ones
+    /// (shaders/draw.pshader).
+    /// </summary>
+    constexpr uint32_t OpaqueOnly = 1u << 18;
+    constexpr uint32_t BlendedOnly = 1u << 19;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -1696,7 +1703,7 @@ auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, 
 
 void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                    std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                                   bool smoothEdges)
+                                   bool smoothEdges, bool blendedOnly)
 {
     const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
 
@@ -1713,7 +1720,8 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     }
 
     const uint16_t surface = SurfaceFor(target);
-    const uint32_t op = KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u);
+    const uint32_t op =
+        KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u) | (blendedOnly ? BlendedOnly : 0u);
 
     // A smooth-edged picture's place in the source is the whole picture.
     if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
@@ -1754,7 +1762,10 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     const int32_t width = command.Width;
     const int32_t height = command.Height;
 
-    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either).
+    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either). A
+    // translucent shape's frame leaves out its blended pixels, which the blit below still blends.
+    bool blendedOnly = false;
+
     if (const std::shared_ptr<const MCHdArt::Frame> hd =
             MCHdArt::Find(command.ShapeTable.data(), command.ShapeNum, width, height);
         hd != nullptr)
@@ -1769,7 +1780,12 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 
         if (AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table))
         {
-            return;
+            if (!MCAgShapeIsAlpha(command.ShapeTable, command.ShapeNum))
+            {
+                return;
+            }
+
+            blendedOnly = true;
         }
     }
 
@@ -1817,7 +1833,7 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
                                  [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
         },
-        MCHdArt::SmoothEdges(command.ShapeTable.data()));
+        MCHdArt::SmoothEdges(command.ShapeTable.data()), blendedOnly);
 }
 
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
@@ -2004,10 +2020,12 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     uint32_t op = KindTexture;
     uint32_t before = 0;
     uint32_t after = 0;
+    const bool translucent = command.Op == MCShapeOp::Alpha || command.Op == MCShapeOp::XlatAlpha;
+    bool hdTranslucent = false;
 
-    // Port-only: an opaque shape the HD art pack has a frame of keeps the original's indices and is shown from the
-    // pack (its bounds: the header's).
-    if (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat)
+    // Port-only: a shape the HD art pack has a frame of keeps the original's indices and is shown from the pack (its
+    // bounds: the header's). A translucent shape's frame leaves out its blended pixels, which still blend below.
+    if (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent)
     {
         const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
 
@@ -2021,7 +2039,8 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
             if (AddHd(surface, *hd, hdAt, shapeFrom, command.Table))
             {
-                op |= IndexOnly;
+                hdTranslucent = translucent;
+                op |= translucent ? 0u : IndexOnly;
             }
         }
     }
@@ -2076,6 +2095,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         }
 
         return;
+    }
+
+    // Port-only: a translucent shape shown from the HD art pack writes its opaque pixels' indices alone, then blends
+    // its translucent pixels.
+    if (hdTranslucent)
+    {
+        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | OpaqueOnly, 0, before, after);
+        op |= BlendedOnly;
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, after);

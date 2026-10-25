@@ -21,7 +21,8 @@ class MCShape;
 /// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
 /// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
 /// appearance being its packet in the shape PAK (its type id's low 24 bits). Only the appearances the pack has folders
-/// for are drawn from it: the extractor writes no effects.</para>
+/// for are drawn from it: the extractor writes no effects. A translucent shape's frame (one drawn through AlphaPal.ini)
+/// leaves out the pixels the shape blends: the GPU still blends those from the original.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU

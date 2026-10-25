@@ -316,10 +316,62 @@ namespace
     }
 
     /// <summary>
-    /// Writes <paramref name="sequences"/> into a pack at <paramref name="pack"/>: each frame at
-    /// <paramref name="scale"/> times its size (each pixel repeated), its colours through <paramref name="paint"/>,
-    /// with its index picture. A sequence holding its blended pixels (sprite/MCHdArt.h) has premultiplied colours, a
-    /// blended pixel the colour and coverage AlphaPal.ini's colour draws, without an index.
+    /// Writes <paramref name="frame"/> as a PNG pair, <paramref name="stem"/>.png and <paramref name="stem"/>_idx.png
+    /// (sprite/MCHdArt.h), at <paramref name="scale"/> times its size (each pixel repeated), its colours through
+    /// <paramref name="paint"/>. With <paramref name="blended"/>, the frame holds its blended pixels: premultiplied, a
+    /// blended pixel of a translucent frame the colour and coverage AlphaPal.ini's colour draws, without an index.
+    /// </summary>
+    void WriteFramePngs(const std::filesystem::path& stem, const DecodedFrame& frame,
+                        std::span<const SDL_Color, 256> colors, int32_t scale,
+                        const std::function<SDL_Color(SDL_Color)>& paint, bool blended)
+    {
+        const int32_t width = frame.Width * scale;
+        const int32_t height = frame.Height * scale;
+        std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel, 0);
+        std::vector<uint8_t> index(color.size(), 0);
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            for (int32_t x = 0; x < width; ++x)
+            {
+                const size_t from = static_cast<size_t>(y / scale) * frame.Width + static_cast<size_t>(x / scale);
+                uint8_t* outColor = &color[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                uint8_t* outIndex = &index[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                outIndex[2] = blended ? MCHdArt::HoldsBlended : 0;
+                outIndex[3] = HasIndex;
+
+                if (frame.Drawn[from] == 0)
+                {
+                    continue;
+                }
+
+                if (const uint8_t value = frame.Index[from]; blended && frame.Translucent && SpecialColor[value] != 0)
+                {
+                    const MCAlphaBlend blend = AlphaColorBlend(MCAlphaColors[value]);
+                    outColor[0] = ChannelByte(blend.R);
+                    outColor[1] = ChannelByte(blend.G);
+                    outColor[2] = ChannelByte(blend.B);
+                    outColor[3] = ChannelByte(blend.Coverage);
+                    continue;
+                }
+
+                const SDL_Color painted = paint(colors[frame.Index[from]]);
+                outColor[0] = painted.r;
+                outColor[1] = painted.g;
+                outColor[2] = painted.b;
+                outColor[3] = HasIndex;
+                outIndex[0] = frame.Index[from];
+                outIndex[1] = HasIndex;
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width, height, color);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width, height, index);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="sequences"/> into a pack at <paramref name="pack"/>: each drawn frame as a PNG pair
+    /// (<see cref="WriteFramePngs"/>) named by its number in its sequence's folder.
     /// </summary>
     void WritePack(const std::filesystem::path& pack, std::span<const Sequence> sequences,
                    std::span<const SDL_Color, 256> colors, int32_t scale,
@@ -332,57 +384,11 @@ namespace
 
             for (size_t frameNum = 0; frameNum < sequence.Frames.size(); ++frameNum)
             {
-                const DecodedFrame& frame = sequence.Frames[frameNum];
-
-                if (frame.Width == 0)
+                if (sequence.Frames[frameNum].Width > 0)
                 {
-                    continue;
+                    WriteFramePngs(folder / std::to_string(frameNum), sequence.Frames[frameNum], colors, scale, paint,
+                                   sequence.Blended);
                 }
-
-                const int32_t width = frame.Width * scale;
-                const int32_t height = frame.Height * scale;
-                std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel, 0);
-                std::vector<uint8_t> index(color.size(), 0);
-
-                for (int32_t y = 0; y < height; ++y)
-                {
-                    for (int32_t x = 0; x < width; ++x)
-                    {
-                        const size_t from =
-                            static_cast<size_t>(y / scale) * frame.Width + static_cast<size_t>(x / scale);
-                        uint8_t* outColor = &color[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
-                        uint8_t* outIndex = &index[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
-                        outIndex[2] = sequence.Blended ? MCHdArt::HoldsBlended : 0;
-                        outIndex[3] = HasIndex;
-
-                        if (frame.Drawn[from] == 0)
-                        {
-                            continue;
-                        }
-
-                        if (const uint8_t value = frame.Index[from];
-                            sequence.Blended && frame.Translucent && SpecialColor[value] != 0)
-                        {
-                            const MCAlphaBlend blend = AlphaColorBlend(MCAlphaColors[value]);
-                            outColor[0] = ChannelByte(blend.R);
-                            outColor[1] = ChannelByte(blend.G);
-                            outColor[2] = ChannelByte(blend.B);
-                            outColor[3] = ChannelByte(blend.Coverage);
-                            continue;
-                        }
-
-                        const SDL_Color painted = paint(colors[frame.Index[from]]);
-                        outColor[0] = painted.r;
-                        outColor[1] = painted.g;
-                        outColor[2] = painted.b;
-                        outColor[3] = HasIndex;
-                        outIndex[0] = frame.Index[from];
-                        outIndex[1] = HasIndex;
-                    }
-                }
-
-                SavePng(folder / std::format("{}.png", frameNum), width, height, color);
-                SavePng(folder / std::format("{}_idx.png", frameNum), width, height, index);
             }
         }
     }
@@ -762,6 +768,222 @@ TEST_CASE_ISOLATED("tool: --hd-extract-terrain writes the terrain tiles for the 
     std::cout << std::format("  {} tiles, {} different, {} that don't fit their table\n", tiles, written.size(),
                              skipped);
     CHECK(!written.empty());
+}
+
+namespace
+{
+    /// <summary>
+    /// The first shape of <paramref name="table"/> when it is a fast-shape table (a terrain overlay's data, tagged
+    /// 'DNAH'): its bytes to the end of its last row (FastShapeSize); none when it isn't one or doesn't fit.
+    /// </summary>
+    std::optional<std::span<const uint8_t>> OverlayShape(std::span<const uint8_t> table)
+    {
+        constexpr std::array<uint8_t, 4> Tag = {'D', 'N', 'A', 'H'};
+        constexpr size_t FirstShapeOffset = 8;
+
+        if (table.size() < FirstShapeOffset + sizeof(uint32_t) || !std::ranges::equal(table.first(Tag.size()), Tag))
+        {
+            return std::nullopt;
+        }
+
+        const auto offset = static_cast<size_t>(static_cast<uint32_t>(MCVfxRead32(table, FirstShapeOffset)));
+
+        if (offset >= table.size())
+        {
+            return std::nullopt;
+        }
+
+        const std::span<const uint8_t> shape = table.subspan(offset);
+        const std::optional<size_t> size = FastShapeSize(shape);
+        return size.has_value() ? std::optional(shape.first(*size)) : std::nullopt;
+    }
+
+    /// <summary>
+    /// Terrain overlay <paramref name="shape"/> (vfx/MCFastShape.cpp's format) decoded: each pixel's index and whether it
+    /// is drawn. A run of colour 255 isn't; nor, in a translucent one (its first row starting with the word 1), are
+    /// colours 0 and 255, which blend to nothing.
+    /// </summary>
+    DecodedFrame DecodeOverlay(std::span<const uint8_t> shape)
+    {
+        constexpr size_t RowOffsets = 0xc;
+        constexpr uint32_t Literal = 0x80;
+        constexpr uint8_t Clear = 0;
+        constexpr uint8_t Key = 255;
+        const auto read16 = [&shape](size_t at) { return static_cast<int32_t>(shape[at] | shape[at + 1] << 8); };
+        DecodedFrame frame;
+        frame.Height = read16(8);
+        frame.Width = read16(10) + 1;
+        frame.XMin = -static_cast<int16_t>(read16(4));
+        frame.YMin = -static_cast<int16_t>(read16(6));
+        frame.Translucent = frame.Height > 0 && read16(static_cast<size_t>(read16(RowOffsets))) == 1;
+        frame.Index.assign(static_cast<size_t>(frame.Width) * frame.Height, 0);
+        frame.Drawn.assign(frame.Index.size(), 0);
+        const auto put = [&](int32_t row, int32_t x, uint8_t value, bool run)
+        {
+            const size_t at = static_cast<size_t>(row) * frame.Width + static_cast<size_t>(x);
+            frame.Index[at] = value;
+            frame.Drawn[at] = (run && value == Key) || (frame.Translucent && (value == Clear || value == Key)) ? 0 : 1;
+        };
+
+        for (int32_t row = 0; row < frame.Height; ++row)
+        {
+            size_t data = static_cast<size_t>(read16(RowOffsets + static_cast<size_t>(row) * 2));
+
+            for (int32_t x = 0; x < frame.Width && data < shape.size();)
+            {
+                const uint32_t c = shape[data++];
+
+                if (c >= Literal)
+                {
+                    for (uint32_t i = 0; i < c - Literal && x < frame.Width && data + i < shape.size(); ++i, ++x)
+                    {
+                        put(row, x, shape[data + i], false);
+                    }
+
+                    data += c - Literal;
+                }
+                else if (data < shape.size())
+                {
+                    const uint8_t value = shape[data++];
+
+                    for (uint32_t i = 0; i < c && x < frame.Width; ++i, ++x)
+                    {
+                        put(row, x, value, true);
+                    }
+                }
+            }
+        }
+
+        return frame;
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// Calls <paramref name="visit"/> with each different terrain overlay of the tile sets (its fast-shape table and the
+    /// shape's bytes, OverlayShape) once; returns how many the tile sets hold, repeats counted.
+    /// </summary>
+    size_t ForEachOverlay(
+        const std::function<void(std::span<const uint8_t> table, std::span<const uint8_t> shape)>& visit)
+    {
+        std::set<std::string> seen;
+        size_t overlays = 0;
+
+        for (const std::string_view set : TileSets)
+        {
+            for (const std::string_view suffix : TileSetSuffixes)
+            {
+                MCPacketFile file;
+
+                if (file.Open(std::format("data\\tiles\\{}{}.pak", set, suffix)) != 0)
+                {
+                    continue;
+                }
+
+                for (int32_t packet = 0; packet < file.GetNumPackets(); ++packet)
+                {
+                    if (file.SeekPacket(packet) != 0 || file.GetPacketSize() <= 0)
+                    {
+                        continue;
+                    }
+
+                    std::vector<uint8_t> data(static_cast<size_t>(file.GetPacketSize()));
+                    const std::optional<std::span<const uint8_t>> shape =
+                        file.ReadPacket(packet, data) < 0 ? std::nullopt : OverlayShape(data);
+
+                    if (!shape.has_value())
+                    {
+                        continue;
+                    }
+
+                    ++overlays;
+
+                    if (seen.insert(MCHdArt::TerrainTileName(*shape)).second)
+                    {
+                        visit(data, *shape);
+                    }
+                }
+            }
+        }
+
+        return overlays;
+    }
+
+    /// <summary>What <see cref="WriteOverlays"/> wrote: the overlays the tile sets hold, repeats counted, the different
+    /// ones with pixels, the translucent among them, and their original pixels.</summary>
+    struct OverlayCounts
+    {
+        size_t Overlays = 0;
+        size_t Written = 0;
+        size_t Translucent = 0;
+        size_t Pixels = 0;
+    };
+
+    /// <summary>
+    /// Writes every terrain overlay with pixels into <paramref name="folder"/> as a PNG pair named as the pack names it
+    /// (<see cref="WriteFramePngs"/>, a translucent one holding its blended pixels), at <paramref name="scale"/>, its
+    /// colours through <paramref name="paint"/>.
+    /// </summary>
+    OverlayCounts WriteOverlays(const std::filesystem::path& folder, std::span<const SDL_Color, 256> colors,
+                                int32_t scale, const std::function<SDL_Color(SDL_Color)>& paint)
+    {
+        std::filesystem::create_directories(folder);
+        size_t written = 0;
+        size_t translucent = 0;
+        size_t pixels = 0;
+        const size_t overlays = ForEachOverlay(
+            [&](std::span<const uint8_t>, std::span<const uint8_t> shape)
+            {
+                const DecodedFrame frame = DecodeOverlay(shape);
+
+                if (std::ranges::find(frame.Drawn, 1) == frame.Drawn.end())
+                {
+                    return;
+                }
+
+                ++written;
+                translucent += frame.Translucent ? 1 : 0;
+                pixels += frame.Index.size();
+                WriteFramePngs(folder / MCHdArt::TerrainTileName(shape), frame, colors, scale, paint,
+                               frame.Translucent);
+            });
+        return {overlays, written, translucent, pixels};
+    }
+
+    /// <summary>The folder of a pack at <paramref name="pack"/> its overlays go in (sprite/MCHdArt.h).</summary>
+    std::filesystem::path OverlayFolderOf(const std::filesystem::path& pack)
+    {
+        return pack / "overlays";
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-overlays &lt;folder&gt;</c> writes every terrain overlay of the tile sets (the fast shapes drawn
+/// over the ground: roads, rivers' banks, rubble, mines) once, as the HD art generator takes them:
+/// <c>&lt;name&gt;.png</c> and <c>&lt;name&gt;_idx.png</c> (sprite/MCHdArt.h; a translucent one holding its blended
+/// pixels), named as the pack names them (MCHdArt::TerrainTileName of the shape's bytes), and the shown colours as
+/// palette.rgb.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-overlays writes the terrain overlays for the HD art generator")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-overlays");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+    WritePaletteRgb(folder, colors);
+    const OverlayCounts counts = WriteOverlays(folder, colors, 1, [](SDL_Color color) { return color; });
+    std::cout << std::format("  {} overlays, {} different with pixels ({} translucent), {} original pixels\n",
+                             counts.Overlays, counts.Written, counts.Translucent, counts.Pixels);
+    CHECK(counts.Written > 0);
 }
 
 TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art generator")
@@ -3311,6 +3533,48 @@ namespace
     };
 
     /// <summary>
+    /// Mission 1's battle, as the audit and the overlay tests play it: the player's lance selected (its brackets and bars
+    /// drawn) and sent at the Uller (shots, explosions, craters, footprints), the camera following the lance as a
+    /// player's would (the Uller starts in the fog). Returns the Uller.
+    /// </summary>
+    std::shared_ptr<MCMover> SendLanceAtUller()
+    {
+        constexpr int32_t UllerPartId = 896;
+        constexpr int32_t LanceSize = 3;
+        const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+        REQUIRE(iface != nullptr);
+        iface->ClearMechSelection();
+
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+        {
+            if (button->Active)
+            {
+                iface->SelectMech(button->PartId);
+            }
+        }
+
+        const std::shared_ptr<MCMover> uller = GetMoverFromPartId(UllerPartId);
+        REQUIRE(uller != nullptr);
+
+        for (int32_t partId = PlayerMechPartId; partId < PlayerMechPartId + LanceSize; ++partId)
+        {
+            const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+            REQUIRE(mover != nullptr);
+            MCTacticalOrder order;
+            order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
+            order.Target = uller;
+            order.AttackParams.Type = 1;
+            order.AttackParams.Method = 0;
+            order.AttackParams.Range = -1;
+            order.AttackParams.Pursue = -1;
+            mover->HandleTacticalOrder(order, 1, 0);
+        }
+
+        Eye()->ChangeTarget(GetMoverFromPartId(PlayerMechPartId), true);
+        return uller;
+    }
+
+    /// <summary>
     /// What drew <paramref name="data"/>, where the audit can tell: a terrain overlay (a fast shape: roads, rivers...), a
     /// crater shape, a cursor, or none.
     /// </summary>
@@ -3389,37 +3653,8 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
         entry.Frames.insert(draw.Frame);
     };
 
-    // The lance selected (its brackets and bars drawn) and sent at the Uller (shots, explosions, craters, footprints).
-    constexpr int32_t UllerPartId = 896;
     constexpr int32_t DefaultFrames = 900;
-    const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
-    REQUIRE(iface != nullptr);
-    iface->ClearMechSelection();
-
-    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
-    {
-        if (button->Active)
-        {
-            iface->SelectMech(button->PartId);
-        }
-    }
-
-    const std::shared_ptr<MCMover> uller = GetMoverFromPartId(UllerPartId);
-    REQUIRE(uller != nullptr);
-
-    for (int32_t partId = PlayerMechPartId; partId < PlayerMechPartId + 3; ++partId)
-    {
-        const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
-        REQUIRE(mover != nullptr);
-        MCTacticalOrder order;
-        order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
-        order.Target = uller;
-        order.AttackParams.Type = 1;
-        order.AttackParams.Method = 0;
-        order.AttackParams.Range = -1;
-        order.AttackParams.Pursue = -1;
-        mover->HandleTacticalOrder(order, 1, 0);
-    }
+    const std::shared_ptr<MCMover> uller = SendLanceAtUller();
 
     int32_t frames = DefaultFrames;
 
@@ -3427,9 +3662,6 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     {
         std::from_chars(given->data(), given->data() + given->size(), frames);
     }
-
-    // The camera follows the lance, as a player's would (the Uller starts in the fog).
-    Eye()->ChangeTarget(GetMoverFromPartId(PlayerMechPartId), true);
 
     for (int32_t frame = 0; frame < frames; ++frame)
     {
@@ -3491,4 +3723,144 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
             }
         }
     }
+}
+
+/// <summary>
+/// A terrain overlay the HD art pack has is drawn from it: a real overlay (the tile sets' first with pixels) drawn on
+/// the screen by the GPU over mission 1, from a pack holding it with its colours inverted, shows other colours than the
+/// original's draw of it, and the HD draws count it.
+/// </summary>
+TEST_CASE_ISOLATED("game: a terrain overlay is drawn from the HD art pack")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    std::vector<uint8_t> table;
+    std::string name;
+    DecodedFrame frame;
+    ForEachOverlay(
+        [&](std::span<const uint8_t> overlayTable, std::span<const uint8_t> shape)
+        {
+            if (table.empty())
+            {
+                frame = DecodeOverlay(shape);
+
+                if (std::ranges::find(frame.Drawn, 1) != frame.Drawn.end())
+                {
+                    table.assign(overlayTable.begin(), overlayTable.end());
+                    name = MCHdArt::TerrainTileName(shape);
+                }
+            }
+        });
+    REQUIRE(!table.empty());
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_overlay";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(OverlayFolderOf(pack));
+    WriteFramePngs(OverlayFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto drawn = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        FastShapeDraw(pane, block.Bytes(), 0, x, y, std::nullopt);
+        const auto shown = display->ReadFrame();
+        REQUIRE(shown.has_value());
+        return *shown;
+    };
+
+    GamePaused = true;
+    const std::vector<SDL_Color> original = drawn();
+    const std::vector<SDL_Color> again = drawn();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    const int64_t drawnBefore = renderer->HdDrawn();
+    const std::vector<SDL_Color> hd = drawn();
+    CHECK(renderer->HdDrawn() > drawnBefore);
+    hdArt.reset();
+    GamePaused = false;
+
+    const auto differing = [](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    {
+        return std::ranges::count_if(std::views::iota(size_t{0}, a.size()), [&](size_t i)
+                                     { return a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b; });
+    };
+
+    const auto changed = differing(original, hd);
+    std::cout << std::format("  overlay {}: {}x{}, {} shown pixels changed\n", name, frame.Width, frame.Height,
+                             changed);
+    CHECK_EQ(differing(original, again), 0);
+    CHECK(changed > 0);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// HD art changes only the colours shown: in mirror mode, mission 1's battle drawn with every terrain overlay from a
+/// pack (their colours inverted), the GPU's palette indices are still the software renderer's, frame after frame, and
+/// overlays were drawn from the pack.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
+{
+    // Frame 105 of this battle differs at the screen's top left with HD art off too (16 pixels, software 151, GPU 43),
+    // so the run stops before it; some 900 overlays are drawn from the pack by then.
+    constexpr int32_t Frames = 90;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::Mirror);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_overlays";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    REQUIRE(WriteOverlays(OverlayFolderOf(pack), colors, TestPackScale, Inverted).Written > 0);
+    WritePaletteRgb(pack, colors);
+    SendLanceAtUller();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    renderer->ResetMirror();
+    const int64_t drawnBefore = renderer->HdDrawn();
+
+    for (int32_t frame = 0; frame < Frames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    hdArt.reset();
+    const MCVulkanRenderer::MirrorTally& tally = renderer->Mirror();
+    std::cout << std::format("  {} overlays drawn from the pack\n", renderer->HdDrawn() - drawnBefore);
+    CHECK(renderer->HdDrawn() > drawnBefore);
+    CHECK_EQ(tally.Frames, Frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    std::filesystem::remove_all(scratch);
 }

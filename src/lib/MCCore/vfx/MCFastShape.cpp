@@ -97,3 +97,63 @@ int32_t FastShapeDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, i
     MCRenderer::For(*window).FastShape(*window, command);
     return 0;
 }
+
+std::optional<size_t> FastShapeRowBytes(std::span<const uint8_t> row, int32_t width)
+{
+    constexpr uint32_t Literal = 0x80;
+    size_t data = 0;
+
+    // A byte c < 0x80 is a run of c pixels of the next byte; c >= 0x80 is c - 0x80 literal pixels following.
+    for (int32_t count = 0; count < width;)
+    {
+        if (data >= row.size())
+        {
+            return std::nullopt;
+        }
+
+        const uint32_t c = row[data++];
+        count += static_cast<int32_t>(c >= Literal ? c - Literal : c);
+        data += c >= Literal ? c - Literal : 1;
+    }
+
+    return data <= row.size() ? std::optional(data) : std::nullopt;
+}
+
+std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape)
+{
+    constexpr size_t RowOffsets = 0xc;
+
+    if (shape.size() < RowOffsets)
+    {
+        return std::nullopt;
+    }
+
+    const int32_t height = Read16(shape, 8);
+    const int32_t width = Read16(shape, 10) + 1;
+    size_t last = RowOffsets + static_cast<size_t>(height) * 2;
+
+    if (last > shape.size())
+    {
+        return std::nullopt;
+    }
+
+    const size_t header = last;
+
+    for (int32_t row = 0; row < height; ++row)
+    {
+        last = std::max(last, static_cast<size_t>(Read16(shape, RowOffsets + static_cast<size_t>(row) * 2)));
+    }
+
+    if (height == 0)
+    {
+        return header;
+    }
+
+    if (last > shape.size())
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<size_t> bytes = FastShapeRowBytes(shape.subspan(last), width);
+    return bytes.has_value() ? std::optional(std::max(header, last + *bytes)) : std::nullopt;
+}

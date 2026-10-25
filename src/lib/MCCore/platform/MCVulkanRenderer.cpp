@@ -305,30 +305,6 @@ namespace
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
     // the next byte, c >= 0x80 is c - 0x80 literal bytes.
 
-    /// <summary>The bytes a fast-shape row's packets take, covering <paramref name="width"/> pixels.</summary>
-    size_t FastRowEnd(std::span<const uint8_t> bytes, int32_t width)
-    {
-        size_t data = 0;
-
-        for (int32_t count = 0; count < width;)
-        {
-            const uint32_t c = bytes[data++];
-
-            if (c >= 0x80)
-            {
-                count += static_cast<int32_t>(c) - 0x80;
-                data += c - 0x80;
-            }
-            else
-            {
-                count += static_cast<int32_t>(c);
-                ++data;
-            }
-        }
-
-        return data;
-    }
-
     /// <summary>Decodes a fast-shape row into value + state pairs (1 a literal pixel, 3 a run's).</summary>
     void DecodeFastRow(std::span<const uint8_t> bytes, int32_t width, std::span<uint8_t> out)
     {
@@ -2269,25 +2245,15 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
     // The shape's bytes: its header and row offsets, then the rows' packets, one row after another, so they end where
     // the row that starts last ends.
     const auto rowStart = [&](int32_t row) -> size_t { return MCRead16(shape, 0xc + static_cast<size_t>(row) * 2); };
+    const std::optional<size_t> size = FastShapeSize(shape);
+
+    if (!size.has_value())
+    {
+        Fatal(0, "MCVulkanRenderer: a fast shape runs past its registered block");
+    }
+
     const MCOptionalRef<DataImage> found = AtlasForData(
-        shape, Seed(ImageKind::FastShape, width, height), "a fast shape",
-        [&]
-        {
-            size_t last = 0xc + static_cast<size_t>(height) * 2;
-            size_t end = last;
-
-            for (int32_t row = 0; row < height; ++row)
-            {
-                last = std::max(last, rowStart(row));
-            }
-
-            if (height > 0)
-            {
-                end = std::max(end, last + FastRowEnd(shape.subspan(last), width));
-            }
-
-            return Extent{end, width, height};
-        },
+        shape, Seed(ImageKind::FastShape, width, height), "a fast shape", [&] { return Extent{*size, width, height}; },
         [&](std::span<uint8_t> out, const Extent& extent)
         {
             std::ranges::fill(out.first(static_cast<size_t>(width) * height * 2), uint8_t{0});
@@ -2295,7 +2261,9 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
             for (int32_t row = 0; row < height; ++row)
             {
                 // A row reaching past the last row's end would be outside the bytes the shape is known by.
-                if (rowStart(row) + FastRowEnd(shape.subspan(rowStart(row)), width) > extent.Size)
+                const std::optional<size_t> rowBytes = FastShapeRowBytes(shape.subspan(rowStart(row)), width);
+
+                if (!rowBytes.has_value() || rowStart(row) + *rowBytes > extent.Size)
                 {
                     Fatal(0, "MCVulkanRenderer: a fast shape's rows are out of order");
                 }
@@ -2339,6 +2307,20 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
     if (command.Alpha)
     {
         op |= AlphaBlend;
+    }
+
+    // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
+    // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
+        hd != nullptr && hd->Blended == command.Alpha &&
+        AddHd(surface, *hd, at, Quad{column, command.FirstRow, 1, 1}, command.Table))
+    {
+        if (command.Alpha)
+        {
+            return;
+        }
+
+        op |= IndexOnly;
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, 0);

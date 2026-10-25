@@ -22,6 +22,7 @@ namespace
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view TerrainFolder = "terrain";
+    constexpr std::string_view OverlayFolder = "overlays";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
@@ -1142,6 +1143,18 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const u
     }
 
     return Cache(FrameKey{FolderIndex(PackFolder() / TerrainFolder, Naming::Hash), TerrainTileHash(tile)}, width,
+                 height);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
+                                                           int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / OverlayFolder, Naming::Hash), TerrainTileHash(shape)}, width,
                  height);
 }
 

@@ -28,7 +28,9 @@ class MCShape;
 /// blends, which the GPU still blends from the original, except an effect's (explosions, fire, smoke...), which holds
 /// them as the colour and coverage they draw.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
-/// original tile's pixels; their alpha is unused.</para>
+/// original tile's pixels; their alpha is unused. A terrain overlay's (a fast shape over the ground: roads, rivers'
+/// banks, rubble, mines) are <c>overlays/&lt;key&gt;.hdf</c> (named as tiles are), with their alpha; a translucent
+/// one's hold its blended pixels.</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
 /// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -207,6 +209,13 @@ namespace MCHdArt
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>
+    /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
+    /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
+    /// is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's

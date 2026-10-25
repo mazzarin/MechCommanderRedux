@@ -424,6 +424,21 @@ private:
     bool AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command);
 
     /// <summary>
+    /// Port-only: adds the smooth colour pass of a game-drawn picture mapped with its key transparent (the fog of war,
+    /// KindSmoothMap): its drawn texels' edges rounded at the output's resolution, as a smooth-edged shape's are, from
+    /// <paramref name="source"/> (the picture's surface). False when the polygon's vertices lie in a line.
+    /// </summary>
+    bool AddSmoothMap(uint16_t surface, SourceRef source, const MCPolygonCommand& command);
+
+    /// <summary>
+    /// Port-only: adds a draw of kind and flags <paramref name="op"/> over a textured polygon's bounds, reading
+    /// <paramref name="source"/> through the polygon's <paramref name="mapping"/> (window to texture positions);
+    /// whether one was added (none when the polygon lies outside its pane).
+    /// </summary>
+    bool AddMapped(uint16_t surface, SourceKind source, uint32_t sourceIndex, uint32_t op, uint32_t color,
+                   const std::array<float, 6>& mapping, const MCPolygonCommand& command);
+
+    /// <summary>
     /// Adds the draw of an HD art frame over <paramref name="at"/> (blended into the colours), reading the original
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as

@@ -4847,3 +4847,47 @@ TEST_CASE_ISOLATED("game: a shape table loaded outside the sprite files is drawn
     CHECK(changed > 0);
     std::filesystem::remove_all(scratch);
 }
+
+/// <summary>
+/// With HD art on (a pack with no frames), the tactical map's fog of war (a picture the game draws, one texel a terrain
+/// vertex) is drawn with smooth edges at the output's resolution: of the map page's two mapped polygons a frame, the
+/// fog's is drawn sharp and the map picture's (not in the pack) isn't.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the tactical map's fog of war with smooth edges")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    map->SetDisplayType(MCTacmapPage::Map);
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_fog");
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    int32_t polygons = 0;
+    int32_t sharp = 0;
+    renderer->Audit = [&](const MCVulkanRenderer::AuditedDraw& draw)
+    {
+        if (draw.Command == "Polygon")
+        {
+            ++polygons;
+            sharp += draw.Sharp ? 1 : 0;
+        }
+    };
+
+    MCTestGame::RunFrame(FrameSeconds);
+    renderer->Audit = nullptr;
+    hdArt.reset();
+    CHECK_EQ(polygons, 2);
+    CHECK_EQ(sharp, 1);
+    std::filesystem::remove_all(pack.parent_path());
+}

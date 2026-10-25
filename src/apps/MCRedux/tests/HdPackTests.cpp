@@ -479,6 +479,28 @@ TEST_CASE_ISOLATED(
     std::filesystem::remove_all(pack);
 }
 
+/// <summary>A movie's HD frames are found by the Smacker file's name, whatever its folders, extension or case.</summary>
+TEST_CASE("hd art: a movie's HD frames are found by its name")
+{
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_movie_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack / "movies");
+    std::ofstream(pack / "movies" / "OPENING.ivf").put('\0');
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+
+    CHECK_EQ(MCHdArt::FindMovie("data\\movies\\opening.smk"), std::optional(pack / "movies" / "OPENING.ivf"));
+    CHECK_EQ(MCHdArt::FindMovie("data/movies/OPENING.SMK"), std::optional(pack / "movies" / "OPENING.ivf"));
+    CHECK(!MCHdArt::FindMovie("CLOSING.SMK").has_value());
+    CHECK(!MCHdArt::FindMovie("").has_value());
+    GHdArt = 0;
+    CHECK(!MCHdArt::FindMovie("OPENING.SMK").has_value());
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    std::filesystem::remove_all(pack);
+}
+
 /// <summary>
 /// Tool: <c>--hd-pack-file &lt;pack folder&gt;</c> writes the pack's pack.cfg for this game: the pack format and the
 /// sprite files (mission 1's, as the game opens them) its mech and object folders are numbered by.

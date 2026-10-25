@@ -19,6 +19,8 @@ class MCShape;
 /// the HD pixels it would have recoloured.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
+/// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
+/// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
 /// shows an HD pixel scaled by its original index's colour now over that colour, so another mission's palette, the
 /// water's colour cycle and the brightness setting show through.</para>
@@ -175,6 +177,12 @@ namespace MCHdArt
 
     /// <summary>A number that changes whenever the pack in use (or whether one is) may have: see SetPackFolder.</summary>
     uint64_t PackVersion();
+
+    /// <summary>
+    /// The pack's HD frames for the Smacker movie <paramref name="movie"/> (its game path or name; folders, extension and
+    /// case don't matter), when HD art is on and the pack has them.
+    /// </summary>
+    std::optional<std::filesystem::path> FindMovie(std::string_view movie);
 
     /// <summary>
     /// How many frames have been read from the pack so far, the time reading them took, and how many bytes the kept

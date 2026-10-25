@@ -19,6 +19,9 @@ namespace
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view PaletteFile = "palette.rgb";
+    /// <summary>The pack's folder of movies' HD frames, and their extension (MCHdArt::FindMovie).</summary>
+    constexpr std::string_view MovieFolder = "movies";
+    constexpr std::string_view MovieExtension = ".ivf";
     /// <summary>
     /// The pack's settings (MCHdArt::WritePackFile): a FIT file, as prefs.cfg, with a block of the pack format and the
     /// game's sprite files it was made from.
@@ -1055,6 +1058,27 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const u
 
     return Cache(FrameKey{FolderIndex(PackFolder() / TerrainFolder, Naming::Hash), TerrainTileHash(tile)}, width,
                  height);
+}
+
+std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)
+{
+    if (!Active())
+    {
+        return std::nullopt;
+    }
+
+    // The file's name without its folders (a game path may use either separator) or extension.
+    const std::string_view file = movie.substr(movie.find_last_of("/\\") + 1);
+    const std::string name = Upper(file.substr(0, file.find_last_of('.')));
+    const std::filesystem::path path = PackFolder() / MovieFolder / (name + std::string(MovieExtension));
+    std::error_code error;
+
+    if (name.empty() || !std::filesystem::is_regular_file(path, error))
+    {
+        return std::nullopt;
+    }
+
+    return path;
 }
 
 size_t MCHdArt::FramesRead()

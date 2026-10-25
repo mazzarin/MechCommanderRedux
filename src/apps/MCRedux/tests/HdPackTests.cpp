@@ -74,10 +74,11 @@ namespace
 }
 
 /// <summary>
-/// BC7 (mode 6) round trip: a sprite-like picture comes back above the PSNR floor, and a block of one colour, or of
-/// transparent black (frame padding), comes back exactly.
+/// BC7 round trip (bc7enc_rdo): a sprite-like picture comes back above the PSNR floor; a block of transparent black
+/// (frame padding) comes back exactly, and one of another colour within a step a channel (bc7enc can miss a
+/// translucent colour by one).
 /// </summary>
-TEST_CASE("hd art: BC7 blocks decode close to the pixels encoded, one colour exactly")
+TEST_CASE("hd art: BC7 blocks decode close to the pixels encoded, padding exactly")
 {
     constexpr int32_t Width = 61;
     constexpr int32_t Height = 47;
@@ -104,7 +105,16 @@ TEST_CASE("hd art: BC7 blocks decode close to the pixels encoded, one colour exa
         MCBc7::EncodeBlock(pixels, block);
         std::array<uint8_t, 64> back{};
         MCBc7::DecodeBlock(block, back);
-        CHECK(back == pixels);
+
+        if (color == std::array<uint8_t, Channels>{0, 0, 0, 0})
+        {
+            CHECK(back == pixels);
+        }
+
+        for (size_t i = 0; i < pixels.size(); i++)
+        {
+            CHECK(std::abs(static_cast<int32_t>(back[i]) - static_cast<int32_t>(pixels[i])) <= 1);
+        }
     }
 }
 
@@ -376,8 +386,9 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
 /// <summary>
 /// Tool: <c>--hd-compress &lt;folder&gt;</c> turns every PNG frame pair under a pack folder (<c>n.png</c> and
 /// <c>n_idx.png</c>, at <c>--hd-scale</c> times the original, 3 unless given) into a frame file <c>n.hdf</c>, using every
-/// core; the PNGs go unless <c>--hd-keep-png 1</c>. It prints the frames, the bytes before and after, and the colours' mean
-/// PSNR. A pair that can't be converted is reported and kept.
+/// core; the PNGs go unless <c>--hd-keep-png 1</c>. <c>--hd-effort</c> (0 to 4, 4 unless given) and <c>--hd-rdo</c> (the
+/// entropy reduction's lambda, 0 = none unless given) set bc7enc_rdo's work. It prints the frames, the bytes before and
+/// after, and the colours' mean PSNR. A pair that can't be converted is reported and kept.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame files")
 {
@@ -393,6 +404,20 @@ TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame
     if (const std::optional<std::string_view> given = MCTest::Option("hd-scale"); given.has_value())
     {
         std::from_chars(given->data(), given->data() + given->size(), scale);
+    }
+
+    MCBc7::MCBc7Options options;
+    options.Effort = MCBc7::MaxEffort;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-effort"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), options.Effort);
+    }
+
+    // strtof: libc++ has from_chars for floats only from macOS 26.
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-rdo"); given.has_value())
+    {
+        options.RdoLambda = std::strtof(std::string(*given).c_str(), nullptr);
     }
 
     const bool keepPngs = MCTest::Option("hd-keep-png").has_value();
@@ -440,7 +465,7 @@ TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame
                 continue;
             }
 
-            const std::vector<uint8_t> file = MCHdArt::EncodeHdf(*frame);
+            const std::vector<uint8_t> file = MCHdArt::EncodeHdf(*frame, options);
             const auto read = MCHdArt::DecodeHdf(file, frame->OriginalWidth(), frame->OriginalHeight());
             const double psnr =
                 read.has_value() ? Psnr(frame->Colors, MCBc7::Decode(read->Colors, read->Width, read->Height)) : 0.0;
@@ -495,10 +520,11 @@ TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame
     }
 
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    std::cout << std::format("  {} frames at {}x: {:.1f} MB of PNG became {:.1f} MB, mean PSNR {:.1f} dB, {:.0f} s\n",
-                             done.load(), scale, static_cast<double>(before.load()) / 1e6,
-                             static_cast<double>(after.load()) / 1e6, psnrFrames > 0 ? psnrTotal / psnrFrames : 0.0,
-                             seconds);
+    std::cout << std::format(
+        "  {} frames at {}x (effort {}, RDO {}): {:.1f} MB of PNG became {:.1f} MB, mean PSNR {:.1f} "
+        "dB, {:.0f} s\n",
+        done.load(), scale, options.Effort, options.RdoLambda, static_cast<double>(before.load()) / 1e6,
+        static_cast<double>(after.load()) / 1e6, psnrFrames > 0 ? psnrTotal / psnrFrames : 0.0, seconds);
 
     for (const std::string& failure : failures)
     {

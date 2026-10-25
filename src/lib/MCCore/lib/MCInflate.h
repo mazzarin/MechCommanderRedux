@@ -1,8 +1,8 @@
 #pragma once
 
 /// <summary>
-/// Port-only: DEFLATE decoding (RFC 1951: stored, fixed-Huffman and dynamic-Huffman blocks) for the HD art pack's
-/// archives, whose entries tools/upscale packs with zlib. A raw stream (no zlib or gzip wrapper).
+/// Port-only: DEFLATE decoding for the HD art pack's archives, whose entries tools/upscale packs with zlib: miniz's
+/// inflate (src/lib/miniz-3.0.2), on a raw stream (no zlib or gzip wrapper).
 /// </summary>
 namespace MCInflate
 {

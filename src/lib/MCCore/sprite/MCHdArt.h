@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sprite/MCBc7.h"
+
 class MCShape;
 
 /// <summary>
@@ -75,9 +77,9 @@ namespace MCHdArt
     /// <summary>
     /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7), scale (u8), the
     /// original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when the frame
-    /// holds RGBA8), then the indices (R8G8 at the original's size). Little-endian.
+    /// holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size). Little-endian.
     /// </summary>
-    std::vector<uint8_t> EncodeHdf(const Frame& frame);
+    std::vector<uint8_t> EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options = {});
 
     /// <summary>
     /// The frame a <c>.hdf</c> file's <paramref name="bytes"/> hold, checked against the original's

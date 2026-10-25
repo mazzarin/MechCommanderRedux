@@ -32,7 +32,9 @@ namespace
     std::string Upper(std::string_view text)
     {
         std::string upper(text);
-        std::ranges::transform(upper, upper.begin(), [](char c) { return static_cast<char>(std::toupper(c)); });
+        // Through unsigned char: a name from a pack may hold any byte, and toupper takes only those and EOF.
+        std::ranges::transform(upper, upper.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         return upper;
     }
 
@@ -53,8 +55,8 @@ namespace
     constexpr size_t SweepInterval = 256;
     constexpr int32_t BytesPerPixel = 4;
     /// <summary>
-    /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its GPU texture (colours
-    /// and indices side by side, so twice as wide) may have: SDL GPU guarantees 8192.
+    /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its colour texture may have
+    /// (SDL GPU guarantees 8192; the indices are a texture of their own, at the original's size).
     /// </summary>
     constexpr int32_t MaxScale = 8;
     constexpr int32_t MaxTextureSide = 8192;
@@ -352,8 +354,21 @@ namespace
             return true;
         }
 
-        const MCHdArchive* archive = ArchiveFor(folder.parent_path());
-        return archive != nullptr && archive->Folders.contains(Upper(folder.filename().string()));
+        // As ReadArchived looks: the nearest archive standing for one of the folder's (up to the pack's), holding the
+        // first folder on the way down.
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+
+        for (std::filesystem::path ancestor = folder.parent_path(); ancestor.has_relative_path() && ancestor != pack;
+             ancestor = ancestor.parent_path())
+        {
+            if (const MCHdArchive* archive = ArchiveFor(ancestor); archive != nullptr)
+            {
+                const std::filesystem::path rest = folder.lexically_relative(ancestor);
+                return !rest.empty() && archive->Folders.contains(Upper(rest.begin()->string()));
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -564,10 +579,11 @@ namespace
     }
 }
 
-std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame)
+std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options)
 {
-    const std::vector<uint8_t> blocks =
-        frame.Format == ColorFormat::Bc7 ? frame.Colors : MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+    const std::vector<uint8_t> blocks = frame.Format == ColorFormat::Bc7
+                                            ? frame.Colors
+                                            : MCBc7::Encode(frame.Colors, frame.Width, frame.Height, options);
     std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
     WriteLittle(bytes, HdfVersion, 2);
     WriteLittle(bytes, HdfBc7, 1);

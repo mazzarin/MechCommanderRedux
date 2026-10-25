@@ -89,6 +89,13 @@ public:
     /// <summary>The number of packets in appearance <paramref name="appearanceNum"/>'s PAK (0 when it has none).</summary>
     int32_t GetNumShapes(uint32_t appearanceNum);
 
+    /// <summary>
+    /// The name (lower case, without ".pak") of the sprite PAK <see cref="GetShapeData"/> reads appearance
+    /// <paramref name="appearanceNum"/> from ("shapes90", or "shapes" for one it leaves empty); empty when neither has
+    /// it.
+    /// </summary>
+    std::string ShapeFileName(uint32_t appearanceNum);
+
     /// <summary>Frees every shape not used this turn or the last, and every ownerless one.</summary>
     void DumpLru();
 
@@ -128,8 +135,12 @@ private:
     /// original picks between the two by packet size, not by zoom.)
     /// </summary>
     std::array<std::unique_ptr<MCPacketFile>, 2> _SpriteFiles;
+    /// <summary>The sprite PAKs' names, lower case, without ".pak" (the HD art pack's folders name them).</summary>
+    std::array<std::string, 2> _SpriteFileNames;
     /// <summary>Each appearance's own PAK once opened (from whichever sprite PAK holds it).</summary>
     std::vector<std::unique_ptr<MCPacketFile>> _AppearanceFiles;
+    /// <summary>Per opened appearance, which of <see cref="_SpriteFiles"/> holds it.</summary>
+    std::vector<uint8_t> _AppearanceSources;
     /// <summary>The part PAKs (legs.pak, torsos.pak, rArms.pak, lArms.pak).</summary>
     MCMechParts<std::unique_ptr<MCPacketFile>> _PartFiles;
     /// <summary>The 90-pixel part PAKs; null unless the 90-pixel sprites are on.</summary>

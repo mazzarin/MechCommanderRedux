@@ -17,6 +17,7 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
+#include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
@@ -1783,6 +1784,11 @@ namespace
             {
                 sprites->DumpAll();
             }
+
+            if (MCGameContext::Current().HasCraterManager())
+            {
+                CraterManager().AttachHdArt();
+            }
         }
 
         ~MCHdArtOn()
@@ -2264,6 +2270,186 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in an explosion's place")
 TEST_CASE_ISOLATED("game: HD art keeps an explosion's palette indices")
 {
     if (const std::optional<HdObjectScene> scene = SetUpHdExplosionScene(MCGpuDrawing::Mirror); scene.has_value())
+    {
+        CheckIndicesKept(*scene);
+    }
+}
+
+namespace
+{
+    /// <summary>The crater PAKs (data\sprites): the missions name one of them as their CraterFile.</summary>
+    constexpr std::array<std::string_view, 2> CraterFiles = {"crater", "feet"};
+
+    /// <summary>
+    /// Every shape of the crater PAKs (craters and footprints, a frame a facing) as a pack's sequences
+    /// (craters/&lt;file&gt;/&lt;packet&gt;), holding their blended pixels as effects' do; translucent frames counted in
+    /// <paramref name="translucent"/>.
+    /// </summary>
+    std::vector<Sequence> CraterSequences(size_t& translucent)
+    {
+        std::vector<Sequence> sequences;
+
+        for (const std::string_view file : CraterFiles)
+        {
+            MCPacketFile pak;
+
+            if (pak.Open(GamePath(SpritePath, file, ".pak")) != 0)
+            {
+                continue;
+            }
+
+            for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+            {
+                std::vector<uint8_t> table(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)));
+
+                if (pak.SeekPacket(packet) != 0 || table.empty() || pak.ReadPacket(packet, table) < 0 ||
+                    !VfxIsShapeTable(table))
+                {
+                    continue;
+                }
+
+                Sequence sequence;
+                sequence.Folder =
+                    MCHdArt::FolderOf(MCHdArt::CraterShapeKey{std::string(file), static_cast<uint32_t>(packet)});
+                sequence.Blended = true;
+
+                for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+                {
+                    auto decoded = Decode(table, frame);
+
+                    if (decoded.has_value() && decoded->Translucent)
+                    {
+                        ++translucent;
+                        LeaveOutUndrawn(*decoded, true);
+                    }
+
+                    if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+                    {
+                        sequence.Frames.emplace_back();
+                        continue;
+                    }
+
+                    sequence.Frames.push_back(std::move(*decoded));
+                }
+
+                if (DrawnFrames(sequence) > 0)
+                {
+                    sequences.push_back(std::move(sequence));
+                }
+            }
+        }
+
+        return sequences;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-craters &lt;folder&gt;</c> writes the craters' and footprints' frames (the crater PAKs'
+/// shapes, a frame a facing) as an HD art pack at their own size, for tools/upscale/make_object_pack.py: each frame a PNG
+/// pair holding its blended pixels (sprite/MCHdArt.h), plus <c>objects.json</c> (one "crater" appearance, animated and
+/// blended, its sequences' frames' bounds) and the shown colours as palette.rgb.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-craters writes the craters' and footprints' frames")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-craters");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack(*out);
+    std::filesystem::create_directories(pack);
+    WritePaletteRgb(pack, colors);
+    size_t translucent = 0;
+    const std::vector<Sequence> sequences = CraterSequences(translucent);
+    REQUIRE(!sequences.empty());
+    WritePack(pack, sequences, colors, 1, [](SDL_Color color) { return color; });
+    std::string json = "{\"appearances\": [\n {\"id\": 0, \"kind\": \"crater\", \"animated\": true, \"blended\": true, "
+                       "\"delta\": false, \"types\": [\"crater\"], \"sequences\": [";
+    size_t frames = 0;
+
+    for (size_t i = 0; i < sequences.size(); ++i)
+    {
+        json += std::format("{}\n  {{\"folder\": \"{}\", \"frames\": [{}]}}", i == 0 ? "" : ",",
+                            sequences[i].Folder.generic_string(), FramesJson(sequences[i]));
+        frames += DrawnFrames(sequences[i]);
+    }
+
+    std::ofstream(pack / "objects.json") << json << "]}]}\n";
+    std::cout << std::format("  {} crater and footprint shapes, {} frames ({} translucent)\n", sequences.size(), frames,
+                             translucent);
+}
+
+namespace
+{
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/> in a world view shown larger than the screen, the camera on the
+    /// player's mech, every crater and footprint shape placed beside it, and a pack of them (the tests' pack: the
+    /// original's pixels doubled, the opaque ones' colours inverted).
+    /// </summary>
+    std::optional<HdObjectScene> SetUpHdCraterScene(MCGpuDrawing drawing)
+    {
+        constexpr float Spacing = 12.0f;
+        constexpr int32_t Row = 6;
+
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        RevealAll();
+        const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
+        REQUIRE(player != nullptr);
+        Eye()->ChangeTarget(player, true);
+        MCCraterManager& craters = CraterManager();
+
+        for (int32_t type = 0; type < craters.ShapeCount(); ++type)
+        {
+            MCVector3D at = player->GetPosition();
+            at.X += Spacing * static_cast<float>(type % Row - Row / 2);
+            at.Y += Spacing * static_cast<float>(type / Row);
+            craters.Place(type, at, 0);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        size_t translucent = 0;
+        const std::vector<Sequence> sequences = CraterSequences(translucent);
+        REQUIRE(!sequences.empty());
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Object = std::static_pointer_cast<MCGameObject>(player);
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_craters";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        WritePack(scene.Pack, sequences, colors, TestPackScale, Inverted);
+        std::cout << std::format("  {} crater shapes placed, {} in the pack\n", craters.ShapeCount(), sequences.size());
+        return scene;
+    }
+}
+
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in a crater's place")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdCraterScene(MCGpuDrawing::On); scene.has_value())
+    {
+        CheckShownFromPack(*scene);
+    }
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps the craters' palette indices")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdCraterScene(MCGpuDrawing::Mirror); scene.has_value())
     {
         CheckIndicesKept(*scene);
     }

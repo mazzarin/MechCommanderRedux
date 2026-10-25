@@ -27,9 +27,10 @@ class MCCraterManager
 public:
     /// <summary>
     /// A ring of <paramref name="numCraters"/> free slots, drawn with <paramref name="shapes"/> (a PAK's packets: the
-    /// full-size half, then the zoomed-out half).
+    /// full-size half, then the zoomed-out half), the PAK named <paramref name="fileName"/> (port: the HD art pack's
+    /// folder for them).
     /// </summary>
-    MCCraterManager(int32_t numCraters, std::vector<std::vector<uint8_t>> shapes);
+    MCCraterManager(int32_t numCraters, std::vector<std::vector<uint8_t>> shapes, std::string fileName = {});
 
     ~MCCraterManager();
     MCCraterManager(const MCCraterManager&) = delete;
@@ -66,6 +67,12 @@ public:
     /// <summary>The shapes (port: the HD art audit names the draws of them).</summary>
     std::span<const std::vector<uint8_t>> Shapes() const { return _Shapes; }
 
+    /// <summary>
+    /// Port-only: ties the shapes to the HD art pack's frames of them (sprite/MCHdArt.h's craters/) when HD art is on;
+    /// done at mission load, and again by whoever turns HD art on during one.
+    /// </summary>
+    void AttachHdArt() const;
+
 private:
     /// <summary>The slots.</summary>
     std::vector<MCCraterData> _Craters;
@@ -75,6 +82,10 @@ private:
     std::vector<std::vector<uint8_t>> _Shapes;
     /// <summary>The number of shapes (packets) the PAK holds.</summary>
     int32_t _ShapeCount = 0;
+    /// <summary>The PAK's name, lower case (the HD art pack's folder for its shapes).</summary>
+    std::string _FileName;
+    /// <summary>Keeps the HD art pack's ties to the shapes while the manager lives.</summary>
+    std::shared_ptr<const int> _HdArtOwner = std::make_shared<const int>(0);
 };
 
 /// <summary>The mission's craters (set for the whole scenario).</summary>

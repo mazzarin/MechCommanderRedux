@@ -12,6 +12,11 @@
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCSplashScreen.h"
+#include "appear/MCAppearanceTypeList.h"
+#include "lib/MCPacketFile.h"
+#include "main/MCGamePaths.h"
+#include "object/MCBattleMech.h"
+#include "sprite/MCSpriteTree.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameContext.h"
@@ -435,4 +440,57 @@ namespace MCTestGame
             stateLog << std::format("{} 0x{:08x}\n", stateFrame++, StateHash()) << std::flush;
         }
     }
+}
+
+std::vector<std::pair<std::string, int32_t>> MCTestGame::MechTrees()
+{
+    std::vector<std::pair<std::string, int32_t>> trees;
+    MCPacketFile pak;
+
+    if (pak.Open(GamePath(SpritePath, "sprites", ".pak")) != 0)
+    {
+        return trees;
+    }
+
+    for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+    {
+        MCFitIniFile fit;
+
+        if (pak.SeekPacket(packet) != 0 || pak.GetPacketSize() == 0 ||
+            fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) != 0 || fit.SeekBlock("Parts") != 0 ||
+            fit.SeekBlock("Main Info") != 0)
+        {
+            continue;
+        }
+
+        if (const MCFitResult<std::string> treeName = fit.Read<std::string>("Name"); treeName.has_value())
+        {
+            trees.emplace_back(*treeName, packet);
+        }
+    }
+
+    return trees;
+}
+
+std::shared_ptr<MCSpriteTree> MCTestGame::FindMechTree(std::string_view name)
+{
+    for (const auto& [treeName, packet] : MechTrees())
+    {
+        if (treeName == name)
+        {
+            return std::static_pointer_cast<MCSpriteTree>(
+                AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
+        }
+    }
+
+    return nullptr;
+}
+
+void MCTestGame::FaceMech(MCBattleMech& mech, float degrees)
+{
+    const double radians = static_cast<double>(degrees) * std::numbers::pi / 180.0;
+    const auto c = static_cast<float>(std::cos(radians));
+    const auto s = static_cast<float>(std::sin(radians));
+    MCFrameOfRef frame(MCVector3D(c, s, 0.0f), MCVector3D(-s, c, 0.0f), UnitZ);
+    mech.SetFrame(frame);
 }

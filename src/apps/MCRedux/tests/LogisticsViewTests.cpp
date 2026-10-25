@@ -579,8 +579,9 @@ TEST_CASE_ISOLATED("game: the preferences panel keeps the sliders where they wer
     const uint32_t shown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs panel", shown);
 
-    // The PREFERENCES title (the art), the art's frame below the panel, and the panel between its boxes.
-    for (const auto [x, y] : {std::pair{400, 105}, std::pair{480, 425}, std::pair{380, 400}, std::pair{470, 300}})
+    // The PREFERENCES title (the art), the art's frame below the panel, and the panel between its boxes (above the
+    // CONTROLS button at its bottom left).
+    for (const auto [x, y] : {std::pair{400, 105}, std::pair{480, 425}, std::pair{380, 360}, std::pair{470, 300}})
     {
         MCTest::Scope scope(std::format("click at {}, {}", x, y));
         MCScreenInput::RealClick(x, y);

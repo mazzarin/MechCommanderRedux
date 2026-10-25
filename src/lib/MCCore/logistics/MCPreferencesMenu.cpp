@@ -2,7 +2,9 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCControlsPanel.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogGroupBox.h"
@@ -115,6 +117,8 @@ namespace
     constexpr int32_t AcceptLeft = 120;
     constexpr int32_t CancelLeft = 189;
     constexpr int32_t ButtonsTop = 250;
+    /// <summary>CONTROLS on the panel: at its bottom left, 10 pixels in, in line with ACCEPT and CANCEL.</summary>
+    constexpr int32_t ControlsLeft = 10;
 
     /// <summary>The INTERFACE VOLUME slider (the screen owns it).</summary>
     std::weak_ptr<MCLogSlider> InterfaceSlider;
@@ -296,6 +300,9 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
+
+    // CONTROLS: the in-mission keys, on a panel of their own.
+    AddControlsPanel(screen, panel, ControlsLeft, ButtonsTop);
 }
 
 void ShowPreferences()
@@ -330,6 +337,8 @@ void ShowPreferences()
     DifficultyToggle(0)->Toggled = GameDifficulty == 0;
     DifficultyToggle(1)->Toggled = GameDifficulty == 1;
     DifficultyToggle(2)->Toggled = GameDifficulty != 0 && GameDifficulty != 1;
+    // Port: the preferences panel shows first, and CONTROLS edits the keys as they are.
+    ResetControls();
     logistics->MainScreen->ShowGuiWindow(false);
     logistics->SetCurrentScreen(logistics->PrefScreen);
     logistics->PrefScreen->ShowGuiWindow(true);
@@ -354,6 +363,8 @@ void CancelPrefs()
 
 void WritePrefs()
 {
+    // Port: the keys CONTROLS edited become the player's, and are written after the settings.
+    AcceptControls();
     MCFitIniFile prefs;
     prefs.Create("prefs.cfg");
     prefs.WriteBlock("MechCommander");
@@ -375,6 +386,7 @@ void WritePrefs()
     prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
     prefs.WriteIdLong("UIResolution", GUiResolution);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
+    MCKeyBindings::WritePrefs(prefs);
     Cancel();
 }
 

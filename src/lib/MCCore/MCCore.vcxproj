@@ -139,6 +139,7 @@
     <ClCompile Include="iface\MCCommandParser.cpp" />
     <ClCompile Include="iface\MCConsoleCommands.cpp" />
     <ClCompile Include="iface\MCFriendlyMechIcon.cpp" />
+    <ClCompile Include="iface\MCKeyBindings.cpp" />
     <ClCompile Include="iface\MCLanceIcon.cpp" />
     <ClCompile Include="iface\MCMechBar.cpp" />
     <ClCompile Include="iface\MCMechIcon.cpp" />
@@ -173,6 +174,7 @@
     <ClCompile Include="logistics\MCCompInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCCompPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCConnectMenu.cpp" />
+    <ClCompile Include="logistics\MCControlsPanel.cpp" />
     <ClCompile Include="logistics\MCDragIcon.cpp" />
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
     <ClCompile Include="logistics\MCGameList.cpp" />
@@ -187,6 +189,7 @@
     <ClCompile Include="logistics\MCLogDialogButton.cpp" />
     <ClCompile Include="logistics\MCLogGroupBox.cpp" />
     <ClCompile Include="logistics\MCLogInvScreen.cpp" />
+    <ClCompile Include="logistics\MCLogKeyList.cpp" />
     <ClCompile Include="logistics\MCLogLabel.cpp" />
     <ClCompile Include="logistics\MCLogMenus.cpp" />
     <ClCompile Include="logistics\MCLogObject.cpp" />
@@ -194,6 +197,7 @@
     <ClCompile Include="logistics\MCLogRows.cpp" />
     <ClCompile Include="logistics\MCLogScrollTextObject.cpp" />
     <ClCompile Include="logistics\MCLogSlider.cpp" />
+    <ClCompile Include="logistics\MCLogTextButton.cpp" />
     <ClCompile Include="logistics\MCLogTextObject.cpp" />
     <ClCompile Include="logistics\MCLogToolButton.cpp" />
     <ClCompile Include="logistics\MCMainMenu.cpp" />
@@ -537,6 +541,7 @@
     <ClInclude Include="iface\MCConsoleCommands.h" />
     <ClInclude Include="iface\MCFriendlyMechIcon.h" />
     <ClInclude Include="iface\MCInterfaceTypes.h" />
+    <ClInclude Include="iface\MCKeyBindings.h" />
     <ClInclude Include="iface\MCLanceIcon.h" />
     <ClInclude Include="iface\MCMechBar.h" />
     <ClInclude Include="iface\MCMechIcon.h" />
@@ -570,6 +575,7 @@
     <ClInclude Include="logistics\MCCompInventoryBlock.h" />
     <ClInclude Include="logistics\MCCompPurchaseBlock.h" />
     <ClInclude Include="logistics\MCConnectMenu.h" />
+    <ClInclude Include="logistics\MCControlsPanel.h" />
     <ClInclude Include="logistics\MCDragIcon.h" />
     <ClInclude Include="logistics\MCFileScrollPane.h" />
     <ClInclude Include="logistics\MCGameList.h" />
@@ -584,6 +590,7 @@
     <ClInclude Include="logistics\MCLogDialogButton.h" />
     <ClInclude Include="logistics\MCLogGroupBox.h" />
     <ClInclude Include="logistics\MCLogInvScreen.h" />
+    <ClInclude Include="logistics\MCLogKeyList.h" />
     <ClInclude Include="logistics\MCLogLabel.h" />
     <ClInclude Include="logistics\MCLogMenus.h" />
     <ClInclude Include="logistics\MCLogObject.h" />
@@ -591,6 +598,7 @@
     <ClInclude Include="logistics\MCLogRows.h" />
     <ClInclude Include="logistics\MCLogScrollTextObject.h" />
     <ClInclude Include="logistics\MCLogSlider.h" />
+    <ClInclude Include="logistics\MCLogTextButton.h" />
     <ClInclude Include="logistics\MCLogTextObject.h" />
     <ClInclude Include="logistics\MCLogToolButton.h" />
     <ClInclude Include="logistics\MCMainMenu.h" />

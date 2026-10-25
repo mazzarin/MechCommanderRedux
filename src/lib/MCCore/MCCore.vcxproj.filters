@@ -354,6 +354,9 @@
     <ClCompile Include="iface\MCFriendlyMechIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
+    <ClCompile Include="iface\MCKeyBindings.cpp">
+      <Filter>iface</Filter>
+    </ClCompile>
     <ClCompile Include="iface\MCLanceIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
@@ -456,6 +459,9 @@
     <ClCompile Include="logistics\MCConnectMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCControlsPanel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCDragIcon.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -498,6 +504,9 @@
     <ClCompile Include="logistics\MCLogInvScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCLogKeyList.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLogLabel.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -517,6 +526,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogSlider.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCLogTextButton.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogTextObject.cpp">
@@ -1528,6 +1540,9 @@
     <ClInclude Include="iface\MCInterfaceTypes.h">
       <Filter>iface</Filter>
     </ClInclude>
+    <ClInclude Include="iface\MCKeyBindings.h">
+      <Filter>iface</Filter>
+    </ClInclude>
     <ClInclude Include="iface\MCLanceIcon.h">
       <Filter>iface</Filter>
     </ClInclude>
@@ -1627,6 +1642,9 @@
     <ClInclude Include="logistics\MCConnectMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCControlsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCDragIcon.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1669,6 +1687,9 @@
     <ClInclude Include="logistics\MCLogInvScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCLogKeyList.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCLogLabel.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1688,6 +1709,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogSlider.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCLogTextButton.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogTextObject.h">

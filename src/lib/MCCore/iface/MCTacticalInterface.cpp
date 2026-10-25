@@ -5,6 +5,7 @@
 #include "camera/MCMainWindow.h"
 #include "gui/MCFloatHelp.h"
 #include "iface/MCCommandParser.h"
+#include "iface/MCKeyBindings.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCOrderSink.h"
 #include "lib/MCFatal.h"
@@ -36,109 +37,6 @@ namespace
     /// <c>iface.fit</c> has none: Windows' default.
     /// </summary>
     constexpr int16_t SystemDragWidth = 4;
-
-    /// <summary>A default key binding: the command, the scan code and the modifiers it needs.</summary>
-    struct MCDefaultKey
-    {
-        MCKeyCommand Command = MCKeyCommand::Unused;
-        uint32_t Code = 0;
-        uint32_t Modifiers = 0;
-    };
-
-    /// <summary>
-    /// The bindings <see cref="MCTacticalInterface::Init"/> sets, in its order. Codes are DirectInput scan codes (0x1xx
-    /// = extended keys).
-    /// </summary>
-    constexpr MCDefaultKey DefaultKeys[] = {
-        {MCKeyCommand::Eject, 0x147, 0},
-        {MCKeyCommand::Stop, 0xe, 0},
-        {MCKeyCommand::Run, 0x39, 0},
-        {MCKeyCommand::ForcedOrder, 0x43, 0},
-        {MCKeyCommand::ForcedRun, 0x44, 0},
-        {MCKeyCommand::ForcedJump, 0x57, 0},
-        {MCKeyCommand::ForcedOrderAlternate, 0x58, 0},
-        {MCKeyCommand::RunAlternate, 0x39, KeyCtrl},
-        {MCKeyCommand::Info, 0x17, 0},
-        {MCKeyCommand::AttackOptimalRange, 0x18, 0},
-        {MCKeyCommand::AttackConservingAmmo, 0x1e, 0},
-        {MCKeyCommand::AttackLongRange, 0x26, 0},
-        {MCKeyCommand::AttackMediumRange, 0x32, 0},
-        {MCKeyCommand::AttackShortRange, 0x1f, 0},
-        {MCKeyCommand::AttackFromPosition, 0x2e, 0},
-        {MCKeyCommand::Jump, 0x24, 0},
-        {MCKeyCommand::JumpAlternate, 0x24, KeyCtrl},
-        {MCKeyCommand::LayMines, 0x21, 0},
-        {MCKeyCommand::LayMinesAlternate, 0x21, KeyCtrl},
-        {MCKeyCommand::Guard, 0x22, 0},
-        {MCKeyCommand::Unbound, 0xffffffffu, 0},
-        {MCKeyCommand::PowerUp, 0x149, 0},
-        {MCKeyCommand::PowerDown, 0x151, 0},
-        {MCKeyCommand::AimHead, 0x48, 0},
-        {MCKeyCommand::AimLeftTorso, 0x47, 0},
-        {MCKeyCommand::AimRightTorso, 0x49, 0},
-        {MCKeyCommand::AimCenterTorso, 0x4c, 0},
-        {MCKeyCommand::AimLeftArm, 0x4b, 0},
-        {MCKeyCommand::AimRightArm, 0x4d, 0},
-        {MCKeyCommand::AimLeftLeg, 0x4f, 0},
-        {MCKeyCommand::AimRightLeg, 0x51, 0},
-        {MCKeyCommand::CameraFollow, 0x14, 0},
-        {MCKeyCommand::Artillery1, 2, 0},
-        {MCKeyCommand::Artillery2, 3, 0},
-        {MCKeyCommand::Artillery3, 4, 0},
-        {MCKeyCommand::Artillery4, 5, 0},
-        {MCKeyCommand::DebugStrike, 0x30, 0},
-        {MCKeyCommand::LinkLance1, 0x3b, KeyCtrl},
-        {MCKeyCommand::LinkLance2, 0x3c, KeyCtrl},
-        {MCKeyCommand::LinkLance3, 0x3d, KeyCtrl},
-        {MCKeyCommand::LinkLance4, 0x3e, KeyCtrl},
-        {MCKeyCommand::SelectLance1, 0x3b, 0},
-        {MCKeyCommand::SelectLance2, 0x3c, 0},
-        {MCKeyCommand::SelectLance3, 0x3d, 0},
-        {MCKeyCommand::SelectLance4, 0x3e, 0},
-        {MCKeyCommand::AddLance1, 0x3b, KeyShift},
-        {MCKeyCommand::AddLance2, 0x3c, KeyShift},
-        {MCKeyCommand::AddLance3, 0x3d, KeyShift},
-        {MCKeyCommand::AddLance4, 0x3e, KeyShift},
-        {MCKeyCommand::BreakLances, 0x3f, 0},
-        {MCKeyCommand::ZoomIn, 0x4e, 0},
-        {MCKeyCommand::ZoomOut, 0x4a, 0},
-        {MCKeyCommand::ZoomInAlternate, 0xd, 0},
-        {MCKeyCommand::ZoomOutAlternate, 0xc, 0},
-        {MCKeyCommand::TacticalMapZoomIn, 0x4e, KeyCtrl},
-        {MCKeyCommand::TacticalMapZoomOut, 0x4a, KeyCtrl},
-        {MCKeyCommand::TacticalMapZoomInAlternate, 0xd, KeyCtrl},
-        {MCKeyCommand::TacticalMapZoomOutAlternate, 0xc, KeyCtrl},
-        {MCKeyCommand::HoldTacticalMap, 0x38, KeyAlt},
-        {MCKeyCommand::MapPage, 0x32, KeyAlt},
-        {MCKeyCommand::SalvagePage, 0x1f, KeyAlt},
-        {MCKeyCommand::InfoPage, 0x20, KeyAlt},
-        {MCKeyCommand::MissionPage, 0x30, KeyAlt},
-        {MCKeyCommand::ScrollUp, 0x148, 0},
-        {MCKeyCommand::ScrollDown, 0x150, 0},
-        {MCKeyCommand::ScrollLeft, 0x14b, 0},
-        {MCKeyCommand::ScrollRight, 0x14d, 0},
-        {MCKeyCommand::TacticalMapScrollUp, 0x148, KeyCtrl},
-        {MCKeyCommand::TacticalMapScrollDown, 0x150, KeyCtrl},
-        {MCKeyCommand::TacticalMapScrollLeft, 0x14b, KeyCtrl},
-        {MCKeyCommand::TacticalMapScrollRight, 0x14d, KeyCtrl},
-        {MCKeyCommand::TogglePalette, 0xf, 0},
-        {MCKeyCommand::SelectVisible, 0x12, 0},
-        {MCKeyCommand::Chat, 0x1c, 0},
-    };
-
-    /// <summary>
-    /// Sets a binding's key code, keeping its modifier bits, then sets <paramref name="modifiers"/> (the original
-    /// assigns a bitfield's members one by one).
-    /// </summary>
-    void BindKey(uint32_t& key, uint32_t code, uint32_t modifiers)
-    {
-        key = (key & (KeyShift | KeyCtrl | KeyAlt)) + code;
-
-        if (modifiers != 0)
-        {
-            key = (key & ~modifiers) + modifiers;
-        }
-    }
 
     /// <summary>
     /// The strike types <see cref="MCTacticalInterface::CallStrike"/> takes (artillery object type numbers), each with
@@ -254,11 +152,9 @@ auto MCTacticalInterface::Init() -> int32_t
         tag->ShowGuiWindow(false);
     }
 
-    // The default key bindings.
-    for (const MCDefaultKey& binding : DefaultKeys)
-    {
-        BindKey(Keys[static_cast<size_t>(binding.Command)], binding.Code, binding.Modifiers);
-    }
+    // The default key bindings. Port: the player's (MCKeyBindings), which are the defaults unless the CONTROLS screen
+    // changed them.
+    Keys = MCKeyBindings::Player();
 
     RotateKey = 0x38;
     SelectedEnemy.reset();
@@ -393,8 +289,22 @@ auto MCTacticalInterface::StartScenario() -> void
     MechBar->InitLances();
     DragTarget.reset();
     ForcingOrder = false;
-    // The salvage page's key (alt+S by default) becomes alt+C, the chat page, in multiplayer.
-    BindKey(Keys[static_cast<size_t>(MCKeyCommand::SalvagePage)], MultiPlayer() != nullptr ? 0x2e : 0x1f, 0);
+    TakePlayerKeys();
+}
+
+auto MCTacticalInterface::TakePlayerKeys() -> void
+{
+    // Port: the player's key bindings as they are now (the CONTROLS screen may have changed them since Init).
+    Keys = MCKeyBindings::Player();
+
+    // The salvage page's key (alt+S by default) becomes alt+C, the chat page, in multiplayer. Port: unless the player
+    // gave it another key.
+    uint32_t& salvageKey = Keys[static_cast<size_t>(MCKeyCommand::SalvagePage)];
+
+    if (salvageKey == MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::SalvagePage)])
+    {
+        MCKeyBindings::BindKey(salvageKey, MultiPlayer() != nullptr ? 0x2e : 0x1f, 0);
+    }
 }
 
 auto MCTacticalInterface::EndScenario() -> void

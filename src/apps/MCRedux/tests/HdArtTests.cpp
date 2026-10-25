@@ -1861,6 +1861,22 @@ namespace
         MCHdArtOn& operator=(const MCHdArtOn&) = delete;
     };
 
+    /// <summary>
+    /// A pack with no frames (only palette.rgb), so with HD art on everything is drawn from the original's pixels (lines
+    /// and ellipses drawn smooth); under the tests' scratch folder <paramref name="name"/>.
+    /// </summary>
+    std::filesystem::path EmptyPack(std::string_view name)
+    {
+        const std::filesystem::path scratch = std::filesystem::temp_directory_path() / name;
+        std::filesystem::remove_all(scratch);
+        const std::filesystem::path pack = scratch / "pack";
+        std::filesystem::create_directories(pack);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        WritePaletteRgb(pack, colors);
+        return pack;
+    }
+
     /// <summary>The pixels whose shown colour differs between <paramref name="a"/> and <paramref name="b"/> (within
     /// <paramref name="within"/> when given), and their mean position.</summary>
     struct Changed
@@ -2145,15 +2161,21 @@ namespace
     void CheckShownFromPack(const HdObjectScene& scene)
     {
         // The game paused, so nothing moves between the frames compared (mission 2's animate), and only the middle of
-        // the view compared (the tactical map's blips blink).
+        // the view compared (the tactical map's blips blink). The frames before are drawn with HD art on from a pack
+        // with no frames, so they differ from the pack's only where it has frames (not where HD art draws lines and
+        // ellipses smooth).
+        // (A frame settles once HD art goes on: it reloads the sprite cache.)
         GamePaused = true;
+        std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+        MCTestGame::RunFrame(FrameSeconds);
         MCTestGame::RunFrame(FrameSeconds);
         const Shown original = ReadShown(scene.Scratch);
         const MCRect middle{original.Width / 4, original.Height / 4, original.Width * 3 / 4, original.Height * 3 / 4};
         MCTestGame::RunFrame(FrameSeconds);
         CHECK_EQ(Compare(original, ReadShown(scene.Scratch), middle).Count, 0);
 
-        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        hdArt.reset();
+        hdArt.emplace(scene.Pack);
         const int64_t drawnBefore = scene.Renderer->HdDrawn();
         MCTestGame::RunFrame(FrameSeconds);
         const Shown hd = ReadShown(scene.Scratch);
@@ -2586,10 +2608,15 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in the mech bar's damage 
         return;
     }
 
+    // The frame before is drawn with HD art on from a pack with no frames, so the two differ only where the pack has
+    // frames (not where HD art draws lines and ellipses smooth).
     GamePaused = true;
+    std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+    MCTestGame::RunFrame(FrameSeconds);
     MCTestGame::RunFrame(FrameSeconds);
     const Shown original = ReadShown(scene->Scratch);
-    std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
+    hdArt.reset();
+    hdArt.emplace(scene->Pack);
     const int64_t drawnBefore = scene->Renderer->HdDrawn();
     MCTestGame::RunFrame(FrameSeconds);
     const Shown hd = ReadShown(scene->Scratch);
@@ -4297,4 +4324,81 @@ TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
     }
 
     std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// With HD art on, lines and ellipses are drawn at the output's resolution: a diagonal line and an ellipse's outline
+/// drawn on the screen by the GPU over mission 1 (a window shown larger than the screen) show, with HD art off, only
+/// their colour or what was under them; with it on, also colours between (their smooth edges).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolution")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_smooth_shapes");
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Radius = 30;
+    constexpr uint8_t Color = 0x30;
+    std::array<SDL_Color, 256> colors{};
+    display->GetShownColors(colors);
+
+    // How many pixels of the box around the shapes show neither the shapes' colour nor what was under them.
+    const auto between = [&](bool hdArt)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (hdArt)
+        {
+            on.emplace(pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        const auto under = display->ReadFrame();
+        VfxLineDraw(pane, x - Length, y - Length / 2, x + Length, y + Length / 2, Color);
+        AGEllipseDraw(pane, x, y + Length, Radius * 2, Radius, Color);
+        const auto drawn = display->ReadFrame();
+        REQUIRE(under.has_value());
+        REQUIRE(drawn.has_value());
+        const int32_t width = display->Width();
+        const SDL_Color shape = colors[Color];
+        int64_t count = 0;
+
+        for (int32_t row = y - Length; row <= y + Length + Radius + 1; ++row)
+        {
+            for (int32_t column = x - Length - 1; column <= x + Length + 1; ++column)
+            {
+                const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
+                const SDL_Color a = (*under)[at];
+                const SDL_Color b = (*drawn)[at];
+                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
+                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
+                count += same || shapeColor ? 0 : 1;
+            }
+        }
+
+        return count;
+    };
+
+    GamePaused = true;
+    const int64_t original = between(false);
+    const int64_t smooth = between(true);
+    GamePaused = false;
+    std::cout << std::format("  pixels between the colours: {} with HD art off, {} on\n", original, smooth);
+    CHECK_EQ(original, 0);
+    CHECK(smooth > 0);
+    std::filesystem::remove_all(pack.parent_path());
 }

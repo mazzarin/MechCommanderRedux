@@ -410,6 +410,12 @@ private:
     };
 
     /// <summary>
+    /// Port-only: whether <paramref name="surface"/> shows what is drawn from the original at the output's resolution:
+    /// HD art is on and the surface is drawn at more pixels than its window has.
+    /// </summary>
+    bool ScaledHdArt(uint16_t surface) const;
+
+    /// <summary>
     /// Adds the draw of an HD art frame over <paramref name="at"/> (blended into the colours), reading the original
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as

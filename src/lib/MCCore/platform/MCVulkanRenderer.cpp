@@ -32,6 +32,9 @@ namespace
     constexpr uint32_t KindHd = 5;
     /// <summary>Port-only: a glyph redrawn sharp (MCSharpText), on a sharp screen.</summary>
     constexpr uint32_t KindSharpGlyph = 6;
+    /// <summary>Port-only: a line's and an ellipse's colour pass at the output's resolution (shaders/draw.pshader).</summary>
+    constexpr uint32_t KindSmoothLine = 7;
+    constexpr uint32_t KindSmoothEllipse = 8;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -836,7 +839,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[11] = static_cast<int32_t>(after);
 
     const MCRect written{draw[0], draw[1], draw[2], draw[3]};
-    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0;
+    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
+                       (op & KindMask) == KindSmoothEllipse;
     const bool indexOnly = (op & IndexOnly) != 0;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
@@ -866,7 +870,11 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
 
     // Mirror mode leaves the blended pixels out of its comparison (an HD art frame's leave the indices under them
     // the original's).
-    if (blend && (op & KindMask) != KindHd)
+    // An HD frame's or a smooth shape's colour pass leaves the indices an index-only pass wrote: they still compare.
+    const uint32_t kind = op & KindMask;
+    const bool keepsIndices = kind == KindHd || kind == KindSmoothLine || kind == KindSmoothEllipse;
+
+    if (blend && !keepsIndices)
     {
         surface.Blended.push_back(written);
     }
@@ -2029,6 +2037,12 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
     return true;
 }
 
+bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
+{
+    const Surface& drawn = _Surfaces[surface];
+    return drawn.DrawnWidth > drawn.RecordedWidth && MCHdArt::Active();
+}
+
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
                              const std::optional<MCColorTable>& table, std::optional<uint8_t> key, HdColours colours)
 {
@@ -2524,9 +2538,20 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
         after = TableRow(*command.Table);
     }
 
+    // Port-only: a line of one colour shown at the output's resolution: its pixels write their indices alone, and its
+    // colour is drawn along it smooth (KindSmoothLine).
+    const bool smooth = !command.Table.has_value() && ScaledHdArt(surface);
+
+    if (smooth)
+    {
+        op |= IndexOnly;
+    }
+
     // The pixels in runs along a row (a line never comes back to a pixel).
     bool join = false;
     bool open = false;
+    std::optional<std::array<int32_t, 2>> first;
+    std::array<int32_t, 2> last{};
     int32_t runY = 0;
     int32_t runX0 = 0;
     int32_t runX1 = 0;
@@ -2546,6 +2571,13 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
     MCLinePixels(command,
                  [&](int32_t x, int32_t y)
                  {
+                     if (!first.has_value())
+                     {
+                         first = std::array{x, y};
+                     }
+
+                     last = {x, y};
+
                      if (open && y == runY && (x == runX1 + 1 || x == runX0 - 1))
                      {
                          runX0 = std::min(runX0, x);
@@ -2560,6 +2592,17 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
                      runX1 = x;
                  });
     flush();
+
+    if (smooth && first.has_value())
+    {
+        const Quad at = {std::min((*first)[0], last[0]) - 1, std::min((*first)[1], last[1]) - 1,
+                         std::max((*first)[0], last[0]) + 1, std::max((*first)[1], last[1]) + 1};
+
+        if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothLine, command.Color, 0, 0))
+        {
+            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, _Draws.back().begin() + 12);
+        }
+    }
 }
 
 void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command)
@@ -2571,6 +2614,15 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
     if (command.Alpha)
     {
         op |= AlphaBlend;
+    }
+
+    // Port-only: an opaque ellipse shown at the output's resolution: its pixels write their indices alone, and its
+    // colour is drawn smooth (KindSmoothEllipse).
+    const bool smooth = !command.Alpha && ScaledHdArt(surface);
+
+    if (smooth)
+    {
+        op |= IndexOnly;
     }
 
     // Each pixel once (MCEllipseRuns), so the runs can share the target's copy.
@@ -2585,6 +2637,23 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
                           join = true;
                       }
                   });
+
+    if (smooth)
+    {
+        const Quad at = {std::max(command.CenterX - command.Width - 1, command.Clip.X0),
+                         std::max(command.CenterY - command.Height - 1, command.Clip.Y0),
+                         std::min(command.CenterX + command.Width + 1, command.Clip.X1),
+                         std::min(command.CenterY + command.Height + 1, command.Clip.Y1)};
+
+        if (at[2] >= at[0] && at[3] >= at[1] &&
+            Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse, command.Color, 0, 0))
+        {
+            std::array<int32_t, 20>& draw = _Draws.back();
+            std::ranges::copy(std::array{command.CenterX, command.CenterY, command.Width, command.Height},
+                              draw.begin() + 12);
+            draw[16] = command.Fill ? 1 : 0;
+        }
+    }
 }
 
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)

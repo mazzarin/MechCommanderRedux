@@ -94,6 +94,9 @@ static const uint KindGouraud = 3;
 static const uint KindTexelWalk = 4;
 static const uint KindHd = 5;
 static const uint KindSharpGlyph = 6;
+// Port-only: a line's and an ellipse's colour pass at the output's resolution (SmoothShapePixel).
+static const uint KindSmoothLine = 7;
+static const uint KindSmoothEllipse = 8;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -443,6 +446,68 @@ Output SharpGlyphPixel(Input input, int2 target)
     return Blended(float4(Shown(index) * coverage, coverage));
 }
 
+// Whether a texel the draw reads, of state `state` and value `value`, is drawn: a run of the key colour (SkipRunKey)
+// and the colour key aren't; `value` becomes the colour table's (TableBefore), whose key isn't drawn either
+// (SkipKeyAfterTable).
+bool KeyedAndMapped(Input input, uint state, inout uint value)
+{
+    const uint flags = input.op.x;
+
+    if (((flags & SkipRunKey) != 0 && state == 3 && value == 255) ||
+        ((flags & ColorKey) != 0 && value == ((input.op.y >> 8) & 255u)))
+    {
+        return false;
+    }
+
+    if ((flags & TableBefore) != 0)
+    {
+        value = Table(input.op.z, value);
+    }
+
+    return (flags & SkipKeyAfterTable) == 0 || value != 255;
+}
+
+// Half a smooth line's or outline's width, in window pixels (the original's are a window pixel wide).
+static const float LineHalfWidth = 0.5;
+
+// Port-only: a line's or an ellipse's colour at drawn pixel `target`, the shape drawn at the output's resolution (its
+// indices were written by the original's pixels, in an index-only pass): the drawn pixel's distance from the line
+// between the centres of its first and last pixels (span), or from the ellipse (span: its centre and radii; walk.x 1
+// when it is filled), its edge ramped over a drawn pixel. Premultiplied, through the blend pipeline.
+Output SmoothShapePixel(Input input, int2 target, uint kind)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
+    float distance;
+
+    if (kind == KindSmoothLine)
+    {
+        const float2 a = float2(input.span.xy) + 0.5;
+        const float2 ab = float2(input.span.zw) + 0.5 - a;
+        const float length2 = dot(ab, ab);
+        const float t = length2 > 0.0 ? saturate(dot(window - a, ab) / length2) : 0.0;
+        distance = length(window - (a + t * ab)) - LineHalfWidth;
+    }
+    else
+    {
+        // The implicit ellipse's value over its gradient's length: about the distance from it, negative inside.
+        const float2 radii = max(float2(input.span.zw), LineHalfWidth);
+        const float2 p = (window - (float2(input.span.xy) + 0.5)) / radii;
+        const float2 gradient = 2.0 * p / radii;
+        const float signedDistance = (dot(p, p) - 1.0) / max(length(gradient), 1e-4);
+        distance = input.walk.x != 0 ? signedDistance : abs(signedDistance) - LineHalfWidth;
+    }
+
+    const float coverage = saturate(0.5 - distance / ramp);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
+}
+
 Output main(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
@@ -465,6 +530,11 @@ Output main(Input input)
     if (kind == KindSharpGlyph)
     {
         return SharpGlyphPixel(input, target);
+    }
+
+    if (kind == KindSmoothLine || kind == KindSmoothEllipse)
+    {
+        return SmoothShapePixel(input, target, kind);
     }
     const uint color = input.op.y & 255u;
     uint value = color;
@@ -543,22 +613,7 @@ Output main(Input input)
         value = color;
     }
 
-    if ((flags & SkipRunKey) != 0 && state == 3 && value == 255)
-    {
-        discard;
-    }
-
-    if ((flags & ColorKey) != 0 && value == ((input.op.y >> 8) & 255u))
-    {
-        discard;
-    }
-
-    if ((flags & TableBefore) != 0)
-    {
-        value = Table(input.op.z, value);
-    }
-
-    if ((flags & SkipKeyAfterTable) != 0 && value == 255)
+    if (!KeyedAndMapped(input, state, value))
     {
         discard;
     }

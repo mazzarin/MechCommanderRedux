@@ -310,7 +310,9 @@ void MCTerrainReadHdTiles()
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
 
-    if (!MCHdArt::Active() || terrain == nullptr || terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+    // The software renderer draws no HD art.
+    if (!MCHdArt::Active() || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || terrain == nullptr ||
+        terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
     {
         return;
     }

@@ -2428,6 +2428,7 @@ namespace
     std::vector<Sequence> IconSequences(size_t& translucent)
     {
         std::vector<Sequence> sequences;
+        std::set<std::string> seen;
         std::error_code error;
 
         for (const std::filesystem::directory_entry& entry :
@@ -2451,8 +2452,9 @@ namespace
                                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 std::vector<uint8_t> table(static_cast<size_t>(std::max(file.RealSize, 0)));
 
-                if (!IsIconShapeFile(name) || table.empty() || (*archive)->ReadEntry(i, table) != file.RealSize ||
-                    !VfxIsShapeTable(table))
+                // A file in more than one FastFile is taken from the first.
+                if (!IsIconShapeFile(name) || !seen.insert(name).second || table.empty() ||
+                    (*archive)->ReadEntry(i, table) != file.RealSize || !VfxIsShapeTable(table))
                 {
                     continue;
                 }

@@ -21,6 +21,8 @@ class MCShape;
 /// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
+/// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
+/// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
 /// shows an HD pixel scaled by its original index's colour now over that colour, so another mission's palette, the
 /// water's colour cycle and the brightness setting show through.</para>
@@ -102,14 +104,38 @@ namespace MCHdArt
     /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
     inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
 
-    /// <summary>The pack's folder (the user folder's <c>HD</c> unless set).</summary>
+    /// <summary>
+    /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
+    /// pack unzipped into the game's folder, as mods are).
+    /// </summary>
     std::filesystem::path PackFolder();
 
     /// <summary>Sets the pack's folder (empty: the default); forgets the shapes and frames found so far.</summary>
     void SetPackFolder(const std::filesystem::path& folder);
 
-    /// <summary>Whether HD art is drawn: <see cref="GHdArt"/>, and a pack folder that exists.</summary>
+    /// <summary>
+    /// Whether HD art is drawn: <see cref="GHdArt"/>, and a pack folder that exists whose <c>pack.cfg</c> (if it has one)
+    /// is of a format this code reads.
+    /// </summary>
     bool Active();
+
+    /// <summary>
+    /// Whether the pack's mech and object folders, named by the game's sprite files' numbers, are drawn: <see
+    /// cref="Active"/>, and the pack was made from this game's sprite files (<c>pack.cfg</c>'s Sprites, when it says).
+    /// A pack made from other files would put another mech's frames in a mech's place; its ground and menu pictures,
+    /// named by their pixels, are still drawn.
+    /// </summary>
+    bool NumberedFolders();
+
+    /// <summary>
+    /// Sets this game's sprite files (their names and sizes; the sprite manager, when it opens them), which
+    /// <see cref="SpriteFiles"/> gives as a pack records them: <c>NAME=size;...</c>, names upper-case.
+    /// </summary>
+    void SetSpriteFiles(std::span<const std::pair<std::string, uint32_t>> files);
+    const std::string& SpriteFiles();
+
+    /// <summary>Writes <c>pack.cfg</c> into a pack's folder: this code's pack format and this game's sprite files.</summary>
+    std::expected<void, std::string> WritePackFile(const std::filesystem::path& folder);
 
     /// <summary>
     /// Notes that <paramref name="shape"/> was loaded from <paramref name="key"/>: while it lives, its frames are drawn
@@ -167,6 +193,12 @@ namespace MCHdArt
 
     /// <summary>A number that changes whenever the pack in use (or whether one is) may have: see SetPackFolder.</summary>
     uint64_t PackVersion();
+
+    /// <summary>
+    /// The pack's HD frames for the Smacker movie <paramref name="movie"/> (its game path or name; folders, extension and
+    /// case don't matter), when HD art is on and the pack has them.
+    /// </summary>
+    std::optional<std::filesystem::path> FindMovie(std::string_view movie);
 
     /// <summary>
     /// How many frames have been read from the pack so far, the time reading them took, and how many bytes the kept

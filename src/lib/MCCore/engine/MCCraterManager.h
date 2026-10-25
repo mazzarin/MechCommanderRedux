@@ -63,6 +63,9 @@ public:
     /// <summary>The number of shapes in the PAK.</summary>
     int32_t ShapeCount() const { return _ShapeCount; }
 
+    /// <summary>The shapes (port: the HD art audit names the draws of them).</summary>
+    std::span<const std::vector<uint8_t>> Shapes() const { return _Shapes; }
+
 private:
     /// <summary>The slots.</summary>
     std::vector<MCCraterData> _Craters;

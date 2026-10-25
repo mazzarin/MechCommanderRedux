@@ -846,6 +846,14 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         draw[7] = from[3];
     }
 
+    if (_Audited.has_value())
+    {
+        const uint32_t kind = op & KindMask;
+        _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
+        _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
+        _Audited->Sharp |= kind == KindHd || kind == KindSharpGlyph;
+    }
+
     draw[8] = static_cast<int32_t>(op);
     draw[9] = static_cast<int32_t>(color);
     draw[10] = static_cast<int32_t>(before);
@@ -1638,8 +1646,30 @@ auto MCVulkanRenderer::SourceFor(uint16_t target, const MCWindow& window) -> std
 
 // Commands ---------------------------------------------------------------------------------------------------------
 
+MCVulkanRenderer::AuditScope::AuditScope(MCVulkanRenderer& renderer, std::string_view command, const MCWindow& target,
+                                         std::span<const uint8_t> data, int32_t frame, const MCWindow* from)
+    : _Renderer(renderer)
+{
+    if (renderer.Audit && !renderer._Audited.has_value())
+    {
+        _Outermost = true;
+        renderer._Audited = AuditedDraw{command, &target, false, data, frame, from, 0, false};
+    }
+}
+
+MCVulkanRenderer::AuditScope::~AuditScope()
+{
+    if (_Outermost && _Renderer._Audited.has_value())
+    {
+        const AuditedDraw audited = *_Renderer._Audited;
+        _Renderer._Audited.reset();
+        _Renderer.Audit(audited);
+    }
+}
+
 void MCVulkanRenderer::Clear(MCWindow& target, const MCRect& rect, uint8_t color)
 {
+    const AuditScope audit(*this, "Clear", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {rect.X0, rect.Y0, rect.X1, rect.Y1};
     Add(surface, SourceKind::None, 0, at, std::nullopt, KindFill, color, 0, 0);
@@ -1647,6 +1677,7 @@ void MCVulkanRenderer::Clear(MCWindow& target, const MCRect& rect, uint8_t color
 
 void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
 {
+    const AuditScope audit(*this, "Hash", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {rect.X0, rect.Y0, rect.X1, rect.Y1};
 
@@ -1660,6 +1691,7 @@ void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
 
 void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 {
+    const AuditScope audit(*this, "Copy", target, {}, -1, &command.Source.get());
     const uint16_t surface = SurfaceFor(target);
     const MCRect& rect = command.SourceRect;
     const Quad at = {command.X, command.Y, command.X + rect.X1 - rect.X0, command.Y + rect.Y1 - rect.Y0};
@@ -1782,6 +1814,8 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
 
 void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command)
 {
+    const AuditScope audit(*this, "AlphaBlit", target, command.Sprite);
+
     if (!command.Texture.has_value())
     {
         MCRenderer::NoteUnregistered("a CopySprite bitmap");
@@ -1803,6 +1837,7 @@ void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& com
 
 void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command)
 {
+    const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
     const std::span<const uint8_t> data =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
@@ -2051,6 +2086,7 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
 
 void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels)
 {
+    const AuditScope audit(*this, "Write", target);
     const uint16_t surface = SurfaceFor(target);
     const auto count = static_cast<int32_t>(pixels.size());
 
@@ -2070,6 +2106,7 @@ void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<c
 
 void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t color)
 {
+    const AuditScope audit(*this, "Pixel", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {x, y, x, y};
     Add(surface, SourceKind::None, 0, at, std::nullopt, KindFill, color, 0, 0);
@@ -2077,6 +2114,7 @@ void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t col
 
 void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
+    const AuditScope audit(*this, "Shape", target, command.ShapeTable, command.ShapeNum);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> header =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum));
@@ -2222,6 +2260,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
 void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& command)
 {
+    const AuditScope audit(*this, "FastShape", target, command.Shape);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> shape = command.Shape;
     const int32_t height = MCRead16(shape, 8);
@@ -2307,11 +2346,17 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
 
 void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
 {
+    const AuditScope audit(*this, "Tile", target, command.Tile);
     const uint16_t surface = SurfaceFor(target);
 
     // A terrain layer drew this pass's tiles from the mesh.
     if (static_cast<int32_t>(surface) == _TerrainLayerSurface)
     {
+        if (_Audited.has_value())
+        {
+            _Audited->Sharp = HdTerrain();
+        }
+
         return;
     }
 
@@ -2365,6 +2410,8 @@ void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
 
 void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command)
 {
+    const AuditScope audit(*this, "Polygon", target);
+
     if (command.Kind == MCPolygonKind::DitheredGouraud || command.Kind == MCPolygonKind::Illuminate)
     {
         NotSupported("Polygon (dithered)");
@@ -2457,6 +2504,7 @@ void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command
 
 void MCVulkanRenderer::MapQuad(MCWindow& target, const MCMapQuadCommand& command)
 {
+    const AuditScope audit(*this, "MapQuad", target);
     const uint16_t surface = SurfaceFor(target);
     const MCWindow& texture = command.Texture.get();
     const std::optional<SourceRef> source = SourceFor(surface, texture);
@@ -2483,6 +2531,7 @@ void MCVulkanRenderer::MapQuad(MCWindow& target, const MCMapQuadCommand& command
 
 void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 {
+    const AuditScope audit(*this, "Line", target);
     const uint16_t surface = SurfaceFor(target);
     uint32_t op = KindFill;
     uint32_t after = 0;
@@ -2533,6 +2582,7 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 
 void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command)
 {
+    const AuditScope audit(*this, "Ellipse", target);
     const uint16_t surface = SurfaceFor(target);
     uint32_t op = KindFill;
 
@@ -2557,6 +2607,7 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
 
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)
 {
+    const AuditScope audit(*this, "StatusBar", target);
     // The AlphaTable row status-bar frames are darkened through (0x008011d0 in MCX.EXE).
     constexpr int32_t StatusFrameAlpha = 0x108;
     const uint16_t surface = SurfaceFor(target);
@@ -2630,6 +2681,7 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
 
 void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 {
+    const AuditScope audit(*this, "Glyph", target, command.Font, command.Character);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> font = command.Font;
     const auto glyphAt = static_cast<uint32_t>(MCRead32(font, 0x10 + static_cast<size_t>(command.Character) * 4));

@@ -2,14 +2,18 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCMechBar.h"
+#include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
@@ -3288,5 +3292,203 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
         }
 
         SavePng(folder / std::format("{}.png", font.Name), pictureWidth, pictureHeight, rgba);
+    }
+}
+
+namespace
+{
+    /// <summary>What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew, and where.</summary>
+    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*>;
+
+    /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
+    struct AuditTally
+    {
+        int64_t Count = 0;
+        int64_t Pixels = 0;
+        bool Scaled = false;
+        std::span<const uint8_t> Data;
+        std::set<int32_t> Frames;
+    };
+
+    /// <summary>
+    /// What drew <paramref name="data"/>, where the audit can tell: a terrain overlay (a fast shape: roads, rivers...), a
+    /// crater shape, a cursor, or none.
+    /// </summary>
+    std::string AuditOwner(std::span<const uint8_t> data)
+    {
+        constexpr std::array<uint8_t, 4> FastShapeTag = {'D', 'N', 'A', 'H'};
+
+        if (data.empty())
+        {
+            return "-";
+        }
+
+        if (data.size() >= FastShapeTag.size() && std::ranges::equal(data.first(FastShapeTag.size()), FastShapeTag))
+        {
+            return "terrain overlay";
+        }
+
+        const std::span<const std::vector<uint8_t>> craters = CraterManager().Shapes();
+
+        for (size_t i = 0; i < craters.size(); ++i)
+        {
+            if (!craters[i].empty() && craters[i].data() == data.data())
+            {
+                return std::format("crater shape {}", i);
+            }
+        }
+
+        constexpr int32_t CursorSlots = 128;
+
+        for (int32_t cursor = 0; cursor < CursorSlots; ++cursor)
+        {
+            if (const std::span<const uint8_t> shape = GuiSystem().CursorShapeData(cursor);
+                !shape.empty() && shape.data() == data.data())
+            {
+                return std::format("cursor {}", cursor);
+            }
+        }
+
+        return "?";
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-audit &lt;pack&gt; --shots &lt;folder&gt;</c> lists what is still drawn from the original's pixels
+/// with HD art on: mission 1 drawn by the GPU as --hd-pack's pictures are, the player's lance selected and sent at the
+/// Uller for <c>--frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
+/// tallied by what it drew and
+/// whether it was sharp (from the pack, the ground's HD atlas or text redrawn sharp). Prints each command's share of
+/// sharp pixels, then the data drawn from the original's pixels, most pixels first, each shape table's first frame
+/// saved as <c>&lt;rank&gt;_&lt;command&gt;.png</c> to tell what it is.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the original's pixels")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-audit");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    StartPictures(*pack, hdArt);
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    std::map<AuditKey, AuditTally> tally;
+    renderer->Audit = [&tally](const MCVulkanRenderer::AuditedDraw& draw)
+    {
+        AuditTally& entry = tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.Window}];
+        ++entry.Count;
+        entry.Pixels += draw.Pixels;
+        entry.Scaled |= draw.Scaled;
+        entry.Data = draw.Data;
+        entry.Frames.insert(draw.Frame);
+    };
+
+    // The lance selected (its brackets and bars drawn) and sent at the Uller (shots, explosions, craters, footprints).
+    constexpr int32_t UllerPartId = 896;
+    constexpr int32_t DefaultFrames = 900;
+    const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+    REQUIRE(iface != nullptr);
+    iface->ClearMechSelection();
+
+    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+    {
+        if (button->Active)
+        {
+            iface->SelectMech(button->PartId);
+        }
+    }
+
+    const std::shared_ptr<MCMover> uller = GetMoverFromPartId(UllerPartId);
+    REQUIRE(uller != nullptr);
+
+    for (int32_t partId = PlayerMechPartId; partId < PlayerMechPartId + 3; ++partId)
+    {
+        const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+        REQUIRE(mover != nullptr);
+        MCTacticalOrder order;
+        order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
+        order.Target = uller;
+        order.AttackParams.Type = 1;
+        order.AttackParams.Method = 0;
+        order.AttackParams.Range = -1;
+        order.AttackParams.Pursue = -1;
+        mover->HandleTacticalOrder(order, 1, 0);
+    }
+
+    int32_t frames = DefaultFrames;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("frames"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), frames);
+    }
+
+    // The camera follows the lance, as a player's would (the Uller starts in the fog).
+    Eye()->ChangeTarget(GetMoverFromPartId(PlayerMechPartId), true);
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    std::cout << std::format("  the Uller {}\n", uller->IsDestroyed() != 0 ? "was destroyed" : "still stands");
+    renderer->Audit = nullptr;
+
+    // Each command's draws and pixels, and the share drawn sharp.
+    std::map<std::string, std::array<int64_t, 3>> commands;
+
+    for (const auto& [key, entry] : tally)
+    {
+        std::array<int64_t, 3>& total = commands[std::get<0>(key)];
+        total[0] += entry.Count;
+        total[1] += entry.Pixels;
+        total[2] += std::get<1>(key) ? entry.Pixels : 0;
+    }
+
+    std::cout << std::format("  {} frames; per command: draws, window pixels, sharp share\n", frames);
+
+    for (const auto& [command, total] : commands)
+    {
+        std::cout << std::format("  {:<10} {:>9} {:>13} {:>5.1f}%\n", command, total[0], total[1],
+                                 total[1] > 0 ? 100.0 * static_cast<double>(total[2]) / static_cast<double>(total[1])
+                                              : 0.0);
+    }
+
+    // What was drawn from the original's pixels, most pixels first.
+    std::vector<std::pair<AuditKey, AuditTally>> original;
+    std::ranges::copy_if(tally, std::back_inserter(original),
+                         [](const auto& entry) { return !std::get<1>(entry.first); });
+    std::ranges::sort(original, std::ranges::greater{}, [](const auto& entry) { return entry.second.Pixels; });
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    constexpr size_t Listed = 120;
+    std::cout
+        << "  drawn from the original's pixels (rank, command, data, window, frames, draws, pixels, scaled, owner):\n";
+
+    for (size_t rank = 0; rank < std::min(original.size(), Listed); ++rank)
+    {
+        const auto& [key, entry] = original[rank];
+        const auto& [command, sharp, data, window] = key;
+        std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}\n", rank, command,
+                                 static_cast<const void*>(data), window->XMax + 1, window->YMax + 1,
+                                 entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
+                                 AuditOwner(entry.Data));
+
+        if ((command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
+        {
+            if (const auto decoded = Decode(entry.Data, *entry.Frames.begin());
+                decoded.has_value() && decoded->Width > 0)
+            {
+                Sequence sequence;
+                sequence.Folder = std::format("{:03}_{}", rank, command);
+                sequence.Frames.push_back(*decoded);
+                WritePack(folder, std::span(&sequence, 1), colors, 1, [](SDL_Color color) { return color; });
+            }
+        }
     }
 }

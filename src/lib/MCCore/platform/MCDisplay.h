@@ -214,6 +214,12 @@ public:
     void PixelScale(float& scaleX, float& scaleY) const;
 
     /// <summary>
+    /// Port-only: whether the screen is drawn at the size it is shown (<see cref="MCFrame::SharpScreen"/>): with HD art
+    /// on (<see cref="GHdArt"/>), when the GPU renderer draws the frame surfaces alone (not mirror mode).
+    /// </summary>
+    bool SharpScreen() const;
+
+    /// <summary>
     /// Shows the screen: uploads the pixels and the palette and presents (waiting for the display's refresh when
     /// vsync is on). A minimised window is skipped without waiting.
     /// </summary>
@@ -300,7 +306,8 @@ private:
     MCViewport ShownViewport() const;
     /// <summary>
     /// The size the frame is composited at when the whole screen is shown scaled up (the window's pixels it covers), so
-    /// the underlays keep the window's resolution; false (and nothing set) otherwise.
+    /// the underlays keep the window's resolution, or, with <see cref="SharpScreen"/>, any view shown scaled up (the
+    /// 640x480 screens'); false (and nothing set) otherwise.
     /// </summary>
     bool ScaledOutput(int& width, int& height) const;
 

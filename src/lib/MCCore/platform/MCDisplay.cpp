@@ -4,6 +4,7 @@
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlPresenter.h"
 #include "platform/MCVulkanPresenter.h"
+#include "sprite/MCHdArt.h"
 
 namespace
 {
@@ -407,9 +408,17 @@ MCViewport MCDisplay::ShownViewport() const
     return _Presenter->Viewport(_View.w, _View.h);
 }
 
+bool MCDisplay::SharpScreen() const
+{
+    return GHdArt != 0 && _Presenter != nullptr && _Presenter->Kind() == MCRendererKind::Vulkan &&
+           MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+}
+
 bool MCDisplay::ScaledOutput(int& width, int& height) const
 {
-    if (!_FollowWindow || _View.x != 0 || _View.y != 0 || _View.w != _Width || _View.h != _Height)
+    const bool wholeScreen = _View.x == 0 && _View.y == 0 && _View.w == _Width && _View.h == _Height;
+
+    if (!_FollowWindow || (!wholeScreen && !SharpScreen()) || _View.w <= 0 || _View.h <= 0)
     {
         return false;
     }
@@ -418,7 +427,7 @@ bool MCDisplay::ScaledOutput(int& width, int& height) const
     const auto shownWidth = static_cast<int>(std::lround(viewport.W));
     const auto shownHeight = static_cast<int>(std::lround(viewport.H));
 
-    if (shownWidth <= _Width || shownHeight <= _Height)
+    if (shownWidth <= _View.w || shownHeight <= _View.h)
     {
         return false;
     }
@@ -432,7 +441,7 @@ float MCDisplay::UnderlayScale() const
 {
     int width = 0;
     int height = 0;
-    return ScaledOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_Height) : 1.0f;
+    return ScaledOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_View.h) : 1.0f;
 }
 
 void MCDisplay::PixelScale(float& scaleX, float& scaleY) const
@@ -459,6 +468,7 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     frame.View = _View;
     frame.Ops = *_Ops;
     ScaledOutput(frame.OutputWidth, frame.OutputHeight);
+    frame.SharpScreen = frame.ScaledOutput() && SharpScreen();
     _FrameUnderlays = ScreenUnderlays();
     frame.Underlays = _FrameUnderlays;
 

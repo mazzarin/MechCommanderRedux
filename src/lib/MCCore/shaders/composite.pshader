@@ -45,7 +45,8 @@ cbuffer Composite : register(b0, space3)
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
     // x: 1 when drawing an underlay's rectangle, 0 for the screen alone. y: 1 when the textures are the GPU
-    // renderer's surfaces.
+    // renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
+    // drawn at the size it's shown; 0 or 1 otherwise).
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
     // shows the colour of cycleSources[(i + y) & 7] (one source a component).
@@ -95,7 +96,11 @@ float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
-    const float4 screen = TexelAt(screenTex, screenSampler, screenPixel, screenSize.zw);
+    // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
+    const float2 drawn = max(mode.zw, float2(1.0, 1.0));
+    const float2 screenTexel =
+        any(drawn != float2(1.0, 1.0)) ? floor((screenMap.xy + (pixel + 0.5) * screenMap.zw) * drawn) : screenPixel;
+    const float4 screen = TexelAt(screenTex, screenSampler, screenTexel, screenSize.zw);
     // The world pixel under this pixel's centre: (2 * offset + 1) * surface / (2 * shown), as the CPU picks it.
     const float2 offset = pixel - shown.xy;
     const float2 world = clamp(floor((2.0 * offset + 1.0) * worldSize.xy / (2.0 * shown.zw)), 0.0, worldSize.xy - 1.0);

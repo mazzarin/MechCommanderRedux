@@ -90,6 +90,14 @@ public:
     }
 
     /// <summary>
+    /// Port-only (<see cref="MCFrame::SharpScreen"/>): from the next <see cref="Execute"/> on, <paramref name="screen"/>'s
+    /// surface is drawn at <paramref name="scaleX"/> x <paramref name="scaleY"/> output pixels a window pixel, from
+    /// its corner to the shown view's far corner (<paramref name="right"/>, <paramref name="bottom"/>, exclusive: a
+    /// 640x480 screen draws only that much of the screen); scales of 1 (or no screen) draw it at its window's size.
+    /// </summary>
+    void SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom);
+
+    /// <summary>
     /// Runs the commands recorded since the last call on <paramref name="commands"/>: uploads what they read, then
     /// draws into the surfaces. The kept surfaces (the fog of war the terrain reads) are drawn first, then the
     /// underlays (<paramref name="underlays"/>), then the rest. On a surface shown over an underlay the key colour is
@@ -108,6 +116,12 @@ public:
     /// and its size in use; null when the window has no surface yet.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceTexture(const MCWindow& window, uint32_t& width, uint32_t& height) const;
+
+    /// <summary>
+    /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
+    /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
+    /// </summary>
+    std::pair<float, float> SurfaceScale(const MCWindow& window) const;
 
     /// <summary>
     /// <paramref name="screen"/> in palette indices with its layout, for screenshots and tests: flushes, reads the
@@ -217,6 +231,12 @@ private:
         /// <summary>The size the commands recorded last saw (the window's).</summary>
         uint32_t RecordedWidth = 0;
         uint32_t RecordedHeight = 0;
+        /// <summary>
+        /// The part of the window the drawn size covers, from its corner: the whole window, but for a screen drawn at the
+        /// size it's shown (<see cref="SetScreenScale"/>), only as far as the view's far corner.
+        /// </summary>
+        uint32_t MappedWidth = 0;
+        uint32_t MappedHeight = 0;
         /// <summary>
         /// The size it is drawn at: the window's, or for a surface shown as an underlay, the rectangle it's shown in
         /// (in output pixels: times the underlay scale, <see cref="SetUnderlayScale"/>). Its draws are scaled into
@@ -525,6 +545,12 @@ private:
     /// <summary>Output pixels per screen pixel the underlays are shown at (<see cref="SetUnderlayScale"/>).</summary>
     float _UnderlayScaleX = 1.0f;
     float _UnderlayScaleY = 1.0f;
+    /// <summary>The screen drawn at the size it's shown (<see cref="SetScreenScale"/>): its window, scale and extent.</summary>
+    MCAddressKey _ScaledScreen;
+    float _ScreenScaleX = 1.0f;
+    float _ScreenScaleY = 1.0f;
+    int32_t _ScreenRight = 0;
+    int32_t _ScreenBottom = 0;
     MCColorCycle _Cycle;
     /// <summary>The pixels <see cref="Write"/> was given this frame: a row each (StripWidth wide), and the texture.</summary>
     std::vector<uint8_t> _StripPixels;

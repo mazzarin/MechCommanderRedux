@@ -2776,8 +2776,8 @@ void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface
 
     // The drawn pixels showing the rectangle's window pixels, and one more each way (a drawn pixel near the edge may
     // show either side of it).
-    const int64_t windowWidth = std::max<int64_t>(surface.RecordedWidth, 1);
-    const int64_t windowHeight = std::max<int64_t>(surface.RecordedHeight, 1);
+    const int64_t windowWidth = std::max<int64_t>(surface.MappedWidth, 1);
+    const int64_t windowHeight = std::max<int64_t>(surface.MappedHeight, 1);
     const int64_t drawnWidth = surface.Target.Width;
     const int64_t drawnHeight = surface.Target.Height;
     const auto x0 = static_cast<int32_t>(std::max<int64_t>(rect.X0 * drawnWidth / windowWidth - 1, 0));
@@ -2804,15 +2804,40 @@ void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface
     SDL_EndGPUCopyPass(pass);
 }
 
+void MCVulkanRenderer::SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom)
+{
+    _ScaledScreen = screen != nullptr && (scaleX > 1.0f || scaleY > 1.0f) ? SurfaceKeyOf(*screen) : MCAddressKey();
+    _ScreenScaleX = scaleX;
+    _ScreenScaleY = scaleY;
+    _ScreenRight = right;
+    _ScreenBottom = bottom;
+}
+
 void MCVulkanRenderer::PlaceSurfaces(std::span<const MCUnderlay> underlays)
 {
     for (Surface& surface : _Surfaces)
     {
         surface.DrawnWidth = surface.RecordedWidth;
         surface.DrawnHeight = surface.RecordedHeight;
+        surface.MappedWidth = surface.RecordedWidth;
+        surface.MappedHeight = surface.RecordedHeight;
 
         if (!surface.Key)
         {
+            continue;
+        }
+
+        // Port-only: a sharp screen, drawn at the size it's shown as far as the view reaches.
+        if (surface.Key == _ScaledScreen && surface.RecordedWidth > 0 && surface.RecordedHeight > 0)
+        {
+            surface.MappedWidth =
+                std::clamp(static_cast<uint32_t>(std::max(_ScreenRight, 1)), 1u, surface.RecordedWidth);
+            surface.MappedHeight =
+                std::clamp(static_cast<uint32_t>(std::max(_ScreenBottom, 1)), 1u, surface.RecordedHeight);
+            surface.DrawnWidth = static_cast<uint32_t>(
+                std::max(1L, std::lround(static_cast<float>(surface.MappedWidth) * _ScreenScaleX)));
+            surface.DrawnHeight = static_cast<uint32_t>(
+                std::max(1L, std::lround(static_cast<float>(surface.MappedHeight) * _ScreenScaleY)));
             continue;
         }
 
@@ -3176,8 +3201,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         if (record.TerrainDraw >= 0)
         {
             FrameUniforms frame = passFrame;
-            frame.Scale[0] = static_cast<int32_t>(std::max(surface.RecordedWidth, 1u));
-            frame.Scale[1] = static_cast<int32_t>(std::max(surface.RecordedHeight, 1u));
+            frame.Scale[0] = static_cast<int32_t>(std::max(surface.MappedWidth, 1u));
+            frame.Scale[1] = static_cast<int32_t>(std::max(surface.MappedHeight, 1u));
             frame.Scale[2] = static_cast<int32_t>(std::max(surface.Target.Width, 1u));
             frame.Scale[3] = static_cast<int32_t>(std::max(surface.Target.Height, 1u));
             std::ranges::fill(frame.SourceScale, 1);
@@ -3256,17 +3281,16 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                                           : record.Blend   ? _Blend.get()
                                                            : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
-        const BatchUniforms batch{{static_cast<float>(surface.RecordedWidth),
-                                   static_cast<float>(surface.RecordedHeight), static_cast<float>(surface.Target.Width),
-                                   static_cast<float>(surface.Target.Height)},
+        const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
+                                   static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
                                   {record.First, 0, 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
         // The target's scale, and the source's when it is a surface.
         const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
         {
-            out[0] = static_cast<int32_t>(std::max(of.RecordedWidth, 1u));
-            out[1] = static_cast<int32_t>(std::max(of.RecordedHeight, 1u));
+            out[0] = static_cast<int32_t>(std::max(of.MappedWidth, 1u));
+            out[1] = static_cast<int32_t>(std::max(of.MappedHeight, 1u));
             out[2] = static_cast<int32_t>(std::max(of.Target.Width, 1u));
             out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
         };
@@ -3413,6 +3437,23 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceTexture(const MCWindow&
     width = 0;
     height = 0;
     return nullptr;
+}
+
+std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const
+{
+    const MCAddressKey canonical = SurfaceKeyOf(window);
+
+    for (const Surface& surface : _Surfaces)
+    {
+        if (surface.Key == canonical && surface.Target.Handle != nullptr && surface.MappedWidth > 0 &&
+            surface.MappedHeight > 0)
+        {
+            return {static_cast<float>(surface.Target.Width) / static_cast<float>(surface.MappedWidth),
+                    static_cast<float>(surface.Target.Height) / static_cast<float>(surface.MappedHeight)};
+        }
+    }
+
+    return {1.0f, 1.0f};
 }
 
 std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnderlay> underlays)
@@ -3562,13 +3603,16 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
     }
 
     const Surface& screenSurface = _Surfaces[*screenIndex];
-    const auto width = static_cast<int32_t>(screenSurface.Index.Width);
-    const auto height = static_cast<int32_t>(screenSurface.Index.Height);
+    const int32_t width = screen.XMax + 1;
+    const int32_t height = screen.YMax + 1;
+    const bool scaledScreen = screenSurface.Index.Width != static_cast<uint32_t>(width) ||
+                              screenSurface.Index.Height != static_cast<uint32_t>(height);
 
-    if (width != screen.XMax + 1 || height != screen.YMax + 1)
+    if (scaledScreen && (screenSurface.RecordedWidth != static_cast<uint32_t>(width) ||
+                         screenSurface.RecordedHeight != static_cast<uint32_t>(height)))
     {
-        return std::unexpected(std::format("the screen's surface is {}x{}, the screen {}x{}", width, height,
-                                           screen.XMax + 1, screen.YMax + 1));
+        return std::unexpected(std::format("the screen's surface is {}x{}, the screen {}x{}",
+                                           screenSurface.RecordedWidth, screenSurface.RecordedHeight, width, height));
     }
 
     // The screen and the world surfaces under it, in the order the composite draws them (a later one over an earlier).
@@ -3611,6 +3655,29 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
     if (!downloaded)
     {
         return std::unexpected(downloaded.error());
+    }
+
+    // A sharp screen (drawn at the size it's shown) gives each window pixel the drawn pixel holding its centre, as the
+    // draws that read a surface do; the window beyond the drawn part is index 0.
+    if (scaledScreen)
+    {
+        std::vector<uint8_t> window(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+        const std::vector<uint8_t>& drawn = (*downloaded)[0];
+        const uint64_t mappedWidth = std::max(screenSurface.MappedWidth, 1u);
+        const uint64_t mappedHeight = std::max(screenSurface.MappedHeight, 1u);
+
+        for (uint64_t y = 0; y < std::min<uint64_t>(mappedHeight, static_cast<uint64_t>(height)); ++y)
+        {
+            const uint64_t drawnY = (2 * y + 1) * screenSurface.Index.Height / (2 * mappedHeight);
+
+            for (uint64_t x = 0; x < std::min<uint64_t>(mappedWidth, static_cast<uint64_t>(width)); ++x)
+            {
+                const uint64_t drawnX = (2 * x + 1) * screenSurface.Index.Width / (2 * mappedWidth);
+                window[y * static_cast<uint64_t>(width) + x] = drawn[drawnY * screenSurface.Index.Width + drawnX];
+            }
+        }
+
+        (*downloaded)[0] = std::move(window);
     }
 
     const std::vector<uint8_t>& gpu = (*downloaded)[0];

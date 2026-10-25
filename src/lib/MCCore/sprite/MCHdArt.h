@@ -132,6 +132,15 @@ namespace MCHdArt
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
+    /// <summary>
+    /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
+    /// resolution while HD art is on, from the 1x shape's coverage; none needs a pack.
+    /// </summary>
+    void SetSmoothEdgeTables(std::span<const uint8_t* const> tables);
+
+    /// <summary>Whether HD art is on and <paramref name="table"/> is one whose edges are drawn smooth.</summary>
+    bool SmoothEdges(const uint8_t* table);
+
     /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
     inline constexpr size_t PaletteBytes = 256 * 3;
 

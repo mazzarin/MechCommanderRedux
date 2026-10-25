@@ -1466,7 +1466,8 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
             continue;
         }
 
-        auto archive = MCFastFile::Create(entry.path().string());
+        // By name: the game opens a FastFile in its folder (a relative --game folder would be taken twice).
+        auto archive = MCFastFile::Create(entry.path().filename().string());
         REQUIRE(archive.has_value());
 
         for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)
@@ -1661,7 +1662,8 @@ namespace
                 continue;
             }
 
-            auto archive = MCFastFile::Create(entry.path().string());
+            // By name: the game opens a FastFile in its folder (a relative --game folder would be taken twice).
+            auto archive = MCFastFile::Create(entry.path().filename().string());
             REQUIRE(archive.has_value());
 
             for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)

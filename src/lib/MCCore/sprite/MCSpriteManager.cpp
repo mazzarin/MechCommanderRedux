@@ -146,6 +146,24 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     }
 
     MCHdArt::SetSmoothEdgeTables(shadowTables);
+
+    // Port-only: the HD art pack's mech and object folders are numbered by these files; a pack records their sizes.
+    std::vector<std::pair<std::string, uint32_t>> files = {
+        {std::string(spriteFileName) + std::string(preferredSuffix),
+         manager->_SpriteFiles[PreferredSprites]->GetLength()},
+        {std::string(spriteFileName), manager->_SpriteFiles[FallbackSprites]->GetLength()}};
+
+    for (int32_t part = 0; part < MechPartCount; part++)
+    {
+        files.emplace_back(PartFileNames[part], manager->_PartFiles[part]->GetLength());
+
+        if (manager->_PartFiles90[part] != nullptr)
+        {
+            files.emplace_back(std::format("{}90", PartFileNames[part]), manager->_PartFiles90[part]->GetLength());
+        }
+    }
+
+    MCHdArt::SetSpriteFiles(files);
     return manager;
 }
 

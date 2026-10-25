@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCHdArt.h"
 #include "lib/MCFastFile.h"
+#include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
@@ -14,13 +15,27 @@ int GHdArt = 0;
 namespace
 {
     /// <summary>
-    /// The pack's folder in the user folder, its folders of mech part frames and of the other appearances' frames.
+    /// The pack's folder in the user folder or the game's, its folders of mech part frames and of the other appearances'
+    /// frames.
     /// </summary>
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view PaletteFile = "palette.rgb";
+    /// <summary>
+    /// The pack's settings (MCHdArt::WritePackFile): a FIT file, as prefs.cfg, with a block of the pack format and the
+    /// game's sprite files it was made from.
+    /// </summary>
+    constexpr std::string_view PackFile = "pack.cfg";
+    constexpr std::string_view PackBlock = "HDArtPack";
+    constexpr std::string_view PackFormatKey = "Format";
+    constexpr std::string_view PackSpritesKey = "Sprites";
+    /// <summary>The pack format this code reads: a pack of a later one is left out whole.</summary>
+    constexpr int32_t PackFormat = 1;
+    /// <summary>How the sprite files are written in pack.cfg: <c>name=size</c>, separated by <c>;</c>.</summary>
+    constexpr char SpriteFileSeparator = ';';
+    constexpr char SpriteSizeSeparator = '=';
     /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
     constexpr std::string_view ArchiveExtension = ".hda";
     constexpr char ArchiveSeparator = '\\';
@@ -142,6 +157,14 @@ namespace
         std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>> MadeWith;
         bool PaletteLooked = false;
         uint64_t Version = 1;
+        /// <summary>The folder found for the pack when none is set (the user folder's HD, else the game folder's).</summary>
+        std::optional<std::filesystem::path> FoundFolder;
+        /// <summary>The pack's pack.cfg, once read: whether its format is one this code reads, and its sprite files.</summary>
+        bool PackFileLooked = false;
+        bool PackFormatReadable = true;
+        std::optional<std::string> PackSprites;
+        /// <summary>This game's sprite files (MCHdArt::SetSpriteFiles; empty: not known yet).</summary>
+        std::string SpriteFiles;
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
@@ -706,15 +729,35 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
 
 std::filesystem::path MCHdArt::PackFolder()
 {
-    const State& state = TheState();
-    return state.Folder.empty() ? MCFileSystem::UserRoot() / DefaultFolder : state.Folder;
+    State& state = TheState();
+
+    if (!state.Folder.empty())
+    {
+        return state.Folder;
+    }
+
+    // The user folder's, else the game folder's (a pack unzipped into the game's folder, as mods are).
+    if (!state.FoundFolder.has_value())
+    {
+        const std::filesystem::path user = MCFileSystem::UserRoot() / DefaultFolder;
+        const std::filesystem::path game = MCFileSystem::GameRoot() / DefaultFolder;
+        std::error_code error;
+        state.FoundFolder =
+            std::filesystem::is_directory(user, error) || !std::filesystem::is_directory(game, error) ? user : game;
+    }
+
+    return *state.FoundFolder;
 }
 
 void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
 {
     State& state = TheState();
     state.Folder = folder;
+    state.FoundFolder.reset();
     state.FolderExists.reset();
+    state.PackFileLooked = false;
+    state.PackFormatReadable = true;
+    state.PackSprites.reset();
     state.Sequences.clear();
     state.Frames.clear();
     state.Order.clear();
@@ -773,6 +816,73 @@ uint64_t MCHdArt::PackVersion()
     return TheState().Version;
 }
 
+namespace
+{
+    /// <summary>The sizes <paramref name="text"/> (MCHdArt::SpriteFiles' form, <c>name=size;...</c>) gives, by name.</summary>
+    std::map<std::string, std::string> SpriteSizes(std::string_view text)
+    {
+        std::map<std::string, std::string> sizes;
+
+        for (const auto part : std::views::split(text, SpriteFileSeparator))
+        {
+            const std::string_view file(part.begin(), part.end());
+
+            if (const size_t at = file.find(SpriteSizeSeparator); at != std::string_view::npos)
+            {
+                sizes.emplace(file.substr(0, at), file.substr(at + 1));
+            }
+        }
+
+        return sizes;
+    }
+
+    /// <summary>
+    /// Reads the pack's pack.cfg once: a pack without one is used whole; one of a later format, or that can't be read,
+    /// not at all.
+    /// </summary>
+    void ReadPackFile()
+    {
+        State& state = TheState();
+
+        if (state.PackFileLooked)
+        {
+            return;
+        }
+
+        state.PackFileLooked = true;
+        const std::filesystem::path path = MCHdArt::PackFolder() / PackFile;
+        std::error_code error;
+
+        if (!std::filesystem::is_regular_file(path, error))
+        {
+            return;
+        }
+
+        MCFitIniFile file;
+
+        if (file.Open(path.string()) != 0 || file.SeekBlock(PackBlock) != 0)
+        {
+            state.PackFormatReadable = false;
+            LogOnce(path, std::format("{} has no {} block", PackFile, PackBlock));
+            return;
+        }
+
+        const MCFitResult<int32_t> format = file.Read<int32_t>(PackFormatKey);
+
+        if (!format.has_value() || *format < 1 || *format > PackFormat)
+        {
+            state.PackFormatReadable = false;
+            LogOnce(path, "the pack is for a later MechCommander Redux; it is left out");
+            return;
+        }
+
+        if (MCFitResult<std::string> sprites = file.Read<std::string>(PackSpritesKey); sprites.has_value())
+        {
+            state.PackSprites = std::move(*sprites);
+        }
+    }
+}
+
 bool MCHdArt::Active()
 {
     if (GHdArt == 0)
@@ -788,18 +898,93 @@ bool MCHdArt::Active()
         state.FolderExists = std::filesystem::is_directory(PackFolder(), error);
     }
 
-    return *state.FolderExists;
+    if (!*state.FolderExists)
+    {
+        return false;
+    }
+
+    ReadPackFile();
+    return state.PackFormatReadable;
+}
+
+bool MCHdArt::NumberedFolders()
+{
+    if (!Active())
+    {
+        return false;
+    }
+
+    State& state = TheState();
+
+    if (!state.PackSprites.has_value() || state.SpriteFiles.empty())
+    {
+        return true;
+    }
+
+    // Only the files both opened count: the 90-pixel parts are opened only when the player's preference asks.
+    const std::map<std::string, std::string> made = SpriteSizes(*state.PackSprites);
+    const std::map<std::string, std::string> here = SpriteSizes(state.SpriteFiles);
+    const bool same = std::ranges::all_of(made,
+                                          [&here](const auto& file)
+                                          {
+                                              const auto found = here.find(file.first);
+                                              return found == here.end() || found->second == file.second;
+                                          });
+
+    if (!same)
+    {
+        LogOnce(PackFolder() / PackFile,
+                "the pack was made from another release of the game's sprites; its mechs and objects are left out");
+    }
+
+    return same;
+}
+
+void MCHdArt::SetSpriteFiles(std::span<const std::pair<std::string, uint32_t>> files)
+{
+    std::string text;
+
+    for (const auto& [name, size] : files)
+    {
+        text += std::format("{}{}{}{}", text.empty() ? "" : std::string(1, SpriteFileSeparator), Upper(name),
+                            SpriteSizeSeparator, size);
+    }
+
+    TheState().SpriteFiles = std::move(text);
+}
+
+const std::string& MCHdArt::SpriteFiles()
+{
+    return TheState().SpriteFiles;
+}
+
+std::expected<void, std::string> MCHdArt::WritePackFile(const std::filesystem::path& folder)
+{
+    const std::filesystem::path path = folder / PackFile;
+    MCFitIniFile file;
+
+    if (file.Create(path.string()) != 0)
+    {
+        return std::unexpected(std::format("{} can't be written", path.string()));
+    }
+
+    file.WriteBlock(PackBlock);
+    file.WriteIdLong(PackFormatKey, PackFormat);
+    file.WriteIdString(PackSpritesKey, SpriteFiles());
+    file.Close();
+    return {};
 }
 
 namespace
 {
     /// <summary>
     /// Ties <paramref name="shape"/> to the pack's folder <paramref name="folder"/> (relative to the pack) when the pack
-    /// has it and HD art is on.
+    /// has it and its numbered folders are drawn (MCHdArt::NumberedFolders: HD art is on, and the pack was made from
+    /// this game's sprite files).
     /// </summary>
     void AttachTo(const std::shared_ptr<MCShape>& shape, const std::filesystem::path& folder)
     {
-        if (shape == nullptr || !MCHdArt::Active() || shape->FrameList().empty())
+        if (shape == nullptr || !MCHdArt::NumberedFolders() || shape->FrameList().empty())
         {
             return;
         }

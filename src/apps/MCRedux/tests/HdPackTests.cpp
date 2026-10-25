@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "TestGame.h"
 #include "lib/MCFastFile.h"
+#include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
 #include "lib/MCLz.h"
 #include "sprite/MCBc7.h"
@@ -387,6 +389,114 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// With no pack folder set, the pack is the user folder's <c>HD</c> when there is one, else the game folder's (a pack
+/// unzipped into the game's folder, as mods are).
+/// </summary>
+TEST_CASE_ISOLATED("hd art: the pack is found in the user folder, else in the game folder")
+{
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_hd_pack_folder_test";
+    const std::filesystem::path game = scratch / "game";
+    const std::filesystem::path user = scratch / "user";
+    std::filesystem::remove_all(scratch);
+    std::filesystem::create_directories(game);
+    std::filesystem::create_directories(user);
+    MCFileSystem::SetGameRoot(game);
+    MCFileSystem::SetUserRoot(user);
+
+    // Neither: the user folder's, where the game makes things.
+    MCHdArt::SetPackFolder({});
+    CHECK_EQ(MCHdArt::PackFolder(), user / "HD");
+
+    // The game folder's alone.
+    std::filesystem::create_directories(game / "HD");
+    MCHdArt::SetPackFolder({});
+    CHECK_EQ(MCHdArt::PackFolder(), game / "HD");
+
+    // Both: the user folder's.
+    std::filesystem::create_directories(user / "HD");
+    MCHdArt::SetPackFolder({});
+    CHECK_EQ(MCHdArt::PackFolder(), user / "HD");
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// pack.cfg: a pack of a later format is left out; one made from other sprite files keeps only what is named by its
+/// pixels (the ground, the menus), not its mech and object folders. Only the files both the pack and the game opened
+/// count (the 90-pixel parts are opened only when the player's preference asks); a pack without pack.cfg is used whole.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "hd art: pack.cfg leaves out a later format, and a pack made from other sprite files keeps its ground")
+{
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_pack_file_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    GHdArt = 1;
+    const std::array<std::pair<std::string, uint32_t>, 2> made = {{{"shapes90", 100}, {"legs90", 200}}};
+
+    const auto use = [&pack](std::span<const std::pair<std::string, uint32_t>> here)
+    {
+        MCHdArt::SetSpriteFiles(here);
+        MCHdArt::SetPackFolder(pack);
+    };
+
+    // No pack.cfg: whole.
+    use(made);
+    CHECK(MCHdArt::Active());
+    CHECK(MCHdArt::NumberedFolders());
+
+    // Made from these files.
+    REQUIRE(MCHdArt::WritePackFile(pack).has_value());
+    use(made);
+    CHECK(MCHdArt::Active());
+    CHECK(MCHdArt::NumberedFolders());
+
+    // A file of another size.
+    const std::array<std::pair<std::string, uint32_t>, 2> other = {{{"shapes90", 100}, {"legs90", 201}}};
+    use(other);
+    CHECK(MCHdArt::Active());
+    CHECK(!MCHdArt::NumberedFolders());
+
+    // A file the game didn't open isn't compared.
+    const std::array<std::pair<std::string, uint32_t>, 1> fewer = {{{"shapes90", 100}}};
+    use(fewer);
+    CHECK(MCHdArt::NumberedFolders());
+
+    // A later format: none of it.
+    {
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Create((pack / "pack.cfg").string()), 0);
+        file.WriteBlock("HDArtPack");
+        file.WriteIdLong("Format", 2);
+        file.Close();
+    }
+
+    use(made);
+    CHECK(!MCHdArt::Active());
+    CHECK(!MCHdArt::NumberedFolders());
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// Tool: <c>--hd-pack-file &lt;pack folder&gt;</c> writes the pack's pack.cfg for this game: the pack format and the
+/// sprite files (mission 1's, as the game opens them) its mech and object folders are numbered by.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-pack-file writes a pack's pack.cfg for this game")
+{
+    const std::optional<std::string_view> folder = MCTest::Option("hd-pack-file");
+
+    if (!folder.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = std::filesystem::absolute(std::filesystem::path(*folder));
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(!MCHdArt::SpriteFiles().empty());
+    REQUIRE(MCHdArt::WritePackFile(pack).has_value());
+    std::cout << std::format("  {}: {}\n", (pack / "pack.cfg").string(), MCHdArt::SpriteFiles());
 }
 
 /// <summary>

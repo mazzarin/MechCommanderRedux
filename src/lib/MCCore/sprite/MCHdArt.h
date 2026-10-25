@@ -120,14 +120,38 @@ namespace MCHdArt
     /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
     inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
 
-    /// <summary>The pack's folder (the user folder's <c>HD</c> unless set).</summary>
+    /// <summary>
+    /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
+    /// pack unzipped into the game's folder, as mods are).
+    /// </summary>
     std::filesystem::path PackFolder();
 
     /// <summary>Sets the pack's folder (empty: the default); forgets the shapes and frames found so far.</summary>
     void SetPackFolder(const std::filesystem::path& folder);
 
-    /// <summary>Whether HD art is drawn: <see cref="GHdArt"/>, and a pack folder that exists.</summary>
+    /// <summary>
+    /// Whether HD art is drawn: <see cref="GHdArt"/>, and a pack folder that exists whose <c>pack.cfg</c> (if it has one)
+    /// is of a format this code reads.
+    /// </summary>
     bool Active();
+
+    /// <summary>
+    /// Whether the pack's mech and object folders, named by the game's sprite files' numbers, are drawn: <see
+    /// cref="Active"/>, and the pack was made from this game's sprite files (<c>pack.cfg</c>'s Sprites, when it says).
+    /// A pack made from other files would put another mech's frames in a mech's place; its ground and menu pictures,
+    /// named by their pixels, are still drawn.
+    /// </summary>
+    bool NumberedFolders();
+
+    /// <summary>
+    /// Sets this game's sprite files (their names and sizes; the sprite manager, when it opens them), which
+    /// <see cref="SpriteFiles"/> gives as a pack records them: <c>NAME=size;...</c>, names upper-case.
+    /// </summary>
+    void SetSpriteFiles(std::span<const std::pair<std::string, uint32_t>> files);
+    const std::string& SpriteFiles();
+
+    /// <summary>Writes <c>pack.cfg</c> into a pack's folder: this code's pack format and this game's sprite files.</summary>
+    std::expected<void, std::string> WritePackFile(const std::filesystem::path& folder);
 
     /// <summary>
     /// Notes that <paramref name="shape"/> was loaded from <paramref name="key"/>: while it lives, its frames are drawn

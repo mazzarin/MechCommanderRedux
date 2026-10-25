@@ -37,6 +37,8 @@ namespace
     constexpr uint32_t KindSmoothEllipse = 8;
     /// <summary>Port-only: a textured polygon's picture shown from the HD art pack, turned and scaled (draw.pshader).</summary>
     constexpr uint32_t KindHdMap = 9;
+    /// <summary>Port-only: a game-drawn picture mapped with its key transparent (the fog of war), its edges smooth.</summary>
+    constexpr uint32_t KindSmoothMap = 10;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -832,8 +834,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         const uint32_t kind = op & KindMask;
         _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
-        _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSharpGlyph || kind == KindSmoothLine ||
-                           kind == KindSmoothEllipse || (op & SmoothEdges) != 0;
+        _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSharpGlyph ||
+                           kind == KindSmoothLine || kind == KindSmoothEllipse || (op & SmoothEdges) != 0;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -875,8 +877,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // the original's).
     // An HD frame's or a smooth shape's colour pass leaves the indices an index-only pass wrote: they still compare.
     const uint32_t kind = op & KindMask;
-    const bool keepsIndices =
-        kind == KindHd || kind == KindHdMap || kind == KindSmoothLine || kind == KindSmoothEllipse;
+    const bool keepsIndices = kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSmoothLine ||
+                              kind == KindSmoothEllipse;
 
     if (blend && !keepsIndices)
     {
@@ -2527,6 +2529,15 @@ void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command
                 {
                     op |= IndexOnly;
                 }
+
+                // Port-only: on a window shown larger, a picture the game draws (the fog of war) mapped with its key
+                // transparent has its edges drawn smooth at the output's resolution, as a mech's shadow's are; the
+                // walk then writes the indices alone.
+                else if ((command.MapFlags & VfxMapTransparent) != 0 && ScaledHdArt(surface) &&
+                         MCRenderer::FrameSurfaceOf(texture) != nullptr && AddSmoothMap(surface, source, command))
+                {
+                    op |= IndexOnly;
+                }
             }
             break;
         }
@@ -2592,34 +2603,38 @@ namespace
     }
 }
 
-bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)
+namespace
 {
-    // The map from the first two vertices and the last (a quad's corners 0, 1 and 3), their texels 16.16.
-    constexpr size_t Triangle = 3;
-    constexpr float Fixed = 65536.0f;
-
-    if (command.Vertices.size() < Triangle)
+    /// <summary>
+    /// The affine map from window to texture positions of a textured polygon: from its first two vertices and its last
+    /// (a quad's corners 0, 1 and 3), their texels 16.16; none for fewer than three vertices, or ones in a line.
+    /// </summary>
+    std::optional<std::array<float, 6>> PolygonMapping(const MCPolygonCommand& command)
     {
-        return false;
+        constexpr size_t Triangle = 3;
+        constexpr float Fixed = 65536.0f;
+
+        if (command.Vertices.size() < Triangle)
+        {
+            return std::nullopt;
+        }
+
+        const auto point = [&command](const MCScreenVertex& vertex)
+        {
+            return MappedPoint{static_cast<float>(command.OriginX + vertex.X),
+                               static_cast<float>(command.OriginY + vertex.Y), static_cast<float>(vertex.U) / Fixed,
+                               static_cast<float>(vertex.V) / Fixed};
+        };
+
+        return TextureMapping(point(command.Vertices[0]), point(command.Vertices[1]), point(command.Vertices.back()));
     }
+}
 
-    const auto point = [&command](const MCScreenVertex& vertex)
-    {
-        return MappedPoint{static_cast<float>(command.OriginX + vertex.X),
-                           static_cast<float>(command.OriginY + vertex.Y), static_cast<float>(vertex.U) / Fixed,
-                           static_cast<float>(vertex.V) / Fixed};
-    };
-
-    const std::optional<std::array<float, 6>> mapping =
-        TextureMapping(point(command.Vertices[0]), point(command.Vertices[1]), point(command.Vertices.back()));
-    const std::optional<uint32_t> picture = mapping.has_value() ? HdPictureOf(frame) : std::nullopt;
-
-    if (!picture)
-    {
-        return false;
-    }
-
-    // The vertices' bounding box, clipped to the pane; the shader leaves out what lies outside the picture.
+bool MCVulkanRenderer::AddMapped(uint16_t surface, SourceKind source, uint32_t sourceIndex, uint32_t op, uint32_t color,
+                                 const std::array<float, 6>& mapping, const MCPolygonCommand& command)
+{
+    // The vertices' bounding box, clipped to the pane (the game's mapped polygons are rectangles); the shader leaves out
+    // what lies outside the texture.
     Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
                std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
 
@@ -2632,20 +2647,55 @@ bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, c
 
     at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
           std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
+
+    if (!Add(surface, source, sourceIndex, at, Quad{0, 0, 1, 1}, op, color, 0, 0))
+    {
+        return false;
+    }
+
+    // The map in span and walk.xy (floats), the texture's size in walk.zw.
+    std::array<int32_t, 20>& draw = _Draws.back();
+    std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    const MCWindow& texture = command.Texture->get();
+    draw[18] = texture.XMax + 1;
+    draw[19] = texture.YMax + 1;
+    return true;
+}
+
+bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)
+{
+    const std::optional<std::array<float, 6>> mapping = PolygonMapping(command);
+    const std::optional<uint32_t> picture = mapping.has_value() ? HdPictureOf(frame) : std::nullopt;
+
+    if (!picture)
+    {
+        return false;
+    }
+
     // The colour field carries the frame's scale and the key (a transparent map's colour, 255).
     constexpr uint32_t Key = 255;
     const uint32_t color = static_cast<uint32_t>(frame.Scale) | Key << 8;
     const uint32_t keyed = (command.MapFlags & VfxMapTransparent) != 0 ? ColorKey : 0;
 
-    if (!Add(surface, SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1}, KindHdMap | AlphaBlend | keyed | HdAsMade,
-             color, 0, 0))
+    if (AddMapped(surface, SourceKind::Picture, *picture, KindHdMap | AlphaBlend | keyed | HdAsMade, color, *mapping,
+                  command))
     {
-        return true;
+        ++_HdDrawn;
     }
 
-    std::array<int32_t, 20>& draw = _Draws.back();
-    std::ranges::transform(*mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
-    ++_HdDrawn;
+    return true;
+}
+
+bool MCVulkanRenderer::AddSmoothMap(uint16_t surface, SourceRef source, const MCPolygonCommand& command)
+{
+    const std::optional<std::array<float, 6>> mapping = PolygonMapping(command);
+
+    if (!mapping)
+    {
+        return false;
+    }
+
+    AddMapped(surface, source.Kind, source.Index, KindSmoothMap | AlphaBlend, 0, *mapping, command);
     return true;
 }
 

@@ -99,6 +99,8 @@ static const uint KindSmoothLine = 7;
 static const uint KindSmoothEllipse = 8;
 // Port-only: a textured polygon's picture (a tactical map's) shown from the HD art pack, turned and scaled (HdMapPixel).
 static const uint KindHdMap = 9;
+// Port-only: a game-drawn picture mapped with its key transparent (the fog of war), its edges smooth (SmoothMapPixel).
+static const uint KindSmoothMap = 10;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -288,15 +290,31 @@ float4 BSplineWeights(float f)
            6.0;
 }
 
-// A smooth-edged shape's coverage at drawn pixel `target`: its drawn source pixels (the 4 x 4 around the centre)
-// smoothed by a cubic B-spline, which rounds the pixel steps into curves, then ramped so the edge is about a drawn
-// pixel wide. `value` becomes a drawn neighbour's when the pixel under the centre isn't drawn.
-float ShapeCoverage(Input input, int2 target, inout uint value)
+// Whether texel `texel` of what a smooth draw reads is drawn, and its value: a smooth-edged shape's (DrawnTexel), or a
+// smooth map's texture texel (walk.zw its size) that isn't the key.
+bool CoverageTexel(Input input, int2 texel, out uint value)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    const float2 at =
-        float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+    if ((input.op.x & 15u) != KindSmoothMap)
+    {
+        return DrawnTexel(input, texel, value);
+    }
+
+    value = 0;
+
+    if (any(texel < 0) || any(texel >= int2(input.walk.zw)))
+    {
+        return false;
+    }
+
+    value = Byte(FetchSource(texel).r);
+    return value != 255u;
+}
+
+// The coverage around `at` (a place in the source's texels, less half a texel): the drawn texels (the 4 x 4 around it)
+// smoothed by a cubic B-spline, which rounds the pixel steps into curves, then ramped so the edge is about a drawn pixel
+// wide. `value` becomes the nearest drawn texel's.
+float SmoothCoverage(Input input, float2 at, inout uint value)
+{
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
     const float4 wx = BSplineWeights(f.x);
@@ -311,7 +329,7 @@ float ShapeCoverage(Input input, int2 target, inout uint value)
         {
             uint tapValue;
 
-            if (DrawnTexel(input, base + int2(x - 1, y - 1), tapValue))
+            if (CoverageTexel(input, base + int2(x - 1, y - 1), tapValue))
             {
                 coverage += wx[x] * wy[y];
                 const float2 d = float2(x - 1, y - 1) - f;
@@ -328,6 +346,17 @@ float ShapeCoverage(Input input, int2 target, inout uint value)
     }
 
     return smoothstep(EdgeLow, EdgeHigh, coverage);
+}
+
+// A smooth-edged shape's coverage at drawn pixel `target` (SmoothCoverage of its source pixels). `value` becomes a drawn
+// neighbour's when the pixel under the centre isn't drawn.
+float ShapeCoverage(Input input, int2 target, inout uint value)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
+    const float2 at =
+        float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+    return SmoothCoverage(input, at, value);
 }
 
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
@@ -408,15 +437,22 @@ Output HdPixel(Input input, int2 target)
     return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
 }
 
+// Where drawn pixel `target`'s centre lies in a textured polygon's texture (KindHdMap, KindSmoothMap): the polygon's
+// affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5).
+float2 MappedPlace(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float4 u = asfloat(input.span);
+    const float2 v = asfloat(input.walk.xy);
+    return float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
+}
+
 // Port-only: a textured polygon's picture shown from the HD art pack (KindHdMap): the drawn pixel's place in the
 // picture is the polygon's affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5), then
 // read as HdPixel reads a frame; nothing outside the picture.
 Output HdMapPixel(Input input, int2 target)
 {
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
-    const float4 u = asfloat(input.span);
-    const float2 v = asfloat(input.walk.xy);
-    const float2 picture = float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
+    const float2 picture = MappedPlace(input, target);
     uint width;
     uint height;
     sourceTex.GetDimensions(width, height);
@@ -427,6 +463,22 @@ Output HdMapPixel(Input input, int2 target)
     }
 
     return HdPixelAt(input, picture);
+}
+
+// Port-only: a game-drawn picture mapped with its key transparent (the fog of war, KindSmoothMap), its colour pass at
+// the output's resolution: its drawn texels' edges rounded as a smooth-edged shape's are (its indices were written by
+// the walk, index-only). Premultiplied, through the blend pipeline.
+Output SmoothMapPixel(Input input, int2 target)
+{
+    uint value = 255u;
+    const float coverage = SmoothCoverage(input, MappedPlace(input, target) - 0.5, value);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(float4(Shown(value), 1.0) * coverage);
 }
 
 // A redrawn glyph's texel (red the font byte, green the coverage), nothing outside its size.
@@ -570,6 +622,12 @@ Output main(Input input)
     {
         return HdMapPixel(input, target);
     }
+
+    if (kind == KindSmoothMap)
+    {
+        return SmoothMapPixel(input, target);
+    }
+
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;

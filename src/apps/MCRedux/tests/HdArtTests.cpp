@@ -1075,6 +1075,13 @@ namespace
         return shapes;
     }
 
+    /// <summary>The frames of <paramref name="sequence"/> with pixels (those a pack holds).</summary>
+    size_t DrawnFrames(const Sequence& sequence)
+    {
+        return static_cast<size_t>(
+            std::ranges::count_if(sequence.Frames, [](const DecodedFrame& frame) { return frame.Width > 0; }));
+    }
+
     /// <summary>An appearance's sequences (one a packet it draws, its frames decoded), and what was left out.</summary>
     struct ObjectSequences
     {
@@ -1137,6 +1144,12 @@ namespace
                 made.Pixels += static_cast<size_t>(decoded->Width) * static_cast<size_t>(decoded->Height);
                 sequence.Frames.push_back(std::move(*decoded));
             }
+
+            // A table with nothing the pack would hold gets no folder (the shape isn't attached).
+            if (DrawnFrames(sequence) == 0)
+            {
+                made.Sequences.pop_back();
+            }
         }
 
         return made;
@@ -1193,13 +1206,6 @@ namespace
         }
 
         return picked;
-    }
-
-    /// <summary>The frames of <paramref name="sequence"/> with pixels (those a pack holds).</summary>
-    size_t DrawnFrames(const Sequence& sequence)
-    {
-        return static_cast<size_t>(
-            std::ranges::count_if(sequence.Frames, [](const DecodedFrame& frame) { return frame.Width > 0; }));
     }
 
     /// <summary>What --hd-objects counts per kind, and how much of it repeats another sequence (made once).</summary>

@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "camera/MCViewWindow.h"
@@ -11,22 +12,31 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
+#include "main/MCGamePaths.h"
+#include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCObjectSystem.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanRenderer.h"
+#include "sprite/MCElementalTree.h"
+#include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCPUAppearanceType.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
+#include "sprite/MCVfxAppearanceType.h"
+#include "sprite/MCVfxBuildingAppearanceType.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCTerrain.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -181,9 +191,15 @@ namespace
         }
     }
 
-    /// <summary>A pack's sequence: one shape table (a gesture's part at one facing), as the tree uses it.</summary>
+    /// <summary>
+    /// A pack's sequence: one shape table (a mech's: a gesture's part at one facing, as the tree uses it; or a packet of
+    /// another appearance's PAK) and its folder in the pack (sprite/MCHdArt.h).
+    /// </summary>
     struct Sequence
     {
+        std::filesystem::path Folder;
+        /// <summary>A hash of the shape table's bytes (another appearance's sequence with the same one repeats it).</summary>
+        size_t Table = 0;
         MCHdArt::MechShapeKey Key;
         int32_t Gesture = 0;
         /// <summary>The tree's part numbering (0 legs, 1 torso, 2 and 3 the arms' sprites).</summary>
@@ -236,6 +252,7 @@ namespace
 
                     Sequence& sequence = sequences.emplace_back();
                     sequence.Key = {sprites->PartFileName(packet->FilePart, true), mechNum, packet->Packet};
+                    sequence.Folder = MCHdArt::FolderOf(sequence.Key);
                     sequence.Gesture = gesture;
                     sequence.Part = part;
                     sequence.Facing = facing;
@@ -272,12 +289,6 @@ namespace
         return sequences;
     }
 
-    /// <summary>A sequence's folder in a pack (sprite/MCHdArt.h).</summary>
-    std::filesystem::path SequenceFolder(const std::filesystem::path& pack, const MCHdArt::MechShapeKey& key)
-    {
-        return pack / "mechs" / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
-    }
-
     /// <summary>
     /// Writes <paramref name="sequences"/> into a pack at <paramref name="pack"/>: each frame at
     /// <paramref name="scale"/> times its size (each pixel repeated), its colours through <paramref name="paint"/>,
@@ -289,7 +300,7 @@ namespace
     {
         for (const Sequence& sequence : sequences)
         {
-            const std::filesystem::path folder = SequenceFolder(pack, sequence.Key);
+            const std::filesystem::path folder = pack / sequence.Folder;
             std::filesystem::create_directories(folder);
 
             for (size_t frameNum = 0; frameNum < sequence.Frames.size(); ++frameNum)
@@ -334,6 +345,36 @@ namespace
                 SavePng(folder / std::format("{}.png", frameNum), width, height, color);
                 SavePng(folder / std::format("{}_idx.png", frameNum), width, height, index);
             }
+        }
+    }
+
+    /// <summary>A sequence's frames' bounds as JSON (the HD art generator's): {"width": ...}, ... (width 0: none).</summary>
+    std::string FramesJson(const Sequence& sequence)
+    {
+        std::string json;
+
+        for (size_t f = 0; f < sequence.Frames.size(); ++f)
+        {
+            const DecodedFrame& frame = sequence.Frames[f];
+            json += std::format("{}{{\"width\": {}, \"height\": {}, \"xmin\": {}, \"ymin\": {}, \"translucent\": {}}}",
+                                f == 0 ? "" : ", ", frame.Width, frame.Height, frame.XMin, frame.YMin,
+                                frame.Translucent ? "true" : "false");
+        }
+
+        return json;
+    }
+
+    /// <summary>
+    /// Writes <paramref name="colors"/> as <paramref name="folder"/>'s palette.rgb: the colours a pack's pictures are made
+    /// from (MCHdArt::MadeWith).
+    /// </summary>
+    void WritePaletteRgb(const std::filesystem::path& folder, std::span<const SDL_Color, 256> colors)
+    {
+        std::ofstream rgb(folder / "palette.rgb", std::ios::binary);
+
+        for (const SDL_Color& color : colors)
+        {
+            rgb.put(static_cast<char>(color.r)).put(static_cast<char>(color.g)).put(static_cast<char>(color.b));
         }
     }
 
@@ -574,14 +615,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-terrain writes the terrain tiles for the 
     std::ofstream(folder / "palettes.json") << palettesJson << "\n}\n";
 
     // The colours the tiles are coloured with, for the pack (MCHdArt::MadeWith).
-    {
-        std::ofstream rgb(folder / "palette.rgb", std::ios::binary);
-
-        for (const SDL_Color& color : colors)
-        {
-            rgb.put(static_cast<char>(color.r)).put(static_cast<char>(color.g)).put(static_cast<char>(color.b));
-        }
-    }
+    WritePaletteRgb(folder, colors);
 
     // How far each palette's colours lie from the base game's, mission 1's (the tiles' colours are its).
     if (auto first = MCPalette::Create(BasePalette); first.has_value())
@@ -722,7 +756,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art gen
 
         for (Sequence& sequence : MechSequences(tree, std::nullopt))
         {
-            if (folders.insert(SequenceFolder({}, sequence.Key).generic_string()).second)
+            if (folders.insert(sequence.Folder.generic_string()).second)
             {
                 sequences.push_back(std::move(sequence));
             }
@@ -739,21 +773,13 @@ TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art gen
     for (size_t i = 0; i < sequences.size(); ++i)
     {
         const Sequence& sequence = sequences[i];
-        json += std::format("{}\n  {{\"folder\": \"mechs/{}/{}/{}\", \"gesture\": {}, \"part\": {}, \"facing\": {}, "
+        json += std::format("{}\n  {{\"folder\": \"{}\", \"gesture\": {}, \"part\": {}, \"facing\": {}, "
                             "\"reverse\": {}, \"frames\": [",
-                            i == 0 ? "" : ",", sequence.Key.PartFile, sequence.Key.MechNum, sequence.Key.Packet,
-                            sequence.Gesture, sequence.Part, sequence.Facing, sequence.Reverse ? "true" : "false");
+                            i == 0 ? "" : ",", sequence.Folder.generic_string(), sequence.Gesture, sequence.Part,
+                            sequence.Facing, sequence.Reverse ? "true" : "false");
 
-        for (size_t f = 0; f < sequence.Frames.size(); ++f)
-        {
-            const DecodedFrame& frame = sequence.Frames[f];
-            json += std::format("{}{{\"width\": {}, \"height\": {}, \"xmin\": {}, \"ymin\": {}, \"translucent\": {}}}",
-                                f == 0 ? "" : ", ", frame.Width, frame.Height, frame.XMin, frame.YMin,
-                                frame.Translucent ? "true" : "false");
-            ++frameCount;
-        }
-
-        json += "]}";
+        json += FramesJson(sequence) + "]}";
+        frameCount += sequence.Frames.size();
     }
 
     json += "\n]}\n";
@@ -796,6 +822,581 @@ TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art gen
 
 namespace
 {
+    /// <summary>What an appearance other than a mech's is drawn for: the HD art generator's kinds.</summary>
+    enum class ObjectKind : uint8_t
+    {
+        /// <summary>Ground vehicles, train cars, the camera drone.</summary>
+        Vehicle,
+        Elemental,
+        /// <summary>Pop-up turrets and gates.</summary>
+        Turret,
+        /// <summary>Buildings and tree buildings.</summary>
+        Building,
+        Tree,
+        /// <summary>Terrain objects (rocks, walls...) and lights.</summary>
+        Object,
+    };
+
+    /// <summary>A kind's name (the tools' and the generator's), and whether its packets are animations (the generator
+    /// upscales each as one sequence) or stills.</summary>
+    struct ObjectKindInfo
+    {
+        std::string_view Name;
+        bool Animated = false;
+    };
+
+    constexpr std::array<ObjectKindInfo, 6> ObjectKinds = {{{"vehicle", true},
+                                                            {"elemental", true},
+                                                            {"turret", true},
+                                                            {"building", false},
+                                                            {"tree", false},
+                                                            {"object", false}}};
+
+    const ObjectKindInfo& KindInfo(ObjectKind kind)
+    {
+        return ObjectKinds[static_cast<size_t>(kind)];
+    }
+
+    /// <summary>
+    /// The object classes (an object type's "ObjectClass" ObjectTypeNum, as MCObjectTypeManager numbers them) whose
+    /// appearances the pack holds, and their kinds. The others are mechs (their own folders) and effects (explosions,
+    /// fire, smoke, weapons, debris, artillery, jets), which keep the original's pixels.
+    /// </summary>
+    constexpr std::array<std::pair<int32_t, ObjectKind>, 12> ClassKinds = {{
+        {0x00, ObjectKind::Tree},      // tree
+        {0x01, ObjectKind::Building},  // building
+        {0x03, ObjectKind::Vehicle},   // ground vehicle
+        {0x0b, ObjectKind::Object},    // terrain object
+        {0x0e, ObjectKind::Elemental}, // elemental
+        {0x0f, ObjectKind::Object},    // misc terrain object
+        {0x12, ObjectKind::Building},  // tree building
+        {0x13, ObjectKind::Vehicle},   // camera drone
+        {0x14, ObjectKind::Vehicle},   // train car
+        {0x15, ObjectKind::Turret},    // turret
+        {0x16, ObjectKind::Turret},    // gate
+        {0x17, ObjectKind::Object},    // light
+    }};
+
+    /// <summary>An appearance type id's class (its top byte) and packet in the sprite PAKs (the rest).</summary>
+    constexpr int AppearanceClassShift = 24;
+    constexpr uint32_t AppearancePacketMask = 0xffffff;
+    /// <summary>The facings walked to find every packet a type draws (degrees, whole ones as the types take them).</summary>
+    constexpr int32_t FirstRotation = -180;
+    constexpr int32_t LastRotation = 180;
+
+    /// <summary>An appearance the pack can hold: its type id, kind, and the names of the object types that use it.</summary>
+    struct ObjectAppearance
+    {
+        uint32_t Id = 0;
+        ObjectKind Kind = ObjectKind::Object;
+        std::vector<std::string> Types;
+    };
+
+    /// <summary>The appearances the object types use, the effects' among them (left out of the pack).</summary>
+    struct ObjectAppearances
+    {
+        std::map<uint32_t, ObjectAppearance> Kept;
+        std::set<uint32_t> Effects;
+    };
+
+    /// <summary>
+    /// The appearances the object PAK's types use, by type id: each with the kind of the first class that uses it
+    /// (ClassKinds), except mechs' and those of classes without shapes of their own (lines, weapon effects).
+    /// </summary>
+    ObjectAppearances FindObjectAppearances()
+    {
+        ObjectAppearances found;
+        MCPacketFile pak;
+        REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
+
+        for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+        {
+            MCFitIniFile fit;
+
+            if (pak.SeekPacket(packet) != 0 || pak.GetPacketSize() <= 0 ||
+                fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) != 0 || fit.SeekBlock("ObjectClass") != 0)
+            {
+                continue;
+            }
+
+            const MCFitResult<int32_t> objectClass = fit.Read<int32_t>("ObjectTypeNum");
+
+            if (!objectClass.has_value() || fit.SeekBlock("ObjectType") != 0)
+            {
+                continue;
+            }
+
+            const MCFitResult<int32_t> appearance = fit.Read<int32_t>("Appearance");
+            const auto id = static_cast<uint32_t>(appearance.value_or(0));
+            const auto appearanceClass = static_cast<MCAppearanceClass>(id >> AppearanceClassShift);
+
+            if (!appearance.has_value() ||
+                (appearanceClass != MCAppearanceClass::Vfx && appearanceClass != MCAppearanceClass::GroundVehicle &&
+                 appearanceClass != MCAppearanceClass::Building &&
+                 appearanceClass != MCAppearanceClass::ElementalTree && appearanceClass != MCAppearanceClass::PopUp))
+            {
+                continue;
+            }
+
+            const auto kind = std::ranges::find(ClassKinds, *objectClass, &std::pair<int32_t, ObjectKind>::first);
+
+            if (kind == ClassKinds.end())
+            {
+                found.Effects.insert(id);
+                continue;
+            }
+
+            const std::string name = fit.Read<std::string>("Name").value_or(std::format("type {}", packet));
+            auto [entry, fresh] = found.Kept.try_emplace(id, ObjectAppearance{id, kind->second, {}});
+            entry->second.Types.push_back(name);
+
+            if (!fresh && entry->second.Kind != kind->second)
+            {
+                std::cout << std::format("  appearance {:#010x}: a {} and a {} ({}); kept as the first\n", id,
+                                         KindInfo(entry->second.Kind).Name, KindInfo(kind->second).Name, name);
+            }
+        }
+
+        // An appearance some effect uses too stays in the pack: the effect draws the same shapes.
+        std::erase_if(found.Effects, [&](uint32_t id) { return found.Kept.contains(id); });
+        return found;
+    }
+
+    /// <summary>Every shape in <paramref name="list"/> still loaded, by packet.</summary>
+    void KeepLoaded(std::span<const std::weak_ptr<MCShape>> list, std::map<uint32_t, std::shared_ptr<MCShape>>& shapes)
+    {
+        for (size_t packet = 0; packet < list.size(); ++packet)
+        {
+            if (std::shared_ptr<MCShape> shape = list[packet].lock())
+            {
+                shapes.emplace(static_cast<uint32_t>(packet), std::move(shape));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The shapes of <paramref name="type"/>'s PAK that it draws, by packet: what its own lookups give over every
+    /// state, part and facing. The packets left out are the original's zoomed-out views.
+    /// </summary>
+    std::map<uint32_t, std::shared_ptr<MCShape>> DrawnShapes(const std::shared_ptr<MCAppearanceType>& type)
+    {
+        std::map<uint32_t, std::shared_ptr<MCShape>> shapes;
+        float frameRate = 0.0f;
+
+        switch (static_cast<MCAppearanceClass>(type->AppearanceNum >> AppearanceClassShift))
+        {
+            case MCAppearanceClass::Vfx:
+            {
+                auto& vfx = static_cast<MCVfxAppearanceType&>(*type);
+
+                for (size_t state = 0; state < vfx.States.size(); ++state)
+                {
+                    // No sub-state, then each one.
+                    for (size_t sub = 0; sub <= vfx.SubStates.size(); ++sub)
+                    {
+                        for (int32_t rotation = FirstRotation; rotation < LastRotation; ++rotation)
+                        {
+                            bool reverse = false;
+                            vfx.GetShape(static_cast<MCActorState>(state),
+                                         sub == 0 ? NoSubState : static_cast<uint8_t>(sub - 1), rotation, frameRate,
+                                         reverse);
+                        }
+                    }
+                }
+
+                KeepLoaded(vfx.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::GroundVehicle:
+            {
+                auto& vehicle = static_cast<MCGVAppearanceType&>(*type);
+
+                for (int32_t state = 0; state < GVActorStateCount; ++state)
+                {
+                    for (int32_t part = 0; part < static_cast<int32_t>(vehicle.NumParts); ++part)
+                    {
+                        for (int32_t rotation = FirstRotation; rotation < LastRotation; ++rotation)
+                        {
+                            vehicle.GetShape(static_cast<MCGVActorState>(state), rotation, part, frameRate);
+                        }
+                    }
+                }
+
+                KeepLoaded(vehicle.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::Building:
+            {
+                auto& building = static_cast<MCVfxBuildingAppearanceType&>(*type);
+
+                for (uint32_t frame = 0; frame < building.ShapeList.size(); ++frame)
+                {
+                    building.GetShape(frame);
+                    building.GetTileShape(frame);
+                }
+
+                KeepLoaded(building.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::ElementalTree:
+            {
+                auto& elemental = static_cast<MCElementalTree&>(*type);
+
+                for (int32_t gesture = 0; gesture < static_cast<int32_t>(elemental.Gestures.size()); ++gesture)
+                {
+                    for (float facing = FirstFacing; facing < LastFacing; facing += FacingStep)
+                    {
+                        elemental.GetGesture(gesture, facing);
+                    }
+                }
+
+                KeepLoaded(elemental.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::PopUp:
+            {
+                auto& popUp = static_cast<MCPUAppearanceType&>(*type);
+
+                for (int32_t state = 0; state < PUActorStateCount; ++state)
+                {
+                    for (int32_t rotation = FirstRotation; rotation < LastRotation; ++rotation)
+                    {
+                        popUp.GetShape(static_cast<MCPUActorState>(state), rotation, 0, frameRate);
+                    }
+                }
+
+                KeepLoaded(popUp.ShapeList, shapes);
+                break;
+            }
+            default:
+                break;
+        }
+
+        return shapes;
+    }
+
+    /// <summary>An appearance's sequences (one a packet it draws, its frames decoded), and what was left out.</summary>
+    struct ObjectSequences
+    {
+        std::vector<Sequence> Sequences;
+        /// <summary>The frames drawn translucent (the HD art pack draws only opaque ones) and those that can't be read.</summary>
+        size_t Translucent = 0;
+        size_t Unreadable = 0;
+        /// <summary>The original pixels of the frames kept (their bounds).</summary>
+        size_t Pixels = 0;
+        /// <summary>Whether the type's frames are deltas drawn over its first (a VFX type's FIT "delta").</summary>
+        bool Delta = false;
+    };
+
+    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type)
+    {
+        const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
+        REQUIRE(sprites != nullptr);
+        const uint32_t appearance = type->AppearanceNum & AppearancePacketMask;
+        const std::string shapeFile = sprites->ShapeFileName(appearance);
+        ObjectSequences made;
+
+        if (static_cast<MCAppearanceClass>(type->AppearanceNum >> AppearanceClassShift) == MCAppearanceClass::Vfx)
+        {
+            made.Delta = static_cast<const MCVfxAppearanceType&>(*type).Delta;
+        }
+
+        for (const auto& [packet, shape] : DrawnShapes(type))
+        {
+            if (!VfxIsShapeTable(shape->FrameList()))
+            {
+                continue;
+            }
+
+            Sequence& sequence = made.Sequences.emplace_back();
+            sequence.Folder = MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, appearance, packet});
+            const std::span<const uint8_t> table = shape->FrameList();
+            sequence.Table = std::hash<std::string_view>{}(
+                std::string_view(reinterpret_cast<const char*>(table.data()), table.size()));
+
+            for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()); ++frame)
+            {
+                auto decoded = Decode(shape->FrameList(), frame);
+
+                // Left out of the pack (drawn from the original).
+                if (!decoded || decoded->Translucent)
+                {
+                    if (decoded)
+                    {
+                        ++made.Translucent;
+                    }
+                    else
+                    {
+                        ++made.Unreadable;
+                    }
+
+                    sequence.Frames.emplace_back();
+                    continue;
+                }
+
+                made.Pixels += static_cast<size_t>(decoded->Width) * static_cast<size_t>(decoded->Height);
+                sequence.Frames.push_back(std::move(*decoded));
+            }
+        }
+
+        return made;
+    }
+
+    /// <summary>The items of a comma-separated option (none when it isn't given).</summary>
+    std::set<std::string> ListOption(std::string_view name)
+    {
+        std::set<std::string> items;
+
+        for (const auto part : std::views::split(MCTest::Option(name).value_or(""), ','))
+        {
+            if (!part.empty())
+            {
+                items.emplace(part.begin(), part.end());
+            }
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// The appearances <c>--kind &lt;name,...&gt;</c> and <c>--appearance &lt;packet,...&gt;</c> pick (every one when
+    /// neither is given), each loaded.
+    /// </summary>
+    std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> PickedObjectAppearances()
+    {
+        const std::set<std::string> kinds = ListOption("kind");
+        std::set<uint32_t> packets;
+
+        for (const std::string& packet : ListOption("appearance"))
+        {
+            uint32_t number = 0;
+            const auto [end, error] = std::from_chars(packet.data(), packet.data() + packet.size(), number);
+            MCTest::Scope scope(std::format("--appearance {}", packet));
+            REQUIRE((error == std::errc() && end == packet.data() + packet.size()));
+            packets.insert(number);
+        }
+
+        std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> picked;
+
+        for (const auto& [id, appearance] : FindObjectAppearances().Kept)
+        {
+            if ((!kinds.empty() && !kinds.contains(std::string(KindInfo(appearance.Kind).Name))) ||
+                (!packets.empty() && !packets.contains(id & AppearancePacketMask)))
+            {
+                continue;
+            }
+
+            if (std::shared_ptr<MCAppearanceType> type = AppearanceTypeList().GetAppearance(id); type != nullptr)
+            {
+                picked.emplace_back(appearance, std::move(type));
+            }
+        }
+
+        return picked;
+    }
+
+    /// <summary>The frames of <paramref name="sequence"/> with pixels (those a pack holds).</summary>
+    size_t DrawnFrames(const Sequence& sequence)
+    {
+        return static_cast<size_t>(
+            std::ranges::count_if(sequence.Frames, [](const DecodedFrame& frame) { return frame.Width > 0; }));
+    }
+
+    /// <summary>What --hd-objects counts per kind, and how much of it repeats another sequence (made once).</summary>
+    struct KindTotals
+    {
+        size_t Appearances = 0;
+        size_t Sequences = 0;
+        size_t Frames = 0;
+        size_t Pixels = 0;
+        size_t RepeatedSequences = 0;
+        size_t RepeatedPixels = 0;
+    };
+
+    /// <summary>
+    /// The sequences seen so far by shape table and by how the generator makes them (animated or still, delta or not),
+    /// so that one repeating an earlier one is made once and copied.
+    /// </summary>
+    class MCRepeats
+    {
+    public:
+        /// <summary>The folder of the first sequence <paramref name="sequence"/> repeats; none (noted) for a first.</summary>
+        std::optional<std::filesystem::path> Of(const Sequence& sequence, const ObjectKindInfo& kind, bool delta)
+        {
+            const auto [found, fresh] =
+                _First.try_emplace(std::tuple{sequence.Table, kind.Animated, delta}, sequence.Folder);
+            return fresh ? std::nullopt : std::optional(found->second);
+        }
+
+    private:
+        std::map<std::tuple<size_t, bool, bool>, std::filesystem::path> _First;
+    };
+}
+
+/// <summary>
+/// Tool: <c>--hd-objects 1</c> lists the appearances the HD art pack holds besides the mechs, for
+/// --hd-extract-objects: a line "object &lt;kind&gt; &lt;type id&gt; &lt;folder&gt; &lt;sequences&gt; &lt;frames&gt;
+/// &lt;pixels&gt; &lt;delta&gt; &lt;object types&gt;" each (the kinds: vehicle, elemental and turret animated; building,
+/// tree and object still), then each kind's totals, the sequences that repeat another's shape table (made once), and
+/// the effects' appearances left out. <c>--kind</c> and <c>--appearance</c> pick as --hd-extract-objects does.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and objects")
+{
+    if (!MCTest::Option("hd-objects").has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<KindTotals, ObjectKinds.size()> totals{};
+    MCRepeats repeats;
+
+    for (const auto& [appearance, type] : PickedObjectAppearances())
+    {
+        const ObjectSequences made = ObjectSequencesOf(type);
+        KindTotals& total = totals[static_cast<size_t>(appearance.Kind)];
+        size_t frames = 0;
+
+        for (const Sequence& sequence : made.Sequences)
+        {
+            frames += DrawnFrames(sequence);
+
+            if (repeats.Of(sequence, KindInfo(appearance.Kind), made.Delta).has_value())
+            {
+                ++total.RepeatedSequences;
+
+                for (const DecodedFrame& frame : sequence.Frames)
+                {
+                    total.RepeatedPixels += static_cast<size_t>(frame.Width) * static_cast<size_t>(frame.Height);
+                }
+            }
+        }
+
+        std::string types;
+
+        for (const std::string& name : appearance.Types)
+        {
+            types += " " + name;
+        }
+
+        const std::filesystem::path folder =
+            made.Sequences.empty() ? std::filesystem::path("-") : made.Sequences.front().Folder.parent_path();
+        std::cout << std::format("object {} {:#010x} {} {} {} {} {}{}\n", KindInfo(appearance.Kind).Name, appearance.Id,
+                                 folder.generic_string(), made.Sequences.size(), frames, made.Pixels,
+                                 made.Delta ? "delta" : "-", types);
+
+        if (made.Translucent + made.Unreadable > 0)
+        {
+            std::cout << std::format("  ({} translucent frames and {} that can't be read left out)\n", made.Translucent,
+                                     made.Unreadable);
+        }
+
+        ++total.Appearances;
+        total.Sequences += made.Sequences.size();
+        total.Frames += frames;
+        total.Pixels += made.Pixels;
+    }
+
+    for (size_t kind = 0; kind < ObjectKinds.size(); ++kind)
+    {
+        const KindTotals& total = totals[kind];
+        std::cout << std::format("  {}: {} appearances, {} sequences, {} frames, {} original pixels; {} sequences ({} "
+                                 "pixels) repeat another's\n",
+                                 ObjectKinds[kind].Name, total.Appearances, total.Sequences, total.Frames, total.Pixels,
+                                 total.RepeatedSequences, total.RepeatedPixels);
+    }
+
+    std::cout << std::format("  effects (left out): {} appearances\n", FindObjectAppearances().Effects.size());
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-objects &lt;folder&gt;</c> writes the vehicles', Elementals', turrets', buildings', trees' and
+/// terrain objects' frames (<c>--kind</c> and <c>--appearance</c> pick, as --hd-objects lists them) as an HD art pack
+/// at their own size, for tools/upscale/make_object_pack.py: every packet each appearance draws, each frame a PNG with
+/// its index picture (sprite/MCHdArt.h; translucent frames left out, as the pack draws only opaque ones), plus
+/// <c>objects.json</c> (each appearance's kind, whether it is animated or still, and its sequences' frames' bounds, as
+/// --hd-extract's) and the shown colours as palette.rgb. A sequence whose shape table an earlier one has (made the same
+/// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals' and objects' frames")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-objects");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack(*out);
+    std::filesystem::create_directories(pack);
+    WritePaletteRgb(pack, colors);
+    std::string json = "{\"appearances\": [";
+    size_t appearances = 0;
+    size_t frames = 0;
+    MCRepeats repeats;
+
+    for (const auto& [appearance, type] : PickedObjectAppearances())
+    {
+        const ObjectSequences made = ObjectSequencesOf(type);
+
+        if (made.Sequences.empty())
+        {
+            continue;
+        }
+
+        std::vector<std::optional<std::filesystem::path>> repeating;
+        std::vector<Sequence> written;
+
+        for (const Sequence& sequence : made.Sequences)
+        {
+            repeating.push_back(repeats.Of(sequence, KindInfo(appearance.Kind), made.Delta));
+
+            if (!repeating.back().has_value())
+            {
+                written.push_back(sequence);
+                frames += DrawnFrames(sequence);
+            }
+        }
+
+        WritePack(pack, written, colors, 1, [](SDL_Color color) { return color; });
+        std::string types;
+
+        for (const std::string& name : appearance.Types)
+        {
+            types += std::format("{}\"{}\"", types.empty() ? "" : ", ", name);
+        }
+
+        json +=
+            std::format("{}\n {{\"id\": {}, \"kind\": \"{}\", \"animated\": {}, \"delta\": {}, \"types\": [{}], "
+                        "\"sequences\": [",
+                        appearances++ == 0 ? "" : ",", appearance.Id, KindInfo(appearance.Kind).Name,
+                        KindInfo(appearance.Kind).Animated ? "true" : "false", made.Delta ? "true" : "false", types);
+
+        for (size_t i = 0; i < made.Sequences.size(); ++i)
+        {
+            const Sequence& sequence = made.Sequences[i];
+            const std::string sameAs = repeating[i].has_value()
+                                           ? std::format(", \"same_as\": \"{}\"", repeating[i]->generic_string())
+                                           : std::string();
+            json += std::format("{}\n  {{\"folder\": \"{}\"{}, \"frames\": [{}]}}", i == 0 ? "" : ",",
+                                sequence.Folder.generic_string(), sameAs, FramesJson(sequence));
+        }
+
+        json += "]}";
+    }
+
+    json += "\n]}\n";
+    std::ofstream(pack / "objects.json") << json;
+    std::cout << std::format("  {} appearances, {} frames (besides the repeated sequences') into {}\n", appearances,
+                             frames, pack.string());
+    CHECK(appearances > 0);
+}
+
+namespace
+{
     /// <summary>Mission 1 drawn by <paramref name="drawing"/>, its world view shown larger than the screen, the
     /// player's mech a Mad Cat standing in the middle, and a pack of its standing gesture: the original's pixels
     /// doubled, their colours inverted.</summary>
@@ -807,6 +1408,38 @@ namespace
         std::filesystem::path Pack;
     };
 
+    /// <summary>The tests' packs: the original's pixels at twice their size, their colours inverted.</summary>
+    constexpr int32_t TestPackScale = 2;
+
+    SDL_Color Inverted(SDL_Color color)
+    {
+        return SDL_Color{static_cast<uint8_t>(255 - color.r), static_cast<uint8_t>(255 - color.g),
+                         static_cast<uint8_t>(255 - color.b), 255};
+    }
+
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/>, its world view shown larger than the screen; null (noted) when the
+    /// GPU can't draw it so.
+    /// </summary>
+    std::shared_ptr<MCVulkanRenderer> StartScaledUp(MCGpuDrawing drawing)
+    {
+        MCRenderer::RequestGpuDrawing(drawing);
+        REQUIRE(MCTestGame::StartMission(1));
+        auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+        if (renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
+        {
+            std::cout << "  (skipped: no GPU renderer on this machine)\n";
+            return nullptr;
+        }
+
+        constexpr int32_t WindowWidth = 1600;
+        constexpr int32_t WindowHeight = 1200;
+        constexpr int UiLines = 480;
+        ScaleUp(WindowWidth, WindowHeight, UiLines);
+        return renderer;
+    }
+
     std::optional<HdScene> SetUpHdScene(MCGpuDrawing drawing)
     {
         if (!MCTestGame::Available())
@@ -814,22 +1447,14 @@ namespace
             return std::nullopt;
         }
 
-        MCRenderer::RequestGpuDrawing(drawing);
-        REQUIRE(MCTestGame::StartMission(1));
         HdScene scene;
-        scene.Renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+        scene.Renderer = StartScaledUp(drawing);
 
-        if (scene.Renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
+        if (scene.Renderer == nullptr)
         {
-            std::cout << "  (skipped: no GPU renderer on this machine)\n";
             return std::nullopt;
         }
 
-        constexpr int32_t WindowWidth = 1600;
-        constexpr int32_t WindowHeight = 1200;
-        constexpr int UiLines = 480;
-        constexpr int32_t Scale = 2;
-        ScaleUp(WindowWidth, WindowHeight, UiLines);
         scene.Player = GivePlayerMech("madcat");
         MCTestGame::FaceMech(*scene.Player.Mech, 0.0f);
         MCTestGame::RunFrame(FrameSeconds);
@@ -841,12 +1466,7 @@ namespace
         scene.Pack = scene.Scratch / "pack";
         const std::vector<Sequence> standing = MechSequences(scene.Player.Tree, StandGesture);
         REQUIRE(!standing.empty());
-        WritePack(scene.Pack, standing, colors, Scale,
-                  [](SDL_Color color)
-                  {
-                      return SDL_Color{static_cast<uint8_t>(255 - color.r), static_cast<uint8_t>(255 - color.g),
-                                       static_cast<uint8_t>(255 - color.b), 255};
-                  });
+        WritePack(scene.Pack, standing, colors, TestPackScale, Inverted);
         return scene;
     }
 
@@ -994,6 +1614,245 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
     std::filesystem::remove_all(scene->Scratch);
 }
 
+namespace
+{
+    /// <summary>The object classes the object tests draw from a pack: a ground vehicle and a building.</summary>
+    constexpr std::array<MCObjectClass, 2> HdObjectClasses = {MCObjectClass::GroundVehicle, MCObjectClass::Building};
+
+    /// <summary>
+    /// The object of <paramref name="objectClass"/> nearest the player's mech in mission 1: from the movers' part table
+    /// and from the object lists.
+    /// </summary>
+    std::shared_ptr<MCGameObject> NearestObject(MCObjectClass objectClass)
+    {
+        const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
+        REQUIRE(player != nullptr);
+        const MCVector3D from = player->GetPosition();
+        std::shared_ptr<MCGameObject> nearest;
+        float nearestDistance = std::numeric_limits<float>::max();
+
+        const auto consider = [&](const std::shared_ptr<MCBaseObject>& object)
+        {
+            if (object == nullptr || object->ObjectClass != objectClass || object->GetAppearance() == nullptr)
+            {
+                return;
+            }
+
+            const auto game = std::static_pointer_cast<MCGameObject>(object);
+            const MCVector3D at = game->GetPosition();
+            const float distance = std::hypot(at.X - from.X, at.Y - from.Y);
+
+            if (distance < nearestDistance)
+            {
+                nearest = game;
+                nearestDistance = distance;
+            }
+        };
+
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; partId++)
+        {
+            consider(GetMoverFromPartId(partId));
+        }
+
+        for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+        {
+            for (const std::shared_ptr<MCBaseObject> object : *list)
+            {
+                consider(object);
+            }
+        }
+
+        return nearest;
+    }
+
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/>, its world view shown larger than the screen, the camera on the
+    /// object of <paramref name="objectClass"/> nearest the player's mech, and a pack of every packet its appearance
+    /// draws (the tests' pack: the original's pixels doubled, their colours inverted).
+    /// </summary>
+    struct HdObjectScene
+    {
+        std::shared_ptr<MCVulkanRenderer> Renderer;
+        std::shared_ptr<MCGameObject> Object;
+        std::filesystem::path Scratch;
+        std::filesystem::path Pack;
+    };
+
+    std::optional<HdObjectScene> SetUpHdObjectScene(MCGpuDrawing drawing, MCObjectClass objectClass)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // The whole map shown (the cheat), so no fog hides the object.
+        RevealAll();
+        scene.Object = NearestObject(objectClass);
+        REQUIRE(scene.Object != nullptr);
+        Eye()->ChangeTarget(scene.Object, true);
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+
+        const std::shared_ptr<MCAppearanceType> type = scene.Object->GetAppearance()->GetAppearanceType();
+        REQUIRE(type != nullptr);
+        const ObjectSequences made = ObjectSequencesOf(type);
+        REQUIRE(!made.Sequences.empty());
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_objects";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        WritePack(scene.Pack, made.Sequences, colors, TestPackScale, Inverted);
+        std::cout << std::format("  object class {:#x}, appearance {:#010x}: {} packets in the pack\n",
+                                 static_cast<int32_t>(objectClass), type->AppearanceNum, made.Sequences.size());
+        return scene;
+    }
+}
+
+/// <summary>
+/// With HD art on and a pack holding a vehicle's (then a building's) frames, the GPU shows the object from the pack in
+/// a world view shown larger than the screen: the shown colours change around it, in the middle of the view, and the
+/// frames before HD art went on were alike (so the change is only how the object is drawn).
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in a vehicle's and a building's place")
+{
+    for (const MCObjectClass objectClass : HdObjectClasses)
+    {
+        const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::On, objectClass);
+
+        if (!scene.has_value())
+        {
+            return;
+        }
+
+        MCTest::Scope scope(std::format("object class {:#x}", static_cast<int32_t>(objectClass)));
+        const Shown original = ReadShown(scene->Scratch);
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(Compare(original, ReadShown(scene->Scratch)).Count, 0);
+
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
+        const int64_t drawnBefore = scene->Renderer->HdDrawn();
+        MCTestGame::RunFrame(FrameSeconds);
+        const Shown hd = ReadShown(scene->Scratch);
+        hdArt.reset();
+
+        CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+        const Changed changed = Compare(original, hd);
+        std::cout << std::format("  {} shown pixels changed of {}x{}, about ({}, {})\n", changed.Count, hd.Width,
+                                 hd.Height, changed.X, changed.Y);
+        REQUIRE(changed.Count > 0);
+        CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
+        CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
+        std::filesystem::remove_all(scene->Scratch);
+    }
+}
+
+/// <summary>
+/// HD art changes only the colours shown: in mirror mode, with a vehicle (then a building) drawn from the pack, the
+/// GPU's palette indices are still the software renderer's, frame after frame.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art keeps a vehicle's and a building's palette indices")
+{
+    constexpr int32_t Frames = 10;
+
+    for (const MCObjectClass objectClass : HdObjectClasses)
+    {
+        const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::Mirror, objectClass);
+
+        if (!scene.has_value())
+        {
+            return;
+        }
+
+        MCTest::Scope scope(std::format("object class {:#x}", static_cast<int32_t>(objectClass)));
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
+        scene->Renderer->ResetMirror();
+        const int64_t drawnBefore = scene->Renderer->HdDrawn();
+
+        for (int32_t frame = 0; frame < Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        hdArt.reset();
+        const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+        CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+        CHECK_EQ(tally.Frames, Frames);
+        CHECK_EQ(tally.DifferentFrames, 0);
+
+        if (tally.DifferentFrames != 0)
+        {
+            std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+        }
+
+        std::filesystem::remove_all(scene->Scratch);
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// The picture tools' start: mission 1 drawn by the GPU in a window of <c>--window &lt;w&gt;x&lt;h&gt;</c> (default
+    /// 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and HD art on with the pack at
+    /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
+    /// unless <c>--hd-original 1</c>.
+    /// </summary>
+    /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
+    bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
+    {
+        // The folder is made absolute before the game starts: the game works in the install's folder.
+        const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(pack));
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartMission(1));
+        REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+
+        int32_t width = 3024;
+        int32_t height = 1890;
+        constexpr int UiLines = 720;
+
+        if (const std::optional<std::string_view> window = MCTest::Option("window"); window.has_value())
+        {
+            const size_t x = window->find('x');
+            REQUIRE(x != std::string_view::npos);
+            std::from_chars(window->data(), window->data() + x, width);
+            std::from_chars(window->data() + x + 1, window->data() + window->size(), height);
+        }
+
+        ScaleUp(width, height, UiLines);
+        const bool original = MCTest::Option("hd-original").has_value();
+
+        if (!original)
+        {
+            hdArt.emplace(packFolder);
+            MCTerrainReadHdTiles();
+        }
+
+        return original;
+    }
+
+    /// <summary>
+    /// Saves the shown frame as <paramref name="folder"/>/&lt;name&gt;_hd.png (or _original.png), and prints how many HD
+    /// frames have been read so far.
+    /// </summary>
+    void Shoot(const std::filesystem::path& folder, std::string_view name, bool original)
+    {
+        const std::filesystem::path path = folder / std::format("{}_{}.png", name, original ? "original" : "hd");
+        REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+        const size_t read = MCHdArt::FramesRead();
+        const auto readTime = std::chrono::duration<double, std::milli>(MCHdArt::ReadTime()).count();
+        std::cout << std::format("  {}: {} HD frames read so far ({:.2f} ms each), {} MB kept\n", name, read,
+                                 read > 0 ? readTime / static_cast<double>(read) : 0.0, MCHdArt::CachedBytes() >> 20);
+    }
+}
+
 /// <summary>
 /// Tool: <c>--hd-pack &lt;folder&gt; --shots &lt;folder&gt;</c> pictures a pack's mech: mission 1's mech given the tree
 /// <c>--mech &lt;name&gt;</c> (default "madcat"), standing at several facings, walking, and zoomed in, shown with HD art
@@ -1011,48 +1870,12 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         return;
     }
 
-    // The folder is made absolute before the game starts: the game works in the install's folder.
-    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartMission(1));
-    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
-
-    int32_t width = 3024;
-    int32_t height = 1890;
-    constexpr int UiLines = 720;
-
-    if (const std::optional<std::string_view> window = MCTest::Option("window"); window.has_value())
-    {
-        const size_t x = window->find('x');
-        REQUIRE(x != std::string_view::npos);
-        std::from_chars(window->data(), window->data() + x, width);
-        std::from_chars(window->data() + x + 1, window->data() + window->size(), height);
-    }
-
-    ScaleUp(width, height, UiLines);
-    const bool original = MCTest::Option("hd-original").has_value();
     std::optional<MCHdArtOn> hdArt;
-
-    if (!original)
-    {
-        // The pack's ground read up front, as a mission's load reads it.
-        hdArt.emplace(packFolder);
-        MCTerrainReadHdTiles();
-    }
-
+    const bool original = StartPictures(*pack, hdArt);
     const PlayerMech player = GivePlayerMech(MCTest::Option("mech").value_or("madcat"));
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
-
-    const auto shoot = [&](const std::string& name)
-    {
-        const std::filesystem::path path = folder / std::format("{}_{}.png", name, original ? "original" : "hd");
-        REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
-        const size_t read = MCHdArt::FramesRead();
-        const auto readTime = std::chrono::duration<double, std::milli>(MCHdArt::ReadTime()).count();
-        std::cout << std::format("  {}: {} HD frames read so far ({:.2f} ms each), {} MB kept\n", name, read,
-                                 read > 0 ? readTime / static_cast<double>(read) : 0.0, MCHdArt::CachedBytes() >> 20);
-    };
+    const auto shoot = [&](const std::string& name) { Shoot(folder, name, original); };
 
     for (const float facing : {0.0f, 45.0f, 90.0f, 135.0f, 180.0f, -45.0f, -90.0f, -135.0f})
     {
@@ -1100,6 +1923,61 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         player.Actor->FadeTableIndex = scheme;
         MCTestGame::RunFrame(FrameSeconds);
         shoot(std::format("paint_{}", scheme));
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-pack-objects &lt;folder&gt; --shots &lt;folder&gt;</c> pictures a pack's vehicles, buildings and trees:
+/// in mission 1 (the map revealed), the camera on the vehicle, the building and the tree nearest the player's mech in
+/// turn, each at the usual zoom and zoomed in, shown with HD art (<c>&lt;name&gt;_hd.png</c>), or with
+/// <c>--hd-original 1</c> without it (<c>&lt;name&gt;_original.png</c>). <c>--window</c> as --hd-pack's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-pack-objects pictures a pack's vehicle, building and tree beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-pack-objects");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    constexpr int32_t SettleFrames = 3;
+    constexpr float ZoomedLines = 300.0f;
+    const std::array<std::pair<MCObjectClass, std::string_view>, 3> subjects = {
+        {{MCObjectClass::GroundVehicle, "vehicle"},
+         {MCObjectClass::Building, "building"},
+         {MCObjectClass::Tree, "tree"}}};
+
+    for (const auto& [objectClass, name] : subjects)
+    {
+        const std::shared_ptr<MCGameObject> object = NearestObject(objectClass);
+
+        if (object == nullptr)
+        {
+            continue;
+        }
+
+        Eye()->ChangeTarget(object, true);
+
+        for (const float zoom : {0.0f, ZoomedLines})
+        {
+            MCFixedZoomHeight = zoom;
+
+            for (int32_t frame = 0; frame < SettleFrames; ++frame)
+            {
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+
+            Shoot(folder, zoom > 0.0f ? std::format("{}_zoomed", name) : std::string(name), original);
+        }
+
+        MCFixedZoomHeight = 0.0f;
     }
 }
 

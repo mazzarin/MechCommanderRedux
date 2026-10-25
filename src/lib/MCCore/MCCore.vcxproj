@@ -405,6 +405,7 @@
     <ClCompile Include="sprite\MCElementalTree.cpp" />
     <ClCompile Include="sprite\MCGVAppearance.cpp" />
     <ClCompile Include="sprite\MCGVAppearanceType.cpp" />
+    <ClCompile Include="sprite\MCHdArt.cpp" />
     <ClCompile Include="sprite\MCMechActor.cpp" />
     <ClCompile Include="sprite\MCPUAppearance.cpp" />
     <ClCompile Include="sprite\MCPUAppearanceType.cpp" />
@@ -793,6 +794,7 @@
     <ClInclude Include="sprite\MCElementalTree.h" />
     <ClInclude Include="sprite\MCGVAppearance.h" />
     <ClInclude Include="sprite\MCGVAppearanceType.h" />
+    <ClInclude Include="sprite\MCHdArt.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />

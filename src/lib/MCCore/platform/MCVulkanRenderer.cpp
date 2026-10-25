@@ -4,6 +4,7 @@
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
 #include "lib/MCFatal.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxClip.h"
 
 namespace
@@ -25,6 +26,9 @@ namespace
     constexpr uint32_t KindTexture = 2;
     constexpr uint32_t KindGouraud = 3;
     constexpr uint32_t KindTexelWalk = 4;
+    constexpr uint32_t KindHd = 5;
+    /// <summary>The kind's bits of a draw's op.</summary>
+    constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
     constexpr uint32_t FillSkipped = 1u << 5;
     constexpr uint32_t SkipRunKey = 1u << 6;
@@ -36,6 +40,8 @@ namespace
     constexpr uint32_t TableAfter = 1u << 13;
     /// <summary>The alpha colour is the draw's op.w, not the pixel's value.</summary>
     constexpr uint32_t GivenAlpha = 1u << 14;
+    /// <summary>The draw writes the indices alone (the index-only pipeline); the shader doesn't read it.</summary>
+    constexpr uint32_t IndexOnly = 1u << 15;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -45,6 +51,12 @@ namespace
     constexpr uint64_t PictureFrames = 300;
     /// <summary>The bytes the pictures may take before the oldest go.</summary>
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
+    /// <summary>The same for the HD art frames on the GPU.</summary>
+    constexpr size_t HdPictureBudget = 512 * 1024 * 1024;
+    /// <summary>An HD art frame's bytes a pixel (RGBA8), and its picture's width per colour column (colours, then
+    /// indices).</summary>
+    constexpr uint32_t HdBytesPerPixel = 4;
+    constexpr uint32_t HdColumnsPerPixel = 2;
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The width of the strip of written pixels.</summary>
@@ -455,11 +467,17 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     // A surface's two targets: its colours and its indices. Opaque draws write both; blended draws blend their
     // premultiplied colour over the colours (ONE, ONE_MINUS_SRC_ALPHA) and leave the indices.
-    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend)
+    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false)
     {
         SDL_GPUColorTargetDescription targets[2]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
         targets[1].format = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
+
+        if (indexOnly)
+        {
+            targets[0].blend_state.enable_color_write_mask = true;
+            targets[0].blend_state.color_write_mask = 0;
+        }
 
         if (blend)
         {
@@ -489,9 +507,11 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     renderer->_Opaque = makePipeline(*renderer->_VertexShader, false);
     renderer->_Blend = makePipeline(*renderer->_VertexShader, true);
+    renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
     renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
 
-    if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_TerrainPipeline == nullptr)
+    if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
+        renderer->_TerrainPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -554,6 +574,11 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
+    for (auto& [key, picture] : _HdPictures)
+    {
+        Release(picture.Texture);
+    }
+
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
     {
         OnTextureReleased(*texture);
@@ -581,6 +606,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     ReleaseTerrainMesh();
     _Opaque.reset();
     _Blend.reset();
+    _IndexOnly.reset();
     _TerrainPipeline.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
@@ -670,39 +696,8 @@ void MCVulkanRenderer::BeginRecording()
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
     // each frame, such as the shape transforms' work buffer, make a new one every frame).
-    const auto drop = [this](auto it)
-    {
-        _PictureBytes -= static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height;
-        Release(it->second.Texture);
-        return _Pictures.erase(it);
-    };
-
-    for (auto it = _Pictures.begin(); it != _Pictures.end();)
-    {
-        it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
-    }
-
-    if (_PictureBytes > PictureBudget)
-    {
-        std::vector<std::pair<uint64_t, uint64_t>> byAge;
-
-        for (const auto& [key, picture] : _Pictures)
-        {
-            byAge.emplace_back(picture.LastFrame, key);
-        }
-
-        std::ranges::sort(byAge);
-
-        for (const auto& [lastFrame, key] : byAge)
-        {
-            if (_PictureBytes <= PictureBudget / 2)
-            {
-                break;
-            }
-
-            drop(_Pictures.find(key));
-        }
-    }
+    TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
+    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdBytesPerPixel);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -719,6 +714,44 @@ void MCVulkanRenderer::BeginRecording()
 
     _FreeRows.insert(_FreeRows.end(), _ReleasedRows.begin(), _ReleasedRows.end());
     _ReleasedRows.clear();
+}
+
+void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
+                                    size_t bytesPerPixel)
+{
+    const auto drop = [&](auto it)
+    {
+        bytes -= static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
+        Release(it->second.Texture);
+        return pictures.erase(it);
+    };
+
+    for (auto it = pictures.begin(); it != pictures.end();)
+    {
+        it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
+    }
+
+    if (bytes > budget)
+    {
+        std::vector<std::pair<uint64_t, uint64_t>> byAge;
+
+        for (const auto& [key, picture] : pictures)
+        {
+            byAge.emplace_back(picture.LastFrame, key);
+        }
+
+        std::ranges::sort(byAge);
+
+        for (const auto& [lastFrame, key] : byAge)
+        {
+            if (bytes <= budget / 2)
+            {
+                break;
+            }
+
+            drop(pictures.find(key));
+        }
+    }
 }
 
 uint16_t MCVulkanRenderer::SurfaceFor(const MCWindow& window)
@@ -791,12 +824,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
 
     const MCRect written{draw[0], draw[1], draw[2], draw[3]};
     const bool blend = (op & (AlphaBlend | TableAfter)) != 0;
+    const bool indexOnly = (op & IndexOnly) != 0;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
     const auto continues = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
-               last.SourceIndex == sourceIndex && last.Blend == blend &&
+               last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
                (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
                last.First + last.Count == _Draws.size();
     };
@@ -810,14 +844,16 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Source = source;
         fresh.SourceIndex = sourceIndex;
         fresh.Blend = blend;
+        fresh.IndexOnly = indexOnly;
         fresh.First = static_cast<uint32_t>(_Draws.size());
         _Records.push_back(fresh);
     }
 
     Record& record = _Records.back();
 
-    // Mirror mode leaves the blended pixels out of its comparison.
-    if (blend)
+    // Mirror mode leaves the blended pixels out of its comparison (an HD art frame's leave the indices under them
+    // the original's).
+    if (blend && (op & KindMask) != KindHd)
     {
         surface.Blended.push_back(written);
     }
@@ -1616,8 +1652,8 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
     Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
 }
 
-void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
-                                   std::string_view command, const std::function<std::optional<uint32_t>()>& picture)
+auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
+                                 std::string_view command) -> std::optional<std::pair<Quad, Quad>>
 {
     // Where the blit's first pixel lies in the picture, and its steps: the bytes CopySprite reads, as coordinates
     // (each run stays within a row of the picture).
@@ -1634,13 +1670,28 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
 
     if (rows <= 0 || columns <= 0)
     {
-        return;
+        return std::nullopt;
     }
 
     // CopySprite's clipping keeps every pixel read inside the picture (the mirrored half size reads the odd rows).
     if (std::min(x0, lastX) < 0 || std::max(x0, lastX) >= width || y0 < 0 || lastY >= height)
     {
         NotSupported(command);
+        return std::nullopt;
+    }
+
+    const Quad at = {blit.Left, blit.Top, blit.Left + columns - 1, blit.Top + rows - 1};
+    const Quad from = {x0, y0, stepX, stepY};
+    return std::pair{at, from};
+}
+
+void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
+                                   std::string_view command, const std::function<std::optional<uint32_t>()>& picture)
+{
+    const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
+
+    if (!place)
+    {
         return;
     }
 
@@ -1652,9 +1703,8 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     }
 
     const uint16_t surface = SurfaceFor(target);
-    const Quad at = {blit.Left, blit.Top, blit.Left + columns - 1, blit.Top + rows - 1};
-    const Quad from = {x0, y0, stepX, stepY};
-    Add(surface, SourceKind::Picture, *index, at, from, KindTexture | OpaqueSource | AlphaBlend, 0, 0, 0);
+    Add(surface, SourceKind::Picture, *index, place->first, place->second, KindTexture | OpaqueSource | AlphaBlend, 0,
+        0, 0);
 }
 
 void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command)
@@ -1684,6 +1734,25 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
     const int32_t height = command.Height;
+
+    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either).
+    if (const std::shared_ptr<const MCHdArt::Frame> hd =
+            MCHdArt::Find(command.ShapeTable.data(), command.ShapeNum, width, height);
+        hd != nullptr)
+    {
+        const std::optional<std::pair<Quad, Quad>> place =
+            BlitPlace(command.Blit, width, height, "ShapeBlit reading outside the shape's picture");
+
+        if (!place)
+        {
+            return;
+        }
+
+        if (AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table))
+        {
+            return;
+        }
+    }
 
     BlitPicture(target, command.Blit, width, height, "ShapeBlit reading outside the shape's picture",
                 [&]() -> std::optional<uint32_t>
@@ -1729,6 +1798,72 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
                                          [&](std::span<uint8_t> out)
                                          { FillShape(data, height, width, command.Table, out); });
                 });
+}
+
+std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
+{
+    BeginRecording();
+    auto found = _HdPictures.find(frame.Id);
+
+    if (found == _HdPictures.end())
+    {
+        const auto width = static_cast<uint32_t>(frame.Width) * HdColumnsPerPixel;
+        const auto height = static_cast<uint32_t>(frame.Height);
+        const size_t size = static_cast<size_t>(width) * height * HdBytesPerPixel;
+
+        if (frame.Pixels.size() != size)
+        {
+            NotSupported("an HD art frame whose pixels don't match its size");
+            return std::nullopt;
+        }
+
+        Picture picture;
+
+        if (auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
+            !made)
+        {
+            SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
+            return std::nullopt;
+        }
+
+        std::ranges::copy(frame.Pixels,
+                          QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdBytesPerPixel).begin());
+        found = _HdPictures.emplace(frame.Id, picture).first;
+        _HdPictureBytes += size;
+        ++_FrameUploads.Pictures;
+        _FrameUploads.PictureBytes += static_cast<int64_t>(size);
+    }
+
+    return UsePicture(found->second);
+}
+
+bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
+                             const std::optional<MCColorTable>& table)
+{
+    const std::optional<uint32_t> picture = HdPictureOf(frame);
+
+    if (!picture)
+    {
+        return false;
+    }
+
+    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd).
+    uint32_t op = KindHd | AlphaBlend;
+    uint32_t before = 0;
+
+    if (table.has_value())
+    {
+        op |= TableBefore;
+        before = TableRow(*table);
+    }
+
+    if (Add(surface, SourceKind::Picture, *picture, at, from, op, static_cast<uint32_t>(frame.Scale), before, 0))
+    {
+        ++_HdDrawn;
+    }
+
+    return true;
 }
 
 void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels)
@@ -1805,6 +1940,27 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     uint32_t op = KindTexture;
     uint32_t before = 0;
     uint32_t after = 0;
+
+    // Port-only: an opaque shape the HD art pack has a frame of keeps the original's indices and is shown from the
+    // pack (its bounds: the header's).
+    if (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat)
+    {
+        const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
+
+        if (const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::Find(command.ShapeTable.data(), command.ShapeNum, boundsWidth, headerRows);
+            hd != nullptr)
+        {
+            // The frame covers the bounds, which may be wider than the shape's widest row.
+            const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};
+            const Quad shapeFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
+
+            if (AddHd(surface, *hd, hdAt, shapeFrom, command.Table))
+            {
+                op |= IndexOnly;
+            }
+        }
+    }
 
     switch (command.Op)
     {
@@ -3036,7 +3192,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
                 next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
-                next.ReadsCopy || record.ReadsCopy || next.First != previous.First + previous.Count)
+                next.IndexOnly != record.IndexOnly || next.ReadsCopy || record.ReadsCopy ||
+                next.First != previous.First + previous.Count)
             {
                 break;
             }
@@ -3089,7 +3246,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {_PaletteTexture.Handle.get(), _Nearest.get()},
         };
 
-        SDL_BindGPUGraphicsPipeline(pass, record.Blend ? _Blend.get() : _Opaque.get());
+        SDL_BindGPUGraphicsPipeline(pass, record.IndexOnly ? _IndexOnly.get()
+                                          : record.Blend   ? _Blend.get()
+                                                           : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
         const BatchUniforms batch{{static_cast<float>(surface.RecordedWidth),
                                    static_cast<float>(surface.RecordedHeight), static_cast<float>(surface.Target.Width),

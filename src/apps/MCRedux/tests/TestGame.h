@@ -4,6 +4,9 @@
 /// The retail install the <c>game:</c> tests read: the runner's <c>--game &lt;folder&gt;</c>, else the current folder.
 /// Without one those tests note that they were skipped and pass.
 /// </summary>
+class MCBattleMech;
+class MCSpriteTree;
+
 namespace MCTestGame
 {
     /// <summary>Whether --game (or the current folder) is an install; sets it as the game root the first time.</summary>
@@ -58,4 +61,10 @@ namespace MCTestGame
     /// <c>== &lt;test&gt;</c> line, then <c>&lt;frame&gt; 0x&lt;hash&gt;</c> per frame).
     /// </remarks>
     uint32_t StateHash();
+
+    /// <summary>The mech tree named <paramref name="name"/> (its FIT's Main Info "Name") in the game's sprite PAK.</summary>
+    std::shared_ptr<MCSpriteTree> FindMechTree(std::string_view name);
+
+    /// <summary>Turns <paramref name="mech"/> to face <paramref name="degrees"/> (about the world's up axis).</summary>
+    void FaceMech(MCBattleMech& mech, float degrees);
 }

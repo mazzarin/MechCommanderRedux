@@ -585,49 +585,6 @@ TEST_CASE("sprites: the shadow facing is one of 32, wrapped and clamped")
 
 namespace
 {
-    /// <summary>The mech tree named <paramref name="name"/> (its FIT's Main Info "Name") in the game's sprite PAK.</summary>
-    std::shared_ptr<MCSpriteTree> FindMechTree(std::string_view name)
-    {
-        MCPacketFile pak;
-
-        if (pak.Open(GamePath(SpritePath, "sprites", ".pak")) != 0)
-        {
-            return nullptr;
-        }
-
-        for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
-        {
-            MCFitIniFile fit;
-
-            if (pak.SeekPacket(packet) != 0 || pak.GetPacketSize() == 0 ||
-                fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) != 0 || fit.SeekBlock("Parts") != 0 ||
-                fit.SeekBlock("Main Info") != 0)
-            {
-                continue;
-            }
-
-            const MCFitResult<std::string> treeName = fit.Read<std::string>("Name");
-
-            if (treeName.has_value() && *treeName == name)
-            {
-                return std::static_pointer_cast<MCSpriteTree>(
-                    AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
-            }
-        }
-
-        return nullptr;
-    }
-
-    /// <summary>Turns <paramref name="mech"/> to face <paramref name="degrees"/> (about the world's up axis).</summary>
-    void FaceMech(MCBattleMech& mech, float degrees)
-    {
-        const double radians = static_cast<double>(degrees) * std::numbers::pi / 180.0;
-        const auto c = static_cast<float>(std::cos(radians));
-        const auto s = static_cast<float>(std::sin(radians));
-        MCFrameOfRef frame(MCVector3D(c, s, 0.0f), MCVector3D(-s, c, 0.0f), UnitZ);
-        mech.SetFrame(frame);
-    }
-
     /// <summary>What one mech part drew: its shape (numbered in the order first seen), frame and mirroring.</summary>
     struct DrawnPart
     {
@@ -719,7 +676,7 @@ TEST_CASE_ISOLATED("game: a mech draws both arms at every facing, standing and w
     REQUIRE(actor != nullptr);
 
     const std::string treeName(MCTest::Option("mech").value_or("madcat"));
-    const std::shared_ptr<MCSpriteTree> tree = FindMechTree(treeName);
+    const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(treeName);
     REQUIRE(tree != nullptr);
     tree->PreloadGestures();
     REQUIRE_EQ(actor->Init(tree, mech), 0);
@@ -775,7 +732,7 @@ TEST_CASE_ISOLATED("game: a mech draws both arms at every facing, standing and w
 
         for (int32_t frame = 0; frame < 2; ++frame)
         {
-            FaceMech(*mech, facing);
+            MCTestGame::FaceMech(*mech, facing);
             step("standing", facing, std::nullopt);
         }
     }

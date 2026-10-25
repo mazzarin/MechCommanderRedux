@@ -105,6 +105,9 @@
     <ClCompile Include="tests\GuiTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\HdArtTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\IniFileTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

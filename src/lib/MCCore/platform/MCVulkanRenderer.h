@@ -4,6 +4,11 @@
 #include "platform/MCSdlHandle.h"
 #include "platform/MCSoftwareRenderer.h"
 
+namespace MCHdArt
+{
+    struct Frame;
+}
+
 /// <summary>
 /// The hardware renderer: draws the frame surfaces (the screen and the world view's surface, see
 /// <see cref="MCRenderer::AddFrameSurface"/>) on the GPU, through SDL GPU on Vulkan, on the presenter's device.
@@ -165,6 +170,9 @@ public:
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
+    /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
+    int64_t HdDrawn() const { return _HdDrawn; }
+
     /// <summary>The commands the GPU can't draw yet that were asked of it (each logged once).</summary>
     const std::map<std::string, int64_t>& Unsupported() const { return _Unsupported; }
 
@@ -247,6 +255,8 @@ private:
         uint32_t SourceIndex = 0;
         /// <summary>Whether the draws are blended into the colours (the blend pipeline), or opaque.</summary>
         bool Blend = false;
+        /// <summary>Whether the draws write the indices alone (an HD art frame draws the colours).</summary>
+        bool IndexOnly = false;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -325,6 +335,23 @@ private:
     /// </summary>
     void BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                      std::string_view command, const std::function<std::optional<uint32_t>()>& picture);
+    /// <summary>
+    /// Where a blit of a picture <paramref name="width"/> x <paramref name="height"/> goes (its rectangle) and reads
+    /// from (its first pixel and steps); none when it draws nothing, or reads outside the picture (then
+    /// <paramref name="command"/> is noted as not supported).
+    /// </summary>
+    std::optional<std::pair<Quad, Quad>> BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
+                                                   std::string_view command);
+    /// <summary>
+    /// Adds the draw of an HD art frame over <paramref name="at"/> (blended into the colours), reading the original
+    /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
+    /// recoloured by <paramref name="table"/> as the original's pixels would be. False when the frame can't be put on
+    /// the GPU.
+    /// </summary>
+    bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
+               const std::optional<MCColorTable>& table);
+    /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
+    std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -434,9 +461,13 @@ private:
     std::shared_ptr<SDL_GPUDevice> _Device;
     MCGpuHandle<SDL_GPUShader> _VertexShader;
     MCGpuHandle<SDL_GPUShader> _FragmentShader;
-    /// <summary>Opaque draws (colours and indices written), and blended ones (alpha blended into the colours).</summary>
+    /// <summary>
+    /// Opaque draws (colours and indices written), blended ones (alpha blended into the colours), and those that write
+    /// the indices alone.
+    /// </summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _Opaque;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _Blend;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexOnly;
     /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
@@ -550,6 +581,17 @@ private:
 
     std::unordered_map<uint64_t, Picture> _Pictures;
     size_t _PictureBytes = 0;
+    /// <summary>The HD art frames on the GPU (RGBA8), by their frame's number, and the bytes they take.</summary>
+    std::unordered_map<uint64_t, Picture> _HdPictures;
+    size_t _HdPictureBytes = 0;
+    int64_t _HdDrawn = 0;
+
+    /// <summary>
+    /// Drops the pictures of <paramref name="pictures"/> unused for a while, then, oldest first, those past
+    /// <paramref name="budget"/> bytes (down to half of it); <paramref name="bytes"/> counts what they take.
+    /// </summary>
+    void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
+                      size_t bytesPerPixel);
 
     /// <summary>Marks <paramref name="picture"/> used this frame; returns its frame picture index.</summary>
     uint32_t UsePicture(Picture& picture);

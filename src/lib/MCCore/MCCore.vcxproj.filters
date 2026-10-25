@@ -1138,6 +1138,9 @@
     <ClCompile Include="sprite\MCGVAppearanceType.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCHdArt.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCMechActor.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2290,6 +2293,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCGVAppearanceType.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCHdArt.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechActor.h">

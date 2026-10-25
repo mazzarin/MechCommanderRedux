@@ -55,26 +55,47 @@ namespace
         std::vector<uint8_t> Drawn;
     };
 
-    /// <summary>Frame <paramref name="frame"/> of <paramref name="table"/> (VFX's run-length format, see
-    /// platform/MCSoftwareRendererShapes.cpp).</summary>
-    DecodedFrame Decode(std::span<const uint8_t> table, int32_t frame)
+    /// <summary>The widest and tallest shape <see cref="Decode"/> takes (the mech parts are under 100 pixels).</summary>
+    constexpr int64_t MaxShapeSide = 1024;
+
+    /// <summary>
+    /// Frame <paramref name="frame"/> of <paramref name="table"/> (VFX's run-length format, see
+    /// platform/MCSoftwareRendererShapes.cpp), or why it can't be read: some retail tables count frames they don't
+    /// hold, or end inside a row.
+    /// </summary>
+    std::expected<DecodedFrame, std::string> Decode(std::span<const uint8_t> table, int32_t frame)
     {
-        const std::span<const uint8_t> shape = MCVfxShape(table, frame);
+        DecodedFrame decoded;
+        const auto bad = [&](std::string_view why) { return std::unexpected(std::format("frame {}: {}", frame, why)); };
+
+        const size_t offset =
+            static_cast<size_t>(static_cast<uint32_t>(MCVfxRead32(table, 8 + static_cast<size_t>(frame) * 8)));
+
+        if (offset + sizeof(MCVfxShapeHeader) > table.size())
+        {
+            return bad(std::format("its offset {} lies past the table's {} bytes", offset, table.size()));
+        }
+
+        const std::span<const uint8_t> shape = table.subspan(offset);
         MCVfxShapeHeader header{};
         std::memcpy(&header, shape.data(), sizeof(header));
-        DecodedFrame decoded;
-        decoded.XMin = header.XMin;
-        decoded.YMin = header.YMin;
-        decoded.Width = header.XMax - header.XMin + 1;
-        decoded.Height = header.YMax - header.YMin + 1;
+        const int64_t width = static_cast<int64_t>(header.XMax) - header.XMin + 1;
+        const int64_t height = static_cast<int64_t>(header.YMax) - header.YMin + 1;
 
-        if (decoded.Width <= 0 || decoded.Height <= 0)
+        if (width <= 0 || height <= 0)
         {
-            decoded.Width = 0;
-            decoded.Height = 0;
             return decoded;
         }
 
+        if (width > MaxShapeSide || height > MaxShapeSide)
+        {
+            return bad(std::format("its bounds are {}x{}", width, height));
+        }
+
+        decoded.XMin = header.XMin;
+        decoded.YMin = header.YMin;
+        decoded.Width = static_cast<int32_t>(width);
+        decoded.Height = static_cast<int32_t>(height);
         const std::span<const uint8_t> bytes = shape.subspan(sizeof(header));
         decoded.Translucent = bytes.size() >= 2 && bytes[0] == 3 && bytes[1] == 0;
         decoded.Index.assign(static_cast<size_t>(decoded.Width) * decoded.Height, 0);
@@ -87,6 +108,11 @@ namespace
 
             for (;;)
             {
+                if (data >= bytes.size())
+                {
+                    return bad(std::format("row {} runs past the table", row));
+                }
+
                 const uint8_t token = bytes[data++];
                 const int32_t count = token >> 1;
 
@@ -97,8 +123,20 @@ namespace
                         break;
                     }
 
+                    if (data >= bytes.size())
+                    {
+                        return bad(std::format("row {} runs past the table", row));
+                    }
+
                     x += bytes[data++];
                     continue;
+                }
+
+                const size_t length = (token & 1) ? static_cast<size_t>(count) : 1;
+
+                if (data + length > bytes.size())
+                {
+                    return bad(std::format("row {} runs past the table", row));
                 }
 
                 for (int32_t i = 0; i < count; ++i)
@@ -111,7 +149,7 @@ namespace
                     }
                 }
 
-                data += (token & 1) ? count : 1;
+                data += length;
                 x += count;
             }
         }
@@ -155,6 +193,8 @@ namespace
         REQUIRE(sprites != nullptr);
         std::vector<Sequence> sequences;
         std::set<std::pair<int32_t, uint32_t>> seen;
+        int32_t skipped = 0;
+        std::string firstSkipped;
 
         for (int32_t gesture = 0; gesture < static_cast<int32_t>(tree->Gestures.size()); ++gesture)
         {
@@ -193,10 +233,30 @@ namespace
 
                     for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()); ++frame)
                     {
-                        sequence.Frames.push_back(Decode(shape->FrameList(), frame));
+                        auto decoded = Decode(shape->FrameList(), frame);
+
+                        if (!decoded)
+                        {
+                            // Left out of the pack (drawn from the original).
+                            if (skipped++ == 0)
+                            {
+                                firstSkipped = std::format("{}/{}/{} {}", sequence.Key.PartFile, sequence.Key.MechNum,
+                                                           sequence.Key.Packet, decoded.error());
+                            }
+
+                            sequence.Frames.emplace_back();
+                            continue;
+                        }
+
+                        sequence.Frames.push_back(std::move(*decoded));
                     }
                 }
             }
+        }
+
+        if (skipped > 0)
+        {
+            std::cout << std::format("  {} frames can't be read (the first: {})\n", skipped, firstSkipped);
         }
 
         return sequences;

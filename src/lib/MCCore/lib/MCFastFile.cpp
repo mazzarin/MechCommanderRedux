@@ -88,6 +88,14 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
+std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
+{
+    const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
+    stored.resize(_Handle->ReadAt(static_cast<uint32_t>(entry.Offset), stored));
+    return stored;
+}
+
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));

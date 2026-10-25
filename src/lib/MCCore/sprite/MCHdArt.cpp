@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCHdArt.h"
+#include "lib/MCFastFile.h"
+#include "lib/MCInflate.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
@@ -16,6 +18,24 @@ namespace
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view PaletteFile = "palette.rgb";
+    /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
+    constexpr std::string_view ArchiveExtension = ".hda";
+    constexpr char ArchiveSeparator = '\\';
+
+    /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
+    struct MCHdArchive
+    {
+        std::unique_ptr<MCFastFile> File;
+        std::unordered_set<std::string> Folders;
+    };
+
+    std::string Upper(std::string_view text)
+    {
+        std::string upper(text);
+        std::ranges::transform(upper, upper.begin(), [](char c) { return static_cast<char>(std::toupper(c)); });
+        return upper;
+    }
+
     /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName).</summary>
     constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
     constexpr uint64_t FnvPrime = 0x100000001b3ull;
@@ -79,6 +99,8 @@ namespace
         std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>> MadeWith;
         bool PaletteLooked = false;
         uint64_t Version = 1;
+        /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
+        std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<const uint8_t*> SmoothTables;
     };
@@ -219,9 +241,125 @@ namespace
         return bytes;
     }
 
+    /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
+    MCHdArchive* ArchiveFor(const std::filesystem::path& folder)
+    {
+        auto [found, fresh] = TheState().Archives.try_emplace(folder);
+
+        if (!fresh)
+        {
+            return found->second.get();
+        }
+
+        const std::filesystem::path path = std::filesystem::path(folder).concat(ArchiveExtension);
+        std::error_code error;
+
+        if (!std::filesystem::is_regular_file(path, error))
+        {
+            return nullptr;
+        }
+
+        auto file = MCFastFile::Create(path.string());
+
+        if (!file)
+        {
+            LogOnce(path, file.error());
+            return nullptr;
+        }
+
+        auto archive = std::make_shared<MCHdArchive>();
+        archive->File = std::move(*file);
+
+        for (const MCFileEntry& entry : archive->File->GetEntries())
+        {
+            const std::string_view name = entry.GetName();
+            archive->Folders.insert(Upper(name.substr(0, name.find(ArchiveSeparator))));
+        }
+
+        found->second = std::move(archive);
+        return found->second.get();
+    }
+
+    /// <summary>
+    /// The frame at <paramref name="key"/> from the nearest archive standing for one of its folders (up to the pack's):
+    /// its entry <c>&lt;the rest of the path&gt;.hdf</c>, inflated when packed; none when there is no such entry.
+    /// </summary>
+    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(const FrameKey& key, int32_t width,
+                                                                           int32_t height)
+    {
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+
+        for (std::filesystem::path folder = key.parent_path(); folder.has_relative_path() && folder != pack;
+             folder = folder.parent_path())
+        {
+            MCHdArchive* archive = ArchiveFor(folder);
+
+            if (archive == nullptr)
+            {
+                continue;
+            }
+
+            std::string name = key.lexically_relative(folder).generic_string();
+            std::ranges::replace(name, '/', ArchiveSeparator);
+            const std::optional<int32_t> index = archive->File->Find(name + std::string(HdfExtension));
+
+            if (!index.has_value())
+            {
+                return std::optional<MCHdArt::Frame>();
+            }
+
+            const MCFileEntry& entry = archive->File->GetEntries()[static_cast<size_t>(*index)];
+
+            if (entry.RealSize < 0 || static_cast<size_t>(entry.RealSize) > MaxHdfBytes)
+            {
+                return std::unexpected(std::format("{} is too large", name));
+            }
+
+            std::vector<uint8_t> stored = archive->File->ReadStored(*index);
+
+            if (entry.Size != entry.RealSize)
+            {
+                auto inflated = MCInflate::Inflate(stored, static_cast<size_t>(entry.RealSize));
+
+                if (!inflated)
+                {
+                    return std::unexpected(std::format("{} doesn't unpack: {}", name, inflated.error()));
+                }
+
+                stored = std::move(*inflated);
+            }
+
+            auto frame = MCHdArt::DecodeHdf(stored, width, height);
+
+            if (!frame)
+            {
+                return std::unexpected(frame.error());
+            }
+
+            return std::optional<MCHdArt::Frame>(std::move(*frame));
+        }
+
+        return std::optional<MCHdArt::Frame>();
+    }
+
+    /// <summary>Whether the pack has <paramref name="folder"/>'s frames: the folder, or an archive holding it.</summary>
+    bool HasFolder(const std::filesystem::path& folder)
+    {
+        std::error_code error;
+
+        if (std::filesystem::is_directory(folder, error))
+        {
+            return true;
+        }
+
+        const MCHdArchive* archive = ArchiveFor(folder.parent_path());
+        return archive != nullptr && archive->Folders.contains(Upper(folder.filename().string()));
+    }
+
     /// <summary>
     /// The frame at <paramref name="key"/> for a shape of <paramref name="width"/> x <paramref name="height"/>: its
-    /// <c>.hdf</c> file, else its PNG pair; none when the pack has no such frame, or what is wrong with the one it has.
+    /// <c>.hdf</c> file, else its PNG pair, else its entry in an archive; none when the pack has no such frame, or what
+    /// is wrong with the one it has.
     /// </summary>
     std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
                                                                                 int32_t height)
@@ -248,7 +386,21 @@ namespace
 
             if (!std::filesystem::is_regular_file(colorPath, error))
             {
-                return nullptr;
+                auto archived = ReadArchived(key, width, height);
+
+                if (!archived)
+                {
+                    return std::unexpected(std::format("frame {}: {}", frame, archived.error()));
+                }
+
+                if (!archived->has_value())
+                {
+                    return nullptr;
+                }
+
+                auto made = std::make_shared<MCHdArt::Frame>(std::move(**archived));
+                made->Id = ++TheState().LastId;
+                return made;
             }
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
@@ -486,6 +638,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
+    state.Archives.clear();
     ++state.Version;
 }
 
@@ -561,9 +714,8 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& 
 
     const std::filesystem::path folder =
         PackFolder() / MechFolder / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
-    std::error_code error;
 
-    if (!std::filesystem::is_directory(folder, error))
+    if (!HasFolder(folder))
     {
         return;
     }

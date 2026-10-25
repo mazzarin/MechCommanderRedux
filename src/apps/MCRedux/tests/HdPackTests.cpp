@@ -18,6 +18,12 @@ namespace
     constexpr std::string_view PngExtension = ".png";
     constexpr std::string_view IndexSuffix = "_idx";
     constexpr int32_t DefaultScale = 3;
+    /// <summary>
+    /// --hd-compress's entropy reduction unless --hd-rdo says. On the Mad Cat (16,032 frames, archived): none 45.3 dB and
+    /// 113 MB, 0.5 42.1 dB and 98 MB, 1 39.2 dB and 91 MB, 4 32.8 dB and 70 MB with blocks showing. 0.5 beats the
+    /// encoder before bc7enc_rdo (38.6 dB, 105 MB) both ways and keeps room for the closest zoom.
+    /// </summary>
+    constexpr float DefaultRdoLambda = 0.5f;
 
     /// <summary>The PSNR (dB) between two RGBA pictures of the same size (infinite for identical ones).</summary>
     double Psnr(std::span<const uint8_t> a, std::span<const uint8_t> b)
@@ -387,7 +393,7 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
 /// Tool: <c>--hd-compress &lt;folder&gt;</c> turns every PNG frame pair under a pack folder (<c>n.png</c> and
 /// <c>n_idx.png</c>, at <c>--hd-scale</c> times the original, 3 unless given) into a frame file <c>n.hdf</c>, using every
 /// core; the PNGs go unless <c>--hd-keep-png 1</c>. <c>--hd-effort</c> (0 to 4, 4 unless given) and <c>--hd-rdo</c> (the
-/// entropy reduction's lambda, 0 = none unless given) set bc7enc_rdo's work. It prints the frames, the bytes before and
+/// entropy reduction's lambda, DefaultRdoLambda unless given; 0 = none) set bc7enc_rdo's work. It prints the frames, the bytes before and
 /// after, and the colours' mean PSNR. A pair that can't be converted is reported and kept.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame files")
@@ -408,6 +414,7 @@ TEST_CASE_ISOLATED("tool: --hd-compress turns a pack's PNG frames into BC7 frame
 
     MCBc7::MCBc7Options options;
     options.Effort = MCBc7::MaxEffort;
+    options.RdoLambda = DefaultRdoLambda;
 
     if (const std::optional<std::string_view> given = MCTest::Option("hd-effort"); given.has_value())
     {

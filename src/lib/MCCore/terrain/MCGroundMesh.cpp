@@ -293,3 +293,8 @@ void MCTerrainForgetMesh()
 {
     GroundMesh.reset();
 }
+
+const MCTerrainMesh* MCTerrainMeshInUse()
+{
+    return GroundMesh != nullptr ? &GroundMesh->Mesh : nullptr;
+}

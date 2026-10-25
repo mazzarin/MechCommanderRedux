@@ -20,7 +20,7 @@ struct Image
 {
     // Where the tile lies in the terrain atlas (xy) and its bounding box's size (zw).
     int4 atlas;
-    // The tile's hot spot (xy: subtracted from the draw position).
+    // The tile's hot spot (xy: subtracted from the draw position); z: 1 when the HD atlas has its colours.
     int4 hot;
 };
 
@@ -40,7 +40,7 @@ cbuffer Terrain : register(b0, space1)
     int4 origin;
     // x, y: the step across and down a vertex; z, w: the map vertex of the mesh's first cell (row, col).
     int4 steps;
-    // x: the mesh's cells a row; y: unused; z, w: the fog's columns and rows.
+    // x: the mesh's cells a row; y: the HD atlas's scale (0: no HD atlas); z, w: the fog's columns and rows.
     int4 mesh;
     // The cells drawn: first row, first column, last row, last column (map vertices, inclusive).
     int4 grid;
@@ -73,6 +73,7 @@ static const float2 quad[6] = {
 static const uint KindTexture = 2;
 static const uint TableBefore = 1u << 7;
 static const uint UseColor = 1u << 10;
+static const uint HdColors = 1u << 16;
 
 // The screen point of map vertex (row, col) at elevation level e.
 int2 Point(int row, int col, uint e)
@@ -195,5 +196,13 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     output.op = uint4(flags, color, before, 0);
     output.span = int4(0, 0, 0, 0);
     output.walk = uint4(0, 0, 0, 0);
+
+    // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
+    if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)
+    {
+        output.op = uint4(flags | HdColors, color, before, (uint)mesh.y);
+        output.walk = uint4(image.atlas);
+    }
+
     return output;
 }

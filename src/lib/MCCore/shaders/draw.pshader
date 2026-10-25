@@ -21,7 +21,10 @@
 //
 // An HD art frame (port-only, sprite/MCHdArt.h) is drawn over the original shape's place: each drawn pixel takes the
 // frame's colour at its centre, filtered between the frame's pixels, so the shape shows at the output's resolution.
-// A paint scheme's table recolours the pixels whose original index it changes.
+// A paint scheme's table recolours the pixels whose original index it changes. A terrain tile with HD colours
+// (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's.
+// HD colours are corrected by their original index's colour now over the one the pack was made from (Corrected), so
+// another palette, the colour cycle and the brightness show through.
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
@@ -39,7 +42,7 @@ SamplerState alphaSampler : register(s2, space2);
 // The tables' fits, one texel a table row (row = the table's row): the premultiplied colour and coverage.
 Texture2D<float4> fitTex : register(t3, space2);
 SamplerState fitSampler : register(s3, space2);
-// The palette, 256 x 1, as shown (gamma applied).
+// The palette, 256 x 2: row 0 as shown (gamma applied), row 1 the colours the HD art pack was made from.
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
 // The HD colours (premultiplied): an HD art frame's (its scale times its indices' size; BC7 frames padded to whole
@@ -95,6 +98,11 @@ static const uint AlphaBlend = 1u << 12;
 static const uint TableAfter = 1u << 13;
 // The alpha colour is op.w, not the pixel's value.
 static const uint GivenAlpha = 1u << 14;
+// A terrain tile's colours from the HD art pack: op.w the scale, walk the tile's place in the atlas (x, y, w, h).
+// (Bit 15 is the renderer's IndexOnly.)
+static const uint HdColors = 1u << 16;
+// The most an HD colour channel is scaled by when today's colour differs from the pack's.
+static const float MaxCorrection = 4.0;
 
 // The alpha colours' kinds.
 static const uint AlphaNothing = 0;
@@ -167,6 +175,57 @@ float4 FetchSource(int2 texel)
     return Fetch(sourceTex, sourceSampler, DrawnPixel(texel, sourceScale));
 }
 
+// The colour the HD art pack's pictures were made from for an index.
+float3 MadeWith(uint index)
+{
+    return Fetch(paletteTex, paletteSampler, int2(index, 1)).rgb;
+}
+
+// An HD colour (premultiplied by a) made from original index `index`'s colour, as it shows now as index `shown` (the
+// same, or a table's): the same index takes each channel's change between the pack's colour and today's; another (a
+// paint scheme, the haze) takes its colour at the HD colour's brightness.
+float3 Corrected(float3 color, float a, uint index, uint shown)
+{
+    const float3 then = MadeWith(index);
+
+    if (shown == index)
+    {
+        return color * clamp(Shown(index) / max(then, 1.0 / 255.0), 0.0, MaxCorrection);
+    }
+
+    const float3 luma = float3(0.299, 0.587, 0.114);
+    const float brightness = dot(color, luma) / max(a * dot(then, luma), 1.0 / 255.0);
+    return saturate(Shown(shown) * brightness) * a;
+}
+
+// The HD terrain's colour at a texel, kept inside the tile's place (low, high).
+float3 HdAtlasTexel(int2 texel, int2 low, int2 high)
+{
+    return Fetch(hdTex, hdSampler, clamp(texel, low, high)).rgb;
+}
+
+// A terrain tile's pixel in HD colours: the tile's place is the source's, op.w the HD atlas's scale; the index is
+// `value` (original, through the haze's table), the HD colour the one made from `original`'s.
+Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
+{
+    const int hdScale = (int)input.op.w;
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 atlas = float2(input.source.xy) + (window - float2(input.rect.xy));
+    const int2 low = int2(input.walk.xy) * hdScale;
+    const int2 high = int2(input.walk.xy + input.walk.zw) * hdScale - 1;
+    const float2 at = atlas * (float)hdScale - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float3 top = lerp(HdAtlasTexel(base, low, high), HdAtlasTexel(base + int2(1, 0), low, high), f.x);
+    const float3 bottom =
+        lerp(HdAtlasTexel(base + int2(0, 1), low, high), HdAtlasTexel(base + int2(1, 1), low, high), f.x);
+
+    Output output;
+    output.color = float4(Corrected(lerp(top, bottom, f.y), 1.0, original, value), 1.0);
+    output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
+    return output;
+}
+
 // An HD art frame's colour at a texel, transparent outside its size.
 float4 HdTexel(int2 texel, int2 size)
 {
@@ -206,26 +265,16 @@ Output HdPixel(Input input, int2 target)
         discard;
     }
 
-    if ((input.op.x & TableBefore) != 0)
+    // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
+    // brightness.
+    const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+    const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+
+    if (Byte(entry.g) == 255u)
     {
-        // A paint scheme: where the table changes the original's index, the painted colour at the HD pixel's
-        // brightness relative to the original colour.
-        const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
-        const float4 entry = Fetch(sourceTex, sourceSampler, texel);
-
-        if (Byte(entry.g) == 255u)
-        {
-            const uint index = Byte(entry.r);
-            const uint painted = Table(input.op.z, index);
-
-            if (painted != index)
-            {
-                const float3 luma = float3(0.299, 0.587, 0.114);
-                const float brightness =
-                    dot(color.rgb / color.a, luma) / max(dot(Shown(index), luma), 1.0 / 255.0);
-                color.rgb = saturate(Shown(painted) * brightness) * color.a;
-            }
-        }
+        const uint index = Byte(entry.r);
+        const uint shown = (input.op.x & TableBefore) != 0 ? Table(input.op.z, index) : index;
+        color.rgb = Corrected(color.rgb, color.a, index, shown);
     }
 
     return Blended(color);
@@ -301,6 +350,8 @@ Output main(Input input)
         discard;
     }
 
+    const uint original = value;
+
     if (state == 2)
     {
         // A shape's skipped pixel: the fills write colour 0, the rest leave it.
@@ -335,6 +386,11 @@ Output main(Input input)
     if ((flags & SkipKeyAfterTable) != 0 && value == 255)
     {
         discard;
+    }
+
+    if ((flags & HdColors) != 0 && (flags & UseColor) == 0 && !(cycle.z != 0 && value == 255))
+    {
+        return HdTerrainPixel(input, target, original, value);
     }
 
     if ((flags & (AlphaBlend | TableAfter)) == 0)

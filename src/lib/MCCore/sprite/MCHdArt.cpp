@@ -12,6 +12,11 @@ namespace
     /// <summary>The pack's folder in the user folder, and its folder of mech part frames.</summary>
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
+    constexpr std::string_view TerrainFolder = "terrain";
+    constexpr std::string_view PaletteFile = "palette.rgb";
+    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName).</summary>
+    constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
+    constexpr uint64_t FnvPrime = 0x100000001b3ull;
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -50,7 +55,8 @@ namespace
         bool Looked = false;
     };
 
-    using FrameKey = std::pair<std::filesystem::path, int32_t>;
+    /// <summary>A frame's file in the pack, without its extension.</summary>
+    using FrameKey = std::filesystem::path;
 
     struct State
     {
@@ -67,6 +73,10 @@ namespace
         std::chrono::nanoseconds ReadTime{0};
         /// <summary>The folders whose problems were logged (once each).</summary>
         std::set<std::filesystem::path> Logged;
+        /// <summary>The pack's palette.rgb, once read (Looked), and the pack's version.</summary>
+        std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>> MadeWith;
+        bool PaletteLooked = false;
+        uint64_t Version = 1;
     };
 
     State& TheState()
@@ -206,18 +216,17 @@ namespace
     }
 
     /// <summary>
-    /// Frame <paramref name="frame"/> of <paramref name="folder"/> for a shape of <paramref name="width"/> x
-    /// <paramref name="height"/>: its <c>.hdf</c> file, else its PNG pair; none when the pack has no such frame, or what
-    /// is wrong with the one it has.
+    /// The frame at <paramref name="key"/> for a shape of <paramref name="width"/> x <paramref name="height"/>: its
+    /// <c>.hdf</c> file, else its PNG pair; none when the pack has no such frame, or what is wrong with the one it has.
     /// </summary>
-    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const std::filesystem::path& folder,
-                                                                                int32_t frame, int32_t width,
+    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
                                                                                 int32_t height)
     {
         std::error_code error;
         std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
+        const std::string frame = key.filename().string();
 
-        if (const std::filesystem::path hdfPath = folder / std::format("{}{}", frame, HdfExtension);
+        if (const std::filesystem::path hdfPath = std::filesystem::path(key).concat(HdfExtension);
             std::filesystem::is_regular_file(hdfPath, error))
         {
             auto bytes = ReadFile(hdfPath, MaxHdfBytes);
@@ -231,7 +240,7 @@ namespace
         }
         else
         {
-            const std::filesystem::path colorPath = folder / std::format("{}.png", frame);
+            const std::filesystem::path colorPath = std::filesystem::path(key).concat(".png");
 
             if (!std::filesystem::is_regular_file(colorPath, error))
             {
@@ -239,7 +248,8 @@ namespace
             }
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
-            const std::filesystem::path indexPath = folder / std::format("{}{}.png", frame, IndexSuffix);
+            const std::filesystem::path indexPath =
+                std::filesystem::path(key).concat(std::format("{}.png", IndexSuffix));
             const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
 
             if (!declared.has_value() || PngSize(indexPath) != declared)
@@ -363,6 +373,41 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
     return made;
 }
 
+namespace
+{
+    /// <summary>The frame at <paramref name="key"/>, from the cache or read the first time it is asked for.</summary>
+    std::shared_ptr<const MCHdArt::Frame> Cache(const FrameKey& key, int32_t width, int32_t height)
+    {
+        State& state = TheState();
+        Cached& cached = state.Frames[key];
+        cached.LastUse = ++state.Uses;
+
+        if (!cached.Looked)
+        {
+            cached.Looked = true;
+            const auto started = std::chrono::steady_clock::now();
+            auto read = ReadFrame(key, width, height);
+            state.ReadTime += std::chrono::steady_clock::now() - started;
+
+            if (!read)
+            {
+                LogOnce(key.parent_path(), read.error());
+            }
+            else if (*read != nullptr)
+            {
+                cached.Frame = std::move(*read);
+                state.Bytes += cached.Frame->Bytes();
+                ++state.Read;
+                std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
+                Trim(key);
+                return kept;
+            }
+        }
+
+        return cached.Frame;
+    }
+}
+
 std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame)
 {
     const std::vector<uint8_t> blocks =
@@ -435,6 +480,44 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Frames.clear();
     state.Bytes = 0;
     state.Logged.clear();
+    state.MadeWith.reset();
+    state.PaletteLooked = false;
+    ++state.Version;
+}
+
+const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& MCHdArt::MadeWith()
+{
+    State& state = TheState();
+
+    if (!state.PaletteLooked)
+    {
+        state.PaletteLooked = true;
+        const std::filesystem::path path = PackFolder() / PaletteFile;
+        std::error_code error;
+
+        if (std::filesystem::is_regular_file(path, error))
+        {
+            std::array<uint8_t, PaletteBytes> colors{};
+            std::ifstream in(path, std::ios::binary);
+
+            if (in.read(reinterpret_cast<char*>(colors.data()), static_cast<std::streamsize>(colors.size())) &&
+                in.peek() == std::char_traits<char>::eof())
+            {
+                state.MadeWith = colors;
+            }
+            else
+            {
+                LogOnce(path, std::format("{} isn't {} bytes of colours", PaletteFile, PaletteBytes));
+            }
+        }
+    }
+
+    return state.MadeWith;
+}
+
+uint64_t MCHdArt::PackVersion()
+{
+    return TheState().Version;
 }
 
 bool MCHdArt::Active()
@@ -506,33 +589,30 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    const FrameKey key{found->second.Folder, frame};
-    Cached& cached = state.Frames[key];
-    cached.LastUse = ++state.Uses;
+    return Cache(found->second.Folder / std::to_string(frame), width, height);
+}
 
-    if (!cached.Looked)
+std::string MCHdArt::TerrainTileName(std::span<const uint8_t> tile)
+{
+    uint64_t hash = FnvOffset;
+
+    for (const uint8_t byte : tile)
     {
-        cached.Looked = true;
-        const auto started = std::chrono::steady_clock::now();
-        auto read = ReadFrame(key.first, frame, width, height);
-        state.ReadTime += std::chrono::steady_clock::now() - started;
-
-        if (!read)
-        {
-            LogOnce(key.first, read.error());
-        }
-        else if (*read != nullptr)
-        {
-            cached.Frame = std::move(*read);
-            state.Bytes += cached.Frame->Bytes();
-            ++state.Read;
-            std::shared_ptr<const Frame> kept = cached.Frame;
-            Trim(key);
-            return kept;
-        }
+        hash = (hash ^ byte) * FnvPrime;
     }
 
-    return cached.Frame;
+    return std::format("{:016x}", hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const uint8_t> tile, int32_t width,
+                                                               int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(PackFolder() / TerrainFolder / TerrainTileName(tile), width, height);
 }
 
 size_t MCHdArt::FramesRead()

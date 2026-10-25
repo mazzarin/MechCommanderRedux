@@ -62,6 +62,13 @@ namespace
     /// HD art frame's, or the terrain's; the palette where a draw has none).
     /// </summary>
     constexpr uint32_t DrawSamplers = 6;
+    /// <summary>
+    /// The palette texture's rows: the colours shown, then the ones the HD art pack was made from (the shown ones when
+    /// there is none), which draw.pshader corrects HD colours by.
+    /// </summary>
+    constexpr uint32_t PaletteRows = 2;
+    /// <summary>The HD terrain atlas's widest and tallest (what the GPUs the port runs on sample).</summary>
+    constexpr uint32_t MaxHdAtlasSide = 16384;
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The width of the strip of written pixels.</summary>
@@ -541,7 +548,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                       renderer->EnsureTexture(renderer->_AlphaTexture, SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
                                               SDL_GPU_TEXTUREUSAGE_SAMPLER, AlphaColorCount, 2),
                       renderer->EnsureTexture(renderer->_PaletteTexture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, 1)})
+                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, 256, PaletteRows)})
     {
         if (!made)
         {
@@ -2545,7 +2552,7 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const uint16_t surface = SurfaceFor(target);
     const uint16_t fog = SurfaceFor(frame.Fog->get());
 
-    if (_TerrainMesh.Version != mesh.Version)
+    if (_TerrainMesh.Version != mesh.Version || _TerrainMesh.HdPack != HdPackInUse())
     {
         if (auto uploaded = UploadTerrainMesh(mesh); !uploaded)
         {
@@ -2616,6 +2623,7 @@ std::span<uint8_t> MCVulkanRenderer::QueueBufferUpload(std::shared_ptr<SDL_GPUBu
 void MCVulkanRenderer::ReleaseTerrainMesh()
 {
     Release(_TerrainMesh.Atlas);
+    Release(_TerrainMesh.HdAtlas);
     _TerrainMesh = TerrainMeshState{};
 }
 
@@ -2624,6 +2632,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     BeginRecording();
     ReleaseTerrainMesh();
     _TerrainMesh.Version = mesh.Version;
+    _TerrainMesh.HdPack = HdPackInUse();
     _TerrainMesh.FirstRow = mesh.FirstRow;
     _TerrainMesh.FirstCol = mesh.FirstCol;
     _TerrainMesh.Cols = mesh.Cols;
@@ -2643,6 +2652,32 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     int32_t shelfY = 0;
     int32_t shelfHeight = 0;
 
+    // Port-only: the HD art pack's colours for the tiles (all at one scale). Then the places lie on whole BC7 blocks
+    // (4 x 4, so a place's HD copy, at the scale, starts on a block and has room for its padded blocks).
+    std::vector<std::shared_ptr<const MCHdArt::Frame>> hdTiles(mesh.Tiles.size());
+    int32_t hdScale = 0;
+
+    if (_TerrainMesh.HdPack != 0)
+    {
+        for (size_t i = 0; i < mesh.Tiles.size(); ++i)
+        {
+            const std::span<const uint8_t> tile = mesh.Tiles[i];
+
+            if (const int32_t width = TileWidth(tile); width != 0)
+            {
+                if (auto frame = MCHdArt::FindTerrainTile(tile, width, tile[2]);
+                    frame != nullptr && (hdScale == 0 || frame->Scale == hdScale))
+                {
+                    hdScale = frame->Scale;
+                    hdTiles[i] = std::move(frame);
+                }
+            }
+        }
+    }
+
+    const int32_t align = hdScale != 0 ? MCBc7::BlockSide : 1;
+    const auto aligned = [align](int32_t value) { return (value + align - 1) / align * align; };
+
     for (size_t i = 0; i < mesh.Tiles.size(); ++i)
     {
         const std::span<const uint8_t> tile = mesh.Tiles[i];
@@ -2655,7 +2690,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
             continue;
         }
 
-        if (shelfX + place.Width > TerrainAtlasWidth)
+        if (shelfX + aligned(place.Width) > TerrainAtlasWidth)
         {
             shelfY += shelfHeight;
             shelfX = 0;
@@ -2664,8 +2699,8 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
         place.X = shelfX;
         place.Y = shelfY;
-        shelfX += place.Width;
-        shelfHeight = std::max(shelfHeight, place.Height);
+        shelfX += aligned(place.Width);
+        shelfHeight = std::max(shelfHeight, aligned(place.Height));
     }
 
     const auto atlasHeight =
@@ -2707,9 +2742,37 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         return std::unexpected(SdlError("SDL_CreateGPUBuffer(terrain)"));
     }
 
+    if (hdScale != 0)
+    {
+        if (auto made = MakeHdTerrainAtlas(static_cast<uint32_t>(TerrainAtlasWidth * hdScale),
+                                           static_cast<uint32_t>((shelfY + shelfHeight) * hdScale));
+            !made)
+        {
+            SDL_Log("MCVulkanRenderer: the HD terrain is off for this map: %s", made.error().c_str());
+            hdScale = 0;
+            std::ranges::fill(hdTiles, nullptr);
+        }
+    }
+
+    _TerrainMesh.HdScale = hdScale;
+
+    if (hdScale != 0)
+    {
+        SDL_Log("MCVulkanRenderer: HD terrain: %zu of %zu tiles, a %ux%u BC7 atlas (%.0f MB)",
+                static_cast<size_t>(std::ranges::count_if(hdTiles, [](const auto& tile) { return tile != nullptr; })),
+                mesh.Tiles.size(), _TerrainMesh.HdAtlas.Width, _TerrainMesh.HdAtlas.Height,
+                static_cast<double>(_TerrainMesh.HdAtlas.Width) * _TerrainMesh.HdAtlas.Height / (1024.0 * 1024.0));
+    }
+
     for (size_t i = 0; i < places.size(); ++i)
     {
         const Place& place = places[i];
+
+        if (place.Width != 0 && hdTiles[i] != nullptr)
+        {
+            UploadHdTile(*hdTiles[i], static_cast<uint32_t>(place.X * hdScale),
+                         static_cast<uint32_t>(place.Y * hdScale));
+        }
 
         if (place.Width != 0)
         {
@@ -2735,6 +2798,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         image[3] = places[i].Height;
         image[4] = tile[0];
         image[5] = tile[1];
+        image[6] = hdTiles[i] != nullptr ? 1 : 0;
     }
 
     const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));
@@ -2747,6 +2811,58 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
     _TerrainMesh.Usable = true;
     return {};
+}
+
+uint64_t MCVulkanRenderer::HdPackInUse()
+{
+    return MCHdArt::Active() ? MCHdArt::PackVersion() : 0;
+}
+
+std::expected<void, std::string> MCVulkanRenderer::MakeHdTerrainAtlas(uint32_t width, uint32_t height)
+{
+    if (width > MaxHdAtlasSide || height > MaxHdAtlasSide)
+    {
+        return std::unexpected(std::format("its tiles need a {}x{} HD atlas", width, height));
+    }
+
+    if (!_Bc7.has_value())
+    {
+        _Bc7 = SDL_GPUTextureSupportsFormat(_Device.get(), SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                            SDL_GPU_TEXTUREUSAGE_SAMPLER);
+    }
+
+    // An RGBA8 atlas would take four times the memory: without BC7, the ground stays the original's.
+    if (!*_Bc7)
+    {
+        return std::unexpected(std::string("the GPU doesn't sample BC7"));
+    }
+
+    return EnsureTexture(_TerrainMesh.HdAtlas, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                         width, height);
+}
+
+void MCVulkanRenderer::UploadHdTile(const MCHdArt::Frame& frame, uint32_t x, uint32_t y)
+{
+    const auto width = static_cast<uint32_t>(MCBc7::Padded(frame.Width));
+    const auto height = static_cast<uint32_t>(MCBc7::Padded(frame.Height));
+    std::vector<uint8_t> encoded;
+    std::span<const uint8_t> blocks = frame.Colors;
+
+    if (frame.Format != MCHdArt::ColorFormat::Bc7)
+    {
+        encoded = MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+        blocks = encoded;
+    }
+
+    if (blocks.size() != static_cast<size_t>(width) * height * HdBc7Bytes)
+    {
+        NotSupported("an HD terrain tile whose blocks don't match its size");
+        return;
+    }
+
+    std::ranges::copy(blocks, QueueUpload(_TerrainMesh.HdAtlas.Handle, x, y, width, height, HdBc7Bytes).begin());
+    ++_FrameUploads.AtlasImages;
+    _FrameUploads.AtlasBytes += static_cast<int64_t>(blocks.size());
 }
 
 void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
@@ -2774,6 +2890,7 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Steps[2] = _TerrainMesh.FirstRow;
     uniforms.Steps[3] = _TerrainMesh.FirstCol;
     uniforms.Mesh[0] = _TerrainMesh.Cols;
+    uniforms.Mesh[1] = _TerrainMesh.HdAtlas.Handle != nullptr ? _TerrainMesh.HdScale : 0;
     uniforms.Mesh[2] = static_cast<int32_t>(fog.RecordedWidth);
     uniforms.Mesh[3] = static_cast<int32_t>(fog.RecordedHeight);
     uniforms.Grid[0] = frame.FirstRow;
@@ -2943,16 +3060,36 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         UploadAlphaColors();
     }
 
+    // The HD art pack's colours go in the palette's second row; they change with the pack in use.
+    if (const uint64_t pack = MCHdArt::Active() ? MCHdArt::PackVersion() : 0; pack != _HdPaletteVersion)
+    {
+        _HdPaletteVersion = pack;
+        _ColorsChanged = true;
+    }
+
     if (_ColorsChanged)
     {
-        const std::span<uint8_t> palette = QueueUpload(_PaletteTexture.Handle, 0, 0, 256, 1, 4);
+        const std::span<uint8_t> palette = QueueUpload(_PaletteTexture.Handle, 0, 0, 256, PaletteRows, 4);
+        const auto& madeWith = _HdPaletteVersion != 0 ? MCHdArt::MadeWith() : std::nullopt;
 
         for (size_t i = 0; i < 256; ++i)
         {
-            palette[i * 4] = _Colors[i].r;
-            palette[i * 4 + 1] = _Colors[i].g;
-            palette[i * 4 + 2] = _Colors[i].b;
-            palette[i * 4 + 3] = 255;
+            const std::span<uint8_t> shown = palette.subspan(i * 4, 4);
+            const std::span<uint8_t> then = palette.subspan((256 + i) * 4, 4);
+            shown[0] = _Colors[i].r;
+            shown[1] = _Colors[i].g;
+            shown[2] = _Colors[i].b;
+            shown[3] = 255;
+
+            if (madeWith.has_value())
+            {
+                std::copy_n(madeWith->begin() + static_cast<ptrdiff_t>(i * 3), 3, then.begin());
+                then[3] = 255;
+            }
+            else
+            {
+                std::ranges::copy(shown, then.begin());
+            }
         }
 
         _ColorsChanged = false;

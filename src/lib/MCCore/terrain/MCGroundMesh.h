@@ -1,6 +1,7 @@
 #pragma once
 
 class MCTerrainWindow;
+struct MCTerrainMesh;
 struct MCTerrainFrame;
 
 /// <summary>
@@ -16,3 +17,6 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
 
 /// <summary>Port: lets go of the ground mesh (the terrain is destroyed).</summary>
 void MCTerrainForgetMesh();
+
+/// <summary>Port: the ground mesh built last (its tiles, for tests and the HD art tools), or null.</summary>
+const MCTerrainMesh* MCTerrainMeshInUse();

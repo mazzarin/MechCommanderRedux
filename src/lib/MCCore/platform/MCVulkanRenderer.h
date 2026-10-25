@@ -174,6 +174,8 @@ public:
 
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
+    /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
+    bool HdTerrain() const { return _TerrainMesh.HdAtlas.Handle != nullptr; }
 
     /// <summary>The commands the GPU can't draw yet that were asked of it (each logged once).</summary>
     const std::map<std::string, int64_t>& Unsupported() const { return _Unsupported; }
@@ -290,6 +292,8 @@ private:
         /// <summary>The HD art pack's tiles, at HdScale times the atlas's places (none without HD terrain).</summary>
         Texture HdAtlas;
         int32_t HdScale = 0;
+        /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
+        uint64_t HdPack = 0;
         std::shared_ptr<SDL_GPUBuffer> Cells;
         std::shared_ptr<SDL_GPUBuffer> Images;
         int32_t FirstRow = 0;
@@ -451,6 +455,12 @@ private:
     std::expected<void, std::string> MakeSurfaceTextures(SDL_GPUCommandBuffer& commands, Surface& surface);
     /// <summary>Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images).</summary>
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
+    /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
+    static uint64_t HdPackInUse();
+    /// <summary>Makes the terrain's HD atlas (BC7), or says why there is none.</summary>
+    std::expected<void, std::string> MakeHdTerrainAtlas(uint32_t width, uint32_t height);
+    /// <summary>Puts an HD terrain tile's colours into the HD atlas at (x, y), a block corner.</summary>
+    void UploadHdTile(const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>
     void ReleaseTerrainMesh();
     /// <summary>Queues <paramref name="size"/> bytes for an upload into a buffer: where to write them.</summary>
@@ -615,6 +625,8 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<SDL_GPUTexture>> _FrameHdColors;
     /// <summary>Whether the GPU samples BC7 (unknown: not asked yet); else HD colours are decoded to RGBA8.</summary>
     std::optional<bool> _Bc7;
+    /// <summary>The HD art pack whose colours the palette's second row holds (MCHdArt::PackVersion; 0: none).</summary>
+    uint64_t _HdPaletteVersion = 0;
 
     /// <summary>
     /// What is kept for a texture (its <c>MCTexture::Hardware</c>): its GPU copy, and its place in

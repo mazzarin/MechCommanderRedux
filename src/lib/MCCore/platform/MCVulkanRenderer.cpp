@@ -32,6 +32,11 @@ namespace
     constexpr uint32_t KindHd = 5;
     /// <summary>Port-only: a glyph redrawn sharp (MCSharpText), on a sharp screen.</summary>
     constexpr uint32_t KindSharpGlyph = 6;
+    /// <summary>Port-only: a line's and an ellipse's colour pass at the output's resolution (shaders/draw.pshader).</summary>
+    constexpr uint32_t KindSmoothLine = 7;
+    constexpr uint32_t KindSmoothEllipse = 8;
+    /// <summary>Port-only: a textured polygon's picture shown from the HD art pack, turned and scaled (draw.pshader).</summary>
+    constexpr uint32_t KindHdMap = 9;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -827,7 +832,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         const uint32_t kind = op & KindMask;
         _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
-        _Audited->Sharp |= kind == KindHd || kind == KindSharpGlyph;
+        _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSharpGlyph || kind == KindSmoothLine ||
+                           kind == KindSmoothEllipse;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -836,7 +842,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[11] = static_cast<int32_t>(after);
 
     const MCRect written{draw[0], draw[1], draw[2], draw[3]};
-    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0;
+    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
+                       (op & KindMask) == KindSmoothEllipse;
     const bool indexOnly = (op & IndexOnly) != 0;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
@@ -866,7 +873,12 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
 
     // Mirror mode leaves the blended pixels out of its comparison (an HD art frame's leave the indices under them
     // the original's).
-    if (blend && (op & KindMask) != KindHd)
+    // An HD frame's or a smooth shape's colour pass leaves the indices an index-only pass wrote: they still compare.
+    const uint32_t kind = op & KindMask;
+    const bool keepsIndices =
+        kind == KindHd || kind == KindHdMap || kind == KindSmoothLine || kind == KindSmoothEllipse;
+
+    if (blend && !keepsIndices)
     {
         surface.Blended.push_back(written);
     }
@@ -1699,7 +1711,12 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
 {
-    if (_Surfaces[target].Key != _ScaledScreen || !MCHdArt::Active() || MCRenderer::FrameSurfaceOf(window) != nullptr)
+    return _Surfaces[target].Key == _ScaledScreen ? HdPicture(window) : nullptr;
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow& window)
+{
+    if (!MCHdArt::Active() || MCRenderer::FrameSurfaceOf(window) != nullptr)
     {
         return nullptr;
     }
@@ -1713,9 +1730,10 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t ta
 
     TextureState& state = StateOf(*texture);
 
-    if (!state.HdLooked)
+    if (!state.HdLooked || state.HdPack != MCHdArt::PackVersion())
     {
         state.HdLooked = true;
+        state.HdPack = MCHdArt::PackVersion();
         state.Hd = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
     }
 
@@ -2027,6 +2045,12 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
     Add(surface, SourceKind::Picture, UsePicture(found->second), at, from, KindSharpGlyph | AlphaBlend | TableBefore,
         static_cast<uint32_t>(MCSharpText::Scale), TableRow(table), 0);
     return true;
+}
+
+bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
+{
+    const Surface& drawn = _Surfaces[surface];
+    return drawn.DrawnWidth > drawn.RecordedWidth && MCHdArt::Active();
 }
 
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
@@ -2463,6 +2487,18 @@ void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command
             {
                 op |= SkipKeyAfterTable;
             }
+
+            // Port-only: a picture the HD art pack has (a tactical or briefing map's) is shown from it at the output's
+            // resolution, turned and scaled as the polygon maps it; the walk then writes the indices alone. A map read
+            // through the lookaside table shows the original.
+            if ((command.MapFlags & VfxMapXlat) == 0)
+            {
+                if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPicture(texture);
+                    hd != nullptr && AddHdMap(surface, *hd, command))
+                {
+                    op |= IndexOnly;
+                }
+            }
             break;
         }
         default:
@@ -2482,6 +2518,106 @@ void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command
                            join = true;
                        }
                    });
+}
+
+namespace
+{
+    /// <summary>A textured polygon's vertex as the HD map takes it: its window position and its texel, in pixels.</summary>
+    using MappedPoint = std::array<float, 4>;
+
+    /// <summary>
+    /// The affine map from window to texture positions that three of a textured polygon's vertices give (pixel centres to
+    /// texel centres): u = m0 x + m1 y + m2, v = m3 x + m4 y + m5; none when they lie in a line.
+    /// </summary>
+    std::optional<std::array<float, 6>> TextureMapping(MappedPoint c0, MappedPoint c1, MappedPoint c2)
+    {
+        constexpr float Centre = 0.5f;
+        constexpr float Flat = 1e-6f;
+
+        for (MappedPoint* point : {&c0, &c1, &c2})
+        {
+            std::ranges::for_each(*point, [](float& value) { value += Centre; });
+        }
+
+        const float x1 = c1[0] - c0[0];
+        const float y1 = c1[1] - c0[1];
+        const float x2 = c2[0] - c0[0];
+        const float y2 = c2[1] - c0[1];
+        const float det = x1 * y2 - x2 * y1;
+
+        if (std::abs(det) < Flat)
+        {
+            return std::nullopt;
+        }
+
+        // The texture's steps along the two sides, through the inverse of the window's.
+        const float u1 = c1[2] - c0[2];
+        const float v1 = c1[3] - c0[3];
+        const float u2 = c2[2] - c0[2];
+        const float v2 = c2[3] - c0[3];
+        const float ux = (u1 * y2 - u2 * y1) / det;
+        const float uy = (u2 * x1 - u1 * x2) / det;
+        const float vx = (v1 * y2 - v2 * y1) / det;
+        const float vy = (v2 * x1 - v1 * x2) / det;
+        return std::array{ux, uy, c0[2] - ux * c0[0] - uy * c0[1], vx, vy, c0[3] - vx * c0[0] - vy * c0[1]};
+    }
+}
+
+bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)
+{
+    // The map from the first two vertices and the last (a quad's corners 0, 1 and 3), their texels 16.16.
+    constexpr size_t Triangle = 3;
+    constexpr float Fixed = 65536.0f;
+
+    if (command.Vertices.size() < Triangle)
+    {
+        return false;
+    }
+
+    const auto point = [&command](const MCScreenVertex& vertex)
+    {
+        return MappedPoint{static_cast<float>(command.OriginX + vertex.X),
+                           static_cast<float>(command.OriginY + vertex.Y), static_cast<float>(vertex.U) / Fixed,
+                           static_cast<float>(vertex.V) / Fixed};
+    };
+
+    const std::optional<std::array<float, 6>> mapping =
+        TextureMapping(point(command.Vertices[0]), point(command.Vertices[1]), point(command.Vertices.back()));
+    const std::optional<uint32_t> picture = mapping.has_value() ? HdPictureOf(frame) : std::nullopt;
+
+    if (!picture)
+    {
+        return false;
+    }
+
+    // The vertices' bounding box, clipped to the pane; the shader leaves out what lies outside the picture.
+    Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
+               std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
+
+    for (const MCScreenVertex& vertex : command.Vertices)
+    {
+        const int32_t x = command.OriginX + vertex.X;
+        const int32_t y = command.OriginY + vertex.Y;
+        at = {std::min(at[0], x), std::min(at[1], y), std::max(at[2], x), std::max(at[3], y)};
+    }
+
+    at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
+          std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
+    // The colour field carries the frame's scale and the key (a transparent map's colour, 255).
+    constexpr uint32_t Key = 255;
+    const uint32_t color = static_cast<uint32_t>(frame.Scale) | Key << 8;
+    const uint32_t keyed = (command.MapFlags & VfxMapTransparent) != 0 ? ColorKey : 0;
+
+    if (!Add(surface, SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1}, KindHdMap | AlphaBlend | keyed | HdAsMade,
+             color, 0, 0))
+    {
+        return true;
+    }
+
+    std::array<int32_t, 20>& draw = _Draws.back();
+    std::ranges::transform(*mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    ++_HdDrawn;
+    return true;
 }
 
 void MCVulkanRenderer::MapQuad(MCWindow& target, const MCMapQuadCommand& command)
@@ -2524,9 +2660,20 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
         after = TableRow(*command.Table);
     }
 
+    // Port-only: a line of one colour shown at the output's resolution: its pixels write their indices alone, and its
+    // colour is drawn along it smooth (KindSmoothLine).
+    const bool smooth = !command.Table.has_value() && ScaledHdArt(surface);
+
+    if (smooth)
+    {
+        op |= IndexOnly;
+    }
+
     // The pixels in runs along a row (a line never comes back to a pixel).
     bool join = false;
     bool open = false;
+    std::optional<std::array<int32_t, 2>> first;
+    std::array<int32_t, 2> last{};
     int32_t runY = 0;
     int32_t runX0 = 0;
     int32_t runX1 = 0;
@@ -2546,6 +2693,13 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
     MCLinePixels(command,
                  [&](int32_t x, int32_t y)
                  {
+                     if (!first.has_value())
+                     {
+                         first = std::array{x, y};
+                     }
+
+                     last = {x, y};
+
                      if (open && y == runY && (x == runX1 + 1 || x == runX0 - 1))
                      {
                          runX0 = std::min(runX0, x);
@@ -2560,6 +2714,17 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
                      runX1 = x;
                  });
     flush();
+
+    if (smooth && first.has_value())
+    {
+        const Quad at = {std::min((*first)[0], last[0]) - 1, std::min((*first)[1], last[1]) - 1,
+                         std::max((*first)[0], last[0]) + 1, std::max((*first)[1], last[1]) + 1};
+
+        if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothLine, command.Color, 0, 0))
+        {
+            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, _Draws.back().begin() + 12);
+        }
+    }
 }
 
 void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command)
@@ -2571,6 +2736,15 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
     if (command.Alpha)
     {
         op |= AlphaBlend;
+    }
+
+    // Port-only: an opaque ellipse shown at the output's resolution: its pixels write their indices alone, and its
+    // colour is drawn smooth (KindSmoothEllipse).
+    const bool smooth = !command.Alpha && ScaledHdArt(surface);
+
+    if (smooth)
+    {
+        op |= IndexOnly;
     }
 
     // Each pixel once (MCEllipseRuns), so the runs can share the target's copy.
@@ -2585,6 +2759,23 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
                           join = true;
                       }
                   });
+
+    if (smooth)
+    {
+        const Quad at = {std::max(command.CenterX - command.Width - 1, command.Clip.X0),
+                         std::max(command.CenterY - command.Height - 1, command.Clip.Y0),
+                         std::min(command.CenterX + command.Width + 1, command.Clip.X1),
+                         std::min(command.CenterY + command.Height + 1, command.Clip.Y1)};
+
+        if (at[2] >= at[0] && at[3] >= at[1] &&
+            Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse, command.Color, 0, 0))
+        {
+            std::array<int32_t, 20>& draw = _Draws.back();
+            std::ranges::copy(std::array{command.CenterX, command.CenterY, command.Width, command.Height},
+                              draw.begin() + 12);
+            draw[16] = command.Fill ? 1 : 0;
+        }
+    }
 }
 
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)

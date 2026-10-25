@@ -22,6 +22,7 @@ namespace
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view CraterFolder = "craters";
+    constexpr std::string_view IconFolder = "icons";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view OverlayFolder = "overlays";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
@@ -1040,6 +1041,11 @@ std::filesystem::path MCHdArt::FolderOf(const CraterShapeKey& key)
     return std::filesystem::path(CraterFolder) / key.CraterFile / std::to_string(key.Packet);
 }
 
+std::filesystem::path MCHdArt::FolderOf(const IconShapeKey& key)
+{
+    return std::filesystem::path(IconFolder) / key.File;
+}
+
 void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key)
 {
     if (shape != nullptr)
@@ -1058,6 +1064,11 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
 
 void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
                      const CraterShapeKey& key)
+{
+    AttachTo(table, owner, FolderOf(key));
+}
+
+void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner, const IconShapeKey& key)
 {
     AttachTo(table, owner, FolderOf(key));
 }

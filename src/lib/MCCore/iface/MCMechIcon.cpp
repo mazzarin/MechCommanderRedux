@@ -8,6 +8,7 @@
 #include "object/MCMover.h"
 #include "object/MCObjectQueue.h"
 #include "object/MCObjectSystem.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfx.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -78,6 +79,7 @@ auto MCMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
     DiagramY = 0;
     Mover.reset();
     DamageShapes = {};
+    _HdArtOwner.reset();
     return 0;
 }
 
@@ -85,7 +87,19 @@ auto MCMechIcon::Destroy() -> void
 {
     DeadImage.reset();
     DamageShapes = {};
+    _HdArtOwner.reset();
     MCGuiObject::Destroy();
+}
+
+auto MCMechIcon::AttachHdArt() -> void
+{
+    // A new owner: ties to shapes loaded before go with the old one.
+    _HdArtOwner = std::make_shared<const int>(0);
+
+    if (MCHdArt::Active() && !DamageShapes.Empty())
+    {
+        MCHdArt::Attach(DamageShapes.Bytes(), _HdArtOwner, MCHdArt::IconShapeKey{DamageShapeName});
+    }
 }
 
 auto MCMechIcon::Draw() -> void

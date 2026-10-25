@@ -46,6 +46,7 @@
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCVfxBuildingAppearanceType.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
@@ -228,6 +229,57 @@ namespace
         bool Blended = false;
         std::vector<DecodedFrame> Frames;
     };
+
+    /// <summary>
+    /// Writes a picture of the game's art for the HD art generator, named by its hash (MCHdArt::PictureHash), once:
+    /// <c>&lt;name&gt;.png</c> (its colours, opaque) and <c>&lt;name&gt;_1x_idx.png</c> (its palette indices, in red),
+    /// and a line of the manifest (name, source, width, height).
+    /// </summary>
+    void WritePicture(const std::filesystem::path& folder, std::ofstream& manifest, std::string_view source,
+                      std::span<const uint8_t> pixels, int32_t width, int32_t height,
+                      std::span<const SDL_Color, 256> colors, std::set<uint64_t>& written)
+    {
+        const uint64_t hash = MCHdArt::PictureHash(pixels, width, height);
+
+        if (!written.insert(hash).second)
+        {
+            return;
+        }
+
+        const std::string name = MCHdArt::PictureName(hash);
+        const size_t size = static_cast<size_t>(width) * static_cast<size_t>(height);
+        std::vector<uint8_t> rgba(size * BytesPerPixel);
+        std::vector<uint8_t> indices(size * BytesPerPixel);
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            const SDL_Color color = colors[pixels[i]];
+            rgba[i * BytesPerPixel] = color.r;
+            rgba[i * BytesPerPixel + 1] = color.g;
+            rgba[i * BytesPerPixel + 2] = color.b;
+            rgba[i * BytesPerPixel + 3] = 255;
+            indices[i * BytesPerPixel] = pixels[i];
+            indices[i * BytesPerPixel + 1] = pixels[i];
+            indices[i * BytesPerPixel + 2] = pixels[i];
+            indices[i * BytesPerPixel + 3] = 255;
+        }
+
+        SavePng(folder / std::format("{}.png", name), width, height, rgba);
+        SavePng(folder / std::format("{}_1x_idx.png", name), width, height, indices);
+        manifest << name << '\t' << source << '\t' << width << '\t' << height << '\n';
+    }
+
+    /// <summary>Whether <paramref name="text"/> ends with <paramref name="ending"/>, letters in either case.</summary>
+    bool EndsWithIgnoringCase(std::string_view text, std::string_view ending)
+    {
+        return text.size() >= ending.size() &&
+               std::ranges::equal(text.substr(text.size() - ending.size()), ending,
+                                  [](char a, char b)
+                                  {
+                                      return std::tolower(static_cast<unsigned char>(a)) ==
+                                             std::tolower(static_cast<unsigned char>(b));
+                                  });
+    }
 
     /// <summary>A colour channel (0..1) as a byte.</summary>
     uint8_t ChannelByte(float value)
@@ -1789,6 +1841,15 @@ namespace
             {
                 CraterManager().AttachHdArt();
             }
+
+            if (const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+                iface != nullptr && iface->MechBar != nullptr)
+            {
+                for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+                {
+                    button->AttachHdArt();
+                }
+            }
         }
 
         ~MCHdArtOn()
@@ -1800,6 +1861,22 @@ namespace
         MCHdArtOn(const MCHdArtOn&) = delete;
         MCHdArtOn& operator=(const MCHdArtOn&) = delete;
     };
+
+    /// <summary>
+    /// A pack with no frames (only palette.rgb), so with HD art on everything is drawn from the original's pixels (lines
+    /// and ellipses drawn smooth); under the tests' scratch folder <paramref name="name"/>.
+    /// </summary>
+    std::filesystem::path EmptyPack(std::string_view name)
+    {
+        const std::filesystem::path scratch = std::filesystem::temp_directory_path() / name;
+        std::filesystem::remove_all(scratch);
+        const std::filesystem::path pack = scratch / "pack";
+        std::filesystem::create_directories(pack);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        WritePaletteRgb(pack, colors);
+        return pack;
+    }
 
     /// <summary>The pixels whose shown colour differs between <paramref name="a"/> and <paramref name="b"/> (within
     /// <paramref name="within"/> when given), and their mean position.</summary>
@@ -2085,15 +2162,21 @@ namespace
     void CheckShownFromPack(const HdObjectScene& scene)
     {
         // The game paused, so nothing moves between the frames compared (mission 2's animate), and only the middle of
-        // the view compared (the tactical map's blips blink).
+        // the view compared (the tactical map's blips blink). The frames before are drawn with HD art on from a pack
+        // with no frames, so they differ from the pack's only where it has frames (not where HD art draws lines and
+        // ellipses smooth).
+        // (A frame settles once HD art goes on: it reloads the sprite cache.)
         GamePaused = true;
+        std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+        MCTestGame::RunFrame(FrameSeconds);
         MCTestGame::RunFrame(FrameSeconds);
         const Shown original = ReadShown(scene.Scratch);
         const MCRect middle{original.Width / 4, original.Height / 4, original.Width * 3 / 4, original.Height * 3 / 4};
         MCTestGame::RunFrame(FrameSeconds);
         CHECK_EQ(Compare(original, ReadShown(scene.Scratch), middle).Count, 0);
 
-        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        hdArt.reset();
+        hdArt.emplace(scene.Pack);
         const int64_t drawnBefore = scene.Renderer->HdDrawn();
         MCTestGame::RunFrame(FrameSeconds);
         const Shown hd = ReadShown(scene.Scratch);
@@ -2340,6 +2423,221 @@ namespace
         }
 
         return sequences;
+    }
+}
+
+namespace
+{
+    /// <summary>Whether <paramref name="name"/> (lower case) is a mech bar icon's shape file: mi##.shp or vi#.shp.</summary>
+    bool IsIconShapeFile(std::string_view name)
+    {
+        constexpr std::string_view Extension = ".shp";
+        constexpr size_t Prefix = 2;
+
+        if (!name.ends_with(Extension) || !(name.starts_with("mi") || name.starts_with("vi")))
+        {
+            return false;
+        }
+
+        const std::string_view number = name.substr(Prefix, name.size() - Prefix - Extension.size());
+        return !number.empty() && std::ranges::all_of(number, [](char c) { return c >= '0' && c <= '9'; });
+    }
+
+    /// <summary>
+    /// The mech bar icons' damage shapes (data\art's mi##.shp and vi#.shp in the game's FastFiles, a frame a body part)
+    /// as a pack's sequences (icons/&lt;file&gt;), translucent frames (none in the retail game) without the pixels they
+    /// blend, counted in <paramref name="translucent"/>.
+    /// </summary>
+    std::vector<Sequence> IconSequences(size_t& translucent)
+    {
+        std::vector<Sequence> sequences;
+        std::set<std::string> seen;
+        std::error_code error;
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(MCFileSystem::GameRoot(), error))
+        {
+            if (!EndsWithIgnoringCase(entry.path().filename().string(), ".fst"))
+            {
+                continue;
+            }
+
+            auto archive = MCFastFile::Create(entry.path().filename().string());
+            REQUIRE(archive.has_value());
+
+            for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)
+            {
+                const MCFileEntry& file = (*archive)->GetEntries()[static_cast<size_t>(i)];
+                // The entry's name past its folders (a FastFile's paths use backslashes).
+                const std::string_view path = file.GetName();
+                std::string name(path.substr(path.find_last_of("\\/") + 1));
+                std::ranges::transform(name, name.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                std::vector<uint8_t> table(static_cast<size_t>(std::max(file.RealSize, 0)));
+
+                // A file in more than one FastFile is taken from the first.
+                if (!IsIconShapeFile(name) || !seen.insert(name).second || table.empty() ||
+                    (*archive)->ReadEntry(i, table) != file.RealSize || !VfxIsShapeTable(table))
+                {
+                    continue;
+                }
+
+                Sequence sequence;
+                sequence.Folder = MCHdArt::FolderOf(MCHdArt::IconShapeKey{name.substr(0, name.find('.'))});
+
+                for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+                {
+                    auto decoded = Decode(table, frame);
+
+                    if (decoded.has_value() && decoded->Translucent)
+                    {
+                        ++translucent;
+                        LeaveOutUndrawn(*decoded, false);
+                    }
+
+                    if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+                    {
+                        sequence.Frames.emplace_back();
+                        continue;
+                    }
+
+                    sequence.Frames.push_back(std::move(*decoded));
+                }
+
+                if (DrawnFrames(sequence) > 0)
+                {
+                    sequences.push_back(std::move(sequence));
+                }
+            }
+        }
+
+        return sequences;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-icons &lt;folder&gt;</c> writes the mech bar icons' damage shapes (<see cref="IconSequences"/>)
+/// as an HD art pack at their own size, for tools/upscale/make_object_pack.py: each frame a PNG pair (sprite/MCHdArt.h),
+/// plus <c>objects.json</c> (one "icon" appearance, still, its sequences' frames' bounds) and the shown colours as
+/// palette.rgb.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-icons writes the mech bar icons' damage shapes")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-icons");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack(*out);
+    std::filesystem::create_directories(pack);
+    WritePaletteRgb(pack, colors);
+    size_t translucent = 0;
+    const std::vector<Sequence> sequences = IconSequences(translucent);
+    REQUIRE(!sequences.empty());
+    WritePack(pack, sequences, colors, 1, [](SDL_Color color) { return color; });
+    std::string json = "{\"appearances\": [\n {\"id\": 0, \"kind\": \"icon\", \"animated\": false, \"blended\": false, "
+                       "\"delta\": false, \"types\": [\"icon\"], \"sequences\": [";
+    size_t frames = 0;
+
+    for (size_t i = 0; i < sequences.size(); ++i)
+    {
+        json += std::format("{}\n  {{\"folder\": \"{}\", \"frames\": [{}]}}", i == 0 ? "" : ",",
+                            sequences[i].Folder.generic_string(), FramesJson(sequences[i]));
+        frames += DrawnFrames(sequences[i]);
+    }
+
+    std::ofstream(pack / "objects.json") << json << "]}]}\n";
+    std::cout << std::format("  {} icon shape files, {} frames ({} translucent)\n", sequences.size(), frames,
+                             translucent);
+}
+
+namespace
+{
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/> in a window shown larger than the screen, its mech bar showing the
+    /// lance's damage diagrams, and a pack of every icon's damage shapes (the tests' pack: pixels doubled, colours
+    /// inverted).
+    /// </summary>
+    std::optional<HdObjectScene> SetUpHdIconScene(MCGpuDrawing drawing)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
+        REQUIRE(player != nullptr);
+        Eye()->ChangeTarget(player, true);
+        MCTestGame::RunFrame(FrameSeconds);
+        size_t translucent = 0;
+        const std::vector<Sequence> sequences = IconSequences(translucent);
+        REQUIRE(!sequences.empty());
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Object = std::static_pointer_cast<MCGameObject>(player);
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_icons";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        WritePack(scene.Pack, sequences, colors, TestPackScale, Inverted);
+        return scene;
+    }
+}
+
+/// <summary>
+/// With HD art on and a pack holding the icons' damage shapes, the mech bar's damage diagrams are drawn from it: the
+/// shown colours change, and only in the mech bar (the window's bottom left), the game paused.
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in the mech bar's damage diagrams")
+{
+    const std::optional<HdObjectScene> scene = SetUpHdIconScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // The frame before is drawn with HD art on from a pack with no frames, so the two differ only where the pack has
+    // frames (not where HD art draws lines and ellipses smooth).
+    GamePaused = true;
+    std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown original = ReadShown(scene->Scratch);
+    hdArt.reset();
+    hdArt.emplace(scene->Pack);
+    const int64_t drawnBefore = scene->Renderer->HdDrawn();
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown hd = ReadShown(scene->Scratch);
+    hdArt.reset();
+    GamePaused = false;
+
+    CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+    const Changed changed = Compare(original, hd, MCRect{0, 0, hd.Width - 1, hd.Height - 1});
+    std::cout << std::format("  {} shown pixels changed, about ({}, {})\n", changed.Count, changed.X, changed.Y);
+    REQUIRE(changed.Count > 0);
+    CHECK(changed.X < hd.Width / 2);
+    CHECK(changed.Y > hd.Height / 2);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps the mech bar's palette indices")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdIconScene(MCGpuDrawing::Mirror); scene.has_value())
+    {
+        CheckIndicesKept(*scene);
     }
 }
 
@@ -3195,55 +3493,6 @@ namespace
     constexpr size_t TgaPalette = 18;
     constexpr size_t TgaPaletteEntry = 3;
 
-    /// <summary>
-    /// Writes a picture of the game's art for the HD art generator, named by its hash (MCHdArt::PictureHash), once:
-    /// <c>&lt;name&gt;.png</c> (its colours, opaque) and <c>&lt;name&gt;_1x_idx.png</c> (its palette indices, in red),
-    /// and a line of the manifest (name, source, width, height).
-    /// </summary>
-    void WritePicture(const std::filesystem::path& folder, std::ofstream& manifest, std::string_view source,
-                      std::span<const uint8_t> pixels, int32_t width, int32_t height,
-                      std::span<const SDL_Color, 256> colors, std::set<uint64_t>& written)
-    {
-        const uint64_t hash = MCHdArt::PictureHash(pixels, width, height);
-
-        if (!written.insert(hash).second)
-        {
-            return;
-        }
-
-        const std::string name = MCHdArt::PictureName(hash);
-        const size_t size = static_cast<size_t>(width) * static_cast<size_t>(height);
-        std::vector<uint8_t> rgba(size * BytesPerPixel);
-        std::vector<uint8_t> indices(size * BytesPerPixel);
-
-        for (size_t i = 0; i < size; ++i)
-        {
-            const SDL_Color color = colors[pixels[i]];
-            rgba[i * BytesPerPixel] = color.r;
-            rgba[i * BytesPerPixel + 1] = color.g;
-            rgba[i * BytesPerPixel + 2] = color.b;
-            rgba[i * BytesPerPixel + 3] = 255;
-            indices[i * BytesPerPixel] = pixels[i];
-            indices[i * BytesPerPixel + 1] = pixels[i];
-            indices[i * BytesPerPixel + 2] = pixels[i];
-            indices[i * BytesPerPixel + 3] = 255;
-        }
-
-        SavePng(folder / std::format("{}.png", name), width, height, rgba);
-        SavePng(folder / std::format("{}_1x_idx.png", name), width, height, indices);
-        manifest << name << '\t' << source << '\t' << width << '\t' << height << '\n';
-    }
-
-    bool EndsWithIgnoringCase(std::string_view text, std::string_view ending)
-    {
-        return text.size() >= ending.size() &&
-               std::ranges::equal(text.substr(text.size() - ending.size()), ending,
-                                  [](char a, char b)
-                                  {
-                                      return std::tolower(static_cast<unsigned char>(a)) ==
-                                             std::tolower(static_cast<unsigned char>(b));
-                                  });
-    }
 }
 
 /// <summary>
@@ -4076,4 +4325,177 @@ TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
     }
 
     std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// With HD art on, lines and ellipses are drawn at the output's resolution: a diagonal line and an ellipse's outline
+/// drawn on the screen by the GPU over mission 1 (a window shown larger than the screen) show, with HD art off, only
+/// their colour or what was under them; with it on, also colours between (their smooth edges).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolution")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_smooth_shapes");
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Radius = 30;
+    constexpr uint8_t Color = 0x30;
+    std::array<SDL_Color, 256> colors{};
+    display->GetShownColors(colors);
+
+    // How many pixels of the box around the shapes show neither the shapes' colour nor what was under them.
+    const auto between = [&](bool hdArt)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (hdArt)
+        {
+            on.emplace(pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        const auto under = display->ReadFrame();
+        VfxLineDraw(pane, x - Length, y - Length / 2, x + Length, y + Length / 2, Color);
+        AGEllipseDraw(pane, x, y + Length, Radius * 2, Radius, Color);
+        const auto drawn = display->ReadFrame();
+        REQUIRE(under.has_value());
+        REQUIRE(drawn.has_value());
+        const int32_t width = display->Width();
+        const SDL_Color shape = colors[Color];
+        int64_t count = 0;
+
+        for (int32_t row = y - Length; row <= y + Length + Radius + 1; ++row)
+        {
+            for (int32_t column = x - Length - 1; column <= x + Length + 1; ++column)
+            {
+                const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
+                const SDL_Color a = (*under)[at];
+                const SDL_Color b = (*drawn)[at];
+                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
+                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
+                count += same || shapeColor ? 0 : 1;
+            }
+        }
+
+        return count;
+    };
+
+    GamePaused = true;
+    const int64_t original = between(false);
+    const int64_t smooth = between(true);
+    GamePaused = false;
+    std::cout << std::format("  pixels between the colours: {} with HD art off, {} on\n", original, smooth);
+    CHECK_EQ(original, 0);
+    CHECK(smooth > 0);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+namespace
+{
+    /// <summary>The folder of a pack at <paramref name="pack"/> its pictures go in (sprite/MCHdArt.h).</summary>
+    std::filesystem::path PictureFolderOf(const std::filesystem::path& pack)
+    {
+        return pack / "menus";
+    }
+
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/> in a window shown larger than the screen, the tactical map on its
+    /// map page, and a pack holding the map's picture (the tests' pack: pixels doubled, colours inverted).
+    /// </summary>
+    std::optional<HdObjectScene> SetUpHdMapScene(MCGpuDrawing drawing)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+        REQUIRE(map != nullptr);
+        map->SetDisplayType(MCTacmapPage::Map);
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::shared_ptr<MCTexture> texture = map->MapPort->Bitmap().Texture.lock();
+        REQUIRE(texture != nullptr);
+        DecodedFrame picture;
+        picture.Width = texture->Width;
+        picture.Height = texture->Height;
+        picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+        picture.Drawn.assign(picture.Index.size(), 1);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_map";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        std::filesystem::create_directories(PictureFolderOf(scene.Pack));
+        const std::string name =
+            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, picture.Width, picture.Height));
+        WriteFramePngs(PictureFolderOf(scene.Pack) / name, picture, colors, TestPackScale, Inverted, false);
+        WritePaletteRgb(scene.Pack, colors);
+        return scene;
+    }
+}
+
+/// <summary>
+/// With HD art on and a pack holding the tactical map's picture, the map is drawn from it, turned and scaled as the
+/// game maps it: the shown colours change, and only in the map (the window's top left), the game paused.
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD art pack's picture shows in the tactical map")
+{
+    const std::optional<HdObjectScene> scene = SetUpHdMapScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // As the mech bar's test: the frame before is drawn with HD art on from a pack with no frames.
+    GamePaused = true;
+    std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown original = ReadShown(scene->Scratch);
+    hdArt.reset();
+    hdArt.emplace(scene->Pack);
+    const int64_t drawnBefore = scene->Renderer->HdDrawn();
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown hd = ReadShown(scene->Scratch);
+    hdArt.reset();
+    GamePaused = false;
+
+    CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+    const Changed changed = Compare(original, hd);
+    std::cout << std::format("  {} shown pixels changed, about ({}, {})\n", changed.Count, changed.X, changed.Y);
+    REQUIRE(changed.Count > 0);
+    CHECK(changed.X < hd.Width / 4);
+    CHECK(changed.Y < hd.Height / 2);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdMapScene(MCGpuDrawing::Mirror); scene.has_value())
+    {
+        CheckIndicesKept(*scene);
+    }
 }

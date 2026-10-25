@@ -196,7 +196,8 @@ public:
 
     /// <summary>
     /// Port-only, for the HD art audit (a test tool): one draw command and what it drew. Sharp: shown at the output's
-    /// resolution (from the HD art pack, the ground's HD atlas or text redrawn sharp), not from the original's pixels.
+    /// resolution (from the HD art pack, the ground's HD atlas, text redrawn sharp or a line or ellipse drawn smooth),
+    /// not from the original's pixels.
     /// </summary>
     struct AuditedDraw
     {
@@ -410,6 +411,19 @@ private:
     };
 
     /// <summary>
+    /// Port-only: whether <paramref name="surface"/> shows what is drawn from the original at the output's resolution:
+    /// HD art is on and the surface is drawn at more pixels than its window has.
+    /// </summary>
+    bool ScaledHdArt(uint16_t surface) const;
+
+    /// <summary>
+    /// Port-only: adds the draw of an HD art frame of a textured polygon's picture (a tactical or briefing map's) as the
+    /// polygon maps it (KindHdMap): turned and scaled, at the output's resolution. False when the frame can't be put on
+    /// the GPU or the polygon's vertices lie in a line.
+    /// </summary>
+    bool AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command);
+
+    /// <summary>
     /// Adds the draw of an HD art frame over <paramref name="at"/> (blended into the colours), reading the original
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as
@@ -422,9 +436,12 @@ private:
 
     /// <summary>
     /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
-    /// time its pixels are uploaded; null when there is none, or when <paramref name="target"/> isn't a sharp screen.
+    /// time its pixels are uploaded or the pack changes; null when there is none, or when <paramref name="target"/>
+    /// isn't a sharp screen.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
+    /// <summary>Port-only: <see cref="HdPictureFor"/> whatever the target: null when there is none.</summary>
+    std::shared_ptr<const MCHdArt::Frame> HdPicture(const MCWindow& window);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
 
@@ -752,10 +769,11 @@ private:
         size_t StreamUpload = 0;
         /// <summary>
         /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
-        /// whether it was looked for since.
+        /// whether it was looked for since, in the pack then set (<see cref="MCHdArt::PackVersion"/>).
         /// </summary>
         std::shared_ptr<const MCHdArt::Frame> Hd;
         bool HdLooked = false;
+        uint64_t HdPack = 0;
     };
 
     /// <summary>What is kept for <paramref name="texture"/> (made when missing).</summary>

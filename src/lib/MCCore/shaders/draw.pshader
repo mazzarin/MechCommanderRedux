@@ -94,6 +94,11 @@ static const uint KindGouraud = 3;
 static const uint KindTexelWalk = 4;
 static const uint KindHd = 5;
 static const uint KindSharpGlyph = 6;
+// Port-only: a line's and an ellipse's colour pass at the output's resolution (SmoothShapePixel).
+static const uint KindSmoothLine = 7;
+static const uint KindSmoothEllipse = 8;
+// Port-only: a textured polygon's picture (a tactical map's) shown from the HD art pack, turned and scaled (HdMapPixel).
+static const uint KindHdMap = 9;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -348,14 +353,10 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     return Fetch(hdTex, hdSampler, texel);
 }
 
-// An HD art frame's pixel: the source is the place in the original shape's bounds of the rectangle's first pixel and
-// the steps per window pixel (negative: mirrored), op.y the frame's scale.
-Output HdPixel(Input input, int2 target)
+// An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD
+// texels around it, recoloured as the original pixel under it shows now.
+Output HdPixelAt(Input input, float2 shape)
 {
-    // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
-    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    const float2 shape = float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw);
     const uint hdScale = input.op.y & 255u;
     uint width;
     uint height;
@@ -395,6 +396,37 @@ Output HdPixel(Input input, int2 target)
     }
 
     return Blended(color);
+}
+
+// An HD art frame's pixel: the source is the place in the original shape's bounds of the rectangle's first pixel and
+// the steps per window pixel (negative: mirrored), op.y the frame's scale.
+Output HdPixel(Input input, int2 target)
+{
+    // The drawn pixel's centre in window pixels, and in the shape's bounds (a mirrored step reads from the right).
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
+    return HdPixelAt(input, float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw));
+}
+
+// Port-only: a textured polygon's picture shown from the HD art pack (KindHdMap): the drawn pixel's place in the
+// picture is the polygon's affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5), then
+// read as HdPixel reads a frame; nothing outside the picture.
+Output HdMapPixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float4 u = asfloat(input.span);
+    const float2 v = asfloat(input.walk.xy);
+    const float2 picture = float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+
+    if (any(picture < 0.0) || any(picture >= float2((float)width, (float)height)))
+    {
+        discard;
+    }
+
+    return HdPixelAt(input, picture);
 }
 
 // A redrawn glyph's texel (red the font byte, green the coverage), nothing outside its size.
@@ -443,6 +475,68 @@ Output SharpGlyphPixel(Input input, int2 target)
     return Blended(float4(Shown(index) * coverage, coverage));
 }
 
+// Whether a texel the draw reads, of state `state` and value `value`, is drawn: a run of the key colour (SkipRunKey)
+// and the colour key aren't; `value` becomes the colour table's (TableBefore), whose key isn't drawn either
+// (SkipKeyAfterTable).
+bool KeyedAndMapped(Input input, uint state, inout uint value)
+{
+    const uint flags = input.op.x;
+
+    if (((flags & SkipRunKey) != 0 && state == 3 && value == 255) ||
+        ((flags & ColorKey) != 0 && value == ((input.op.y >> 8) & 255u)))
+    {
+        return false;
+    }
+
+    if ((flags & TableBefore) != 0)
+    {
+        value = Table(input.op.z, value);
+    }
+
+    return (flags & SkipKeyAfterTable) == 0 || value != 255;
+}
+
+// Half a smooth line's or outline's width, in window pixels (the original's are a window pixel wide).
+static const float LineHalfWidth = 0.5;
+
+// Port-only: a line's or an ellipse's colour at drawn pixel `target`, the shape drawn at the output's resolution (its
+// indices were written by the original's pixels, in an index-only pass): the drawn pixel's distance from the line
+// between the centres of its first and last pixels (span), or from the ellipse (span: its centre and radii; walk.x 1
+// when it is filled), its edge ramped over a drawn pixel. Premultiplied, through the blend pipeline.
+Output SmoothShapePixel(Input input, int2 target, uint kind)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
+    float distance;
+
+    if (kind == KindSmoothLine)
+    {
+        const float2 a = float2(input.span.xy) + 0.5;
+        const float2 ab = float2(input.span.zw) + 0.5 - a;
+        const float length2 = dot(ab, ab);
+        const float t = length2 > 0.0 ? saturate(dot(window - a, ab) / length2) : 0.0;
+        distance = length(window - (a + t * ab)) - LineHalfWidth;
+    }
+    else
+    {
+        // The implicit ellipse's value over its gradient's length: about the distance from it, negative inside.
+        const float2 radii = max(float2(input.span.zw), LineHalfWidth);
+        const float2 p = (window - (float2(input.span.xy) + 0.5)) / radii;
+        const float2 gradient = 2.0 * p / radii;
+        const float signedDistance = (dot(p, p) - 1.0) / max(length(gradient), 1e-4);
+        distance = input.walk.x != 0 ? signedDistance : abs(signedDistance) - LineHalfWidth;
+    }
+
+    const float coverage = saturate(0.5 - distance / ramp);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
+}
+
 Output main(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
@@ -465,6 +559,16 @@ Output main(Input input)
     if (kind == KindSharpGlyph)
     {
         return SharpGlyphPixel(input, target);
+    }
+
+    if (kind == KindSmoothLine || kind == KindSmoothEllipse)
+    {
+        return SmoothShapePixel(input, target, kind);
+    }
+
+    if (kind == KindHdMap)
+    {
+        return HdMapPixel(input, target);
     }
     const uint color = input.op.y & 255u;
     uint value = color;
@@ -543,22 +647,7 @@ Output main(Input input)
         value = color;
     }
 
-    if ((flags & SkipRunKey) != 0 && state == 3 && value == 255)
-    {
-        discard;
-    }
-
-    if ((flags & ColorKey) != 0 && value == ((input.op.y >> 8) & 255u))
-    {
-        discard;
-    }
-
-    if ((flags & TableBefore) != 0)
-    {
-        value = Table(input.op.z, value);
-    }
-
-    if ((flags & SkipKeyAfterTable) != 0 && value == 255)
+    if (!KeyedAndMapped(input, state, value))
     {
         discard;
     }

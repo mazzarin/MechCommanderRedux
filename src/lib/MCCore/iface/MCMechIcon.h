@@ -69,8 +69,19 @@ public:
     MCGuiOwned<MCGuiPort> DeadImage;
     /// <summary>The damage shapes (one per body part), loaded from <c>artPath</c>.</summary>
     MCRegisteredBlock DamageShapes;
+    /// <summary>Port: their file's name, lower case, without its extension (the HD art pack's folder for them).</summary>
+    std::string DamageShapeName;
+
+    /// <summary>
+    /// Port-only: ties the damage shapes to the HD art pack's frames of them (sprite/MCHdArt.h's icons/) when HD art is
+    /// on; done when they load, and again by whoever turns HD art on during a mission.
+    /// </summary>
+    void AttachHdArt();
 
 protected:
+    /// <summary>Keeps the HD art pack's ties to the damage shapes while they are these.</summary>
+    std::shared_ptr<const int> _HdArtOwner;
+
     /// <summary>Draws each body part's shape in its colour (translucent unless undamaged) into <paramref name="target"/>.</summary>
     void DrawParts(MCGuiPort& target);
     /// <summary>Picks each body part's colour from its armour left (green, yellow, orange, red, destroyed).</summary>

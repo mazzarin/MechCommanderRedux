@@ -14,6 +14,8 @@ class MCShape;
 /// RGBA with straight alpha. Beside each, <c>&lt;frame&gt;_idx.png</c> gives each pixel the original's palette index
 /// (red) and whether it has one (green), so a paint scheme's fade table recolours the HD pixels it would have
 /// recoloured.</para>
+/// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.png</c> and <c>_idx.png</c> likewise, named
+/// by their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>).</para>
 /// </remarks>
 namespace MCHdArt
@@ -69,6 +71,22 @@ namespace MCHdArt
     /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds.
     /// </summary>
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
+
+    /// <summary>
+    /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its
+    /// <paramref name="width"/> x <paramref name="height"/> palette indices, the same whichever file or packet they came
+    /// from. A picture the game has drawn into has another, so it is shown as it is.
+    /// </summary>
+    uint64_t PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height);
+
+    /// <summary>The file name (without its extension) of the picture <paramref name="hash"/> names: 16 hex digits.</summary>
+    std::string PictureName(uint64_t hash);
+
+    /// <summary>
+    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;.png</c> in the pack, with its
+    /// <c>_idx</c> picture, as a frame's), read the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
 
     /// <summary>
     /// How many frames have been read from the pack so far, the time reading them took, and how many bytes the kept

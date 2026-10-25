@@ -371,9 +371,24 @@ private:
     /// the GPU.
     /// </summary>
     bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
-               const std::optional<MCColorTable>& table);
+               const std::optional<MCColorTable>& table, std::optional<uint8_t> key = std::nullopt);
+
+    /// <summary>
+    /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
+    /// time its pixels are uploaded; null when there is none, or when <paramref name="target"/> isn't a sharp screen.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+
+    /// <summary>
+    /// Port-only: draws the glyph <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows
+    /// <paramref name="pitch"/> apart) over <paramref name="at"/> on a sharp screen, redrawn as strokes
+    /// (<see cref="MCSharpText"/>) at the output's resolution in the colours <paramref name="table"/> gives its bytes.
+    /// False when it can't be put on the GPU (the original then draws the colours as well).
+    /// </summary>
+    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns, int32_t rows,
+                       const Quad& at, const MCColorTable& table);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -614,6 +629,9 @@ private:
     size_t _HdPictureBytes = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
+    /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
+    std::unordered_map<uint64_t, Picture> _SharpGlyphs;
+    size_t _SharpGlyphBytes = 0;
     int64_t _HdDrawn = 0;
 
     /// <summary>
@@ -650,6 +668,12 @@ private:
         uint32_t StreamSize = 0;
         uint64_t StreamFrame = ~0ull;
         size_t StreamUpload = 0;
+        /// <summary>
+        /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
+        /// whether it was looked for since.
+        /// </summary>
+        std::shared_ptr<const MCHdArt::Frame> Hd;
+        bool HdLooked = false;
     };
 
     /// <summary>What is kept for <paramref name="texture"/> (made when missing).</summary>

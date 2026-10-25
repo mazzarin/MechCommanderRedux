@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
 #include "lib/MCFatal.h"
@@ -27,6 +28,8 @@ namespace
     constexpr uint32_t KindGouraud = 3;
     constexpr uint32_t KindTexelWalk = 4;
     constexpr uint32_t KindHd = 5;
+    /// <summary>Port-only: a glyph redrawn sharp (MCSharpText), on a sharp screen.</summary>
+    constexpr uint32_t KindSharpGlyph = 6;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -57,6 +60,11 @@ namespace
     /// indices).</summary>
     constexpr uint32_t HdBytesPerPixel = 4;
     constexpr uint32_t HdColumnsPerPixel = 2;
+    /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes).</summary>
+    constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (a redrawn glyph is kept by its bytes' hash).</summary>
+    constexpr uint64_t HashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t HashPrime = 0x100000001b3ull;
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The width of the strip of written pixels.</summary>
@@ -579,6 +587,11 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.Texture);
     }
 
+    for (auto& [key, picture] : _SharpGlyphs)
+    {
+        Release(picture.Texture);
+    }
+
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
     {
         OnTextureReleased(*texture);
@@ -698,6 +711,7 @@ void MCVulkanRenderer::BeginRecording()
     // each frame, such as the shape transforms' work buffer, make a new one every frame).
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
     TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdBytesPerPixel);
+    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdBytesPerPixel);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1339,6 +1353,7 @@ std::optional<uint32_t> MCVulkanRenderer::PictureOf(MCTexture& texture)
         _FrameUploads.PictureBytes += static_cast<int64_t>(size);
         texture.Dirty = false;
         state.Behind = true;
+        state.HdLooked = false;
         state.Index = static_cast<uint32_t>(_FramePictures.size());
         _FramePictures.push_back(picture.Handle);
         return state.Index;
@@ -1404,6 +1419,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadWhole(MCTexture& textur
     _FrameUploads.PictureBytes += static_cast<int64_t>(size);
     texture.Dirty = false;
     state.Behind = false;
+    state.HdLooked = false;
 
     if (MCRenderer::GpuDrawing() == MCGpuDrawing::Mirror)
     {
@@ -1649,7 +1665,41 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
         return;
     }
 
+    // Port-only: on a sharp screen, a picture the HD art pack has is shown from the pack; the copy keeps the indices.
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPictureFor(surface, command.Source.get());
+        hd != nullptr &&
+        AddHd(surface, *hd, at, from, std::nullopt, command.ColorKey ? std::optional(command.Key) : std::nullopt))
+    {
+        Add(surface, source->Kind, source->Index, at, from, op | IndexOnly, color, 0, 0);
+        return;
+    }
+
     Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
+{
+    if (_Surfaces[target].Key != _ScaledScreen || !MCHdArt::Active() || MCRenderer::FrameSurfaceOf(window) != nullptr)
+    {
+        return nullptr;
+    }
+
+    const std::shared_ptr<MCTexture> texture = window.Texture.lock();
+
+    if (texture == nullptr || texture->Hardware == nullptr || texture->CpuStale)
+    {
+        return nullptr;
+    }
+
+    TextureState& state = StateOf(*texture);
+
+    if (!state.HdLooked)
+    {
+        state.HdLooked = true;
+        state.Hd = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
+    }
+
+    return state.Hd;
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -1844,8 +1894,62 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     return UsePicture(found->second);
 }
 
+bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns,
+                                     int32_t rows, const Quad& at, const MCColorTable& table)
+{
+    BeginRecording();
+
+    // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once.
+    uint64_t key = HashBasis;
+    const auto mix = [&key](uint64_t value)
+    {
+        key ^= value;
+        key *= HashPrime;
+    };
+
+    mix(static_cast<uint64_t>(columns));
+    mix(static_cast<uint64_t>(rows));
+
+    for (int32_t row = 0; row < rows; ++row)
+    {
+        for (int32_t column = 0; column < columns; ++column)
+        {
+            const size_t offset = static_cast<size_t>(row) * static_cast<size_t>(pitch) + static_cast<size_t>(column);
+            mix(offset < glyph.size() ? glyph[offset] : MCSharpText::NoInk);
+        }
+    }
+
+    auto found = _SharpGlyphs.find(key);
+
+    if (found == _SharpGlyphs.end())
+    {
+        const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, pitch, columns, rows);
+        const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
+        const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
+        Picture picture;
+
+        if (redrawn.empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+        {
+            return false;
+        }
+
+        std::ranges::copy(redrawn, QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdBytesPerPixel).begin());
+        found = _SharpGlyphs.emplace(key, picture).first;
+        _SharpGlyphBytes += redrawn.size();
+        ++_FrameUploads.Pictures;
+        _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
+    }
+
+    // The colour field carries the redrawn glyph's scale (shaders/draw.pshader's KindSharpGlyph).
+    const Quad from = {0, 0, 1, 1};
+    Add(surface, SourceKind::Picture, UsePicture(found->second), at, from, KindSharpGlyph | AlphaBlend | TableBefore,
+        static_cast<uint32_t>(MCSharpText::Scale), TableRow(table), 0);
+    return true;
+}
+
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
-                             const std::optional<MCColorTable>& table)
+                             const std::optional<MCColorTable>& table, std::optional<uint8_t> key)
 {
     const std::optional<uint32_t> picture = HdPictureOf(frame);
 
@@ -1854,8 +1958,8 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
         return false;
     }
 
-    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd).
-    uint32_t op = KindHd | AlphaBlend;
+    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out.
+    uint32_t op = KindHd | AlphaBlend | (key.has_value() ? ColorKey : 0);
     uint32_t before = 0;
 
     if (table.has_value())
@@ -1864,7 +1968,9 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
         before = TableRow(*table);
     }
 
-    if (Add(surface, SourceKind::Picture, *picture, at, from, op, static_cast<uint32_t>(frame.Scale), before, 0))
+    const uint32_t color = static_cast<uint32_t>(frame.Scale) | static_cast<uint32_t>(key.value_or(0)) << 8;
+
+    if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, 0))
     {
         ++_HdDrawn;
     }
@@ -2467,6 +2573,14 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
     {
         op |= TableBefore | SkipKeyAfterTable;
         before = TableRow(*command.Table);
+
+        // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp; the original's draw keeps
+        // the indices.
+        if (_Surfaces[surface].Key == _ScaledScreen &&
+            AddSharpGlyph(surface, source, pitch, columns, rows, at, *command.Table))
+        {
+            op |= IndexOnly;
+        }
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, 0);

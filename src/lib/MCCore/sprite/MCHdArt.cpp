@@ -11,6 +11,11 @@ namespace
     /// <summary>The pack's folder in the user folder, and its folder of mech part frames.</summary>
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
+    /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
+    constexpr std::string_view PictureFolder = "menus";
+    /// <summary>FNV-1a's 64-bit offset basis and prime (MCHdArt::PictureHash).</summary>
+    constexpr uint64_t PictureHashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t PictureHashPrime = 0x100000001b3ull;
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>The index picture's green where a pixel has an index.</summary>
@@ -43,7 +48,8 @@ namespace
         bool Looked = false;
     };
 
-    using FrameKey = std::pair<std::filesystem::path, int32_t>;
+    /// <summary>A frame's folder and name: a mech frame's number, or a picture's hash (MCHdArt::PictureHash).</summary>
+    using FrameKey = std::pair<std::filesystem::path, uint64_t>;
 
     struct State
     {
@@ -149,7 +155,7 @@ namespace
     /// <paramref name="height"/>; none when the pack has no such frame, or what is wrong with the one it has.
     /// </summary>
     std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const std::filesystem::path& folder,
-                                                                                int32_t frame, int32_t width,
+                                                                                std::string_view frame, int32_t width,
                                                                                 int32_t height)
     {
         const std::filesystem::path colorPath = folder / std::format("{}.png", frame);
@@ -248,6 +254,44 @@ namespace
     /// <summary>
     /// Drops the least recently used frames, but never <paramref name="keep"/>, until the kept ones fit the budget.
     /// </summary>
+    void Trim(const FrameKey& keep);
+
+    /// <summary>
+    /// The cached frame <paramref name="key"/> (named <paramref name="stem"/> in its folder) for a picture of
+    /// <paramref name="width"/> x <paramref name="height"/>, read the first time it is asked for.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> Lookup(const FrameKey& key, std::string_view stem, int32_t width,
+                                                 int32_t height)
+    {
+        State& state = TheState();
+        Cached& cached = state.Frames[key];
+        cached.LastUse = ++state.Uses;
+
+        if (!cached.Looked)
+        {
+            cached.Looked = true;
+            const auto started = std::chrono::steady_clock::now();
+            auto read = ReadFrame(key.first, stem, width, height);
+            state.ReadTime += std::chrono::steady_clock::now() - started;
+
+            if (!read)
+            {
+                LogOnce(key.first, read.error());
+            }
+            else if (*read != nullptr)
+            {
+                cached.Frame = std::move(*read);
+                state.Bytes += cached.Frame->Pixels.size();
+                ++state.Read;
+                std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
+                Trim(key);
+                return kept;
+            }
+        }
+
+        return cached.Frame;
+    }
+
     void Trim(const FrameKey& keep)
     {
         State& state = TheState();
@@ -362,33 +406,53 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    const FrameKey key{found->second.Folder, frame};
-    Cached& cached = state.Frames[key];
-    cached.LastUse = ++state.Uses;
+    return Lookup(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, std::to_string(frame), width, height);
+}
 
-    if (!cached.Looked)
+uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
+{
+    // FNV-1a over the size, then eight bytes at a time (the rest one at a time).
+    uint64_t hash = PictureHashBasis;
+    const auto mix = [&hash](uint64_t value)
     {
-        cached.Looked = true;
-        const auto started = std::chrono::steady_clock::now();
-        auto read = ReadFrame(key.first, frame, width, height);
-        state.ReadTime += std::chrono::steady_clock::now() - started;
+        hash ^= value;
+        hash *= PictureHashPrime;
+    };
 
-        if (!read)
-        {
-            LogOnce(key.first, read.error());
-        }
-        else if (*read != nullptr)
-        {
-            cached.Frame = std::move(*read);
-            state.Bytes += cached.Frame->Pixels.size();
-            ++state.Read;
-            std::shared_ptr<const Frame> kept = cached.Frame;
-            Trim(key);
-            return kept;
-        }
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(width)));
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(height)));
+    size_t at = 0;
+
+    for (; at + sizeof(uint64_t) <= pixels.size(); at += sizeof(uint64_t))
+    {
+        uint64_t word = 0;
+        std::memcpy(&word, pixels.data() + at, sizeof(word));
+        mix(word);
     }
 
-    return cached.Frame;
+    for (; at < pixels.size(); ++at)
+    {
+        mix(pixels[at]);
+    }
+
+    return hash;
+}
+
+std::string MCHdArt::PictureName(uint64_t hash)
+{
+    return std::format("{:016x}", hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8_t> pixels, int32_t width,
+                                                           int32_t height)
+{
+    if (!Active() || width <= 0 || height <= 0)
+    {
+        return nullptr;
+    }
+
+    const uint64_t hash = PictureHash(pixels, width, height);
+    return Lookup(FrameKey{PackFolder() / PictureFolder, hash}, PictureName(hash), width, height);
 }
 
 size_t MCHdArt::FramesRead()

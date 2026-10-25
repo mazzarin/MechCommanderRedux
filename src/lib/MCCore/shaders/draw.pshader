@@ -112,7 +112,7 @@ static const uint HdColors = 1u << 16;
 // walk its place in the source (x0, y0, x1, y1).
 static const uint SmoothEdges = 1u << 17;
 // An HD frame's colours shown as made, not Corrected (a menu's picture, made from its own screen's palette).
-static const uint HdAsMade = 1u << 18;
+static const uint HdAsMade = 1u << 20;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;

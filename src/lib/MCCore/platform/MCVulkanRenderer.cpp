@@ -52,7 +52,7 @@ namespace
     /// </summary>
     constexpr uint32_t SmoothEdges = 1u << 17;
     /// <summary>Port-only: an HD frame's colours shown as made, not corrected by the palette (MCVulkanRenderer::HdColours).</summary>
-    constexpr uint32_t HdAsMade = 1u << 18;
+    constexpr uint32_t HdAsMade = 1u << 20;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;

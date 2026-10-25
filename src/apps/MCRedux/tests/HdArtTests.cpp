@@ -1082,11 +1082,34 @@ namespace
             std::ranges::count_if(sequence.Frames, [](const DecodedFrame& frame) { return frame.Width > 0; }));
     }
 
+    /// <summary>
+    /// Leaves out of a translucent frame (drawn through AlphaPal.ini) the pixels it blends, and those of colours 0 and
+    /// 255, which draw nothing: the pack's frame shows its opaque pixels over the original's blended ones.
+    /// </summary>
+    void LeaveOutBlended(DecodedFrame& frame)
+    {
+        constexpr uint8_t Clear = 0;
+        constexpr uint8_t Key = 255;
+
+        for (size_t i = 0; i < frame.Index.size(); ++i)
+        {
+            const uint8_t index = frame.Index[i];
+
+            if (index == Clear || index == Key || SpecialColor[index] != 0)
+            {
+                frame.Drawn[i] = 0;
+            }
+        }
+    }
+
     /// <summary>An appearance's sequences (one a packet it draws, its frames decoded), and what was left out.</summary>
     struct ObjectSequences
     {
         std::vector<Sequence> Sequences;
-        /// <summary>The frames drawn translucent (the HD art pack draws only opaque ones) and those that can't be read.</summary>
+        /// <summary>
+        /// The frames drawn translucent (their blended pixels left out: the original's still blend), and those that can't
+        /// be read (left out).
+        /// </summary>
         size_t Translucent = 0;
         size_t Unreadable = 0;
         /// <summary>The original pixels of the frames kept (their bounds).</summary>
@@ -1125,18 +1148,19 @@ namespace
             {
                 auto decoded = Decode(shape->FrameList(), frame);
 
-                // Left out of the pack (drawn from the original).
-                if (!decoded || decoded->Translucent)
+                if (!decoded)
                 {
-                    if (decoded)
-                    {
-                        ++made.Translucent;
-                    }
-                    else
-                    {
-                        ++made.Unreadable;
-                    }
+                    ++made.Unreadable;
+                }
+                else if (decoded->Translucent)
+                {
+                    ++made.Translucent;
+                    LeaveOutBlended(*decoded);
+                }
 
+                // Left out of the pack (drawn from the original): a frame that can't be read, or has no opaque pixel.
+                if (!decoded || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+                {
                     sequence.Frames.emplace_back();
                     continue;
                 }
@@ -1293,8 +1317,9 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 
         if (made.Translucent + made.Unreadable > 0)
         {
-            std::cout << std::format("  ({} translucent frames and {} that can't be read left out)\n", made.Translucent,
-                                     made.Unreadable);
+            std::cout << std::format(
+                "  ({} translucent frames, their blended pixels left out; {} that can't be read)\n", made.Translucent,
+                made.Unreadable);
         }
 
         ++total.Appearances;
@@ -1319,7 +1344,8 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 /// Tool: <c>--hd-extract-objects &lt;folder&gt;</c> writes the vehicles', Elementals', turrets', buildings', trees' and
 /// terrain objects' frames (<c>--kind</c> and <c>--appearance</c> pick, as --hd-objects lists them) as an HD art pack
 /// at their own size, for tools/upscale/make_object_pack.py: every packet each appearance draws, each frame a PNG with
-/// its index picture (sprite/MCHdArt.h; translucent frames left out, as the pack draws only opaque ones), plus
+/// its index picture (sprite/MCHdArt.h; a translucent frame without the pixels it blends, which the original still
+/// draws), plus
 /// <c>objects.json</c> (each appearance's kind, whether it is animated or still, and its sequences' frames' bounds, as
 /// --hd-extract's) and the shown colours as palette.rgb. A sequence whose shape table an earlier one has (made the same
 /// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it.
@@ -1424,13 +1450,13 @@ namespace
     }
 
     /// <summary>
-    /// Mission 1 drawn by <paramref name="drawing"/>, its world view shown larger than the screen; null (noted) when the
-    /// GPU can't draw it so.
+    /// Mission <paramref name="mission"/> drawn by <paramref name="drawing"/>, its world view shown larger than the
+    /// screen; null (noted) when the GPU can't draw it so.
     /// </summary>
-    std::shared_ptr<MCVulkanRenderer> StartScaledUp(MCGpuDrawing drawing)
+    std::shared_ptr<MCVulkanRenderer> StartScaledUp(MCGpuDrawing drawing, int32_t mission = 1)
     {
         MCRenderer::RequestGpuDrawing(drawing);
-        REQUIRE(MCTestGame::StartMission(1));
+        REQUIRE(MCTestGame::StartMission(mission));
         auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
 
         if (renderer == nullptr || MCRenderer::GpuDrawing() != drawing)
@@ -1505,8 +1531,8 @@ namespace
         MCHdArtOn& operator=(const MCHdArtOn&) = delete;
     };
 
-    /// <summary>The pixels whose shown colour differs between <paramref name="a"/> and <paramref name="b"/>, and their
-    /// mean position.</summary>
+    /// <summary>The pixels whose shown colour differs between <paramref name="a"/> and <paramref name="b"/> (within
+    /// <paramref name="within"/> when given), and their mean position.</summary>
     struct Changed
     {
         int32_t Count = 0;
@@ -1514,15 +1540,16 @@ namespace
         int64_t Y = 0;
     };
 
-    Changed Compare(const Shown& a, const Shown& b)
+    Changed Compare(const Shown& a, const Shown& b, std::optional<MCRect> within = std::nullopt)
     {
         REQUIRE_EQ(a.Width, b.Width);
         REQUIRE_EQ(a.Height, b.Height);
+        const MCRect region = within.value_or(MCRect{0, 0, a.Width - 1, a.Height - 1});
         Changed changed;
 
-        for (int32_t y = 0; y < a.Height; ++y)
+        for (int32_t y = region.Y0; y <= region.Y1; ++y)
         {
-            for (int32_t x = 0; x < a.Width; ++x)
+            for (int32_t x = region.X0; x <= region.X1; ++x)
             {
                 const size_t at = (static_cast<size_t>(y) * a.Width + x) * BytesPerPixel;
 
@@ -1622,14 +1649,11 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 
 namespace
 {
-    /// <summary>The object classes the object tests draw from a pack: a ground vehicle and a building.</summary>
-    constexpr std::array<MCObjectClass, 2> HdObjectClasses = {MCObjectClass::GroundVehicle, MCObjectClass::Building};
-
     /// <summary>
-    /// The object of <paramref name="objectClass"/> nearest the player's mech in mission 1: from the movers' part table
-    /// and from the object lists.
+    /// The object nearest the player's mech in mission 1 that <paramref name="wanted"/> picks (it has an appearance):
+    /// from the movers' part table and from the object lists.
     /// </summary>
-    std::shared_ptr<MCGameObject> NearestObject(MCObjectClass objectClass)
+    std::shared_ptr<MCGameObject> NearestObject(const std::function<bool(MCBaseObject&)>& wanted)
     {
         const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
         REQUIRE(player != nullptr);
@@ -1639,7 +1663,7 @@ namespace
 
         const auto consider = [&](const std::shared_ptr<MCBaseObject>& object)
         {
-            if (object == nullptr || object->ObjectClass != objectClass || object->GetAppearance() == nullptr)
+            if (object == nullptr || object->GetAppearance() == nullptr)
             {
                 return;
             }
@@ -1648,7 +1672,7 @@ namespace
             const MCVector3D at = game->GetPosition();
             const float distance = std::hypot(at.X - from.X, at.Y - from.Y);
 
-            if (distance < nearestDistance)
+            if (distance < nearestDistance && wanted(*object))
             {
                 nearest = game;
                 nearestDistance = distance;
@@ -1671,10 +1695,67 @@ namespace
         return nearest;
     }
 
+    /// <summary>The object of <paramref name="objectClass"/> nearest the player's mech in mission 1.</summary>
+    std::shared_ptr<MCGameObject> NearestObject(MCObjectClass objectClass)
+    {
+        return NearestObject([objectClass](const MCBaseObject& object) { return object.ObjectClass == objectClass; });
+    }
+
+    /// <summary>What the object tests draw from a pack, nearest the player's mech in mission 1.</summary>
+    enum class HdSubject : uint8_t
+    {
+        Vehicle,
+        Building,
+        /// <summary>An object with translucent frames (drawn through AlphaPal.ini).</summary>
+        Translucent,
+    };
+
+    /// <summary>The mission a subject is looked for in: mission 1 has no object drawn translucent; mission 2 has cargo containers.</summary>
+    int32_t MissionOf(HdSubject subject)
+    {
+        constexpr int32_t TranslucentMission = 2;
+        return subject == HdSubject::Translucent ? TranslucentMission : 1;
+    }
+
+    std::shared_ptr<MCGameObject> NearestSubject(HdSubject subject)
+    {
+        switch (subject)
+        {
+            case HdSubject::Vehicle:
+                return NearestObject(MCObjectClass::GroundVehicle);
+            case HdSubject::Building:
+                return NearestObject(MCObjectClass::Building);
+            case HdSubject::Translucent:
+                break;
+        }
+
+        // Each appearance's frames looked at once.
+        std::map<uint32_t, bool> translucent;
+        return NearestObject(
+            [&translucent](MCBaseObject& object)
+            {
+                const std::shared_ptr<MCAppearanceType> type = object.GetAppearance()->GetAppearanceType();
+
+                if (type == nullptr)
+                {
+                    return false;
+                }
+
+                const auto [found, fresh] = translucent.try_emplace(type->AppearanceNum, false);
+
+                if (fresh)
+                {
+                    found->second = ObjectSequencesOf(type).Translucent > 0;
+                }
+
+                return found->second;
+            });
+    }
+
     /// <summary>
-    /// Mission 1 drawn by <paramref name="drawing"/>, its world view shown larger than the screen, the camera on the
-    /// object of <paramref name="objectClass"/> nearest the player's mech, and a pack of every packet its appearance
-    /// draws (the tests' pack: the original's pixels doubled, their colours inverted).
+    /// <paramref name="subject"/>'s mission drawn by <paramref name="drawing"/>, its world view shown larger than the
+    /// screen, the camera on the subject, and a pack of every packet its appearance draws (the tests' pack: the original's
+    /// pixels doubled, their colours inverted).
     /// </summary>
     struct HdObjectScene
     {
@@ -1684,7 +1765,7 @@ namespace
         std::filesystem::path Pack;
     };
 
-    std::optional<HdObjectScene> SetUpHdObjectScene(MCGpuDrawing drawing, MCObjectClass objectClass)
+    std::optional<HdObjectScene> SetUpHdObjectScene(MCGpuDrawing drawing, HdSubject subject)
     {
         if (!MCTestGame::Available())
         {
@@ -1692,7 +1773,7 @@ namespace
         }
 
         HdObjectScene scene;
-        scene.Renderer = StartScaledUp(drawing);
+        scene.Renderer = StartScaledUp(drawing, MissionOf(subject));
 
         if (scene.Renderer == nullptr)
         {
@@ -1701,7 +1782,7 @@ namespace
 
         // The whole map shown (the cheat), so no fog hides the object.
         RevealAll();
-        scene.Object = NearestObject(objectClass);
+        scene.Object = NearestSubject(subject);
         REQUIRE(scene.Object != nullptr);
         Eye()->ChangeTarget(scene.Object, true);
         MCTestGame::RunFrame(FrameSeconds);
@@ -1718,96 +1799,132 @@ namespace
         scene.Pack = scene.Scratch / "pack";
         WritePack(scene.Pack, made.Sequences, colors, TestPackScale, Inverted);
         std::cout << std::format("  object class {:#x}, appearance {:#010x}: {} packets in the pack\n",
-                                 static_cast<int32_t>(objectClass), type->AppearanceNum, made.Sequences.size());
+                                 static_cast<int32_t>(scene.Object->ObjectClass), type->AppearanceNum,
+                                 made.Sequences.size());
         return scene;
-    }
-}
-
-/// <summary>
-/// With HD art on and a pack holding a vehicle's (then a building's) frames, the GPU shows the object from the pack in
-/// a world view shown larger than the screen: the shown colours change around it, in the middle of the view, and the
-/// frames before HD art went on were alike (so the change is only how the object is drawn).
-/// </summary>
-TEST_CASE_ISOLATED("game: an HD art pack's frames show in a vehicle's and a building's place")
-{
-    for (const MCObjectClass objectClass : HdObjectClasses)
-    {
-        const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::On, objectClass);
-
-        if (!scene.has_value())
-        {
-            return;
-        }
-
-        MCTest::Scope scope(std::format("object class {:#x}", static_cast<int32_t>(objectClass)));
-        const Shown original = ReadShown(scene->Scratch);
-        MCTestGame::RunFrame(FrameSeconds);
-        CHECK_EQ(Compare(original, ReadShown(scene->Scratch)).Count, 0);
-
-        std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-        const int64_t drawnBefore = scene->Renderer->HdDrawn();
-        MCTestGame::RunFrame(FrameSeconds);
-        const Shown hd = ReadShown(scene->Scratch);
-        hdArt.reset();
-
-        CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-        const Changed changed = Compare(original, hd);
-        std::cout << std::format("  {} shown pixels changed of {}x{}, about ({}, {})\n", changed.Count, hd.Width,
-                                 hd.Height, changed.X, changed.Y);
-        REQUIRE(changed.Count > 0);
-        CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
-        CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
-        std::filesystem::remove_all(scene->Scratch);
-    }
-}
-
-/// <summary>
-/// HD art changes only the colours shown: in mirror mode, with a vehicle (then a building) drawn from the pack, the
-/// GPU's palette indices are still the software renderer's, frame after frame.
-/// </summary>
-TEST_CASE_ISOLATED("game: HD art keeps a vehicle's and a building's palette indices")
-{
-    constexpr int32_t Frames = 10;
-
-    for (const MCObjectClass objectClass : HdObjectClasses)
-    {
-        const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::Mirror, objectClass);
-
-        if (!scene.has_value())
-        {
-            return;
-        }
-
-        MCTest::Scope scope(std::format("object class {:#x}", static_cast<int32_t>(objectClass)));
-        std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-        scene->Renderer->ResetMirror();
-        const int64_t drawnBefore = scene->Renderer->HdDrawn();
-
-        for (int32_t frame = 0; frame < Frames; ++frame)
-        {
-            MCTestGame::RunFrame(FrameSeconds);
-        }
-
-        hdArt.reset();
-        const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
-        CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-        CHECK_EQ(tally.Frames, Frames);
-        CHECK_EQ(tally.DifferentFrames, 0);
-
-        if (tally.DifferentFrames != 0)
-        {
-            std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
-        }
-
-        std::filesystem::remove_all(scene->Scratch);
     }
 }
 
 namespace
 {
     /// <summary>
-    /// The picture tools' start: mission 1 drawn by the GPU in a window of <c>--window &lt;w&gt;x&lt;h&gt;</c> (default
-    /// 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and HD art on with the pack at
+    /// With HD art on and a pack holding each of <paramref name="subjects"/>' frames in turn, the GPU shows the object
+    /// from the pack in a world view shown larger than the screen: the shown colours change around it, in the middle of
+    /// the view, and the frames before HD art went on were alike (so the change is only how the object is drawn).
+    /// </summary>
+    void CheckShownFromPack(std::span<const HdSubject> subjects)
+    {
+        for (const HdSubject subject : subjects)
+        {
+            const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::On, subject);
+
+            if (!scene.has_value())
+            {
+                return;
+            }
+
+            // The game paused, so nothing moves between the frames compared (mission 2's animate), and only the middle
+            // of the view compared (the tactical map's blips blink).
+            MCTest::Scope scope(std::format("subject {}", static_cast<int32_t>(subject)));
+            GamePaused = true;
+            MCTestGame::RunFrame(FrameSeconds);
+            const Shown original = ReadShown(scene->Scratch);
+            const MCRect middle{original.Width / 4, original.Height / 4, original.Width * 3 / 4,
+                                original.Height * 3 / 4};
+            MCTestGame::RunFrame(FrameSeconds);
+            CHECK_EQ(Compare(original, ReadShown(scene->Scratch), middle).Count, 0);
+
+            std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
+            const int64_t drawnBefore = scene->Renderer->HdDrawn();
+            MCTestGame::RunFrame(FrameSeconds);
+            const Shown hd = ReadShown(scene->Scratch);
+            hdArt.reset();
+            GamePaused = false;
+
+            CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+            const Changed changed = Compare(original, hd, middle);
+            std::cout << std::format("  {} shown pixels changed of {}x{}, about ({}, {})\n", changed.Count, hd.Width,
+                                     hd.Height, changed.X, changed.Y);
+            REQUIRE(changed.Count > 0);
+            CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
+            CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
+            std::filesystem::remove_all(scene->Scratch);
+        }
+    }
+
+    /// <summary>
+    /// HD art changes only the colours shown: in mirror mode, with each of <paramref name="subjects"/> drawn from the
+    /// pack in turn, the GPU's palette indices are still the software renderer's, frame after frame.
+    /// </summary>
+    void CheckIndicesKept(std::span<const HdSubject> subjects)
+    {
+        constexpr int32_t Frames = 10;
+
+        for (const HdSubject subject : subjects)
+        {
+            const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::Mirror, subject);
+
+            if (!scene.has_value())
+            {
+                return;
+            }
+
+            MCTest::Scope scope(std::format("subject {}", static_cast<int32_t>(subject)));
+            std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
+            scene->Renderer->ResetMirror();
+            const int64_t drawnBefore = scene->Renderer->HdDrawn();
+
+            for (int32_t frame = 0; frame < Frames; ++frame)
+            {
+                MCTestGame::RunFrame(FrameSeconds);
+            }
+
+            hdArt.reset();
+            const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+            CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+            CHECK_EQ(tally.Frames, Frames);
+            CHECK_EQ(tally.DifferentFrames, 0);
+
+            if (tally.DifferentFrames != 0)
+            {
+                std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+            }
+
+            std::filesystem::remove_all(scene->Scratch);
+        }
+    }
+
+    /// <summary>The subjects of mission 1, and of mission 2 (mission 1 has no object drawn translucent).</summary>
+    constexpr std::array<HdSubject, 2> FirstMissionSubjects = {HdSubject::Vehicle, HdSubject::Building};
+    constexpr std::array<HdSubject, 1> SecondMissionSubjects = {HdSubject::Translucent};
+}
+
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in a vehicle's and a building's place")
+{
+    CheckShownFromPack(FirstMissionSubjects);
+}
+
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in a translucent object's place")
+{
+    CheckShownFromPack(SecondMissionSubjects);
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps a vehicle's and a building's palette indices")
+{
+    CheckIndicesKept(FirstMissionSubjects);
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps a translucent object's palette indices")
+{
+    CheckIndicesKept(SecondMissionSubjects);
+}
+
+namespace
+{
+    /// <summary>
+    /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
+    /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
+    /// HD art on with the pack at
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
     /// unless <c>--hd-original 1</c>.
     /// </summary>
@@ -1816,8 +1933,15 @@ namespace
     {
         // The folder is made absolute before the game starts: the game works in the install's folder.
         const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(pack));
+        int32_t mission = 1;
+
+        if (const std::optional<std::string_view> given = MCTest::Option("mission"); given.has_value())
+        {
+            std::from_chars(given->data(), given->data() + given->size(), mission);
+        }
+
         MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-        REQUIRE(MCTestGame::StartMission(1));
+        REQUIRE(MCTestGame::StartMission(mission));
         REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
 
         int32_t width = 3024;
@@ -1934,11 +2058,12 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 
 /// <summary>
 /// Tool: <c>--hd-pack-objects &lt;folder&gt; --shots &lt;folder&gt;</c> pictures a pack's vehicles, buildings and trees:
-/// in mission 1 (the map revealed), the camera on the vehicle, the building and the tree nearest the player's mech in
-/// turn, each at the usual zoom and zoomed in, shown with HD art (<c>&lt;name&gt;_hd.png</c>), or with
+/// in mission 1 (or <c>--mission</c>'s; the map revealed), the camera on the vehicle, the building, the object with
+/// translucent frames and the tree nearest the player's mech in turn, each at the usual zoom and zoomed in, shown with HD art
+/// (<c>&lt;name&gt;_hd.png</c>), or with
 /// <c>--hd-original 1</c> without it (<c>&lt;name&gt;_original.png</c>). <c>--window</c> as --hd-pack's.
 /// </summary>
-TEST_CASE_ISOLATED("tool: --hd-pack-objects pictures a pack's vehicle, building and tree beside the original")
+TEST_CASE_ISOLATED("tool: --hd-pack-objects pictures a pack's vehicles, buildings and trees beside the original")
 {
     const std::optional<std::string_view> pack = MCTest::Option("hd-pack-objects");
     const std::optional<std::string_view> shots = MCTest::Option("shots");
@@ -1955,14 +2080,16 @@ TEST_CASE_ISOLATED("tool: --hd-pack-objects pictures a pack's vehicle, building 
     std::filesystem::create_directories(folder);
     constexpr int32_t SettleFrames = 3;
     constexpr float ZoomedLines = 300.0f;
-    const std::array<std::pair<MCObjectClass, std::string_view>, 3> subjects = {
-        {{MCObjectClass::GroundVehicle, "vehicle"},
-         {MCObjectClass::Building, "building"},
-         {MCObjectClass::Tree, "tree"}}};
+    const std::array<std::pair<std::string_view, std::function<std::shared_ptr<MCGameObject>()>>, 4> subjects = {{
+        {"vehicle", [] { return NearestSubject(HdSubject::Vehicle); }},
+        {"building", [] { return NearestSubject(HdSubject::Building); }},
+        {"translucent", [] { return NearestSubject(HdSubject::Translucent); }},
+        {"tree", [] { return NearestObject(MCObjectClass::Tree); }},
+    }};
 
-    for (const auto& [objectClass, name] : subjects)
+    for (const auto& [name, nearest] : subjects)
     {
-        const std::shared_ptr<MCGameObject> object = NearestObject(objectClass);
+        const std::shared_ptr<MCGameObject> object = nearest();
 
         if (object == nullptr)
         {

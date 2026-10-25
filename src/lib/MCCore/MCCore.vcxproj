@@ -195,6 +195,7 @@
     <ClCompile Include="logistics\MCLogRows.cpp" />
     <ClCompile Include="logistics\MCLogScrollTextObject.cpp" />
     <ClCompile Include="logistics\MCLogSlider.cpp" />
+    <ClCompile Include="logistics\MCLogTextButton.cpp" />
     <ClCompile Include="logistics\MCLogTextObject.cpp" />
     <ClCompile Include="logistics\MCLogToolButton.cpp" />
     <ClCompile Include="logistics\MCMainMenu.cpp" />
@@ -593,6 +594,7 @@
     <ClInclude Include="logistics\MCLogRows.h" />
     <ClInclude Include="logistics\MCLogScrollTextObject.h" />
     <ClInclude Include="logistics\MCLogSlider.h" />
+    <ClInclude Include="logistics\MCLogTextButton.h" />
     <ClInclude Include="logistics\MCLogTextObject.h" />
     <ClInclude Include="logistics\MCLogToolButton.h" />
     <ClInclude Include="logistics\MCMainMenu.h" />

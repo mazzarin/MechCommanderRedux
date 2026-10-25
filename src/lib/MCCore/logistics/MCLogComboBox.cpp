@@ -5,7 +5,7 @@
 #include "gui/MCGuiFont.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCGenericScreen.h"
-#include "platform/MCRenderer.h"
+#include "logistics/MCLogLabel.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -13,6 +13,7 @@ namespace
     /// <summary>The drop-down's colours: the panel's back, the outline and lit row, the text.</summary>
     constexpr uint8_t ComboBackColor = 0x10;
     constexpr uint8_t ComboLineColor = 0x14;
+    constexpr uint8_t ComboTextColor = 0xe3;
     /// <summary>The sample a drop-down plays when it opens and when a row is chosen (the check boxes' press sound).</summary>
     constexpr uint32_t ComboClickSound = 16;
     /// <summary>The width of the field's arrow button, its left line included.</summary>
@@ -41,20 +42,7 @@ auto MCLogComboBox::Destroy() -> void
 
 auto MCLogComboBox::LabelColors() -> MCColorTable
 {
-    static const MCColorTable table = []
-    {
-        static std::array<uint8_t, 256> colors{};
-
-        for (int32_t i = 0; i < 256; ++i)
-        {
-            colors[static_cast<size_t>(i)] = i == 0xff ? 0xff : 0xe3;
-        }
-
-        MCRenderer::RegisterData(std::span(colors.data(), colors.size()), MCDataKind::Tables);
-        return MCColorTable(colors);
-    }();
-
-    return table;
+    return FontColors(ComboTextColor);
 }
 
 auto MCLogComboBox::WriteLabel(int32_t xPos, int32_t yPos, const std::string& text) -> void

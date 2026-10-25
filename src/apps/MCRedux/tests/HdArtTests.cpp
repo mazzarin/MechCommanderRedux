@@ -3705,8 +3705,11 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
 
 namespace
 {
-    /// <summary>What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew, and where.</summary>
-    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*>;
+    /// <summary>
+    /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
+    /// copied from), and where.
+    /// </summary>
+    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
 
     /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
     struct AuditTally
@@ -3831,7 +3834,7 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     std::map<AuditKey, AuditTally> tally;
     renderer->Audit = [&tally](const MCVulkanRenderer::AuditedDraw& draw)
     {
-        AuditTally& entry = tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.Window}];
+        AuditTally& entry = tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
         ++entry.Count;
         entry.Pixels += draw.Pixels;
         entry.Scaled |= draw.Scaled;
@@ -3877,10 +3880,11 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
                                               : 0.0);
     }
 
-    // What was drawn from the original's pixels, most pixels first.
+    // What was drawn from the original's pixels (with --hd-audit-all, everything), most pixels first.
+    const bool all = MCTest::Option("hd-audit-all").has_value();
     std::vector<std::pair<AuditKey, AuditTally>> original;
     std::ranges::copy_if(tally, std::back_inserter(original),
-                         [](const auto& entry) { return !std::get<1>(entry.first); });
+                         [all](const auto& entry) { return all || !std::get<1>(entry.first); });
     std::ranges::sort(original, std::ranges::greater{}, [](const auto& entry) { return entry.second.Pixels; });
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
@@ -3891,13 +3895,36 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     for (size_t rank = 0; rank < std::min(original.size(), Listed); ++rank)
     {
         const auto& [key, entry] = original[rank];
-        const auto& [command, sharp, data, window] = key;
-        std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}\n", rank, command,
+        const auto& [command, sharp, data, from, window] = key;
+        std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}\n", rank, command,
                                  static_cast<const void*>(data), window->XMax + 1, window->YMax + 1,
                                  entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
-                                 AuditOwner(entry.Data));
+                                 AuditOwner(entry.Data), sharp ? " sharp" : "");
 
-        if ((command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
+        // A copy's picture as its window holds it, and the pack's frame of it when it was drawn sharp.
+        if (from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+        {
+            DecodedFrame picture;
+            picture.Width = from->XMax + 1;
+            picture.Height = from->YMax + 1;
+            picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+            picture.Drawn.assign(from->Size(), 1);
+            WriteFramePngs(
+                folder / std::format("{:03}_{}", rank, command), picture, colors, 1,
+                [](SDL_Color color) { return color; }, false);
+
+            if (const std::shared_ptr<const MCHdArt::Frame> hd =
+                    sharp ? MCHdArt::FindPicture(picture.Index, picture.Width, picture.Height) : nullptr;
+                hd != nullptr)
+            {
+                std::vector<uint8_t> rgba = hd->Format == MCHdArt::ColorFormat::Bc7
+                                                ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
+                                                : hd->Colors;
+                SavePng(folder / std::format("{:03}_{}_hd.png", rank, command), hd->Width, hd->Height, rgba);
+            }
+        }
+
+        if (!sharp && (command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
         {
             if (const auto decoded = Decode(entry.Data, *entry.Frames.begin());
                 decoded.has_value() && decoded->Width > 0)

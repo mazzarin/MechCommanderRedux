@@ -623,9 +623,14 @@ std::string MCKeyBindings::CommandLabel(MCKeyCommand command)
 {
     for (const MCControlRow& row : ControlRowTable)
     {
-        if (!row.IsHeading() && (row.Command == command || row.Alternate == command))
+        if (!row.IsHeading() && row.Command == command)
         {
             return std::string(row.Label);
+        }
+
+        if (!row.IsHeading() && row.Alternate == command)
+        {
+            return std::format("{} ALTERNATE", row.Label);
         }
     }
 

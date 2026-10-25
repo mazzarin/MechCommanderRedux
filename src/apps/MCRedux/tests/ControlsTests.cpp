@@ -374,9 +374,16 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
 
     // Ctrl+R for RUN's alternate; Escape while listening keeps the key and the screen.
     RealClickCell(*list, CellOf(MCKeyCommand::RunAlternate));
+    CHECK_EQ(list->Status(), "PRESS THE NEW KEY FOR RUN ALTERNATE. ESC CANCELS.");
     RealChord(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_SCANCODE_R);
     CHECK_EQ(key(MCKeyCommand::RunAlternate), 0x13u | KeyCtrl);
     RealClickCell(*list, CellOf(MCKeyCommand::Stop));
+
+    // A key the game has no code for (F13) binds nothing: it keeps listening.
+    MCScreenInput::RealKey(SDL_SCANCODE_F13);
+    CHECK(list->Listening() == CellOf(MCKeyCommand::Stop));
+    CHECK_EQ(list->Status(), "PRESS THE NEW KEY FOR STOP. ESC CANCELS.");
+    CHECK_EQ(key(MCKeyCommand::Stop), MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
     CHECK(!list->Listening().has_value());
     CHECK_EQ(key(MCKeyCommand::Stop), MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Stop)]);

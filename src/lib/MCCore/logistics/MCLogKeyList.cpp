@@ -63,6 +63,8 @@ namespace
     /// <summary>The status line's hints.</summary>
     constexpr std::string_view Hint = "CLICK A KEY TO CHANGE IT. RIGHT-CLICK A KEY TO CLEAR IT.";
     constexpr std::string_view DefaultsNews = "THE ORIGINAL KEYS ARE BACK.";
+    /// <summary>What listening says about a key the game has no code for (F13 and up, media keys): it can't be bound.</summary>
+    constexpr std::string_view UnreadableKey = "THE GAME CAN'T READ THAT KEY. PRESS ANOTHER, OR ESC.";
 
     /// <summary>The scan code of Escape, which stops listening (it is the game's own key, not one to bind).</summary>
     constexpr int16_t EscapeScanCode = 0x01;
@@ -446,6 +448,12 @@ auto MCLogKeyList::HandleEvent(MCGuiEvent& event) -> void
                 else if (MCKeyBindings::IsModifierKey(event.ScanCode))
                 {
                     _PendingModifier = event.ScanCode;
+                }
+                else if (event.ScanCode == 0)
+                {
+                    // MCInput gives every key it passes on a code, but a key without one would be every such key in a
+                    // mission, and PREFS couldn't name it.
+                    _Status = UnreadableKey;
                 }
                 else
                 {

@@ -15,6 +15,12 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
                                                       int32_t stepY, int32_t elevStep, int32_t minX, int32_t maxX,
                                                       int32_t minY, int32_t maxY, MCTerrainFrame& frame);
 
+/// <summary>
+/// Port-only: reads the HD art pack's copies of the map's ground tiles (MCHdArt::FindTerrainTile) while the mission
+/// loads, so the first frame, which uploads the ground, doesn't wait on the pack. Does nothing while HD art is off.
+/// </summary>
+void MCTerrainReadHdTiles();
+
 /// <summary>Port: lets go of the ground mesh (the terrain is destroyed).</summary>
 void MCTerrainForgetMesh();
 

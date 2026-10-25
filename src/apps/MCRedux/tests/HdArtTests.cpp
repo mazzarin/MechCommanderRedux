@@ -861,7 +861,12 @@ namespace
         {
             GHdArt = 1;
             MCHdArt::SetPackFolder(pack);
-            SpriteManager()->DumpAll();
+
+            // None before the game starts.
+            if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager(); sprites != nullptr)
+            {
+                sprites->DumpAll();
+            }
         }
 
         ~MCHdArtOn()
@@ -1006,6 +1011,8 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         return;
     }
 
+    // The folder is made absolute before the game starts: the game works in the install's folder.
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartMission(1));
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -1028,7 +1035,9 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 
     if (!original)
     {
-        hdArt.emplace(std::filesystem::path(*pack));
+        // The pack's ground read up front, as a mission's load reads it.
+        hdArt.emplace(packFolder);
+        MCTerrainReadHdTiles();
     }
 
     const PlayerMech player = GivePlayerMech(MCTest::Option("mech").value_or("madcat"));
@@ -1215,6 +1224,42 @@ TEST_CASE_ISOLATED("game: HD art draws the ground in the pack's colours")
     std::cout << std::format("  {} tiles; {} of {} shown pixels changed\n", ground->Tiles, changed.Count, pixels);
     CHECK(ground->HdTerrain);
     CHECK(static_cast<size_t>(changed.Count) * 2 > pixels);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// HD terrain is read while the mission loads (MCTerrainReadHdTiles): every tile of the map's ground mesh, so its first
+/// frame with HD art reads none.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs it")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // A pack of the ground alone: the scene's pack has the mech's frames, which a frame reads when it draws the mech.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    const size_t tiles = WriteTerrainPack(pack, *mesh, colors);
+    REQUIRE(tiles > 0);
+    const MCHdArtOn hdArt(pack);
+    const size_t before = MCHdArt::FramesRead();
+    MCTerrainReadHdTiles();
+    CHECK_EQ(MCHdArt::FramesRead() - before, tiles);
+
+    // The frame uploads the ground with the pack's tiles, all read already.
+    const size_t loaded = MCHdArt::FramesRead();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(scene->Renderer->HdTerrain());
+    CHECK_EQ(MCHdArt::FramesRead(), loaded);
     std::filesystem::remove_all(scene->Scratch);
 }
 

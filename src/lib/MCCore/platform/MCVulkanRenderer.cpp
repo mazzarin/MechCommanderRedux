@@ -350,25 +350,6 @@ namespace
         return static_cast<uint32_t>(MCRead32(tile, 4 + static_cast<size_t>(row) * 4));
     }
 
-    /// <summary>The width a tile's spans reach (0 for a tile without pixels).</summary>
-    int32_t TileWidth(std::span<const uint8_t> tile)
-    {
-        int32_t width = 0;
-
-        for (int32_t row = 0; row < tile[2]; ++row)
-        {
-            const uint32_t offset = TileOffset(tile, row);
-            const int32_t length = static_cast<int32_t>(TileOffset(tile, row + 1) - offset);
-
-            if (length > 1)
-            {
-                width = std::max(width, tile[offset] + length - 1);
-            }
-        }
-
-        return width;
-    }
-
     /// <summary>Decodes a tile into <paramref name="width"/> x height value + state pairs (1 a pixel, 0 none).</summary>
     void DecodeTile(std::span<const uint8_t> tile, int32_t width, std::span<uint8_t> image)
     {
@@ -2198,7 +2179,7 @@ void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
     const std::span<const uint8_t> tile = command.Tile;
     const MCOptionalRef<DataImage> found = AtlasForData(
         tile, Seed(ImageKind::Tile, 0, 0), "a terrain tile",
-        [&] { return Extent{TileOffset(tile, tile[2]), TileWidth(tile), tile[2]}; },
+        [&] { return Extent{TileOffset(tile, tile[2]), VfxTileWidth(tile), tile[2]}; },
         [&](std::span<uint8_t> out, const Extent& extent) { DecodeTile(tile, extent.Width, out); });
 
     if (!found.has_value() || found->get().Measured.Width == 0)
@@ -2697,7 +2678,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         {
             const std::span<const uint8_t> tile = mesh.Tiles[i];
 
-            if (const int32_t width = TileWidth(tile); width != 0)
+            if (const int32_t width = VfxTileWidth(tile); width != 0)
             {
                 if (auto frame = MCHdArt::FindTerrainTile(tile, width, tile[2]);
                     frame != nullptr && (hdScale == 0 || frame->Scale == hdScale))
@@ -2716,7 +2697,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     {
         const std::span<const uint8_t> tile = mesh.Tiles[i];
         Place& place = places[i];
-        place.Width = TileWidth(tile);
+        place.Width = VfxTileWidth(tile);
         place.Height = tile[2];
 
         if (place.Width == 0)

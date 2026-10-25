@@ -554,3 +554,9 @@ int32_t VfxNTileDraw(const MCPane& pane, std::span<const uint8_t> tile, int32_t 
 /// </summary>
 /// <remarks>Issue #25: tiles come from the tile set's files; the original drew whatever the table said.</remarks>
 bool VfxTileFits(std::span<const uint8_t> tile);
+
+/// <summary>
+/// Port: the columns a tile's spans reach (0 for a tile without pixels), one more than its stated width for the retail
+/// tiles that reach past their box (see <see cref="VfxTileFits"/>, which the tile must pass).
+/// </summary>
+int32_t VfxTileWidth(std::span<const uint8_t> tile);

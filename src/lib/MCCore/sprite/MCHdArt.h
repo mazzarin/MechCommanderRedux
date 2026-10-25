@@ -15,6 +15,11 @@ class MCShape;
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured.</para>
+/// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
+/// original tile's pixels; their alpha is unused.</para>
+/// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
+/// shows an HD pixel scaled by its original index's colour now over that colour, so another mission's palette, the
+/// water's colour cycle and the brightness setting show through.</para>
 /// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>).</para>
 /// </remarks>
 namespace MCHdArt
@@ -114,6 +119,27 @@ namespace MCHdArt
     /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds.
     /// </summary>
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
+
+    /// <summary>
+    /// The name the pack keeps terrain tile <paramref name="tile"/> under (its data as the ground mesh keeps it: up to
+    /// its last row's end): the data's 64-bit FNV-1a hash in hex, so the same tile in any tile set has one name.
+    /// </summary>
+    std::string TerrainTileName(std::span<const uint8_t> tile);
+
+    /// <summary>
+    /// The HD copy of terrain tile <paramref name="tile"/> (its bounds <paramref name="width"/> x
+    /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
+    inline constexpr size_t PaletteBytes = 256 * 3;
+
+    /// <summary>The colours the pack's pictures were made from (its palette.rgb), or none.</summary>
+    const std::optional<std::array<uint8_t, PaletteBytes>>& MadeWith();
+
+    /// <summary>A number that changes whenever the pack in use (or whether one is) may have: see SetPackFolder.</summary>
+    uint64_t PackVersion();
 
     /// <summary>
     /// How many frames have been read from the pack so far, the time reading them took, and how many bytes the kept

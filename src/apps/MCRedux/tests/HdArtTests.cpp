@@ -8,11 +8,15 @@
 #include "color/MCPalette.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
+#include "lib/MCFastFile.h"
+#include "lib/MCFitIniFile.h"
+#include "lib/MCPacketFile.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
@@ -22,6 +26,7 @@
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
+#include "terrain/MCGroundMesh.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -444,6 +449,248 @@ TEST_CASE_ISOLATED("tool: --hd-mechs lists the mech trees")
 /// PNG with its index picture (sprite/MCHdArt.h), plus <c>&lt;name&gt;.json</c> (each sequence's gesture, part, facing and
 /// frames' bounds) and <c>palette.json</c> (the shown colours, the special colours, the actors' fade tables).
 /// </summary>
+namespace
+{
+    /// <summary>The terrain tile sets (data\tiles\&lt;name&gt;.pak and the rotated &lt;name&gt;90.pak).</summary>
+    constexpr std::array<std::string_view, 2> TileSets = {"tiles", "gtiles"};
+    constexpr std::array<std::string_view, 2> TileSetSuffixes = {"", "90"};
+    /// <summary>The archive of the missions' FITs, and where they lie in it.</summary>
+    constexpr std::string_view MissionArchive = "MISSION.FST";
+    constexpr std::string_view MissionFolder = "missions";
+    /// <summary>The base game's palette (mission 1's).</summary>
+    constexpr std::string_view BasePalette = "palette";
+
+    /// <summary>Where row <paramref name="row"/> of a terrain tile starts (VFX's tile format, vfx/vfxtile.cpp).</summary>
+    uint32_t TileRow(std::span<const uint8_t> tile, int32_t row)
+    {
+        return static_cast<uint32_t>(MCVfxRead32(tile, 4 + static_cast<size_t>(row) * 4));
+    }
+
+    /// <summary>A terrain tile's pixels: each one's index and whether it is drawn.</summary>
+    struct DecodedTile
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        std::vector<uint8_t> Index;
+        std::vector<uint8_t> Drawn;
+    };
+
+    DecodedTile DecodeTile(std::span<const uint8_t> tile)
+    {
+        DecodedTile decoded;
+        decoded.Height = tile[2];
+
+        for (int32_t row = 0; row < decoded.Height; ++row)
+        {
+            const uint32_t offset = TileRow(tile, row);
+            const auto length = static_cast<int32_t>(TileRow(tile, row + 1) - offset);
+
+            if (length > 1)
+            {
+                decoded.Width = std::max(decoded.Width, tile[offset] + length - 1);
+            }
+        }
+
+        decoded.Index.assign(static_cast<size_t>(decoded.Width) * decoded.Height, 0);
+        decoded.Drawn.assign(decoded.Index.size(), 0);
+
+        for (int32_t row = 0; row < decoded.Height; ++row)
+        {
+            const uint32_t offset = TileRow(tile, row);
+            const auto length = static_cast<int32_t>(TileRow(tile, row + 1) - offset);
+
+            for (int32_t i = 0; i < length - 1; ++i)
+            {
+                const size_t at = static_cast<size_t>(row) * decoded.Width + tile[offset] + i;
+                decoded.Index[at] = tile[offset + 1 + i];
+                decoded.Drawn[at] = 1;
+            }
+        }
+
+        return decoded;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-terrain &lt;folder&gt;</c> writes every terrain tile of the tile sets (data\tiles: the
+/// normal and the rotated views) once, as the HD art generator takes them: <c>&lt;name&gt;.png</c>, the tile's shown
+/// colours (mission 1's palette) where it is drawn, and <c>&lt;name&gt;_idx.png</c> (red the index, green 255 where
+/// drawn), named as the pack names them (MCHdArt::TerrainTileName), and those colours as palette.rgb. Tiles whose data
+/// doesn't fit their table are left out, as the ground mesh leaves them out. It also lists the palettes the missions
+/// name (palettes.json) and how far each lies from mission 1's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-terrain writes the terrain tiles for the HD art generator")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-terrain");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+
+    // The missions' palettes.
+    std::map<std::string, std::vector<std::string>> palettes;
+    auto archive = MCFastFile::Create((MCFileSystem::GameRoot() / MissionArchive).string());
+    REQUIRE(archive.has_value());
+
+    for (const MCFileEntry& entry : (*archive)->GetEntries())
+    {
+        std::string name(entry.GetName());
+        std::string lower = name;
+        std::ranges::transform(lower, lower.begin(), [](char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (!lower.ends_with(".fit") || lower.find(MissionFolder) == std::string::npos)
+        {
+            continue;
+        }
+
+        MCFitIniFile fit;
+
+        if (fit.Open(name) != 0 || fit.SeekBlock("PaletteSystem") != 0)
+        {
+            continue;
+        }
+
+        if (const auto palette = fit.Read<std::string>("PaletteSystem"); palette.has_value())
+        {
+            palettes[*palette].push_back(name);
+        }
+    }
+
+    std::string palettesJson = "{";
+
+    for (const auto& [palette, missions] : palettes)
+    {
+        palettesJson += std::format("{}\n \"{}\": {}", palettesJson.size() == 1 ? "" : ",", palette, missions.size());
+        std::cout << std::format("  palette {}: {} missions\n", palette, missions.size());
+    }
+
+    std::ofstream(folder / "palettes.json") << palettesJson << "\n}\n";
+
+    // The colours the tiles are coloured with, for the pack (MCHdArt::MadeWith).
+    {
+        std::ofstream rgb(folder / "palette.rgb", std::ios::binary);
+
+        for (const SDL_Color& color : colors)
+        {
+            rgb.put(static_cast<char>(color.r)).put(static_cast<char>(color.g)).put(static_cast<char>(color.b));
+        }
+    }
+
+    // How far each palette's colours lie from the base game's, mission 1's (the tiles' colours are its).
+    if (auto first = MCPalette::Create(BasePalette); first.has_value())
+    {
+        for (const auto& [palette, missions] : palettes)
+        {
+            auto other = MCPalette::Create(palette);
+
+            if (!other.has_value())
+            {
+                continue;
+            }
+
+            int32_t differing = 0;
+            int32_t largest = 0;
+
+            for (int32_t i = 0; i < MCPalette::ColorCount; ++i)
+            {
+                const MCVfxRgb a = (*first)->Colors()[static_cast<size_t>(i)];
+                const MCVfxRgb b = (*other)->Colors()[static_cast<size_t>(i)];
+                const int32_t d = std::max({std::abs(a.R - b.R), std::abs(a.G - b.G), std::abs(a.B - b.B)});
+                differing += d != 0 ? 1 : 0;
+                largest = std::max(largest, d);
+            }
+
+            std::cout << std::format("  palette {}: {} of {} colours differ from mission 1's, by up to {}\n", palette,
+                                     differing, MCPalette::ColorCount, largest);
+        }
+    }
+
+    // The tiles, each once.
+    std::set<std::string> written;
+    size_t tiles = 0;
+    size_t skipped = 0;
+
+    for (const std::string_view set : TileSets)
+    {
+        for (const std::string_view suffix : TileSetSuffixes)
+        {
+            MCPacketFile file;
+
+            if (file.Open(std::format("data\\tiles\\{}{}.pak", set, suffix)) != 0)
+            {
+                continue;
+            }
+
+            for (int32_t packet = 0; packet < file.GetNumPackets(); ++packet)
+            {
+                if (file.SeekPacket(packet) != 0 || file.GetPacketSize() <= 0)
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> data(static_cast<size_t>(file.GetPacketSize()));
+
+                if (file.ReadPacket(packet, data) < 0 || data.size() < 8 || !VfxTileFits(data))
+                {
+                    ++skipped;
+                    continue;
+                }
+
+                // As the ground mesh keeps it: up to its last row's end.
+                const uint32_t end = TileRow(data, data[2]);
+                const std::span<const uint8_t> tile = std::span<const uint8_t>(data).first(end);
+                const std::string name = MCHdArt::TerrainTileName(tile);
+                ++tiles;
+
+                if (!written.insert(name).second)
+                {
+                    continue;
+                }
+
+                const DecodedTile decoded = DecodeTile(tile);
+
+                if (decoded.Width == 0)
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> color(decoded.Index.size() * BytesPerPixel, 0);
+                std::vector<uint8_t> index(color.size(), 0);
+
+                for (size_t i = 0; i < decoded.Index.size(); ++i)
+                {
+                    const SDL_Color shown = colors[decoded.Index[i]];
+                    index[i * BytesPerPixel] = decoded.Index[i];
+                    index[i * BytesPerPixel + 3] = HasIndex;
+
+                    if (decoded.Drawn[i] != 0)
+                    {
+                        color[i * BytesPerPixel] = shown.r;
+                        color[i * BytesPerPixel + 1] = shown.g;
+                        color[i * BytesPerPixel + 2] = shown.b;
+                        color[i * BytesPerPixel + 3] = HasIndex;
+                        index[i * BytesPerPixel + 1] = HasIndex;
+                    }
+                }
+
+                SavePng(folder / (name + ".png"), decoded.Width, decoded.Height, color);
+                SavePng(folder / (name + "_idx.png"), decoded.Width, decoded.Height, index);
+            }
+        }
+    }
+
+    std::cout << std::format("  {} tiles, {} different, {} that don't fit their table\n", tiles, written.size(),
+                             skipped);
+    CHECK(!written.empty());
+}
+
 TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art generator")
 {
     const std::optional<std::string_view> out = MCTest::Option("hd-extract");
@@ -845,4 +1092,153 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         MCTestGame::RunFrame(FrameSeconds);
         shoot(std::format("paint_{}", scheme));
     }
+}
+
+namespace
+{
+    /// <summary>The terrain test's HD tiles' scale.</summary>
+    constexpr int32_t TerrainScale = 2;
+
+    /// <summary>
+    /// Writes the HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder: each pixel's shown
+    /// colour inverted, at <see cref="TerrainScale"/> (nearest), opaque, with the index picture beside it.
+    /// </summary>
+    size_t WriteTerrainPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh,
+                            std::span<const SDL_Color, 256> colors)
+    {
+        const std::filesystem::path folder = pack / "terrain";
+        std::filesystem::create_directories(folder);
+        size_t written = 0;
+
+        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        {
+            const DecodedTile decoded = DecodeTile(tile);
+
+            if (decoded.Width == 0)
+            {
+                continue;
+            }
+
+            const int32_t width = decoded.Width * TerrainScale;
+            const int32_t height = decoded.Height * TerrainScale;
+            std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel);
+            std::vector<uint8_t> index(color.size());
+
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < width; ++x)
+                {
+                    const size_t from = static_cast<size_t>(y / TerrainScale) * decoded.Width + x / TerrainScale;
+                    const size_t to = (static_cast<size_t>(y) * width + x) * BytesPerPixel;
+                    const SDL_Color shown = colors[decoded.Index[from]];
+                    color[to] = static_cast<uint8_t>(255 - shown.r);
+                    color[to + 1] = static_cast<uint8_t>(255 - shown.g);
+                    color[to + 2] = static_cast<uint8_t>(255 - shown.b);
+                    color[to + 3] = HasIndex;
+                    index[to] = decoded.Index[from];
+                    index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
+                    index[to + 3] = HasIndex;
+                }
+            }
+
+            const std::string name = MCHdArt::TerrainTileName(tile);
+            SavePng(folder / (name + ".png"), width, height, color);
+            SavePng(folder / (name + "_idx.png"), width, height, index);
+            ++written;
+        }
+
+        return written;
+    }
+}
+
+namespace
+{
+    /// <summary>What the HD terrain tests saw: the view before and after HD art went on, and the tiles in the pack.</summary>
+    struct HdGround
+    {
+        Shown Before;
+        Shown After;
+        size_t Tiles = 0;
+        bool HdTerrain = false;
+    };
+
+    /// <summary>
+    /// Mission 1 drawn <paramref name="drawing"/> (<paramref name="scene"/> set up for it), then with a pack of the map's
+    /// tiles (colours inverted) for <paramref name="frames"/> frames.
+    /// </summary>
+    std::optional<HdGround> DrawHdGround(MCGpuDrawing drawing, int32_t frames, std::optional<HdScene>& scene)
+    {
+        scene = SetUpHdScene(drawing);
+
+        if (!scene.has_value())
+        {
+            return std::nullopt;
+        }
+
+        SingleStepMode = 1;
+        MCTestGame::RunFrame(FrameSeconds);
+        const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+        REQUIRE(mesh != nullptr);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        HdGround ground;
+        ground.Tiles = WriteTerrainPack(scene->Pack, *mesh, colors);
+        REQUIRE(ground.Tiles > 0);
+        ground.Before = ReadShown(scene->Scratch);
+        const MCHdArtOn hdArt(scene->Pack);
+        scene->Renderer->ResetMirror();
+
+        for (int32_t frame = 0; frame < frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        ground.After = ReadShown(scene->Scratch);
+        ground.HdTerrain = scene->Renderer->HdTerrain();
+        return ground;
+    }
+}
+
+/// <summary>HD terrain: with a pack holding the map's tiles (colours inverted), most of the view shows the pack's colours.</summary>
+TEST_CASE_ISOLATED("game: HD art draws the ground in the pack's colours")
+{
+    std::optional<HdScene> scene;
+    const std::optional<HdGround> ground = DrawHdGround(MCGpuDrawing::On, 1, scene);
+
+    if (!ground.has_value())
+    {
+        return;
+    }
+
+    const Changed changed = Compare(ground->Before, ground->After);
+    const size_t pixels = static_cast<size_t>(ground->After.Width) * static_cast<size_t>(ground->After.Height);
+    std::cout << std::format("  {} tiles; {} of {} shown pixels changed\n", ground->Tiles, changed.Count, pixels);
+    CHECK(ground->HdTerrain);
+    CHECK(static_cast<size_t>(changed.Count) * 2 > pixels);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>HD terrain changes only the colours: in mirror mode every palette index stays the software renderer's.</summary>
+TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
+{
+    constexpr int32_t Frames = 5;
+    std::optional<HdScene> scene;
+    const std::optional<HdGround> ground = DrawHdGround(MCGpuDrawing::Mirror, Frames, scene);
+
+    if (!ground.has_value())
+    {
+        return;
+    }
+
+    const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
+    CHECK(ground->HdTerrain);
+    CHECK_EQ(tally.Frames, Frames);
+    CHECK_EQ(tally.DifferentFrames, 0);
+
+    if (tally.DifferentFrames != 0)
+    {
+        std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+    }
+
+    std::filesystem::remove_all(scene->Scratch);
 }

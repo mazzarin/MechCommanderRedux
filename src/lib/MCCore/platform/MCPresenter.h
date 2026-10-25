@@ -94,6 +94,12 @@ struct MCFrame
     /// </summary>
     int OutputWidth = 0;
     int OutputHeight = 0;
+    /// <summary>
+    /// Port-only, with HD art on (<see cref="MCDisplay::SharpScreen"/>): the screen is drawn at the size it is shown
+    /// (as its underlays are), so the GPU renderer's HD text and art show at the output's resolution. Its palette
+    /// indices are the window's as ever.
+    /// </summary>
+    bool SharpScreen = false;
     /// <summary>The screen's op plane (one byte a pixel, laid out as the pixels).</summary>
     std::span<const uint8_t> Ops;
     /// <summary>The screen's underlays this frame (only those that lie under the screen and have pixels).</summary>

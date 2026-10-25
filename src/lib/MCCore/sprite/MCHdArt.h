@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sprite/MCBc7.h"
+
 class MCShape;
 
 /// <summary>
@@ -15,6 +17,8 @@ class MCShape;
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured.</para>
+/// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
+/// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -75,9 +79,9 @@ namespace MCHdArt
     /// <summary>
     /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7), scale (u8), the
     /// original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when the frame
-    /// holds RGBA8), then the indices (R8G8 at the original's size). Little-endian.
+    /// holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size). Little-endian.
     /// </summary>
-    std::vector<uint8_t> EncodeHdf(const Frame& frame);
+    std::vector<uint8_t> EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options = {});
 
     /// <summary>
     /// The frame a <c>.hdf</c> file's <paramref name="bytes"/> hold, checked against the original's
@@ -121,6 +125,20 @@ namespace MCHdArt
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
 
     /// <summary>
+    /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its
+    /// <paramref name="width"/> x <paramref name="height"/> palette indices, the same whichever file or packet they came
+    /// from. A picture the game has drawn into has another, so it is shown as it is.
+    /// </summary>
+    uint64_t PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height);
+
+    /// <summary>The file name (without its extension) of the picture <paramref name="hash"/> names: 16 hex digits.</summary>
+    std::string PictureName(uint64_t hash);
+
+    /// <summary>
+    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, kept as a
+    /// frame's), read the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
     /// The name the pack keeps terrain tile <paramref name="tile"/> under (its data as the ground mesh keeps it: up to
     /// its last row's end): the data's 64-bit FNV-1a hash in hex, so the same tile in any tile set has one name.
     /// </summary>

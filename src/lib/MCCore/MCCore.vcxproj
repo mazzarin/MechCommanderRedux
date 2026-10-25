@@ -388,6 +388,7 @@
     <ClCompile Include="platform\MCRenderer.cpp" />
     <ClCompile Include="platform\MCSdlPresenter.cpp" />
     <ClCompile Include="platform\MCServices.cpp" />
+    <ClCompile Include="platform\MCSharpText.cpp" />
     <ClCompile Include="platform\MCSmacker.cpp" />
     <ClCompile Include="platform\MCSocket.cpp">
       <!-- The socket wrapper includes the system socket headers (winsock2.h drags in windows.h), which must not meet
@@ -788,6 +789,7 @@
     <ClInclude Include="platform\MCSdlHandle.h" />
     <ClInclude Include="platform\MCSdlPresenter.h" />
     <ClInclude Include="platform\MCServices.h" />
+    <ClInclude Include="platform\MCSharpText.h" />
     <ClInclude Include="platform\MCSmacker.h" />
     <ClInclude Include="platform\MCSocket.h" />
     <ClInclude Include="platform\MCSoftwareRenderer.h" />
@@ -893,6 +895,33 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <!-- As mimalloc's own Visual Studio project does: in C, MSVC's atomics shim warns (C4047, C4024). -->
       <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+  </ItemGroup>
+  <!-- miniz (src\lib\miniz-3.0.2, MIT): its inflate unpacks the HD art pack's archives (lib\MCInflate), as it
+       unpacks the Gold CD's cabinets for the editor. One C unit outside MCCore, so its own ItemGroup too. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)miniz-3.0.2\miniz.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>Level1</WarningLevel>
+      <PreprocessorDefinitions>MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_TIME;MINIZ_NO_STDIO;MINIZ_NO_ZLIB_COMPATIBLE_NAMES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- bc7enc_rdo (src\lib\bc7enc_rdo, MIT or public domain): the HD art pack's BC7 encoder, decoder and entropy
+       reduction, unchanged from upstream. It lives outside MCCore, so it has its own ItemGroup, which sync_projects.py
+       leaves alone. sprite\MCBc7.cpp wraps it. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)bc7enc_rdo\bc7enc.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)bc7enc_rdo\bc7decomp.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)bc7enc_rdo\ert.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

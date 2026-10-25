@@ -1099,6 +1099,9 @@
     <ClCompile Include="platform\MCServices.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCSharpText.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCSmacker.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2275,6 +2278,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCServices.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCSharpText.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCSmacker.h">

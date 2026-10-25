@@ -24,12 +24,18 @@
 // A paint scheme's table recolours the pixels whose original index it changes. A terrain tile with HD colours
 // (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's.
 // HD colours are corrected by their original index's colour now over the one the pack was made from (Corrected), so
-// another palette, the colour cycle and the brightness show through.
+// another palette, the colour cycle and the brightness show through; a menu's picture, made from its own screen's
+// palette, shows as made (HdAsMade).
+//
+// A sharp glyph (port-only, platform/MCSharpText.h) is drawn over the glyph's place on a sharp screen (one drawn at the
+// size it is shown): each drawn pixel takes the coverage of the glyph's strokes at its centre, filtered between the
+// redrawn pixels, in the colour the glyph's table gives the font byte of the ink pixel nearest it.
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
-// The source: an atlas page (red value, green state), a picture (red), a surface's indices (red), or an HD art frame's
-// original indices (red the index, green 1 where there is one; one texel an original pixel).
+// The source: an atlas page (red value, green state), a picture (red), a surface's indices (red), an HD art frame's
+// original indices (red the index, green 1 where there is one; one texel an original pixel), or a glyph redrawn sharp
+// (red the font byte, green the coverage).
 Texture2D<float4> sourceTex : register(t0, space2);
 SamplerState sourceSampler : register(s0, space2);
 // The frame's tables: 256 wide, one row a table, row 0 the identity.
@@ -85,6 +91,7 @@ static const uint KindTexture = 2;
 static const uint KindGouraud = 3;
 static const uint KindTexelWalk = 4;
 static const uint KindHd = 5;
+static const uint KindSharpGlyph = 6;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -104,6 +111,8 @@ static const uint HdColors = 1u << 16;
 // A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
 // walk its place in the source (x0, y0, x1, y1).
 static const uint SmoothEdges = 1u << 17;
+// An HD frame's colours shown as made, not Corrected (a menu's picture, made from its own screen's palette).
+static const uint HdAsMade = 1u << 18;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -306,12 +315,24 @@ float ShapeCoverage(Input input, int2 target, inout uint value)
     return smoothstep(EdgeLow, EdgeHigh, coverage);
 }
 
-// An HD art frame's colour at a texel, transparent outside its size.
-float4 HdTexel(int2 texel, int2 size)
+// An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
+// of a menu's art) leaves out the original's pixel of the key colour (keyed: op.x's ColorKey, the key op.y's bits
+// 8-15). The frame's indices (the source) have a texel for hdScale x hdScale of its colours.
+float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
 {
     if (any(texel < 0) || any(texel >= size))
     {
         return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    if ((flags & ColorKey) != 0)
+    {
+        const float4 entry = Fetch(sourceTex, sourceSampler, texel / hdScale);
+
+        if (Byte(entry.g) == 255u && Byte(entry.r) == key)
+        {
+            return float4(0.0, 0.0, 0.0, 0.0);
+        }
     }
 
     return Fetch(hdTex, hdSampler, texel);
@@ -336,8 +357,13 @@ Output HdPixel(Input input, int2 target)
     const float2 at = shape * (float)hdScale - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
-    const float4 top = lerp(HdTexel(base, size), HdTexel(base + int2(1, 0), size), f.x);
-    const float4 bottom = lerp(HdTexel(base + int2(0, 1), size), HdTexel(base + int2(1, 1), size), f.x);
+    const uint flags = input.op.x;
+    const uint key = (input.op.y >> 8) & 255u;
+    const int texelScale = (int)hdScale;
+    const float4 top = lerp(HdTexel(base, size, texelScale, flags, key),
+                            HdTexel(base + int2(1, 0), size, texelScale, flags, key), f.x);
+    const float4 bottom = lerp(HdTexel(base + int2(0, 1), size, texelScale, flags, key),
+                               HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
     float4 color = lerp(top, bottom, f.y);
 
     if (color.a <= 0.0)
@@ -350,7 +376,7 @@ Output HdPixel(Input input, int2 target)
     const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
     const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
-    if (Byte(entry.g) == 255u)
+    if (Byte(entry.g) == 255u && (input.op.x & HdAsMade) == 0)
     {
         const uint index = Byte(entry.r);
         const uint shown = (input.op.x & TableBefore) != 0 ? Table(input.op.z, index) : index;
@@ -358,6 +384,52 @@ Output HdPixel(Input input, int2 target)
     }
 
     return Blended(color);
+}
+
+// A redrawn glyph's texel (red the font byte, green the coverage), nothing outside its size.
+float4 GlyphTexel(int2 texel, int2 size)
+{
+    if (any(texel < 0) || any(texel >= size))
+    {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    return Fetch(sourceTex, sourceSampler, texel);
+}
+
+// A sharp glyph's pixel: the source is the place in the glyph of the rectangle's first pixel, op.y the redrawn
+// glyph's scale, op.z the glyph's table.
+Output SharpGlyphPixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 glyph = float2(input.source.xy) + (window - float2(input.rect.xy));
+    const float glyphScale = (float)(input.op.y & 255u);
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    const int2 size = int2((int)width, (int)height);
+
+    const float2 at = glyph * glyphScale - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float top = lerp(GlyphTexel(base, size).g, GlyphTexel(base + int2(1, 0), size).g, f.x);
+    const float bottom = lerp(GlyphTexel(base + int2(0, 1), size).g, GlyphTexel(base + int2(1, 1), size).g, f.x);
+    const float coverage = lerp(top, bottom, f.y);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    const int2 nearest = clamp(int2(floor(glyph * glyphScale)), int2(0, 0), size - 1);
+    const uint index = Table(input.op.z, Byte(Fetch(sourceTex, sourceSampler, nearest).r));
+
+    if (index == 255u)
+    {
+        discard;
+    }
+
+    return Blended(float4(Shown(index) * coverage, coverage));
 }
 
 Output main(Input input)
@@ -377,6 +449,11 @@ Output main(Input input)
     if (kind == KindHd)
     {
         return HdPixel(input, target);
+    }
+
+    if (kind == KindSharpGlyph)
+    {
+        return SharpGlyphPixel(input, target);
     }
     const uint color = input.op.y & 255u;
     uint value = color;

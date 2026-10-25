@@ -37,7 +37,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <!-- /bigobj: some reconstructed files (the ABL library, the logistics screens) are large. /utf-8: sources are UTF-8. -->
       <AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\include;$(MCLibDir)mimalloc-3.3.1\include;$(MCLibDir)MCCore;$(MCGeneratedDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MCLibDir)SDL-release-3.4.12\include;$(MCLibDir)mimalloc-3.3.1\include;$(MCLibDir)bc7enc_rdo;$(MCLibDir)miniz-3.0.2;$(MCLibDir)MCCore;$(MCGeneratedDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>

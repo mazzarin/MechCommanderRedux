@@ -17,6 +17,8 @@ namespace
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view TerrainFolder = "terrain";
+    /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
+    constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
     /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
     constexpr std::string_view ArchiveExtension = ".hda";
@@ -32,13 +34,17 @@ namespace
     std::string Upper(std::string_view text)
     {
         std::string upper(text);
-        std::ranges::transform(upper, upper.begin(), [](char c) { return static_cast<char>(std::toupper(c)); });
+        // Through unsigned char: a name from a pack may hold any byte, and toupper takes only those and EOF.
+        std::ranges::transform(upper, upper.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         return upper;
     }
 
-    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName).</summary>
+    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName, MCHdArt::PictureHash).</summary>
     constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
     constexpr uint64_t FnvPrime = 0x100000001b3ull;
+    /// <summary>Where a frame key's folder goes in its hash: above any frame number.</summary>
+    constexpr int FolderHashShift = 40;
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -53,8 +59,8 @@ namespace
     constexpr size_t SweepInterval = 256;
     constexpr int32_t BytesPerPixel = 4;
     /// <summary>
-    /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its GPU texture (colours
-    /// and indices side by side, so twice as wide) may have: SDL GPU guarantees 8192.
+    /// The largest scale a frame may have (packs are made at 3x or 4x), and the largest side its colour texture may have
+    /// (SDL GPU guarantees 8192; the indices are a texture of their own, at the original's size).
     /// </summary>
     constexpr int32_t MaxScale = 8;
     constexpr int32_t MaxTextureSide = 8192;
@@ -62,23 +68,55 @@ namespace
     constexpr std::array<uint8_t, 16> PngHeader = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n',
                                                    0,    0,   0,   13,  'I',  'H',  'D',  'R'};
 
-    /// <summary>A shape the pack has frames for, and their folder.</summary>
+    /// <summary>How a folder of the pack names its frames: by number (a mech part's), or by a hash in hex (the ground's).</summary>
+    enum class Naming : uint8_t
+    {
+        Number,
+        Hash,
+    };
+
+    /// <summary>A folder of the pack frames are looked up in, and whether it is a folder of frame files (not looked yet: none).</summary>
+    struct FrameFolder
+    {
+        std::filesystem::path Path;
+        Naming Names = Naming::Number;
+        std::optional<bool> Loose;
+    };
+
+    /// <summary>
+    /// A frame: its folder (an index into State::Folders) and its name there (a number or a hash). Numbers, so the lookup
+    /// each draw makes hashes two integers rather than comparing paths part by part.
+    /// </summary>
+    struct FrameKey
+    {
+        uint32_t Folder = 0;
+        uint64_t Name = 0;
+
+        bool operator==(const FrameKey&) const = default;
+    };
+
+    struct FrameKeyHash
+    {
+        size_t operator()(const FrameKey& key) const
+        {
+            return std::hash<uint64_t>{}(key.Name ^ (static_cast<uint64_t>(key.Folder) << FolderHashShift));
+        }
+    };
+
+    /// <summary>A shape the pack has frames for, and their folder (an index into State::Folders).</summary>
     struct Sequence
     {
         std::weak_ptr<MCShape> Shape;
-        std::filesystem::path Folder;
+        uint32_t Folder = 0;
     };
 
-    /// <summary>A frame read (null: the pack has none, or it is unusable), and when it was last asked for.</summary>
+    /// <summary>A frame read (null: the pack has none, or it is unusable), and its place in State::Order.</summary>
     struct Cached
     {
         std::shared_ptr<const MCHdArt::Frame> Frame;
-        uint64_t LastUse = 0;
+        std::list<FrameKey>::iterator InOrder;
         bool Looked = false;
     };
-
-    /// <summary>A frame's file in the pack, without its extension.</summary>
-    using FrameKey = std::filesystem::path;
 
     struct State
     {
@@ -87,8 +125,12 @@ namespace
         std::optional<bool> FolderExists;
         std::unordered_map<const uint8_t*, Sequence> Sequences;
         size_t Attached = 0;
-        std::map<FrameKey, Cached> Frames;
-        uint64_t Uses = 0;
+        /// <summary>The folders frames were looked up in, and each one's index there.</summary>
+        std::vector<FrameFolder> Folders;
+        std::map<std::filesystem::path, uint32_t> FolderIndices;
+        std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
+        /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
+        std::list<FrameKey> Order;
         uint64_t LastId = 0;
         size_t Bytes = 0;
         size_t Read = 0;
@@ -281,11 +323,12 @@ namespace
     }
 
     /// <summary>
-    /// The frame at <paramref name="key"/> from the nearest archive standing for one of its folders (up to the pack's):
-    /// its entry <c>&lt;the rest of the path&gt;.hdf</c>, inflated when packed; none when there is no such entry.
+    /// The frame at <paramref name="key"/> (its path in the pack, without its extension) from the nearest archive standing
+    /// for one of its folders (up to the pack's): its entry <c>&lt;the rest of the path&gt;.hdf</c>, inflated when packed;
+    /// none when there is no such entry.
     /// </summary>
-    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(const FrameKey& key, int32_t width,
-                                                                           int32_t height)
+    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(const std::filesystem::path& key,
+                                                                           int32_t width, int32_t height)
     {
         const std::filesystem::path pack = MCHdArt::PackFolder();
 
@@ -352,24 +395,67 @@ namespace
             return true;
         }
 
-        const MCHdArchive* archive = ArchiveFor(folder.parent_path());
-        return archive != nullptr && archive->Folders.contains(Upper(folder.filename().string()));
+        // As ReadArchived looks: the nearest archive standing for one of the folder's (up to the pack's), holding the
+        // first folder on the way down.
+        const std::filesystem::path pack = MCHdArt::PackFolder();
+
+        for (std::filesystem::path ancestor = folder.parent_path(); ancestor.has_relative_path() && ancestor != pack;
+             ancestor = ancestor.parent_path())
+        {
+            if (const MCHdArchive* archive = ArchiveFor(ancestor); archive != nullptr)
+            {
+                const std::filesystem::path rest = folder.lexically_relative(ancestor);
+                return !rest.empty() && archive->Folders.contains(Upper(rest.begin()->string()));
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
+    std::string HashName(uint64_t hash)
+    {
+        return std::format("{:016x}", hash);
+    }
+
+    /// <summary>The index of the folder at <paramref name="path"/> in State::Folders (added the first time).</summary>
+    uint32_t FolderIndex(const std::filesystem::path& path, Naming names)
+    {
+        State& state = TheState();
+        const auto [found, fresh] = state.FolderIndices.try_emplace(path, static_cast<uint32_t>(state.Folders.size()));
+
+        if (fresh)
+        {
+            state.Folders.push_back(FrameFolder{path, names, std::nullopt});
+        }
+
+        return found->second;
     }
 
     /// <summary>
-    /// The frame at <paramref name="key"/> for a shape of <paramref name="width"/> x <paramref name="height"/>: its
+    /// The frame <paramref name="key"/> for a shape of <paramref name="width"/> x <paramref name="height"/>: its
     /// <c>.hdf</c> file, else its PNG pair, else its entry in an archive; none when the pack has no such frame, or what
     /// is wrong with the one it has.
     /// </summary>
     std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> ReadFrame(const FrameKey& key, int32_t width,
                                                                                 int32_t height)
     {
+        FrameFolder& folder = TheState().Folders.at(key.Folder);
         std::error_code error;
-        std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
-        const std::string frame = key.filename().string();
 
-        if (const std::filesystem::path hdfPath = std::filesystem::path(key).concat(HdfExtension);
-            std::filesystem::is_regular_file(hdfPath, error))
+        // Loose frame files lie in a folder; an archive's, in none (a pack of archives costs no file checks a frame).
+        if (!folder.Loose.has_value())
+        {
+            folder.Loose = std::filesystem::is_directory(folder.Path, error);
+        }
+
+        const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : std::to_string(key.Name);
+        const std::filesystem::path path = folder.Path / frame;
+        const bool loose = *folder.Loose;
+        std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
+
+        if (const std::filesystem::path hdfPath = std::filesystem::path(path).concat(HdfExtension);
+            loose && std::filesystem::is_regular_file(hdfPath, error))
         {
             auto bytes = ReadFile(hdfPath, MaxHdfBytes);
 
@@ -382,11 +468,11 @@ namespace
         }
         else
         {
-            const std::filesystem::path colorPath = std::filesystem::path(key).concat(".png");
+            const std::filesystem::path colorPath = std::filesystem::path(path).concat(".png");
 
-            if (!std::filesystem::is_regular_file(colorPath, error))
+            if (!loose || !std::filesystem::is_regular_file(colorPath, error))
             {
-                auto archived = ReadArchived(key, width, height);
+                auto archived = ReadArchived(path, width, height);
 
                 if (!archived)
                 {
@@ -405,7 +491,7 @@ namespace
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
             const std::filesystem::path indexPath =
-                std::filesystem::path(key).concat(std::format("{}.png", IndexSuffix));
+                std::filesystem::path(path).concat(std::format("{}.png", IndexSuffix));
             const std::optional<std::pair<int32_t, int32_t>> declared = PngSize(colorPath);
 
             if (!declared.has_value() || PngSize(indexPath) != declared)
@@ -437,32 +523,23 @@ namespace
     }
 
     /// <summary>
-    /// Drops the least recently used frames, but never <paramref name="keep"/>, until the kept ones fit the budget.
+    /// Drops the least recently used frames, but never the one used last (the frame just read), until the kept ones fit
+    /// the budget.
     /// </summary>
-    void Trim(const FrameKey& keep)
+    void Trim()
     {
         State& state = TheState();
 
-        while (state.Bytes > MCHdArt::CacheBudget)
+        while (state.Bytes > MCHdArt::CacheBudget && state.Order.size() > 1)
         {
-            auto oldest = state.Frames.end();
+            const auto oldest = state.Frames.find(state.Order.front());
+            state.Order.pop_front();
 
-            for (auto it = state.Frames.begin(); it != state.Frames.end(); ++it)
+            if (oldest != state.Frames.end())
             {
-                if (it->second.Frame != nullptr && it->first != keep &&
-                    (oldest == state.Frames.end() || it->second.LastUse < oldest->second.LastUse))
-                {
-                    oldest = it;
-                }
+                state.Bytes -= oldest->second.Frame->Bytes();
+                state.Frames.erase(oldest);
             }
-
-            if (oldest == state.Frames.end())
-            {
-                return;
-            }
-
-            state.Bytes -= oldest->second.Frame->Bytes();
-            state.Frames.erase(oldest);
         }
     }
 }
@@ -531,14 +608,17 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
 
 namespace
 {
-    /// <summary>The frame at <paramref name="key"/>, from the cache or read the first time it is asked for.</summary>
+    /// <summary>The frame <paramref name="key"/>, from the cache or read the first time it is asked for.</summary>
     std::shared_ptr<const MCHdArt::Frame> Cache(const FrameKey& key, int32_t width, int32_t height)
     {
         State& state = TheState();
         Cached& cached = state.Frames[key];
-        cached.LastUse = ++state.Uses;
 
-        if (!cached.Looked)
+        if (cached.Frame != nullptr)
+        {
+            state.Order.splice(state.Order.end(), state.Order, cached.InOrder);
+        }
+        else if (!cached.Looked)
         {
             cached.Looked = true;
             const auto started = std::chrono::steady_clock::now();
@@ -547,15 +627,16 @@ namespace
 
             if (!read)
             {
-                LogOnce(key.parent_path(), read.error());
+                LogOnce(state.Folders.at(key.Folder).Path, read.error());
             }
             else if (*read != nullptr)
             {
                 cached.Frame = std::move(*read);
+                cached.InOrder = state.Order.insert(state.Order.end(), key);
                 state.Bytes += cached.Frame->Bytes();
                 ++state.Read;
                 std::shared_ptr<const MCHdArt::Frame> kept = cached.Frame;
-                Trim(key);
+                Trim();
                 return kept;
             }
         }
@@ -564,10 +645,11 @@ namespace
     }
 }
 
-std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame)
+std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options)
 {
-    const std::vector<uint8_t> blocks =
-        frame.Format == ColorFormat::Bc7 ? frame.Colors : MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+    const std::vector<uint8_t> blocks = frame.Format == ColorFormat::Bc7
+                                            ? frame.Colors
+                                            : MCBc7::Encode(frame.Colors, frame.Width, frame.Height, options);
     std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
     WriteLittle(bytes, HdfVersion, 2);
     WriteLittle(bytes, HdfBc7, 1);
@@ -634,6 +716,9 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.FolderExists.reset();
     state.Sequences.clear();
     state.Frames.clear();
+    state.Order.clear();
+    state.Folders.clear();
+    state.FolderIndices.clear();
     state.Bytes = 0;
     state.Logged.clear();
     state.MadeWith.reset();
@@ -728,7 +813,7 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& 
         std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Shape.expired(); });
     }
 
-    state.Sequences[shape->FrameList().data()] = Sequence{shape, folder};
+    state.Sequences[shape->FrameList().data()] = Sequence{shape, FolderIndex(folder, Naming::Number)};
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)
@@ -755,19 +840,74 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    return Cache(found->second.Folder / std::to_string(frame), width, height);
+    return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
+}
+
+uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
+{
+    // FNV-1a over the size, then eight bytes at a time (the rest one at a time).
+    uint64_t hash = FnvOffset;
+    const auto mix = [&hash](uint64_t value)
+    {
+        hash ^= value;
+        hash *= FnvPrime;
+    };
+
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(width)));
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(height)));
+    size_t at = 0;
+
+    for (; at + sizeof(uint64_t) <= pixels.size(); at += sizeof(uint64_t))
+    {
+        uint64_t word = 0;
+        std::memcpy(&word, pixels.data() + at, sizeof(word));
+        mix(word);
+    }
+
+    for (; at < pixels.size(); ++at)
+    {
+        mix(pixels[at]);
+    }
+
+    return hash;
+}
+
+std::string MCHdArt::PictureName(uint64_t hash)
+{
+    return HashName(hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8_t> pixels, int32_t width,
+                                                           int32_t height)
+{
+    if (!Active() || width <= 0 || height <= 0)
+    {
+        return nullptr;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), PictureHash(pixels, width, height)},
+                 width, height);
+}
+
+namespace
+{
+    /// <summary>The 64-bit FNV-1a hash of a terrain tile's data, which names it in the pack (TerrainTileName).</summary>
+    uint64_t TerrainTileHash(std::span<const uint8_t> tile)
+    {
+        uint64_t hash = FnvOffset;
+
+        for (const uint8_t byte : tile)
+        {
+            hash = (hash ^ byte) * FnvPrime;
+        }
+
+        return hash;
+    }
 }
 
 std::string MCHdArt::TerrainTileName(std::span<const uint8_t> tile)
 {
-    uint64_t hash = FnvOffset;
-
-    for (const uint8_t byte : tile)
-    {
-        hash = (hash ^ byte) * FnvPrime;
-    }
-
-    return std::format("{:016x}", hash);
+    return HashName(TerrainTileHash(tile));
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const uint8_t> tile, int32_t width,
@@ -778,7 +918,8 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const u
         return nullptr;
     }
 
-    return Cache(PackFolder() / TerrainFolder / TerrainTileName(tile), width, height);
+    return Cache(FrameKey{FolderIndex(PackFolder() / TerrainFolder, Naming::Hash), TerrainTileHash(tile)}, width,
+                 height);
 }
 
 size_t MCHdArt::FramesRead()

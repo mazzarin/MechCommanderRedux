@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
 #include "lib/MCFatal.h"
@@ -28,6 +29,8 @@ namespace
     constexpr uint32_t KindGouraud = 3;
     constexpr uint32_t KindTexelWalk = 4;
     constexpr uint32_t KindHd = 5;
+    /// <summary>Port-only: a glyph redrawn sharp (MCSharpText), on a sharp screen.</summary>
+    constexpr uint32_t KindSharpGlyph = 6;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -48,6 +51,8 @@ namespace
     /// the draw's walk (shaders/draw.pshader). Bit 16 is the terrain shader's HdColors.
     /// </summary>
     constexpr uint32_t SmoothEdges = 1u << 17;
+    /// <summary>Port-only: an HD frame's colours shown as made, not corrected by the palette (MCVulkanRenderer::HdColours).</summary>
+    constexpr uint32_t HdAsMade = 1u << 18;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -74,6 +79,12 @@ namespace
     constexpr uint32_t PaletteRows = 2;
     /// <summary>The HD terrain atlas's widest and tallest (what the GPUs the port runs on sample).</summary>
     constexpr uint32_t MaxHdAtlasSide = 16384;
+    /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
+    constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (a redrawn glyph is kept by its bytes' hash).</summary>
+    constexpr uint64_t HashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t HashPrime = 0x100000001b3ull;
+
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The width of the strip of written pixels.</summary>
@@ -350,25 +361,6 @@ namespace
         return static_cast<uint32_t>(MCRead32(tile, 4 + static_cast<size_t>(row) * 4));
     }
 
-    /// <summary>The width a tile's spans reach (0 for a tile without pixels).</summary>
-    int32_t TileWidth(std::span<const uint8_t> tile)
-    {
-        int32_t width = 0;
-
-        for (int32_t row = 0; row < tile[2]; ++row)
-        {
-            const uint32_t offset = TileOffset(tile, row);
-            const int32_t length = static_cast<int32_t>(TileOffset(tile, row + 1) - offset);
-
-            if (length > 1)
-            {
-                width = std::max(width, tile[offset] + length - 1);
-            }
-        }
-
-        return width;
-    }
-
     /// <summary>Decodes a tile into <paramref name="width"/> x height value + state pairs (1 a pixel, 0 none).</summary>
     void DecodeTile(std::span<const uint8_t> tile, int32_t width, std::span<uint8_t> image)
     {
@@ -597,6 +589,11 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(picture.HdColors);
     }
 
+    for (auto& [key, picture] : _SharpGlyphs)
+    {
+        Release(picture.Texture);
+    }
+
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
     {
         OnTextureReleased(*texture);
@@ -717,6 +714,7 @@ void MCVulkanRenderer::BeginRecording()
     // each frame, such as the shape transforms' work buffer, make a new one every frame).
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
     TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdRgbaBytes);
+    TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -1361,6 +1359,7 @@ std::optional<uint32_t> MCVulkanRenderer::PictureOf(MCTexture& texture)
         _FrameUploads.PictureBytes += static_cast<int64_t>(size);
         texture.Dirty = false;
         state.Behind = true;
+        state.HdLooked = false;
         state.Index = static_cast<uint32_t>(_FramePictures.size());
         _FramePictures.push_back(picture.Handle);
         return state.Index;
@@ -1426,6 +1425,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadWhole(MCTexture& textur
     _FrameUploads.PictureBytes += static_cast<int64_t>(size);
     texture.Dirty = false;
     state.Behind = false;
+    state.HdLooked = false;
 
     if (MCRenderer::GpuDrawing() == MCGpuDrawing::Mirror)
     {
@@ -1677,7 +1677,41 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
         return;
     }
 
+    // Port-only: on a sharp screen, a picture the HD art pack has is shown from the pack; the copy keeps the indices.
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPictureFor(surface, command.Source.get());
+        hd != nullptr && AddHd(surface, *hd, at, from, std::nullopt,
+                               command.ColorKey ? std::optional(command.Key) : std::nullopt, HdColours::AsMade))
+    {
+        Add(surface, source->Kind, source->Index, at, from, op | IndexOnly, color, 0, 0);
+        return;
+    }
+
     Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
+{
+    if (_Surfaces[target].Key != _ScaledScreen || !MCHdArt::Active() || MCRenderer::FrameSurfaceOf(window) != nullptr)
+    {
+        return nullptr;
+    }
+
+    const std::shared_ptr<MCTexture> texture = window.Texture.lock();
+
+    if (texture == nullptr || texture->Hardware == nullptr || texture->CpuStale)
+    {
+        return nullptr;
+    }
+
+    TextureState& state = StateOf(*texture);
+
+    if (!state.HdLooked)
+    {
+        state.HdLooked = true;
+        state.Hd = MCHdArt::FindPicture(texture->Pixels, texture->Width, texture->Height);
+    }
+
+    return state.Hd;
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -1921,8 +1955,62 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     return UsePicture(found->second);
 }
 
+bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns,
+                                     int32_t rows, const Quad& at, const MCColorTable& table)
+{
+    BeginRecording();
+
+    // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once.
+    uint64_t key = HashBasis;
+    const auto mix = [&key](uint64_t value)
+    {
+        key ^= value;
+        key *= HashPrime;
+    };
+
+    mix(static_cast<uint64_t>(columns));
+    mix(static_cast<uint64_t>(rows));
+
+    for (int32_t row = 0; row < rows; ++row)
+    {
+        for (int32_t column = 0; column < columns; ++column)
+        {
+            const size_t offset = static_cast<size_t>(row) * static_cast<size_t>(pitch) + static_cast<size_t>(column);
+            mix(offset < glyph.size() ? glyph[offset] : MCSharpText::NoInk);
+        }
+    }
+
+    auto found = _SharpGlyphs.find(key);
+
+    if (found == _SharpGlyphs.end())
+    {
+        const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, pitch, columns, rows);
+        const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
+        const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
+        Picture picture;
+
+        if (redrawn.empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+        {
+            return false;
+        }
+
+        std::ranges::copy(redrawn, QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdRgbaBytes).begin());
+        found = _SharpGlyphs.emplace(key, picture).first;
+        _SharpGlyphBytes += redrawn.size();
+        ++_FrameUploads.Pictures;
+        _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
+    }
+
+    // The colour field carries the redrawn glyph's scale (shaders/draw.pshader's KindSharpGlyph).
+    const Quad from = {0, 0, 1, 1};
+    Add(surface, SourceKind::Picture, UsePicture(found->second), at, from, KindSharpGlyph | AlphaBlend | TableBefore,
+        static_cast<uint32_t>(MCSharpText::Scale), TableRow(table), 0);
+    return true;
+}
+
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
-                             const std::optional<MCColorTable>& table)
+                             const std::optional<MCColorTable>& table, std::optional<uint8_t> key, HdColours colours)
 {
     const std::optional<uint32_t> picture = HdPictureOf(frame);
 
@@ -1931,8 +2019,9 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
         return false;
     }
 
-    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd).
-    uint32_t op = KindHd | AlphaBlend;
+    // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out.
+    uint32_t op =
+        KindHd | AlphaBlend | (key.has_value() ? ColorKey : 0) | (colours == HdColours::AsMade ? HdAsMade : 0);
     uint32_t before = 0;
 
     if (table.has_value())
@@ -1941,7 +2030,9 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
         before = TableRow(*table);
     }
 
-    if (Add(surface, SourceKind::Picture, *picture, at, from, op, static_cast<uint32_t>(frame.Scale), before, 0))
+    const uint32_t color = static_cast<uint32_t>(frame.Scale) | static_cast<uint32_t>(key.value_or(0)) << 8;
+
+    if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, 0))
     {
         ++_HdDrawn;
     }
@@ -2198,7 +2289,7 @@ void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
     const std::span<const uint8_t> tile = command.Tile;
     const MCOptionalRef<DataImage> found = AtlasForData(
         tile, Seed(ImageKind::Tile, 0, 0), "a terrain tile",
-        [&] { return Extent{TileOffset(tile, tile[2]), TileWidth(tile), tile[2]}; },
+        [&] { return Extent{TileOffset(tile, tile[2]), VfxTileWidth(tile), tile[2]}; },
         [&](std::span<uint8_t> out, const Extent& extent) { DecodeTile(tile, extent.Width, out); });
 
     if (!found.has_value() || found->get().Measured.Width == 0)
@@ -2562,6 +2653,14 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
     {
         op |= TableBefore | SkipKeyAfterTable;
         before = TableRow(*command.Table);
+
+        // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp; the original's draw keeps
+        // the indices.
+        if (_Surfaces[surface].Key == _ScaledScreen &&
+            AddSharpGlyph(surface, source, pitch, columns, rows, at, *command.Table))
+        {
+            op |= IndexOnly;
+        }
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, 0);
@@ -2697,7 +2796,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         {
             const std::span<const uint8_t> tile = mesh.Tiles[i];
 
-            if (const int32_t width = TileWidth(tile); width != 0)
+            if (const int32_t width = VfxTileWidth(tile); width != 0)
             {
                 if (auto frame = MCHdArt::FindTerrainTile(tile, width, tile[2]);
                     frame != nullptr && (hdScale == 0 || frame->Scale == hdScale))
@@ -2716,7 +2815,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     {
         const std::span<const uint8_t> tile = mesh.Tiles[i];
         Place& place = places[i];
-        place.Width = TileWidth(tile);
+        place.Width = VfxTileWidth(tile);
         place.Height = tile[2];
 
         if (place.Width == 0)
@@ -2911,8 +3010,8 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
 
     const MCTerrainFrame& frame = draw.Frame;
     TerrainUniforms uniforms{};
-    uniforms.TargetSize[0] = static_cast<float>(surface.RecordedWidth);
-    uniforms.TargetSize[1] = static_cast<float>(surface.RecordedHeight);
+    uniforms.TargetSize[0] = static_cast<float>(surface.MappedWidth);
+    uniforms.TargetSize[1] = static_cast<float>(surface.MappedHeight);
     uniforms.TargetSize[2] = static_cast<float>(surface.Target.Width);
     uniforms.TargetSize[3] = static_cast<float>(surface.Target.Height);
     uniforms.Origin[0] = frame.OriginX;
@@ -2983,8 +3082,8 @@ void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface
 
     // The drawn pixels showing the rectangle's window pixels, and one more each way (a drawn pixel near the edge may
     // show either side of it).
-    const int64_t windowWidth = std::max<int64_t>(surface.RecordedWidth, 1);
-    const int64_t windowHeight = std::max<int64_t>(surface.RecordedHeight, 1);
+    const int64_t windowWidth = std::max<int64_t>(surface.MappedWidth, 1);
+    const int64_t windowHeight = std::max<int64_t>(surface.MappedHeight, 1);
     const int64_t drawnWidth = surface.Target.Width;
     const int64_t drawnHeight = surface.Target.Height;
     const auto x0 = static_cast<int32_t>(std::max<int64_t>(rect.X0 * drawnWidth / windowWidth - 1, 0));
@@ -3011,15 +3110,40 @@ void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface
     SDL_EndGPUCopyPass(pass);
 }
 
+void MCVulkanRenderer::SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom)
+{
+    _ScaledScreen = screen != nullptr && (scaleX > 1.0f || scaleY > 1.0f) ? SurfaceKeyOf(*screen) : MCAddressKey();
+    _ScreenScaleX = scaleX;
+    _ScreenScaleY = scaleY;
+    _ScreenRight = right;
+    _ScreenBottom = bottom;
+}
+
 void MCVulkanRenderer::PlaceSurfaces(std::span<const MCUnderlay> underlays)
 {
     for (Surface& surface : _Surfaces)
     {
         surface.DrawnWidth = surface.RecordedWidth;
         surface.DrawnHeight = surface.RecordedHeight;
+        surface.MappedWidth = surface.RecordedWidth;
+        surface.MappedHeight = surface.RecordedHeight;
 
         if (!surface.Key)
         {
+            continue;
+        }
+
+        // Port-only: a sharp screen, drawn at the size it's shown as far as the view reaches.
+        if (surface.Key == _ScaledScreen && surface.RecordedWidth > 0 && surface.RecordedHeight > 0)
+        {
+            surface.MappedWidth =
+                std::clamp(static_cast<uint32_t>(std::max(_ScreenRight, 1)), 1u, surface.RecordedWidth);
+            surface.MappedHeight =
+                std::clamp(static_cast<uint32_t>(std::max(_ScreenBottom, 1)), 1u, surface.RecordedHeight);
+            surface.DrawnWidth = static_cast<uint32_t>(
+                std::max(1L, std::lround(static_cast<float>(surface.MappedWidth) * _ScreenScaleX)));
+            surface.DrawnHeight = static_cast<uint32_t>(
+                std::max(1L, std::lround(static_cast<float>(surface.MappedHeight) * _ScreenScaleY)));
             continue;
         }
 
@@ -3403,8 +3527,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         if (record.TerrainDraw >= 0)
         {
             FrameUniforms frame = passFrame;
-            frame.Scale[0] = static_cast<int32_t>(std::max(surface.RecordedWidth, 1u));
-            frame.Scale[1] = static_cast<int32_t>(std::max(surface.RecordedHeight, 1u));
+            frame.Scale[0] = static_cast<int32_t>(std::max(surface.MappedWidth, 1u));
+            frame.Scale[1] = static_cast<int32_t>(std::max(surface.MappedHeight, 1u));
             frame.Scale[2] = static_cast<int32_t>(std::max(surface.Target.Width, 1u));
             frame.Scale[3] = static_cast<int32_t>(std::max(surface.Target.Height, 1u));
             std::ranges::fill(frame.SourceScale, 1);
@@ -3494,17 +3618,16 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                                           : record.Blend   ? _Blend.get()
                                                            : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
-        const BatchUniforms batch{{static_cast<float>(surface.RecordedWidth),
-                                   static_cast<float>(surface.RecordedHeight), static_cast<float>(surface.Target.Width),
-                                   static_cast<float>(surface.Target.Height)},
+        const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
+                                   static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
                                   {record.First, 0, 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
         // The target's scale, and the source's when it is a surface.
         const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
         {
-            out[0] = static_cast<int32_t>(std::max(of.RecordedWidth, 1u));
-            out[1] = static_cast<int32_t>(std::max(of.RecordedHeight, 1u));
+            out[0] = static_cast<int32_t>(std::max(of.MappedWidth, 1u));
+            out[1] = static_cast<int32_t>(std::max(of.MappedHeight, 1u));
             out[2] = static_cast<int32_t>(std::max(of.Target.Width, 1u));
             out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
         };
@@ -3654,6 +3777,23 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceTexture(const MCWindow&
     return nullptr;
 }
 
+std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const
+{
+    const MCAddressKey canonical = SurfaceKeyOf(window);
+
+    for (const Surface& surface : _Surfaces)
+    {
+        if (surface.Key == canonical && surface.Target.Handle != nullptr && surface.MappedWidth > 0 &&
+            surface.MappedHeight > 0)
+        {
+            return {static_cast<float>(surface.Target.Width) / static_cast<float>(surface.MappedWidth),
+                    static_cast<float>(surface.Target.Height) / static_cast<float>(surface.MappedHeight)};
+        }
+    }
+
+    return {1.0f, 1.0f};
+}
+
 std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnderlay> underlays)
 {
     if (!_Recording && _Uploads.empty() && _BufferUploads.empty())
@@ -3801,13 +3941,16 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
     }
 
     const Surface& screenSurface = _Surfaces[*screenIndex];
-    const auto width = static_cast<int32_t>(screenSurface.Index.Width);
-    const auto height = static_cast<int32_t>(screenSurface.Index.Height);
+    const int32_t width = screen.XMax + 1;
+    const int32_t height = screen.YMax + 1;
+    const bool scaledScreen = screenSurface.Index.Width != static_cast<uint32_t>(width) ||
+                              screenSurface.Index.Height != static_cast<uint32_t>(height);
 
-    if (width != screen.XMax + 1 || height != screen.YMax + 1)
+    if (scaledScreen && (screenSurface.RecordedWidth != static_cast<uint32_t>(width) ||
+                         screenSurface.RecordedHeight != static_cast<uint32_t>(height)))
     {
-        return std::unexpected(std::format("the screen's surface is {}x{}, the screen {}x{}", width, height,
-                                           screen.XMax + 1, screen.YMax + 1));
+        return std::unexpected(std::format("the screen's surface is {}x{}, the screen {}x{}",
+                                           screenSurface.RecordedWidth, screenSurface.RecordedHeight, width, height));
     }
 
     // The screen and the world surfaces under it, in the order the composite draws them (a later one over an earlier).
@@ -3850,6 +3993,29 @@ auto MCVulkanRenderer::ReadShown(const MCWindow& screen, std::span<const MCUnder
     if (!downloaded)
     {
         return std::unexpected(downloaded.error());
+    }
+
+    // A sharp screen (drawn at the size it's shown) gives each window pixel the drawn pixel holding its centre, as the
+    // draws that read a surface do; the window beyond the drawn part is index 0.
+    if (scaledScreen)
+    {
+        std::vector<uint8_t> window(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+        const std::vector<uint8_t>& drawn = (*downloaded)[0];
+        const uint64_t mappedWidth = std::max(screenSurface.MappedWidth, 1u);
+        const uint64_t mappedHeight = std::max(screenSurface.MappedHeight, 1u);
+
+        for (uint64_t y = 0; y < std::min<uint64_t>(mappedHeight, static_cast<uint64_t>(height)); ++y)
+        {
+            const uint64_t drawnY = (2 * y + 1) * screenSurface.Index.Height / (2 * mappedHeight);
+
+            for (uint64_t x = 0; x < std::min<uint64_t>(mappedWidth, static_cast<uint64_t>(width)); ++x)
+            {
+                const uint64_t drawnX = (2 * x + 1) * screenSurface.Index.Width / (2 * mappedWidth);
+                window[y * static_cast<uint64_t>(width) + x] = drawn[drawnY * screenSurface.Index.Width + drawnX];
+            }
+        }
+
+        (*downloaded)[0] = std::move(window);
     }
 
     const std::vector<uint8_t>& gpu = (*downloaded)[0];

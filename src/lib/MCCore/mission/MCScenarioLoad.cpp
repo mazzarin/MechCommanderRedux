@@ -47,6 +47,7 @@
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCSpriteManager.h"
+#include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
@@ -246,6 +247,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MissionStartTime = 0;
     RunningTime = 0.0f;
     ActualTime = 0.0f;
+    // Port-only: the HD art pack's ground is read here, under the loading bar, rather than in the mission's first frame.
+    MCTerrainReadHdTiles();
     UpdateDisplay(false, true, 30, true, 100);
 
     CameraList()->SetEye(CameraList()->ActivateAllReady());

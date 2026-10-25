@@ -29,6 +29,13 @@
 #include "terrain/MCGroundMesh.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
+#include "gui/MCGuiPort.h"
+#include "logistics/MCLoadSaveMenu.h"
+#include "main/MCLogistics.h"
+#include "lib/MCFile.h"
+#include "logistics/MCMainMenu.h"
+#include "logistics/MCPreferencesMenu.h"
+#include "platform/MCSharpText.h"
 
 namespace
 {
@@ -861,7 +868,12 @@ namespace
         {
             GHdArt = 1;
             MCHdArt::SetPackFolder(pack);
-            SpriteManager()->DumpAll();
+
+            // None before the game starts.
+            if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager(); sprites != nullptr)
+            {
+                sprites->DumpAll();
+            }
         }
 
         ~MCHdArtOn()
@@ -1006,6 +1018,8 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         return;
     }
 
+    // The folder is made absolute before the game starts: the game works in the install's folder.
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartMission(1));
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -1028,7 +1042,9 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 
     if (!original)
     {
-        hdArt.emplace(std::filesystem::path(*pack));
+        // The pack's ground read up front, as a mission's load reads it.
+        hdArt.emplace(packFolder);
+        MCTerrainReadHdTiles();
     }
 
     const PlayerMech player = GivePlayerMech(MCTest::Option("mech").value_or("madcat"));
@@ -1218,6 +1234,42 @@ TEST_CASE_ISOLATED("game: HD art draws the ground in the pack's colours")
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// HD terrain is read while the mission loads (MCTerrainReadHdTiles): every tile of the map's ground mesh, so its first
+/// frame with HD art reads none.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs it")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // A pack of the ground alone: the scene's pack has the mech's frames, which a frame reads when it draws the mech.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    const size_t tiles = WriteTerrainPack(pack, *mesh, colors);
+    REQUIRE(tiles > 0);
+    const MCHdArtOn hdArt(pack);
+    const size_t before = MCHdArt::FramesRead();
+    MCTerrainReadHdTiles();
+    CHECK_EQ(MCHdArt::FramesRead() - before, tiles);
+
+    // The frame uploads the ground with the pack's tiles, all read already.
+    const size_t loaded = MCHdArt::FramesRead();
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(scene->Renderer->HdTerrain());
+    CHECK_EQ(MCHdArt::FramesRead(), loaded);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 /// <summary>HD terrain changes only the colours: in mirror mode every palette index stays the software renderer's.</summary>
 TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 {
@@ -1241,4 +1293,591 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
     }
 
     std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Tool: <c>--sharp-menus &lt;folder&gt;</c> shows the main menu and the logistics screens in a window the size of a
+/// Retina MacBook's screen (<c>--window WxH</c>, default 3024x1890) with HD art on (a sharp screen: text redrawn sharp,
+/// and the pack's menu art with <c>--hd-pack &lt;pack&gt;</c>), and saves each as shown into the folder; with
+/// <c>--hd-original 1</c>, as the game shows them without.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off")
+{
+    const std::optional<std::string_view> shots = MCTest::Option("sharp-menus");
+
+    if (!shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+
+    int32_t width = 3024;
+    int32_t height = 1890;
+
+    if (const std::optional<std::string_view> window = MCTest::Option("window"); window.has_value())
+    {
+        const size_t x = window->find('x');
+        REQUIRE(x != std::string_view::npos);
+        std::from_chars(window->data(), window->data() + x, width);
+        std::from_chars(window->data() + x + 1, window->data() + window->size(), height);
+    }
+
+    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), width, height));
+    SDL_SyncWindow(&MCInput::Display()->Window());
+    // The menus have no sprites to let go of, so HD art goes on without MCHdArtOn's.
+    const bool original = MCTest::Option("hd-original").has_value();
+    GHdArt = original ? 0 : 1;
+    MCHdArt::SetPackFolder(std::filesystem::path(MCTest::Option("hd-pack").value_or("")));
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    // Two seconds settle a screen change's wipe.
+    constexpr int32_t SettleFrames = 30;
+
+    const auto shoot = [&](const std::string& name)
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const std::filesystem::path path = folder / std::format("{}_{}.png", name, original ? "original" : "sharp");
+        REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+        std::cout << std::format("  {}: {}\n", name, path.string());
+    };
+
+    shoot("main_menu");
+    ShowPreferences();
+    shoot("preferences");
+    CancelPrefs();
+    LoadScreen();
+    shoot("load");
+    Cancel();
+    NewCampaign();
+    shoot("briefing");
+    GlobalLog()->SetUpPurchaseScreen(true);
+    shoot("purchase");
+    GlobalLog()->SetUpRepairScreen(true);
+    shoot("repair");
+    GHdArt = 0;
+    MCHdArt::SetPackFolder({});
+}
+
+namespace
+{
+    /// <summary>Where a TGA's 8-bit pixels start: after the 18-byte header and a 256-entry palette (as the game reads them).</summary>
+    constexpr size_t TgaPixels = 0x312;
+    /// <summary>A TGA's colour-mapped image type, and its pixel depth (the game's art is both).</summary>
+    constexpr uint8_t TgaColorMapped = 1;
+    constexpr uint8_t TgaDepth = 8;
+    /// <summary>Where a TGA's palette starts (after the header): 256 colours of blue, green and red.</summary>
+    constexpr size_t TgaPalette = 18;
+    constexpr size_t TgaPaletteEntry = 3;
+
+    /// <summary>
+    /// Writes a picture of the game's art for the HD art generator, named by its hash (MCHdArt::PictureHash), once:
+    /// <c>&lt;name&gt;.png</c> (its colours, opaque) and <c>&lt;name&gt;_1x_idx.png</c> (its palette indices, in red),
+    /// and a line of the manifest (name, source, width, height).
+    /// </summary>
+    void WritePicture(const std::filesystem::path& folder, std::ofstream& manifest, std::string_view source,
+                      std::span<const uint8_t> pixels, int32_t width, int32_t height,
+                      std::span<const SDL_Color, 256> colors, std::set<uint64_t>& written)
+    {
+        const uint64_t hash = MCHdArt::PictureHash(pixels, width, height);
+
+        if (!written.insert(hash).second)
+        {
+            return;
+        }
+
+        const std::string name = MCHdArt::PictureName(hash);
+        const size_t size = static_cast<size_t>(width) * static_cast<size_t>(height);
+        std::vector<uint8_t> rgba(size * BytesPerPixel);
+        std::vector<uint8_t> indices(size * BytesPerPixel);
+
+        for (size_t i = 0; i < size; ++i)
+        {
+            const SDL_Color color = colors[pixels[i]];
+            rgba[i * BytesPerPixel] = color.r;
+            rgba[i * BytesPerPixel + 1] = color.g;
+            rgba[i * BytesPerPixel + 2] = color.b;
+            rgba[i * BytesPerPixel + 3] = 255;
+            indices[i * BytesPerPixel] = pixels[i];
+            indices[i * BytesPerPixel + 1] = pixels[i];
+            indices[i * BytesPerPixel + 2] = pixels[i];
+            indices[i * BytesPerPixel + 3] = 255;
+        }
+
+        SavePng(folder / std::format("{}.png", name), width, height, rgba);
+        SavePng(folder / std::format("{}_1x_idx.png", name), width, height, indices);
+        manifest << name << '\t' << source << '\t' << width << '\t' << height << '\n';
+    }
+
+    bool EndsWithIgnoringCase(std::string_view text, std::string_view ending)
+    {
+        return text.size() >= ending.size() &&
+               std::ranges::equal(text.substr(text.size() - ending.size()), ending,
+                                  [](char a, char b)
+                                  {
+                                      return std::tolower(static_cast<unsigned char>(a)) ==
+                                             std::tolower(static_cast<unsigned char>(b));
+                                  });
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-menus &lt;folder&gt;</c> writes every picture of the menus' and logistics' art for the HD art
+/// generator (tools/upscale/make_menu_pack.py): the TGAs in the install's FastFiles and the GIF packets of the GUI's art
+/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-menus");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+    std::ofstream manifest(folder / "manifest.tsv");
+    std::set<uint64_t> written;
+    int32_t pictures = 0;
+    int32_t skipped = 0;
+    std::error_code error;
+
+    // The TGAs in every FastFile beside SYSTEM.CFG.
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(MCFileSystem::GameRoot(), error))
+    {
+        if (!EndsWithIgnoringCase(entry.path().filename().string(), ".fst"))
+        {
+            continue;
+        }
+
+        auto archive = MCFastFile::Create(entry.path().string());
+        REQUIRE(archive.has_value());
+
+        for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)
+        {
+            const MCFileEntry& file = (*archive)->GetEntries()[static_cast<size_t>(i)];
+
+            if (!EndsWithIgnoringCase(file.GetName(), ".tga") || file.RealSize <= static_cast<int32_t>(TgaPixels))
+            {
+                continue;
+            }
+
+            std::vector<uint8_t> data(static_cast<size_t>(file.RealSize));
+
+            if ((*archive)->ReadEntry(i, data) != file.RealSize || data[2] != TgaColorMapped || data[16] != TgaDepth)
+            {
+                ++skipped;
+                continue;
+            }
+
+            int16_t width = 0;
+            int16_t height = 0;
+            std::memcpy(&width, data.data() + 0x0c, sizeof(width));
+            std::memcpy(&height, data.data() + 0x0e, sizeof(height));
+            const size_t size = static_cast<size_t>(std::max<int16_t>(width, 0)) * std::max<int16_t>(height, 0);
+
+            if (size == 0 || TgaPixels + size > data.size())
+            {
+                ++skipped;
+                continue;
+            }
+
+            // A TGA is shown in its own palette (the screen that shows it loads it), so its colours are drawn in that.
+            std::array<SDL_Color, 256> own{};
+
+            for (size_t c = 0; c < own.size(); ++c)
+            {
+                const uint8_t* entry = data.data() + TgaPalette + c * TgaPaletteEntry;
+                own[c] = SDL_Color{entry[2], entry[1], entry[0], 255};
+            }
+
+            WritePicture(folder, manifest, file.GetName(), std::span(data).subspan(TgaPixels, size), width, height, own,
+                         written);
+            ++pictures;
+        }
+    }
+
+    // The GUI's art file's GIF packets (packets that aren't GIFs are left out).
+    MCPacketFile& art = *GuiSystem().ArtFile;
+
+    for (int32_t packet = 0; packet < art.GetNumPackets(); ++packet)
+    {
+        MCFile file;
+
+        if (art.SeekPacket(packet) != 0 || file.Open(art, static_cast<uint32_t>(art.GetPacketSize())) != 0)
+        {
+            ++skipped;
+            continue;
+        }
+
+        std::vector<uint8_t> gif(file.FileSize());
+        file.Read(gif);
+        file.Close();
+        const std::expected<int32_t, std::string> resolution = VfxGifResolution(gif);
+
+        if (!resolution.has_value())
+        {
+            ++skipped;
+            continue;
+        }
+
+        const auto dimensions = static_cast<uint32_t>(*resolution);
+        MCGuiPort port;
+        REQUIRE(port.Init(static_cast<int32_t>(dimensions >> 16), static_cast<int32_t>(dimensions & 0xffff)) == 0);
+        REQUIRE(VfxGifDraw(port.Frame(), gif).has_value());
+        const MCWindow& window = port.Bitmap();
+        WritePicture(folder, manifest, std::format("art.pak packet {}", packet), port.Pixels(), window.XMax + 1,
+                     window.YMax + 1, colors, written);
+        ++pictures;
+    }
+
+    std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),
+                             folder.string(), skipped);
+    CHECK(!written.empty());
+}
+
+/// <summary>
+/// With HD art on, the menus' screen is drawn at the window's resolution (a sharp screen, two drawn pixels a screen
+/// pixel in a 1280x960 window), and what it shows in palette indices (what the tests, the fog test and mirror mode
+/// read) is what the screen shows without.
+/// </summary>
+TEST_CASE_ISOLATED("game: a sharp screen draws the menus at the window's resolution and keeps their indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    constexpr int32_t Width = 1280;
+    constexpr int32_t Height = 960;
+    constexpr int32_t SettleFrames = 30;
+    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+    SDL_SyncWindow(&MCInput::Display()->Window());
+
+    const auto settle = []
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    };
+
+    settle();
+    const std::vector<uint8_t> plain = MCInput::Display()->ComposeScreen();
+    CHECK(!MCInput::Display()->SharpScreen());
+
+    GHdArt = 1;
+    settle();
+    const std::shared_ptr<MCVulkanRenderer> renderer =
+        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const auto [scaleX, scaleY] = renderer->SurfaceScale(MCInput::Display()->Screen());
+    const std::vector<uint8_t> sharp = MCInput::Display()->ComposeScreen();
+    GHdArt = 0;
+
+    constexpr float Tolerance = 0.01f;
+    CHECK(std::abs(scaleX - 2.0f) < Tolerance);
+    CHECK(std::abs(scaleY - 2.0f) < Tolerance);
+    REQUIRE_EQ(sharp.size(), plain.size());
+    CHECK(sharp == plain);
+}
+
+/// <summary>
+/// A glyph redrawn sharp covers its ink pixels' centres fully, keeps each one's font byte, joins diagonal neighbours
+/// with a straight stroke (the middle of a diagonal pair is covered), and leaves the background far from the ink empty.
+/// </summary>
+TEST_CASE("sharp text: a glyph redrawn as strokes covers its ink and keeps its bytes")
+{
+    constexpr int32_t Columns = 4;
+    constexpr int32_t Rows = 3;
+    constexpr uint8_t Ink = 7;
+    constexpr uint8_t Shade = 9;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    // A diagonal from (0, 0) to (2, 2), and a lone shaded pixel at (3, 0).
+    const std::array<uint8_t, Columns * Rows> glyph = {Ink, No, No, Shade, No, Ink, No, No, No, No, Ink, No};
+    const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, Columns, Columns, Rows);
+    constexpr int32_t Scale = MCSharpText::Scale;
+    REQUIRE_EQ(redrawn.size(), static_cast<size_t>(Columns * Scale * Rows * Scale * 4));
+
+    // The byte and coverage of the redrawn pixel at (x, y) in glyph pixels.
+    const auto at = [&](float x, float y)
+    {
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * Columns * Scale + column) * 4;
+        return std::pair{redrawn[offset], redrawn[offset + 1]};
+    };
+
+    CHECK_EQ(at(0.5f, 0.5f).first, Ink);
+    CHECK_EQ(at(0.5f, 0.5f).second, uint8_t{255});
+    CHECK_EQ(at(3.5f, 0.5f).first, Shade);
+    CHECK_EQ(at(3.5f, 0.5f).second, uint8_t{255});
+    // Halfway along the diagonal, between (0, 0) and (1, 1).
+    CHECK_EQ(at(1.0f, 1.0f).second, uint8_t{255});
+    // The corner far from any ink.
+    CHECK_EQ(at(0.1f, 2.9f).second, uint8_t{0});
+}
+
+namespace
+{
+    /// <summary>A font of the install's (a FastFile's .fnt): its name and bytes.</summary>
+    struct MCGameFont
+    {
+        std::string Name;
+        std::vector<uint8_t> Data;
+    };
+
+    /// <summary>Every font in the install's FastFiles that the game can draw (VfxFontFits), each once by name.</summary>
+    std::vector<MCGameFont> GameFonts()
+    {
+        std::vector<MCGameFont> fonts;
+        std::set<std::string> names;
+        std::error_code error;
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(MCFileSystem::GameRoot(), error))
+        {
+            if (!EndsWithIgnoringCase(entry.path().filename().string(), ".fst"))
+            {
+                continue;
+            }
+
+            auto archive = MCFastFile::Create(entry.path().string());
+            REQUIRE(archive.has_value());
+
+            for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)
+            {
+                const MCFileEntry& file = (*archive)->GetEntries()[static_cast<size_t>(i)];
+                std::string name(file.GetName().substr(file.GetName().find_last_of('\\') + 1));
+                std::ranges::transform(name, name.begin(), [](char c) { return static_cast<char>(std::tolower(c)); });
+
+                if (!EndsWithIgnoringCase(name, ".fnt") || !names.insert(name).second)
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> data(static_cast<size_t>(file.RealSize));
+
+                if ((*archive)->ReadEntry(i, data) == file.RealSize && VfxFontFits(data))
+                {
+                    fonts.push_back({std::move(name), std::move(data)});
+                }
+            }
+        }
+
+        return fonts;
+    }
+
+    /// <summary>A glyph of a font: its width, and its rows (the font's height of them), <c>width</c> bytes each.</summary>
+    std::span<const uint8_t> GlyphOf(std::span<const uint8_t> font, int32_t character, int32_t& width)
+    {
+        const auto offset = static_cast<size_t>(static_cast<uint32_t>(MCVfxRead32(font, 0x10 + character * 4)));
+        width = MCVfxRead32(font, offset);
+        return font.subspan(offset + 4, static_cast<size_t>(width) * static_cast<size_t>(VfxFontHeight(font)));
+    }
+}
+
+/// <summary>
+/// Every glyph of every font in the install, redrawn as strokes (what a sharp screen shows), reads as the original:
+/// brought back down to the font's size (each glyph pixel's centre) it is the glyph, ink and bytes, and no stroke
+/// reaches farther than half a glyph pixel (and the edge's smoothing) from an ink pixel.
+/// </summary>
+TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the originals")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t Scale = MCSharpText::Scale;
+    constexpr uint8_t Half = 128;
+    // How far a covered redrawn pixel's centre may lie from an ink pixel, in glyph pixels: half a pixel, and the
+    // smoothing's half a redrawn pixel.
+    constexpr float Reach = 0.5f + 0.5f / static_cast<float>(Scale) + 1e-4f;
+    const std::vector<MCGameFont> fonts = GameFonts();
+    REQUIRE(!fonts.empty());
+    int64_t glyphs = 0;
+    int64_t wrong = 0;
+    std::string first;
+
+    const auto fail = [&](const MCGameFont& font, int32_t character, std::string_view what)
+    {
+        if (wrong++ == 0)
+        {
+            first = std::format("{} glyph {}: {}", font.Name, character, what);
+        }
+    };
+
+    for (const MCGameFont& font : fonts)
+    {
+        const int32_t height = VfxFontHeight(font.Data);
+
+        for (int32_t character = 0; character < MCVfxRead32(font.Data, 4); ++character)
+        {
+            int32_t width = 0;
+            const std::span<const uint8_t> glyph = GlyphOf(font.Data, character, width);
+
+            if (width <= 0 || height <= 0)
+            {
+                continue;
+            }
+
+            ++glyphs;
+            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
+            const int32_t redrawnWidth = width * Scale;
+            const auto texel = [&](int32_t x, int32_t y)
+            { return &redrawn[(static_cast<size_t>(y) * static_cast<size_t>(redrawnWidth) + x) * 4]; };
+            const auto ink = [&](int32_t x, int32_t y)
+            {
+                return x >= 0 && y >= 0 && x < width && y < height &&
+                       glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x] != MCSharpText::NoInk;
+            };
+
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < width; ++x)
+                {
+                    const uint8_t* centre = texel(x * Scale + Scale / 2, y * Scale + Scale / 2);
+                    const uint8_t byte = glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x];
+
+                    if (ink(x, y) != (centre[1] >= Half) || (ink(x, y) && centre[0] != byte))
+                    {
+                        fail(font, character,
+                             std::format("pixel ({}, {}) comes back {:#x} at {}", x, y, centre[0], centre[1]));
+                    }
+                }
+            }
+
+            for (int32_t j = 0; j < height * Scale; ++j)
+            {
+                for (int32_t i = 0; i < redrawnWidth; ++i)
+                {
+                    if (texel(i, j)[1] == 0)
+                    {
+                        continue;
+                    }
+
+                    const float px = (static_cast<float>(i) + 0.5f) / Scale;
+                    const float py = (static_cast<float>(j) + 0.5f) / Scale;
+                    float nearest = std::numeric_limits<float>::max();
+
+                    for (int32_t y = static_cast<int32_t>(py) - 1; y <= static_cast<int32_t>(py) + 1; ++y)
+                    {
+                        for (int32_t x = static_cast<int32_t>(px) - 1; x <= static_cast<int32_t>(px) + 1; ++x)
+                        {
+                            if (ink(x, y))
+                            {
+                                const float dx = std::max(std::abs(px - (static_cast<float>(x) + 0.5f)) - 0.5f, 0.0f);
+                                const float dy = std::max(std::abs(py - (static_cast<float>(y) + 0.5f)) - 0.5f, 0.0f);
+                                nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy));
+                            }
+                        }
+                    }
+
+                    if (nearest > Reach)
+                    {
+                        fail(font, character,
+                             std::format("stroke at ({:.2f}, {:.2f}) is {:.2f} from the ink", px, py, nearest));
+                    }
+                }
+            }
+        }
+    }
+
+    std::cout << std::format("  {} fonts, {} glyphs, {} wrong{}{}\n", fonts.size(), glyphs, wrong,
+                             wrong > 0 ? ", first: " : "", first);
+    CHECK_EQ(wrong, int64_t{0});
+}
+
+/// <summary>
+/// Tool: <c>--sharp-fonts &lt;folder&gt;</c> writes every font's glyph set as <c>&lt;font&gt;.png</c>, each glyph's
+/// original (scaled up nearest) over its sharp redraw, so every letter can be checked by eye.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original over sharp")
+{
+    const std::optional<std::string_view> out = MCTest::Option("sharp-fonts");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t Scale = MCSharpText::Scale;
+    constexpr int32_t PerRow = 16;
+    constexpr int32_t Gap = 4;
+    constexpr uint8_t Ground = 24;
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+
+    for (const MCGameFont& font : GameFonts())
+    {
+        const int32_t height = VfxFontHeight(font.Data);
+        const int32_t count = MCVfxRead32(font.Data, 4);
+        int32_t widest = 1;
+
+        for (int32_t character = 0; character < count; ++character)
+        {
+            int32_t width = 0;
+            GlyphOf(font.Data, character, width);
+            widest = std::max(widest, width);
+        }
+
+        const int32_t cellWidth = widest * Scale + Gap;
+        const int32_t cellHeight = 2 * height * Scale + 3 * Gap;
+        const int32_t rows = (count + PerRow - 1) / PerRow;
+        const int32_t pictureWidth = PerRow * cellWidth;
+        const int32_t pictureHeight = std::max(rows, 1) * cellHeight;
+        std::vector<uint8_t> rgba(
+            static_cast<size_t>(pictureWidth) * static_cast<size_t>(pictureHeight) * BytesPerPixel, Ground);
+
+        const auto put = [&](int32_t x, int32_t y, uint8_t level)
+        {
+            uint8_t* pixel = &rgba[(static_cast<size_t>(y) * static_cast<size_t>(pictureWidth) + x) * BytesPerPixel];
+            pixel[0] = pixel[1] = pixel[2] = static_cast<uint8_t>(Ground + (255 - Ground) * level / 255);
+            pixel[3] = 255;
+        };
+
+        for (int32_t character = 0; character < count; ++character)
+        {
+            int32_t width = 0;
+            const std::span<const uint8_t> glyph = GlyphOf(font.Data, character, width);
+
+            if (width <= 0 || height <= 0)
+            {
+                continue;
+            }
+
+            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
+            const int32_t left = (character % PerRow) * cellWidth;
+            const int32_t top = (character / PerRow) * cellHeight;
+
+            for (int32_t j = 0; j < height * Scale; ++j)
+            {
+                for (int32_t i = 0; i < width * Scale; ++i)
+                {
+                    const bool inked = glyph[static_cast<size_t>(j / Scale) * static_cast<size_t>(width) + i / Scale] !=
+                                       MCSharpText::NoInk;
+                    put(left + i, top + Gap + j, inked ? 255 : 0);
+                    put(left + i, top + 2 * Gap + height * Scale + j,
+                        redrawn[(static_cast<size_t>(j) * static_cast<size_t>(width * Scale) + i) * 4 + 1]);
+                }
+            }
+        }
+
+        SavePng(folder / std::format("{}.png", font.Name), pictureWidth, pictureHeight, rgba);
+    }
 }

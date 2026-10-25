@@ -46,6 +46,7 @@
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCVfxBuildingAppearanceType.h"
 #include "terrain/MCGroundMesh.h"
+#include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
@@ -4401,4 +4402,100 @@ TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolu
     CHECK_EQ(original, 0);
     CHECK(smooth > 0);
     std::filesystem::remove_all(pack.parent_path());
+}
+
+namespace
+{
+    /// <summary>The folder of a pack at <paramref name="pack"/> its pictures go in (sprite/MCHdArt.h).</summary>
+    std::filesystem::path PictureFolderOf(const std::filesystem::path& pack)
+    {
+        return pack / "menus";
+    }
+
+    /// <summary>
+    /// Mission 1 drawn by <paramref name="drawing"/> in a window shown larger than the screen, the tactical map on its
+    /// map page, and a pack holding the map's picture (the tests' pack: pixels doubled, colours inverted).
+    /// </summary>
+    std::optional<HdObjectScene> SetUpHdMapScene(MCGpuDrawing drawing)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+        REQUIRE(map != nullptr);
+        map->SetDisplayType(MCTacmapPage::Map);
+        MCTestGame::RunFrame(FrameSeconds);
+        const std::shared_ptr<MCTexture> texture = map->MapPort->Bitmap().Texture.lock();
+        REQUIRE(texture != nullptr);
+        DecodedFrame picture;
+        picture.Width = texture->Width;
+        picture.Height = texture->Height;
+        picture.Index.assign(texture->Pixels.begin(), texture->Pixels.end());
+        picture.Drawn.assign(picture.Index.size(), 1);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_map";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        std::filesystem::create_directories(PictureFolderOf(scene.Pack));
+        const std::string name =
+            MCHdArt::PictureName(MCHdArt::PictureHash(texture->Pixels, picture.Width, picture.Height));
+        WriteFramePngs(PictureFolderOf(scene.Pack) / name, picture, colors, TestPackScale, Inverted, false);
+        WritePaletteRgb(scene.Pack, colors);
+        return scene;
+    }
+}
+
+/// <summary>
+/// With HD art on and a pack holding the tactical map's picture, the map is drawn from it, turned and scaled as the
+/// game maps it: the shown colours change, and only in the map (the window's top left), the game paused.
+/// </summary>
+TEST_CASE_ISOLATED("game: an HD art pack's picture shows in the tactical map")
+{
+    const std::optional<HdObjectScene> scene = SetUpHdMapScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    // As the mech bar's test: the frame before is drawn with HD art on from a pack with no frames.
+    GamePaused = true;
+    std::optional<MCHdArtOn> hdArt(std::in_place, EmptyPack("mc_tests_hd_empty_pack"));
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown original = ReadShown(scene->Scratch);
+    hdArt.reset();
+    hdArt.emplace(scene->Pack);
+    const int64_t drawnBefore = scene->Renderer->HdDrawn();
+    MCTestGame::RunFrame(FrameSeconds);
+    const Shown hd = ReadShown(scene->Scratch);
+    hdArt.reset();
+    GamePaused = false;
+
+    CHECK(scene->Renderer->HdDrawn() > drawnBefore);
+    const Changed changed = Compare(original, hd);
+    std::cout << std::format("  {} shown pixels changed, about ({}, {})\n", changed.Count, changed.X, changed.Y);
+    REQUIRE(changed.Count > 0);
+    CHECK(changed.X < hd.Width / 4);
+    CHECK(changed.Y < hd.Height / 2);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdMapScene(MCGpuDrawing::Mirror); scene.has_value())
+    {
+        CheckIndicesKept(*scene);
+    }
 }

@@ -27,6 +27,7 @@ class MCShape;
 /// for are drawn from it. A translucent shape's frame (one drawn through AlphaPal.ini) leaves out the pixels the shape
 /// blends, which the GPU still blends from the original, except an effect's (explosions, fire, smoke...), which holds
 /// them as the colour and coverage they draw.</para>
+/// <para>A mech bar icon's damage shapes (a frame a body part) are <c>icons/&lt;shape file&gt;/&lt;frame&gt;</c>.</para>
 /// <para>A crater's or footprint's frames (MCCraterManager's shapes, a frame a facing) are
 /// <c>craters/&lt;crater PAK&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, holding their blended pixels as an effect's do.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
@@ -145,6 +146,15 @@ namespace MCHdArt
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
     std::filesystem::path FolderOf(const CraterShapeKey& key);
 
+    /// <summary>Where a mech bar icon's damage shapes come from (data\\art's <c>mi##.shp</c> or <c>vi#.shp</c>).</summary>
+    struct IconShapeKey
+    {
+        /// <summary>The shape file's name, lower case, without its extension ("mi01").</summary>
+        std::string File;
+    };
+
+    std::filesystem::path FolderOf(const IconShapeKey& key);
+
     /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
     inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
 
@@ -194,6 +204,7 @@ namespace MCHdArt
     /// is off.
     /// </summary>
     void Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner, const CraterShapeKey& key);
+    void Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner, const IconShapeKey& key);
 
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table starting at <paramref name="table"/> (whose

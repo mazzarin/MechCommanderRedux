@@ -451,6 +451,10 @@ auto MCFriendlyMechIcon::SetID(int32_t newPartId) -> void
     DamageShapes = MCRegisteredBlock(shapeFile.GetLength(), MCDataKind::Shapes);
     shapeFile.Read(DamageShapes.Bytes());
     shapeFile.Close();
+    DamageShapeName = shapeName;
+    std::ranges::transform(DamageShapeName, DamageShapeName.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    AttachHdArt();
 
     auto shown = std::static_pointer_cast<MCMover>(object);
     NumParts = shown->NumBodyLocations();

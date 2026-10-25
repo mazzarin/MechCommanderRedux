@@ -868,9 +868,12 @@ namespace
         /// <summary>Buildings and tree buildings.</summary>
         Building,
         Tree,
-        /// <summary>Terrain objects (rocks, walls...) and lights.</summary>
+        /// <summary>Terrain objects (rocks, walls...).</summary>
         Object,
-        /// <summary>Explosions, fire, smoke, weapons' shots, debris, jets: every other class with shapes.</summary>
+        /// <summary>
+        /// Explosions, fire, smoke, lights (the glow an explosion, fire or shot casts), weapons' shots, debris, jets: every
+        /// other class with shapes.
+        /// </summary>
         Effect,
     };
 
@@ -902,9 +905,9 @@ namespace
     /// <summary>
     /// The object classes (an object type's "ObjectClass" ObjectTypeNum, as MCObjectTypeManager numbers them) and their
     /// kinds. Mechs have folders of their own; every other class with shapes of its own draws effects (explosions, fire,
-    /// smoke, weapons, debris, artillery, jets).
+    /// smoke, lights, weapons, debris, artillery, jets).
     /// </summary>
-    constexpr std::array<std::pair<int32_t, ObjectKind>, 12> ClassKinds = {{
+    constexpr std::array<std::pair<int32_t, ObjectKind>, 11> ClassKinds = {{
         {0x00, ObjectKind::Tree},      // tree
         {0x01, ObjectKind::Building},  // building
         {0x03, ObjectKind::Vehicle},   // ground vehicle
@@ -916,7 +919,6 @@ namespace
         {0x14, ObjectKind::Vehicle},   // train car
         {0x15, ObjectKind::Turret},    // turret
         {0x16, ObjectKind::Turret},    // gate
-        {0x17, ObjectKind::Object},    // light
     }};
 
     /// <summary>An appearance type id's class (its top byte) and packet in the sprite PAKs (the rest).</summary>
@@ -2425,6 +2427,88 @@ TEST_CASE_ISOLATED("tool: --hd-pack-objects pictures a pack's vehicles, building
         }
 
         MCFixedZoomHeight = 0.0f;
+    }
+}
+
+namespace
+{
+    /// <summary>The object type named <paramref name="name"/> (its packet in the object PAK, which CreateObject takes).</summary>
+    std::optional<int32_t> ObjectTypeNamed(std::string_view name)
+    {
+        MCPacketFile pak;
+        REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
+
+        for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+        {
+            MCFitIniFile fit;
+
+            if (pak.SeekPacket(packet) == 0 && pak.GetPacketSize() > 0 &&
+                fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) == 0 && fit.SeekBlock("ObjectType") == 0 &&
+                fit.Read<std::string>("Name").value_or("") == name)
+            {
+                return packet;
+            }
+        }
+
+        return std::nullopt;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-pack-effects &lt;folder&gt; --shots &lt;folder&gt;</c> pictures a pack's effects: in mission 1, each of
+/// <c>--explosion &lt;name,...&gt;</c> (object types; default minedet, mdst and gasexpl) goes off beside the player's mech,
+/// shot as it plays (<c>&lt;name&gt;_&lt;frame&gt;_hd.png</c>), or with <c>--hd-original 1</c> without HD art. A run plays
+/// out the same every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as
+/// --hd-pack's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-pack-effects");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
+    REQUIRE(player != nullptr);
+    Eye()->ChangeTarget(player, true);
+    std::set<std::string> names = ListOption("explosion");
+
+    if (names.empty())
+    {
+        names = {"minedet", "mdst", "gasexpl"};
+    }
+
+    // Beside the mech (world units), the frames shot after it goes off, and the frames it is given to finish.
+    constexpr float Beside = 60.0f;
+    constexpr std::array<int32_t, 5> ShotFrames = {2, 5, 9, 14, 20};
+    constexpr int32_t Frames = 45;
+
+    for (const std::string& name : names)
+    {
+        const std::optional<int32_t> type = ObjectTypeNamed(name);
+        MCTest::Scope scope(std::format("--explosion {}", name));
+        REQUIRE(type.has_value());
+        MCVector3D at = player->GetPosition();
+        at.X += Beside;
+        CreateExplosion(*type, at, 0.0f, 0.0f);
+
+        for (int32_t frame = 1; frame <= Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (std::ranges::contains(ShotFrames, frame))
+            {
+                Shoot(folder, std::format("{}_{:02}", name, frame), original);
+            }
+        }
     }
 }
 

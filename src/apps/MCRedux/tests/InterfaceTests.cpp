@@ -355,6 +355,87 @@ TEST_CASE_ISOLATED("game: a mission takes the keys the player bound")
 }
 
 /// <summary>
+/// Port: with the CONTROLS screen's LAPTOP keys, a mission aims with shift and the letters (the keypad's 3x3 shape),
+/// powers up and down with P and shift+P, ejects with shift+E, and forces a run with R held and a jump with H held;
+/// the keypad aims no more.
+/// </summary>
+TEST_CASE_ISOLATED("game: the LAPTOP keys aim, power, eject and force a run or a jump")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+    REQUIRE(iface != nullptr);
+    const auto sinkPin = std::make_shared<MCRecordingOrderSink>();
+    MCRecordingOrderSink& sink = *sinkPin;
+    iface->SetOrderSink(sinkPin);
+    MCKeyBindings::SetPlayer(MCKeyBindings::Laptop());
+    iface->TakePlayerKeys();
+    std::vector<int32_t> force = SelectWholeForce();
+    std::ranges::sort(force);
+    REQUIRE(!force.empty());
+
+    struct MCLaptopKey
+    {
+        std::string_view Name;
+        int16_t ScanCode;
+        uint32_t Modifiers;
+        MCInterfaceMode Mode;
+    };
+
+    const MCLaptopKey modeKeys[] = {
+        {"shift+I aims at the head", 0x17, KeyShift, MCInterfaceMode::AimHead},
+        {"shift+U aims at the left torso", 0x16, KeyShift, MCInterfaceMode::AimLeftTorso},
+        {"shift+O aims at the right torso", 0x18, KeyShift, MCInterfaceMode::AimRightTorso},
+        {"shift+K aims at the centre torso", 0x25, KeyShift, MCInterfaceMode::AimCenterTorso},
+        {"shift+J aims at the left arm", 0x24, KeyShift, MCInterfaceMode::AimLeftArm},
+        {"shift+L aims at the right arm", 0x26, KeyShift, MCInterfaceMode::AimRightArm},
+        {"shift+M aims at the left leg", 0x32, KeyShift, MCInterfaceMode::AimLeftLeg},
+        {"shift+. aims at the right leg", 0x34, KeyShift, MCInterfaceMode::AimRightLeg},
+        {"shift+E ejects", 0x12, KeyShift, MCInterfaceMode::Eject},
+        {"I still shows info", 0x17, 0, MCInterfaceMode::Info},
+        {"keypad 8 aims no more", 0x48, 0, MCInterfaceMode::None},
+    };
+
+    for (const MCLaptopKey& binding : modeKeys)
+    {
+        MCTest::Scope scope(binding.Name);
+        iface->SetMode(MCInterfaceMode::None);
+        SendKey(binding.ScanCode, binding.Modifiers);
+        CHECK_EQ(static_cast<int32_t>(iface->CurrentMode), static_cast<int32_t>(binding.Mode));
+        SendKey(binding.ScanCode, binding.Modifiers, false);
+    }
+
+    sink.Orders.clear();
+    SendKey(0x19);
+    CHECK(OrderedMovers(sink, MCTacticalOrderCode::PowerUp) == force);
+    SendKey(0x19, 0, false);
+    sink.Orders.clear();
+    SendKey(0x19, KeyShift);
+    CHECK(OrderedMovers(sink, MCTacticalOrderCode::PowerDown) == force);
+    SendKey(0x19, KeyShift, false);
+
+    // R held forces the next click's order and runs; let go, it doesn't.
+    iface->SetMode(MCInterfaceMode::None);
+    SendKey(0x13);
+    CHECK(iface->ForcingOrder);
+    CHECK(iface->CurrentMode == MCInterfaceMode::Run);
+    SendKey(0x13, 0, false);
+    CHECK(!iface->ForcingOrder);
+    SendKey(0x23);
+    CHECK(iface->ForcingOrder);
+    CHECK(iface->CurrentMode == MCInterfaceMode::Jump);
+    SendKey(0x23, 0, false);
+    CHECK(!iface->ForcingOrder);
+
+    iface->SetOrderSink(nullptr);
+    MCKeyBindings::SetPlayer(MCKeyBindings::Defaults());
+}
+
+/// <summary>
 /// A click on open ground orders the selection by the mode: walk there (no mode), run there, attack the point with
 /// the range of an attack mode; a jump needs jump jets, which mission 1's Uller W has none of.
 /// </summary>

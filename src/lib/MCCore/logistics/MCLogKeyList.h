@@ -65,6 +65,9 @@ public:
     /// </summary>
     void RestoreDefaults();
 
+    /// <summary>Takes the LAPTOP bindings (<see cref="MCKeyBindings::Laptop"/>), saying so on the status line.</summary>
+    void UseLaptopKeys();
+
     /// <summary>The key cell under the screen point (<paramref name="xPos"/>, <paramref name="yPos"/>), if any.</summary>
     std::optional<Cell> CellAt(int32_t xPos, int32_t yPos);
 
@@ -107,6 +110,9 @@ private:
 
     /// <summary>Clears <paramref name="cell"/>'s key.</summary>
     void Clear(Cell cell);
+
+    /// <summary>Takes <paramref name="keys"/> (DEFAULTS, LAPTOP), saying <paramref name="news"/> on the status line.</summary>
+    void UsePreset(const MCKeyBindings::MCKeyTable& keys, std::string_view news);
 
     /// <summary>The row under the screen y, if it is a shown row.</summary>
     std::optional<int32_t> RowAt(int32_t yPos);

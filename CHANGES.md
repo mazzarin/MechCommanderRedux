@@ -82,8 +82,16 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - The mission keys can be changed: the preferences screen has a CONTROLS button listing every command with its key and
   an alternate key. Click a key and press the new one, with Ctrl, Alt or Shift if you like; a key another command had
   moves, and the screen says which command lost it. Right-click clears a key, and DEFAULTS brings back the original
-  keys. Handy on keyboards without a numeric keypad, Home or Page Up and Down. Keys that differ from the original are
-  kept in `PREFS.CFG`'s `Controls` block.
+  keys. Keys that differ from the original are kept in `PREFS.CFG`'s `Controls` block.
+- LAPTOP sets keys every laptop has, with no keypad, F-keys, Home or Page Up and Down, and none macOS keeps for
+  itself:
+  - aimed shots on Shift with U I O / J K L / M . (the keypad's layout);
+  - lances on 1-4 (Shift adds, Ctrl makes) and 5 breaks them up;
+  - support strikes on 7 8 9 0;
+  - map scroll on Shift+arrows;
+  - power up and down on P and Shift+P, and eject on Shift+E;
+  - zoom on = and -;
+  - hold Ctrl, R or H to force an order, a run or a jump.
 
 ### Sound
 

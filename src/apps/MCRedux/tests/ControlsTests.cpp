@@ -254,6 +254,68 @@ TEST_CASE("controls: binding a key another command has moves it from that comman
 }
 
 /// <summary>
+/// The LAPTOP keys need nothing a laptop lacks or reaches only with fn (the keypad, F1-F12, Home, End, Page Up and
+/// Down, Insert, Delete) nor what macOS keeps (ctrl+arrows); no two listed commands share a key, and every listed
+/// command has one.
+/// </summary>
+TEST_CASE("controls: the LAPTOP keys need no keypad, F-key or page key, and none is taken twice")
+{
+    constexpr std::array<uint32_t, 11> Navigation = {0x147, 0x14f, 0x149, 0x151, 0x152, 0x153,
+                                                     0x148, 0x150, 0x14b, 0x14d, 0x135};
+    constexpr std::array<uint32_t, 4> Arrows = {0x148, 0x150, 0x14b, 0x14d};
+    const MCKeyBindings::MCKeyTable& laptop = MCKeyBindings::Laptop();
+    std::map<uint32_t, MCKeyCommand> taken;
+
+    const auto check = [&](MCKeyCommand command)
+    {
+        if (command == MCKeyCommand::Unused)
+        {
+            return;
+        }
+
+        const uint32_t key = laptop[static_cast<size_t>(command)];
+
+        if (key == MCKeyBindings::NoKey)
+        {
+            return;
+        }
+
+        const uint32_t code = key & ~MCKeyBindings::ModifierBits;
+        const bool keypad = (code >= 0x47 && code <= 0x53) || code == 0x37 || code == 0x11c;
+        const bool functionKey = (code >= 0x3b && code <= 0x44) || code == 0x57 || code == 0x58;
+        const bool arrow = std::ranges::contains(Arrows, code);
+        const bool navigation = !arrow && std::ranges::contains(Navigation, code);
+        CHECK(!keypad);
+        CHECK(!functionKey);
+        CHECK(!navigation);
+        CHECK(!(arrow && (key & KeyCtrl) != 0));
+        const auto [where, added] = taken.emplace(key, command);
+        CHECK(added || where->second == command);
+    };
+
+    for (const MCKeyBindings::MCControlRow& row : MCKeyBindings::ControlRows())
+    {
+        check(row.Command);
+        check(row.Alternate);
+
+        if (!row.IsHeading())
+        {
+            CHECK(laptop[static_cast<size_t>(row.Command)] != MCKeyBindings::NoKey);
+        }
+    }
+
+    // Keys every keyboard has stay the original's.
+    for (const MCKeyCommand command : {MCKeyCommand::Run, MCKeyCommand::Jump, MCKeyCommand::Stop, MCKeyCommand::Guard,
+                                       MCKeyCommand::Chat, MCKeyCommand::ScrollUp, MCKeyCommand::HoldTacticalMap})
+    {
+        CHECK_EQ(laptop[static_cast<size_t>(command)], MCKeyBindings::Defaults()[static_cast<size_t>(command)]);
+    }
+
+    CHECK_EQ(MCKeyBindings::KeyName(laptop[static_cast<size_t>(MCKeyCommand::AimHead)]), std::string("SHIFT+I"));
+    CHECK_EQ(MCKeyBindings::KeyName(laptop[static_cast<size_t>(MCKeyCommand::LinkLance2)]), std::string("CTRL+2"));
+}
+
+/// <summary>
 /// PREFS keeps only the keys that differ from the defaults, in the Controls block by name, and reading it gives the
 /// player those keys over the defaults; a name it doesn't know leaves that command's key as it was, and a PREFS without
 /// the block gives the defaults.
@@ -430,6 +492,16 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
     RealClickOn(*defaults);
     CHECK(EditedKeys() == MCKeyBindings::Defaults());
     CHECK_EQ(list->Status(), "THE ORIGINAL KEYS ARE BACK.");
+
+    // LAPTOP takes the keys every laptop has, and says so; DEFAULTS brings the original's back.
+    const std::shared_ptr<MCLogTextButton> laptop = FindTextButton(screen, "LAPTOP");
+    REQUIRE(laptop != nullptr);
+    RealClickOn(*laptop);
+    CHECK(EditedKeys() == MCKeyBindings::Laptop());
+    CHECK_EQ(list->Status(), "LAPTOP KEYS: NO KEYPAD, F-KEYS OR PAGE KEYS NEEDED.");
+    MCScreenInput::SaveShot("controls laptop", MCScreenInput::ScreenHash());
+    RealClickOn(*defaults);
+    CHECK(EditedKeys() == MCKeyBindings::Defaults());
     RealClickCell(*list, CellOf(MCKeyCommand::Jump));
     MCScreenInput::RealKey(SDL_SCANCODE_K);
     WritePrefs();

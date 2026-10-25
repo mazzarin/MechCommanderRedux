@@ -33,7 +33,7 @@ namespace
     constexpr int32_t TitleLeft = 12;
     constexpr int32_t TitleTop = 8;
 
-    /// <summary>DEFAULTS at the bottom left, DONE at the bottom right, 10 pixels in.</summary>
+    /// <summary>DEFAULTS then LAPTOP at the bottom left, DONE at the bottom right, 10 pixels in and apart.</summary>
     constexpr int32_t ButtonInset = 10;
 
     /// <summary>The panels.</summary>
@@ -71,6 +71,15 @@ namespace
             list->RestoreDefaults();
         }
     }
+
+    /// <summary>LAPTOP: keys every laptop has (MCKeyBindings::Laptop).</summary>
+    void UseLaptopKeys()
+    {
+        if (const std::shared_ptr<MCLogKeyList> list = List.lock(); list != nullptr)
+        {
+            list->UseLaptopKeys();
+        }
+    }
 }
 
 void AddControlsPanel(MCGenericScreen& screen, MCGuiObject& prefsPanel, int32_t buttonLeft, int32_t buttonTop)
@@ -106,7 +115,14 @@ void AddControlsPanel(MCGenericScreen& screen, MCGuiObject& prefsPanel, int32_t 
     const int32_t buttonsTop = PanelPlace.Height - ButtonInset - defaults->Height();
     defaults->MoveTo(ButtonInset, buttonsTop);
     defaults->ShowGuiWindow(true);
+    const int32_t laptopLeft = ButtonInset + defaults->Width() + ButtonInset;
     screen.AdoptChildOf(panel, std::move(defaults));
+
+    auto laptop = MCMakeGui<MCLogTextButton>();
+    laptop->InitWithLabel(0, 0, "LAPTOP", UseLaptopKeys);
+    laptop->MoveTo(laptopLeft, buttonsTop);
+    laptop->ShowGuiWindow(true);
+    screen.AdoptChildOf(panel, std::move(laptop));
 
     auto done = MCMakeGui<MCLogTextButton>();
     done->InitWithLabel(0, 0, "DONE", HideControls);

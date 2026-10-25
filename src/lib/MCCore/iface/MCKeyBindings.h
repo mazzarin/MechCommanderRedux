@@ -51,6 +51,14 @@ namespace MCKeyBindings
     /// <summary>The original's bindings, as <see cref="MCTacticalInterface::Init"/> set them.</summary>
     const MCKeyTable& Defaults();
 
+    /// <summary>
+    /// The CONTROLS screen's LAPTOP keys: the original's, with the keys a laptop lacks or reaches only with fn (the
+    /// keypad, F1-F12, Home, Page Up and Down) and those macOS keeps for itself (ctrl+arrows, ctrl+F1-F4, F11) moved
+    /// to keys every keyboard has. The force keys move off F9-F12: ctrl alone (which forces orders in the original
+    /// too), R and H.
+    /// </summary>
+    const MCKeyTable& Laptop();
+
     /// <summary>The player's bindings: the defaults with the changes PREFS holds.</summary>
     const MCKeyTable& Player();
 

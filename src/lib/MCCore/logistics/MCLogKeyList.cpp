@@ -63,6 +63,7 @@ namespace
     /// <summary>The status line's hints.</summary>
     constexpr std::string_view Hint = "CLICK A KEY TO CHANGE IT. RIGHT-CLICK A KEY TO CLEAR IT.";
     constexpr std::string_view DefaultsNews = "THE ORIGINAL KEYS ARE BACK.";
+    constexpr std::string_view LaptopNews = "LAPTOP KEYS: NO KEYPAD, F-KEYS OR PAGE KEYS NEEDED.";
     /// <summary>What listening says about a key the game has no code for (F13 and up, media keys): it can't be bound.</summary>
     constexpr std::string_view UnreadableKey = "THE GAME CAN'T READ THAT KEY. PRESS ANOTHER, OR ESC.";
 
@@ -151,10 +152,20 @@ auto MCLogKeyList::Reset() -> void
 
 auto MCLogKeyList::RestoreDefaults() -> void
 {
+    UsePreset(MCKeyBindings::Defaults(), DefaultsNews);
+}
+
+auto MCLogKeyList::UseLaptopKeys() -> void
+{
+    UsePreset(MCKeyBindings::Laptop(), LaptopNews);
+}
+
+auto MCLogKeyList::UsePreset(const MCKeyBindings::MCKeyTable& keys, std::string_view news) -> void
+{
     StopListening();
-    Keys() = MCKeyBindings::Defaults();
+    Keys() = keys;
     _Lost.reset();
-    _Status = DefaultsNews;
+    _Status = news;
 }
 
 auto MCLogKeyList::VisibleRows() -> int32_t

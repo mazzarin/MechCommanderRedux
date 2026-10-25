@@ -287,6 +287,9 @@ private:
         uint64_t Version = 0;
         bool Usable = false;
         Texture Atlas;
+        /// <summary>The HD art pack's tiles, at HdScale times the atlas's places (none without HD terrain).</summary>
+        Texture HdAtlas;
+        int32_t HdScale = 0;
         std::shared_ptr<SDL_GPUBuffer> Cells;
         std::shared_ptr<SDL_GPUBuffer> Images;
         int32_t FirstRow = 0;
@@ -577,13 +580,19 @@ private:
     /// <summary>Pictures (windows in memory) by content, and when each was used last.</summary>
     struct Picture
     {
+        /// <summary>An HD art frame's colours (Texture holds its original's indices), and the bytes both take.</summary>
+        Texture HdColors;
+        size_t Bytes = 0;
         Texture Texture;
         uint64_t LastFrame = 0;
     };
 
     std::unordered_map<uint64_t, Picture> _Pictures;
     size_t _PictureBytes = 0;
-    /// <summary>The HD art frames on the GPU (RGBA8), by their frame's number, and the bytes they take.</summary>
+    /// <summary>
+    /// The HD art frames on the GPU (their indices R8G8, their colours BC7 or RGBA8), by their frame's number, and the
+    /// bytes they take.
+    /// </summary>
     std::unordered_map<uint64_t, Picture> _HdPictures;
     size_t _HdPictureBytes = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
@@ -602,6 +611,10 @@ private:
 
     /// <summary>The frame's pictures in use (their textures).</summary>
     std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;
+    /// <summary>The HD colours of the frame's pictures that are HD art frames, by their place in _FramePictures.</summary>
+    std::unordered_map<uint32_t, std::shared_ptr<SDL_GPUTexture>> _FrameHdColors;
+    /// <summary>Whether the GPU samples BC7 (unknown: not asked yet); else HD colours are decoded to RGBA8.</summary>
+    std::optional<bool> _Bc7;
 
     /// <summary>
     /// What is kept for a texture (its <c>MCTexture::Hardware</c>): its GPU copy, and its place in

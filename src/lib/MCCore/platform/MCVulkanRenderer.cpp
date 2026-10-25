@@ -4,6 +4,7 @@
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
 #include "lib/MCFatal.h"
+#include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxClip.h"
 
@@ -53,10 +54,14 @@ namespace
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
     /// <summary>The same for the HD art frames on the GPU.</summary>
     constexpr size_t HdPictureBudget = 512 * 1024 * 1024;
-    /// <summary>An HD art frame's bytes a pixel (RGBA8), and its picture's width per colour column (colours, then
-    /// indices).</summary>
-    constexpr uint32_t HdBytesPerPixel = 4;
-    constexpr uint32_t HdColumnsPerPixel = 2;
+    /// <summary>The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4).</summary>
+    constexpr uint32_t HdRgbaBytes = 4;
+    constexpr uint32_t HdBc7Bytes = 1;
+    /// <summary>
+    /// draw.pshader's textures: the source, the tables, the alpha colours, the fits, the palette and the HD colours (an
+    /// HD art frame's, or the terrain's; the palette where a draw has none).
+    /// </summary>
+    constexpr uint32_t DrawSamplers = 6;
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
     /// <summary>The width of the strip of written pixels.</summary>
@@ -577,6 +582,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     for (auto& [key, picture] : _HdPictures)
     {
         Release(picture.Texture);
+        Release(picture.HdColors);
     }
 
     for (const std::shared_ptr<MCTexture>& texture : MCRenderer::Textures())
@@ -593,6 +599,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _Uploads.clear();
     _BufferUploads.clear();
     _FramePictures.clear();
+    _FrameHdColors.clear();
     Release(_Blank);
     Release(_TableTexture);
     Release(_AlphaTexture);
@@ -697,7 +704,7 @@ void MCVulkanRenderer::BeginRecording()
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
     // each frame, such as the shape transforms' work buffer, make a new one every frame).
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
-    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdBytesPerPixel);
+    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdRgbaBytes);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
     if (_Tables.empty())
@@ -721,8 +728,11 @@ void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictu
 {
     const auto drop = [&](auto it)
     {
-        bytes -= static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
+        bytes -= it->second.Bytes != 0
+                     ? it->second.Bytes
+                     : static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
         Release(it->second.Texture);
+        Release(it->second.HdColors);
         return pictures.erase(it);
     };
 
@@ -1559,6 +1569,12 @@ uint32_t MCVulkanRenderer::UsePicture(Picture& picture)
     picture.LastFrame = _Frame;
     const auto index = static_cast<uint32_t>(_FramePictures.size());
     _FramePictures.push_back(picture.Texture.Handle);
+
+    if (picture.HdColors.Handle != nullptr)
+    {
+        _FrameHdColors[index] = picture.HdColors.Handle;
+    }
+
     return index;
 }
 
@@ -1812,33 +1828,71 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
 
     if (found == _HdPictures.end())
     {
-        const auto width = static_cast<uint32_t>(frame.Width) * HdColumnsPerPixel;
+        const auto width = static_cast<uint32_t>(frame.Width);
         const auto height = static_cast<uint32_t>(frame.Height);
-        const size_t size = static_cast<size_t>(width) * height * HdBytesPerPixel;
+        const auto originalWidth = static_cast<uint32_t>(frame.OriginalWidth());
+        const auto originalHeight = static_cast<uint32_t>(frame.OriginalHeight());
+        const bool bc7 = frame.Format == MCHdArt::ColorFormat::Bc7;
+        uint32_t colorWidth = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Width)) : width;
+        uint32_t colorHeight = bc7 ? static_cast<uint32_t>(MCBc7::Padded(frame.Height)) : height;
 
-        if (frame.Pixels.size() != size)
+        if (frame.Indices.size() != static_cast<size_t>(originalWidth) * originalHeight * MCHdArt::IndexBytes ||
+            frame.Colors.size() != static_cast<size_t>(colorWidth) * colorHeight * (bc7 ? HdBc7Bytes : HdRgbaBytes))
         {
             NotSupported("an HD art frame whose pixels don't match its size");
             return std::nullopt;
         }
 
-        Picture picture;
+        if (!_Bc7.has_value())
+        {
+            _Bc7 = SDL_GPUTextureSupportsFormat(_Device.get(), SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
+                                                SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        }
 
-        if (auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                      SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height);
-            !made)
+        // A GPU without BC7 gets the colours decoded here.
+        const bool sendBc7 = bc7 && *_Bc7;
+        std::vector<uint8_t> decoded;
+        std::span<const uint8_t> colors = frame.Colors;
+
+        if (bc7 && !sendBc7)
+        {
+            decoded = MCBc7::Decode(frame.Colors, frame.Width, frame.Height);
+            colors = decoded;
+            colorWidth = width;
+            colorHeight = height;
+        }
+
+        Picture picture;
+        auto made = EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                  originalWidth, originalHeight);
+
+        if (made)
+        {
+            made = EnsureTexture(picture.HdColors,
+                                 sendBc7 ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                 SDL_GPU_TEXTUREUSAGE_SAMPLER, colorWidth, colorHeight);
+        }
+
+        if (!made)
         {
             SDL_Log("MCVulkanRenderer: HD art frame %ux%u: %s", width, height, made.error().c_str());
+            Release(picture.Texture);
+            Release(picture.HdColors);
             _HdRefused.insert(frame.Id);
             return std::nullopt;
         }
 
-        std::ranges::copy(frame.Pixels,
-                          QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdBytesPerPixel).begin());
+        std::ranges::copy(frame.Indices, QueueUpload(picture.Texture.Handle, 0, 0, originalWidth, originalHeight,
+                                                     static_cast<uint32_t>(MCHdArt::IndexBytes))
+                                             .begin());
+        std::ranges::copy(colors, QueueUpload(picture.HdColors.Handle, 0, 0, colorWidth, colorHeight,
+                                              sendBc7 ? HdBc7Bytes : HdRgbaBytes)
+                                      .begin());
+        picture.Bytes = frame.Indices.size() + colors.size();
         found = _HdPictures.emplace(frame.Id, picture).first;
-        _HdPictureBytes += size;
+        _HdPictureBytes += picture.Bytes;
         ++_FrameUploads.Pictures;
-        _FrameUploads.PictureBytes += static_cast<int64_t>(size);
+        _FrameUploads.PictureBytes += static_cast<int64_t>(picture.Bytes);
     }
 
     return UsePicture(found->second);
@@ -2746,13 +2800,15 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     SDL_BindGPUVertexSamplers(&pass, 0, &fogBinding, 1);
     SDL_GPUBuffer* const buffers[2] = {_TerrainMesh.Cells.get(), _TerrainMesh.Images.get()};
     SDL_BindGPUVertexStorageBuffers(&pass, 0, buffers, 2);
-    const SDL_GPUTextureSamplerBinding bindings[5] = {
+    SDL_GPUTexture* const hdAtlas =
+        _TerrainMesh.HdAtlas.Handle != nullptr ? _TerrainMesh.HdAtlas.Handle.get() : _PaletteTexture.Handle.get();
+    const SDL_GPUTextureSamplerBinding bindings[DrawSamplers] = {
         {_TerrainMesh.Atlas.Handle.get(), _Nearest.get()}, {_TableTexture.Handle.get(), _Nearest.get()},
         {_AlphaTexture.Handle.get(), _Nearest.get()},      {_FitTexture.Handle.get(), _Nearest.get()},
-        {_PaletteTexture.Handle.get(), _Nearest.get()},
+        {_PaletteTexture.Handle.get(), _Nearest.get()},    {hdAtlas, _Nearest.get()},
     };
 
-    SDL_BindGPUFragmentSamplers(&pass, 0, bindings, 5);
+    SDL_BindGPUFragmentSamplers(&pass, 0, bindings, DrawSamplers);
     SDL_PushGPUVertexUniformData(&commands, 0, &uniforms, sizeof(uniforms));
     SDL_PushGPUFragmentUniformData(&commands, 0, frameUniforms.data(), static_cast<uint32_t>(frameUniforms.size()));
     SDL_DrawGPUPrimitives(&pass, 6, draw.CellCount, 0, 0);
@@ -3244,18 +3300,29 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             }
         }
 
-        const SDL_GPUTextureSamplerBinding bindings[5] = {
+        SDL_GPUTexture* hdColors = _PaletteTexture.Handle.get();
+
+        if (record.Source == SourceKind::Picture)
+        {
+            if (const auto hd = _FrameHdColors.find(record.SourceIndex); hd != _FrameHdColors.end())
+            {
+                hdColors = hd->second.get();
+            }
+        }
+
+        const SDL_GPUTextureSamplerBinding bindings[DrawSamplers] = {
             {source, _Nearest.get()},
             {_TableTexture.Handle.get(), _Nearest.get()},
             {_AlphaTexture.Handle.get(), _Nearest.get()},
             {_FitTexture.Handle.get(), _Nearest.get()},
             {_PaletteTexture.Handle.get(), _Nearest.get()},
+            {hdColors, _Nearest.get()},
         };
 
         SDL_BindGPUGraphicsPipeline(pass, record.IndexOnly ? _IndexOnly.get()
                                           : record.Blend   ? _Blend.get()
                                                            : _Opaque.get());
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
         const BatchUniforms batch{{static_cast<float>(surface.RecordedWidth),
                                    static_cast<float>(surface.RecordedHeight), static_cast<float>(surface.Target.Width),
                                    static_cast<float>(surface.Target.Height)},
@@ -3329,6 +3396,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     _TerrainDraws.clear();
     _Staging.clear();
     _FramePictures.clear();
+    _FrameHdColors.clear();
     _StripPixels.clear();
     _StripRows = 0;
 

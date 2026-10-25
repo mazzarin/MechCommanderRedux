@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "MCGameFolder.h"
+#include "../MCGameFolder.h"
 #include "MCTest.h"
 
 namespace

@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
@@ -350,8 +351,30 @@ namespace
     }
 }
 
+/// <summary>Tool: <c>--hd-mechs 1</c> lists the mech trees, for --hd-extract's --mech: a line "mech &lt;name&gt;" each,
+/// then its packet in the legs, torso, right and left arm PAKs (trees that share them share an HD pack's frames).</summary>
+TEST_CASE_ISOLATED("tool: --hd-mechs lists the mech trees")
+{
+    if (!MCTest::Option("hd-mechs").has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+
+    for (const auto& [name, packet] : MCTestGame::MechTrees())
+    {
+        const auto tree = std::static_pointer_cast<MCSpriteTree>(
+            AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
+        REQUIRE(tree != nullptr);
+        std::cout << std::format("mech {} {} {} {} {}\n", name, tree->FileNumbers[MCMechPart::Legs],
+                                 tree->FileNumbers[MCMechPart::Torso], tree->FileNumbers[MCMechPart::RightArm],
+                                 tree->FileNumbers[MCMechPart::LeftArm]);
+    }
+}
+
 /// <summary>
-/// Tool: <c>--hd-extract &lt;folder&gt;</c> writes the mech tree <c>--mech &lt;name&gt;</c> (default "madcat") as an HD art
+/// Tool: <c>--hd-extract &lt;folder&gt;</c> writes the mech trees <c>--mech &lt;name&gt;</c> (default "madcat") as an HD art
 /// pack at its own size, for tools/upscale/make_hd_pack.py to upscale: every shape table of every gesture, each frame a
 /// PNG with its index picture (sprite/MCHdArt.h), plus <c>&lt;name&gt;.json</c> (each sequence's gesture, part, facing and
 /// frames' bounds) and <c>palette.json</c> (the shown colours, the special colours, the actors' fade tables).
@@ -367,13 +390,35 @@ TEST_CASE_ISOLATED("tool: --hd-extract writes a mech's frames for the HD art gen
 
     REQUIRE(MCTestGame::StartMission(1));
     const std::string name(MCTest::Option("mech").value_or("madcat"));
-    const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(name);
-    REQUIRE(tree != nullptr);
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
 
+    // Every tree of that name (the retail PAK has two "hunchbk"s), each shape table once.
+    std::vector<Sequence> sequences;
+    std::set<std::string> folders;
+
+    for (const auto& [treeName, packet] : MCTestGame::MechTrees())
+    {
+        if (treeName != name)
+        {
+            continue;
+        }
+
+        const auto tree = std::static_pointer_cast<MCSpriteTree>(
+            AppearanceTypeList().GetAppearance(0x01000000u | static_cast<uint32_t>(packet)));
+        REQUIRE(tree != nullptr);
+
+        for (Sequence& sequence : MechSequences(tree, std::nullopt))
+        {
+            if (folders.insert(SequenceFolder({}, sequence.Key).generic_string()).second)
+            {
+                sequences.push_back(std::move(sequence));
+            }
+        }
+    }
+
+    REQUIRE(!sequences.empty());
     const std::filesystem::path pack(*out);
-    const std::vector<Sequence> sequences = MechSequences(tree, std::nullopt);
     WritePack(pack, sequences, colors, 1, [](SDL_Color color) { return color; });
 
     std::string json = std::format("{{\"mech\": \"{}\", \"sequences\": [", name);

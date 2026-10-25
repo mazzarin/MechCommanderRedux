@@ -62,6 +62,9 @@ namespace MCTestGame
     /// </remarks>
     uint32_t StateHash();
 
+    /// <summary>The mech trees in the game's sprite PAK: each one's name (its FIT's Main Info "Name") and packet.</summary>
+    std::vector<std::pair<std::string, int32_t>> MechTrees();
+
     /// <summary>The mech tree named <paramref name="name"/> (its FIT's Main Info "Name") in the game's sprite PAK.</summary>
     std::shared_ptr<MCSpriteTree> FindMechTree(std::string_view name);
 

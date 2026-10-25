@@ -192,7 +192,8 @@ namespace
         {
             for (const std::string_view drive : WrapperDrives)
             {
-                const std::filesystem::path path = app / drive;
+                // In the platform's separators, so a path found inside reads as one built part by part.
+                const std::filesystem::path path = app / std::filesystem::path(drive).make_preferred();
                 std::error_code error;
 
                 if (std::filesystem::is_directory(path, error) && !std::filesystem::is_symlink(path, error))

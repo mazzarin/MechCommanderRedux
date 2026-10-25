@@ -832,7 +832,8 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         const uint32_t kind = op & KindMask;
         _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
-        _Audited->Sharp |= kind == KindHd || kind == KindSharpGlyph;
+        _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSharpGlyph || kind == KindSmoothLine ||
+                           kind == KindSmoothEllipse;
     }
 
     draw[8] = static_cast<int32_t>(op);

@@ -196,7 +196,8 @@ public:
 
     /// <summary>
     /// Port-only, for the HD art audit (a test tool): one draw command and what it drew. Sharp: shown at the output's
-    /// resolution (from the HD art pack, the ground's HD atlas or text redrawn sharp), not from the original's pixels.
+    /// resolution (from the HD art pack, the ground's HD atlas, text redrawn sharp or a line or ellipse drawn smooth),
+    /// not from the original's pixels.
     /// </summary>
     struct AuditedDraw
     {

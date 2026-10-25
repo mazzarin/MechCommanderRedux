@@ -27,8 +27,12 @@ class MCShape;
 /// for are drawn from it. A translucent shape's frame (one drawn through AlphaPal.ini) leaves out the pixels the shape
 /// blends, which the GPU still blends from the original, except an effect's (explosions, fire, smoke...), which holds
 /// them as the colour and coverage they draw.</para>
+/// <para>A crater's or footprint's frames (MCCraterManager's shapes, a frame a facing) are
+/// <c>craters/&lt;crater PAK&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, holding their blended pixels as an effect's do.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
-/// original tile's pixels; their alpha is unused.</para>
+/// original tile's pixels; their alpha is unused. A terrain overlay's (a fast shape over the ground: roads, rivers'
+/// banks, rubble, mines) are <c>overlays/&lt;key&gt;.hdf</c> (named as tiles are), with their alpha; a translucent
+/// one's hold its blended pixels.</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
 /// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -128,9 +132,18 @@ namespace MCHdArt
         uint32_t Packet = 0;
     };
 
+    /// <summary>Where a crater's or footprint's shape comes from (MCCraterManager).</summary>
+    struct CraterShapeKey
+    {
+        /// <summary>The crater PAK's name, lower case ("feet", "crater"), and the shape's packet in it.</summary>
+        std::string CraterFile;
+        uint32_t Packet = 0;
+    };
+
     /// <summary>The folder in a pack that holds the frames of the shape loaded from <paramref name="key"/>.</summary>
     std::filesystem::path FolderOf(const MechShapeKey& key);
     std::filesystem::path FolderOf(const ObjectShapeKey& key);
+    std::filesystem::path FolderOf(const CraterShapeKey& key);
 
     /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
     inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
@@ -176,6 +189,13 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
+    /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
+    /// <paramref name="owner"/> lives, its frames are drawn from the pack's when it has them. Does nothing while HD art
+    /// is off.
+    /// </summary>
+    void Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner, const CraterShapeKey& key);
+
+    /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table starting at <paramref name="table"/> (whose
     /// bounds are <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when
     /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds.
@@ -207,6 +227,13 @@ namespace MCHdArt
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>
+    /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its
+    /// bounds <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when HD art
+    /// is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's

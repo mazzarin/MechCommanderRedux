@@ -194,6 +194,31 @@ public:
     /// <summary>The commands the GPU can't draw yet that were asked of it (each logged once).</summary>
     const std::map<std::string, int64_t>& Unsupported() const { return _Unsupported; }
 
+    /// <summary>
+    /// Port-only, for the HD art audit (a test tool): one draw command and what it drew. Sharp: shown at the output's
+    /// resolution (from the HD art pack, the ground's HD atlas or text redrawn sharp), not from the original's pixels.
+    /// </summary>
+    struct AuditedDraw
+    {
+        std::string_view Command;
+        /// <summary>The window drawn on, and whether its surface is drawn at more pixels than the window has.</summary>
+        const MCWindow* Window = nullptr;
+        bool Scaled = false;
+        /// <summary>
+        /// The data it drew (a shape table, a tile, a font...; to the end of its registered block) and the frame, or the
+        /// window it copied from, where it has them.
+        /// </summary>
+        std::span<const uint8_t> Data;
+        int32_t Frame = -1;
+        const MCWindow* From = nullptr;
+        /// <summary>The window pixels its draws covered.</summary>
+        int64_t Pixels = 0;
+        bool Sharp = false;
+    };
+
+    /// <summary>Port-only: called after every draw command while set (the HD art audit's).</summary>
+    std::function<void(const AuditedDraw&)> Audit;
+
 protected:
     /// <summary>The alpha colours go up again before the next draws.</summary>
     void OnAlphaTableChanged() override { _AlphaColorsChanged = true; }
@@ -667,6 +692,23 @@ private:
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;
     int64_t _HdDrawn = 0;
+    /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
+    std::optional<AuditedDraw> _Audited;
+
+    /// <summary>Audits the draw command it lives through (when <see cref="Audit"/> is set; the outermost command's).</summary>
+    class AuditScope
+    {
+    public:
+        AuditScope(MCVulkanRenderer& renderer, std::string_view command, const MCWindow& target,
+                   std::span<const uint8_t> data = {}, int32_t frame = -1, const MCWindow* from = nullptr);
+        ~AuditScope();
+        AuditScope(const AuditScope&) = delete;
+        AuditScope& operator=(const AuditScope&) = delete;
+
+    private:
+        MCVulkanRenderer& _Renderer;
+        bool _Outermost = false;
+    };
 
     /// <summary>
     /// Drops the pictures of <paramref name="pictures"/> unused for a while, then, oldest first, those past

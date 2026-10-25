@@ -305,30 +305,6 @@ namespace
     // Fast shapes (fastshp.cpp's format): rows of packets covering width + 1 pixels; c < 0x80 is a run of c pixels of
     // the next byte, c >= 0x80 is c - 0x80 literal bytes.
 
-    /// <summary>The bytes a fast-shape row's packets take, covering <paramref name="width"/> pixels.</summary>
-    size_t FastRowEnd(std::span<const uint8_t> bytes, int32_t width)
-    {
-        size_t data = 0;
-
-        for (int32_t count = 0; count < width;)
-        {
-            const uint32_t c = bytes[data++];
-
-            if (c >= 0x80)
-            {
-                count += static_cast<int32_t>(c) - 0x80;
-                data += c - 0x80;
-            }
-            else
-            {
-                count += static_cast<int32_t>(c);
-                ++data;
-            }
-        }
-
-        return data;
-    }
-
     /// <summary>Decodes a fast-shape row into value + state pairs (1 a literal pixel, 3 a run's).</summary>
     void DecodeFastRow(std::span<const uint8_t> bytes, int32_t width, std::span<uint8_t> out)
     {
@@ -844,6 +820,14 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         draw[5] = from[1] + (draw[1] - rect[1]) * from[3];
         draw[6] = from[2];
         draw[7] = from[3];
+    }
+
+    if (_Audited.has_value())
+    {
+        const uint32_t kind = op & KindMask;
+        _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
+        _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
+        _Audited->Sharp |= kind == KindHd || kind == KindSharpGlyph;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -1638,8 +1622,30 @@ auto MCVulkanRenderer::SourceFor(uint16_t target, const MCWindow& window) -> std
 
 // Commands ---------------------------------------------------------------------------------------------------------
 
+MCVulkanRenderer::AuditScope::AuditScope(MCVulkanRenderer& renderer, std::string_view command, const MCWindow& target,
+                                         std::span<const uint8_t> data, int32_t frame, const MCWindow* from)
+    : _Renderer(renderer)
+{
+    if (renderer.Audit && !renderer._Audited.has_value())
+    {
+        _Outermost = true;
+        renderer._Audited = AuditedDraw{command, &target, false, data, frame, from, 0, false};
+    }
+}
+
+MCVulkanRenderer::AuditScope::~AuditScope()
+{
+    if (_Outermost && _Renderer._Audited.has_value())
+    {
+        const AuditedDraw audited = *_Renderer._Audited;
+        _Renderer._Audited.reset();
+        _Renderer.Audit(audited);
+    }
+}
+
 void MCVulkanRenderer::Clear(MCWindow& target, const MCRect& rect, uint8_t color)
 {
+    const AuditScope audit(*this, "Clear", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {rect.X0, rect.Y0, rect.X1, rect.Y1};
     Add(surface, SourceKind::None, 0, at, std::nullopt, KindFill, color, 0, 0);
@@ -1647,6 +1653,7 @@ void MCVulkanRenderer::Clear(MCWindow& target, const MCRect& rect, uint8_t color
 
 void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
 {
+    const AuditScope audit(*this, "Hash", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {rect.X0, rect.Y0, rect.X1, rect.Y1};
 
@@ -1660,6 +1667,7 @@ void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
 
 void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 {
+    const AuditScope audit(*this, "Copy", target, {}, -1, &command.Source.get());
     const uint16_t surface = SurfaceFor(target);
     const MCRect& rect = command.SourceRect;
     const Quad at = {command.X, command.Y, command.X + rect.X1 - rect.X0, command.Y + rect.Y1 - rect.Y0};
@@ -1782,6 +1790,8 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
 
 void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command)
 {
+    const AuditScope audit(*this, "AlphaBlit", target, command.Sprite);
+
     if (!command.Texture.has_value())
     {
         MCRenderer::NoteUnregistered("a CopySprite bitmap");
@@ -1803,6 +1813,7 @@ void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& com
 
 void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command)
 {
+    const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
     const std::span<const uint8_t> data =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
@@ -2051,6 +2062,7 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
 
 void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<const uint8_t> pixels)
 {
+    const AuditScope audit(*this, "Write", target);
     const uint16_t surface = SurfaceFor(target);
     const auto count = static_cast<int32_t>(pixels.size());
 
@@ -2070,6 +2082,7 @@ void MCVulkanRenderer::Write(MCWindow& target, int32_t x, int32_t y, std::span<c
 
 void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t color)
 {
+    const AuditScope audit(*this, "Pixel", target);
     const uint16_t surface = SurfaceFor(target);
     const Quad at = {x, y, x, y};
     Add(surface, SourceKind::None, 0, at, std::nullopt, KindFill, color, 0, 0);
@@ -2077,6 +2090,7 @@ void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t col
 
 void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
+    const AuditScope audit(*this, "Shape", target, command.ShapeTable, command.ShapeNum);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> header =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum));
@@ -2222,6 +2236,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
 void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& command)
 {
+    const AuditScope audit(*this, "FastShape", target, command.Shape);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> shape = command.Shape;
     const int32_t height = MCRead16(shape, 8);
@@ -2230,25 +2245,15 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
     // The shape's bytes: its header and row offsets, then the rows' packets, one row after another, so they end where
     // the row that starts last ends.
     const auto rowStart = [&](int32_t row) -> size_t { return MCRead16(shape, 0xc + static_cast<size_t>(row) * 2); };
+    const std::optional<size_t> size = FastShapeSize(shape);
+
+    if (!size.has_value())
+    {
+        Fatal(0, "MCVulkanRenderer: a fast shape runs past its registered block");
+    }
+
     const MCOptionalRef<DataImage> found = AtlasForData(
-        shape, Seed(ImageKind::FastShape, width, height), "a fast shape",
-        [&]
-        {
-            size_t last = 0xc + static_cast<size_t>(height) * 2;
-            size_t end = last;
-
-            for (int32_t row = 0; row < height; ++row)
-            {
-                last = std::max(last, rowStart(row));
-            }
-
-            if (height > 0)
-            {
-                end = std::max(end, last + FastRowEnd(shape.subspan(last), width));
-            }
-
-            return Extent{end, width, height};
-        },
+        shape, Seed(ImageKind::FastShape, width, height), "a fast shape", [&] { return Extent{*size, width, height}; },
         [&](std::span<uint8_t> out, const Extent& extent)
         {
             std::ranges::fill(out.first(static_cast<size_t>(width) * height * 2), uint8_t{0});
@@ -2256,7 +2261,9 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
             for (int32_t row = 0; row < height; ++row)
             {
                 // A row reaching past the last row's end would be outside the bytes the shape is known by.
-                if (rowStart(row) + FastRowEnd(shape.subspan(rowStart(row)), width) > extent.Size)
+                const std::optional<size_t> rowBytes = FastShapeRowBytes(shape.subspan(rowStart(row)), width);
+
+                if (!rowBytes.has_value() || rowStart(row) + *rowBytes > extent.Size)
                 {
                     Fatal(0, "MCVulkanRenderer: a fast shape's rows are out of order");
                 }
@@ -2302,16 +2309,36 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
         op |= AlphaBlend;
     }
 
+    // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
+    // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
+        hd != nullptr && hd->Blended == command.Alpha &&
+        AddHd(surface, *hd, at, Quad{column, command.FirstRow, 1, 1}, command.Table))
+    {
+        if (command.Alpha)
+        {
+            return;
+        }
+
+        op |= IndexOnly;
+    }
+
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, 0);
 }
 
 void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
 {
+    const AuditScope audit(*this, "Tile", target, command.Tile);
     const uint16_t surface = SurfaceFor(target);
 
     // A terrain layer drew this pass's tiles from the mesh.
     if (static_cast<int32_t>(surface) == _TerrainLayerSurface)
     {
+        if (_Audited.has_value())
+        {
+            _Audited->Sharp = HdTerrain();
+        }
+
         return;
     }
 
@@ -2365,6 +2392,8 @@ void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
 
 void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command)
 {
+    const AuditScope audit(*this, "Polygon", target);
+
     if (command.Kind == MCPolygonKind::DitheredGouraud || command.Kind == MCPolygonKind::Illuminate)
     {
         NotSupported("Polygon (dithered)");
@@ -2457,6 +2486,7 @@ void MCVulkanRenderer::Polygon(MCWindow& target, const MCPolygonCommand& command
 
 void MCVulkanRenderer::MapQuad(MCWindow& target, const MCMapQuadCommand& command)
 {
+    const AuditScope audit(*this, "MapQuad", target);
     const uint16_t surface = SurfaceFor(target);
     const MCWindow& texture = command.Texture.get();
     const std::optional<SourceRef> source = SourceFor(surface, texture);
@@ -2483,6 +2513,7 @@ void MCVulkanRenderer::MapQuad(MCWindow& target, const MCMapQuadCommand& command
 
 void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 {
+    const AuditScope audit(*this, "Line", target);
     const uint16_t surface = SurfaceFor(target);
     uint32_t op = KindFill;
     uint32_t after = 0;
@@ -2533,6 +2564,7 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 
 void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command)
 {
+    const AuditScope audit(*this, "Ellipse", target);
     const uint16_t surface = SurfaceFor(target);
     uint32_t op = KindFill;
 
@@ -2557,6 +2589,7 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
 
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)
 {
+    const AuditScope audit(*this, "StatusBar", target);
     // The AlphaTable row status-bar frames are darkened through (0x008011d0 in MCX.EXE).
     constexpr int32_t StatusFrameAlpha = 0x108;
     const uint16_t surface = SurfaceFor(target);
@@ -2630,6 +2663,7 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
 
 void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 {
+    const AuditScope audit(*this, "Glyph", target, command.Font, command.Character);
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> font = command.Font;
     const auto glyphAt = static_cast<uint32_t>(MCRead32(font, 0x10 + static_cast<size_t>(command.Character) * 4));

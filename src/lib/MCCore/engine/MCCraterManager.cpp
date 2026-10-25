@@ -9,6 +9,7 @@
 #include "main/MCGamePaths.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -29,8 +30,8 @@ namespace
     constexpr int32_t CraterDepth = 30000000;
 }
 
-MCCraterManager::MCCraterManager(int32_t numCraters, std::vector<std::vector<uint8_t>> shapes)
-    : _Shapes(std::move(shapes)), _ShapeCount(static_cast<int32_t>(_Shapes.size()))
+MCCraterManager::MCCraterManager(int32_t numCraters, std::vector<std::vector<uint8_t>> shapes, std::string fileName)
+    : _Shapes(std::move(shapes)), _ShapeCount(static_cast<int32_t>(_Shapes.size())), _FileName(std::move(fileName))
 {
     _Shapes.resize(std::max(_Shapes.size(), MinShapeSlots));
 
@@ -93,7 +94,25 @@ auto MCCraterManager::Create(int32_t numCraters, std::string_view craterFileName
         }
     }
 
-    return std::make_unique<MCCraterManager>(numCraters, std::move(shapes));
+    std::string lower(craterFileName);
+    std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    auto manager = std::make_unique<MCCraterManager>(numCraters, std::move(shapes), std::move(lower));
+    manager->AttachHdArt();
+    return manager;
+}
+
+void MCCraterManager::AttachHdArt() const
+{
+    if (!MCHdArt::Active())
+    {
+        return;
+    }
+
+    for (size_t packet = 0; packet < static_cast<size_t>(_ShapeCount); ++packet)
+    {
+        MCHdArt::Attach(_Shapes[packet], _HdArtOwner,
+                        MCHdArt::CraterShapeKey{_FileName, static_cast<uint32_t>(packet)});
+    }
 }
 
 auto MCCraterManager::AddCrater(int32_t craterType, const MCVector3D& position, int32_t rotation) -> void

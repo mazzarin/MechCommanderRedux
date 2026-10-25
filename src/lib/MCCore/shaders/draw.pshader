@@ -113,12 +113,12 @@ static const uint HdColors = 1u << 16;
 // A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
 // walk its place in the source (x0, y0, x1, y1).
 static const uint SmoothEdges = 1u << 17;
-// An HD frame's colours shown as made, not Corrected (a menu's picture, made from its own screen's palette).
-static const uint HdAsMade = 1u << 20;
 // Port-only, for a translucent shape drawn from the HD art pack: only its opaque pixels (drawn index-only under the HD
 // frame), or only its blended ones (which the HD frame leaves out).
 static const uint OpaqueOnly = 1u << 18;
 static const uint BlendedOnly = 1u << 19;
+// An HD frame's colours shown as made, not Corrected (a menu's picture, made from its own screen's palette).
+static const uint HdAsMade = 1u << 20;
 // Port-only: an HD art frame holding its blended pixels.
 static const uint HdLight = 1u << 21;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.

@@ -439,6 +439,19 @@ int VfxShapeScan(const MCPane& pane, uint8_t transparentColor, int hotX, int hot
 int32_t FastShapeDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t hotX,
                       int32_t hotY, std::optional<MCColorTable> xlat);
 
+/// <summary>
+/// Port-only: the bytes a fast-shape row's packets take to cover <paramref name="width"/> pixels, or none when they run
+/// past <paramref name="row"/>.
+/// </summary>
+std::optional<size_t> FastShapeRowBytes(std::span<const uint8_t> row, int32_t width);
+
+/// <summary>
+/// Port-only: the bytes fast shape <paramref name="shape"/> (its header) takes: its header and row offsets, then its
+/// rows, to the end of the row that starts last (a terrain overlay's data, as the HD art pack names it); none when a
+/// row runs past <paramref name="shape"/>.
+/// </summary>
+std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape);
+
 // ---------------------------------------------------------------------------------------------------------------
 // vfx\vfx_ellipse.cpp (vfx/MCAgEllipse.cpp)
 // ---------------------------------------------------------------------------------------------------------------

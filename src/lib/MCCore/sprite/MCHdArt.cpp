@@ -21,7 +21,9 @@ namespace
     constexpr std::string_view DefaultFolder = "HD";
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
+    constexpr std::string_view CraterFolder = "craters";
     constexpr std::string_view TerrainFolder = "terrain";
+    constexpr std::string_view OverlayFolder = "overlays";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
@@ -126,10 +128,13 @@ namespace
         }
     };
 
-    /// <summary>A shape the pack has frames for, and their folder (an index into State::Folders).</summary>
+    /// <summary>
+    /// A shape table the pack has frames for, what keeps it (its MCShape, or a crater manager's token: the table is that
+    /// owner's while it lives), and their folder (an index into State::Folders).
+    /// </summary>
     struct Sequence
     {
-        std::weak_ptr<MCShape> Shape;
+        std::weak_ptr<const void> Owner;
         uint32_t Folder = 0;
     };
 
@@ -988,13 +993,14 @@ std::expected<void, std::string> MCHdArt::WritePackFile(const std::filesystem::p
 namespace
 {
     /// <summary>
-    /// Ties <paramref name="shape"/> to the pack's folder <paramref name="folder"/> (relative to the pack) when the pack
-    /// has it and its numbered folders are drawn (MCHdArt::NumberedFolders: HD art is on, and the pack was made from
-    /// this game's sprite files).
+    /// Ties shape table <paramref name="table"/>, kept by <paramref name="owner"/>, to the pack's folder
+    /// <paramref name="folder"/> (relative to the pack) when the pack has it and its numbered folders are drawn
+    /// (MCHdArt::NumberedFolders: HD art is on, and the pack was made from this game's sprite files).
     /// </summary>
-    void AttachTo(const std::shared_ptr<MCShape>& shape, const std::filesystem::path& folder)
+    void AttachTo(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
+                  const std::filesystem::path& folder)
     {
-        if (shape == nullptr || !MCHdArt::NumberedFolders() || shape->FrameList().empty())
+        if (owner == nullptr || table.empty() || !MCHdArt::NumberedFolders())
         {
             return;
         }
@@ -1008,13 +1014,13 @@ namespace
 
         State& state = TheState();
 
-        // The cache drops shapes; their entries go now and then (a lookup checks that the shape still lives).
+        // The cache drops shapes; their entries go now and then (a lookup checks that the owner still lives).
         if (++state.Attached % SweepInterval == 0)
         {
-            std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Shape.expired(); });
+            std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Owner.expired(); });
         }
 
-        state.Sequences[shape->FrameList().data()] = Sequence{shape, FolderIndex(path, Naming::Number)};
+        state.Sequences[table.data()] = Sequence{owner, FolderIndex(path, Naming::Number)};
     }
 }
 
@@ -1029,14 +1035,31 @@ std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)
            std::to_string(key.Packet);
 }
 
+std::filesystem::path MCHdArt::FolderOf(const CraterShapeKey& key)
+{
+    return std::filesystem::path(CraterFolder) / key.CraterFile / std::to_string(key.Packet);
+}
+
 void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key)
 {
-    AttachTo(shape, FolderOf(key));
+    if (shape != nullptr)
+    {
+        AttachTo(shape->FrameList(), shape, FolderOf(key));
+    }
 }
 
 void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key)
 {
-    AttachTo(shape, FolderOf(key));
+    if (shape != nullptr)
+    {
+        AttachTo(shape->FrameList(), shape, FolderOf(key));
+    }
+}
+
+void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
+                     const CraterShapeKey& key)
+{
+    AttachTo(table, owner, FolderOf(key));
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)
@@ -1054,10 +1077,8 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    // The bytes at the address may be another shape's now.
-    const std::shared_ptr<MCShape> shape = found->second.Shape.lock();
-
-    if (shape == nullptr || shape->FrameList().data() != table)
+    // The bytes at the address may be another shape's now (its owner gone).
+    if (found->second.Owner.expired())
     {
         state.Sequences.erase(found);
         return nullptr;
@@ -1142,6 +1163,18 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const u
     }
 
     return Cache(FrameKey{FolderIndex(PackFolder() / TerrainFolder, Naming::Hash), TerrainTileHash(tile)}, width,
+                 height);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
+                                                           int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / OverlayFolder, Naming::Hash), TerrainTileHash(shape)}, width,
                  height);
 }
 

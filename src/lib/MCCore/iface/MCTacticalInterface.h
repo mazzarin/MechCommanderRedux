@@ -77,8 +77,14 @@ public:
     /// <summary>The zoom-out key, as <see cref="ZoomIn"/>: <paramref name="factor"/> times more lines.</summary>
     static void ZoomOut(float factor = ZoomKeyStep, bool sound = true);
 
-    /// <summary>Makes the command parser, starts the edge scrolling and the lance icons.</summary>
+    /// <summary>Makes the command parser, starts the edge scrolling and the lance icons, and takes the player's keys.</summary>
     void StartScenario();
+
+    /// <summary>
+    /// Port: takes the player's key bindings (<see cref="MCKeyBindings::Player"/>), with the salvage page's key
+    /// swapped for the chat page's in multiplayer unless the player gave it another (StartScenario calls it).
+    /// </summary>
+    void TakePlayerKeys();
     /// <summary>Drops the selection, parser, buttons, lance icons and reserve icons.</summary>
     void EndScenario();
 

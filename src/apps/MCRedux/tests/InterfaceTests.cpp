@@ -5,6 +5,7 @@
 #include "camera/MCMainWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCCommandParser.h"
+#include "iface/MCKeyBindings.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCOrderSink.h"
 #include "iface/MCTacticalInterface.h"
@@ -308,6 +309,49 @@ TEST_CASE_ISOLATED("game: the default keys pick their modes and the order keys o
     CHECK(sink.Orders.empty());
 
     iface->SetOrderSink(nullptr);
+}
+
+/// <summary>
+/// Port: the keys the player bound on the CONTROLS screen are the ones a mission listens to (the scenario takes them
+/// when it starts, TakePlayerKeys). Jump on K and guard on shift+J: K jumps, J (no longer a key) does nothing,
+/// shift+J guards; the salvage page keeps the key it was given instead of the multiplayer swap's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission takes the keys the player bound")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+    REQUIRE(iface != nullptr);
+    CHECK_EQ(iface->Key(MCKeyCommand::Jump), MCKeyBindings::Defaults()[static_cast<size_t>(MCKeyCommand::Jump)]);
+    MCKeyBindings::MCKeyTable keys = MCKeyBindings::Defaults();
+    MCKeyBindings::Bind(keys, MCKeyCommand::Jump, 0x25);
+    MCKeyBindings::Bind(keys, MCKeyCommand::Guard, 0x24 | KeyShift);
+    MCKeyBindings::Bind(keys, MCKeyCommand::SalvagePage, 0x2f | KeyAlt);
+    MCKeyBindings::SetPlayer(keys);
+    iface->TakePlayerKeys();
+    CHECK_EQ(iface->Key(MCKeyCommand::Jump), 0x25u);
+    CHECK_EQ(iface->Key(MCKeyCommand::SalvagePage), 0x2fu | KeyAlt);
+    SelectWholeForce();
+
+    iface->SetMode(MCInterfaceMode::None);
+    SendKey(0x25);
+    CHECK(iface->CurrentMode == MCInterfaceMode::Jump);
+    SendKey(0x25, 0, false);
+
+    iface->SetMode(MCInterfaceMode::None);
+    SendKey(0x24);
+    CHECK(iface->CurrentMode == MCInterfaceMode::None);
+    SendKey(0x24, 0, false);
+
+    SendKey(0x24, KeyShift);
+    CHECK(iface->CurrentMode == MCInterfaceMode::Guard);
+    SendKey(0x24, KeyShift, false);
+
+    MCKeyBindings::SetPlayer(MCKeyBindings::Defaults());
 }
 
 /// <summary>

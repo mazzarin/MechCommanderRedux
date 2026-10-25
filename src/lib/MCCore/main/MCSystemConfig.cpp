@@ -4,6 +4,7 @@
 #include "color/MCPalette.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
@@ -247,6 +248,9 @@ void ReadPreferences(MCFitIniFile& file)
     SfxVolume = file.Read<int32_t>("SFXVolume").value_or(0x60);
     // Port: the interface sounds' own volume; a PREFS.CFG without it plays them at the effects volume, as before.
     InterfaceVolume = file.Read<int32_t>("InterfaceVolume").value_or(SfxVolume);
+
+    // Port-only: the keys the player changed on the CONTROLS screen (the Controls block).
+    MCKeyBindings::ReadPrefs(file);
 }
 
 void SystemInit()

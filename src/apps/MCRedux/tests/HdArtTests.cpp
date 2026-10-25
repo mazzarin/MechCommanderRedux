@@ -55,7 +55,10 @@ namespace
         std::vector<uint8_t> Drawn;
     };
 
-    /// <summary>The widest and tallest shape <see cref="Decode"/> takes (the mech parts are under 100 pixels).</summary>
+    /// <summary>
+    /// The widest and tallest shape <see cref="Decode"/> takes, and the farthest its corner may lie from its hot spot (the
+    /// mech parts are under 100 pixels).
+    /// </summary>
     constexpr int64_t MaxShapeSide = 1024;
 
     /// <summary>
@@ -87,9 +90,11 @@ namespace
             return decoded;
         }
 
-        if (width > MaxShapeSide || height > MaxShapeSide)
+        if (width > MaxShapeSide || height > MaxShapeSide ||
+            std::abs(static_cast<int64_t>(header.XMin)) > MaxShapeSide ||
+            std::abs(static_cast<int64_t>(header.YMin)) > MaxShapeSide)
         {
-            return bad(std::format("its bounds are {}x{}", width, height));
+            return bad(std::format("its bounds are {}x{} at ({}, {})", width, height, header.XMin, header.YMin));
         }
 
         decoded.XMin = header.XMin;

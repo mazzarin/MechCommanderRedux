@@ -1310,6 +1310,11 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         return;
     }
 
+    // The pack's folder made absolute before the game starts, as --hd-pack's tool does (none: the user folder's).
+    const std::optional<std::string_view> packOption = MCTest::Option("hd-pack");
+    const std::filesystem::path pack = packOption.has_value()
+                                           ? std::filesystem::absolute(std::filesystem::path(*packOption))
+                                           : std::filesystem::path();
     MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
     REQUIRE(MCTestGame::StartLogistics());
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
@@ -1330,7 +1335,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     // The menus have no sprites to let go of, so HD art goes on without MCHdArtOn's.
     const bool original = MCTest::Option("hd-original").has_value();
     GHdArt = original ? 0 : 1;
-    MCHdArt::SetPackFolder(std::filesystem::path(MCTest::Option("hd-pack").value_or("")));
+    MCHdArt::SetPackFolder(pack);
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
     // Two seconds settle a screen change's wipe.
@@ -1461,7 +1466,8 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
             continue;
         }
 
-        auto archive = MCFastFile::Create(entry.path().string());
+        // By name: the game opens a FastFile in its folder (a relative --game folder would be taken twice).
+        auto archive = MCFastFile::Create(entry.path().filename().string());
         REQUIRE(archive.has_value());
 
         for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)
@@ -1656,7 +1662,8 @@ namespace
                 continue;
             }
 
-            auto archive = MCFastFile::Create(entry.path().string());
+            // By name: the game opens a FastFile in its folder (a relative --game folder would be taken twice).
+            auto archive = MCFastFile::Create(entry.path().filename().string());
             REQUIRE(archive.has_value());
 
             for (int32_t i = 0; i < (*archive)->GetNumFiles(); ++i)

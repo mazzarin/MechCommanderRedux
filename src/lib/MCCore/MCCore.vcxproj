@@ -155,6 +155,7 @@
     <ClCompile Include="lib\MCFatal.cpp" />
     <ClCompile Include="lib\MCFile.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
+    <ClCompile Include="lib\MCInflate.cpp" />
     <ClCompile Include="lib\MCLzCompress.cpp" />
     <ClCompile Include="lib\MCLzDecompress.cpp" />
     <ClCompile Include="lib\MCPacketFile.cpp" />
@@ -553,6 +554,7 @@
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />
     <ClInclude Include="lib\MCIDString.h" />
+    <ClInclude Include="lib\MCInflate.h" />
     <ClInclude Include="lib\MCLz.h" />
     <ClInclude Include="lib\MCMsvcSort.h" />
     <ClInclude Include="lib\MCOptionalRef.h" />

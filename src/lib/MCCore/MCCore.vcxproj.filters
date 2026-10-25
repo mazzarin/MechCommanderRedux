@@ -402,6 +402,9 @@
     <ClCompile Include="lib\MCFitIniFile.cpp">
       <Filter>lib</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCInflate.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCLzCompress.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1574,6 +1577,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCIDString.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCInflate.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCLz.h">

@@ -493,19 +493,29 @@ namespace
         return scene;
     }
 
-    /// <summary>Turns HD art on with <paramref name="pack"/>; the shapes loaded from then on find its frames.</summary>
-    void UseHdArt(const std::filesystem::path& pack)
+    /// <summary>
+    /// HD art on with a pack while it lives (the shapes loaded from then on find its frames), and off again however the
+    /// test ends.
+    /// </summary>
+    class MCHdArtOn
     {
-        GHdArt = 1;
-        MCHdArt::SetPackFolder(pack);
-        SpriteManager()->DumpAll();
-    }
+    public:
+        explicit MCHdArtOn(const std::filesystem::path& pack)
+        {
+            GHdArt = 1;
+            MCHdArt::SetPackFolder(pack);
+            SpriteManager()->DumpAll();
+        }
 
-    void StopHdArt()
-    {
-        GHdArt = 0;
-        MCHdArt::SetPackFolder({});
-    }
+        ~MCHdArtOn()
+        {
+            GHdArt = 0;
+            MCHdArt::SetPackFolder({});
+        }
+
+        MCHdArtOn(const MCHdArtOn&) = delete;
+        MCHdArtOn& operator=(const MCHdArtOn&) = delete;
+    };
 
     /// <summary>The pixels whose shown colour differs between <paramref name="a"/> and <paramref name="b"/>, and their
     /// mean position.</summary>
@@ -568,11 +578,11 @@ TEST_CASE_ISOLATED("game: an HD art pack's frames show in a mech's place")
     const Changed still = Compare(original, ReadShown(scene->Scratch));
     CHECK_EQ(still.Count, 0);
 
-    UseHdArt(scene->Pack);
+    std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
     const int64_t drawnBefore = scene->Renderer->HdDrawn();
     MCTestGame::RunFrame(FrameSeconds);
     const Shown hd = ReadShown(scene->Scratch);
-    StopHdArt();
+    hdArt.reset();
 
     CHECK(scene->Renderer->HdDrawn() > drawnBefore);
     CHECK(MCHdArt::FramesRead() > 0);
@@ -599,7 +609,7 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
     }
 
     constexpr int32_t Frames = 10;
-    UseHdArt(scene->Pack);
+    std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
     scene->Renderer->ResetMirror();
     const int64_t drawnBefore = scene->Renderer->HdDrawn();
 
@@ -608,7 +618,7 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
         MCTestGame::RunFrame(FrameSeconds);
     }
 
-    StopHdArt();
+    hdArt.reset();
     const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
     CHECK(scene->Renderer->HdDrawn() > drawnBefore);
     CHECK_EQ(tally.Frames, Frames);
@@ -657,10 +667,11 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
 
     ScaleUp(width, height, UiLines);
     const bool original = MCTest::Option("hd-original").has_value();
+    std::optional<MCHdArtOn> hdArt;
 
     if (!original)
     {
-        UseHdArt(std::filesystem::path(*pack));
+        hdArt.emplace(std::filesystem::path(*pack));
     }
 
     const PlayerMech player = GivePlayerMech(MCTest::Option("mech").value_or("madcat"));
@@ -724,6 +735,4 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         MCTestGame::RunFrame(FrameSeconds);
         shoot(std::format("paint_{}", scheme));
     }
-
-    StopHdArt();
 }

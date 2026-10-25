@@ -80,6 +80,12 @@ public:
     std::shared_ptr<MCShape> GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCMechPart part, int32_t turnUsed,
                                               std::weak_ptr<MCAppearanceType> owner, bool zoomedOut);
 
+    /// <summary>
+    /// The name of the part PAK <see cref="GetMechShapeData"/> reads <paramref name="part"/> from with
+    /// <paramref name="zoomedOut"/> ("legs", or "legs90" when the 90-pixel PAKs are open).
+    /// </summary>
+    std::string PartFileName(MCMechPart part, bool zoomedOut) const;
+
     /// <summary>The number of packets in appearance <paramref name="appearanceNum"/>'s PAK (0 when it has none).</summary>
     int32_t GetNumShapes(uint32_t appearanceNum);
 

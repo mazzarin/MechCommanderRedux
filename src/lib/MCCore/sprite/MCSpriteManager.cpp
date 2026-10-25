@@ -6,6 +6,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCLogistics.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCShape.h"
 
 int Use90PixelSprite = 0;
@@ -263,7 +264,16 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
         return nullptr;
     }
 
-    return LoadShape(file, packetNum, size, turnUsed, std::move(owner), false);
+    std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), false);
+    // Port-only: the HD art pack's frames for it, if it has them.
+    MCHdArt::Attach(shape, MCHdArt::MechShapeKey{PartFileName(part, zoomedOut), mechNum, packetNum});
+    return shape;
+}
+
+auto MCSpriteManager::PartFileName(MCMechPart part, bool zoomedOut) const -> std::string
+{
+    const bool use90 = zoomedOut && _PartFiles90[part] != nullptr;
+    return std::format("{}{}", PartFileNames[static_cast<size_t>(part)], use90 ? "90" : "");
 }
 
 auto MCSpriteManager::GetNumShapes(uint32_t appearanceNum) -> int32_t

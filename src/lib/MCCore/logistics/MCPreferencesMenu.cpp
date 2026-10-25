@@ -16,6 +16,7 @@
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
@@ -375,6 +376,7 @@ void WritePrefs()
     prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
     prefs.WriteIdLong("UIResolution", GUiResolution);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
+    prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     Cancel();
 }
 

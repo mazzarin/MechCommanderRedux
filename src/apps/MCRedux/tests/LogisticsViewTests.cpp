@@ -24,6 +24,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -139,20 +140,53 @@ namespace
 {
     /// <summary>
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 76 wide and 11 tall at
-    /// (512, top), its list's rows 10 tall from top + 11. DIFFICULTY's field is at y 176 (EASY, REGULAR, HARD),
-    /// RENDERER's at y 243 (VULKAN, SOFTWARE).
+    /// (left, top), its list's rows 10 tall from top + 11. DIFFICULTY's field is at (512, 176) (EASY, REGULAR, HARD),
+    /// RENDERER's at (512, 243) (VULKAN, SOFTWARE), HD ART's at (390, 347) (OFF, ON).
     /// </summary>
     struct PrefsDropDown
     {
         int32_t Top = 0;
+        int32_t Left = 512;
 
-        int32_t FieldX() const { return 540; }
+        int32_t FieldX() const { return Left + 28; }
         int32_t FieldY() const { return Top + 5; }
         int32_t RowY(int32_t row) const { return Top + 11 + row * 10 + 5; }
     };
 
     constexpr PrefsDropDown DifficultyDropDown{176};
     constexpr PrefsDropDown RendererDropDown{243};
+    constexpr PrefsDropDown HdArtDropDown{347, 390};
+
+    /// <summary>Runs five frames: a click lands and the screen settles.</summary>
+    void RunFrames()
+    {
+        for (int32_t frame = 0; frame < 5; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    }
+
+    /// <summary>Opens <paramref name="dropDown"/>'s list and chooses its row <paramref name="row"/>.</summary>
+    void ChooseIn(const PrefsDropDown& dropDown, int32_t row)
+    {
+        MCScreenInput::Click(dropDown.FieldX(), dropDown.FieldY());
+        RunFrames();
+        MCScreenInput::Click(dropDown.FieldX(), dropDown.RowY(row));
+        RunFrames();
+    }
+
+    /// <summary>Checks that the menus' message dialog is up, saves its shot as <paramref name="shot"/>, and closes it
+    /// with OK.</summary>
+    void CloseMenuMessage(std::string_view shot)
+    {
+        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        CHECK(dialog.ShowWindow != 0);
+        MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
+        MCLogDialogButton& ok = *dialog.OkButton;
+        MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+        RunFrames();
+        CHECK(dialog.ShowWindow == 0);
+    }
 
     /// <summary>The drop-down under <paramref name="parent"/> (at any depth) whose field lies at <paramref name="dropDown"/>.</summary>
     std::shared_ptr<MCLogComboBox> FindDropDownIn(MCGuiObject& parent, const PrefsDropDown& dropDown)
@@ -227,70 +261,45 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
     const int32_t chosen = GRendererPreference;
     REQUIRE_EQ(chosen, static_cast<int32_t>(MCRendererKind::Vulkan));
 
-    const auto frames = []
-    {
-        for (int32_t frame = 0; frame < 5; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    };
-
     // Choosing another renderer than the running one says it needs a restart; OK closes the message.
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    const auto closeRestartNotice = [&](std::string_view shot)
-    {
-        CHECK(dialog.ShowWindow != 0);
-        MCScreenInput::SaveShot(std::string(shot), MCScreenInput::ScreenHash());
-        MCLogDialogButton& ok = *dialog.OkButton;
-        MCScreenInput::Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
-        frames();
-        CHECK(dialog.ShowWindow == 0);
-    };
-
-    const auto choose = [&](int32_t row)
-    {
-        MCScreenInput::Click(RendererDropDown.FieldX(), RendererDropDown.FieldY());
-        frames();
-        MCScreenInput::Click(RendererDropDown.FieldX(), RendererDropDown.RowY(row));
-        frames();
-    };
 
     ShowPreferences();
-    frames();
+    RunFrames();
     const uint32_t vulkanShown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs vulkan", vulkanShown);
-    choose(1);
+    ChooseIn(RendererDropDown, 1);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Software));
-    closeRestartNotice("prefs restart notice");
+    CloseMenuMessage("prefs restart notice");
     const uint32_t softwareShown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs software", softwareShown);
     CHECK(softwareShown != vulkanShown);
 
     // VULKAN back: no message (it's the running renderer); VULKAN again: no change, no message.
-    choose(0);
+    ChooseIn(RendererDropDown, 0);
     CHECK(dialog.ShowWindow == 0);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
     CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
-    choose(0);
+    ChooseIn(RendererDropDown, 0);
     CHECK(dialog.ShowWindow == 0);
     CHECK_EQ(GRendererPreference, static_cast<int32_t>(MCRendererKind::Vulkan));
     CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
-    choose(1);
-    closeRestartNotice("prefs restart notice again");
+    ChooseIn(RendererDropDown, 1);
+    CloseMenuMessage("prefs restart notice again");
     CHECK_EQ(MCScreenInput::ScreenHash(), softwareShown);
 
     // CANCEL puts the choice back, and the field shows it when the screen opens again.
     CancelPrefs();
-    frames();
+    RunFrames();
     CHECK_EQ(GRendererPreference, chosen);
     ShowPreferences();
-    frames();
+    RunFrames();
     CHECK_EQ(MCScreenInput::ScreenHash(), vulkanShown);
 
-    choose(1);
-    closeRestartNotice("prefs restart notice before accept");
+    ChooseIn(RendererDropDown, 1);
+    CloseMenuMessage("prefs restart notice before accept");
     WritePrefs();
-    frames();
+    RunFrames();
     CHECK_EQ(GRenderer, running);
 
     char renderer[32] = {};
@@ -303,6 +312,76 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
 
     std::filesystem::remove(prefsPath);
     CHECK(std::string_view(renderer) == "software");
+}
+
+/// <summary>
+/// The preferences screen's HD ART drop-down: ON without a pack in the user folder says where the pack goes, CANCEL puts
+/// OFF back (and the field shows it), ACCEPT writes PREFS "HDArt".
+/// </summary>
+TEST_CASE_ISOLATED("game: the preferences screen turns HD art on and saves it in PREFS")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::filesystem::remove(prefsPath);
+    REQUIRE_EQ(GHdArt, 0);
+    REQUIRE(!std::filesystem::exists(MCHdArt::PackFolder()));
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+
+    ShowPreferences();
+    RunFrames();
+    REQUIRE(FindDropDown(HdArtDropDown) != nullptr);
+    const uint32_t offShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs hd art off", offShown);
+    ChooseIn(HdArtDropDown, 1);
+    CHECK_EQ(GHdArt, 1);
+    CloseMenuMessage("prefs hd art needs a pack");
+    const uint32_t onShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs hd art on", onShown);
+    CHECK(onShown != offShown);
+
+    // OFF says nothing.
+    ChooseIn(HdArtDropDown, 0);
+    CHECK(dialog.ShowWindow == 0);
+    CHECK_EQ(GHdArt, 0);
+    CHECK_EQ(MCScreenInput::ScreenHash(), offShown);
+
+    // CANCEL puts the choice back, and the field shows it when the screen opens again.
+    ChooseIn(HdArtDropDown, 1);
+    CloseMenuMessage("prefs hd art needs a pack again");
+    CancelPrefs();
+    RunFrames();
+    CHECK_EQ(GHdArt, 0);
+    ShowPreferences();
+    RunFrames();
+    CHECK_EQ(MCScreenInput::ScreenHash(), offShown);
+
+    ChooseIn(HdArtDropDown, 1);
+    CloseMenuMessage("prefs hd art needs a pack before accept");
+    WritePrefs();
+    RunFrames();
+    std::optional<bool> saved;
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        const MCFitResult<bool> hdArt = prefs.Read<bool>("HDArt");
+        CHECK(hdArt.has_value());
+
+        if (hdArt.has_value())
+        {
+            saved = *hdArt;
+        }
+    }
+
+    std::filesystem::remove(prefsPath);
+    GHdArt = 0;
+    CHECK(saved == std::optional<bool>(true));
 }
 
 /// <summary>

@@ -64,13 +64,15 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 275};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER and UI RESOLUTION under DIFFICULTY.
+    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER and UI RESOLUTION under DIFFICULTY, and
+    /// HD ART under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
     constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
     constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 63};
     constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
+    constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
     constexpr uint8_t PanelOutlineColor = 0x18;
@@ -120,10 +122,13 @@ namespace
     /// <summary>The INTERFACE VOLUME slider (the screen owns it).</summary>
     std::weak_ptr<MCLogSlider> InterfaceSlider;
 
-    /// <summary>The renderer choice, the UI resolution and the interface volume when the screen opened (for CancelPrefs).</summary>
+    /// <summary>
+    /// The renderer choice, the UI resolution, the interface volume and HD art when the screen opened (for CancelPrefs).
+    /// </summary>
     int32_t SavedRendererPreference = 0;
     int32_t SavedUiResolution = 0;
     int32_t SavedInterfaceLevel = 0;
+    int32_t SavedHdArt = 0;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -134,6 +139,17 @@ namespace
         if (renderer != GRenderer)
         {
             ShowMenuMessage("The new renderer takes effect when you restart MechCommander.");
+        }
+    }
+
+    /// <summary>The HD ART drop-down chose <paramref name="hdArt"/>: on without a pack says where the pack goes.</summary>
+    void HdArtChanged(int32_t hdArt)
+    {
+        std::error_code error;
+
+        if (hdArt != 0 && !std::filesystem::is_directory(MCHdArt::PackFolder(), error))
+        {
+            ShowMenuMessage("HD ART needs an HD art pack in the HD folder beside your saved games.");
         }
     }
 
@@ -295,6 +311,11 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
+    // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
+    MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);
+    AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
+    AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
+
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
 }
@@ -316,6 +337,7 @@ void ShowPreferences()
     SavedRendererPreference = GRendererPreference;
     SavedUiResolution = GUiResolution;
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
+    SavedHdArt = GHdArt;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -350,6 +372,7 @@ void CancelPrefs()
     GameDifficulty = logistics->SavedPrefs6;
     GRendererPreference = SavedRendererPreference;
     GUiResolution = SavedUiResolution;
+    GHdArt = SavedHdArt;
     Cancel();
 }
 

@@ -25,6 +25,8 @@ namespace
     constexpr std::string_view IconFolder = "icons";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view OverlayFolder = "overlays";
+    /// <summary>The pack's folder of shape tables loaded outside the sprite, crater and icon files, each named by its hash.</summary>
+    constexpr std::string_view ShapeFolder = "shapes";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
@@ -1200,6 +1202,28 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8
 
     return Cache(FrameKey{FolderIndex(PackFolder() / OverlayFolder, Naming::Hash), TerrainTileHash(shape)}, width,
                  height);
+}
+
+uint64_t MCHdArt::ShapeTableHash(std::span<const uint8_t> table)
+{
+    return TerrainTileHash(table);
+}
+
+std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
+{
+    return std::filesystem::path(ShapeFolder) / HashName(hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(
+        FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), static_cast<uint64_t>(frame)},
+        width, height);
 }
 
 std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)

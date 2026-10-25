@@ -4505,3 +4505,327 @@ TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
         CheckIndicesKept(*scene);
     }
 }
+
+namespace
+{
+    /// <summary>
+    /// How the HD art generator makes a loose shape table's frames (tools/upscale/make_object_pack.py's kinds): stills
+    /// (forest edges, waypoint marks, the tactical map's part diagrams), an animation of frames of one size (sensor
+    /// blips), or frames holding their blended pixels (smoke, shots, shadows: any table with translucent frames).
+    /// </summary>
+    enum class LooseKind : uint8_t
+    {
+        Still,
+        Animated,
+        Blended,
+    };
+
+    constexpr std::array<ObjectKindInfo, 3> LooseKinds = {
+        {{"shape", false}, {"shape-animated", true}, {"shape-effect", true, true}}};
+
+    /// <summary>A loose shape table as a pack's sequence (shapes/&lt;hash&gt;), its kind, and where it came from.</summary>
+    struct LooseTable
+    {
+        Sequence Frames;
+        LooseKind Kind = LooseKind::Still;
+        std::string Source;
+    };
+
+    /// <summary>
+    /// The game files whose shapes the pack keeps elsewhere (lower case, without extensions): the sprite manager's
+    /// (mechs/, objects/), the crater PAKs (craters/), and the mechs' shadows (drawn with smooth edges instead).
+    /// </summary>
+    std::set<std::string> FilesKeptElsewhere()
+    {
+        std::set<std::string> names(CraterFiles.begin(), CraterFiles.end());
+        names.insert("shadow");
+
+        for (const auto part : std::views::split(std::string_view(MCHdArt::SpriteFiles()), ';'))
+        {
+            std::string name(std::string_view(part).substr(0, std::string_view(part).find('=')));
+            std::ranges::transform(name, name.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+            if (!name.empty())
+            {
+                names.insert(name);
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// <paramref name="table"/> as a loose table: its frames decoded (translucent ones holding their blended pixels),
+    /// and its kind; none when it draws nothing.
+    /// </summary>
+    std::optional<LooseTable> MakeLooseTable(std::span<const uint8_t> table, std::string source)
+    {
+        LooseTable loose;
+        loose.Source = std::move(source);
+        loose.Frames.Folder = MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table));
+        std::vector<DecodedFrame> frames;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            auto decoded = Decode(table, frame);
+            frames.push_back(decoded.has_value() ? std::move(*decoded) : DecodedFrame{});
+        }
+
+        const bool translucent = std::ranges::any_of(frames, [](const DecodedFrame& f) { return f.Translucent; });
+        loose.Frames.Blended = translucent;
+
+        for (DecodedFrame& frame : frames)
+        {
+            if (frame.Translucent)
+            {
+                LeaveOutUndrawn(frame, true);
+            }
+
+            if (std::ranges::find(frame.Drawn, 1) == frame.Drawn.end())
+            {
+                loose.Frames.Frames.emplace_back();
+                continue;
+            }
+
+            loose.Frames.Frames.push_back(std::move(frame));
+        }
+
+        if (DrawnFrames(loose.Frames) == 0)
+        {
+            return std::nullopt;
+        }
+
+        // Frames of one size animate (a blip's); frames of several are stills (a forest's edges, full and half size).
+        const std::vector<DecodedFrame>& made = loose.Frames.Frames;
+        const auto first = std::ranges::find_if(made, [](const DecodedFrame& f) { return f.Width > 0; });
+        const bool oneSize =
+            std::ranges::all_of(made, [&first](const DecodedFrame& f)
+                                { return f.Width == 0 || (f.Width == first->Width && f.Height == first->Height); });
+        loose.Kind = translucent                                ? LooseKind::Blended
+                     : DrawnFrames(loose.Frames) > 1 && oneSize ? LooseKind::Animated
+                                                                : LooseKind::Still;
+        return loose;
+    }
+
+    /// <summary>
+    /// The shape tables the game loads whole outside the sprite, crater and icon files (every <c>.shp</c> file, and
+    /// every packet of the other PAKs that is a shape table), in its FastFiles and its folders, each once: what
+    /// MCVulkanRenderer::HdShape finds by its bytes' hash.
+    /// </summary>
+    std::vector<LooseTable> LooseShapeTables()
+    {
+        const std::set<std::string> elsewhere = FilesKeptElsewhere();
+        std::set<uint64_t> seen;
+        std::vector<LooseTable> tables;
+
+        const auto add = [&](std::span<const uint8_t> table, std::string source)
+        {
+            if (VfxIsShapeTable(table) && seen.insert(MCHdArt::ShapeTableHash(table)).second)
+            {
+                if (std::optional<LooseTable> loose = MakeLooseTable(table, std::move(source)); loose.has_value())
+                {
+                    tables.push_back(std::move(*loose));
+                }
+            }
+        };
+
+        // A file by its path as the game opens it: a .shp whole, a PAK's packets each.
+        const auto take = [&](const std::string& path)
+        {
+            std::string name(std::string_view(path).substr(path.find_last_of("\\/") + 1));
+            std::ranges::transform(name, name.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const std::string stem = name.substr(0, name.find('.'));
+
+            if (EndsWithIgnoringCase(name, ".shp") && !IsIconShapeFile(name))
+            {
+                MCFile file;
+
+                if (file.Open(path) == 0)
+                {
+                    std::vector<uint8_t> bytes(file.FileSize());
+                    file.Read(bytes);
+                    add(bytes, path);
+                }
+            }
+            else if (EndsWithIgnoringCase(name, ".pak") && !elsewhere.contains(stem))
+            {
+                MCPacketFile pak;
+
+                if (pak.Open(path) != 0)
+                {
+                    return;
+                }
+
+                for (int32_t packet = 0; packet < pak.GetNumPackets(); ++packet)
+                {
+                    std::vector<uint8_t> bytes(static_cast<size_t>(std::max(pak.GetPacketSize(), 0)));
+
+                    if (pak.SeekPacket(packet) == 0 && !bytes.empty() && pak.ReadPacket(packet, bytes) >= 0)
+                    {
+                        add(bytes, std::format("{} packet {}", path, packet));
+                    }
+                }
+            }
+        };
+
+        std::error_code error;
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(MCFileSystem::GameRoot(), error))
+        {
+            if (EndsWithIgnoringCase(entry.path().filename().string(), ".fst"))
+            {
+                auto archive = MCFastFile::Create(entry.path().filename().string());
+                REQUIRE(archive.has_value());
+
+                for (const MCFileEntry& file : (*archive)->GetEntries())
+                {
+                    take(std::string(file.GetName()));
+                }
+            }
+        }
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::recursive_directory_iterator(MCFileSystem::GameRoot(), error))
+        {
+            if (entry.is_regular_file(error))
+            {
+                take(std::filesystem::relative(entry.path(), MCFileSystem::GameRoot()).generic_string());
+            }
+        }
+
+        return tables;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-extract-shapes &lt;folder&gt;</c> writes the shape tables the game loads outside the sprite, crater and
+/// icon files (<see cref="LooseShapeTables"/>: trees' shadows, forests' burnt edges, sensor blips, smoke, shots, the
+/// waypoint and pause marks, the tactical map's part diagrams...) as an HD art pack at their own size, for
+/// tools/upscale/make_object_pack.py: each frame a PNG pair (translucent tables' holding their blended pixels), plus
+/// <c>objects.json</c> (an appearance a kind: "shape" stills, "shape-animated", "shape-effect" blended), the shown colours
+/// as palette.rgb and <c>sources.tsv</c> (each table's folder, kind, frames and file).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-extract-shapes writes the shape tables loaded outside the sprite files")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-extract-shapes");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack(*out);
+    std::filesystem::create_directories(pack);
+    WritePaletteRgb(pack, colors);
+    const std::vector<LooseTable> tables = LooseShapeTables();
+    REQUIRE(!tables.empty());
+    std::ofstream sources(pack / "sources.tsv");
+    std::string json = "{\"appearances\": [";
+    std::array<size_t, LooseKinds.size()> frames{};
+
+    for (size_t kind = 0; kind < LooseKinds.size(); ++kind)
+    {
+        std::vector<Sequence> sequences;
+
+        for (const LooseTable& table : tables)
+        {
+            if (static_cast<size_t>(table.Kind) == kind)
+            {
+                sequences.push_back(table.Frames);
+                frames[kind] += DrawnFrames(table.Frames);
+                sources << table.Frames.Folder.generic_string() << '\t' << LooseKinds[kind].Name << '\t'
+                        << DrawnFrames(table.Frames) << '\t' << table.Source << '\n';
+            }
+        }
+
+        WritePack(pack, sequences, colors, 1, [](SDL_Color color) { return color; });
+        const ObjectKindInfo& info = LooseKinds[kind];
+        json += std::format("{}\n {{\"id\": {}, \"kind\": \"{}\", \"animated\": {}, \"blended\": {}, \"delta\": false, "
+                            "\"types\": [\"{}\"], \"sequences\": [",
+                            kind == 0 ? "" : ",", kind, info.Name, info.Animated, info.Blended, info.Name);
+
+        for (size_t i = 0; i < sequences.size(); ++i)
+        {
+            json += std::format("{}\n  {{\"folder\": \"{}\", \"frames\": [{}]}}", i == 0 ? "" : ",",
+                                sequences[i].Folder.generic_string(), FramesJson(sequences[i]));
+        }
+
+        json += "]}";
+    }
+
+    std::ofstream(pack / "objects.json") << json << "]}\n";
+    std::cout << std::format("  {} shape tables: {} still frames, {} animated, {} blended\n", tables.size(), frames[0],
+                             frames[1], frames[2]);
+}
+
+/// <summary>
+/// A shape table loaded outside the sprite files (here the forests' burnt edges, forest.shp, read whole as
+/// MCMiscTerrainObjectType reads it) is drawn from the pack's frame kept under its bytes' hash (shapes/&lt;hash&gt;): the
+/// shown colours change where it is drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: a shape table loaded outside the sprite files is drawn from the HD art pack")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    MCFile file;
+    REQUIRE(file.Open(GamePath(SpritePath, "forest", ".shp")) == 0);
+    MCRegisteredBlock block(file.FileSize(), MCDataKind::Shapes);
+    file.Read(block.Bytes());
+    file.Close();
+    const std::optional<LooseTable> table = MakeLooseTable(block.Bytes(), "forest.shp");
+    REQUIRE(table.has_value());
+    REQUIRE(table->Frames.Frames[0].Width > 0);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_loose_shape";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, std::span(&table->Frames, 1), colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto drawn = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        AGShapeDraw(pane, block.Bytes(), 0, x, y);
+        const auto shown = display->ReadFrame();
+        REQUIRE(shown.has_value());
+        return *shown;
+    };
+
+    GamePaused = true;
+    const std::vector<SDL_Color> original = drawn();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    const int64_t drawnBefore = renderer->HdDrawn();
+    const std::vector<SDL_Color> hd = drawn();
+    CHECK(renderer->HdDrawn() > drawnBefore);
+    hdArt.reset();
+    GamePaused = false;
+
+    const auto changed = std::ranges::count_if(
+        std::views::iota(size_t{0}, original.size()),
+        [&](size_t i) { return original[i].r != hd[i].r || original[i].g != hd[i].g || original[i].b != hd[i].b; });
+    std::cout << std::format("  forest.shp frame 0: {}x{}, {} shown pixels changed\n", table->Frames.Frames[0].Width,
+                             table->Frames.Frames[0].Height, changed);
+    CHECK(changed > 0);
+    std::filesystem::remove_all(scratch);
+}

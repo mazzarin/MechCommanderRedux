@@ -253,6 +253,23 @@ namespace MCHdArt
     std::shared_ptr<const Frame> FindOverlay(std::span<const uint8_t> shape, int32_t width, int32_t height);
 
     /// <summary>
+    /// The name the pack keeps a shape table loaded outside the sprite, crater and icon files under (a tree's shadow, a
+    /// forest's burnt edges, a sensor blip, smoke...): the hash of its bytes (a whole <c>.shp</c> file, or a packet of a
+    /// PAK, as its loader reads it), 64-bit FNV-1a.
+    /// </summary>
+    uint64_t ShapeTableHash(std::span<const uint8_t> table);
+
+    /// <summary>The pack folder the frames of the shape table whose bytes hash to <paramref name="hash"/> are in.</summary>
+    std::filesystem::path ShapeTableFolder(uint64_t hash);
+
+    /// <summary>
+    /// The HD copy of frame <paramref name="frame"/> of the shape table whose bytes hash to <paramref name="hash"/>
+    /// (<see cref="ShapeTableHash"/>; the frame's bounds <paramref name="width"/> x <paramref name="height"/>), read from
+    /// the pack the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height);
+
+    /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
     /// resolution while HD art is on, from the 1x shape's coverage; none needs a pack.
     /// </summary>

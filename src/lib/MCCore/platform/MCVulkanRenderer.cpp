@@ -1283,6 +1283,7 @@ auto MCVulkanRenderer::AtlasForData(std::span<const uint8_t> data, uint64_t seed
 void MCVulkanRenderer::OnDataChanged(MCAddressKey first, size_t size)
 {
     _DataImages.erase(_DataImages.lower_bound({first, 0}), _DataImages.lower_bound({first + size, 0}));
+    _ShapeHashes.erase(_ShapeHashes.lower_bound(first), _ShapeHashes.lower_bound(first + size));
 
     // Tables reaching into the bytes: their rows stay as they are for the draws recorded, and are reused from the
     // next frame on.
@@ -1740,6 +1741,35 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
     return state.Hd;
 }
 
+std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const uint8_t> table, int32_t frame,
+                                                                int32_t width, int32_t height)
+{
+    if (!MCHdArt::Active())
+    {
+        return nullptr;
+    }
+
+    if (MCHdArt::AttachedFolder(table.data()).has_value())
+    {
+        return MCHdArt::Find(table.data(), frame, width, height);
+    }
+
+    // The table's bytes to the end of its block: the whole file or packet its loader read.
+    const MCAddressKey key = MCAddressKey::OfData(table);
+    const auto [found, fresh] = _ShapeHashes.try_emplace(key);
+
+    if (fresh)
+    {
+        if (const std::optional<MCDataBlock> block = MCRenderer::DataBlockOf(key);
+            block.has_value() && block->Kind == MCDataKind::Shapes)
+        {
+            found->second = MCHdArt::ShapeTableHash(std::span(table.data(), block->BytesFrom(key)));
+        }
+    }
+
+    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height) : nullptr;
+}
+
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                  std::string_view command) -> std::optional<std::pair<Quad, Quad>>
 {
@@ -1841,8 +1871,7 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     // translucent shape's frame leaves out its blended pixels, which the blit below still blends, unless it holds them.
     bool blendedOnly = false;
 
-    if (const std::shared_ptr<const MCHdArt::Frame> hd =
-            MCHdArt::Find(command.ShapeTable.data(), command.ShapeNum, width, height);
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdShape(command.ShapeTable, command.ShapeNum, width, height);
         hd != nullptr)
     {
         const std::optional<std::pair<Quad, Quad>> place =
@@ -2173,7 +2202,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
 
         if (const std::shared_ptr<const MCHdArt::Frame> hd =
-                MCHdArt::Find(command.ShapeTable.data(), command.ShapeNum, boundsWidth, headerRows);
+                HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
             hd != nullptr && !(hd->Blended && command.Op == MCShapeOp::XlatAlpha))
         {
             // The frame covers the bounds, which may be wider than the shape's widest row.

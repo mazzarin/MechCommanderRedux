@@ -18,6 +18,8 @@ class MCShape;
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured. A frame that holds a translucent shape's blended pixels too (an effect's,
 /// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255.</para>
+/// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
+/// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
 /// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
 /// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
@@ -181,6 +183,20 @@ namespace MCHdArt
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
 
     /// <summary>
+    /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its
+    /// <paramref name="width"/> x <paramref name="height"/> palette indices, the same whichever file or packet they came
+    /// from. A picture the game has drawn into has another, so it is shown as it is.
+    /// </summary>
+    uint64_t PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height);
+
+    /// <summary>The file name (without its extension) of the picture <paramref name="hash"/> names: 16 hex digits.</summary>
+    std::string PictureName(uint64_t hash);
+
+    /// <summary>
+    /// The HD copy of the picture with <paramref name="pixels"/> (<c>menus/&lt;hash&gt;</c> in the pack, kept as a
+    /// frame's), read the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
     /// The name the pack keeps terrain tile <paramref name="tile"/> under (its data as the ground mesh keeps it: up to
     /// its last row's end): the data's 64-bit FNV-1a hash in hex, so the same tile in any tile set has one name.
     /// </summary>

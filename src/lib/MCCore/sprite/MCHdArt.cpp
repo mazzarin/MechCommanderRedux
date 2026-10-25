@@ -22,6 +22,8 @@ namespace
     constexpr std::string_view MechFolder = "mechs";
     constexpr std::string_view ObjectFolder = "objects";
     constexpr std::string_view TerrainFolder = "terrain";
+    /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
+    constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
     /// <summary>The pack's folder of movies' HD frames, and their extension (MCHdArt::FindMovie).</summary>
     constexpr std::string_view MovieFolder = "movies";
@@ -59,7 +61,7 @@ namespace
         return upper;
     }
 
-    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName).</summary>
+    /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName, MCHdArt::PictureHash).</summary>
     constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
     constexpr uint64_t FnvPrime = 0x100000001b3ull;
     /// <summary>Where a frame key's folder goes in its hash: above any frame number.</summary>
@@ -1062,6 +1064,52 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
     }
 
     return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
+}
+
+uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
+{
+    // FNV-1a over the size, then eight bytes at a time (the rest one at a time).
+    uint64_t hash = FnvOffset;
+    const auto mix = [&hash](uint64_t value)
+    {
+        hash ^= value;
+        hash *= FnvPrime;
+    };
+
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(width)));
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(height)));
+    size_t at = 0;
+
+    for (; at + sizeof(uint64_t) <= pixels.size(); at += sizeof(uint64_t))
+    {
+        uint64_t word = 0;
+        std::memcpy(&word, pixels.data() + at, sizeof(word));
+        mix(word);
+    }
+
+    for (; at < pixels.size(); ++at)
+    {
+        mix(pixels[at]);
+    }
+
+    return hash;
+}
+
+std::string MCHdArt::PictureName(uint64_t hash)
+{
+    return HashName(hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8_t> pixels, int32_t width,
+                                                           int32_t height)
+{
+    if (!Active() || width <= 0 || height <= 0)
+    {
+        return nullptr;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), PictureHash(pixels, width, height)},
+                 width, height);
 }
 
 namespace

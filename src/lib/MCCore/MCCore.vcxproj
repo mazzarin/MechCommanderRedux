@@ -384,6 +384,7 @@
     <ClCompile Include="platform\MCRenderer.cpp" />
     <ClCompile Include="platform\MCSdlPresenter.cpp" />
     <ClCompile Include="platform\MCServices.cpp" />
+    <ClCompile Include="platform\MCSharpText.cpp" />
     <ClCompile Include="platform\MCSmacker.cpp" />
     <ClCompile Include="platform\MCSocket.cpp">
       <!-- The socket wrapper includes the system socket headers (winsock2.h drags in windows.h), which must not meet
@@ -780,6 +781,7 @@
     <ClInclude Include="platform\MCSdlHandle.h" />
     <ClInclude Include="platform\MCSdlPresenter.h" />
     <ClInclude Include="platform\MCServices.h" />
+    <ClInclude Include="platform\MCSharpText.h" />
     <ClInclude Include="platform\MCSmacker.h" />
     <ClInclude Include="platform\MCSocket.h" />
     <ClInclude Include="platform\MCSoftwareRenderer.h" />

@@ -90,6 +90,14 @@ public:
     }
 
     /// <summary>
+    /// Port-only (<see cref="MCFrame::SharpScreen"/>): from the next <see cref="Execute"/> on, <paramref name="screen"/>'s
+    /// surface is drawn at <paramref name="scaleX"/> x <paramref name="scaleY"/> output pixels a window pixel, from
+    /// its corner to the shown view's far corner (<paramref name="right"/>, <paramref name="bottom"/>, exclusive: a
+    /// 640x480 screen draws only that much of the screen); scales of 1 (or no screen) draw it at its window's size.
+    /// </summary>
+    void SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom);
+
+    /// <summary>
     /// Runs the commands recorded since the last call on <paramref name="commands"/>: uploads what they read, then
     /// draws into the surfaces. The kept surfaces (the fog of war the terrain reads) are drawn first, then the
     /// underlays (<paramref name="underlays"/>), then the rest. On a surface shown over an underlay the key colour is
@@ -108,6 +116,12 @@ public:
     /// and its size in use; null when the window has no surface yet.
     /// </summary>
     std::shared_ptr<SDL_GPUTexture> SurfaceTexture(const MCWindow& window, uint32_t& width, uint32_t& height) const;
+
+    /// <summary>
+    /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
+    /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
+    /// </summary>
+    std::pair<float, float> SurfaceScale(const MCWindow& window) const;
 
     /// <summary>
     /// <paramref name="screen"/> in palette indices with its layout, for screenshots and tests: flushes, reads the
@@ -219,6 +233,12 @@ private:
         /// <summary>The size the commands recorded last saw (the window's).</summary>
         uint32_t RecordedWidth = 0;
         uint32_t RecordedHeight = 0;
+        /// <summary>
+        /// The part of the window the drawn size covers, from its corner: the whole window, but for a screen drawn at the
+        /// size it's shown (<see cref="SetScreenScale"/>), only as far as the view's far corner.
+        /// </summary>
+        uint32_t MappedWidth = 0;
+        uint32_t MappedHeight = 0;
         /// <summary>
         /// The size it is drawn at: the window's, or for a surface shown as an underlay, the rectangle it's shown in
         /// (in output pixels: times the underlay scale, <see cref="SetUnderlayScale"/>). Its draws are scaled into
@@ -354,15 +374,43 @@ private:
     std::optional<std::pair<Quad, Quad>> BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                                    std::string_view command);
     /// <summary>
+    /// How an HD art frame's colours show: corrected by each original index's colour now over the pack's palette.rgb
+    /// (a mech's, the ground's: made from the missions' palette), or as made (a menu's picture, made from its own
+    /// screen's palette).
+    /// </summary>
+    enum class HdColours : uint8_t
+    {
+        Corrected,
+        AsMade,
+    };
+
+    /// <summary>
     /// Adds the draw of an HD art frame over <paramref name="at"/> (blended into the colours), reading the original
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
-    /// recoloured by <paramref name="table"/> as the original's pixels would be. False when the frame can't be put on
-    /// the GPU.
+    /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as
+    /// <paramref name="colours"/> says; a keyed copy (<paramref name="key"/>) leaves out the original's pixels of the
+    /// key. False when the frame can't be put on the GPU.
     /// </summary>
     bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
-               const std::optional<MCColorTable>& table);
+               const std::optional<MCColorTable>& table, std::optional<uint8_t> key = std::nullopt,
+               HdColours colours = HdColours::Corrected);
+
+    /// <summary>
+    /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
+    /// time its pixels are uploaded; null when there is none, or when <paramref name="target"/> isn't a sharp screen.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+
+    /// <summary>
+    /// Port-only: draws the glyph <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows
+    /// <paramref name="pitch"/> apart) over <paramref name="at"/> on a sharp screen, redrawn as strokes
+    /// (<see cref="MCSharpText"/>) at the output's resolution in the colours <paramref name="table"/> gives its bytes.
+    /// False when it can't be put on the GPU (the original then draws the colours as well).
+    /// </summary>
+    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns, int32_t rows,
+                       const Quad& at, const MCColorTable& table);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -540,6 +588,12 @@ private:
     /// <summary>Output pixels per screen pixel the underlays are shown at (<see cref="SetUnderlayScale"/>).</summary>
     float _UnderlayScaleX = 1.0f;
     float _UnderlayScaleY = 1.0f;
+    /// <summary>The screen drawn at the size it's shown (<see cref="SetScreenScale"/>): its window, scale and extent.</summary>
+    MCAddressKey _ScaledScreen;
+    float _ScreenScaleX = 1.0f;
+    float _ScreenScaleY = 1.0f;
+    int32_t _ScreenRight = 0;
+    int32_t _ScreenBottom = 0;
     MCColorCycle _Cycle;
     /// <summary>The pixels <see cref="Write"/> was given this frame: a row each (StripWidth wide), and the texture.</summary>
     std::vector<uint8_t> _StripPixels;
@@ -609,6 +663,9 @@ private:
     size_t _HdPictureBytes = 0;
     /// <summary>The HD art frames the GPU couldn't take (logged once each, then drawn from the 1x shape).</summary>
     std::unordered_set<uint64_t> _HdRefused;
+    /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
+    std::unordered_map<uint64_t, Picture> _SharpGlyphs;
+    size_t _SharpGlyphBytes = 0;
     int64_t _HdDrawn = 0;
 
     /// <summary>
@@ -651,6 +708,12 @@ private:
         uint32_t StreamSize = 0;
         uint64_t StreamFrame = ~0ull;
         size_t StreamUpload = 0;
+        /// <summary>
+        /// Port-only: the HD art pack's copy of the pixels as last uploaded (<see cref="MCHdArt::FindPicture"/>), and
+        /// whether it was looked for since.
+        /// </summary>
+        std::shared_ptr<const MCHdArt::Frame> Hd;
+        bool HdLooked = false;
     };
 
     /// <summary>What is kept for <paramref name="texture"/> (made when missing).</summary>

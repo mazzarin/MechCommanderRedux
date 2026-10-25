@@ -468,6 +468,10 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     SDL_GPUTexture* ops = gpuSurfaces ? screen : _Ops.Handle.get();
     SDL_GPUTexture* tables = gpuSurfaces ? screen : _Tables.Handle.get();
     const float source = gpuSurfaces ? 1.0f : 0.0f;
+    // The screen's drawn pixels per screen pixel: above 1 for a sharp screen (MCFrame::SharpScreen), drawn at the size
+    // it's shown.
+    const auto [drawnX, drawnY] =
+        gpuSurfaces ? _Renderer->SurfaceScale(frame.Screen.get()) : std::pair<float, float>{1.0f, 1.0f};
     const float screenSize[4] = {static_cast<float>(frame.Width), static_cast<float>(frame.Height),
                                  static_cast<float>(screenWidth), static_cast<float>(screenHeight)};
     SDL_GPUColorTargetInfo target{};
@@ -513,7 +517,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
                            {1.0f, 1.0f, 1.0f, 1.0f},
-                           {0.0f, source, 0.0f, 0.0f}});
+                           {0.0f, source, drawnX, drawnY}});
 
     for (size_t i = 0; i < frame.Underlays.size(); ++i)
     {
@@ -579,7 +583,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
              static_cast<float>(underlay.Rect.X1 - underlay.Rect.X0 + 1) / mapX,
              static_cast<float>(underlay.Rect.Y1 - underlay.Rect.Y0 + 1) / mapY},
             {worldSize[0], worldSize[1], worldSize[2], worldSize[3]},
-            {1.0f, source, 0.0f, 0.0f},
+            {1.0f, source, drawnX, drawnY},
         };
 
         draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
@@ -783,13 +787,24 @@ void MCVulkanPresenter::PlaceUnderlays(const MCFrame& frame)
 {
     if (frame.ScaledOutput() && frame.View.w > 0 && frame.View.h > 0)
     {
-        _Renderer->SetUnderlayScale(static_cast<float>(frame.OutputWidth) / static_cast<float>(frame.View.w),
-                                    static_cast<float>(frame.OutputHeight) / static_cast<float>(frame.View.h));
+        const float scaleX = static_cast<float>(frame.OutputWidth) / static_cast<float>(frame.View.w);
+        const float scaleY = static_cast<float>(frame.OutputHeight) / static_cast<float>(frame.View.h);
+        _Renderer->SetUnderlayScale(scaleX, scaleY);
+
+        // Port-only: a sharp screen is drawn at the same scale, as far as the view reaches.
+        if (frame.SharpScreen)
+        {
+            _Renderer->SetScreenScale(&frame.Screen.get(), scaleX, scaleY, frame.View.x + frame.View.w,
+                                      frame.View.y + frame.View.h);
+            return;
+        }
     }
     else
     {
         _Renderer->SetUnderlayScale(1.0f, 1.0f);
     }
+
+    _Renderer->SetScreenScale(nullptr, 1.0f, 1.0f, 0, 0);
 }
 
 MCViewport MCVulkanPresenter::Viewport(int viewWidth, int viewHeight) const

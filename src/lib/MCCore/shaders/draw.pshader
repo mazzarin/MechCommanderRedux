@@ -25,8 +25,8 @@
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
 
-// The source: an atlas page (red value, green state), a picture (red), a surface's indices (red), or an HD art frame
-// (its premultiplied colours, then its original indices: red the index, green 1 where there is one).
+// The source: an atlas page (red value, green state), a picture (red), a surface's indices (red), or an HD art frame's
+// original indices (red the index, green 1 where there is one; one texel an original pixel).
 Texture2D<float4> sourceTex : register(t0, space2);
 SamplerState sourceSampler : register(s0, space2);
 // The frame's tables: 256 wide, one row a table, row 0 the identity.
@@ -42,6 +42,10 @@ SamplerState fitSampler : register(s3, space2);
 // The palette, 256 x 1, as shown (gamma applied).
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
+// The HD colours (premultiplied): an HD art frame's (its scale times its indices' size; BC7 frames padded to whole
+// blocks), or the terrain's tiles at HdScale times their atlas places.
+Texture2D<float4> hdTex : register(t5, space2);
+SamplerState hdSampler : register(s5, space2);
 
 cbuffer Frame : register(b0, space3)
 {
@@ -171,7 +175,7 @@ float4 HdTexel(int2 texel, int2 size)
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    return Fetch(sourceTex, sourceSampler, texel);
+    return Fetch(hdTex, hdSampler, texel);
 }
 
 // An HD art frame's pixel: the source is the place in the original shape's bounds of the rectangle's first pixel and
@@ -182,14 +186,15 @@ Output HdPixel(Input input, int2 target)
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
     const float2 shape = float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw);
-    const float hdScale = (float)(input.op.y & 255u);
+    const uint hdScale = input.op.y & 255u;
     uint width;
     uint height;
     sourceTex.GetDimensions(width, height);
-    const int2 size = int2((int)(width / 2u), (int)height);
+    const int2 original = int2((int)width, (int)height);
+    const int2 size = original * (int)hdScale;
 
     // Between the four texels around the point (premultiplied, so the transparent ones add no colour).
-    const float2 at = shape * hdScale - 0.5;
+    const float2 at = shape * (float)hdScale - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
     const float4 top = lerp(HdTexel(base, size), HdTexel(base + int2(1, 0), size), f.x);
@@ -205,8 +210,8 @@ Output HdPixel(Input input, int2 target)
     {
         // A paint scheme: where the table changes the original's index, the painted colour at the HD pixel's
         // brightness relative to the original colour.
-        const int2 texel = clamp(int2(floor(shape * hdScale)), int2(0, 0), size - 1);
-        const float4 entry = Fetch(sourceTex, sourceSampler, texel + int2(size.x, 0));
+        const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+        const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
         if (Byte(entry.g) == 255u)
         {

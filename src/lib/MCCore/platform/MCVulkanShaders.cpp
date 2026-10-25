@@ -24,7 +24,7 @@ namespace MCVulkanShaders
     const MCShaderInfo Quad{MCShader::Quad, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1};
     const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1};
     const MCShaderInfo DrawVertex{MCShader::Instance, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 1};
-    const MCShaderInfo DrawFragment{MCShader::Draw, SDL_GPU_SHADERSTAGE_FRAGMENT, 5, 1};
+    const MCShaderInfo DrawFragment{MCShader::Draw, SDL_GPU_SHADERSTAGE_FRAGMENT, 6, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
 
     std::string_view Name(MCShader shader)

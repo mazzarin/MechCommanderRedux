@@ -401,6 +401,7 @@
     <ClCompile Include="sound\MCSoundSystem.cpp" />
     <ClCompile Include="sprite\MCArmAppearance.cpp" />
     <ClCompile Include="sprite\MCArmAppearanceType.cpp" />
+    <ClCompile Include="sprite\MCBc7.cpp" />
     <ClCompile Include="sprite\MCElementalActor.cpp" />
     <ClCompile Include="sprite\MCElementalTree.cpp" />
     <ClCompile Include="sprite\MCGVAppearance.cpp" />
@@ -790,6 +791,7 @@
     <ClInclude Include="sound\MCSoundSystem.h" />
     <ClInclude Include="sprite\MCArmAppearance.h" />
     <ClInclude Include="sprite\MCArmAppearanceType.h" />
+    <ClInclude Include="sprite\MCBc7.h" />
     <ClInclude Include="sprite\MCElementalActor.h" />
     <ClInclude Include="sprite\MCElementalTree.h" />
     <ClInclude Include="sprite\MCGVAppearance.h" />

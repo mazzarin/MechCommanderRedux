@@ -1126,6 +1126,9 @@
     <ClCompile Include="sprite\MCArmAppearanceType.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCBc7.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCElementalActor.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2281,6 +2284,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCArmAppearanceType.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCBc7.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCElementalActor.h">

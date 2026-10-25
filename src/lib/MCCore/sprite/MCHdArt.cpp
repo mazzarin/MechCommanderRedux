@@ -25,6 +25,8 @@ namespace
     constexpr std::string_view IconFolder = "icons";
     constexpr std::string_view TerrainFolder = "terrain";
     constexpr std::string_view OverlayFolder = "overlays";
+    /// <summary>The pack's folder of shape tables loaded outside the sprite, crater and icon files, each named by its hash.</summary>
+    constexpr std::string_view ShapeFolder = "shapes";
     /// <summary>The pack's folder of pictures (the menus' and logistics' art), each named by its hash.</summary>
     constexpr std::string_view PictureFolder = "menus";
     constexpr std::string_view PaletteFile = "palette.rgb";
@@ -1098,6 +1100,19 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
     return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
 }
 
+std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)
+{
+    const State& state = TheState();
+    const auto found = state.Sequences.find(table);
+
+    if (found == state.Sequences.end() || found->second.Owner.expired())
+    {
+        return std::nullopt;
+    }
+
+    return state.Folders[found->second.Folder].Path;
+}
+
 uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
 {
     // FNV-1a over the size, then eight bytes at a time (the rest one at a time).
@@ -1187,6 +1202,28 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8
 
     return Cache(FrameKey{FolderIndex(PackFolder() / OverlayFolder, Naming::Hash), TerrainTileHash(shape)}, width,
                  height);
+}
+
+uint64_t MCHdArt::ShapeTableHash(std::span<const uint8_t> table)
+{
+    return TerrainTileHash(table);
+}
+
+std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
+{
+    return std::filesystem::path(ShapeFolder) / HashName(hash);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(
+        FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), static_cast<uint64_t>(frame)},
+        width, height);
 }
 
 std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)

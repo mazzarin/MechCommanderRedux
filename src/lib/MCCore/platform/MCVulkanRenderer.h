@@ -442,6 +442,14 @@ private:
     std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
     /// <summary>Port-only: <see cref="HdPictureFor"/> whatever the target: null when there is none.</summary>
     std::shared_ptr<const MCHdArt::Frame> HdPicture(const MCWindow& window);
+    /// <summary>
+    /// Port-only: the HD art pack's copy of frame <paramref name="frame"/> of <paramref name="table"/> (its bounds
+    /// <paramref name="width"/> x <paramref name="height"/>): from the folder the table is attached to, else, for a
+    /// table nothing attached (one loaded outside the sprite, crater and icon files), the one the pack keeps under its
+    /// bytes' hash (<see cref="MCHdArt::FindShape"/>); null when there is none.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> HdShape(std::span<const uint8_t> table, int32_t frame, int32_t width,
+                                                  int32_t height);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
 
@@ -682,6 +690,11 @@ private:
 
     /// <summary>The images made from registered data, by the address they're read from and their seed.</summary>
     std::map<std::pair<MCAddressKey, uint64_t>, DataImage> _DataImages;
+    /// <summary>
+    /// Port-only: the hashes of the shape tables nothing attached (<see cref="HdShape"/>), by the table's address, until
+    /// its bytes change; none for a table outside the registered blocks.
+    /// </summary>
+    std::map<MCAddressKey, std::optional<uint64_t>> _ShapeHashes;
     /// <summary>The last picture number handed out (<c>DataImage::PictureId</c>).</summary>
     uint64_t _LastPictureId = 0;
 

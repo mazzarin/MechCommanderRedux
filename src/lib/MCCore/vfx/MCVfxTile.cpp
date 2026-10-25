@@ -65,6 +65,31 @@ bool VfxTileFits(std::span<const uint8_t> tile)
     return true;
 }
 
+int32_t VfxTileWidth(std::span<const uint8_t> tile)
+{
+    const auto offset = [&](int32_t row)
+    {
+        uint32_t value = 0;
+        std::memcpy(&value, tile.data() + 4 + static_cast<size_t>(row) * 4, sizeof(value));
+        return value;
+    };
+
+    int32_t width = 0;
+
+    for (int32_t row = 0; row < tile[2]; ++row)
+    {
+        const uint32_t start = offset(row);
+        const auto length = static_cast<int32_t>(offset(row + 1) - start);
+
+        if (length > 1)
+        {
+            width = std::max(width, tile[start] + length - 1);
+        }
+    }
+
+    return width;
+}
+
 int32_t VfxNTileDraw(const MCPane& pane, std::span<const uint8_t> tile, int32_t x, int32_t y, const MCTileXlat& xlat)
 {
     const std::shared_ptr<MCWindow> window = pane.Window.lock();

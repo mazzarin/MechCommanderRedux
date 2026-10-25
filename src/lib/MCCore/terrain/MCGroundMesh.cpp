@@ -7,12 +7,15 @@
 #include "object/MCElementalGameSystem.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
 #include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfx.h"
 #include "vfx/MCVfxClip.h"
+
+#include <unordered_set>
 
 namespace
 {
@@ -34,6 +37,25 @@ namespace
 
     std::unique_ptr<MCGroundMesh> GroundMesh;
     uint64_t GroundMeshVersions = 0;
+
+    /// <summary>
+    /// The tile MCTerrainBlock::Draw would draw for <paramref name="textureData"/> (not negative), as the ground mesh keeps
+    /// it: up to its last row's end. None for a tile that can't be read or whose data doesn't fit its table (issue #25),
+    /// drawn as none, as the 2D drawer does.
+    /// </summary>
+    std::span<const uint8_t> GroundTile(MCTerrainTiles& tileCache, int32_t textureData)
+    {
+        const std::span<const uint8_t> data = tileCache.Lookup(textureData);
+
+        if (data.empty() || !VfxTileFits(data))
+        {
+            return {};
+        }
+
+        uint32_t size = 0;
+        std::memcpy(&size, data.subspan(4 + static_cast<size_t>(data[2]) * 4, sizeof(size)).data(), sizeof(size));
+        return data.first(size);
+    }
 
     /// <summary>
     /// Builds the ground mesh over the map and a ring of <paramref name="ring"/> off-map vertices around it, reading
@@ -96,15 +118,10 @@ namespace
                     }
                     else
                     {
-                        // A tile whose data doesn't fit its table (issue #25) is drawn as none, as the 2D drawer does.
-                        if (const std::span<const uint8_t> data = tileCache.Lookup(textureData);
-                            !data.empty() && VfxTileFits(data))
+                        if (const std::span<const uint8_t> tile = GroundTile(tileCache, textureData); !tile.empty())
                         {
-                            uint32_t size = 0;
-                            std::memcpy(&size, data.subspan(4 + static_cast<size_t>(data[2]) * 4, sizeof(size)).data(),
-                                        sizeof(size));
                             index = static_cast<uint32_t>(mesh.Tiles.size());
-                            mesh.Tiles.emplace_back(data.begin(), data.begin() + size);
+                            mesh.Tiles.emplace_back(tile.begin(), tile.end());
                         }
 
                         tiles.emplace(textureData, index);
@@ -289,7 +306,50 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
     return {};
 }
 
+void MCTerrainReadHdTiles()
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (!MCHdArt::Active() || terrain == nullptr || terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+    {
+        return;
+    }
+
+    MCMapBlockManager& blocks = *terrain->MapBlocks;
+    const int32_t side = MCTerrain::VerticesBlockSide;
+    const int32_t mapSide = MCTerrain::BlocksMapSide * side;
+    std::unordered_set<int32_t> seen;
+
+    // A block's width of off-map vertices too: those are the off-map block's (MapVertexIndex), which the mesh's ring
+    // holds, whatever its width.
+    for (int32_t r = -side; r < mapSide; ++r)
+    {
+        for (int32_t c = -side; c < mapSide; ++c)
+        {
+            const int32_t textureData = blocks.MapVertexAt(r, c).TextureData;
+
+            if (textureData < 0 || !seen.insert(textureData).second)
+            {
+                continue;
+            }
+
+            if (const std::span<const uint8_t> tile = GroundTile(*terrain->Tiles, textureData); !tile.empty())
+            {
+                if (const int32_t width = VfxTileWidth(tile); width != 0)
+                {
+                    MCHdArt::FindTerrainTile(tile, width, tile[2]);
+                }
+            }
+        }
+    }
+}
+
 void MCTerrainForgetMesh()
 {
     GroundMesh.reset();
+}
+
+const MCTerrainMesh* MCTerrainMeshInUse()
+{
+    return GroundMesh != nullptr ? &GroundMesh->Mesh : nullptr;
 }

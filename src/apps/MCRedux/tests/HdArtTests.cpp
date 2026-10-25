@@ -8,6 +8,7 @@
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
@@ -16,12 +17,15 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
+#include "object/MCExplosion.h"
+#include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCObjectSystem.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "platform/MCRegisteredBlock.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanRenderer.h"
@@ -33,10 +37,12 @@
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
+#include "sprite/MCVfxAppearance.h"
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCVfxBuildingAppearanceType.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTerrain.h"
+#include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 #include "gui/MCGuiPort.h"
@@ -213,8 +219,17 @@ namespace
         int32_t Part = 0;
         float Facing = 0.0f;
         bool Reverse = false;
+        /// <summary>Whether its translucent frames hold their blended pixels (an effect's, MCHdArt::Frame::Blended).</summary>
+        bool Blended = false;
         std::vector<DecodedFrame> Frames;
     };
+
+    /// <summary>A colour channel (0..1) as a byte.</summary>
+    uint8_t ChannelByte(float value)
+    {
+        constexpr float Full = 255.0f;
+        return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * Full));
+    }
 
     /// <summary>
     /// The shape tables of <paramref name="tree"/>'s gestures (only <paramref name="onlyGesture"/>'s when given), each
@@ -299,7 +314,8 @@ namespace
     /// <summary>
     /// Writes <paramref name="sequences"/> into a pack at <paramref name="pack"/>: each frame at
     /// <paramref name="scale"/> times its size (each pixel repeated), its colours through <paramref name="paint"/>,
-    /// with its index picture.
+    /// with its index picture. A sequence holding its blended pixels (sprite/MCHdArt.h) has premultiplied colours, a
+    /// blended pixel the colour and coverage AlphaPal.ini's colour draws, without an index.
     /// </summary>
     void WritePack(const std::filesystem::path& pack, std::span<const Sequence> sequences,
                    std::span<const SDL_Color, 256> colors, int32_t scale,
@@ -332,10 +348,22 @@ namespace
                             static_cast<size_t>(y / scale) * frame.Width + static_cast<size_t>(x / scale);
                         uint8_t* outColor = &color[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
                         uint8_t* outIndex = &index[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                        outIndex[2] = sequence.Blended ? MCHdArt::HoldsBlended : 0;
                         outIndex[3] = HasIndex;
 
                         if (frame.Drawn[from] == 0)
                         {
+                            continue;
+                        }
+
+                        if (const uint8_t value = frame.Index[from];
+                            sequence.Blended && frame.Translucent && SpecialColor[value] != 0)
+                        {
+                            const MCAlphaBlend blend = AlphaColorBlend(MCAlphaColors[value]);
+                            outColor[0] = ChannelByte(blend.R);
+                            outColor[1] = ChannelByte(blend.G);
+                            outColor[2] = ChannelByte(blend.B);
+                            outColor[3] = ChannelByte(blend.Coverage);
                             continue;
                         }
 
@@ -842,22 +870,29 @@ namespace
         Tree,
         /// <summary>Terrain objects (rocks, walls...) and lights.</summary>
         Object,
+        /// <summary>Explosions, fire, smoke, weapons' shots, debris, jets: every other class with shapes.</summary>
+        Effect,
     };
 
-    /// <summary>A kind's name (the tools' and the generator's), and whether its packets are animations (the generator
-    /// upscales each as one sequence) or stills.</summary>
+    /// <summary>
+    /// A kind's name (the tools' and the generator's), whether its packets are animations (the generator upscales each as
+    /// one sequence) or stills, and whether its translucent frames hold their blended pixels (smoke and glow, drawn from
+    /// the pack as AlphaPal.ini's colours draw them) or leave them to the original (glass and shadows).
+    /// </summary>
     struct ObjectKindInfo
     {
         std::string_view Name;
         bool Animated = false;
+        bool Blended = false;
     };
 
-    constexpr std::array<ObjectKindInfo, 6> ObjectKinds = {{{"vehicle", true},
+    constexpr std::array<ObjectKindInfo, 7> ObjectKinds = {{{"vehicle", true},
                                                             {"elemental", true},
                                                             {"turret", true},
                                                             {"building", false},
                                                             {"tree", false},
-                                                            {"object", false}}};
+                                                            {"object", false},
+                                                            {"effect", true, true}}};
 
     const ObjectKindInfo& KindInfo(ObjectKind kind)
     {
@@ -865,9 +900,9 @@ namespace
     }
 
     /// <summary>
-    /// The object classes (an object type's "ObjectClass" ObjectTypeNum, as MCObjectTypeManager numbers them) whose
-    /// appearances the pack holds, and their kinds. The others are mechs (their own folders) and effects (explosions,
-    /// fire, smoke, weapons, debris, artillery, jets), which keep the original's pixels.
+    /// The object classes (an object type's "ObjectClass" ObjectTypeNum, as MCObjectTypeManager numbers them) and their
+    /// kinds. Mechs have folders of their own; every other class with shapes of its own draws effects (explosions, fire,
+    /// smoke, weapons, debris, artillery, jets).
     /// </summary>
     constexpr std::array<std::pair<int32_t, ObjectKind>, 12> ClassKinds = {{
         {0x00, ObjectKind::Tree},      // tree
@@ -899,20 +934,15 @@ namespace
         std::vector<std::string> Types;
     };
 
-    /// <summary>The appearances the object types use, the effects' among them (left out of the pack).</summary>
-    struct ObjectAppearances
-    {
-        std::map<uint32_t, ObjectAppearance> Kept;
-        std::set<uint32_t> Effects;
-    };
-
     /// <summary>
     /// The appearances the object PAK's types use, by type id: each with the kind of the first class that uses it
-    /// (ClassKinds), except mechs' and those of classes without shapes of their own (lines, weapon effects).
+    /// (ClassKinds; an effect's when none does), except mechs' and those of classes without shapes of their own (lines,
+    /// weapon effects).
     /// </summary>
-    ObjectAppearances FindObjectAppearances()
+    std::map<uint32_t, ObjectAppearance> FindObjectAppearances()
     {
-        ObjectAppearances found;
+        std::map<uint32_t, ObjectAppearance> found;
+        std::map<uint32_t, ObjectAppearance> effects;
         MCPacketFile pak;
         REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
 
@@ -945,27 +975,22 @@ namespace
                 continue;
             }
 
-            const auto kind = std::ranges::find(ClassKinds, *objectClass, &std::pair<int32_t, ObjectKind>::first);
-
-            if (kind == ClassKinds.end())
-            {
-                found.Effects.insert(id);
-                continue;
-            }
-
+            const auto classKind = std::ranges::find(ClassKinds, *objectClass, &std::pair<int32_t, ObjectKind>::first);
+            const bool effect = classKind == ClassKinds.end();
+            const ObjectKind kind = effect ? ObjectKind::Effect : classKind->second;
             const std::string name = fit.Read<std::string>("Name").value_or(std::format("type {}", packet));
-            auto [entry, fresh] = found.Kept.try_emplace(id, ObjectAppearance{id, kind->second, {}});
+            auto [entry, fresh] = (effect ? effects : found).try_emplace(id, ObjectAppearance{id, kind, {}});
             entry->second.Types.push_back(name);
 
-            if (!fresh && entry->second.Kind != kind->second)
+            if (!fresh && entry->second.Kind != kind)
             {
                 std::cout << std::format("  appearance {:#010x}: a {} and a {} ({}); kept as the first\n", id,
-                                         KindInfo(entry->second.Kind).Name, KindInfo(kind->second).Name, name);
+                                         KindInfo(entry->second.Kind).Name, KindInfo(kind).Name, name);
             }
         }
 
-        // An appearance some effect uses too stays in the pack: the effect draws the same shapes.
-        std::erase_if(found.Effects, [&](uint32_t id) { return found.Kept.contains(id); });
+        // An appearance an effect shares with another class is that class's: the effect draws the same shapes.
+        found.merge(effects);
         return found;
     }
 
@@ -1090,10 +1115,11 @@ namespace
     }
 
     /// <summary>
-    /// Leaves out of a translucent frame (drawn through AlphaPal.ini) the pixels it blends, and those of colours 0 and
-    /// 255, which draw nothing: the pack's frame shows its opaque pixels over the original's blended ones.
+    /// Leaves out of a translucent frame (drawn through AlphaPal.ini) the pixels of colours 0 and 255, which draw nothing,
+    /// and, unless <paramref name="keepBlended"/>, those it blends: the pack's frame then shows its opaque pixels over the
+    /// original's blended ones.
     /// </summary>
-    void LeaveOutBlended(DecodedFrame& frame)
+    void LeaveOutUndrawn(DecodedFrame& frame, bool keepBlended)
     {
         constexpr uint8_t Clear = 0;
         constexpr uint8_t Key = 255;
@@ -1102,7 +1128,7 @@ namespace
         {
             const uint8_t index = frame.Index[i];
 
-            if (index == Clear || index == Key || SpecialColor[index] != 0)
+            if (index == Clear || index == Key || (!keepBlended && SpecialColor[index] != 0))
             {
                 frame.Drawn[i] = 0;
             }
@@ -1114,8 +1140,8 @@ namespace
     {
         std::vector<Sequence> Sequences;
         /// <summary>
-        /// The frames drawn translucent (their blended pixels left out: the original's still blend), and those that can't
-        /// be read (left out).
+        /// The frames drawn translucent (their blended pixels left out, the original's still blending them, unless they
+        /// are kept), and those that can't be read (left out).
         /// </summary>
         size_t Translucent = 0;
         size_t Unreadable = 0;
@@ -1125,7 +1151,11 @@ namespace
         bool Delta = false;
     };
 
-    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type)
+    /// <summary>
+    /// <paramref name="type"/>'s sequences, their translucent frames holding their blended pixels when
+    /// <paramref name="keepBlended"/> (an effect's).
+    /// </summary>
+    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type, bool keepBlended)
     {
         const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
         REQUIRE(sprites != nullptr);
@@ -1147,6 +1177,7 @@ namespace
 
             Sequence& sequence = made.Sequences.emplace_back();
             sequence.Folder = MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, appearance, packet});
+            sequence.Blended = keepBlended;
             const std::span<const uint8_t> table = shape->FrameList();
             sequence.Table = std::hash<std::string_view>{}(
                 std::string_view(reinterpret_cast<const char*>(table.data()), table.size()));
@@ -1162,7 +1193,7 @@ namespace
                 else if (decoded->Translucent)
                 {
                     ++made.Translucent;
-                    LeaveOutBlended(*decoded);
+                    LeaveOutUndrawn(*decoded, keepBlended);
                 }
 
                 // Left out of the pack (drawn from the original): a frame that can't be read, or has no opaque pixel.
@@ -1222,7 +1253,7 @@ namespace
 
         std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> picked;
 
-        for (const auto& [id, appearance] : FindObjectAppearances().Kept)
+        for (const auto& [id, appearance] : FindObjectAppearances())
         {
             if ((!kinds.empty() && !kinds.contains(std::string(KindInfo(appearance.Kind).Name))) ||
                 (!packets.empty() && !packets.contains(id & AppearancePacketMask)))
@@ -1261,21 +1292,21 @@ namespace
         std::optional<std::filesystem::path> Of(const Sequence& sequence, const ObjectKindInfo& kind, bool delta)
         {
             const auto [found, fresh] =
-                _First.try_emplace(std::tuple{sequence.Table, kind.Animated, delta}, sequence.Folder);
+                _First.try_emplace(std::tuple{sequence.Table, kind.Animated, kind.Blended, delta}, sequence.Folder);
             return fresh ? std::nullopt : std::optional(found->second);
         }
 
     private:
-        std::map<std::tuple<size_t, bool, bool>, std::filesystem::path> _First;
+        std::map<std::tuple<size_t, bool, bool, bool>, std::filesystem::path> _First;
     };
 }
 
 /// <summary>
 /// Tool: <c>--hd-objects 1</c> lists the appearances the HD art pack holds besides the mechs, for
 /// --hd-extract-objects: a line "object &lt;kind&gt; &lt;type id&gt; &lt;folder&gt; &lt;sequences&gt; &lt;frames&gt;
-/// &lt;pixels&gt; &lt;delta&gt; &lt;object types&gt;" each (the kinds: vehicle, elemental and turret animated; building,
-/// tree and object still), then each kind's totals, the sequences that repeat another's shape table (made once), and
-/// the effects' appearances left out. <c>--kind</c> and <c>--appearance</c> pick as --hd-extract-objects does.
+/// &lt;pixels&gt; &lt;delta&gt; &lt;object types&gt;" each (the kinds: vehicle, elemental, turret and effect animated;
+/// building, tree and object still), then each kind's totals and the sequences that repeat another's shape table (made
+/// once). <c>--kind</c> and <c>--appearance</c> pick as --hd-extract-objects does.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and objects")
 {
@@ -1290,7 +1321,7 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 
     for (const auto& [appearance, type] : PickedObjectAppearances())
     {
-        const ObjectSequences made = ObjectSequencesOf(type);
+        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
         KindTotals& total = totals[static_cast<size_t>(appearance.Kind)];
         size_t frames = 0;
 
@@ -1324,9 +1355,9 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 
         if (made.Translucent + made.Unreadable > 0)
         {
-            std::cout << std::format(
-                "  ({} translucent frames, their blended pixels left out; {} that can't be read)\n", made.Translucent,
-                made.Unreadable);
+            std::cout << std::format("  ({} translucent frames, their blended pixels {}; {} that can't be read)\n",
+                                     made.Translucent, KindInfo(appearance.Kind).Blended ? "kept" : "left out",
+                                     made.Unreadable);
         }
 
         ++total.Appearances;
@@ -1343,17 +1374,15 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
                                  ObjectKinds[kind].Name, total.Appearances, total.Sequences, total.Frames, total.Pixels,
                                  total.RepeatedSequences, total.RepeatedPixels);
     }
-
-    std::cout << std::format("  effects (left out): {} appearances\n", FindObjectAppearances().Effects.size());
 }
 
 /// <summary>
-/// Tool: <c>--hd-extract-objects &lt;folder&gt;</c> writes the vehicles', Elementals', turrets', buildings', trees' and
-/// terrain objects' frames (<c>--kind</c> and <c>--appearance</c> pick, as --hd-objects lists them) as an HD art pack
-/// at their own size, for tools/upscale/make_object_pack.py: every packet each appearance draws, each frame a PNG with
-/// its index picture (sprite/MCHdArt.h; a translucent frame without the pixels it blends, which the original still
-/// draws), plus
-/// <c>objects.json</c> (each appearance's kind, whether it is animated or still, and its sequences' frames' bounds, as
+/// Tool: <c>--hd-extract-objects &lt;folder&gt;</c> writes the vehicles', Elementals', turrets', buildings', trees',
+/// terrain objects' and effects' frames (<c>--kind</c> and <c>--appearance</c> pick, as --hd-objects lists them) as an HD
+/// art pack at their own size, for tools/upscale/make_object_pack.py: every packet each appearance draws, each frame a
+/// PNG with its index picture (sprite/MCHdArt.h; a translucent frame without the pixels it blends, which the original
+/// still draws, except an effect's, which holds them premultiplied), plus <c>objects.json</c> (each appearance's kind,
+/// whether it is animated or still, whether it holds its blended pixels, and its sequences' frames' bounds, as
 /// --hd-extract's) and the shown colours as palette.rgb. A sequence whose shape table an earlier one has (made the same
 /// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it.
 /// </summary>
@@ -1379,7 +1408,7 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
 
     for (const auto& [appearance, type] : PickedObjectAppearances())
     {
-        const ObjectSequences made = ObjectSequencesOf(type);
+        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
 
         if (made.Sequences.empty())
         {
@@ -1408,11 +1437,11 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
             types += std::format("{}\"{}\"", types.empty() ? "" : ", ", name);
         }
 
-        json +=
-            std::format("{}\n {{\"id\": {}, \"kind\": \"{}\", \"animated\": {}, \"delta\": {}, \"types\": [{}], "
-                        "\"sequences\": [",
-                        appearances++ == 0 ? "" : ",", appearance.Id, KindInfo(appearance.Kind).Name,
-                        KindInfo(appearance.Kind).Animated ? "true" : "false", made.Delta ? "true" : "false", types);
+        json += std::format("{}\n {{\"id\": {}, \"kind\": \"{}\", \"animated\": {}, \"blended\": {}, \"delta\": {}, "
+                            "\"types\": [{}], \"sequences\": [",
+                            appearances++ == 0 ? "" : ",", appearance.Id, KindInfo(appearance.Kind).Name,
+                            KindInfo(appearance.Kind).Animated ? "true" : "false",
+                            KindInfo(appearance.Kind).Blended ? "true" : "false", made.Delta ? "true" : "false", types);
 
         for (size_t i = 0; i < made.Sequences.size(); ++i)
         {
@@ -1752,7 +1781,7 @@ namespace
 
                 if (fresh)
                 {
-                    found->second = ObjectSequencesOf(type).Translucent > 0;
+                    found->second = ObjectSequencesOf(type, false).Translucent > 0;
                 }
 
                 return found->second;
@@ -1797,7 +1826,7 @@ namespace
 
         const std::shared_ptr<MCAppearanceType> type = scene.Object->GetAppearance()->GetAppearanceType();
         REQUIRE(type != nullptr);
-        const ObjectSequences made = ObjectSequencesOf(type);
+        const ObjectSequences made = ObjectSequencesOf(type, false);
         REQUIRE(!made.Sequences.empty());
         std::array<SDL_Color, 256> colors{};
         MCInput::Display()->GetShownColors(colors);
@@ -1819,6 +1848,34 @@ namespace
     /// from the pack in a world view shown larger than the screen: the shown colours change around it, in the middle of
     /// the view, and the frames before HD art went on were alike (so the change is only how the object is drawn).
     /// </summary>
+    void CheckShownFromPack(const HdObjectScene& scene)
+    {
+        // The game paused, so nothing moves between the frames compared (mission 2's animate), and only the middle of
+        // the view compared (the tactical map's blips blink).
+        GamePaused = true;
+        MCTestGame::RunFrame(FrameSeconds);
+        const Shown original = ReadShown(scene.Scratch);
+        const MCRect middle{original.Width / 4, original.Height / 4, original.Width * 3 / 4, original.Height * 3 / 4};
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(Compare(original, ReadShown(scene.Scratch), middle).Count, 0);
+
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        const int64_t drawnBefore = scene.Renderer->HdDrawn();
+        MCTestGame::RunFrame(FrameSeconds);
+        const Shown hd = ReadShown(scene.Scratch);
+        hdArt.reset();
+        GamePaused = false;
+
+        CHECK(scene.Renderer->HdDrawn() > drawnBefore);
+        const Changed changed = Compare(original, hd, middle);
+        std::cout << std::format("  {} shown pixels changed of {}x{}, about ({}, {})\n", changed.Count, hd.Width,
+                                 hd.Height, changed.X, changed.Y);
+        REQUIRE(changed.Count > 0);
+        CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
+        CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
+        std::filesystem::remove_all(scene.Scratch);
+    }
+
     void CheckShownFromPack(std::span<const HdSubject> subjects)
     {
         for (const HdSubject subject : subjects)
@@ -1830,32 +1887,8 @@ namespace
                 return;
             }
 
-            // The game paused, so nothing moves between the frames compared (mission 2's animate), and only the middle
-            // of the view compared (the tactical map's blips blink).
             MCTest::Scope scope(std::format("subject {}", static_cast<int32_t>(subject)));
-            GamePaused = true;
-            MCTestGame::RunFrame(FrameSeconds);
-            const Shown original = ReadShown(scene->Scratch);
-            const MCRect middle{original.Width / 4, original.Height / 4, original.Width * 3 / 4,
-                                original.Height * 3 / 4};
-            MCTestGame::RunFrame(FrameSeconds);
-            CHECK_EQ(Compare(original, ReadShown(scene->Scratch), middle).Count, 0);
-
-            std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-            const int64_t drawnBefore = scene->Renderer->HdDrawn();
-            MCTestGame::RunFrame(FrameSeconds);
-            const Shown hd = ReadShown(scene->Scratch);
-            hdArt.reset();
-            GamePaused = false;
-
-            CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-            const Changed changed = Compare(original, hd, middle);
-            std::cout << std::format("  {} shown pixels changed of {}x{}, about ({}, {})\n", changed.Count, hd.Width,
-                                     hd.Height, changed.X, changed.Y);
-            REQUIRE(changed.Count > 0);
-            CHECK(std::abs(changed.X - hd.Width / 2) < hd.Width / 4);
-            CHECK(std::abs(changed.Y - hd.Height / 2) < hd.Height / 4);
-            std::filesystem::remove_all(scene->Scratch);
+            CheckShownFromPack(*scene);
         }
     }
 
@@ -1863,10 +1896,34 @@ namespace
     /// HD art changes only the colours shown: in mirror mode, with each of <paramref name="subjects"/> drawn from the
     /// pack in turn, the GPU's palette indices are still the software renderer's, frame after frame.
     /// </summary>
-    void CheckIndicesKept(std::span<const HdSubject> subjects)
+    void CheckIndicesKept(const HdObjectScene& scene)
     {
         constexpr int32_t Frames = 10;
+        std::optional<MCHdArtOn> hdArt(std::in_place, scene.Pack);
+        scene.Renderer->ResetMirror();
+        const int64_t drawnBefore = scene.Renderer->HdDrawn();
 
+        for (int32_t frame = 0; frame < Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        hdArt.reset();
+        const MCVulkanRenderer::MirrorTally& tally = scene.Renderer->Mirror();
+        CHECK(scene.Renderer->HdDrawn() > drawnBefore);
+        CHECK_EQ(tally.Frames, Frames);
+        CHECK_EQ(tally.DifferentFrames, 0);
+
+        if (tally.DifferentFrames != 0)
+        {
+            std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
+        }
+
+        std::filesystem::remove_all(scene.Scratch);
+    }
+
+    void CheckIndicesKept(std::span<const HdSubject> subjects)
+    {
         for (const HdSubject subject : subjects)
         {
             const std::optional<HdObjectScene> scene = SetUpHdObjectScene(MCGpuDrawing::Mirror, subject);
@@ -1877,27 +1934,7 @@ namespace
             }
 
             MCTest::Scope scope(std::format("subject {}", static_cast<int32_t>(subject)));
-            std::optional<MCHdArtOn> hdArt(std::in_place, scene->Pack);
-            scene->Renderer->ResetMirror();
-            const int64_t drawnBefore = scene->Renderer->HdDrawn();
-
-            for (int32_t frame = 0; frame < Frames; ++frame)
-            {
-                MCTestGame::RunFrame(FrameSeconds);
-            }
-
-            hdArt.reset();
-            const MCVulkanRenderer::MirrorTally& tally = scene->Renderer->Mirror();
-            CHECK(scene->Renderer->HdDrawn() > drawnBefore);
-            CHECK_EQ(tally.Frames, Frames);
-            CHECK_EQ(tally.DifferentFrames, 0);
-
-            if (tally.DifferentFrames != 0)
-            {
-                std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
-            }
-
-            std::filesystem::remove_all(scene->Scratch);
+            CheckIndicesKept(*scene);
         }
     }
 
@@ -1924,6 +1961,276 @@ TEST_CASE_ISOLATED("game: HD art keeps a vehicle's and a building's palette indi
 TEST_CASE_ISOLATED("game: HD art keeps a translucent object's palette indices")
 {
     CheckIndicesKept(SecondMissionSubjects);
+}
+
+namespace
+{
+    /// <summary>
+    /// A mine's explosion (GameSys's) going off at the player's mech in mission 1, drawn by <paramref name="drawing"/>
+    /// in a world view shown larger than the screen, the camera on it, and a pack of every packet its appearance draws,
+    /// holding their blended pixels (the tests' pack: the original's pixels doubled, the opaque ones' colours inverted).
+    /// </summary>
+    std::optional<HdObjectScene> SetUpHdExplosionScene(MCGpuDrawing drawing)
+    {
+        if (!MCTestGame::Available())
+        {
+            return std::nullopt;
+        }
+
+        HdObjectScene scene;
+        scene.Renderer = StartScaledUp(drawing);
+
+        if (scene.Renderer == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        RevealAll();
+        const std::shared_ptr<MCMover> player = GetMoverFromPartId(PlayerMechPartId);
+        REQUIRE(player != nullptr);
+        MCVector3D at = player->GetPosition();
+        CreateExplosion(MineExplosion, at, 0.0f, 0.0f);
+        Eye()->ChangeTarget(player, true);
+        MCTestGame::RunFrame(FrameSeconds);
+        std::shared_ptr<MCExplosion> explosion;
+
+        for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
+        {
+            for (const std::shared_ptr<MCBaseObject> object : *list)
+            {
+                if (object != nullptr && object->ObjectClass == MCObjectClass::Explosion)
+                {
+                    explosion = std::static_pointer_cast<MCExplosion>(object);
+                }
+            }
+        }
+
+        REQUIRE(explosion != nullptr);
+        REQUIRE(explosion->Appearance != nullptr);
+        const std::shared_ptr<MCAppearanceType> type = explosion->Appearance->GetAppearanceType();
+        REQUIRE(type != nullptr);
+        const ObjectSequences made = ObjectSequencesOf(type, true);
+        REQUIRE(!made.Sequences.empty());
+        CHECK(made.Translucent > 0);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        scene.Object = explosion;
+        scene.Scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effects";
+        std::filesystem::remove_all(scene.Scratch);
+        scene.Pack = scene.Scratch / "pack";
+        WritePack(scene.Pack, made.Sequences, colors, TestPackScale, Inverted);
+        std::cout << std::format("  explosion type {}, appearance {:#010x}: {} packets ({} translucent frames)\n",
+                                 MineExplosion, type->AppearanceNum, made.Sequences.size(), made.Translucent);
+        return scene;
+    }
+}
+
+TEST_CASE_ISOLATED("game: an HD art pack's frames show in an explosion's place")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdExplosionScene(MCGpuDrawing::On); scene.has_value())
+    {
+        CheckShownFromPack(*scene);
+    }
+}
+
+TEST_CASE_ISOLATED("game: HD art keeps an explosion's palette indices")
+{
+    if (const std::optional<HdObjectScene> scene = SetUpHdExplosionScene(MCGpuDrawing::Mirror); scene.has_value())
+    {
+        CheckIndicesKept(*scene);
+    }
+}
+
+namespace
+{
+    /// <summary>A shape's VFX table, one frame, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
+    std::vector<uint8_t> OneFrameTable(int32_t width, int32_t height, std::span<const uint8_t> rows)
+    {
+        std::vector<uint8_t> table = {'1', '.', '1', '0'};
+        const auto put = [&table](int32_t value)
+        {
+            for (int32_t byte = 0; byte < 4; ++byte)
+            {
+                table.push_back(static_cast<uint8_t>(static_cast<uint32_t>(value) >> (8 * byte)));
+            }
+        };
+
+        constexpr int32_t FirstFrame = 16;
+        constexpr int BoundsShift = 16;
+        put(1);
+        put(FirstFrame);
+        put(0);
+        put(width << BoundsShift | height);
+        put(0);
+        put(0);
+        put(0);
+        put(width - 1);
+        put(height - 1);
+        table.insert(table.end(), rows.begin(), rows.end());
+        return table;
+    }
+}
+
+/// <summary>
+/// An effect's HD frame (one holding its blended pixels) is all that shows of a translucent shape: drawn on the screen
+/// by the GPU over mission 1, a shape of colour 0 (nothing), 254 (halves what is under it), 4 (adds its colour) and an
+/// opaque colour shows the frame's colours in their places, light added where the frame has colour without coverage,
+/// and none of the original's blending.
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and light, none of the original's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    constexpr uint8_t Nothing = 0;
+    constexpr uint8_t Halves = 254;
+    constexpr uint8_t Adds = 4;
+    REQUIRE(SpecialColor[Halves] != 0);
+    REQUIRE(SpecialColor[Adds] != 0);
+
+    // An opaque colour (one of the free colours, 10..245) with every channel: an HD colour is corrected channel by
+    // channel by its index's colour.
+    constexpr int32_t FirstFree = 10;
+    constexpr int32_t EndFree = 246;
+    constexpr uint8_t Channel = 40;
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const auto free = std::views::iota(FirstFree, EndFree);
+    const auto full = std::ranges::find_if(free,
+                                           [&](int32_t i)
+                                           {
+                                               const SDL_Color& c = colors[static_cast<size_t>(i)];
+                                               return SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel &&
+                                                      c.g >= Channel && c.b >= Channel;
+                                           });
+    REQUIRE(full != free.end());
+    const auto opaque = static_cast<uint8_t>(*full);
+
+    // Each row: one pixel of colour 0 (a translucent shape's mark), then 2 halving, 2 adding and 3 opaque.
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    constexpr uint8_t OnePixel = 3;
+    constexpr uint8_t SevenPixels = 15;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.insert(rows.end(),
+                    {OnePixel, Nothing, SevenPixels, Halves, Halves, Adds, Adds, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table = OneFrameTable(Width, Height, rows);
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(!shape->FrameList().empty());
+    REQUIRE(MCAgShapeIsAlpha(shape->FrameList(), 0));
+
+    // The frame: nothing, light, black covering what is under it, and the opaque colour at half its brightness, by the
+    // original's columns.
+    constexpr int32_t Scale = 2;
+    constexpr SDL_Color Light = {90, 60, 30, 0};
+    constexpr SDL_Color Cover = {0, 0, 0, 255};
+    const SDL_Color lit = {static_cast<uint8_t>(colors[opaque].r / 2), static_cast<uint8_t>(colors[opaque].g / 2),
+                           static_cast<uint8_t>(colors[opaque].b / 2), 255};
+    const auto frameColor = [&](int32_t column)
+    {
+        return column == 0 ? SDL_Color{0, 0, 0, 0} : column < 3 ? Light : column < 5 ? Cover : lit;
+    };
+
+    std::vector<uint8_t> color(static_cast<size_t>(Width * Scale) * Height * Scale * BytesPerPixel);
+    std::vector<uint8_t> index(color.size());
+
+    for (int32_t y = 0; y < Height * Scale; ++y)
+    {
+        for (int32_t x = 0; x < Width * Scale; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * Width * Scale + x) * BytesPerPixel;
+            const SDL_Color c = frameColor(x / Scale);
+            const bool hasIndex = x / Scale >= 5;
+            std::ranges::copy(std::array{c.r, c.g, c.b, c.a}, color.begin() + static_cast<ptrdiff_t>(at));
+            std::ranges::copy(std::array<uint8_t, 4>{hasIndex ? opaque : uint8_t{0}, hasIndex ? HasIndex : uint8_t{0},
+                                                     MCHdArt::HoldsBlended, HasIndex},
+                              index.begin() + static_cast<ptrdiff_t>(at));
+        }
+    }
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effect_frame";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    constexpr uint32_t TestAppearance = 0xfffff;
+    const MCHdArt::ObjectShapeKey key{"shapes", TestAppearance, 0};
+    std::filesystem::create_directories(pack / MCHdArt::FolderOf(key));
+    SavePng(pack / MCHdArt::FolderOf(key) / "0.png", Width * Scale, Height * Scale, color);
+    SavePng(pack / MCHdArt::FolderOf(key) / "0_idx.png", Width * Scale, Height * Scale, index);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCTestGame::RunFrame(FrameSeconds);
+    const auto before = display->ReadFrame();
+    REQUIRE(before.has_value());
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+    const int64_t drawnBefore = renderer->HdDrawn();
+    AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+    const auto after = display->ReadFrame();
+    REQUIRE(after.has_value());
+    CHECK(renderer->HdDrawn() > drawnBefore);
+    hdArt.reset();
+
+    const int32_t width = display->Width();
+    const auto shown = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+    const auto sameAs = [&](SDL_Color actual, int32_t r, int32_t g, int32_t b)
+    { return near(actual.r, r) && near(actual.g, g) && near(actual.b, b); };
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        for (int32_t column = 0; column < Width; ++column)
+        {
+            const SDL_Color under = shown(*before, column, row);
+            const SDL_Color drawn = shown(*after, column, row);
+            MCTest::Scope scope(std::format("column {}, row {}: {} {} {} over {} {} {}", column, row, drawn.r, drawn.g,
+                                            drawn.b, under.r, under.g, under.b));
+
+            if (column == 0)
+            {
+                CHECK(sameAs(drawn, under.r, under.g, under.b));
+            }
+            else if (column < 3)
+            {
+                CHECK(sameAs(drawn, std::min(under.r + Light.r, 255), std::min(under.g + Light.g, 255),
+                             std::min(under.b + Light.b, 255)));
+            }
+            else if (column < 5)
+            {
+                CHECK(sameAs(drawn, Cover.r, Cover.g, Cover.b));
+            }
+            else
+            {
+                CHECK(sameAs(drawn, lit.r, lit.g, lit.b));
+            }
+        }
+    }
+
+    std::filesystem::remove_all(scratch);
 }
 
 namespace

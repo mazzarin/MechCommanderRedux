@@ -16,15 +16,17 @@ class MCShape;
 /// the original's indices), or, as the generator first writes them, <c>&lt;frame&gt;.png</c>: the frame's bounds at an
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
-/// the HD pixels it would have recoloured.</para>
+/// the HD pixels it would have recoloured. A frame that holds a translucent shape's blended pixels too (an effect's,
+/// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255.</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
 /// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
 /// PAK, a packet of the shape PAK (<c>shapes90.pak</c>, or <c>shapes.pak</c> for an appearance that one leaves
 /// empty); their frames are <c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;/&lt;frame&gt;</c>, the
 /// appearance being its packet in the shape PAK (its type id's low 24 bits). Only the appearances the pack has folders
-/// for are drawn from it: the extractor writes no effects. A translucent shape's frame (one drawn through AlphaPal.ini)
-/// leaves out the pixels the shape blends: the GPU still blends those from the original.</para>
+/// for are drawn from it. A translucent shape's frame (one drawn through AlphaPal.ini) leaves out the pixels the shape
+/// blends, which the GPU still blends from the original, except an effect's (explosions, fire, smoke...), which holds
+/// them as the colour and coverage they draw.</para>
 /// <para>A terrain tile's colours are <c>terrain/&lt;key&gt;.hdf</c> (<see cref="TerrainTileName"/>), drawn inside the
 /// original tile's pixels; their alpha is unused.</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
@@ -63,6 +65,11 @@ namespace MCHdArt
         /// has one (255).
         /// </summary>
         std::vector<uint8_t> Indices;
+        /// <summary>
+        /// Whether the colours include the pixels a translucent shape blends (an effect's), as AlphaPal.ini's colours draw
+        /// them: a pixel may add light (colour without coverage), and the original's draw blends none of them.
+        /// </summary>
+        bool Blended = false;
 
         /// <summary>The original's width and height.</summary>
         int32_t OriginalWidth() const { return Width / std::max(Scale, 1); }
@@ -75,17 +82,21 @@ namespace MCHdArt
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>
     inline constexpr size_t IndexBytes = 2;
     inline constexpr uint8_t HasIndex = 255;
+    /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>
+    inline constexpr uint8_t HoldsBlended = 255;
 
     /// <summary>
     /// A frame from a PNG pair as the generator writes them: <paramref name="colorPath"/> (straight RGBA, made
-    /// premultiplied) and <paramref name="indexPath"/> (the same size; each original pixel's index read from its block's
-    /// top-left pixel) at <paramref name="scale"/> HD pixels per original pixel.
+    /// premultiplied; already premultiplied in a frame that holds its blended pixels) and <paramref name="indexPath"/>
+    /// (the same size; each original pixel's index read from its block's top-left pixel, and whether the frame holds its
+    /// blended pixels from the top-left pixel's blue) at <paramref name="scale"/> HD pixels per original pixel.
     /// </summary>
     std::expected<Frame, std::string> FrameFromPngs(const std::filesystem::path& colorPath,
                                                     const std::filesystem::path& indexPath, int32_t scale);
 
     /// <summary>
-    /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7), scale (u8), the
+    /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7, 2 = BC7 holding a
+    /// translucent shape's blended pixels too, which older builds leave to the original), scale (u8), the
     /// original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when the frame
     /// holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size). Little-endian.
     /// </summary>

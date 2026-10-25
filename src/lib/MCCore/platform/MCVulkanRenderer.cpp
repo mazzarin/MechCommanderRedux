@@ -43,6 +43,11 @@ namespace
     constexpr uint32_t GivenAlpha = 1u << 14;
     /// <summary>The draw writes the indices alone (the index-only pipeline); the shader doesn't read it.</summary>
     constexpr uint32_t IndexOnly = 1u << 15;
+    /// <summary>
+    /// Port-only: a translucent shape's coverage taken between its pixels (smooth edges), its place in the source in
+    /// the draw's walk (shaders/draw.pshader). Bit 16 is the terrain shader's HdColors.
+    /// </summary>
+    constexpr uint32_t SmoothEdges = 1u << 17;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -840,7 +845,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[11] = static_cast<int32_t>(after);
 
     const MCRect written{draw[0], draw[1], draw[2], draw[3]};
-    const bool blend = (op & (AlphaBlend | TableAfter)) != 0;
+    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0;
     const bool indexOnly = (op & IndexOnly) != 0;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
@@ -1709,7 +1714,8 @@ auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, 
 }
 
 void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
-                                   std::string_view command, const std::function<std::optional<uint32_t>()>& picture)
+                                   std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
+                                   bool smoothEdges)
 {
     const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
 
@@ -1726,8 +1732,17 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     }
 
     const uint16_t surface = SurfaceFor(target);
-    Add(surface, SourceKind::Picture, *index, place->first, place->second, KindTexture | OpaqueSource | AlphaBlend, 0,
-        0, 0);
+    const uint32_t op = KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u);
+
+    // A smooth-edged picture's place in the source is the whole picture.
+    if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
+    {
+        std::array<int32_t, 20>& draw = _Draws.back();
+        draw[16] = 0;
+        draw[17] = 0;
+        draw[18] = width - 1;
+        draw[19] = height - 1;
+    }
 }
 
 void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command)
@@ -1777,50 +1792,51 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         }
     }
 
-    BlitPicture(target, command.Blit, width, height, "ShapeBlit reading outside the shape's picture",
-                [&]() -> std::optional<uint32_t>
-                {
-                    const MCOptionalRef<DataImage> found =
-                        ImageOf(data, Seed(ImageKind::ShapeFill, width, height), "a transformed shape",
-                                [&]
-                                {
-                                    Extent extent{0, width, height};
-                                    int32_t widest = 0;
-                                    extent.Size = ShapeExtent(data, height, widest);
-                                    return extent;
-                                });
-
-                    if (!found.has_value())
-                    {
-                        return std::nullopt;
-                    }
-
-                    DataImage& image = found->get();
-
-                    if (image.PictureId == 0)
-                    {
-                        image.PictureId = ++_LastPictureId;
-                    }
-
-                    // The picture of the shape (by its number) through the table (by its slot's number).
-                    uint64_t key = image.PictureId;
-
-                    if (command.Table.has_value())
-                    {
-                        const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
-
-                        if (!slot.has_value())
+    BlitPicture(
+        target, command.Blit, width, height, "ShapeBlit reading outside the shape's picture",
+        [&]() -> std::optional<uint32_t>
+        {
+            const MCOptionalRef<DataImage> found =
+                ImageOf(data, Seed(ImageKind::ShapeFill, width, height), "a transformed shape",
+                        [&]
                         {
-                            return std::nullopt;
-                        }
+                            Extent extent{0, width, height};
+                            int32_t widest = 0;
+                            extent.Size = ShapeExtent(data, height, widest);
+                            return extent;
+                        });
 
-                        key = key << 32 | slot->Id;
-                    }
+            if (!found.has_value())
+            {
+                return std::nullopt;
+            }
 
-                    return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
-                                         [&](std::span<uint8_t> out)
-                                         { FillShape(data, height, width, command.Table, out); });
-                });
+            DataImage& image = found->get();
+
+            if (image.PictureId == 0)
+            {
+                image.PictureId = ++_LastPictureId;
+            }
+
+            // The picture of the shape (by its number) through the table (by its slot's number).
+            uint64_t key = image.PictureId;
+
+            if (command.Table.has_value())
+            {
+                const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
+
+                if (!slot.has_value())
+                {
+                    return std::nullopt;
+                }
+
+                key = key << 32 | slot->Id;
+            }
+
+            return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                                 [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
+        },
+        MCHdArt::SmoothEdges(command.ShapeTable.data()));
 }
 
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
@@ -2061,6 +2077,24 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             before = TableRow(*command.Table);
             break;
         }
+    }
+
+    // Port-only: a shape with smooth edges (with HD art on: the mechs' shadows) writes its indices as always, then its
+    // colour through the blend pipeline with its coverage taken between its own pixels (its place in the atlas).
+    if (command.Op == MCShapeOp::Draw && (op & IndexOnly) == 0 && MCHdArt::SmoothEdges(command.ShapeTable.data()))
+    {
+        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
+
+        if (Add(surface, SourceKind::Atlas, place->Page, at, from, op | SmoothEdges, 0, before, after))
+        {
+            std::array<int32_t, 20>& draw = _Draws.back();
+            draw[16] = place->X;
+            draw[17] = place->Y;
+            draw[18] = place->X + width - 1;
+            draw[19] = place->Y + rows - 1;
+        }
+
+        return;
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, after);

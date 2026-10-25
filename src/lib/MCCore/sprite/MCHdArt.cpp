@@ -5,6 +5,8 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCShape.h"
 
+#include <unordered_set>
+
 int GHdArt = 0;
 
 namespace
@@ -77,6 +79,8 @@ namespace
         std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>> MadeWith;
         bool PaletteLooked = false;
         uint64_t Version = 1;
+        /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
+        std::unordered_set<const uint8_t*> SmoothTables;
     };
 
     State& TheState()
@@ -513,6 +517,16 @@ const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& MCHdArt::MadeWi
     }
 
     return state.MadeWith;
+}
+
+void MCHdArt::SetSmoothEdgeTables(std::span<const uint8_t* const> tables)
+{
+    TheState().SmoothTables = std::unordered_set<const uint8_t*>(tables.begin(), tables.end());
+}
+
+bool MCHdArt::SmoothEdges(const uint8_t* table)
+{
+    return GHdArt != 0 && TheState().SmoothTables.contains(table);
 }
 
 uint64_t MCHdArt::PackVersion()

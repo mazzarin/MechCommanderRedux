@@ -101,6 +101,12 @@ static const uint GivenAlpha = 1u << 14;
 // A terrain tile's colours from the HD art pack: op.w the scale, walk the tile's place in the atlas (x, y, w, h).
 // (Bit 15 is the renderer's IndexOnly.)
 static const uint HdColors = 1u << 16;
+// A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
+// walk its place in the source (x0, y0, x1, y1).
+static const uint SmoothEdges = 1u << 17;
+// A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
+static const float EdgeLow = 0.3;
+static const float EdgeHigh = 0.7;
 // The most an HD colour channel is scaled by when today's colour differs from the pack's.
 static const float MaxCorrection = 4.0;
 
@@ -226,6 +232,80 @@ Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
     return output;
 }
 
+// Whether a source texel inside the shape's place (walk: x0, y0, x1, y1) is drawn, and its value.
+bool DrawnTexel(Input input, int2 texel, out uint value)
+{
+    value = 0;
+
+    if (any(texel < int2(input.walk.xy)) || any(texel > int2(input.walk.zw)))
+    {
+        return false;
+    }
+
+    const float4 sample = Fetch(sourceTex, sourceSampler, texel);
+    value = Byte(sample.r);
+
+    // A picture of indices (an opaque source): colours 0 and 255 draw nothing. An atlas page: the state says.
+    if ((input.op.x & OpaqueSource) != 0)
+    {
+        return value != 0 && value != 255;
+    }
+
+    const uint state = Byte(sample.g);
+    return state != 0 && state != 2;
+}
+
+// The cubic B-spline's weights for the four source pixels around a point a fraction f past the second.
+float4 BSplineWeights(float f)
+{
+    const float f2 = f * f;
+    const float f3 = f2 * f;
+    return float4(1.0 - 3.0 * f + 3.0 * f2 - f3, 4.0 - 6.0 * f2 + 3.0 * f3, 1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3, f3) /
+           6.0;
+}
+
+// A smooth-edged shape's coverage at drawn pixel `target`: its drawn source pixels (the 4 x 4 around the centre)
+// smoothed by a cubic B-spline, which rounds the pixel steps into curves, then ramped so the edge is about a drawn
+// pixel wide. `value` becomes a drawn neighbour's when the pixel under the centre isn't drawn.
+float ShapeCoverage(Input input, int2 target, inout uint value)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
+    const float2 at =
+        float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float4 wx = BSplineWeights(f.x);
+    const float4 wy = BSplineWeights(f.y);
+    float coverage = 0.0;
+    bool found = false;
+    float nearest = 1e9;
+
+    for (int y = 0; y < 4; y++)
+    {
+        for (int x = 0; x < 4; x++)
+        {
+            uint tapValue;
+
+            if (DrawnTexel(input, base + int2(x - 1, y - 1), tapValue))
+            {
+                coverage += wx[x] * wy[y];
+                const float2 d = float2(x - 1, y - 1) - f;
+                const float distance = dot(d, d);
+
+                if (!found || distance < nearest)
+                {
+                    found = true;
+                    nearest = distance;
+                    value = tapValue;
+                }
+            }
+        }
+    }
+
+    return smoothstep(EdgeLow, EdgeHigh, coverage);
+}
+
 // An HD art frame's colour at a texel, transparent outside its size.
 float4 HdTexel(int2 texel, int2 size)
 {
@@ -301,6 +381,7 @@ Output main(Input input)
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;
+    float coverage = 1.0;
 
     if (kind == KindHash)
     {
@@ -320,6 +401,12 @@ Output main(Input input)
         const float4 sample = FetchSource(texel);
         value = Byte(sample.r);
         state = (flags & OpaqueSource) != 0 ? 1 : Byte(sample.g);
+
+        if ((flags & SmoothEdges) != 0)
+        {
+            coverage = ShapeCoverage(input, target, value);
+            state = coverage > 0.0 ? 1 : 0;
+        }
     }
     else if (kind == KindGouraud)
     {
@@ -393,6 +480,12 @@ Output main(Input input)
         return HdTerrainPixel(input, target, original, value);
     }
 
+    // A smooth-edged opaque shape's colour pass (its indices were written by an index-only one).
+    if ((flags & SmoothEdges) != 0 && (flags & (AlphaBlend | TableAfter)) == 0)
+    {
+        return Blended(float4(Shown(value), 1.0) * coverage);
+    }
+
     if ((flags & (AlphaBlend | TableAfter)) == 0)
     {
         return Opaque(value);
@@ -430,11 +523,12 @@ Output main(Input input)
         }
     }
 
-    // Drawn through the blend pipeline, full coverage replaces the pixel's colour.
+    // Drawn through the blend pipeline, full coverage replaces the pixel's colour; a smooth edge's partial coverage
+    // blends that colour in.
     if (opaque)
     {
-        return Opaque(value);
+        return coverage < 1.0 ? Blended(float4(Shown(value), 1.0) * coverage) : Opaque(value);
     }
 
-    return Blended(blend);
+    return Blended(blend * coverage);
 }

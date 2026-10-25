@@ -343,7 +343,8 @@ private:
     /// noted as not supported).
     /// </summary>
     void BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
-                     std::string_view command, const std::function<std::optional<uint32_t>()>& picture);
+                     std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
+                     bool smoothEdges = false);
     /// <summary>
     /// Where a blit of a picture <paramref name="width"/> x <paramref name="height"/> goes (its rectangle) and reads
     /// from (its first pixel and steps); none when it draws nothing, or reads outside the picture (then

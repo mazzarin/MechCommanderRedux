@@ -98,6 +98,20 @@ add_custom_target(mc_shaders DEPENDS ${MC_SHADER_HEADERS})
 add_library(MCCore STATIC ${MCCORE_SOURCES})
 add_dependencies(MCCore mc_shaders mc_version)
 target_include_directories(MCCore PUBLIC ${MC_SRC}/lib/MCCore ${MC_SRC}/lib/mimalloc-3.3.1/include ${MC_GENERATED_DIR})
+# bc7enc_rdo (the HD art pack's BC7 codec, sprite/MCBc7 wraps it): outside MCCore's project, as on Windows, and built
+# without MCCore's precompiled header.
+set(MC_BC7ENC_SOURCES ${MC_SRC}/lib/bc7enc_rdo/bc7enc.cpp ${MC_SRC}/lib/bc7enc_rdo/bc7decomp.cpp
+                      ${MC_SRC}/lib/bc7enc_rdo/ert.cpp)
+target_sources(MCCore PRIVATE ${MC_BC7ENC_SOURCES})
+set_source_files_properties(${MC_BC7ENC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
+target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/bc7enc_rdo)
+# miniz (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++ options.
+add_library(mc_miniz STATIC ${MC_SRC}/lib/miniz-3.0.2/miniz.c)
+target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME MINIZ_NO_STDIO
+                                           MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+target_compile_options(mc_miniz PRIVATE -w)
+target_include_directories(mc_miniz PUBLIC ${MC_SRC}/lib/miniz-3.0.2)
+target_link_libraries(MCCore PUBLIC mc_miniz)
 target_precompile_headers(MCCore PRIVATE ${MC_SRC}/lib/MCCore/stdafx.h)
 target_link_libraries(MCCore PUBLIC SDL3::SDL3-static mimalloc-static)
 # Apple's clang fuses a*b+c into one rounding where MSVC rounds twice; off, the game computes what it does on Windows

@@ -71,8 +71,9 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     auto manager = std::make_unique<MCSpriteManager>(Key{});
 
     // The preferred PAK is "<name>90.pak" ("<name>.pak" in the demo); faithful: the CD retry always adds "90.pak".
+    const std::string_view preferredSuffix = InDemo == 0 ? "90" : "";
     std::expected<std::unique_ptr<MCPacketFile>, std::string> preferred =
-        OpenSpriteFile(spriteFileName, InDemo == 0 ? "90.pak" : ".pak", "90.pak");
+        OpenSpriteFile(spriteFileName, std::format("{}.pak", preferredSuffix), "90.pak");
 
     if (!preferred.has_value())
     {
@@ -130,6 +131,23 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     }
 
     MCHdArt::SetSmoothEdgeTables(shadowTables);
+
+    // Port-only: the HD art pack's mech and object folders are numbered by these files; a pack records their sizes.
+    std::vector<std::pair<std::string, uint32_t>> files = {
+        {std::string(spriteFileName) + std::string(preferredSuffix), manager->_SpriteFiles[0]->GetLength()},
+        {std::string(spriteFileName), manager->_SpriteFiles[1]->GetLength()}};
+
+    for (int32_t part = 0; part < MechPartCount; part++)
+    {
+        files.emplace_back(PartFileNames[part], manager->_PartFiles[part]->GetLength());
+
+        if (manager->_PartFiles90[part] != nullptr)
+        {
+            files.emplace_back(std::format("{}90", PartFileNames[part]), manager->_PartFiles90[part]->GetLength());
+        }
+    }
+
+    MCHdArt::SetSpriteFiles(files);
     return manager;
 }
 

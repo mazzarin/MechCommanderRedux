@@ -250,9 +250,15 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
     }
 
     std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
-    // Port-only: the HD art pack's frames for it, if it has them (it has none for effects).
-    MCHdArt::Attach(
-        shape, MCHdArt::ObjectShapeKey{_SpriteFileNames[_AppearanceSources[appearanceNum]], appearanceNum, packetNum});
+
+    // Port-only: the HD art pack's frames for it, if it has them (it has none for effects); no key is made while HD art
+    // is off.
+    if (MCHdArt::Active())
+    {
+        MCHdArt::Attach(shape, MCHdArt::ObjectShapeKey{_SpriteFileNames[_AppearanceSources[appearanceNum]],
+                                                       appearanceNum, packetNum});
+    }
+
     return shape;
 }
 

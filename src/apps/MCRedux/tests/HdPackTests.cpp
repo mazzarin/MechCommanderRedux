@@ -84,7 +84,7 @@ namespace
 /// <summary>
 /// BC7 round trip (bc7enc_rdo): a sprite-like picture comes back above the PSNR floor; a block of transparent black
 /// (frame padding) comes back exactly, and one of another colour within a step a channel (bc7enc can miss a
-/// translucent colour by one).
+/// translucent colour by one). A frame holding its blended pixels (an effect's) reads back as one.
 /// </summary>
 TEST_CASE("hd art: BC7 blocks decode close to the pixels encoded, padding exactly")
 {
@@ -157,7 +157,15 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
     CHECK_EQ(read->Scale, Scale);
     CHECK(read->Format == MCHdArt::ColorFormat::Bc7);
     CHECK(read->Indices == frame.Indices);
+    CHECK(!read->Blended);
     CHECK(Psnr(frame.Colors, MCBc7::Decode(read->Colors, read->Width, read->Height)) >= MinimumPsnr);
+
+    frame.Blended = true;
+    const std::vector<uint8_t> blendedFile = MCHdArt::EncodeHdf(frame);
+    const auto blended = MCHdArt::DecodeHdf(blendedFile, Width, Height);
+    REQUIRE(blended.has_value());
+    CHECK(blended->Blended);
+    CHECK(blended->Indices == frame.Indices);
 
     CHECK(MCHdArt::DecodeHdf(file, 0, 0).has_value());
     CHECK(!MCHdArt::DecodeHdf(file, Width + 1, Height).has_value());

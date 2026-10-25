@@ -141,6 +141,21 @@ void InitAlphaLookup(std::span<const MCVfxRgb, 256> palette)
     MCRenderer::AlphaTableChanged();
 }
 
+MCAlphaBlend AlphaColorBlend(const MCAlphaColor& entry)
+{
+    constexpr float Full = 255.0f;
+
+    // A colour dodge (background * 255 / (255 - RGB)) brightens what is under it.
+    if (entry.Alpha == 0.0f && entry.BackgroundWeight == 0.0f)
+    {
+        return {entry.R / Full, entry.G / Full, entry.B / Full, 0.0f};
+    }
+
+    return {std::clamp(entry.R * entry.Alpha / Full, 0.0f, 1.0f), std::clamp(entry.G * entry.Alpha / Full, 0.0f, 1.0f),
+            std::clamp(entry.B * entry.Alpha / Full, 0.0f, 1.0f),
+            std::clamp(1.0f - entry.BackgroundWeight, 0.0f, 1.0f)};
+}
+
 uint8_t FindClosest(std::span<const MCVfxRgb, 256> palette, int r, int g, int b)
 {
     uint8_t best = 10;

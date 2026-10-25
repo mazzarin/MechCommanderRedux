@@ -382,6 +382,21 @@ struct MCAlphaColor
 /// </summary>
 extern std::array<MCAlphaColor, AlphaColorCount> MCAlphaColors;
 
+/// <summary>Port-only: what an alpha colour draws over a pixel, premultiplied: <c>RGB + pixel * (1 - Coverage)</c>.</summary>
+struct MCAlphaBlend
+{
+    float R = 0.0f;
+    float G = 0.0f;
+    float B = 0.0f;
+    float Coverage = 0.0f;
+};
+
+/// <summary>
+/// Port-only: <paramref name="entry"/> (a special colour's) as a blend of full colour: <c>RGB * A</c> with
+/// <c>1 - B2</c> coverage, or, for a colour dodge (A and B2 both 0), added light of its colour, with none.
+/// </summary>
+MCAlphaBlend AlphaColorBlend(const MCAlphaColor& entry);
+
 /// <summary>
 /// Builds <see cref="AlphaTable"/> and <see cref="SpecialColor"/> for <paramref name="palette"/> from
 /// <c>AlphaPal.ini</c>: lines of <c>index R G B A B2</c>; a special colour blended over background (r, g, b) (8-bit)

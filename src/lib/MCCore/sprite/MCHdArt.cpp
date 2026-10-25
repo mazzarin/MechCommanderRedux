@@ -71,6 +71,8 @@ namespace
     constexpr std::array<uint8_t, 4> HdfMagic = {'M', 'C', 'H', 'D'};
     constexpr uint32_t HdfVersion = 1;
     constexpr uint32_t HdfBc7 = 1;
+    /// <summary>The colour format of a frame holding its blended pixels (MCHdArt::Frame::Blended).</summary>
+    constexpr uint32_t HdfBc7Blended = 2;
     constexpr size_t HdfHeaderBytes = 16;
     constexpr size_t MaxHdfBytes = 64u * 1024u * 1024u;
     using MCHdArt::HasIndex;
@@ -602,9 +604,10 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
     made.Scale = scale;
     made.Format = ColorFormat::Rgba8;
     made.Colors = std::move(color->Pixels);
+    made.Blended = !index->Pixels.empty() && index->Pixels[2] == HoldsBlended;
 
     // Premultiplied, so the GPU's blend and filtering need no division.
-    for (size_t at = 0; at < made.Colors.size(); at += BytesPerPixel)
+    for (size_t at = 0; !made.Blended && at < made.Colors.size(); at += BytesPerPixel)
     {
         const uint32_t alpha = made.Colors[at + 3];
 
@@ -679,7 +682,7 @@ std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame, const MCBc7::MCBc7Op
                                             : MCBc7::Encode(frame.Colors, frame.Width, frame.Height, options);
     std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
     WriteLittle(bytes, HdfVersion, 2);
-    WriteLittle(bytes, HdfBc7, 1);
+    WriteLittle(bytes, frame.Blended ? HdfBc7Blended : HdfBc7, 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.Scale), 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalWidth()), 2);
     WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalHeight()), 2);
@@ -693,12 +696,14 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
     -> std::expected<Frame, std::string>
 {
     if (bytes.size() < HdfHeaderBytes || !std::equal(HdfMagic.begin(), HdfMagic.end(), bytes.begin()) ||
-        ReadLittle(bytes, 4, 2) != HdfVersion || ReadLittle(bytes, 6, 1) != HdfBc7)
+        ReadLittle(bytes, 4, 2) != HdfVersion ||
+        (ReadLittle(bytes, 6, 1) != HdfBc7 && ReadLittle(bytes, 6, 1) != HdfBc7Blended))
     {
         return std::unexpected(std::string("not a version 1 BC7 HD frame"));
     }
 
     Frame frame;
+    frame.Blended = ReadLittle(bytes, 6, 1) == HdfBc7Blended;
     frame.Scale = static_cast<int32_t>(ReadLittle(bytes, 7, 1));
     const auto originalWidth = static_cast<int32_t>(ReadLittle(bytes, 8, 2));
     const auto originalHeight = static_cast<int32_t>(ReadLittle(bytes, 10, 2));

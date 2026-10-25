@@ -21,7 +21,8 @@
 //
 // An HD art frame (port-only, sprite/MCHdArt.h) is drawn over the original shape's place: each drawn pixel takes the
 // frame's colour at its centre, filtered between the frame's pixels, so the shape shows at the output's resolution.
-// A translucent shape's frame leaves out its blended pixels, which the original's draw still blends (BlendedOnly).
+// A translucent shape's frame leaves out its blended pixels, which the original's draw still blends (BlendedOnly),
+// except one that holds them (HdLight: an effect's), whose pixels may add light (colour without coverage).
 // A paint scheme's table recolours the pixels whose original index it changes. A terrain tile with HD colours
 // (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's.
 // HD colours are corrected by their original index's colour now over the one the pack was made from (Corrected), so
@@ -109,11 +110,15 @@ static const uint SmoothEdges = 1u << 17;
 // frame), or only its blended ones (which the HD frame leaves out).
 static const uint OpaqueOnly = 1u << 18;
 static const uint BlendedOnly = 1u << 19;
+// Port-only: an HD art frame holding its blended pixels.
+static const uint HdLight = 1u << 21;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
 // The most an HD colour channel is scaled by when today's colour differs from the pack's.
 static const float MaxCorrection = 4.0;
+// Light below this (under two steps of 8 bits) is BC7's error around a frame's empty pixels, not the frame's.
+static const float LightFloor = 1.5 / 255.0;
 
 // The alpha colours' kinds.
 static const uint AlphaNothing = 0;
@@ -345,7 +350,8 @@ Output HdPixel(Input input, int2 target)
     const float4 bottom = lerp(HdTexel(base + int2(0, 1), size), HdTexel(base + int2(1, 1), size), f.x);
     float4 color = lerp(top, bottom, f.y);
 
-    if (color.a <= 0.0)
+    // A frame holding its blended pixels may add light where it has no coverage (BC7's error adds none).
+    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb < LightFloor)))
     {
         discard;
     }

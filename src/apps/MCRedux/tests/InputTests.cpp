@@ -21,6 +21,28 @@ TEST_CASE("input: key lParam and Windows-1252")
     CHECK_EQ(MCInput::MakePointLParam(-1, 2), 0x0002ffff);
 }
 
+TEST_CASE("input: full screen, the cursor stays off the screen's corners and still reaches its sides")
+{
+    // A 1512x982-point screen showing a 1663x1080 picture: the cursor keeps two points from either side.
+    const SDL_Rect guarded = MCInput::GuardCorners(SDL_Rect{0, 0, 1512, 982});
+    CHECK_EQ(guarded.x, MCInput::CornerGuardPoints);
+    CHECK_EQ(guarded.x + guarded.w, 1512 - MCInput::CornerGuardPoints);
+    CHECK_EQ(guarded.y, 0);
+    CHECK_EQ(guarded.h, 982);
+
+    // The last point it reaches at a side is that side, for edge scrolling; inside, the plain mapping holds.
+    CHECK_EQ(MCInput::GuardedX(2.0f, guarded, 2, 0, 1663), 0);
+    CHECK_EQ(MCInput::GuardedX(2.9f, guarded, 3, 0, 1663), 0);
+    CHECK_EQ(MCInput::GuardedX(3.0f, guarded, 3, 0, 1663), 3);
+    CHECK_EQ(MCInput::GuardedX(1508.9f, guarded, 1659, 0, 1663), 1659);
+    CHECK_EQ(MCInput::GuardedX(1509.0f, guarded, 1659, 0, 1663), 1662);
+
+    // Too narrow to lose four points, an area is kept whole.
+    const SDL_Rect narrow = MCInput::GuardCorners(SDL_Rect{10, 0, 4, 10});
+    CHECK_EQ(narrow.x, 10);
+    CHECK_EQ(narrow.w, 4);
+}
+
 TEST_CASE("input: posted messages reach the window procedure")
 {
     MCInput::Reset();

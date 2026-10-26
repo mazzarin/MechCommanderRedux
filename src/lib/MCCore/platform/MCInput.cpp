@@ -38,6 +38,8 @@ namespace
         std::shared_ptr<SDL_Cursor> GameCursor;
         /// <summary>The game's ClipCursor rectangle (logical screen), if it set one.</summary>
         std::optional<MCClipRect> ClipRect;
+        /// <summary>The window area keeping the cursor off the screen's corners (GuardCorners), if any.</summary>
+        std::optional<SDL_Rect> CornerGuard;
         /// <summary>The mouse is over the window's letterbox bars, not the picture.</summary>
         bool OutsidePicture = false;
         uint32_t DoubleClickTime = 500;
@@ -166,6 +168,12 @@ namespace
         const MCClipRect area = screenArea();
         point.x = std::clamp(static_cast<int32_t>(std::floor(x)), area.left, area.right - 1);
         point.y = std::clamp(static_cast<int32_t>(std::floor(y)), area.top, area.bottom - 1);
+
+        if (const std::optional<SDL_Rect>& guard = state().CornerGuard; guard.has_value())
+        {
+            point.x = MCInput::GuardedX(windowX, *guard, point.x, area.left, area.right);
+        }
+
         return point;
     }
 
@@ -255,12 +263,13 @@ namespace
     /// Sets where the system cursor may go: the game's ClipCursor rectangle if it set one; else, full screen and
     /// focused, the picture. The original's full screen switched the monitor to the game's resolution, so the mouse
     /// never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's cursor
-    /// stuck at the edge.
+    /// stuck at the edge. Kept to the picture, the cursor stays off its corners too (MCInput::GuardCorners).
     /// </summary>
     void applyMouseRect()
     {
         MCInputState& input = state();
         const std::shared_ptr<MCDisplay> display = input.Display.lock();
+        input.CornerGuard.reset();
 
         if (display == nullptr)
         {
@@ -269,8 +278,9 @@ namespace
 
         SDL_Window* window = &display->Window();
         std::optional<MCClipRect> logical = input.ClipRect;
+        const bool fullscreenPicture = !logical && input.Active && display->IsFullscreen();
 
-        if (!logical && input.Active && display->IsFullscreen())
+        if (fullscreenPicture)
         {
             logical = screenArea();
         }
@@ -293,6 +303,13 @@ namespace
         area.y = static_cast<int>(std::ceil(top));
         area.w = std::max(1, static_cast<int>(std::floor(right)) - area.x);
         area.h = std::max(1, static_cast<int>(std::floor(bottom)) - area.y);
+
+        if (fullscreenPicture)
+        {
+            area = MCInput::GuardCorners(area);
+            input.CornerGuard = area;
+        }
+
         SDL_SetWindowMouseRect(window, &area);
     }
 
@@ -734,6 +751,33 @@ namespace MCInput
         applyMouseRect();
     }
 
+    SDL_Rect GuardCorners(SDL_Rect picture)
+    {
+        if (picture.w > 2 * CornerGuardPoints)
+        {
+            picture.x += CornerGuardPoints;
+            picture.w -= 2 * CornerGuardPoints;
+        }
+
+        return picture;
+    }
+
+    int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right)
+    {
+        // The cursor reaches the area's first point and its last (SDL's confinement holds x + w - 1).
+        if (windowX < static_cast<float>(guarded.x + 1))
+        {
+            return left;
+        }
+
+        if (windowX >= static_cast<float>(guarded.x + guarded.w - 1))
+        {
+            return right - 1;
+        }
+
+        return x;
+    }
+
     void RefreshMouseArea()
     {
         applyMouseRect();
@@ -915,6 +959,7 @@ namespace MCInput
         input.DoubleClickTime = 500;
         input.Active = false;
         input.TextInput = false;
+        input.CornerGuard.reset();
         input.LastClickButton = -1;
         input.LastClickTime = 0;
         input.LastClickPos = {};

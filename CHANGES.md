@@ -72,6 +72,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 ### Mouse
 
 - The mouse cursor is the system cursor, so it moves smoothly even when the game's frame rate drops.
+- Full screen, the cursor stops two points short of the screen's left and right edges (which still scroll the map),
+  so edge scrolling no longer runs it into a screen corner and fires the corner's hot corner action (macOS's Lock
+  Screen, Mission Control...).
 - An item dragged in the logistics inventory moves with the cursor.
 - The mouse wheel works; the original didn't use it. Over the battlefield, wheel up zooms in and wheel down zooms out,
   a little per notch. Over the tactical map it zooms the map, as its zoom buttons do. Over any list or text with a

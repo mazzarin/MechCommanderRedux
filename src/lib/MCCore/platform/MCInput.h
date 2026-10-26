@@ -134,9 +134,30 @@ namespace MCInput
 
     /// <summary>
     /// Confines the cursor to a rectangle of the logical screen (<c>ClipCursor</c>). None frees it, back to the
-    /// default: the picture while full screen and focused, anywhere otherwise.
+    /// default: the picture while full screen and focused (kept off its corners: <see cref="GuardCorners"/>),
+    /// anywhere otherwise.
     /// </summary>
     void ClipCursor(std::optional<MCClipRect> rect);
+
+    /// <summary>
+    /// How far (window points) the cursor is kept from the picture's left and right sides while full screen and
+    /// focused: then the picture's corners are the screen's, where macOS's hot corners (Lock Screen, Mission
+    /// Control...) fire, and edge scrolling pushes the cursor into them.
+    /// </summary>
+    inline constexpr int CornerGuardPoints = 2;
+
+    /// <summary>
+    /// The window area the cursor may cover full screen: <paramref name="picture"/>'s, <see cref="CornerGuardPoints"/>
+    /// in from its left and right sides, so it reaches no corner (all of it, if too narrow for that).
+    /// </summary>
+    SDL_Rect GuardCorners(SDL_Rect picture);
+
+    /// <summary>
+    /// The logical x of a window x inside a <see cref="GuardCorners"/> area: <paramref name="x"/>, its plain mapping,
+    /// except at the last point the cursor reaches at either side, which is that side of the screen (from
+    /// <paramref name="left"/> to <paramref name="right"/>, exclusive), so edge scrolling still works there.
+    /// </summary>
+    int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right);
 
     /// <summary>Recomputes the cursor's area after the picture moved in the window without a window event (a new
     /// logical size).</summary>

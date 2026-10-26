@@ -220,6 +220,13 @@ namespace MCHdArt
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
 
     /// <summary>
+    /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
+    /// (the mech bar's damage diagrams: the interface's pixel art), not the original's pixels' smoothed (the renderer's
+    /// default for a frame that doesn't hold its blended pixels).
+    /// </summary>
+    bool KeepsFrameEdges(const uint8_t* table);
+
+    /// <summary>
     /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
     /// none when it isn't attached (or its owner is gone).
     /// </summary>

@@ -489,6 +489,12 @@ private:
                                                   int32_t height);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+    /// <summary>
+    /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
+    /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
+    /// smooth.
+    /// </summary>
+    static HdEdges HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table);
 
     /// <summary>
     /// Port-only: draws the glyph <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows

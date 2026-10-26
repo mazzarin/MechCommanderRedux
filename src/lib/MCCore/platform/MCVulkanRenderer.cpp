@@ -1947,12 +1947,17 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         }
 
         AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table, std::nullopt, HdColours::Corrected,
-              hd->Blended ? HdEdges::Frame : HdEdges::Smooth);
+              HdEdgesOf(*hd, command.ShapeTable));
         return;
     }
 
     BlitPicture(target, command.Blit, width, height, ReadsOutside, picture,
                 MCHdArt::SmoothEdges(command.ShapeTable.data()));
+}
+
+auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
+{
+    return frame.Blended || MCHdArt::KeepsFrameEdges(table.data()) ? HdEdges::Frame : HdEdges::Smooth;
 }
 
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
@@ -2285,7 +2290,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             // The frame covers the bounds, which may be wider than the shape's widest row.
             const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};
             const Quad shapeFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
-            const HdEdges edges = hd->Blended ? HdEdges::Frame : HdEdges::Smooth;
+            const HdEdges edges = HdEdgesOf(*hd, command.ShapeTable);
 
             if (translucent && !hd->Blended)
             {

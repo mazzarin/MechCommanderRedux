@@ -23,11 +23,16 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
+#include "object/MCBullet.h"
 #include "object/MCExplosion.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCLaser.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCObjectSystem.h"
+#include "object/MCProjectileLaser.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -3388,6 +3393,183 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
                 Shoot(folder, std::format("{}_{:02}", name, frame), original);
             }
         }
+    }
+}
+
+namespace
+{
+    /// <summary>The pictures a weapon of --hd-weapons gets: frames after it fires, spread over its flight and hit.</summary>
+    constexpr int32_t WeaponShots = 6;
+
+    /// <summary>A weapon --hd-weapons fires: its pictures' name, its master component id and the frames it is shot at.</summary>
+    struct PicturedWeapon
+    {
+        std::string_view Name;
+        int32_t MasterId = 0;
+        std::array<int32_t, WeaponShots> ShotFrames{};
+    };
+
+    /// <summary>
+    /// The weapons --hd-weapons fires, by their Inner Sphere master ids (logistics' FitComponents): the PPC, the Gauss
+    /// rifle and the large ER laser, all three projectile lasers. Over mission 1's 200 units the PPC's bolt grows for five
+    /// frames and its hit plays from the seventh; the slug and the laser's bolt fly four and hit from the sixth.
+    /// </summary>
+    constexpr std::array<PicturedWeapon, 3> PicturedWeapons = {{
+        {"ppc", 0x91, {1, 3, 5, 7, 9, 13}},
+        {"gauss", 0x68, {1, 2, 4, 6, 7, 9}},
+        {"erlaser", 0x8d, {1, 2, 4, 6, 8, 10}},
+    }};
+
+    /// <summary>
+    /// Sends <paramref name="masterId"/>'s weapon effect from <paramref name="shooter"/>'s right arm to
+    /// <paramref name="target"/>'s centre torso as a hit of MCBattleMech::FireWeapon launches it (its LaunchWeaponFX),
+    /// with a shot that does no damage, so the target stands for every weapon. Returns the effect.
+    /// </summary>
+    std::shared_ptr<MCGameObject> LaunchWeapon(MCBattleMech& shooter, const std::shared_ptr<MCBattleMech>& target,
+                                               int32_t masterId)
+    {
+        const MCMasterComponent& weapon = MasterComponentList[static_cast<size_t>(masterId)];
+        std::shared_ptr<MCGameObject> fx = CreateObject(static_cast<int32_t>(WeaponFXTable[weapon.WeaponEffect]));
+        MCTest::Scope scope(std::format("weapon {} ({}), effect {}", masterId, weapon.Name, weapon.WeaponEffect));
+        REQUIRE(fx != nullptr);
+        const std::shared_ptr<MCGameObject> source = shooter.SharedAs<MCGameObject>();
+        const int32_t sourceHotSpot = shooter.BodyAt(MechRightArm).HotSpotNumber;
+        const int32_t targetHotSpot = target->BodyAt(MechCenterTorso).HotSpotNumber;
+        const float entryAngle = target->RelFacingTo(shooter.GetPosition(), -1);
+        const auto aim = [&](MCWeaponShotInfo& shot)
+        { shot.Init(source, masterId, 0.0f, MechCenterTorso, entryAngle); };
+        const auto launch = [&](auto& effect, MCWeaponShotInfo& shot)
+        {
+            aim(shot);
+            effect.Owner = source;
+            effect.Target = target;
+            effect.OwnerHotSpot = sourceHotSpot;
+            effect.TargetHotSpot = targetHotSpot;
+        };
+
+        if (fx->ObjectClass == MCObjectClass::Bullet)
+        {
+            auto& bullet = static_cast<MCBullet&>(*fx);
+            launch(bullet, bullet.NewShot());
+        }
+        else if (fx->ObjectClass == MCObjectClass::ProjectileLaser)
+        {
+            auto& projectile = static_cast<MCProjectileLaser&>(*fx);
+            launch(projectile, projectile.ShotInfo);
+        }
+        else
+        {
+            REQUIRE(fx->ObjectClass == MCObjectClass::Laser);
+            auto& laser = static_cast<MCLaser&>(*fx);
+            aim(laser.ShotInfo);
+            laser.Source = source;
+            laser.Target = target;
+            laser.SourceHotSpot = sourceHotSpot;
+            laser.TargetHotSpot = targetHotSpot;
+        }
+
+        std::cout << std::format("  {}: {} (effect {}, object type {}, class {})\n", masterId, weapon.Name,
+                                 weapon.WeaponEffect, WeaponFXTable[weapon.WeaponEffect],
+                                 static_cast<int32_t>(fx->ObjectClass));
+        WeaponList()->Add(fx);
+        return fx;
+    }
+
+    /// <summary>
+    /// Turns <paramref name="mech"/> to face <paramref name="point"/>: FaceMech's facing turned by the mech's relative
+    /// facing to the point one way or the other, whichever leaves it facing the point.
+    /// </summary>
+    void FaceMechTo(MCBattleMech& mech, MCVector3D point)
+    {
+        MCTestGame::FaceMech(mech, 0.0f);
+        const float turn = mech.RelFacingTo(point, -1);
+        float best = std::numeric_limits<float>::max();
+        float facing = 0.0f;
+
+        for (const float candidate : {turn, -turn})
+        {
+            MCTestGame::FaceMech(mech, candidate);
+
+            if (const float left = std::abs(mech.RelFacingTo(point, -1)); left < best)
+            {
+                best = left;
+                facing = candidate;
+            }
+        }
+
+        MCTestGame::FaceMech(mech, facing);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-weapons &lt;pack&gt; --shots &lt;folder&gt;</c> pictures weapons firing: in mission 1 (the map
+/// revealed), the player's mech faces the next mech of its lance and fires a PPC, a Gauss rifle and a large ER laser at
+/// it in turn (shots that do no damage), the camera between the two, each shot at frames spread over its flight and hit
+/// (<c>&lt;weapon&gt;_&lt;n&gt;_hd.png</c>), or with <c>--hd-original 1</c> without HD art. A run plays out the same
+/// every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as --hd-pack's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-weapons pictures weapons firing beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-weapons");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const std::shared_ptr<MCMover> shooterMover = GetMoverFromPartId(PlayerMechPartId);
+    const std::shared_ptr<MCMover> targetMover = GetMoverFromPartId(PlayerMechPartId + 1);
+    REQUIRE(shooterMover != nullptr);
+    REQUIRE(targetMover != nullptr);
+    REQUIRE(shooterMover->ObjectClass == MCObjectClass::BattleMech);
+    REQUIRE(targetMover->ObjectClass == MCObjectClass::BattleMech);
+    const auto shooter = std::static_pointer_cast<MCBattleMech>(shooterMover);
+    const auto target = std::static_pointer_cast<MCBattleMech>(targetMover);
+    const MCVector3D from = shooter->GetPosition();
+    const MCVector3D to = target->GetPosition();
+    std::cout << std::format("  shooter at ({:.0f}, {:.0f}), target at ({:.0f}, {:.0f}), {:.0f} apart\n", from.X,
+                             from.Y, to.X, to.Y, std::hypot(to.X - from.X, to.Y - from.Y));
+    FaceMechTo(*shooter, to);
+    Eye()->ChangeTarget(nullptr, true);
+    Eye()->SetPosition(MCVector3D((from.X + to.X) * 0.5f, (from.Y + to.Y) * 0.5f, (from.Z + to.Z) * 0.5f));
+
+    // The frames before each weapon fires (the last one's hit effect gone), and those it is given to finish.
+    constexpr int32_t SettleFrames = 15;
+    constexpr int32_t Frames = 30;
+
+    for (const PicturedWeapon& weapon : PicturedWeapons)
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const std::weak_ptr<MCGameObject> fx = LaunchWeapon(*shooter, target, weapon.MasterId);
+        int32_t shot = 0;
+        int32_t lasted = 0;
+
+        for (int32_t frame = 1; frame <= Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (!fx.expired())
+            {
+                lasted = frame;
+            }
+
+            if (std::ranges::contains(weapon.ShotFrames, frame))
+            {
+                Shoot(folder, std::format("{}_{}", weapon.Name, shot++), original);
+            }
+        }
+
+        std::cout << std::format("  {}: the shot flew {} frames\n", weapon.Name, lasted);
     }
 }
 

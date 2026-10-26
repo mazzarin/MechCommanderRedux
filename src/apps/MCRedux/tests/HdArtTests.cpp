@@ -3476,6 +3476,43 @@ namespace
 
     std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
     void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
+
+    /// <summary>
+    /// Whether a shape's frame shows nothing: no pixel drawn, or a translucent one's every pixel colour 0 (AlphaPal.ini's
+    /// marker colour, transparent).
+    /// </summary>
+    bool BlankFrame(const DecodedFrame& frame)
+    {
+        for (size_t i = 0; i < frame.Index.size(); ++i)
+        {
+            if (frame.Drawn[i] != 0 && (!frame.Translucent || frame.Index[i] != 0))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the audit counts a draw as sharp: drawn so, or showing nothing (it covered no pixels, or its shape's
+    /// frame is blank: invisible with HD art on or off), so nothing of the original's pixels shows.
+    /// </summary>
+    bool AuditSharp(const MCVulkanRenderer::AuditedDraw& draw)
+    {
+        if (draw.Sharp || draw.Pixels == 0)
+        {
+            return true;
+        }
+
+        if (!VfxIsShapeTable(draw.Data) || draw.Frame < 0)
+        {
+            return false;
+        }
+
+        const auto decoded = Decode(draw.Data, draw.Frame);
+        return decoded.has_value() && BlankFrame(*decoded);
+    }
 }
 
 namespace
@@ -4708,7 +4745,7 @@ namespace
         return [&tally](const MCVulkanRenderer::AuditedDraw& draw)
         {
             AuditTally& entry =
-                tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
+                tally[{std::string(draw.Command), AuditSharp(draw), draw.Data.data(), draw.From, draw.Window}];
             const bool table = VfxIsShapeTable(draw.Data);
 
             if (entry.Count == 0)
@@ -4993,8 +5030,9 @@ namespace
         return [tallied = AuditInto(tally), &detail](const MCVulkanRenderer::AuditedDraw& draw)
         {
             tallied(draw);
+            const bool sharp = AuditSharp(draw);
             AuditDetail::Entry& entry =
-                detail.Entries[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
+                detail.Entries[{std::string(draw.Command), sharp, draw.Data.data(), draw.From, draw.Window}];
 
             if (entry.Screens.empty())
             {
@@ -5006,7 +5044,7 @@ namespace
             entry.Screens.insert(detail.Screen);
 
             if (const MCWindow* from = draw.From;
-                !draw.Sharp && from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+                !sharp && from != nullptr && from->Pixels != nullptr && from->Size() > 0)
             {
                 DecodedFrame& latest = entry.Latest.emplace();
                 latest.Width = from->XMax + 1;
@@ -5015,7 +5053,7 @@ namespace
                 MCInput::Display()->GetShownColors(entry.LatestColors);
             }
 
-            if (!draw.Sharp)
+            if (!sharp)
             {
                 AuditDetail::Site& site =
                     detail
@@ -5298,24 +5336,9 @@ namespace
                        : has == 0    ? "lacks"
                                      : std::format("part {}/{}", has, kept);
 
-                // Frames that show nothing: no pixel drawn, or an alpha sprite's every pixel colour 0 (AlphaPal.ini's
-                // marker colour, transparent).
-                const auto blank = std::ranges::count_if(entry->ShapeFrames,
-                                                         [](const auto& frameKept)
-                                                         {
-                                                             const DecodedFrame& frame = frameKept.second;
-
-                                                             for (size_t i = 0; i < frame.Index.size(); ++i)
-                                                             {
-                                                                 if (frame.Drawn[i] != 0 &&
-                                                                     (!frame.Translucent || frame.Index[i] != 0))
-                                                                 {
-                                                                     return false;
-                                                                 }
-                                                             }
-
-                                                             return true;
-                                                         });
+                // Frames that show nothing (the audit counts their draws as sharp, so none should be listed here).
+                const auto blank = std::ranges::count_if(entry->ShapeFrames, [](const auto& frameKept)
+                                                         { return BlankFrame(frameKept.second); });
                 source = std::format("blank {}/{}", blank, kept);
 
                 if (const std::filesystem::path path = items / (id + ".png");

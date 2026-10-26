@@ -15,6 +15,7 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCRegistrySettings.h"
 #include "main/MCLogistics.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
@@ -142,7 +143,7 @@ namespace
     int32_t SavedUiResolution = 0;
     int32_t SavedInterfaceLevel = 0;
     int32_t SavedHdArt = 0;
-    int32_t SavedScrollSpeed = OriginalScrollSpeed;
+    int32_t SavedScrollSpeed = AutoScrollSpeed;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -331,8 +332,8 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
     AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
 
-    // SCROLL SPEED: the battlefield's scrolling, at the screen's edges and by the scroll keys, as a factor of the
-    // original's speed.
+    // SCROLL SPEED: the battlefield's scrolling, at the screen's edges and by the scroll keys: AUTO (the original's pace
+    // across the screen), or a factor of the original's speed.
     MCLogGroupBox& scrollSpeed = AddBox(screen, panel, ScrollSpeedBoxPlace, BoxOutlineColor);
     AddLabel(screen, scrollSpeed, "SCROLL SPEED", BoxTitleLeft, BoxTitleTop);
     std::vector<MCLogComboBox::Item> scrollSpeeds;
@@ -340,7 +341,10 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     for (const int percent : ScrollSpeeds)
     {
         const std::string factor = std::format("{}X", percent / PercentPerFactor);
-        scrollSpeeds.push_back({percent == OriginalScrollSpeed ? factor + " (ORIGINAL)" : factor, percent});
+        scrollSpeeds.push_back({percent == AutoScrollSpeed       ? std::string("AUTO")
+                                : percent == OriginalScrollSpeed ? factor + " (ORIGINAL)"
+                                                                 : factor,
+                                percent});
     }
 
     AddDropDown(screen, scrollSpeed, GScrollSpeed, std::move(scrollSpeeds), nullptr);
@@ -465,14 +469,20 @@ int SteppedInterfaceSize(int size, int steps)
 
 bool StepInterfaceSize(int steps)
 {
-    const int size = SteppedInterfaceSize(GInterfaceSize, steps);
+    // AUTO steps on from the size it picks for the display, and a step back onto that size is AUTO again.
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    const int autoSize = display != nullptr ? static_cast<int>(std::lround(display->AutoInterfaceScaleNow() *
+                                                                           static_cast<float>(OriginalInterfaceSize)))
+                                            : OriginalInterfaceSize;
+    const int size = GInterfaceSize == AutoInterfaceSize ? autoSize : GInterfaceSize;
+    const int stepped = SteppedInterfaceSize(size, steps);
 
-    if (size == GInterfaceSize)
+    if (stepped == size)
     {
         return false;
     }
 
-    GInterfaceSize = size;
+    GInterfaceSize = stepped == autoSize ? AutoInterfaceSize : stepped;
     SavePrefs();
     return true;
 }

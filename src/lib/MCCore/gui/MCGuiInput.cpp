@@ -22,6 +22,7 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCWin32Defs.h"
 
@@ -434,10 +435,22 @@ namespace
     /// <summary>OB-184: the part of a whole step the last frame's scroll had left over, carried into the next.</summary>
     float ScrollCarry = 0.0f;
 
-    /// <summary>Port: SCROLL SPEED (<see cref="GScrollSpeed"/>) as a factor of the original's speed.</summary>
+    /// <summary>The original's screen's lines, which AUTO's scroll speed keeps the pace of.</summary>
+    constexpr float OriginalScreenLines = 480.0f;
+
+    /// <summary>
+    /// Port: SCROLL SPEED (<see cref="GScrollSpeed"/>) as a factor of the original's speed; AUTO's is the screen's lines
+    /// over the original's 480, so the battlefield crosses the screen as fast as at 640x480 (2.25 at 1080 lines).
+    /// </summary>
     float ScrollSpeedFactor()
     {
-        return static_cast<float>(GScrollSpeed) / static_cast<float>(OriginalScrollSpeed);
+        if (GScrollSpeed != AutoScrollSpeed)
+        {
+            return static_cast<float>(GScrollSpeed) / static_cast<float>(OriginalScrollSpeed);
+        }
+
+        const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+        return display != nullptr ? std::max(static_cast<float>(display->Height()) / OriginalScreenLines, 1.0f) : 1.0f;
     }
 }
 

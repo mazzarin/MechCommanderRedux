@@ -381,6 +381,11 @@ namespace MCTestGame
                 return false;
             }
 
+            // The original's scroll speed and interface size, not AUTO's picks for whatever window a test opens (a
+            // test, or BootOptions.Started, sets another).
+            GScrollSpeed = OriginalScrollSpeed;
+            GInterfaceSize = OriginalInterfaceSize;
+
             if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
             {
                 display->OnPresent = Presented;

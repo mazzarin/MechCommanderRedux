@@ -262,6 +262,9 @@ TEST_CASE("presenter: a bigger interface gives the screen that many times fewer 
         {1280, 800, 1.0f, false, 1.25f, 1024, 640},
         // The smallest window keeps the smallest screen.
         {640, 480, 1.0f, false, 2.0f, 640, 480},
+        // AUTO: the user's 14-inch Retina MacBook (945 points tall) at 1080P takes 150%, NATIVE (945 lines) 125%.
+        {3024, 1890, 2.0f, false, MCDisplay::AutoInterface, 1152, 720},
+        {3024, 1890, 2.0f, true, MCDisplay::AutoInterface, 1210, 756},
     };
 
     for (const MCFitCase& fitCase : cases)
@@ -276,6 +279,21 @@ TEST_CASE("presenter: a bigger interface gives the screen that many times fewer 
         CHECK_EQ(screen.x, fitCase.ScreenWidth);
         CHECK_EQ(screen.y, fitCase.ScreenHeight);
     }
+}
+
+/// <summary>
+/// AUTO's interface scale: about 0.75 lines a point of the window's height, in quarter steps from 1 to 2.
+/// </summary>
+TEST_CASE("presenter: AUTO's interface scale suits the display")
+{
+    // A 14-inch Retina laptop: 1080 lines (1080P) or 945 (NATIVE) on 945 points.
+    CHECK_EQ(MCDisplay::AutoInterfaceScale(1080, 1890, 2.0f), 1.5f);
+    CHECK_EQ(MCDisplay::AutoInterfaceScale(945, 1890, 2.0f), 1.25f);
+    // A 1440p desktop monitor at 1080P, and a 1080p one.
+    CHECK_EQ(MCDisplay::AutoInterfaceScale(1080, 1440, 1.0f), 1.0f);
+    CHECK_EQ(MCDisplay::AutoInterfaceScale(1080, 1080, 1.0f), 1.25f);
+    // A small window on a Retina screen: at most 2.
+    CHECK_EQ(MCDisplay::AutoInterfaceScale(800, 800, 2.0f), 2.0f);
 }
 
 /// <summary>The interface size keys step through INTERFACE SIZE's choices and stop at either end.</summary>
@@ -413,9 +431,18 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     REQUIRE(map != nullptr);
     const int32_t mapHidden = map->IsHidden();
 
+    // A size the keys land on is kept as AUTO when it is AUTO's pick for this window.
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+    REQUIRE(SDL_GetWindowSizeInPixels(&display->Window(), &pixelWidth, &pixelHeight));
+    const auto autoSize = static_cast<int>(std::lround(
+        MCDisplay::AutoInterfaceScale(LargeWindowLines, pixelHeight, SDL_GetWindowDisplayScale(&display->Window())) *
+        static_cast<float>(OriginalInterfaceSize)));
+    const auto kept = [autoSize](int size) { return size == autoSize ? AutoInterfaceSize : size; };
+
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK_EQ(GInterfaceSize, 125);
+    CHECK_EQ(GInterfaceSize, kept(125));
     CHECK_EQ(display->Height(), 864);
     CHECK_EQ(map->IsHidden(), mapHidden);
 
@@ -423,16 +450,25 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
         MCFitIniFile prefs;
         REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
         REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        CHECK_EQ(prefs.Read<int32_t>("InterfaceSize"), MCFitResult<int32_t>(125));
+        CHECK_EQ(prefs.Read<int32_t>("InterfaceSize"), MCFitResult<int32_t>(kept(125)));
     }
 
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
     MCTestGame::RunFrame(1.0f / 15.0f);
-    CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
+    CHECK_EQ(GInterfaceSize, kept(OriginalInterfaceSize));
     CHECK_EQ(display->Height(), LargeWindowLines);
     CHECK_EQ(map->IsHidden(), mapHidden);
 
-    // PREFS read back: a size that isn't a choice is the original's.
+    // AUTO: the screen takes AUTO's pick's lines.
+    GInterfaceSize = AutoInterfaceSize;
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(display->Height(), std::max(static_cast<int>(std::lround(static_cast<double>(LargeWindowLines) *
+                                                                      OriginalInterfaceSize / autoSize)),
+                                         480));
+    GInterfaceSize = OriginalInterfaceSize;
+    MCTestGame::RunFrame(1.0f / 15.0f);
+
+    // PREFS read back: a size that isn't a choice is AUTO.
     {
         MCFitIniFile prefs;
         REQUIRE_EQ(prefs.Create(prefsPath.string()), 0);
@@ -455,7 +491,7 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
         MCFitIniFile prefs;
         REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
         ReadPreferences(prefs);
-        CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
+        CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
     }
 
     // The test user folder as it was: later tests read its PREFS.

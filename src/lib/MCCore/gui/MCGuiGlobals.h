@@ -89,22 +89,29 @@ inline constexpr int MaxUiResolution = 1080;
 inline constexpr std::array<int, 5> UiResolutions = {480, 600, 720, 900, 1080};
 /// <summary>
 /// Port-only: how fast the battlefield scrolls, at the screen's edges and by the scroll keys, in percent of the
-/// original's speed (PREFS "ScrollSpeed", the preferences screen's SCROLL SPEED box): one of <see cref="ScrollSpeeds"/>.
+/// original's speed (PREFS "ScrollSpeed", the preferences screen's SCROLL SPEED box): one of <see cref="ScrollSpeeds"/>,
+/// or <see cref="AutoScrollSpeed"/> (the default): the screen's lines over the original's 480, so it crosses the screen
+/// as fast as the original did at 640x480 at any UI resolution and interface size.
 /// </summary>
 extern int GScrollSpeed;
-/// <summary>Port-only: the original's scroll speed, <see cref="GScrollSpeed"/>'s default.</summary>
+/// <summary>Port-only: <see cref="GScrollSpeed"/>'s AUTO, its default.</summary>
+inline constexpr int AutoScrollSpeed = 0;
+/// <summary>Port-only: the original's scroll speed (1X).</summary>
 inline constexpr int OriginalScrollSpeed = 100;
-/// <summary>Port-only: the choices of <see cref="GScrollSpeed"/>.</summary>
-inline constexpr std::array<int, 5> ScrollSpeeds = {OriginalScrollSpeed, 150, 200, 250, 300};
+/// <summary>Port-only: the choices of <see cref="GScrollSpeed"/>, AUTO first.</summary>
+inline constexpr std::array<int, 6> ScrollSpeeds = {AutoScrollSpeed, OriginalScrollSpeed, 150, 200, 250, 300};
 /// <summary>
 /// Port-only: the in-mission interface's size in percent (PREFS "InterfaceSize", which alt+= and alt+- step and save in
 /// a mission): one of <see cref="InterfaceSizes"/>. The screen gets that many times fewer lines than UI RESOLUTION
 /// gives it (480 at the fewest), so the tactical map, the command palette, the mech bar and the unit overlays, drawn at
 /// fixed sizes, are that much bigger; the world view keeps the window's pixels and shows as much of the battlefield. It
-/// takes effect at once, as a window resize does.
+/// takes effect at once, as a window resize does. <see cref="AutoInterfaceSize"/> (the default) picks one of the
+/// choices for the display (MCDisplay::AutoInterfaceScale), which the keys step on from.
 /// </summary>
 extern int GInterfaceSize;
-/// <summary>Port-only: the original's interface size, <see cref="GInterfaceSize"/>'s default.</summary>
+/// <summary>Port-only: <see cref="GInterfaceSize"/>'s AUTO, its default.</summary>
+inline constexpr int AutoInterfaceSize = 0;
+/// <summary>Port-only: the original's interface size (100 percent).</summary>
 inline constexpr int OriginalInterfaceSize = 100;
 /// <summary>Port-only: the choices of <see cref="GInterfaceSize"/>, smallest first.</summary>
 inline constexpr std::array<int, 5> InterfaceSizes = {OriginalInterfaceSize, 125, 150, 175, 200};

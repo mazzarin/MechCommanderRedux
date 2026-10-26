@@ -40,11 +40,13 @@ namespace
 
     /// <summary>
     /// How many times fewer lines the screen has for PREFS "InterfaceSize" (<see cref="GInterfaceSize"/>): 1.5 at 150
-    /// percent.
+    /// percent; 0 for AUTO (the display picks).
     /// </summary>
     float InterfaceScale()
     {
-        return static_cast<float>(GInterfaceSize) / static_cast<float>(OriginalInterfaceSize);
+        return GInterfaceSize == AutoInterfaceSize
+                   ? MCDisplay::AutoInterface
+                   : static_cast<float>(GInterfaceSize) / static_cast<float>(OriginalInterfaceSize);
     }
 
     /// <summary>One gamma step over <paramref name="color"/>.</summary>

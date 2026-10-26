@@ -246,13 +246,15 @@ TEST_CASE("system config: PREFS.CFG gives the display, difficulty and volumes, w
     ReadPrefsText("FITini\r\n[MechCommander]\r\nl SFXVolume=100\r\nl InterfaceVolume=12\r\nFITend\r\n");
     CHECK_EQ(SfxVolume, 100);
     CHECK_EQ(InterfaceVolume, 12);
-    CHECK_EQ(GScrollSpeed, OriginalScrollSpeed);
+    CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
 
-    // SCROLL SPEED: one of its choices, else the original's speed.
+    // SCROLL SPEED: one of its choices (AUTO's 0 among them), else AUTO.
     ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=250\r\nFITend\r\n");
     CHECK_EQ(GScrollSpeed, 250);
-    ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=175\r\nFITend\r\n");
+    ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=100\r\nFITend\r\n");
     CHECK_EQ(GScrollSpeed, OriginalScrollSpeed);
+    ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=175\r\nFITend\r\n");
+    CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
 }
 
 /// <summary>OB-168, kept: Brightness and Gamma fill the same gamma level, Brightness last.</summary>

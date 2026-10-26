@@ -909,7 +909,7 @@ namespace
 
 /// <summary>
 /// SCROLL SPEED (PREFS "ScrollSpeed") multiplies the battlefield's scrolling, by the scroll keys and at the screen's
-/// edge alike. At 1X, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
+/// edge alike (AUTO by the screen's lines over 480). At 1X, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
 /// Scroll Speed (48) halved, as the original did at full size.
 /// </summary>
 TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and at the screen's edge")
@@ -928,8 +928,14 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and 
     constexpr float frame = 1.0f / 15.0f;
     const auto original = static_cast<float>(iface->ScrollSpeed / 2);
     CHECK_EQ(original, 24.0f);
+    // AUTO: the screen's lines over the original's 480 (the tests' 640x480 screen: 1X).
+    constexpr float OriginalLines = 480.0f;
     const auto scaled = [original](int percent)
-    { return original * static_cast<float>(percent) / static_cast<float>(OriginalScrollSpeed); };
+    {
+        return original * (percent == AutoScrollSpeed
+                               ? std::max(static_cast<float>(GuiSystem().Height()) / OriginalLines, 1.0f)
+                               : static_cast<float>(percent) / static_cast<float>(OriginalScrollSpeed));
+    };
 
     // The keys: right, at each speed in turn.
     SendKey(ScrollRightKey);

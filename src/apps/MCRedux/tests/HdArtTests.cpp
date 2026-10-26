@@ -1221,7 +1221,10 @@ namespace
     constexpr int32_t FirstRotation = -180;
     constexpr int32_t LastRotation = 180;
 
-    /// <summary>An appearance the pack can hold: its type id, kind, and the names of the object types that use it.</summary>
+    /// <summary>
+    /// An appearance the pack can hold: its type id, kind, and the names of the object types that use it (none: no
+    /// object type uses it, every packet is one no type draws).
+    /// </summary>
     struct ObjectAppearance
     {
         uint32_t Id = 0;
@@ -1415,6 +1418,67 @@ namespace
         return shapes;
     }
 
+    /// <summary>
+    /// Which of an appearance's packets the object tools take (<c>--hd-packets drawn|all|undrawn</c>): those its type's
+    /// lookups draw (the default), every packet of its PAK, or only those its lookups never reach (the original's
+    /// zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations). Past the default, the
+    /// appearances no object type uses are taken too, every packet of each.
+    /// </summary>
+    enum class PacketChoice : uint8_t
+    {
+        Drawn,
+        All,
+        Undrawn,
+    };
+
+    constexpr std::array<std::pair<std::string_view, PacketChoice>, 3> PacketChoices = {
+        {{"drawn", PacketChoice::Drawn}, {"all", PacketChoice::All}, {"undrawn", PacketChoice::Undrawn}}};
+
+    /// <summary>The packets <c>--hd-packets</c> picks.</summary>
+    PacketChoice PacketsOption()
+    {
+        const std::string_view name = MCTest::Option("hd-packets").value_or(PacketChoices.front().first);
+        const auto found = std::ranges::find(PacketChoices, name, &std::pair<std::string_view, PacketChoice>::first);
+        MCTest::Scope scope(std::format("--hd-packets {} (drawn, all or undrawn)", name));
+        REQUIRE(found != PacketChoices.end());
+        return found->second;
+    }
+
+    /// <summary>
+    /// The shapes of <paramref name="type"/>'s PAK that <paramref name="packets"/> picks, by packet: those it draws
+    /// (<see cref="DrawnShapes"/>), every one, or every one it doesn't draw.
+    /// </summary>
+    std::map<uint32_t, std::shared_ptr<MCShape>> ChosenShapes(const std::shared_ptr<MCAppearanceType>& type,
+                                                              PacketChoice packets)
+    {
+        std::map<uint32_t, std::shared_ptr<MCShape>> drawn = DrawnShapes(type);
+
+        if (packets == PacketChoice::Drawn)
+        {
+            return drawn;
+        }
+
+        const uint32_t appearance = type->AppearanceNum & AppearancePacketMask;
+        std::map<uint32_t, std::shared_ptr<MCShape>> shapes;
+
+        for (int32_t packet = 0; packet < SpriteManager()->GetNumShapes(appearance); ++packet)
+        {
+            const auto number = static_cast<uint32_t>(packet);
+
+            if (packets == PacketChoice::Undrawn && drawn.contains(number))
+            {
+                continue;
+            }
+
+            if (std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(appearance, number, Turn, type))
+            {
+                shapes.emplace(number, std::move(shape));
+            }
+        }
+
+        return shapes;
+    }
+
     /// <summary>The frames of <paramref name="sequence"/> with pixels (those a pack holds).</summary>
     size_t DrawnFrames(const Sequence& sequence)
     {
@@ -1460,10 +1524,11 @@ namespace
     };
 
     /// <summary>
-    /// <paramref name="type"/>'s sequences, their translucent frames holding their blended pixels when
-    /// <paramref name="keepBlended"/> (an effect's).
+    /// <paramref name="type"/>'s sequences (one a packet <paramref name="packets"/> picks), their translucent frames
+    /// holding their blended pixels when <paramref name="keepBlended"/> (an effect's).
     /// </summary>
-    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type, bool keepBlended)
+    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type, bool keepBlended,
+                                      PacketChoice packets = PacketChoice::Drawn)
     {
         const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
         REQUIRE(sprites != nullptr);
@@ -1476,7 +1541,7 @@ namespace
             made.Delta = static_cast<const MCVfxAppearanceType&>(*type).Delta;
         }
 
-        for (const auto& [packet, shape] : DrawnShapes(type))
+        for (const auto& [packet, shape] : ChosenShapes(type, packets))
         {
             if (!VfxIsShapeTable(shape->FrameList()))
             {
@@ -1542,10 +1607,85 @@ namespace
     }
 
     /// <summary>
-    /// The appearances <c>--kind &lt;name,...&gt;</c> and <c>--appearance &lt;packet,...&gt;</c> pick (every one when
-    /// neither is given), each loaded.
+    /// The classes an appearance no object type uses is tried as (its FIT in the sprite PAK, the first class whose loader
+    /// takes it), and the kind each gives it: the classes with blocks of their own first, the VFX's before the pop-ups'
+    /// (whose FIT a VFX one, with Symmetrical in its states, also fits). A VFX appearance's kind is whether it is Scaled
+    /// (<see cref="VfxKind"/>), not the one here.
     /// </summary>
-    std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> PickedObjectAppearances()
+    constexpr std::array<std::pair<MCAppearanceClass, ObjectKind>, 6> UntypedClasses = {{
+        {MCAppearanceClass::ElementalTree, ObjectKind::Elemental},
+        {MCAppearanceClass::GroundVehicle, ObjectKind::Vehicle},
+        {MCAppearanceClass::Arm, ObjectKind::Effect},
+        {MCAppearanceClass::Building, ObjectKind::Building},
+        {MCAppearanceClass::Vfx, ObjectKind::Object},
+        {MCAppearanceClass::PopUp, ObjectKind::Turret},
+    }};
+
+    /// <summary>
+    /// The kind a VFX appearance no object type uses is made as: a still object when it is Scaled (has the original's
+    /// zoomed-out views, as the world's trees, buildings and objects do), else an effect (explosions, fire, smoke). Of the
+    /// VFX appearances types use, 631 of 648 are of the kind this gives (lights and two effects are Scaled).
+    /// </summary>
+    ObjectKind VfxKind(const MCVfxAppearanceType& vfx)
+    {
+        return vfx.Scaled ? ObjectKind::Object : ObjectKind::Effect;
+    }
+
+    /// <summary>
+    /// The sprite PAK's appearances with shapes that no appearance in <paramref name="typed"/> is, each with the first
+    /// class of <see cref="UntypedClasses"/> its FIT loads as and that class's kind; one none loads is named and left out.
+    /// </summary>
+    std::map<uint32_t, ObjectAppearance> FindUntypedAppearances(const std::map<uint32_t, ObjectAppearance>& typed)
+    {
+        std::set<uint32_t> typedPackets;
+
+        for (const auto& [id, appearance] : typed)
+        {
+            typedPackets.insert(id & AppearancePacketMask);
+        }
+
+        std::map<uint32_t, ObjectAppearance> found;
+
+        for (uint32_t packet = 0; packet < SpriteManager()->GetNumAppearances(); ++packet)
+        {
+            if (typedPackets.contains(packet) || SpriteManager()->GetNumShapes(packet) <= 0)
+            {
+                continue;
+            }
+
+            std::shared_ptr<MCAppearanceType> type;
+            const auto loads =
+                std::ranges::find_if(UntypedClasses,
+                                     [packet, &type](const std::pair<MCAppearanceClass, ObjectKind>& candidate)
+                                     {
+                                         type = AppearanceTypeList().GetAppearance(
+                                             std::to_underlying(candidate.first) << AppearanceClassShift | packet);
+                                         return type != nullptr;
+                                     });
+
+            if (loads == UntypedClasses.end())
+            {
+                std::cout << std::format("  sprite PAK appearance {} ({}): no type uses it and its FIT loads as no "
+                                         "class; left out\n",
+                                         packet, SpriteManager()->ShapeFileName(packet));
+                continue;
+            }
+
+            const ObjectKind kind = loads->first == MCAppearanceClass::Vfx
+                                        ? VfxKind(static_cast<const MCVfxAppearanceType&>(*type))
+                                        : loads->second;
+            found.emplace(type->AppearanceNum, ObjectAppearance{type->AppearanceNum, kind, {}});
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The appearances <c>--kind &lt;name,...&gt;</c> and <c>--appearance &lt;packet,...&gt;</c> pick (every one when
+    /// neither is given), each loaded; past <see cref="PacketChoice::Drawn"/>, those no object type uses too.
+    /// </summary>
+    std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> PickedObjectAppearances(
+        PacketChoice packetChoice = PacketChoice::Drawn)
     {
         const std::set<std::string> kinds = ListOption("kind");
         std::set<uint32_t> packets;
@@ -1560,8 +1700,14 @@ namespace
         }
 
         std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> picked;
+        std::map<uint32_t, ObjectAppearance> appearances = FindObjectAppearances();
 
-        for (const auto& [id, appearance] : FindObjectAppearances())
+        if (packetChoice != PacketChoice::Drawn)
+        {
+            appearances.merge(FindUntypedAppearances(appearances));
+        }
+
+        for (const auto& [id, appearance] : appearances)
         {
             if ((!kinds.empty() && !kinds.contains(std::string(KindInfo(appearance.Kind).Name))) ||
                 (!packets.empty() && !packets.contains(id & AppearancePacketMask)))
@@ -1576,6 +1722,15 @@ namespace
         }
 
         return picked;
+    }
+
+    /// <summary>
+    /// The packets of <paramref name="appearance"/> that <paramref name="packets"/> picks: every one of an appearance no
+    /// object type uses (no type draws any).
+    /// </summary>
+    PacketChoice PacketsOf(const ObjectAppearance& appearance, PacketChoice packets)
+    {
+        return appearance.Types.empty() ? PacketChoice::All : packets;
     }
 
     /// <summary>What --hd-objects counts per kind, and how much of it repeats another sequence (made once).</summary>
@@ -1614,7 +1769,8 @@ namespace
 /// --hd-extract-objects: a line "object &lt;kind&gt; &lt;type id&gt; &lt;folder&gt; &lt;sequences&gt; &lt;frames&gt;
 /// &lt;pixels&gt; &lt;delta&gt; &lt;object types&gt;" each (the kinds: vehicle, elemental, turret and effect animated;
 /// building, tree and object still), then each kind's totals and the sequences that repeat another's shape table (made
-/// once). <c>--kind</c> and <c>--appearance</c> pick as --hd-extract-objects does.
+/// once). <c>--kind</c>, <c>--appearance</c> and <c>--hd-packets</c> pick as --hd-extract-objects does (an appearance no
+/// type uses is listed with "(no type)").
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and objects")
 {
@@ -1627,9 +1783,19 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
     std::array<KindTotals, ObjectKinds.size()> totals{};
     MCRepeats repeats;
 
-    for (const auto& [appearance, type] : PickedObjectAppearances())
+    const PacketChoice packets = PacketsOption();
+
+    for (const auto& [appearance, type] : PickedObjectAppearances(packets))
     {
-        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
+        const ObjectSequences made =
+            ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended, PacketsOf(appearance, packets));
+
+        // An appearance no type uses is listed only when it has frames.
+        if (appearance.Types.empty() && made.Sequences.empty())
+        {
+            continue;
+        }
+
         KindTotals& total = totals[static_cast<size_t>(appearance.Kind)];
         size_t frames = 0;
 
@@ -1648,7 +1814,7 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
             }
         }
 
-        std::string types;
+        std::string types = appearance.Types.empty() ? std::string(" (no type)") : std::string();
 
         for (const std::string& name : appearance.Types)
         {
@@ -1692,7 +1858,10 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 /// still draws, except an effect's, which holds them premultiplied), plus <c>objects.json</c> (each appearance's kind,
 /// whether it is animated or still, whether it holds its blended pixels, and its sequences' frames' bounds, as
 /// --hd-extract's) and the shown colours as palette.rgb. A sequence whose shape table an earlier one has (made the same
-/// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it.
+/// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it. With
+/// <c>--hd-packets all</c> every packet of each appearance's PAK is written, with <c>--hd-packets undrawn</c> only those
+/// no lookup reaches (the original's zoomed-out views...), each under the folder the game would look it up by; either
+/// adds the appearances no object type uses (no types in objects.json), each of the kind its class gives.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals' and objects' frames")
 {
@@ -1714,9 +1883,12 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
     size_t frames = 0;
     MCRepeats repeats;
 
-    for (const auto& [appearance, type] : PickedObjectAppearances())
+    const PacketChoice packets = PacketsOption();
+
+    for (const auto& [appearance, type] : PickedObjectAppearances(packets))
     {
-        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
+        const ObjectSequences made =
+            ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended, PacketsOf(appearance, packets));
 
         if (made.Sequences.empty())
         {
@@ -6461,7 +6633,8 @@ namespace
 /// pack holds, as the extractors find them in the game's files: the mechs' and objects' sprites, the ground's tiles and
 /// overlays, the craters, the mech bar's icons, the shape tables loaded outside the sprite files and the menus' and
 /// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind. Then
-/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks.
+/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks (the pack holds
+/// them when made with --hd-extract-objects --hd-packets undrawn), their frames as their appearance's kind keeps them.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack holds")
 {
@@ -6515,9 +6688,18 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
     // The packets of the sprite PAKs no type's walk above draws, as a check on the walks: the game's own lookups never
     // reach them (the original's zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations), and
-    // the appearances no type uses are named.
+    // the appearances no type uses are named. A frame counts as --hd-packets undrawn extracts it: with its blended
+    // pixels only for an appearance of a kind that keeps them (an appearance no type uses, of the kind its class gives).
     ArtCoverage& packets = report.emplace_back(ArtCoverage{"sprite PAK packets no type draws", 0, 0, {}, false});
     std::map<uint32_t, size_t> untyped;
+    std::map<uint32_t, ObjectAppearance> kinds = FindObjectAppearances();
+    kinds.merge(FindUntypedAppearances(kinds));
+    std::map<uint32_t, bool> keepsBlended;
+
+    for (const auto& [id, appearance] : kinds)
+    {
+        keepsBlended.emplace(id & AppearancePacketMask, KindInfo(appearance.Kind).Blended);
+    }
 
     for (uint32_t appearance = 0; appearance < SpriteManager()->GetNumAppearances(); ++appearance)
     {
@@ -6532,6 +6714,8 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
             }
 
             const std::span<const uint8_t> table = shape->FrameList();
+            const auto keeps = keepsBlended.find(appearance);
+            const bool keepBlended = keeps == keepsBlended.end() || keeps->second;
 
             for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
             {
@@ -6539,7 +6723,7 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
                 if (decoded.has_value() && decoded->Translucent)
                 {
-                    LeaveOutUndrawn(*decoded, true);
+                    LeaveOutUndrawn(*decoded, keepBlended);
                 }
 
                 if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
@@ -6674,6 +6858,156 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     }
 
     std::cout << std::format("  all: {} of {} frames ({} pictures unreadable)\n", found, frames, skipped);
+}
+
+namespace
+{
+    /// <summary>The grey a packet's pictures are shown over, and the gap between the original and the pack's copy.</summary>
+    constexpr uint8_t PacketUnder = 48;
+    constexpr int32_t PacketGap = 8;
+    /// <summary>The frames of each packet --hd-packet-pictures pictures unless --hd-picture-frames says.</summary>
+    constexpr int32_t PacketFramesPictured = 4;
+
+    /// <summary>
+    /// <paramref name="original"/>'s drawn pixels in <paramref name="colors"/>, each scaled up to
+    /// <paramref name="hd"/>'s scale by the nearest pixel, beside <paramref name="hd"/> (premultiplied), both over grey.
+    /// </summary>
+    void SavePacketPicture(const std::filesystem::path& path, const DecodedFrame& original, const MCHdArt::Frame& hd,
+                           std::span<const SDL_Color, 256> colors)
+    {
+        const int32_t scale = hd.Scale;
+        const int32_t side = original.Width * scale;
+        const int32_t width = side * 2 + PacketGap;
+        const int32_t height = original.Height * scale;
+        std::vector<uint8_t> out(static_cast<size_t>(width) * height * BytesPerPixel, PacketUnder);
+        const std::vector<uint8_t> rgba =
+            hd.Format == MCHdArt::ColorFormat::Bc7 ? MCBc7::Decode(hd.Colors, hd.Width, hd.Height) : hd.Colors;
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            for (int32_t x = 0; x < side; ++x)
+            {
+                const size_t source = static_cast<size_t>(y / scale) * original.Width + x / scale;
+                uint8_t* left = &out[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                uint8_t* right = left + static_cast<size_t>(side + PacketGap) * BytesPerPixel;
+                left[3] = right[3] = std::numeric_limits<uint8_t>::max();
+
+                if (original.Drawn[source] != 0)
+                {
+                    const SDL_Color color = colors[original.Index[source]];
+                    left[0] = color.r;
+                    left[1] = color.g;
+                    left[2] = color.b;
+                }
+
+                if (x < hd.Width && y < hd.Height)
+                {
+                    const uint8_t* texel = &rgba[(static_cast<size_t>(y) * hd.Width + x) * BytesPerPixel];
+
+                    for (int32_t c = 0; c < 3; ++c)
+                    {
+                        right[c] = static_cast<uint8_t>(std::min(255, texel[c] + PacketUnder * (255 - texel[3]) / 255));
+                    }
+                }
+            }
+        }
+
+        SavePng(path, width, height, out);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-packet-pictures &lt;pack&gt; --shots &lt;folder&gt; --hd-folders &lt;folder,...&gt;</c> pictures sprite PAK
+/// packets' frames beside the pack's copies, whether or not a type draws them (the original's zoomed-out views...): each
+/// folder as the pack names it (<c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;</c>), its first
+/// <c>--hd-picture-frames</c> frames (4 unless given) as <c>&lt;shape PAK&gt;_&lt;appearance&gt;_&lt;packet&gt;_&lt;frame&gt;.png</c>:
+/// the original scaled up by the nearest pixel beside the pack's frame, over grey.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-packet-pictures pictures sprite packets beside the pack's copies")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-packet-pictures");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t frames = PacketFramesPictured;
+
+    if (const std::optional<std::string_view> option = MCTest::Option("hd-picture-frames"); option.has_value())
+    {
+        const auto [end, error] = std::from_chars(option->data(), option->data() + option->size(), frames);
+        MCTest::Scope scope(std::format("--hd-picture-frames {}", *option));
+        REQUIRE((error == std::errc() && end == option->data() + option->size() && frames > 0));
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    MCHdArtOn hdArt(std::filesystem::absolute(std::filesystem::path(*pack)));
+    const std::filesystem::path out(*shots);
+    std::filesystem::create_directories(out);
+    int32_t written = 0;
+
+    for (const std::string& name : ListOption("hd-folders"))
+    {
+        // objects/<shape PAK>/<appearance>/<packet>
+        const std::filesystem::path folder(name);
+        const std::vector<std::filesystem::path> parts(folder.begin(), folder.end());
+        MCTest::Scope scope(std::format("--hd-folders {}", name));
+        REQUIRE(parts.size() == 4);
+        const std::string shapeFile = parts[1].string();
+        uint32_t appearance = 0;
+        uint32_t packet = 0;
+
+        for (const auto& [part, number] : {std::pair{parts[2].string(), &appearance}, {parts[3].string(), &packet}})
+        {
+            const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), *number);
+            REQUIRE((error == std::errc() && end == part.data() + part.size()));
+        }
+
+        REQUIRE(SpriteManager()->ShapeFileName(appearance) == shapeFile);
+        const std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(appearance, packet, Turn, {});
+        REQUIRE((shape != nullptr && VfxIsShapeTable(shape->FrameList())));
+        int32_t pictured = 0;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()) && pictured < frames; ++frame)
+        {
+            std::expected<DecodedFrame, std::string> decoded = Decode(shape->FrameList(), frame);
+
+            if (!decoded.has_value() || decoded->Width == 0)
+            {
+                continue;
+            }
+
+            // A translucent frame's colours 0 and 255 draw nothing; a frame with nothing drawn has no pack frame.
+            if (decoded->Translucent)
+            {
+                LeaveOutUndrawn(*decoded, true);
+            }
+
+            if (std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+            {
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindInFolder(shape->HdFolder, frame, decoded->Width, decoded->Height);
+            std::cout << std::format("  {}/{}: {}x{}, {}\n", name, frame, decoded->Width, decoded->Height,
+                                     hd != nullptr ? std::format("HD {}x", hd->Scale) : "not in the pack");
+
+            if (hd != nullptr)
+            {
+                SavePacketPicture(out / std::format("{}_{}_{}_{}.png", shapeFile, appearance, packet, frame), *decoded,
+                                  *hd, colors);
+                ++pictured;
+                ++written;
+            }
+        }
+    }
+
+    CHECK(written > 0);
 }
 
 /// <summary>

@@ -376,6 +376,7 @@
     <ClCompile Include="platform\MCDirectPlay.cpp" />
     <ClCompile Include="platform\MCDisplay.cpp" />
     <ClCompile Include="platform\MCFileSystem.cpp" />
+    <ClCompile Include="platform\MCFlac.cpp" />
     <ClCompile Include="platform\MCFrameLog.cpp" />
     <ClCompile Include="platform\MCInput.cpp" />
     <ClCompile Include="platform\MCPresenter.cpp" />
@@ -399,6 +400,7 @@
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
     <ClCompile Include="platform\MCVulkanShaders.cpp" />
+    <ClCompile Include="sound\MCHdAudio.cpp" />
     <ClCompile Include="sound\MCRadio.cpp" />
     <ClCompile Include="sound\MCRadioMessage.cpp" />
     <ClCompile Include="sound\MCSoundSystem.cpp" />
@@ -772,6 +774,7 @@
     <ClInclude Include="platform\MCDirectPlay.h" />
     <ClInclude Include="platform\MCDisplay.h" />
     <ClInclude Include="platform\MCFileSystem.h" />
+    <ClInclude Include="platform\MCFlac.h" />
     <ClInclude Include="platform\MCFrameLog.h" />
     <ClInclude Include="platform\MCInput.h" />
     <ClInclude Include="platform\MCNeverDestroyed.h" />
@@ -792,6 +795,7 @@
     <ClInclude Include="platform\MCVulkanRenderer.h" />
     <ClInclude Include="platform\MCVulkanShaders.h" />
     <ClInclude Include="platform\MCWin32Defs.h" />
+    <ClInclude Include="sound\MCHdAudio.h" />
     <ClInclude Include="sound\MCRadio.h" />
     <ClInclude Include="sound\MCRadioMessage.h" />
     <ClInclude Include="sound\MCSoundSystem.h" />
@@ -915,6 +919,14 @@
     </ClCompile>
     <ClCompile Include="$(MCLibDir)bc7enc_rdo\ert.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <!-- dr_flac, public domain or MIT-0: the optional HD audio pack's single FLAC decoder. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)dr_flac\dr_flac.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
   </ItemGroup>

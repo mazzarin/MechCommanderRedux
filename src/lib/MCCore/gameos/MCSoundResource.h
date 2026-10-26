@@ -3,6 +3,7 @@
 #include "platform/MCWin32Defs.h"
 
 class MCFile;
+class MCFlac;
 
 /// <summary>Where a sound resource's samples come from.</summary>
 enum class MCSoundResourceType : int32_t
@@ -75,6 +76,9 @@ private:
     /// the duration. Fatal on a bad file.
     /// </summary>
     void OpenStream();
+    /// <summary>Uses a valid, length-matched pack entry; otherwise leaves the original resource intact.</summary>
+    void TryHdSample();
+    void TryHdStream(uint64_t sourceFrames);
 
     /// <summary>The file name, for a file or stream.</summary>
     std::string _FileName;
@@ -86,4 +90,6 @@ private:
     std::unique_ptr<MCFile> _Stream;
     /// <summary>A stream's data chunk position in the file.</summary>
     int32_t _DataStart = 0;
+    /// <summary>A music decoder, with bounded scratch memory, read by the existing streaming ring.</summary>
+    std::unique_ptr<MCFlac> _Flac;
 };

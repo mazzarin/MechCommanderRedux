@@ -112,6 +112,10 @@ target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME 
 target_compile_options(mc_miniz PRIVATE -w)
 target_include_directories(mc_miniz PUBLIC ${MC_SRC}/lib/miniz-3.0.2)
 target_link_libraries(MCCore PUBLIC mc_miniz)
+# dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
+add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
+target_compile_options(mc_flac PRIVATE -w)
+target_link_libraries(MCCore PUBLIC mc_flac)
 target_precompile_headers(MCCore PRIVATE ${MC_SRC}/lib/MCCore/stdafx.h)
 target_link_libraries(MCCore PUBLIC SDL3::SDL3-static mimalloc-static)
 # Apple's clang fuses a*b+c into one rounding where MSVC rounds twice; off, the game computes what it does on Windows

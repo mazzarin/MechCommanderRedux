@@ -43,6 +43,13 @@ namespace
     constexpr uint32_t KindSmoothMap = 10;
     /// <summary>Port-only: a flat or Gouraud polygon's colour pass at the output's resolution (a laser's beam).</summary>
     constexpr uint32_t KindSmoothPolygon = 11;
+    /// <summary>
+    /// Port-only: an HD art frame drawn as KindHd is, its edges from the original's pixels it draws, smoothed
+    /// (draw.pshader). Kinds 12 and 13 are left for other branches.
+    /// </summary>
+    constexpr uint32_t KindHdSmooth = 14;
+    /// <summary>Port-only: a terrain tile's seam pass (shaders/terrain.vshader; drawn only there).</summary>
+    [[maybe_unused]] constexpr uint32_t KindTerrainSeam = 15;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -535,9 +542,10 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_Blend = makePipeline(*renderer->_VertexShader, true);
     renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
     renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
+    renderer->_TerrainSeamPipeline = makePipeline(*renderer->_TerrainShader, true);
 
     if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
-        renderer->_TerrainPipeline == nullptr)
+        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -641,6 +649,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _Blend.reset();
     _IndexOnly.reset();
     _TerrainPipeline.reset();
+    _TerrainSeamPipeline.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
     _TerrainShader.reset();
@@ -862,9 +871,9 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         // A table applied to what lies under a fill on a surface drawn larger (a fade: the logistics rows' darkening)
         // recolours the drawn colours at the output's resolution, drawing nothing of the original's pixels.
         const bool recolours = kind == KindFill && (op & TableAfter) != 0 && _Audited->Scaled;
-        _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSmoothPolygon ||
-                           kind == KindSharpGlyph || kind == KindSmoothLine || kind == KindSmoothEllipse ||
-                           (op & SmoothEdges) != 0 || recolours;
+        _Audited->Sharp |= kind == KindHd || kind == KindHdSmooth || kind == KindHdMap || kind == KindSmoothMap ||
+                           kind == KindSmoothPolygon || kind == KindSharpGlyph || kind == KindSmoothLine ||
+                           kind == KindSmoothEllipse || (op & SmoothEdges) != 0 || recolours;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -906,7 +915,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // the original's).
     // An HD frame's or a smooth shape's colour pass leaves the indices an index-only pass wrote: they still compare.
     const uint32_t kind = op & KindMask;
-    const bool keepsIndices = kind == KindHd || kind == KindHdMap || kind == KindSmoothMap ||
+    const bool keepsIndices = kind == KindHd || kind == KindHdSmooth || kind == KindHdMap || kind == KindSmoothMap ||
                               kind == KindSmoothPolygon || kind == KindSmoothLine || kind == KindSmoothEllipse;
 
     if (blend && !keepsIndices)
@@ -1898,78 +1907,93 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
     const int32_t height = command.Height;
+    constexpr std::string_view ReadsOutside = "ShapeBlit reading outside the shape's picture";
 
-    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either). A
-    // translucent shape's frame leaves out its blended pixels, which the blit below still blends, unless it holds them.
-    bool blendedOnly = false;
-
-    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdShape(command.ShapeTable, command.ShapeNum, width, height);
-        hd != nullptr)
+    // The shape as a picture of indices (FillShape), its colour or blended pixels' blit's source.
+    const auto picture = [&]() -> std::optional<uint32_t>
     {
-        const std::optional<std::pair<Quad, Quad>> place =
-            BlitPlace(command.Blit, width, height, "ShapeBlit reading outside the shape's picture");
+        const MCOptionalRef<DataImage> found =
+            ImageOf(data, Seed(ImageKind::ShapeFill, width, height), "a transformed shape",
+                    [&]
+                    {
+                        Extent extent{0, width, height};
+                        int32_t widest = 0;
+                        extent.Size = ShapeExtent(data, height, widest);
+                        return extent;
+                    });
+
+        if (!found.has_value())
+        {
+            return std::nullopt;
+        }
+
+        DataImage& image = found->get();
+
+        if (image.PictureId == 0)
+        {
+            image.PictureId = ++_LastPictureId;
+        }
+
+        // The picture of the shape (by its number) through the table (by its slot's number).
+        uint64_t key = image.PictureId;
+
+        if (command.Table.has_value())
+        {
+            const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
+
+            if (!slot.has_value())
+            {
+                return std::nullopt;
+            }
+
+            key = key << 32 | slot->Id;
+        }
+
+        return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                             [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
+    };
+
+    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either), its edges
+    // smooth unless it holds its blended pixels (an effect's). A translucent shape's blended pixels that its frame
+    // leaves out are blended first, with smooth edges, so the frame's edge lies over them.
+    if (const std::shared_ptr<const MCHdArt::Frame> hd = HdShape(command.ShapeTable, command.ShapeNum, width, height);
+        hd != nullptr && HdPictureOf(*hd).has_value())
+    {
+        const std::optional<std::pair<Quad, Quad>> place = BlitPlace(command.Blit, width, height, ReadsOutside);
 
         if (!place)
         {
             return;
         }
 
-        if (AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table))
-        {
-            if (!MCAgShapeIsAlpha(command.ShapeTable, command.ShapeNum) || hd->Blended)
-            {
-                return;
-            }
+        const HdEdges edges = HdEdgesOf(*hd, command.ShapeTable);
+        const bool smooth = edges == HdEdges::Smooth;
+        const bool blendsOwn = !hd->Blended && MCAgShapeIsAlpha(command.ShapeTable, command.ShapeNum);
 
-            blendedOnly = true;
+        if (blendsOwn && smooth)
+        {
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
+
+        AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table, std::nullopt, HdColours::Corrected,
+              edges);
+
+        // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
+        if (blendsOwn && !smooth)
+        {
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, true);
+        }
+
+        return;
     }
 
-    BlitPicture(
-        target, command.Blit, width, height, "ShapeBlit reading outside the shape's picture",
-        [&]() -> std::optional<uint32_t>
-        {
-            const MCOptionalRef<DataImage> found =
-                ImageOf(data, Seed(ImageKind::ShapeFill, width, height), "a transformed shape",
-                        [&]
-                        {
-                            Extent extent{0, width, height};
-                            int32_t widest = 0;
-                            extent.Size = ShapeExtent(data, height, widest);
-                            return extent;
-                        });
+    BlitPicture(target, command.Blit, width, height, ReadsOutside, picture,
+                MCHdArt::SmoothEdges(command.ShapeTable.data()));
+}
 
-            if (!found.has_value())
-            {
-                return std::nullopt;
-            }
-
-            DataImage& image = found->get();
-
-            if (image.PictureId == 0)
-            {
-                image.PictureId = ++_LastPictureId;
-            }
-
-            // The picture of the shape (by its number) through the table (by its slot's number).
-            uint64_t key = image.PictureId;
-
-            if (command.Table.has_value())
-            {
-                const std::optional<TableSlot> slot = TableSlotOf(*command.Table);
-
-                if (!slot.has_value())
-                {
-                    return std::nullopt;
-                }
-
-                key = key << 32 | slot->Id;
-            }
-
-            return PictureForKey(key, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
-                                 [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
-        },
-        MCHdArt::SmoothEdges(command.ShapeTable.data()), blendedOnly);
+auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
+{
+    return frame.Blended || MCHdArt::KeepsFrameEdges(table.data()) ? HdEdges::Frame : HdEdges::Smooth;
 }
 
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
@@ -2228,7 +2252,8 @@ bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
 }
 
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
-                             const std::optional<MCColorTable>& table, std::optional<uint8_t> key, HdColours colours)
+                             const std::optional<MCColorTable>& table, std::optional<uint8_t> key, HdColours colours,
+                             HdEdges edges)
 {
     const std::optional<uint32_t> picture = HdPictureOf(frame);
 
@@ -2238,7 +2263,7 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
     }
 
     // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out.
-    uint32_t op = KindHd | AlphaBlend | (key.has_value() ? ColorKey : 0) |
+    uint32_t op = (edges == HdEdges::Smooth ? KindHdSmooth : KindHd) | AlphaBlend | (key.has_value() ? ColorKey : 0) |
                   (colours == HdColours::AsMade ? HdAsMade : 0) | (frame.Blended ? HdLight : 0u);
     uint32_t before = 0;
 
@@ -2335,10 +2360,6 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     uint32_t op = KindTexture;
     uint32_t before = 0;
     uint32_t after = 0;
-    const bool translucent = command.Op == MCShapeOp::Alpha || command.Op == MCShapeOp::XlatAlpha;
-    bool hdTranslucent = false;
-    bool hdBlended = false;
-
     // Port-only: line art (the purchase screen's sold-out outlines) on a sharp screen is redrawn as smooth strokes at
     // the output's resolution (MCSharpLines), in the colours its table gives its bytes; the original's draw keeps the
     // indices.
@@ -2363,31 +2384,6 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
         lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow);
         op |= lineArt ? IndexOnly : 0u;
-    }
-
-    // Port-only: a shape the HD art pack has a frame of keeps the original's indices and is shown from the pack (its
-    // bounds: the header's). A translucent shape's frame leaves out its blended pixels, which still blend below, unless
-    // it holds them (an effect's); drawn through a table (XlatAlpha: the haze), such a frame's blended pixels take the
-    // table's change of colour (draw.pshader's TableShift).
-    if (!lineArt && (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent))
-    {
-        const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
-
-        if (const std::shared_ptr<const MCHdArt::Frame> hd =
-                HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
-            hd != nullptr)
-        {
-            // The frame covers the bounds, which may be wider than the shape's widest row.
-            const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};
-            const Quad shapeFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
-
-            if (AddHd(surface, *hd, hdAt, shapeFrom, command.Table))
-            {
-                hdTranslucent = translucent;
-                hdBlended = translucent && hd->Blended;
-                op |= translucent ? 0u : IndexOnly;
-            }
-        }
     }
 
     switch (command.Op)
@@ -2424,13 +2420,24 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
         }
     }
 
-    // Port-only: a shape with smooth edges (with HD art on: the mechs' shadows) writes its indices as always, then its
-    // colour through the blend pipeline with its coverage taken between its own pixels (its place in the atlas).
-    if (command.Op == MCShapeOp::Draw && (op & IndexOnly) == 0 && MCHdArt::SmoothEdges(command.ShapeTable.data()))
+    // Port-only: a smooth-edged draw's place (window pixels and its first source pixel), a window pixel wider each way
+    // the pane allows, as its smooth edges reach a little past its pixels (draw.pshader's SmoothCoverage).
+    const auto widened = [&](const Quad& rect, const Quad& source)
     {
-        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
+        const bool rowsKnown = command.ClipBottom >= command.ClipTop;
+        const int32_t left = std::max(rect[0] - 1, command.Lo);
+        const int32_t top = rowsKnown ? std::max(rect[1] - 1, command.ClipTop) : rect[1];
+        const int32_t right = std::min(rect[2] + 1, command.Hi);
+        const int32_t bottom = rowsKnown ? std::min(rect[3] + 1, command.ClipBottom) : rect[3];
+        return std::pair{Quad{left, top, right, bottom},
+                         Quad{source[0] - (rect[0] - left), source[1] - (rect[1] - top), source[2], source[3]}};
+    };
 
-        if (Add(surface, SourceKind::Atlas, place->Page, at, from, op | SmoothEdges, 0, before, after))
+    // Port-only: a colour pass with smooth edges, its coverage taken between the shape's own pixels (its place in the
+    // atlas).
+    const auto addSmooth = [&](const Quad& rect, const Quad& source, uint32_t smoothOp)
+    {
+        if (Add(surface, SourceKind::Atlas, place->Page, rect, source, smoothOp, 0, before, after))
         {
             std::array<int32_t, 20>& draw = _Draws.back();
             draw[16] = place->X;
@@ -2438,22 +2445,58 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             draw[18] = place->X + width - 1;
             draw[19] = place->Y + rows - 1;
         }
+    };
 
-        return;
-    }
+    const bool translucent = command.Op == MCShapeOp::Alpha || command.Op == MCShapeOp::XlatAlpha;
 
-    // Port-only: a translucent shape shown from the HD art pack writes its opaque pixels' indices alone, then blends
-    // its translucent pixels (none when its frame holds them).
-    if (hdTranslucent)
+    // Port-only: a shape the HD art pack has a frame of keeps the original's indices (a translucent one's opaque
+    // pixels') and is shown from the pack (its bounds: the header's), its edges smooth unless the frame holds its
+    // blended pixels (an effect's; drawn through a table, XlatAlpha's haze, they take the table's change of colour:
+    // draw.pshader's TableShift). A translucent shape's blended pixels that its frame leaves out (a shadow, glass) are
+    // drawn first, with smooth edges, so the frame's edge lies over them.
+    if (!lineArt && (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent))
     {
-        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | OpaqueOnly, 0, before, after);
+        const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
 
-        if (hdBlended)
+        if (const std::shared_ptr<const MCHdArt::Frame> hd =
+                HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
+            hd != nullptr && HdPictureOf(*hd).has_value())
         {
+            // The frame covers the bounds, which may be wider than the shape's widest row.
+            const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};
+            const Quad shapeFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
+            const HdEdges edges = HdEdgesOf(*hd, command.ShapeTable);
+            const bool smooth = edges == HdEdges::Smooth;
+            const bool blendsOwn = translucent && !hd->Blended;
+
+            if (blendsOwn && smooth)
+            {
+                const auto [blendedAt, blendedFrom] = widened(at, from);
+                addSmooth(blendedAt, blendedFrom, op | SmoothEdges | BlendedOnly);
+            }
+
+            const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
+            AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+            Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
+                before, after);
+
+            // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
+            if (blendsOwn && !smooth)
+            {
+                Add(surface, SourceKind::Atlas, place->Page, at, from, op | BlendedOnly, 0, before, after);
+            }
+
             return;
         }
+    }
 
-        op |= BlendedOnly;
+    // Port-only: a shape with smooth edges (with HD art on: the mechs' shadows) writes its indices as always, then its
+    // colour through the blend pipeline with its coverage taken between its own pixels.
+    if (command.Op == MCShapeOp::Draw && MCHdArt::SmoothEdges(command.ShapeTable.data()))
+    {
+        Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
+        addSmooth(at, from, op | SmoothEdges);
+        return;
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, after);
@@ -2536,16 +2579,30 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
 
     // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
     // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
+    // An opaque one's edges are smooth (KindHdSmooth), reaching a window pixel past it each way the pane allows.
     if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
-        hd != nullptr && hd->Blended == command.Alpha &&
-        AddHd(surface, *hd, at, Quad{column, command.FirstRow, 1, 1}, command.Table))
+        hd != nullptr && hd->Blended == command.Alpha)
     {
-        if (command.Alpha)
+        const HdEdges edges = hd->Blended ? HdEdges::Frame : HdEdges::Smooth;
+        Quad frameAt = at;
+        Quad frameFrom = {column, command.FirstRow, 1, 1};
+
+        if (edges == HdEdges::Smooth && command.ClipX1 >= command.ClipX0 && command.ClipY1 >= command.ClipY0)
         {
-            return;
+            frameAt = {std::max(at[0] - 1, command.ClipX0), std::max(at[1] - 1, command.ClipY0),
+                       std::min(at[2] + 1, command.ClipX1), std::min(at[3] + 1, command.ClipY1)};
+            frameFrom = {column - (at[0] - frameAt[0]), command.FirstRow - (at[1] - frameAt[1]), 1, 1};
         }
 
-        op |= IndexOnly;
+        if (AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges))
+        {
+            if (command.Alpha)
+            {
+                return;
+            }
+
+            op |= IndexOnly;
+        }
     }
 
     Add(surface, SourceKind::Atlas, place->Page, at, from, op, 0, before, 0);
@@ -3759,6 +3816,16 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     SDL_PushGPUVertexUniformData(&commands, 0, &uniforms, sizeof(uniforms));
     SDL_PushGPUFragmentUniformData(&commands, 0, frameUniforms.data(), static_cast<uint32_t>(frameUniforms.size()));
     SDL_DrawGPUPrimitives(&pass, 6, draw.CellCount, 0, 0);
+
+    // Port-only: with HD ground, every tile again, faded into the ones drawn before it across their seams, once every
+    // tile is drawn (terrain.vshader's seam pass, KindTerrainSeam).
+    if (_TerrainMesh.HdAtlas.Handle != nullptr)
+    {
+        uniforms.Pane[2] = 1;
+        SDL_BindGPUGraphicsPipeline(&pass, _TerrainSeamPipeline.get());
+        SDL_PushGPUVertexUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+        SDL_DrawGPUPrimitives(&pass, 6, draw.CellCount, 0, 0);
+    }
 
     // The draws that follow read their own buffer.
     SDL_GPUBuffer* const drawBuffer = _DrawBuffer.get();

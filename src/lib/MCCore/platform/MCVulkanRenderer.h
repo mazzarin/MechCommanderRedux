@@ -416,6 +416,17 @@ private:
     };
 
     /// <summary>
+    /// Port-only: where an HD art frame's edges come from: its alpha (a menu's picture, an effect's blended pixels), or
+    /// the original's pixels it draws, smoothed at the output's resolution (KindHdSmooth: a sprite's or an overlay's
+    /// frame, whose alpha is only their mask scaled up, steps and all).
+    /// </summary>
+    enum class HdEdges : uint8_t
+    {
+        Frame,
+        Smooth,
+    };
+
+    /// <summary>
     /// Port-only: whether <paramref name="surface"/> shows what is drawn from the original at the output's resolution:
     /// HD art is on and the surface is drawn at more pixels than its window has.
     /// </summary>
@@ -455,11 +466,11 @@ private:
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as
     /// <paramref name="colours"/> says; a keyed copy (<paramref name="key"/>) leaves out the original's pixels of the
-    /// key. False when the frame can't be put on the GPU.
+    /// key; its edges as <paramref name="edges"/> says. False when the frame can't be put on the GPU.
     /// </summary>
     bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
                const std::optional<MCColorTable>& table, std::optional<uint8_t> key = std::nullopt,
-               HdColours colours = HdColours::Corrected);
+               HdColours colours = HdColours::Corrected, HdEdges edges = HdEdges::Frame);
 
     /// <summary>
     /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
@@ -479,6 +490,12 @@ private:
                                                   int32_t height);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+    /// <summary>
+    /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
+    /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
+    /// smooth.
+    /// </summary>
+    static HdEdges HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table);
 
     /// <summary>
     /// Port-only: draws the part from (<paramref name="sourceX"/>, <paramref name="sourceY"/>) of the glyph
@@ -644,6 +661,8 @@ private:
     /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
+    /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
     std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>

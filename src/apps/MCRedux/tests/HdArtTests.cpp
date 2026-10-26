@@ -3354,6 +3354,322 @@ TEST_CASE_ISOLATED("game: an effect's HD frame drawn through a table takes the t
 
 namespace
 {
+    /// <summary>The appearance the smooth-edge tests' pack keeps their frame under (none of the game's).</summary>
+    constexpr uint32_t TestEdgeAppearance = 0xffffe;
+    /// <summary>The rows of the smooth-edge tests' shapes: a staircase, one pixel longer each row.</summary>
+    constexpr int32_t StairRows = 24;
+    /// <summary>The original rows left out at the staircase's top and bottom, where its corners round.</summary>
+    constexpr int32_t StairEnds = 4;
+    /// <summary>A shape row's run of n pixels (the VFX encoding: n << 1 | 1, then the pixels), and its end.</summary>
+    constexpr uint8_t RunOf(int32_t pixels)
+    {
+        return static_cast<uint8_t>(pixels << 1 | 1);
+    }
+
+    constexpr uint8_t RowEnd = 0;
+
+    /// <summary>
+    /// Writes a frame that leaves out the blended pixels (MCHdArt::Frame not Blended) as a PNG pair,
+    /// <paramref name="stem"/>.png and _idx.png: <paramref name="width"/> x <paramref name="height"/> original pixels,
+    /// <paramref name="scale"/> HD pixels each (nearest, so its alpha keeps the original's steps), the pixels
+    /// <paramref name="indexAt"/> gives an index opaque in <paramref name="color"/>, the rest transparent.
+    /// </summary>
+    void WriteSteppedFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
+                           SDL_Color color, const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt)
+    {
+        std::vector<uint8_t> colors(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
+        std::vector<uint8_t> index(colors.size());
+
+        for (int32_t y = 0; y < height * scale; ++y)
+        {
+            for (int32_t x = 0; x < width * scale; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
+                const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
+                const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
+                std::ranges::copy(std::array{color.r, color.g, color.b, alpha},
+                                  colors.begin() + static_cast<ptrdiff_t>(at));
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), alpha, 0, HasIndex},
+                                  index.begin() + static_cast<ptrdiff_t>(at));
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width * scale, height * scale, colors);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width * scale, height * scale, index);
+    }
+
+    /// <summary>A free colour (10..245, not a special one) far from <paramref name="from"/>'s.</summary>
+    uint8_t ContrastingIndex(std::span<const SDL_Color, 256> colors, uint8_t from)
+    {
+        constexpr int32_t FirstFree = 10;
+        constexpr int32_t EndFree = 246;
+        constexpr int32_t Apart = 240;
+        const SDL_Color& a = colors[from];
+        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto found =
+            std::ranges::find_if(free,
+                                 [&](int32_t i)
+                                 {
+                                     const SDL_Color& b = colors[static_cast<size_t>(i)];
+                                     return SpecialColor[static_cast<size_t>(i)] == 0 &&
+                                            std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) >= Apart;
+                                 });
+        REQUIRE(found != free.end());
+        return static_cast<uint8_t>(*found);
+    }
+
+    /// <summary>How far a shown pixel's colour lies from another's (the channels' differences summed).</summary>
+    int32_t ColourDistance(const uint8_t* a, const uint8_t* b)
+    {
+        return std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
+    }
+
+    /// <summary>
+    /// What a smooth-edge test saw of a staircase drawn over a plain colour: per shown row of what changed, how many
+    /// pixels' worth it covers (each changed pixel's distance from the plain colour over a whole pixel's), and the
+    /// scale the screen is shown at.
+    /// </summary>
+    struct StairCover
+    {
+        std::vector<double> Rows;
+        double Scale = 1.0;
+    };
+
+    /// <summary>
+    /// The staircase <paramref name="draw"/> draws on the screen pane over a plain colour (index
+    /// <paramref name="plain"/>), with HD art on from <paramref name="pack"/> (none: off): per shown row, its cover
+    /// (StairCover), a whole pixel being as far from the plain colour as the shown pixel at <paramref name="full"/> of
+    /// what changed (fractions of its width and height).
+    /// </summary>
+    StairCover CoverOfStairs(const std::optional<std::filesystem::path>& pack, uint8_t plain,
+                             const std::function<void()>& draw, std::pair<double, double> full,
+                             const std::filesystem::path& scratch)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (pack.has_value())
+        {
+            on.emplace(*pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(ScreenPort()->Frame(), plain);
+        const Shown before = ReadShown(scratch);
+        draw();
+        const Shown after = ReadShown(scratch);
+        REQUIRE_EQ(before.Width, after.Width);
+        MCRect box{after.Width, after.Height, -1, -1};
+
+        for (int32_t y = 0; y < after.Height; ++y)
+        {
+            for (int32_t x = 0; x < after.Width; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * after.Width + x) * BytesPerPixel;
+
+                if (ColourDistance(&before.Pixels[at], &after.Pixels[at]) != 0)
+                {
+                    box = {std::min(box.X0, x), std::min(box.Y0, y), std::max(box.X1, x), std::max(box.Y1, y)};
+                }
+            }
+        }
+
+        REQUIRE(box.X1 >= box.X0);
+        const auto pixel = [&](const Shown& shown, int32_t x, int32_t y)
+        { return &shown.Pixels[(static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel]; };
+        const int32_t fullX = box.X0 + static_cast<int32_t>(full.first * (box.X1 - box.X0));
+        const int32_t fullY = box.Y0 + static_cast<int32_t>(full.second * (box.Y1 - box.Y0));
+        const double whole = ColourDistance(pixel(before, fullX, fullY), pixel(after, fullX, fullY));
+        REQUIRE(whole > 0.0);
+        StairCover cover;
+        cover.Scale = static_cast<double>(box.Y1 - box.Y0 + 1) / StairRows;
+
+        for (int32_t y = box.Y0; y <= box.Y1; ++y)
+        {
+            double row = 0.0;
+
+            for (int32_t x = box.X0; x <= box.X1; ++x)
+            {
+                row += std::min(ColourDistance(pixel(before, x, y), pixel(after, x, y)) / whole, 1.0);
+            }
+
+            cover.Rows.push_back(row);
+        }
+
+        return cover;
+    }
+
+    /// <summary>
+    /// The largest change of cover between neighbouring shown rows, away from the staircase's ends: its edge's slope
+    /// (a pixel a row) where it is smooth, about the screen's scale where it keeps the original's steps.
+    /// </summary>
+    double LargestStep(const StairCover& cover)
+    {
+        const auto ends = static_cast<size_t>(StairEnds * cover.Scale);
+        double largest = 0.0;
+
+        for (size_t row = ends; row + 1 + ends < cover.Rows.size(); ++row)
+        {
+            largest = std::max(largest, cover.Rows[row + 1] - cover.Rows[row]);
+        }
+
+        return largest;
+    }
+
+    /// <summary>
+    /// A shape of <paramref name="rows"/> (OneFrameTable's) drawn by the smooth-edge tests, its frame in a pack under
+    /// TestEdgeAppearance, and the scratch folder.
+    /// </summary>
+    struct StairShape
+    {
+        std::shared_ptr<MCShape> Shape;
+        std::filesystem::path Scratch;
+        std::filesystem::path Pack;
+        MCHdArt::ObjectShapeKey Key{"shapes", TestEdgeAppearance, 0};
+    };
+
+    StairShape MakeStairShape(std::string_view name, int32_t width, std::span<const uint8_t> rows)
+    {
+        StairShape stairs;
+        const std::vector<uint8_t> table = OneFrameTable(width, StairRows, rows);
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        stairs.Shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        REQUIRE(!stairs.Shape->FrameList().empty());
+        stairs.Scratch = std::filesystem::temp_directory_path() / name;
+        std::filesystem::remove_all(stairs.Scratch);
+        stairs.Pack = stairs.Scratch / "pack";
+        std::filesystem::create_directories(stairs.Pack / MCHdArt::FolderOf(stairs.Key));
+        return stairs;
+    }
+}
+
+/// <summary>
+/// An HD frame's edges come from the original's pixels, smoothed: a staircase (a pixel longer each row) drawn on the
+/// screen by the GPU over mission 1 (a window shown larger than the screen), its frame's alpha the original's steps
+/// scaled up, shows with HD art off a jump of about the screen's scale every few shown rows, and with it on an edge
+/// that moves about a pixel a shown row.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's edges smoothed")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.push_back(RunOf(row + 1));
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
+        rows.push_back(RowEnd);
+    }
+
+    const StairShape stairs = MakeStairShape("mc_tests_hd_smooth_frame", StairRows, rows);
+    constexpr int32_t Scale = 2;
+    WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", StairRows, StairRows, Scale, colors[opaque],
+                      [&](int32_t x, int32_t y) { return x <= y ? std::optional(opaque) : std::nullopt; });
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto draw = [&]
+    {
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+    };
+
+    // A whole pixel: the bottom row's left end, inside the staircase.
+    constexpr std::pair<double, double> Inside = {0.1, 0.99};
+    GamePaused = true;
+    const StairCover original = CoverOfStairs(std::nullopt, plain, draw, Inside, stairs.Scratch);
+    const StairCover smooth = CoverOfStairs(stairs.Pack, plain, draw, Inside, stairs.Scratch);
+    GamePaused = false;
+    std::cout << std::format("  largest step between rows (scale {:.2f}): {:.2f} with HD art off, {:.2f} on\n",
+                             smooth.Scale, LargestStep(original), LargestStep(smooth));
+    CHECK(LargestStep(original) > smooth.Scale * 0.75);
+    CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+/// <summary>
+/// A translucent shape's blended pixels that its HD frame leaves out (a shadow) are drawn with smooth edges: a shape
+/// whose rows hold two opaque pixels and then a halving staircase (a pixel longer each row), drawn as the frame test's,
+/// shows the shadow's edge with HD art off stepping about the screen's scale every few shown rows, and with it on
+/// moving about a pixel a shown row.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a translucent sprite's shadow with smooth edges under its HD frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    constexpr uint8_t Mark = 0;
+    constexpr uint8_t Halves = 254;
+    constexpr int32_t Opaque = 2;
+    REQUIRE(SpecialColor[Halves] != 0);
+    std::vector<uint8_t> rows;
+
+    // Each row: the translucent shape's mark (a pixel of colour 0), two opaque pixels, then the shadow.
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(1), Mark, RunOf(Opaque + row + 1), opaque, opaque});
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), Halves);
+        rows.push_back(RowEnd);
+    }
+
+    constexpr int32_t Width = 1 + Opaque + StairRows;
+    const StairShape stairs = MakeStairShape("mc_tests_hd_smooth_shadow", Width, rows);
+    REQUIRE(MCAgShapeIsAlpha(stairs.Shape->FrameList(), 0));
+    constexpr int32_t Scale = 2;
+    WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", Width, StairRows, Scale, colors[opaque],
+                      [&](int32_t x, int32_t) { return x >= 1 && x <= Opaque ? std::optional(opaque) : std::nullopt; });
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto draw = [&]
+    {
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+    };
+
+    // A whole pixel of shadow: the bottom row's middle.
+    constexpr std::pair<double, double> Inside = {0.6, 0.99};
+    GamePaused = true;
+    const StairCover original = CoverOfStairs(std::nullopt, plain, draw, Inside, stairs.Scratch);
+    const StairCover smooth = CoverOfStairs(stairs.Pack, plain, draw, Inside, stairs.Scratch);
+    GamePaused = false;
+    std::cout << std::format("  largest step between rows (scale {:.2f}): {:.2f} with HD art off, {:.2f} on\n",
+                             smooth.Scale, LargestStep(original), LargestStep(smooth));
+    CHECK(LargestStep(original) > smooth.Scale * 0.75);
+    CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+namespace
+{
     /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
@@ -4168,6 +4484,146 @@ namespace
     /// has one, the results and debriefing, and logistics after the mission.
     /// </summary>
     void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail);
+}
+
+namespace
+{
+    /// <summary>The seam test's two tile colours, a channel apart: a tile's every HD pixel is one of them.</summary>
+    constexpr SDL_Color SeamRed = {220, 30, 30, 255};
+    constexpr SDL_Color SeamBlue = {30, 30, 220, 255};
+    /// <summary>How far a shown channel may be from the colour it is taken for.</summary>
+    constexpr int32_t SeamTolerance = 12;
+    /// <summary>A mix of the two lies this far from both, at least, in red.</summary>
+    constexpr int32_t SeamMixed = 40;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (a tile's colour is picked by its name's hash).</summary>
+    constexpr uint64_t SeamHashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t SeamHashPrime = 0x100000001b3ull;
+
+    /// <summary>
+    /// Writes HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder, each one colour
+    /// (SeamRed or SeamBlue, by its name's hash), at TerrainScale, with the index picture WriteTerrainPack writes.
+    /// </summary>
+    size_t WriteTwoColourTerrain(const std::filesystem::path& pack, const MCTerrainMesh& mesh)
+    {
+        const std::filesystem::path folder = pack / "terrain";
+        std::filesystem::create_directories(folder);
+        size_t written = 0;
+
+        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        {
+            const DecodedTile decoded = DecodeTile(tile);
+
+            if (decoded.Width == 0)
+            {
+                continue;
+            }
+
+            const std::string name = MCHdArt::TerrainTileName(tile);
+            // FNV-1a over the name: the same split on every platform.
+            uint64_t hash = SeamHashBasis;
+
+            for (const char c : name)
+            {
+                hash = (hash ^ static_cast<uint8_t>(c)) * SeamHashPrime;
+            }
+
+            const SDL_Color colour = hash % 2 == 0 ? SeamRed : SeamBlue;
+            const int32_t width = decoded.Width * TerrainScale;
+            const int32_t height = decoded.Height * TerrainScale;
+            std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel);
+            std::vector<uint8_t> index(color.size());
+
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < width; ++x)
+                {
+                    const size_t from = static_cast<size_t>(y / TerrainScale) * decoded.Width + x / TerrainScale;
+                    const size_t to = (static_cast<size_t>(y) * width + x) * BytesPerPixel;
+                    std::ranges::copy(std::array{colour.r, colour.g, colour.b, HasIndex},
+                                      color.begin() + static_cast<ptrdiff_t>(to));
+                    index[to] = decoded.Index[from];
+                    index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
+                    index[to + 3] = HasIndex;
+                }
+            }
+
+            SavePng(folder / (name + ".png"), width, height, color);
+            SavePng(folder / (name + "_idx.png"), width, height, index);
+            ++written;
+        }
+
+        return written;
+    }
+}
+
+/// <summary>
+/// HD ground: the tiles' HD colours fade into each other across their seams (each tile is upscaled on its own): with a
+/// pack whose tiles are each one of two colours, the shown ground holds mixes of the two along the tiles' seams, and is
+/// still mostly the two colours inside the tiles.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their seams")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    RevealAll();
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    REQUIRE(WriteTwoColourTerrain(pack, *mesh) > 0);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn hdArt(pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const Shown shown = ReadShown(scene->Scratch);
+
+    // The view's middle half (the interface lies around it).
+    const auto near = [](const uint8_t* pixel, const SDL_Color& colour)
+    {
+        return std::abs(pixel[0] - colour.r) <= SeamTolerance && std::abs(pixel[1] - colour.g) <= SeamTolerance &&
+               std::abs(pixel[2] - colour.b) <= SeamTolerance;
+    };
+
+    int64_t plain = 0;
+    int64_t mixed = 0;
+    int64_t pixels = 0;
+
+    for (int32_t y = shown.Height / 4; y < shown.Height * 3 / 4; ++y)
+    {
+        for (int32_t x = shown.Width / 4; x < shown.Width * 3 / 4; ++x)
+        {
+            const uint8_t* pixel = &shown.Pixels[(static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel];
+            const int32_t sum = pixel[0] + pixel[2];
+            ++pixels;
+
+            if (near(pixel, SeamRed) || near(pixel, SeamBlue))
+            {
+                ++plain;
+            }
+            else if (std::abs(pixel[1] - SeamRed.g) <= SeamTolerance &&
+                     std::abs(sum - (SeamRed.r + SeamRed.b)) <= 2 * SeamTolerance &&
+                     pixel[0] >= SeamBlue.r + SeamMixed && pixel[0] <= SeamRed.r - SeamMixed)
+            {
+                ++mixed;
+            }
+        }
+    }
+
+    std::cout << std::format("  of {} pixels: {} one tile's colour, {} a mix of two\n", pixels, plain, mixed);
+    // Without the fade, every tile's pixel would be one colour or the other; the seams' mixes are a band a few shown
+    // pixels wide along them.
+    constexpr int64_t MixedShare = 1000;
+    CHECK(plain * 2 > pixels);
+    CHECK(mixed * MixedShare > pixels);
+    std::filesystem::remove_all(scene->Scratch);
 }
 
 /// <summary>

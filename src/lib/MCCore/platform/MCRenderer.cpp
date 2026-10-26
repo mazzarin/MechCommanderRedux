@@ -252,6 +252,8 @@ namespace
             moved.Left += _X;
             moved.Lo += _X;
             moved.Hi += _X;
+            moved.ClipTop += _Y;
+            moved.ClipBottom += _Y;
             Target().Shape(Window(), moved);
         }
 
@@ -261,6 +263,9 @@ namespace
             moved.Top += _Y;
             moved.StartX += _X;
             moved.ClipX0 += _X;
+            moved.ClipX1 += _X;
+            moved.ClipY0 += _Y;
+            moved.ClipY1 += _Y;
             Target().FastShape(Window(), moved);
         }
 

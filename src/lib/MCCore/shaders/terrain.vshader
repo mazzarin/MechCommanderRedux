@@ -13,6 +13,10 @@
 // them) pick the tile's table: none with all four seen, the haze table for one to three, the fill (colour 0x10) for none
 // or when everything is black.
 //
+// Port-only: with HD ground, a second pass (the seam pass, pane.z 1) draws every tile again, in the same order, through
+// the blend pipeline (draw.pshader's KindTerrainSeam), its box SeamReach pixels wider: its colours at its pixels'
+// smoothed coverage, so each tile fades into the ones drawn before it across their seams.
+//
 // Bindings (SDL GPU, SPIR-V): the fog's surface (sampled) and the mesh as storage buffers in space0, vertex uniforms in
 // space1.
 
@@ -51,7 +55,7 @@ cbuffer Terrain : register(b0, space1)
     int4 clip;
     // x: everything filled; y, z, w: the table rows for one, two and three corners seen.
     uint4 haze;
-    // The pane's corner in the window (xy).
+    // The pane's corner in the window (xy); z: 1 in the seam pass.
     int4 pane;
 };
 
@@ -72,9 +76,12 @@ static const float2 quad[6] = {
 
 // draw.pshader's kinds and flags.
 static const uint KindTexture = 2;
+static const uint KindTerrainSeam = 15;
 static const uint TableBefore = 1u << 7;
 static const uint UseColor = 1u << 10;
 static const uint HdColors = 1u << 16;
+// How far the seam pass reaches past a tile's box (window pixels): as far as its B-spline's coverage reaches.
+static const int SeamReach = 2;
 
 // The screen point of map vertex (row, col) at elevation level e.
 int2 Point(int row, int col, uint e)
@@ -145,10 +152,12 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         return Nothing();
     }
 
-    // The tile's box in the window, cut to the pane.
+    // The tile's box in the window (wider in the seam pass), cut to the pane.
     const Image image = images[cell.x];
+    const bool seamPass = pane.z != 0;
+    const int reach = seamPass ? SeamReach : 0;
     const int2 at = pane.xy + topLeft - image.hot.xy;
-    const int4 box = int4(at, at + image.atlas.zw - 1);
+    const int4 box = int4(at - reach, at + image.atlas.zw - 1 + reach);
     const int4 cut = int4(max(box.xy, clip.xy), min(box.zw, clip.zw));
 
     if (cut.z < cut.x || cut.w < cut.y)
@@ -156,7 +165,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         return Nothing();
     }
 
-    uint flags = KindTexture;
+    uint flags = seamPass ? KindTerrainSeam : KindTexture;
     uint color = 0;
     uint before = 0;
     uint seen = 0;
@@ -195,8 +204,9 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     output.rect = cut;
     output.source = int4(image.atlas.xy + cut.xy - at, 1, 1);
     output.op = uint4(flags, color, before, 0);
-    output.span = int4(0, 0, 0, 0);
-    output.walk = uint4(0, 0, 0, 0);
+    // The seam pass reads the tile's place in the atlas (walk.zw) and its size (span.xy).
+    output.span = seamPass ? int4(image.atlas.zw, 0, 0) : int4(0, 0, 0, 0);
+    output.walk = seamPass ? uint4(0, 0, (uint)image.atlas.x, (uint)image.atlas.y) : uint4(0, 0, 0, 0);
 
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)

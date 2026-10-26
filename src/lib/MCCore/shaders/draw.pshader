@@ -21,8 +21,10 @@
 //
 // An HD art frame (port-only, sprite/MCHdArt.h) is drawn over the original shape's place: each drawn pixel takes the
 // frame's colour at its centre, filtered between the frame's pixels, so the shape shows at the output's resolution.
-// A translucent shape's frame leaves out its blended pixels, which the original's draw still blends (BlendedOnly),
-// except one that holds them (HdLight: an effect's), whose pixels may add light (colour without coverage).
+// A translucent shape's frame leaves out its blended pixels, which the original's draw still blends, with smooth edges,
+// under the frame (SmoothEdges with BlendedOnly), except one that holds them (HdLight: an effect's), whose pixels may
+// add light (colour without coverage). A frame whose alpha is only its original's mask scaled up (KindHdSmooth) takes
+// its coverage from the original's pixels, smoothed, as a smooth-edged shape does.
 // A paint scheme's table recolours the pixels whose original index it changes. A terrain tile with HD colours
 // (HdColors, terrain.vshader) writes the pixels and indices it always did, its colours filtered from the HD tile's.
 // HD colours are corrected by their original index's colour now over the one the pack was made from (Corrected), so
@@ -106,6 +108,11 @@ static const uint KindHdMap = 9;
 static const uint KindSmoothMap = 10;
 // Port-only: a flat or Gouraud polygon (a laser's beam) at the output's resolution, its edges smooth (SmoothPolygonPixel).
 static const uint KindSmoothPolygon = 11;
+// Port-only: an HD art frame drawn as KindHd is, its coverage the original's pixels smoothed (HdMaskCoverage) instead
+// of its alpha (their mask scaled up, which keeps the pixels' steps). Kinds 12 and 13 are left for other branches.
+static const uint KindHdSmooth = 14;
+// Port-only: a terrain tile's seam pass (terrain.vshader), drawn over every tile after them all (TerrainSeamPixel).
+static const uint KindTerrainSeam = 15;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -126,7 +133,7 @@ static const uint HdColors = 1u << 16;
 // walk its place in the source (x0, y0, x1, y1).
 static const uint SmoothEdges = 1u << 17;
 // Port-only, for a translucent shape drawn from the HD art pack: only its opaque pixels (drawn index-only under the HD
-// frame), or only its blended ones (which the HD frame leaves out).
+// frame), or only its blended ones (which the HD frame leaves out; with SmoothEdges, smooth: SmoothBlendedPixel).
 static const uint OpaqueOnly = 1u << 18;
 static const uint BlendedOnly = 1u << 19;
 // An HD frame's colours shown as made, not Corrected (a menu's picture, made from its own screen's palette).
@@ -136,6 +143,15 @@ static const uint HdLight = 1u << 21;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
+// The same for an HD frame's coverage and the blended pixels under it (KindHdSmooth, SmoothBlendedPixel), a little
+// lower, so a thin line or a lone pixel of the original (a lamp's shadow, a palm's trunk) keeps most of its strength.
+static const float SpriteEdgeLow = 0.2;
+static const float SpriteEdgeHigh = 0.6;
+// An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
+static const float HdMaskAlpha = 0.5;
+// An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
+// past its mask, the frame keeps no colour).
+static const float HdOwnColourAlpha = 0.5;
 // The most an HD colour channel is scaled by when today's colour differs from the pack's.
 static const float MaxCorrection = 4.0;
 // An effect's frame (HdLight) holds faint error in its empty parts (the network's and BC7's: up to about 5/255 of light
@@ -280,10 +296,10 @@ float3 HdAtlasTexel(int2 texel, int2 low, int2 high, int atlas)
     return atlas == 0 ? Fetch(hdTex, hdSampler, at).rgb : Fetch(hdTex2, hdSampler2, at).rgb;
 }
 
-// A terrain tile's pixel in HD colours (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place and walk.zw its
-// place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value` (original, through
-// the haze's table), the HD colour the one made from `original`'s.
-Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
+// A terrain tile's HD colour at drawn pixel `target` (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place
+// and walk.zw its place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value`
+// (original, through the haze's table), the HD colour the one made from `original`'s.
+float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 {
     const int hdScale = (int)input.op.w;
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
@@ -298,9 +314,14 @@ Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
         lerp(HdAtlasTexel(base, low, high, atlas), HdAtlasTexel(base + int2(1, 0), low, high, atlas), f.x);
     const float3 bottom =
         lerp(HdAtlasTexel(base + int2(0, 1), low, high, atlas), HdAtlasTexel(base + int2(1, 1), low, high, atlas), f.x);
+    return Corrected(lerp(top, bottom, f.y), 1.0, original, value);
+}
 
+// A terrain tile's pixel in HD colours (HdTerrainColour), and its index.
+Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
+{
     Output output;
-    output.color = float4(Corrected(lerp(top, bottom, f.y), 1.0, original, value), 1.0);
+    output.color = float4(HdTerrainColour(input, target, original, value), 1.0);
     output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
     return output;
 }
@@ -395,15 +416,170 @@ float SmoothCoverage(Input input, float2 at, inout uint value)
     return smoothstep(EdgeLow, EdgeHigh, coverage);
 }
 
-// A smooth-edged shape's coverage at drawn pixel `target` (SmoothCoverage of its source pixels). `value` becomes a drawn
-// neighbour's when the pixel under the centre isn't drawn.
-float ShapeCoverage(Input input, int2 target, inout uint value)
+// Where drawn pixel `target`'s centre lies in a smooth-edged shape's source, less half a texel (SmoothCoverage's `at`).
+float2 ShapePlace(Input input, int2 target)
 {
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float2 flip = float2(input.source.z < 0 ? 1.0 : 0.0, input.source.w < 0 ? 1.0 : 0.0);
-    const float2 at =
-        float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
-    return SmoothCoverage(input, at, value);
+    return float2(input.source.xy) + flip + (window - float2(input.rect.xy)) * float2(input.source.zw) - 0.5;
+}
+
+// A smooth-edged shape's coverage at drawn pixel `target` (SmoothCoverage of its source pixels). `value` becomes a
+// drawn neighbour's when the pixel under the centre isn't drawn.
+float ShapeCoverage(Input input, int2 target, inout uint value)
+{
+    return SmoothCoverage(input, ShapePlace(input, target), value);
+}
+
+// Whether texel `texel` of the terrain's atlas is one a tile draws (inside its place, low..high), and its value.
+bool TileTexel(int2 texel, int2 low, int2 high, out uint value)
+{
+    value = 0;
+
+    if (any(texel < low) || any(texel > high))
+    {
+        return false;
+    }
+
+    const float4 sample = FetchSource(texel);
+    value = Byte(sample.r);
+    return Byte(sample.g) != 0;
+}
+
+// Port-only: a terrain tile's seam pass (KindTerrainSeam, terrain.vshader): with HD ground, every tile is drawn again
+// after them all, in the same order, through the blend pipeline, over its box a little wider (its place in the atlas
+// walk.zw, its size span.xy): its colour at the B-spline's coverage of its own pixels (SmoothCoverage's 4 x 4, not
+// ramped). Each tile was upscaled on its own, so where two meet their HD colours would change at the original's pixel
+// steps; so each fades into the tiles drawn before it across a smooth seam, as the original's painter's order lays them
+// (a tile's coverage is whole inside it, where it shows as the first pass drew it). The colour is the first pass's for
+// the nearest of its pixels: the fill, or its HD colour (else its own) through the haze's table. Premultiplied.
+Output TerrainSeamPixel(Input input, int2 target)
+{
+    const int2 low = int2(input.walk.zw);
+    const int2 high = low + input.span.xy - 1;
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 at = float2(input.source.xy) + (window - float2(input.rect.xy)) - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float4 wx = BSplineWeights(f.x);
+    const float4 wy = BSplineWeights(f.y);
+    float coverage = 0.0;
+    float nearest = 1e9;
+    uint original = 0;
+
+    for (int y = 0; y < 4; y++)
+    {
+        for (int x = 0; x < 4; x++)
+        {
+            uint value;
+
+            if (!TileTexel(base + int2(x - 1, y - 1), low, high, value))
+            {
+                continue;
+            }
+
+            coverage += wx[x] * wy[y];
+            const float2 d = float2(x - 1, y - 1) - f;
+            const float distance = dot(d, d);
+
+            if (distance < nearest)
+            {
+                nearest = distance;
+                original = value;
+            }
+        }
+    }
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    const uint flags = input.op.x;
+    float3 colour;
+
+    if ((flags & UseColor) != 0)
+    {
+        colour = Shown(input.op.y & 255u);
+    }
+    else
+    {
+        const uint shown = (flags & TableBefore) != 0 ? Table(input.op.z, original) : original;
+        colour = (flags & HdColors) != 0 ? HdTerrainColour(input, target, original, shown) : Shown(shown);
+    }
+
+    return Blended(float4(colour, 1.0) * coverage);
+}
+
+// A translucent colour (premultiplied) drawn through table `row` after the draw (TableAfter: the haze, fades): over
+// what the table's fit does to the pixel under it.
+float4 ThroughFit(float4 blend, uint row)
+{
+    const float4 fit = Fetch(fitTex, fitSampler, int2(0, row));
+    return float4(blend.rgb * (1.0 - fit.a) + fit.rgb, 1.0 - (1.0 - blend.a) * (1.0 - fit.a));
+}
+
+// Port-only: the pixels a translucent shape blends (a shadow, glass) that its HD frame leaves out, drawn before the
+// frame (KindTexture with SmoothEdges and BlendedOnly), with smooth edges: their colours' mean around the drawn pixel
+// by the B-spline's weights (SmoothCoverage's 4 x 4), over the share of the pixel that the shape's pixels cover (all of
+// them smoothed) and its opaque ones (the frame's, smoothed as KindHdSmooth's) leave. So a shadow's edges are curves,
+// and it reaches under the frame's edge, which covers it. A table after the draw (the haze) changes that colour as it
+// changes a pixel's. Premultiplied, through the blend pipeline.
+Output SmoothBlendedPixel(Input input, int2 target)
+{
+    const uint flags = input.op.x;
+    const float2 at = ShapePlace(input, target);
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float4 wx = BSplineWeights(f.x);
+    const float4 wy = BSplineWeights(f.y);
+    float opaqueWeight = 0.0;
+    float blendedWeight = 0.0;
+    float4 blendSum = float4(0.0, 0.0, 0.0, 0.0);
+
+    for (int y = 0; y < 4; y++)
+    {
+        for (int x = 0; x < 4; x++)
+        {
+            uint value;
+
+            if (!DrawnTexel(input, base + int2(x - 1, y - 1), value))
+            {
+                continue;
+            }
+
+            const float weight = wx[x] * wy[y];
+            const uint alphaKind = (uint)round(Fetch(alphaTex, alphaSampler, int2(value, 0)).x);
+
+            if (alphaKind == AlphaOpaque)
+            {
+                opaqueWeight += weight;
+            }
+            else if (alphaKind != AlphaNothing || (flags & TableAfter) != 0)
+            {
+                blendedWeight += weight;
+                blendSum += weight * Fetch(alphaTex, alphaSampler, int2(value, 1));
+            }
+        }
+    }
+
+    const float frameCoverage = smoothstep(SpriteEdgeLow, SpriteEdgeHigh, opaqueWeight);
+    const float shapeCoverage = smoothstep(SpriteEdgeLow, SpriteEdgeHigh, opaqueWeight + blendedWeight);
+    const float share = frameCoverage < 1.0 ? saturate((shapeCoverage - frameCoverage) / (1.0 - frameCoverage)) : 0.0;
+
+    if (blendedWeight <= 0.0 || share <= 0.0)
+    {
+        discard;
+    }
+
+    float4 blend = blendSum / blendedWeight;
+
+    if ((flags & TableAfter) != 0)
+    {
+        blend = ThroughFit(blend, input.op.w);
+    }
+
+    return Blended(blend * share);
 }
 
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
@@ -429,8 +605,52 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     return Fetch(hdTex, hdSampler, texel);
 }
 
+// Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
+// KindHdSmooth: the original's pixels (`original` its size) that it draws, where the frame's alpha at their centre is
+// over HdMaskAlpha, smoothed as a smooth-edged shape's are (SmoothCoverage), so its edges are curves at the output's
+// resolution instead of its mask's steps. `nearest` becomes the drawn pixel nearest the place.
+float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
+{
+    const float2 at = shape - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float4 wx = BSplineWeights(f.x);
+    const float4 wy = BSplineWeights(f.y);
+    float coverage = 0.0;
+    float nearestDistance = 1e9;
+    nearest = int2(0, 0);
+
+    for (int y = 0; y < 4; y++)
+    {
+        for (int x = 0; x < 4; x++)
+        {
+            const int2 texel = base + int2(x - 1, y - 1);
+
+            if (any(texel < 0) || any(texel >= original) ||
+                Fetch(hdTex, hdSampler, texel * hdScale + hdScale / 2).a <= HdMaskAlpha)
+            {
+                continue;
+            }
+
+            coverage += wx[x] * wy[y];
+            const float2 d = float2(x - 1, y - 1) - f;
+            const float distance = dot(d, d);
+
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearest = texel;
+            }
+        }
+    }
+
+    return smoothstep(SpriteEdgeLow, SpriteEdgeHigh, coverage);
+}
+
 // An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD
-// texels around it, recoloured as the original pixel under it shows now.
+// texels around it, recoloured as the original pixel under it shows now. A smooth-edged one's (KindHdSmooth) is that
+// colour, unpremultiplied, at HdMaskCoverage's coverage; past the frame's own coverage, where it keeps no colour, the
+// colour at its nearest drawn pixel's centre.
 Output HdPixelAt(Input input, float2 shape)
 {
     const uint hdScale = input.op.y & 255u;
@@ -452,6 +672,19 @@ Output HdPixelAt(Input input, float2 shape)
     const float4 bottom = lerp(HdTexel(base + int2(0, 1), size, texelScale, flags, key),
                                HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
     float4 color = lerp(top, bottom, f.y);
+    int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
+
+    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
+    if ((flags & 15u) == KindHdSmooth)
+    {
+        int2 nearest;
+        const float coverage = HdMaskCoverage(original, texelScale, shape, nearest);
+        texel = nearest;
+        const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
+        const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);
+        const float3 near = inside.a > 0.0 ? inside.rgb / inside.a : own;
+        color = float4(lerp(near, own, saturate(color.a / HdOwnColourAlpha)) * coverage, coverage);
+    }
 
     // A frame holding its blended pixels may add light where it has no coverage (its error adds none).
     if ((input.op.x & HdLight) != 0 && color.a < CoverageFloor)
@@ -466,7 +699,6 @@ Output HdPixelAt(Input input, float2 shape)
 
     // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
     // brightness.
-    const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
     const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
     if (Byte(entry.g) == 255u && (input.op.x & HdAsMade) == 0)
@@ -776,9 +1008,15 @@ Output main(Input input)
     const uint flags = input.op.x;
     const uint kind = flags & 15u;
 
-    if (kind == KindHd)
+    if (kind == KindHd || kind == KindHdSmooth)
     {
         return HdPixel(input, target);
+    }
+
+    // Port-only: a translucent shape's blended pixels under its HD frame, smooth.
+    if (kind == KindTexture && (flags & (SmoothEdges | BlendedOnly)) == (SmoothEdges | BlendedOnly))
+    {
+        return SmoothBlendedPixel(input, target);
     }
 
     if (kind == KindSharpGlyph)
@@ -804,6 +1042,11 @@ Output main(Input input)
     if (kind == KindSmoothPolygon)
     {
         return SmoothPolygonPixel(input, target);
+    }
+
+    if (kind == KindTerrainSeam)
+    {
+        return TerrainSeamPixel(input, target);
     }
 
     const uint color = input.op.y & 255u;
@@ -936,8 +1179,7 @@ Output main(Input input)
         }
         else
         {
-            const float4 fit = Fetch(fitTex, fitSampler, int2(0, input.op.w));
-            blend = float4(blend.rgb * (1.0 - fit.a) + fit.rgb, 1.0 - (1.0 - blend.a) * (1.0 - fit.a));
+            blend = ThroughFit(blend, input.op.w);
         }
     }
 

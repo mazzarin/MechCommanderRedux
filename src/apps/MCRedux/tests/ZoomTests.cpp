@@ -49,9 +49,6 @@ TEST_CASE_ISOLATED("game: units keep their place on the ground while the zoom ea
 
 namespace
 {
-    /// <summary>The window the starting-zoom tests boot in, as a player's window was in the menus.</summary>
-    constexpr int LargeWindowWidth = 1600;
-    constexpr int LargeWindowHeight = 1200;
     /// <summary>The corner of the screen the menus are drawn in, and the display shows for them.</summary>
     constexpr int MenuWidth = 640;
     constexpr int MenuHeight = 480;
@@ -70,10 +67,7 @@ namespace
             return;
         }
 
-        MCTestGame::BootOptions.WindowWidth = LargeWindowWidth;
-        MCTestGame::BootOptions.WindowHeight = LargeWindowHeight;
-        MCTestGame::BootOptions.FixedZoomHeight = 0.0f;
-        MCTestGame::BootOptions.Started = [uiResolution] { GUiResolution = uiResolution; };
+        MCTestGame::BootInLargeWindow(uiResolution, OriginalInterfaceSize);
         REQUIRE(MCTestGame::StartMission(1));
         const std::shared_ptr<MCViewWindow> view = MCMainView();
         REQUIRE(view != nullptr);
@@ -81,7 +75,7 @@ namespace
         REQUIRE(display != nullptr);
         REQUIRE_EQ(display->Height(), uiResolution);
         REQUIRE_EQ(view->Height(), display->Height());
-        constexpr auto windowLines = static_cast<float>(LargeWindowHeight);
+        constexpr auto windowLines = static_cast<float>(MCTestGame::LargeWindowHeight);
 
         display->SetView(0, 0, MenuWidth, MenuHeight);
         CHECK_EQ(display->UnderlayScale(), 1.0f);

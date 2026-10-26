@@ -292,9 +292,7 @@ TEST_CASE("presenter: the interface size steps through its choices")
 
 namespace
 {
-    /// <summary>The window the interface size tests boot in: 1080P draws its screen 1080 lines tall.</summary>
-    constexpr int LargeWindowWidth = 1600;
-    constexpr int LargeWindowHeight = 1200;
+    /// <summary>The UI RESOLUTION the interface size tests boot at: 1080 lines in the 1600x1200 window.</summary>
     constexpr int LargeWindowLines = 1080;
 
     /// <summary>
@@ -302,15 +300,7 @@ namespace
     /// </summary>
     bool StartInLargeWindow()
     {
-        MCTestGame::BootOptions.WindowWidth = LargeWindowWidth;
-        MCTestGame::BootOptions.WindowHeight = LargeWindowHeight;
-        MCTestGame::BootOptions.FixedZoomHeight = 0.0f;
-        MCTestGame::BootOptions.Started = []
-        {
-            GUiResolution = LargeWindowLines;
-            GInterfaceSize = OriginalInterfaceSize;
-        };
-
+        MCTestGame::BootInLargeWindow(LargeWindowLines, OriginalInterfaceSize);
         return MCTestGame::StartMission(1);
     }
 
@@ -361,7 +351,7 @@ TEST_CASE_ISOLATED("game: INTERFACE SIZE 150% draws a 1080P mission's interface 
     REQUIRE_EQ(display->Height(), LargeWindowLines);
     const float zoom = view->ZoomHeight;
     const int32_t worldHeight = view->WorldHeight();
-    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(LargeWindowHeight)) < 0.5f);
+    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(MCTestGame::LargeWindowHeight)) < 0.5f);
 
     GInterfaceSize = 150;
     MCTestGame::RunFrame(1.0f / 15.0f);
@@ -372,7 +362,7 @@ TEST_CASE_ISOLATED("game: INTERFACE SIZE 150% draws a 1080P mission's interface 
     CHECK_EQ(view->Height(), 720);
     CHECK_EQ(view->ZoomHeight, zoom);
     CHECK_EQ(view->WorldHeight(), worldHeight);
-    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(LargeWindowHeight)) < 0.5f);
+    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(MCTestGame::LargeWindowHeight)) < 0.5f);
 
     // The middle of the map page, where the window shows it: the screen point times the window's pixels a line.
     const std::shared_ptr<MCTacticalMap> map = TacticalMap();
@@ -381,7 +371,7 @@ TEST_CASE_ISOLATED("game: INTERFACE SIZE 150% draws a 1080P mission's interface 
     REQUIRE(map->DisplayType == MCTacmapPage::Map);
     const int32_t localX = (map->MapRect.left + map->MapRect.right) / 2;
     const int32_t localY = (map->MapRect.top + map->MapRect.bottom) / 2;
-    const float scale = static_cast<float>(LargeWindowHeight) / static_cast<float>(display->Height());
+    const float scale = static_cast<float>(MCTestGame::LargeWindowHeight) / static_cast<float>(display->Height());
     const float windowX = (static_cast<float>(map->GlobalX() + localX) + 0.5f) * scale;
     const float windowY = (static_cast<float>(map->GlobalY() + localY) + 0.5f) * scale;
     MCVector3D target(static_cast<float>(localX), static_cast<float>(localY), 0.0f);

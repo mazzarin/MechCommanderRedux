@@ -57,6 +57,18 @@ namespace MCTestGame
     std::function<void()> OnPresent;
     MCBootOptions BootOptions;
 
+    void BootInLargeWindow(int uiResolution, int interfaceSize)
+    {
+        BootOptions.WindowWidth = LargeWindowWidth;
+        BootOptions.WindowHeight = LargeWindowHeight;
+        BootOptions.FixedZoomHeight = 0.0f;
+        BootOptions.Started = [uiResolution, interfaceSize]
+        {
+            GUiResolution = uiResolution;
+            GInterfaceSize = interfaceSize;
+        };
+    }
+
     namespace
     {
         /// <summary>

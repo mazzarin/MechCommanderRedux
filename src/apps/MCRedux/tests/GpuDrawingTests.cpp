@@ -139,6 +139,42 @@ TEST_CASE_ISOLATED("game: the GPU draws mission 1 zoomed as the software rendere
 }
 
 /// <summary>
+/// Mirror mode on mission 1 with a bigger interface: INTERFACE SIZE 150% in a 1600x1200 window at 1080P gives a screen
+/// 720 lines tall, shown scaled up with the world view at the window's pixels, and the GPU still draws the screen and
+/// the world as the software renderer does.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU draws mission 1 with a 150% interface as the software renderer does")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int uiResolution = 1080;
+    constexpr int interfaceSize = 150;
+    constexpr int lines = 720;
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
+    MCTestGame::BootInLargeWindow(uiResolution, interfaceSize);
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    REQUIRE_EQ(MCInput::Display()->Height(), lines);
+    renderer->ResetMirror();
+
+    for (int32_t frame = 0; frame < 30; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    CheckMirror(*renderer);
+}
+
+/// <summary>
 /// Mirror mode on mission 1 with the camera at each corner and edge of the map (as far as Camera::setPosition lets it
 /// go), at the closest and the furthest zoom: the terrain window's grid reaches off the map there, so the ground mesh's
 /// ring of off-map cells is drawn, and the GPU's world is still the software renderer's pixel for pixel. Any grid the

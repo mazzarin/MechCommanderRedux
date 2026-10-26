@@ -36,6 +36,16 @@ namespace MCTestGame
     /// <summary>The options the next boot uses (set them before it).</summary>
     extern MCBootOptions BootOptions;
 
+    /// <summary>The size of a player's window the large-window tests boot in, in pixels.</summary>
+    inline constexpr int LargeWindowWidth = 1600;
+    inline constexpr int LargeWindowHeight = 1200;
+
+    /// <summary>
+    /// Sets <see cref="BootOptions"/> for a player's 1600x1200 window with the zoom free, at UI RESOLUTION
+    /// <paramref name="uiResolution"/> and INTERFACE SIZE <paramref name="interfaceSize"/> (in place of PREFS's).
+    /// </summary>
+    void BootInLargeWindow(int uiResolution, int interfaceSize);
+
     /// <summary>
     /// Boots the whole game in a hidden window with <c>-mission &lt;segment&gt;</c> (SYSTEM.CFG's campaign, logistics
     /// skipped), as RunGame does, and runs frames until the scenario is playing. Only a TEST_CASE_ISOLATED test may:

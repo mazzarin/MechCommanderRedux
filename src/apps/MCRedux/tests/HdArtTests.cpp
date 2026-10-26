@@ -4657,6 +4657,53 @@ TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
     std::filesystem::remove_all(scratch);
 }
 
+namespace
+{
+    /// <summary>
+    /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
+    /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
+    /// </summary>
+    int64_t PixelsBetween(const std::optional<std::filesystem::path>& pack, uint8_t color, const MCRect& box,
+                          const std::function<void()>& draw)
+    {
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        const MCPane& pane = ScreenPort()->Frame();
+        std::array<SDL_Color, 256> colors{};
+        display->GetShownColors(colors);
+        std::optional<MCHdArtOn> on;
+
+        if (pack.has_value())
+        {
+            on.emplace(*pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        const auto under = display->ReadFrame();
+        draw();
+        const auto drawn = display->ReadFrame();
+        REQUIRE(under.has_value());
+        REQUIRE(drawn.has_value());
+        const int32_t width = display->Width();
+        const SDL_Color shape = colors[color];
+        int64_t count = 0;
+
+        for (int32_t row = box.Y0; row <= box.Y1; ++row)
+        {
+            for (int32_t column = box.X0; column <= box.X1; ++column)
+            {
+                const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
+                const SDL_Color a = (*under)[at];
+                const SDL_Color b = (*drawn)[at];
+                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
+                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
+                count += same || shapeColor ? 0 : 1;
+            }
+        }
+
+        return count;
+    }
+}
+
 /// <summary>
 /// With HD art on, lines and ellipses are drawn at the output's resolution: a diagonal line and an ellipse's outline
 /// drawn on the screen by the GPU over mission 1 (a window shown larger than the screen) show, with HD art off, only
@@ -4677,60 +4724,89 @@ TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolu
     }
 
     const std::filesystem::path pack = EmptyPack("mc_tests_hd_smooth_shapes");
-    const std::shared_ptr<MCDisplay> display = MCInput::Display();
     MCPane& pane = ScreenPort()->Frame();
     const int32_t x = (pane.X1 - pane.X0) / 2;
     const int32_t y = (pane.Y1 - pane.Y0) / 2;
     constexpr int32_t Length = 60;
     constexpr int32_t Radius = 30;
     constexpr uint8_t Color = 0x30;
-    std::array<SDL_Color, 256> colors{};
-    display->GetShownColors(colors);
-
-    // How many pixels of the box around the shapes show neither the shapes' colour nor what was under them.
-    const auto between = [&](bool hdArt)
+    const MCRect box{x - Length - 1, y - Length, x + Length + 1, y + Length + Radius + 1};
+    const auto shapes = [&]
     {
-        std::optional<MCHdArtOn> on;
-
-        if (hdArt)
-        {
-            on.emplace(pack);
-        }
-
-        MCTestGame::RunFrame(FrameSeconds);
-        const auto under = display->ReadFrame();
         VfxLineDraw(pane, x - Length, y - Length / 2, x + Length, y + Length / 2, Color);
         AGEllipseDraw(pane, x, y + Length, Radius * 2, Radius, Color);
-        const auto drawn = display->ReadFrame();
-        REQUIRE(under.has_value());
-        REQUIRE(drawn.has_value());
-        const int32_t width = display->Width();
-        const SDL_Color shape = colors[Color];
-        int64_t count = 0;
-
-        for (int32_t row = y - Length; row <= y + Length + Radius + 1; ++row)
-        {
-            for (int32_t column = x - Length - 1; column <= x + Length + 1; ++column)
-            {
-                const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
-                const SDL_Color a = (*under)[at];
-                const SDL_Color b = (*drawn)[at];
-                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
-                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
-                count += same || shapeColor ? 0 : 1;
-            }
-        }
-
-        return count;
     };
 
     GamePaused = true;
-    const int64_t original = between(false);
-    const int64_t smooth = between(true);
+    const int64_t original = PixelsBetween(std::nullopt, Color, box, shapes);
+    const int64_t smooth = PixelsBetween(pack, Color, box, shapes);
     GamePaused = false;
     std::cout << std::format("  pixels between the colours: {} with HD art off, {} on\n", original, smooth);
     CHECK_EQ(original, 0);
     CHECK(smooth > 0);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// With HD art on, a flat or Gouraud polygon (a laser's beam) is drawn at the output's resolution: its slanted edges
+/// show pixels between its colour and what lies under it, which the original's whole pixels never do.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws flat and Gouraud polygons with smooth edges")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_smooth_polygons");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Width = 6;
+    constexpr uint8_t Color = 0x30;
+    constexpr int32_t Fixed = 1 << 16;
+    // A slanted beam, as a laser's: a quad Length long and Width wide, one colour (so the flat and Gouraud fills agree).
+    const std::array<MCScreenVertex, 4> beam = {
+        MCScreenVertex{x - Length, y - Length / 2, Color * Fixed, 0, 0, 0},
+        MCScreenVertex{x + Length, y + Length / 2, Color * Fixed, 0, 0, 0},
+        MCScreenVertex{x + Length, y + Length / 2 + Width, Color * Fixed, 0, 0, 0},
+        MCScreenVertex{x - Length, y - Length / 2 + Width, Color * Fixed, 0, 0, 0}};
+    const MCRect box{x - Length - 1, y - Length / 2 - 1, x + Length + 1, y + Length / 2 + Width + 1};
+
+    GamePaused = true;
+
+    for (const bool gouraud : {false, true})
+    {
+        const auto polygon = [&]
+        {
+            if (gouraud)
+            {
+                VfxGouraudPolygon(pane, beam);
+            }
+            else
+            {
+                VfxFlatPolygon(pane, beam);
+            }
+        };
+
+        MCTest::Scope scope(gouraud ? "Gouraud" : "flat");
+        const int64_t original = PixelsBetween(std::nullopt, Color, box, polygon);
+        const int64_t smooth = PixelsBetween(pack, Color, box, polygon);
+        std::cout << std::format("  {}: pixels between the colours: {} with HD art off, {} on\n",
+                                 gouraud ? "Gouraud" : "flat", original, smooth);
+        CHECK_EQ(original, 0);
+        CHECK(smooth > 0);
+    }
+
+    GamePaused = false;
     std::filesystem::remove_all(pack.parent_path());
 }
 
@@ -5505,4 +5581,43 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     }
 
     std::cout << std::format("  all: {} of {} frames ({} pictures unreadable)\n", found, frames, skipped);
+}
+
+/// <summary>
+/// Tool: <c>--hd-map-shots &lt;pack&gt; --shots &lt;folder&gt;</c> pictures the ground across a mission's map
+/// (<c>--mission</c>, default 1) as --hd-pack does: the camera moved to points of a grid across the map's diamond,
+/// <c>ground_&lt;n&gt;_hd.png</c> (or _original.png with <c>--hd-original 1</c>) at each, the map revealed. On a big map
+/// the HD ground's tiles lie in two atlases, so the pictures show both.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-map-shots");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    // A 3 x 3 grid inside the map's diamond, around its middle.
+    constexpr std::array<float, 3> Fractions = {0.3f, 0.5f, 0.7f};
+    const MCVector3D topLeft = MCTerrain::MapTopLeft3d100;
+    int32_t shot = 0;
+
+    for (const float down : Fractions)
+    {
+        for (const float across : Fractions)
+        {
+            Eye()->SetPosition(
+                MCVector3D(topLeft.X + across * WorldUnitsMapSide, topLeft.Y - down * WorldUnitsMapSide, 0.0f));
+            MCTestGame::RunFrame(FrameSeconds);
+            MCTestGame::RunFrame(FrameSeconds);
+            Shoot(folder, std::format("ground_{}", shot++), original);
+        }
+    }
 }

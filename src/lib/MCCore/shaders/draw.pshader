@@ -57,6 +57,9 @@ SamplerState paletteSampler : register(s4, space2);
 // blocks), or the terrain's tiles at HdScale times their atlas places.
 Texture2D<float4> hdTex : register(t5, space2);
 SamplerState hdSampler : register(s5, space2);
+// The terrain's second HD atlas (a big map's tiles past the first's), else hdTex again.
+Texture2D<float4> hdTex2 : register(t6, space2);
+SamplerState hdSampler2 : register(s6, space2);
 
 cbuffer Frame : register(b0, space3)
 {
@@ -101,6 +104,8 @@ static const uint KindSmoothEllipse = 8;
 static const uint KindHdMap = 9;
 // Port-only: a game-drawn picture mapped with its key transparent (the fog of war), its edges smooth (SmoothMapPixel).
 static const uint KindSmoothMap = 10;
+// Port-only: a flat or Gouraud polygon (a laser's beam) at the output's resolution, its edges smooth (SmoothPolygonPixel).
+static const uint KindSmoothPolygon = 11;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -265,27 +270,31 @@ float3 TableShift(uint row, float3 color, float a)
     return saturate(k * color + m * a);
 }
 
-// The HD terrain's colour at a texel, kept inside the tile's place (low, high).
-float3 HdAtlasTexel(int2 texel, int2 low, int2 high)
+// The HD terrain's colour at a texel of atlas `atlas` (0 hdTex, 1 hdTex2), kept inside the tile's place (low, high).
+float3 HdAtlasTexel(int2 texel, int2 low, int2 high, int atlas)
 {
-    return Fetch(hdTex, hdSampler, clamp(texel, low, high)).rgb;
+    const int2 at = clamp(texel, low, high);
+    return atlas == 0 ? Fetch(hdTex, hdSampler, at).rgb : Fetch(hdTex2, hdSampler2, at).rgb;
 }
 
-// A terrain tile's pixel in HD colours: the tile's place is the source's, op.w the HD atlas's scale; the index is
-// `value` (original, through the haze's table), the HD colour the one made from `original`'s.
+// A terrain tile's pixel in HD colours (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place and walk.zw its
+// place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value` (original, through
+// the haze's table), the HD colour the one made from `original`'s.
 Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 {
     const int hdScale = (int)input.op.w;
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
-    const float2 atlas = float2(input.source.xy) + (window - float2(input.rect.xy));
-    const int2 low = int2(input.walk.xy) * hdScale;
-    const int2 high = int2(input.walk.xy + input.walk.zw) * hdScale - 1;
-    const float2 at = atlas * (float)hdScale - 0.5;
+    const float2 local = float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
+    const int2 low = int2(input.walk.xy);
+    const int2 high = low + input.span.xy * hdScale - 1;
+    const int atlas = input.span.z;
+    const float2 at = float2(input.walk.xy) + local * (float)hdScale - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
-    const float3 top = lerp(HdAtlasTexel(base, low, high), HdAtlasTexel(base + int2(1, 0), low, high), f.x);
+    const float3 top =
+        lerp(HdAtlasTexel(base, low, high, atlas), HdAtlasTexel(base + int2(1, 0), low, high, atlas), f.x);
     const float3 bottom =
-        lerp(HdAtlasTexel(base + int2(0, 1), low, high), HdAtlasTexel(base + int2(1, 1), low, high), f.x);
+        lerp(HdAtlasTexel(base + int2(0, 1), low, high, atlas), HdAtlasTexel(base + int2(1, 1), low, high, atlas), f.x);
 
     Output output;
     output.color = float4(Corrected(lerp(top, bottom, f.y), 1.0, original, value), 1.0);
@@ -630,6 +639,51 @@ Output SmoothShapePixel(Input input, int2 target, uint kind)
     return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
 }
 
+// A smooth polygon's corner `i` (window pixels; source holds x in the low 16 bits, y in the high, signed).
+float2 PolygonCorner(Input input, uint i)
+{
+    const int packed = input.source[i];
+    return float2((float)((packed << 16) >> 16), (float)(packed >> 16));
+}
+
+// Port-only: a flat or Gouraud polygon's colour at drawn pixel `target` (KindSmoothPolygon; its indices were written by
+// the original's spans, index-only): inside its corners' edges (through the pixels' centres, half a window pixel out, as
+// the spans take both ends), the edge ramped over a drawn pixel; its colour index the plane in span.xyz, wrapping as the
+// walk's. Premultiplied, through the blend pipeline.
+Output SmoothPolygonPixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
+    const uint corners = input.walk.x;
+    const float turn = (float)asint(input.walk.y);
+    float inside = 1e9;
+
+    for (uint i = 0; i < 4; i++)
+    {
+        if (i >= corners)
+        {
+            break;
+        }
+
+        const float2 a = PolygonCorner(input, i) + 0.5;
+        const float2 b = PolygonCorner(input, (i + 1) % corners) + 0.5;
+        const float2 edge = b - a;
+        const float along = max(length(edge), 1e-4);
+        inside = min(inside, turn * (edge.x * (window.y - a.y) - edge.y * (window.x - a.x)) / along);
+    }
+
+    const float coverage = saturate((inside + LineHalfWidth) / ramp + 0.5);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    const float3 plane = asfloat(input.span.xyz);
+    const uint index = (uint)(int)floor(plane.x * window.x + plane.y * window.y + plane.z) & 255u;
+    return Blended(float4(Shown(index), 1.0) * coverage);
+}
+
 Output main(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
@@ -667,6 +721,11 @@ Output main(Input input)
     if (kind == KindSmoothMap)
     {
         return SmoothMapPixel(input, target);
+    }
+
+    if (kind == KindSmoothPolygon)
+    {
+        return SmoothPolygonPixel(input, target);
     }
 
     const uint color = input.op.y & 255u;

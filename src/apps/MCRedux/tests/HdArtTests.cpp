@@ -5749,6 +5749,111 @@ TEST_CASE_ISOLATED("game: the system cursor's pictures come from the HD art pack
 }
 
 /// <summary>
+/// Tool: <c>--hd-pictures &lt;pack&gt; --shots &lt;folder&gt; --hd-picture-names NAME[,NAME]</c> writes the menus'
+/// pictures whose file names hold one of the names (ignoring case) as a keyed copy shows them, over dark grey: the
+/// original at the pack's scale (nearest) beside the pack's copy, <c>&lt;file&gt;.png</c>.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-pictures pictures menu pictures beside the pack's copies")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-pictures");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+    const std::optional<std::string_view> named = MCTest::Option("hd-picture-names");
+
+    if (!pack.has_value() || !shots.has_value() || !named.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const auto lower = [](std::string text)
+    {
+        std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
+
+    std::vector<std::string> names;
+
+    for (const auto part : std::views::split(*named, ','))
+    {
+        names.push_back(lower(std::string(std::string_view(part))));
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> shown{};
+    MCInput::Display()->GetShownColors(shown);
+    MCHdArtOn hdArt(std::filesystem::absolute(std::filesystem::path(*pack)));
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+
+    // The key (magenta, as the game's 6-bit palettes give it), and the grey both pictures are shown over.
+    const auto keyed = [](SDL_Color color) { return color.r >= 252 && color.g == 0 && color.b >= 252; };
+    constexpr uint8_t Under = 48;
+    constexpr int32_t Gap = 8;
+    int32_t skipped = 0;
+    int32_t written = 0;
+    ForEachPicture(
+        shown, skipped,
+        [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
+            std::span<const SDL_Color, 256> colors)
+        {
+            const std::string file = lower(std::string(source.substr(source.find_last_of("\\/") + 1)));
+
+            if (std::ranges::none_of(names, [&](const std::string& name) { return file.contains(name); }))
+            {
+                return;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindPicture(pixels, width, height);
+            const int32_t scale = hd != nullptr ? hd->Scale : TestPackScale;
+            const int32_t side = width * scale;
+            const int32_t outWidth = side * 2 + Gap;
+            const int32_t outHeight = height * scale;
+            std::vector<uint8_t> out(static_cast<size_t>(outWidth) * outHeight * BytesPerPixel, Under);
+            const std::vector<uint8_t> rgba = hd == nullptr ? std::vector<uint8_t>()
+                                              : hd->Format == MCHdArt::ColorFormat::Bc7
+                                                  ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
+                                                  : hd->Colors;
+
+            for (int32_t y = 0; y < outHeight; ++y)
+            {
+                for (int32_t x = 0; x < side; ++x)
+                {
+                    const SDL_Color color = colors[pixels[static_cast<size_t>(y / scale) * width + x / scale]];
+                    uint8_t* left = &out[(static_cast<size_t>(y) * outWidth + x) * BytesPerPixel];
+                    uint8_t* right = left + static_cast<size_t>(side + Gap) * BytesPerPixel;
+                    left[3] = right[3] = 255;
+
+                    if (keyed(color))
+                    {
+                        continue;
+                    }
+
+                    left[0] = color.r;
+                    left[1] = color.g;
+                    left[2] = color.b;
+
+                    if (!rgba.empty() && x < hd->Width && y < hd->Height)
+                    {
+                        // Premultiplied over the grey.
+                        const uint8_t* texel = &rgba[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+
+                        for (int32_t c = 0; c < 3; ++c)
+                        {
+                            right[c] = static_cast<uint8_t>(std::min(255, texel[c] + Under * (255 - texel[3]) / 255));
+                        }
+                    }
+                }
+            }
+
+            SavePng(folder / (file.substr(0, file.find('.')) + ".png"), outWidth, outHeight, out);
+            std::cout << std::format("  {}: {}x{}, {}\n", source, width, height,
+                                     hd != nullptr ? std::format("HD {}x", hd->Scale) : "not in the pack");
+            ++written;
+        });
+
+    CHECK(written > 0);
+}
+
+/// <summary>
 /// Tool: <c>--hd-cursors &lt;pack&gt; --shots &lt;folder&gt;</c> pictures every cursor shape as the system cursor
 /// shows it on a Retina MacBook (the UI 720 lines tall in 1890 pixels): <c>cursor_&lt;n&gt;.png</c>, the original
 /// scaled by the nearest pixel beside the HD art pack's copy.

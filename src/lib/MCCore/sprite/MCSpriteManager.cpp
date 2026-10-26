@@ -269,12 +269,17 @@ auto MCSpriteManager::GetShapeData(uint32_t appearanceNum, uint32_t packetNum, i
 
     std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), true);
 
-    // Port-only: the HD art pack's frames for it, if it has them (it has none for effects); no key is made while HD art
-    // is off.
+    // Port-only: the HD art pack's frames for it, if it has them; no key is made while HD art is off.
+    const MCHdArt::ObjectShapeKey key{_SpriteFileNames[_AppearanceSources[appearanceNum]], appearanceNum, packetNum};
+
+    if (shape != nullptr)
+    {
+        shape->HdFolder = MCHdArt::FolderOf(key);
+    }
+
     if (MCHdArt::Active())
     {
-        MCHdArt::Attach(shape, MCHdArt::ObjectShapeKey{_SpriteFileNames[_AppearanceSources[appearanceNum]],
-                                                       appearanceNum, packetNum});
+        MCHdArt::Attach(shape, key);
     }
 
     return shape;
@@ -327,8 +332,23 @@ auto MCSpriteManager::GetMechShapeData(uint32_t mechNum, uint32_t packetNum, MCM
 
     std::shared_ptr<MCShape> shape = LoadShape(file, packetNum, size, turnUsed, std::move(owner), false);
     // Port-only: the HD art pack's frames for it, if it has them.
-    MCHdArt::Attach(shape, MCHdArt::MechShapeKey{PartFileName(part, zoomedOut), mechNum, packetNum});
+    const MCHdArt::MechShapeKey key{PartFileName(part, zoomedOut), mechNum, packetNum};
+
+    if (shape != nullptr)
+    {
+        shape->HdFolder = MCHdArt::FolderOf(key);
+    }
+
+    MCHdArt::Attach(shape, key);
     return shape;
+}
+
+auto MCSpriteManager::AttachHdArt() -> void
+{
+    for (const std::shared_ptr<MCShape>& shape : _Shapes)
+    {
+        MCHdArt::AttachFolder(shape);
+    }
 }
 
 auto MCSpriteManager::PartFileName(MCMechPart part, bool zoomedOut) const -> std::string

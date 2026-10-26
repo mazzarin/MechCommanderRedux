@@ -2198,14 +2198,15 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
     // Port-only: a shape the HD art pack has a frame of keeps the original's indices and is shown from the pack (its
     // bounds: the header's). A translucent shape's frame leaves out its blended pixels, which still blend below, unless
-    // it holds them (an effect's); such a frame isn't drawn through a table applied to what lies under it (XlatAlpha).
+    // it holds them (an effect's); drawn through a table (XlatAlpha: the haze), such a frame's blended pixels take the
+    // table's change of colour (draw.pshader's TableShift).
     if (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent)
     {
         const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
 
         if (const std::shared_ptr<const MCHdArt::Frame> hd =
                 HdShape(command.ShapeTable, command.ShapeNum, boundsWidth, headerRows);
-            hd != nullptr && !(hd->Blended && command.Op == MCShapeOp::XlatAlpha))
+            hd != nullptr)
         {
             // The frame covers the bounds, which may be wider than the shape's widest row.
             const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};

@@ -102,6 +102,12 @@ public:
     /// <summary>Frees every shape.</summary>
     void DumpAll();
 
+    /// <summary>
+    /// Port-only: attaches every loaded shape to the HD art pack's frames (its <c>HdFolder</c>), for HD art turned on
+    /// after they were loaded. Does nothing while HD art is off.
+    /// </summary>
+    void AttachHdArt();
+
     /// <summary>Mech shadow shape <paramref name="index"/> (one table of 32 facings), or empty when there is none.</summary>
     std::span<const uint8_t> MechShadow(size_t index) const;
 

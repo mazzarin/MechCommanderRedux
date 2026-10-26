@@ -1832,10 +1832,12 @@ namespace
             GHdArt = 1;
             MCHdArt::SetPackFolder(pack);
 
-            // None before the game starts.
+            // None before the game starts. The shapes still in use are attached as the game attaches them as it loads
+            // them with HD art on.
             if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager(); sprites != nullptr)
             {
                 sprites->DumpAll();
+                sprites->AttachHdArt();
             }
 
             if (MCGameContext::Current().HasCraterManager())
@@ -2789,6 +2791,64 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>The appearance number the effect tests' pack keeps their frame under (none of the game's).</summary>
+    constexpr uint32_t TestEffectAppearance = 0xfffff;
+
+    /// <summary>
+    /// An opaque colour (one of the free colours, 10..245) with every channel at 40 or more: an HD colour is corrected
+    /// channel by channel by its index's colour.
+    /// </summary>
+    uint8_t FullColorIndex(std::span<const SDL_Color, 256> colors)
+    {
+        constexpr int32_t FirstFree = 10;
+        constexpr int32_t EndFree = 246;
+        constexpr uint8_t Channel = 40;
+        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto full = std::ranges::find_if(free,
+                                               [&](int32_t i)
+                                               {
+                                                   const SDL_Color& c = colors[static_cast<size_t>(i)];
+                                                   return SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel &&
+                                                          c.g >= Channel && c.b >= Channel;
+                                               });
+        REQUIRE(full != free.end());
+        return static_cast<uint8_t>(*full);
+    }
+
+    /// <summary>
+    /// Writes a frame holding its blended pixels (MCHdArt::Frame::Blended) as a PNG pair, <paramref name="stem"/>.png and
+    /// _idx.png: <paramref name="width"/> x <paramref name="height"/> original pixels, <paramref name="scale"/> HD pixels
+    /// each, every pixel of an original column <paramref name="colorOf"/>'s premultiplied colour and
+    /// <paramref name="indexOf"/>'s index (none: a blended pixel).
+    /// </summary>
+    void WriteBlendedFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
+                           const std::function<SDL_Color(int32_t)>& colorOf,
+                           const std::function<std::optional<uint8_t>(int32_t)>& indexOf)
+    {
+        std::vector<uint8_t> color(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
+        std::vector<uint8_t> index(color.size());
+
+        for (int32_t y = 0; y < height * scale; ++y)
+        {
+            for (int32_t x = 0; x < width * scale; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
+                const SDL_Color c = colorOf(x / scale);
+                const std::optional<uint8_t> original = indexOf(x / scale);
+                std::ranges::copy(std::array{c.r, c.g, c.b, c.a}, color.begin() + static_cast<ptrdiff_t>(at));
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), original ? HasIndex : uint8_t{0},
+                                                         MCHdArt::HoldsBlended, HasIndex},
+                                  index.begin() + static_cast<ptrdiff_t>(at));
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width * scale, height * scale, color);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width * scale, height * scale, index);
+    }
+}
+
 /// <summary>
 /// An effect's HD frame (one holding its blended pixels) is all that shows of a translucent shape: drawn on the screen
 /// by the GPU over mission 1, a shape of colour 0 (nothing), 254 (halves what is under it), 4 (adds its colour) and an
@@ -2818,23 +2878,9 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
     REQUIRE(SpecialColor[Halves] != 0);
     REQUIRE(SpecialColor[Adds] != 0);
 
-    // An opaque colour (one of the free colours, 10..245) with every channel: an HD colour is corrected channel by
-    // channel by its index's colour.
-    constexpr int32_t FirstFree = 10;
-    constexpr int32_t EndFree = 246;
-    constexpr uint8_t Channel = 40;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
-    const auto free = std::views::iota(FirstFree, EndFree);
-    const auto full = std::ranges::find_if(free,
-                                           [&](int32_t i)
-                                           {
-                                               const SDL_Color& c = colors[static_cast<size_t>(i)];
-                                               return SpecialColor[static_cast<size_t>(i)] == 0 && c.r >= Channel &&
-                                                      c.g >= Channel && c.b >= Channel;
-                                           });
-    REQUIRE(full != free.end());
-    const auto opaque = static_cast<uint8_t>(*full);
+    const uint8_t opaque = FullColorIndex(colors);
 
     // Each row: one pixel of colour 0 (a translucent shape's mark), then 2 halving, 2 adding and 3 opaque.
     constexpr int32_t Width = 8;
@@ -2869,31 +2915,14 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
         return column == 0 ? SDL_Color{0, 0, 0, 0} : column < 3 ? Light : column < 5 ? Cover : lit;
     };
 
-    std::vector<uint8_t> color(static_cast<size_t>(Width * Scale) * Height * Scale * BytesPerPixel);
-    std::vector<uint8_t> index(color.size());
-
-    for (int32_t y = 0; y < Height * Scale; ++y)
-    {
-        for (int32_t x = 0; x < Width * Scale; ++x)
-        {
-            const size_t at = (static_cast<size_t>(y) * Width * Scale + x) * BytesPerPixel;
-            const SDL_Color c = frameColor(x / Scale);
-            const bool hasIndex = x / Scale >= 5;
-            std::ranges::copy(std::array{c.r, c.g, c.b, c.a}, color.begin() + static_cast<ptrdiff_t>(at));
-            std::ranges::copy(std::array<uint8_t, 4>{hasIndex ? opaque : uint8_t{0}, hasIndex ? HasIndex : uint8_t{0},
-                                                     MCHdArt::HoldsBlended, HasIndex},
-                              index.begin() + static_cast<ptrdiff_t>(at));
-        }
-    }
-
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effect_frame";
     std::filesystem::remove_all(scratch);
     const std::filesystem::path pack = scratch / "pack";
-    constexpr uint32_t TestAppearance = 0xfffff;
-    const MCHdArt::ObjectShapeKey key{"shapes", TestAppearance, 0};
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
     std::filesystem::create_directories(pack / MCHdArt::FolderOf(key));
-    SavePng(pack / MCHdArt::FolderOf(key) / "0.png", Width * Scale, Height * Scale, color);
-    SavePng(pack / MCHdArt::FolderOf(key) / "0_idx.png", Width * Scale, Height * Scale, index);
+    constexpr int32_t FirstOpaque = 5;
+    WriteBlendedFrame(pack / MCHdArt::FolderOf(key) / "0", Width, Height, Scale, frameColor,
+                      [&](int32_t column) { return column >= FirstOpaque ? std::optional(opaque) : std::nullopt; });
     WritePaletteRgb(pack, colors);
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
@@ -2948,6 +2977,140 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
         }
     }
 
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// An effect's HD frame drawn through a table (XlatAlpha: the haze, a fade) is drawn from the pack, its pixels taking the
+/// table's change of colour: through a fade that darkens, its light and its opaque colour show darker than drawn
+/// without one.
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's HD frame drawn through a table takes the table's change of colour")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // A fade that darkens the palette.
+    const auto brightness = [&](uint8_t index)
+    {
+        const SDL_Color& c = colors[index];
+        return static_cast<int32_t>(c.r) + c.g + c.b;
+    };
+
+    std::optional<MCColorTable> fade;
+
+    for (int32_t table = 0; !fade.has_value(); ++table)
+    {
+        const std::optional<MCColorTable> candidate = GamePalette().GetFadeTable(table);
+        REQUIRE(candidate.has_value());
+        int64_t change = 0;
+
+        for (int32_t i = 0; i < 256; ++i)
+        {
+            change += brightness((*candidate)[static_cast<size_t>(i)]) - brightness(static_cast<uint8_t>(i));
+        }
+
+        if (change < 0 && brightness((*candidate)[opaque]) < brightness(opaque))
+        {
+            fade = candidate;
+        }
+    }
+
+    // One pixel of colour 0 (a translucent shape's mark), then 2 adding light and 2 opaque, each row.
+    constexpr uint8_t Nothing = 0;
+    constexpr uint8_t Adds = 4;
+    constexpr int32_t Width = 5;
+    constexpr int32_t Height = 4;
+    constexpr int32_t Scale = 2;
+    constexpr int32_t FirstOpaque = 3;
+    constexpr uint8_t OnePixel = 3;
+    constexpr uint8_t FourPixels = 9;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.insert(rows.end(), {OnePixel, Nothing, FourPixels, Adds, Adds, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table = OneFrameTable(Width, Height, rows);
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(MCAgShapeIsAlpha(shape->FrameList(), 0));
+    constexpr SDL_Color Light = {90, 60, 30, 0};
+    const auto frameColor = [&](int32_t column)
+    {
+        return column == 0 ? SDL_Color{0, 0, 0, 0} : column < FirstOpaque ? Light : colors[opaque];
+    };
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effect_table";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+    std::filesystem::create_directories(pack / MCHdArt::FolderOf(key));
+    WriteBlendedFrame(pack / MCHdArt::FolderOf(key) / "0", Width, Height, Scale, frameColor,
+                      [&](int32_t column) { return column >= FirstOpaque ? std::optional(opaque) : std::nullopt; });
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+    GamePaused = true;
+    const auto drawn = [&](const std::optional<MCColorTable>& through)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        const int64_t drawnBefore = renderer->HdDrawn();
+
+        if (through.has_value())
+        {
+            AGShapeTranslateDraw(pane, shape->FrameList(), 0, x, y, *through);
+        }
+        else
+        {
+            AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+        }
+
+        const auto shown = display->ReadFrame();
+        REQUIRE(shown.has_value());
+        CHECK(renderer->HdDrawn() > drawnBefore);
+        return *shown;
+    };
+
+    const std::vector<SDL_Color> plain = drawn(std::nullopt);
+    const std::vector<SDL_Color> faded = drawn(fade);
+    GamePaused = false;
+    hdArt.reset();
+    const int32_t width = display->Width();
+    const auto sum = [&](const std::vector<SDL_Color>& frame, int32_t column)
+    {
+        const SDL_Color c = frame[static_cast<size_t>(y + 1 + pane.Y0) * width + x + column + pane.X0];
+        return static_cast<int32_t>(c.r) + c.g + c.b;
+    };
+
+    std::cout << std::format("  light {} -> {}, opaque {} -> {}\n", sum(plain, 1), sum(faded, 1),
+                             sum(plain, FirstOpaque), sum(faded, FirstOpaque));
+    CHECK(sum(faded, 1) < sum(plain, 1));
+    CHECK(sum(faded, FirstOpaque) < sum(plain, FirstOpaque));
     std::filesystem::remove_all(scratch);
 }
 
@@ -4165,6 +4328,8 @@ namespace
     /// </summary>
     void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames)
     {
+        std::filesystem::create_directories(folder);
+
         // Each command's draws and pixels, and the share drawn sharp.
         std::map<std::string, std::array<int64_t, 3>> commands;
 

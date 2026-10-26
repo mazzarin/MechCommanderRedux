@@ -1064,6 +1064,14 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
     }
 }
 
+void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
+{
+    if (shape != nullptr && !shape->HdFolder.empty())
+    {
+        AttachTo(shape->FrameList(), shape, shape->HdFolder);
+    }
+}
+
 void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
                      const CraterShapeKey& key)
 {

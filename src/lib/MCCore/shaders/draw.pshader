@@ -230,6 +230,41 @@ float3 Corrected(float3 color, float a, uint index, uint shown)
     return saturate(Shown(shown) * brightness) * a;
 }
 
+// The palette indices TableShift fits a table's change of colour over: every 16th, from the 8th.
+static const uint TableFitSamples = 16;
+static const uint TableFitStep = 16;
+static const uint TableFitFirst = 8;
+// A channel varying less than this over the samples is shifted, not scaled.
+static const float TableFitFlat = 1e-4;
+
+// The change of colour table `row` makes, fitted a channel at a time over a sample of the palette (shown = k colour +
+// m, least squares), applied to premultiplied colour `color` of coverage `a` (light, without coverage, is only scaled).
+float3 TableShift(uint row, float3 color, float a)
+{
+    float3 sumX = float3(0.0, 0.0, 0.0);
+    float3 sumY = float3(0.0, 0.0, 0.0);
+    float3 sumXX = float3(0.0, 0.0, 0.0);
+    float3 sumXY = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < TableFitSamples; i++)
+    {
+        const uint index = TableFitFirst + i * TableFitStep;
+        const float3 x = Shown(index);
+        const float3 y = Shown(Table(row, index));
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+    }
+
+    const float n = (float)TableFitSamples;
+    const float3 variance = sumXX - sumX * sumX / n;
+    const float3 sloped = step(TableFitFlat, variance);
+    const float3 k = lerp(float3(1.0, 1.0, 1.0), (sumXY - sumX * sumY / n) / max(variance, TableFitFlat), sloped);
+    const float3 m = (sumY - k * sumX) / n;
+    return saturate(k * color + m * a);
+}
+
 // The HD terrain's colour at a texel, kept inside the tile's place (low, high).
 float3 HdAtlasTexel(int2 texel, int2 low, int2 high)
 {
@@ -422,6 +457,12 @@ Output HdPixelAt(Input input, float2 shape)
         const uint index = Byte(entry.r);
         const uint shown = (input.op.x & TableBefore) != 0 ? Table(input.op.z, index) : index;
         color.rgb = Corrected(color.rgb, color.a, index, shown);
+    }
+    else if (Byte(entry.g) != 255u && (input.op.x & TableBefore) != 0)
+    {
+        // A pixel without an index (an effect's blended one: smoke, dust) drawn through a table (the haze): the
+        // table's change of colour, as near as one line a channel follows it.
+        color.rgb = TableShift(input.op.z, color.rgb, color.a);
     }
 
     return Blended(color);

@@ -199,6 +199,12 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
+    /// Notes that <paramref name="shape"/>'s frames are in its <c>HdFolder</c> (none: nothing), as <see cref="Attach"/>
+    /// with its key does. Does nothing while HD art is off.
+    /// </summary>
+    void AttachFolder(const std::shared_ptr<MCShape>& shape);
+
+    /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
     /// <paramref name="owner"/> lives, its frames are drawn from the pack's when it has them. Does nothing while HD art
     /// is off.

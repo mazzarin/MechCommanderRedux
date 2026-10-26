@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCFlac.h"
 #define DR_FLAC_NO_STDIO
-#include "../dr_flac/dr_flac.h"
+#include "dr_flac.h"
 
 struct MCFlac::Impl
 {
@@ -124,4 +124,12 @@ bool MCFlac::Validate()
     }
 
     return bytes == _Frames * _Format.BlockAlign() && Seek(0);
+}
+
+bool MCFlac::CheckEnd()
+{
+    // A frame is at most two 16-bit samples: Open takes mono or stereo, and Read gives 16-bit.
+    std::array<uint8_t, 2 * sizeof(int16_t)> last;
+    const auto frame = std::span(last).first(_Format.BlockAlign());
+    return Seek(_Frames - 1) && Read(frame) == frame.size() && Seek(0);
 }

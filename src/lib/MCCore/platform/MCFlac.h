@@ -16,8 +16,13 @@ public:
     /// <summary>Reads whole PCM frames, as signed 16-bit little-endian bytes. Short at EOF or corruption.</summary>
     size_t Read(std::span<uint8_t> bytes);
     bool Seek(uint64_t frame);
-    /// <summary>Checks every decoded frame, without keeping the whole recording in memory.</summary>
+    /// <summary>Checks every decoded frame, without keeping the whole recording in memory (the pack check's).</summary>
     bool Validate();
+    /// <summary>
+    /// Whether the last frame decodes, then back to the start: a cheap check that the file isn't cut short, for the
+    /// game to make before it streams one (decoding a whole track would hold the frame up).
+    /// </summary>
+    bool CheckEnd();
 
 private:
     MCFlac();

@@ -15,6 +15,7 @@
 #include "main/MCLogistics.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
+#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCSpriteManager.h"
@@ -61,11 +62,11 @@ namespace
     };
 
     /// <summary>The panel: the art's panel at its corner, made tall enough for the settings and the buttons.</summary>
-    constexpr MCPrefsPlace PanelPlace{13, 51, 263, 275};
+    constexpr MCPrefsPlace PanelPlace{13, 51, 263, 329};
 
     /// <summary>
     /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER and UI RESOLUTION under DIFFICULTY, and
-    /// HD ART under SOUND.
+    /// HD ART and HD AUDIO under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
     constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
@@ -73,6 +74,7 @@ namespace
     constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
     constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
+    constexpr MCPrefsPlace HdAudioBoxPlace{10, 236, 112, 50};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
     constexpr uint8_t PanelOutlineColor = 0x18;
@@ -117,7 +119,7 @@ namespace
     /// <summary>ACCEPT and CANCEL on the panel: side by side at its bottom right, 10 pixels in.</summary>
     constexpr int32_t AcceptLeft = 120;
     constexpr int32_t CancelLeft = 189;
-    constexpr int32_t ButtonsTop = 250;
+    constexpr int32_t ButtonsTop = 304;
 
     /// <summary>The INTERFACE VOLUME slider (the screen owns it).</summary>
     std::weak_ptr<MCLogSlider> InterfaceSlider;
@@ -129,6 +131,7 @@ namespace
     int32_t SavedUiResolution = 0;
     int32_t SavedInterfaceLevel = 0;
     int32_t SavedHdArt = 0;
+    int32_t SavedHdAudio = 0;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -150,6 +153,15 @@ namespace
         if (hdArt != 0 && !std::filesystem::is_directory(MCHdArt::PackFolder(), error))
         {
             ShowMenuMessage("HD ART needs an HD art pack in the HD folder beside your saved games.");
+        }
+    }
+
+    /// <summary>The HD AUDIO drop-down chose <paramref name="hdAudio"/>: on without a pack says where the pack goes.</summary>
+    void HdAudioChanged(int32_t hdAudio)
+    {
+        if (hdAudio != HdAudioOff && !MCHdAudio::PackReadable())
+        {
+            ShowMenuMessage("HD AUDIO needs an HD audio pack in the HD folder beside your saved games.");
         }
     }
 
@@ -316,6 +328,12 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
     AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
 
+    // HD AUDIO: the HD audio pack's sounds where it has them (sound/MCHdAudio.h), from the next sound or track on.
+    MCLogGroupBox& hdAudio = AddBox(screen, panel, HdAudioBoxPlace, BoxOutlineColor);
+    AddLabel(screen, hdAudio, "HD AUDIO", BoxTitleLeft, BoxTitleTop);
+    AddDropDown(screen, hdAudio, GHdAudio, {{"OFF", HdAudioOff}, {"ON", HdAudioOn}, {"ORCHESTRAL", HdAudioOrchestral}},
+                HdAudioChanged);
+
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
 }
@@ -338,6 +356,7 @@ void ShowPreferences()
     SavedUiResolution = GUiResolution;
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
     SavedHdArt = GHdArt;
+    SavedHdAudio = GHdAudio;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -373,6 +392,7 @@ void CancelPrefs()
     GRendererPreference = SavedRendererPreference;
     GUiResolution = SavedUiResolution;
     GHdArt = SavedHdArt;
+    GHdAudio = SavedHdAudio;
     Cancel();
 }
 
@@ -400,6 +420,7 @@ void WritePrefs()
     prefs.WriteIdLong("UIResolution", GUiResolution);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
+    prefs.WriteIdLong("HDAudio", GHdAudio);
     Cancel();
 }
 

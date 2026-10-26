@@ -1,7 +1,10 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCNullAudioDevice.h"
+#include "gameos/MCSoundRenderer.h"
 #include "gameos/MCSoundResource.h"
 #include "lib/MCPacketFile.h"
+#include "main/MCGameContext.h"
 #include "platform/MCFlac.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -59,24 +62,35 @@ namespace
         file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
+    /// <summary>A pack in its own temporary folder with HD audio on; the folder, setting and pack go back after.</summary>
     struct Fixture
     {
-        std::filesystem::path Previous = MCHdArt::PackFolder();
+        int PreviousSetting = GHdAudio;
         std::filesystem::path Root =
             std::filesystem::temp_directory_path() /
             std::format("mc_tests_hd_audio_{}", std::chrono::steady_clock::now().time_since_epoch().count());
         Fixture()
         {
+            GHdAudio = HdAudioOn;
             MCHdArt::SetPackFolder(Root);
-            Config("stereo");
+            Config();
         }
 
-        ~Fixture() { MCHdArt::SetPackFolder(Previous); }
-        void Config(std::string_view set, int format = 1)
+        ~Fixture()
         {
-            const std::string cfg =
-                std::format("FITini\n[HDAudioPack]\nl Format={}\nst MusicSet=\"{}\"\nFITend\n", format, set);
+            GHdAudio = PreviousSetting;
+            MCHdArt::SetPackFolder({});
+            MCHdAudio::Forget();
+            std::error_code error;
+            std::filesystem::remove_all(Root, error);
+        }
+
+        /// <summary>Writes the pack's audio.cfg of <paramref name="format"/> and forgets what was found.</summary>
+        void Config(int format = 1)
+        {
+            const std::string cfg = std::format("FITini\n[HDAudioPack]\nl Format={}\nFITend\n", format);
             Write(Root / "audio/audio.cfg", std::span(reinterpret_cast<const uint8_t*>(cfg.data()), cfg.size()));
+            MCHdAudio::Forget();
         }
 
         std::filesystem::path Sample(std::span<const uint8_t> wave)
@@ -103,6 +117,10 @@ TEST_CASE("HD audio: FLAC decoding, seeking and corrupt input")
     CHECK_EQ(flac->Format().Rate, uint32_t{48000});
     CHECK_EQ(flac->Format().Channels, uint16_t{2});
     CHECK(flac->Validate());
+    CHECK(flac->CheckEnd());
+    std::array<uint8_t, 4> first{};
+    CHECK_EQ(flac->Read(first), size_t{4});
+    CHECK_EQ(first[0], uint8_t{0xe8});
     CHECK(flac->Seek(959));
     std::array<uint8_t, 8> pcm{};
     CHECK_EQ(flac->Read(pcm), size_t{4});
@@ -114,8 +132,11 @@ TEST_CASE("HD audio: FLAC decoding, seeking and corrupt input")
     auto broken = Flac();
     broken.resize(broken.size() - 3);
     Write(path, broken);
+    // The header is whole, so the file opens; both checks find its end missing.
     flac = MCFlac::Open(path);
-    CHECK(flac == nullptr || !flac->Validate());
+    REQUIRE(flac != nullptr);
+    CHECK(!flac->Validate());
+    CHECK(!flac->CheckEnd());
     Write(path, Original());
     CHECK(MCFlac::Open(path) == nullptr);
 }
@@ -171,16 +192,17 @@ TEST_CASE("HD audio: missing, future, corrupt and wrong-length entries keep the 
     MCSoundResource missing(Original());
     CHECK_EQ(missing.WaveSize, uint32_t{441});
     Write(fixture.Sample(Original()), Flac());
-    fixture.Config("stereo", 2);
+    fixture.Config(2);
     MCSoundResource future(Original());
     CHECK_EQ(future.WaveSize, uint32_t{441});
-    fixture.Config("stereo");
+    fixture.Config();
     Write(fixture.Sample(Original(882)), Flac());
     MCSoundResource wrong(Original(882));
     CHECK_EQ(wrong.Format.nSamplesPerSec, uint32_t{22050});
     auto broken = Flac();
     broken.resize(broken.size() - 4);
     Write(fixture.Sample(Original()), broken);
+    MCHdAudio::Forget();
     MCSoundResource corrupt(Original());
     CHECK_EQ(corrupt.WaveSize, uint32_t{441});
 }
@@ -210,11 +232,12 @@ TEST_CASE("HD audio: music selection, streaming silence and short seamless loops
     stream.Rewind();
     stream.Read(block, false);
     CHECK_EQ(block[3840], uint8_t{0});
-    fixture.Config("orchestral");
+    // ORCHESTRAL takes the pack's orchestral music where it has some, its stereo music elsewhere; OFF the original.
+    GHdAudio = HdAudioOrchestral;
     CHECK_EQ(MCHdAudio::Music(source.string())->string(), music.string());
     Write(fixture.Root / "audio/music/orchestral/MUSIC02.flac", Flac());
     CHECK(MCHdAudio::Music(source.string())->parent_path().filename() == "orchestral");
-    fixture.Config("original");
+    GHdAudio = HdAudioOff;
     CHECK(!MCHdAudio::Music(source.string()).has_value());
     MCSoundResource original(MCSoundResourceType::Stream, source.string());
     CHECK_EQ(original.Format.nSamplesPerSec, uint32_t{22050});
@@ -227,7 +250,8 @@ TEST_CASE("HD audio: an absent audio configuration disables otherwise valid repl
     Write(disabled / "audio/samples" / (MCHdAudio::SampleKey(Original()) + ".flac"), Flac());
     Write(disabled / "audio/music/stereo/MUSIC02.flac", Flac());
     MCHdArt::SetPackFolder(disabled);
-    CHECK(!MCHdAudio::Sample(Original()).has_value());
+    CHECK(!MCHdAudio::PackReadable());
+    CHECK(MCHdAudio::Sample(Original()) == nullptr);
     CHECK(!MCHdAudio::Music("MUSIC02.WAV").has_value());
     MCSoundResource resource(Original());
     CHECK_EQ(resource.Format.nSamplesPerSec, uint32_t{22050});
@@ -251,8 +275,77 @@ TEST_CASE("HD audio: corrupt and wrong-duration music fall back before playback"
     MCSoundResource wrongLength(MCSoundResourceType::Stream, source.string());
     CHECK_EQ(wrongLength.Format.nSamplesPerSec, uint32_t{22050});
     CHECK_EQ(wrongLength.DurationMs, uint32_t{40});
-    fixture.Config("../other");
-    CHECK(!MCHdAudio::Music(source.string()).has_value());
+}
+
+TEST_CASE("HD audio: OFF plays the game's own sounds with a pack in place")
+{
+    Fixture fixture;
+    Write(fixture.Sample(Original()), Flac());
+    const auto source = fixture.Root / "MUSIC02.WAV";
+    Write(source, Original());
+    Write(fixture.Root / "audio/music/stereo/MUSIC02.flac", Flac());
+    GHdAudio = HdAudioOff;
+    CHECK(MCHdAudio::PackReadable());
+    CHECK(MCHdAudio::Sample(Original()) == nullptr);
+    MCSoundResource sample(Original());
+    CHECK_EQ(sample.Format.nSamplesPerSec, uint32_t{22050});
+    CHECK_EQ(sample.WaveSize, uint32_t{441});
+    MCSoundResource stream(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(stream.Format.nSamplesPerSec, uint32_t{22050});
+}
+
+TEST_CASE("HD audio: a sample played again comes from memory, and a wave without one is remembered too")
+{
+    Fixture fixture;
+    Write(fixture.Sample(Original()), Flac());
+    const auto first = MCHdAudio::Sample(Original());
+    REQUIRE(first != nullptr);
+    CHECK_EQ(first->Pcm.size(), size_t{3840});
+
+    // With the file gone, the decoded copy still plays: nothing is read from disk again.
+    std::filesystem::remove(fixture.Sample(Original()));
+    CHECK(MCHdAudio::Sample(Original()) == first);
+    MCSoundResource again(Original());
+    CHECK_EQ(again.WaveSize, uint32_t{3840});
+
+    // A wave the pack has nothing for stays without one when a file appears, until the pack is looked at again.
+    CHECK(MCHdAudio::Sample(Original(882)) == nullptr);
+    Write(fixture.Sample(Original(882)), Flac());
+    CHECK(MCHdAudio::Sample(Original(882)) == nullptr);
+    MCHdAudio::Forget();
+    CHECK(MCHdAudio::Sample(Original()) == nullptr);
+}
+
+TEST_CASE("HD audio: HD music streams through a sound channel's ring, looping")
+{
+    Fixture fixture;
+    const auto source = fixture.Root / "MUSIC02.WAV";
+    Write(source, Original());
+    Write(fixture.Root / "audio/music/stereo/MUSIC02.flac", Flac());
+    MCTestContextScope scope;
+    MCNullAudioDevice& device = scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    const std::shared_ptr<MCSoundResource> music =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    REQUIRE(music != nullptr);
+    CHECK_EQ(music->Format.nSamplesPerSec, uint32_t{48000});
+    CHECK_EQ(music->Format.nChannels, uint16_t{2});
+
+    // The ring holds seconds of a 20 ms track: it is filled by looping, and serviced as it plays.
+    renderer.SetChannelLooping(1, true);
+    renderer.Play(1, music);
+    CHECK_CALLED(device.Played, 1);
+    CHECK(renderer.IsPlaying(1));
+
+    for (int32_t update = 0; update < 10; ++update)
+    {
+        renderer.ServiceStreams();
+    }
+
+    CHECK(renderer.IsPlaying(1));
+    renderer.Stop(1);
+    renderer.DestroyResource(*music);
+    MCSoundRenderer::Uninstall();
 }
 
 TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")
@@ -265,13 +358,19 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
         return;
     }
 
-    const auto previous = MCHdArt::PackFolder();
     MCHdArt::SetPackFolder(std::filesystem::path(*pack));
     struct Restore
     {
-        std::filesystem::path Folder;
-        ~Restore() { MCHdArt::SetPackFolder(Folder); }
-    } restore{previous};
+        int Setting = GHdAudio;
+        ~Restore()
+        {
+            GHdAudio = Setting;
+            MCHdArt::SetPackFolder({});
+            MCHdAudio::Forget();
+        }
+    } restore;
+    GHdAudio = HdAudioOn;
+    MCHdAudio::Forget();
     size_t samples = 0;
     size_t music = 0;
     const bool samplesOnly = MCTest::Option("hd-audio-samples-only").has_value();
@@ -284,15 +383,9 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
             return;
         }
 
-        const auto path = MCHdAudio::Sample(wave);
-        CHECK(path.has_value());
-
-        if (!path)
-        {
-            return;
-        }
-
-        auto decoded = MCFlac::Open(*path);
+        CHECK(MCHdAudio::Sample(wave) != nullptr);
+        auto decoded =
+            MCFlac::Open(std::filesystem::path(*pack) / "audio/samples" / (MCHdAudio::SampleKey(wave) + ".flac"));
         CHECK(decoded != nullptr);
 
         if (!decoded)

@@ -30,6 +30,18 @@ namespace
 
         return value;
     }
+
+    /// <summary>The wave format of a decoded HD replacement (PCM).</summary>
+    tWAVEFORMATEX WaveFormatOf(const MCSoundFormat& format)
+    {
+        return {1,
+                format.Channels,
+                format.Rate,
+                format.BytesPerSecond(),
+                static_cast<uint16_t>(format.BlockAlign()),
+                format.Bits,
+                0};
+    }
 }
 
 MCSoundResource::MCSoundResource(std::span<const uint8_t> image)
@@ -79,40 +91,15 @@ void MCSoundResource::LoadFile()
 
 void MCSoundResource::TryHdSample()
 {
-    const auto path = MCHdAudio::Sample(_Image);
+    const std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(_Image);
 
-    if (!path.has_value())
+    if (decoded == nullptr)
     {
         return;
     }
 
-    auto flac = MCFlac::Open(*path);
-    const auto original = MCAudio::ParseWave(_Image);
-
-    // Effects stay small, including a corrupt entry's advertised size. Do not allocate a music-sized static sound.
-    if (!flac || !original || flac->Frames() * flac->Format().BlockAlign() > 32 * 1024 * 1024 ||
-        !MCHdAudio::MatchesLength(*flac, original->Samples.size() / original->Format.BlockAlign(),
-                                  original->Format.Rate))
-    {
-        return;
-    }
-
-    std::vector<uint8_t> pcm(static_cast<size_t>(flac->Frames() * flac->Format().BlockAlign()));
-
-    if (flac->Read(pcm) != pcm.size())
-    {
-        return;
-    }
-
-    const auto& format = flac->Format();
-    Format = {1,
-              format.Channels,
-              format.Rate,
-              format.BytesPerSecond(),
-              static_cast<uint16_t>(format.BlockAlign()),
-              format.Bits,
-              0};
-    _Image = std::move(pcm);
+    Format = WaveFormatOf(decoded->Format);
+    _Image = decoded->Pcm;
     _WaveOffset = 0;
     WaveSize = static_cast<uint32_t>(_Image.size());
 }
@@ -128,22 +115,18 @@ void MCSoundResource::TryHdStream(uint64_t sourceFrames)
 
     auto flac = MCFlac::Open(*path);
 
-    // Preflight using bounded memory: truncated or corrupt optional files must fall back before playback starts.
-    if (!flac || !MCHdAudio::MatchesLength(*flac, sourceFrames, Format.nSamplesPerSec) || !flac->Validate())
+    // A file cut short falls back before playback starts; the check decodes only the last frame, so a track change
+    // doesn't hold the frame up. A bad frame further in plays as silence.
+    if (!flac || !MCHdAudio::MatchesLength(*flac, sourceFrames, Format.nSamplesPerSec) || !flac->CheckEnd())
     {
         return;
     }
 
-    const auto& format = flac->Format();
-    Format = {1,
-              format.Channels,
-              format.Rate,
-              format.BytesPerSecond(),
-              static_cast<uint16_t>(format.BlockAlign()),
-              format.Bits,
-              0};
+    Format = WaveFormatOf(flac->Format());
     // DurationMs stays the original's: the game uses it for music scheduling and fades.
     _Flac = std::move(flac);
+    _Stream->Close();
+    _Stream.reset();
 }
 
 void MCSoundResource::ReadWaveInfo()
@@ -193,34 +176,7 @@ uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t dep
 {
     if (_Flac != nullptr)
     {
-        size_t done = 0;
-        bool rewound = false;
-
-        while (done < buffer.size())
-        {
-            const size_t read = _Flac->Read(buffer.subspan(done));
-            done += read;
-
-            if (done == buffer.size())
-            {
-                break;
-            }
-
-            if (!loop || (read == 0 && rewound))
-            {
-                std::ranges::fill(buffer.subspan(done), uint8_t{0});
-                break;
-            }
-
-            if (!_Flac->Seek(0))
-            {
-                std::ranges::fill(buffer.subspan(done), uint8_t{0});
-                break;
-            }
-
-            rewound = true;
-        }
-
+        ReadFlac(buffer, loop);
         return static_cast<uint32_t>(buffer.size());
     }
 
@@ -251,6 +207,35 @@ uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t dep
 
     std::ranges::fill(buffer.subspan(bytesRead), Format.wBitsPerSample == 8 ? uint8_t{0x80} : uint8_t{0});
     return bytes;
+}
+
+void MCSoundResource::ReadFlac(std::span<uint8_t> buffer, bool loop)
+{
+    // The ring is sized and filled in whole frames; a partial frame at the end (none is expected) stays silent.
+    const size_t whole = buffer.size() - buffer.size() % Format.nBlockAlign;
+    size_t done = 0;
+    bool rewound = false;
+
+    while (done < whole)
+    {
+        const size_t read = _Flac->Read(buffer.subspan(done, whole - done));
+        done += read;
+
+        if (done == whole)
+        {
+            break;
+        }
+
+        // The end (or a bad frame): a looping stream starts again, unless it just did and read nothing.
+        if (!loop || (read == 0 && rewound) || !_Flac->Seek(0))
+        {
+            break;
+        }
+
+        rewound = true;
+    }
+
+    std::ranges::fill(buffer.subspan(done), uint8_t{0});
 }
 
 void MCSoundResource::Rewind()

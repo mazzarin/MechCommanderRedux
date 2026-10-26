@@ -138,8 +138,11 @@ static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
 // The most an HD colour channel is scaled by when today's colour differs from the pack's.
 static const float MaxCorrection = 4.0;
-// Light below this (under two steps of 8 bits) is BC7's error around a frame's empty pixels, not the frame's.
-static const float LightFloor = 1.5 / 255.0;
+// An effect's frame (HdLight) holds faint error in its empty parts (the network's and BC7's: up to about 5/255 of light
+// and 4/255 of coverage), which the copies of an effect the game stacks on one place (a dying mech's critical hits,
+// each with its own) would add up into a lit box. Coverage below its floor is none, and light loses its floor.
+static const float LightFloor = 6.0 / 255.0;
+static const float CoverageFloor = 4.5 / 255.0;
 
 // The alpha colours' kinds.
 static const uint AlphaNothing = 0;
@@ -450,8 +453,13 @@ Output HdPixelAt(Input input, float2 shape)
                                HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
     float4 color = lerp(top, bottom, f.y);
 
-    // A frame holding its blended pixels may add light where it has no coverage (BC7's error adds none).
-    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb < LightFloor)))
+    // A frame holding its blended pixels may add light where it has no coverage (its error adds none).
+    if ((input.op.x & HdLight) != 0 && color.a < CoverageFloor)
+    {
+        color = float4(max(color.rgb - LightFloor, 0.0), 0.0);
+    }
+
+    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb <= 0.0)))
     {
         discard;
     }
@@ -646,10 +654,69 @@ float2 PolygonCorner(Input input, uint i)
     return float2((float)((packed << 16) >> 16), (float)(packed >> 16));
 }
 
+// A smooth polygon's colour index at window point `window`, as the original's walk steps it: each side's from its top
+// corner's to its bottom's (span holds the corners' indices), then along the row from the left side's to the right's.
+float PolygonIndex(Input input, float2 window, uint corners)
+{
+    const float4 values = asfloat(input.span);
+    float top = 1e9;
+    float bottom = -1e9;
+
+    for (uint i = 0; i < 4; i++)
+    {
+        if (i >= corners)
+        {
+            break;
+        }
+
+        top = min(top, PolygonCorner(input, i).y);
+        bottom = max(bottom, PolygonCorner(input, i).y);
+    }
+
+    // Corners and spans are at the pixels' centres.
+    const float2 at = float2(window.x - 0.5, clamp(window.y - 0.5, top, bottom));
+    float2 left = float2(1e9, 0.0);
+    float2 right = float2(-1e9, 0.0);
+
+    for (uint j = 0; j < 4; j++)
+    {
+        if (j >= corners)
+        {
+            break;
+        }
+
+        const uint k = (j + 1) % corners;
+        const float2 a = PolygonCorner(input, j);
+        const float2 b = PolygonCorner(input, k);
+
+        // A level side's ends are its neighbours' ends too.
+        if (a.y == b.y)
+        {
+            continue;
+        }
+
+        const float t = (at.y - a.y) / (b.y - a.y);
+
+        if (t < 0.0 || t > 1.0)
+        {
+            continue;
+        }
+
+        const float va = dot(values, float4(j == 0, j == 1, j == 2, j == 3));
+        const float vb = dot(values, float4(k == 0, k == 1, k == 2, k == 3));
+        const float2 side = float2(lerp(a.x, b.x, t), lerp(va, vb, t));
+        left = side.x < left.x ? side : left;
+        right = side.x > right.x ? side : right;
+    }
+
+    const float across = right.x > left.x ? saturate((at.x - left.x) / (right.x - left.x)) : 0.0;
+    return lerp(left.y, right.y, across);
+}
+
 // Port-only: a flat or Gouraud polygon's colour at drawn pixel `target` (KindSmoothPolygon; its indices were written by
 // the original's spans, index-only): inside its corners' edges (through the pixels' centres, half a window pixel out, as
-// the spans take both ends), the edge ramped over a drawn pixel; its colour index the plane in span.xyz, wrapping as the
-// walk's. Premultiplied, through the blend pipeline.
+// the spans take both ends), the edge ramped over a drawn pixel; its colour index stepped as the walk's (PolygonIndex),
+// wrapping as the walk's. Premultiplied, through the blend pipeline.
 Output SmoothPolygonPixel(Input input, int2 target)
 {
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
@@ -679,8 +746,7 @@ Output SmoothPolygonPixel(Input input, int2 target)
         discard;
     }
 
-    const float3 plane = asfloat(input.span.xyz);
-    const uint index = (uint)(int)floor(plane.x * window.x + plane.y * window.y + plane.z) & 255u;
+    const uint index = (uint)(int)floor(PolygonIndex(input, window, corners)) & 255u;
     return Blended(float4(Shown(index), 1.0) * coverage);
 }
 

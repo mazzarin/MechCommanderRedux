@@ -23,11 +23,16 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
+#include "object/MCBullet.h"
 #include "object/MCExplosion.h"
+#include "object/MCGroundVehicleGameSystem.h"
+#include "object/MCLaser.h"
+#include "object/MCMasterComponent.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCObjectSystem.h"
+#include "object/MCProjectileLaser.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -35,6 +40,7 @@
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanRenderer.h"
+#include "sprite/MCArmAppearanceType.h"
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
@@ -1218,8 +1224,7 @@ namespace
 
     /// <summary>
     /// The appearances the object PAK's types use, by type id: each with the kind of the first class that uses it
-    /// (ClassKinds; an effect's when none does), except mechs' and those of classes without shapes of their own (lines,
-    /// weapon effects).
+    /// (ClassKinds; an effect's when none does), except mechs' and lines' (no shapes of their own).
     /// </summary>
     std::map<uint32_t, ObjectAppearance> FindObjectAppearances()
     {
@@ -1251,7 +1256,7 @@ namespace
 
             if (!appearance.has_value() ||
                 (appearanceClass != MCAppearanceClass::Vfx && appearanceClass != MCAppearanceClass::GroundVehicle &&
-                 appearanceClass != MCAppearanceClass::Building &&
+                 appearanceClass != MCAppearanceClass::Arm && appearanceClass != MCAppearanceClass::Building &&
                  appearanceClass != MCAppearanceClass::ElementalTree && appearanceClass != MCAppearanceClass::PopUp))
             {
                 continue;
@@ -1337,6 +1342,20 @@ namespace
                 }
 
                 KeepLoaded(vehicle.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::Arm:
+            {
+                // A weapon's flash at its shooter (a projectile laser's), one packet a facing.
+                auto& arm = static_cast<MCArmAppearanceType&>(*type);
+
+                for (int32_t rotation = FirstRotation; rotation < LastRotation; ++rotation)
+                {
+                    bool reverse = false;
+                    arm.GetShape(rotation, frameRate, reverse);
+                }
+
+                KeepLoaded(arm.ShapeList, shapes);
                 break;
             }
             case MCAppearanceClass::Building:
@@ -2903,16 +2922,20 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
     REQUIRE(!shape->FrameList().empty());
     REQUIRE(MCAgShapeIsAlpha(shape->FrameList(), 0));
 
-    // The frame: nothing, light, black covering what is under it, and the opaque colour at half its brightness, by the
+    // The frame: the faint error a generated frame holds where it is empty (drawn: nothing, or stacked copies would add it
+    // up into a box), light, black covering what is under it, and the opaque colour at half its brightness, by the
     // original's columns.
     constexpr int32_t Scale = 2;
     constexpr SDL_Color Light = {90, 60, 30, 0};
+    // Light loses draw.pshader's floor (its LightFloor, in 8-bit steps), below which an effect's frame holds only error.
+    constexpr int32_t LightFloor = 6;
+    constexpr SDL_Color Error = {4, 4, 4, 3};
     constexpr SDL_Color Cover = {0, 0, 0, 255};
     const SDL_Color lit = {static_cast<uint8_t>(colors[opaque].r / 2), static_cast<uint8_t>(colors[opaque].g / 2),
                            static_cast<uint8_t>(colors[opaque].b / 2), 255};
     const auto frameColor = [&](int32_t column)
     {
-        return column == 0 ? SDL_Color{0, 0, 0, 0} : column < 3 ? Light : column < 5 ? Cover : lit;
+        return column == 0 ? Error : column < 3 ? Light : column < 5 ? Cover : lit;
     };
 
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effect_frame";
@@ -2963,8 +2986,9 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
             }
             else if (column < 3)
             {
-                CHECK(sameAs(drawn, std::min(under.r + Light.r, 255), std::min(under.g + Light.g, 255),
-                             std::min(under.b + Light.b, 255)));
+                CHECK(sameAs(drawn, std::min(under.r + Light.r - LightFloor, 255),
+                             std::min(under.g + Light.g - LightFloor, 255),
+                             std::min(under.b + Light.b - LightFloor, 255)));
             }
             else if (column < 5)
             {
@@ -3393,6 +3417,276 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
 
 namespace
 {
+    /// <summary>
+    /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
+    /// copied from), and where.
+    /// </summary>
+    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
+
+    /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
+    struct AuditTally
+    {
+        int64_t Count = 0;
+        int64_t Pixels = 0;
+        bool Scaled = false;
+        std::span<const uint8_t> Data;
+        std::set<int32_t> Frames;
+    };
+
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
+    void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
+}
+
+namespace
+{
+    /// <summary>The pictures a weapon of --hd-weapons gets: frames after it fires, spread over its flight and hit.</summary>
+    constexpr int32_t WeaponShots = 6;
+
+    /// <summary>A weapon --hd-weapons fires: its pictures' name, its master component id and the frames it is shot at.</summary>
+    struct PicturedWeapon
+    {
+        std::string_view Name;
+        int32_t MasterId = 0;
+        std::array<int32_t, WeaponShots> ShotFrames{};
+    };
+
+    /// <summary>
+    /// The weapons --hd-weapons fires, by their Inner Sphere master ids (logistics' FitComponents): the PPC, the Gauss
+    /// rifle and the large ER laser, all three projectile lasers. Over mission 1's 200 units the PPC's bolt grows for five
+    /// frames and its hit plays from the seventh; the slug and the laser's bolt fly four and hit from the sixth.
+    /// </summary>
+    constexpr std::array<PicturedWeapon, 3> PicturedWeapons = {{
+        {"ppc", 0x91, {1, 3, 5, 7, 9, 13}},
+        {"gauss", 0x68, {1, 2, 4, 6, 7, 9}},
+        {"erlaser", 0x8d, {1, 2, 4, 6, 8, 10}},
+    }};
+
+    /// <summary>
+    /// Sends <paramref name="masterId"/>'s weapon effect from <paramref name="shooter"/>'s right arm to
+    /// <paramref name="target"/>'s centre torso as a hit of MCBattleMech::FireWeapon launches it (its LaunchWeaponFX),
+    /// with a shot doing <paramref name="damage"/> (none: the target stands for every weapon). Returns the effect.
+    /// </summary>
+    std::shared_ptr<MCGameObject> LaunchWeapon(MCBattleMech& shooter, const std::shared_ptr<MCBattleMech>& target,
+                                               int32_t masterId, float damage = 0.0f)
+    {
+        const MCMasterComponent& weapon = MasterComponentList[static_cast<size_t>(masterId)];
+        std::shared_ptr<MCGameObject> fx = CreateObject(static_cast<int32_t>(WeaponFXTable[weapon.WeaponEffect]));
+        MCTest::Scope scope(std::format("weapon {} ({}), effect {}", masterId, weapon.Name, weapon.WeaponEffect));
+        REQUIRE(fx != nullptr);
+        const std::shared_ptr<MCGameObject> source = shooter.SharedAs<MCGameObject>();
+        const int32_t sourceHotSpot = shooter.BodyAt(MechRightArm).HotSpotNumber;
+        const int32_t targetHotSpot = target->BodyAt(MechCenterTorso).HotSpotNumber;
+        const float entryAngle = target->RelFacingTo(shooter.GetPosition(), -1);
+        const auto aim = [&](MCWeaponShotInfo& shot)
+        { shot.Init(source, masterId, damage, MechCenterTorso, entryAngle); };
+        const auto launch = [&](auto& effect, MCWeaponShotInfo& shot)
+        {
+            aim(shot);
+            effect.Owner = source;
+            effect.Target = target;
+            effect.OwnerHotSpot = sourceHotSpot;
+            effect.TargetHotSpot = targetHotSpot;
+        };
+
+        if (fx->ObjectClass == MCObjectClass::Bullet)
+        {
+            auto& bullet = static_cast<MCBullet&>(*fx);
+            launch(bullet, bullet.NewShot());
+        }
+        else if (fx->ObjectClass == MCObjectClass::ProjectileLaser)
+        {
+            auto& projectile = static_cast<MCProjectileLaser&>(*fx);
+            launch(projectile, projectile.ShotInfo);
+        }
+        else
+        {
+            REQUIRE(fx->ObjectClass == MCObjectClass::Laser);
+            auto& laser = static_cast<MCLaser&>(*fx);
+            aim(laser.ShotInfo);
+            laser.Source = source;
+            laser.Target = target;
+            laser.SourceHotSpot = sourceHotSpot;
+            laser.TargetHotSpot = targetHotSpot;
+        }
+
+        std::cout << std::format("  {}: {} (effect {}, object type {}, class {})\n", masterId, weapon.Name,
+                                 weapon.WeaponEffect, WeaponFXTable[weapon.WeaponEffect],
+                                 static_cast<int32_t>(fx->ObjectClass));
+        WeaponList()->Add(fx);
+        return fx;
+    }
+
+    /// <summary>
+    /// Turns <paramref name="mech"/> to face <paramref name="point"/>: FaceMech's facing turned by the mech's relative
+    /// facing to the point one way or the other, whichever leaves it facing the point.
+    /// </summary>
+    void FaceMechTo(MCBattleMech& mech, MCVector3D point)
+    {
+        MCTestGame::FaceMech(mech, 0.0f);
+        const float turn = mech.RelFacingTo(point, -1);
+        float best = std::numeric_limits<float>::max();
+        float facing = 0.0f;
+
+        for (const float candidate : {turn, -turn})
+        {
+            MCTestGame::FaceMech(mech, candidate);
+
+            if (const float left = std::abs(mech.RelFacingTo(point, -1)); left < best)
+            {
+                best = left;
+                facing = candidate;
+            }
+        }
+
+        MCTestGame::FaceMech(mech, facing);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-weapons &lt;pack&gt; --shots &lt;folder&gt;</c> pictures weapons firing: in mission 1 (the map
+/// revealed), the player's mech faces the next mech of its lance and fires a PPC, a Gauss rifle and a large ER laser at
+/// it in turn (shots that do no damage), the camera between the two, each shot at frames spread over its flight and hit
+/// (<c>&lt;weapon&gt;_&lt;n&gt;_hd.png</c>), or with <c>--hd-original 1</c> without HD art. A run plays out the same
+/// every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as --hd-pack's.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-weapons pictures weapons firing beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-weapons");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const std::shared_ptr<MCMover> shooterMover = GetMoverFromPartId(PlayerMechPartId);
+    const std::shared_ptr<MCMover> targetMover = GetMoverFromPartId(PlayerMechPartId + 1);
+    REQUIRE(shooterMover != nullptr);
+    REQUIRE(targetMover != nullptr);
+    REQUIRE(shooterMover->ObjectClass == MCObjectClass::BattleMech);
+    REQUIRE(targetMover->ObjectClass == MCObjectClass::BattleMech);
+    const auto shooter = std::static_pointer_cast<MCBattleMech>(shooterMover);
+    const auto target = std::static_pointer_cast<MCBattleMech>(targetMover);
+    const MCVector3D from = shooter->GetPosition();
+    const MCVector3D to = target->GetPosition();
+    std::cout << std::format("  shooter at ({:.0f}, {:.0f}), target at ({:.0f}, {:.0f}), {:.0f} apart\n", from.X,
+                             from.Y, to.X, to.Y, std::hypot(to.X - from.X, to.Y - from.Y));
+    FaceMechTo(*shooter, to);
+    Eye()->ChangeTarget(nullptr, true);
+    Eye()->SetPosition(MCVector3D((from.X + to.X) * 0.5f, (from.Y + to.Y) * 0.5f, (from.Z + to.Z) * 0.5f));
+
+    // The frames before each weapon fires (the last one's hit effect gone), and those it is given to finish.
+    constexpr int32_t SettleFrames = 15;
+    constexpr int32_t Frames = 30;
+
+    for (const PicturedWeapon& weapon : PicturedWeapons)
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const std::weak_ptr<MCGameObject> fx = LaunchWeapon(*shooter, target, weapon.MasterId);
+        int32_t shot = 0;
+        int32_t lasted = 0;
+
+        for (int32_t frame = 1; frame <= Frames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (!fx.expired())
+            {
+                lasted = frame;
+            }
+
+            if (std::ranges::contains(weapon.ShotFrames, frame))
+            {
+                Shoot(folder, std::format("{}_{}", weapon.Name, shot++), original);
+            }
+        }
+
+        std::cout << std::format("  {}: the shot flew {} frames\n", weapon.Name, lasted);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-mech-death &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a mech's death: --hd-weapons' scene, the
+/// shot a PPC doing enough damage to destroy its target's centre torso, then a picture every few frames from its fall
+/// to its wreck (<c>death_&lt;frame&gt;_hd.png</c>, or with <c>--hd-original 1</c> without HD art). With
+/// <c>--hd-audit-frames n</c>, the draws of its first n frames are tallied as --hd-audit tallies a battle's (into
+/// <c>audit</c> in the folder).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-mech-death pictures a mech's death beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-mech-death");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const auto shooter = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId));
+    const auto target = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId + 1));
+    REQUIRE(shooter != nullptr);
+    REQUIRE(target != nullptr);
+    const MCVector3D from = shooter->GetPosition();
+    const MCVector3D to = target->GetPosition();
+    FaceMechTo(*shooter, to);
+    Eye()->ChangeTarget(nullptr, true);
+    Eye()->SetPosition(to);
+
+    // A PPC's master id, a hit no centre torso survives, and the pictures' spacing and the frames after the blast.
+    constexpr int32_t Ppc = 0x91;
+    constexpr float Lethal = 1000.0f;
+    constexpr int32_t Every = 3;
+    constexpr int32_t MostFrames = 600;
+    constexpr int32_t AfterBlast = 30;
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const int32_t audited = std::stoi(std::string(MCTest::Option("hd-audit-frames").value_or("0")));
+    std::map<AuditKey, AuditTally> tally;
+    LaunchWeapon(*shooter, target, Ppc, Lethal);
+    int32_t blast = -1;
+
+    for (int32_t frame = 1; frame <= MostFrames && (blast < 0 || frame <= blast + AfterBlast); ++frame)
+    {
+        renderer->Audit = frame <= audited ? AuditInto(tally) : nullptr;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (blast < 0 && target->DeathExplosionDone)
+        {
+            blast = frame;
+        }
+
+        if (frame % Every == 0)
+        {
+            Shoot(folder, std::format("death_{:03}", frame), original);
+        }
+    }
+
+    renderer->Audit = nullptr;
+    std::cout << std::format("  destroyed: {}, blew up at frame {}\n", target->IsDestroyed() != 0, blast);
+    CHECK(blast > 0);
+
+    if (audited > 0)
+    {
+        ReportAudit(tally, folder / "audit", audited);
+    }
+}
+
+namespace
+{
     /// <summary>The terrain test's HD tiles' scale.</summary>
     constexpr int32_t TerrainScale = 2;
 
@@ -3574,28 +3868,6 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
     }
 
     std::filesystem::remove_all(scene->Scratch);
-}
-
-namespace
-{
-    /// <summary>
-    /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
-    /// copied from), and where.
-    /// </summary>
-    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
-
-    /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
-    struct AuditTally
-    {
-        int64_t Count = 0;
-        int64_t Pixels = 0;
-        bool Scaled = false;
-        std::span<const uint8_t> Data;
-        std::set<int32_t> Frames;
-    };
-
-    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
-    void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
 }
 
 /// <summary>
@@ -4394,6 +4666,38 @@ namespace
                 }
             }
 
+            // With --hd-audit-all, a sharp shape's pack frames (their stored colours) for its first frames drawn.
+            constexpr size_t FramesShown = 4;
+
+            if (sharp && all && command == "Shape" && VfxIsShapeTable(entry.Data))
+            {
+                const std::optional<std::filesystem::path> attached = MCHdArt::AttachedFolder(entry.Data.data());
+
+                for (const int32_t frame : entry.Frames | std::views::take(FramesShown))
+                {
+                    const auto decoded = Decode(entry.Data, frame);
+
+                    if (!decoded.has_value() || decoded->Width == 0)
+                    {
+                        continue;
+                    }
+
+                    const std::shared_ptr<const MCHdArt::Frame> hd =
+                        attached.has_value() ? MCHdArt::FindInFolder(*attached, frame, decoded->Width, decoded->Height)
+                                             : MCHdArt::FindShape(MCHdArt::ShapeTableHash(entry.Data), frame,
+                                                                  decoded->Width, decoded->Height);
+
+                    if (hd != nullptr)
+                    {
+                        std::vector<uint8_t> rgba = hd->Format == MCHdArt::ColorFormat::Bc7
+                                                        ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
+                                                        : hd->Colors;
+                        SavePng(folder / std::format("{:03}_{}_{}_hd.png", rank, command, frame), hd->Width, hd->Height,
+                                rgba);
+                    }
+                }
+            }
+
             if (!sharp && (command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
             {
                 if (const auto decoded = Decode(entry.Data, *entry.Frames.begin());
@@ -4660,16 +4964,14 @@ TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
 namespace
 {
     /// <summary>
-    /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
-    /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
+    /// What the pixels of <paramref name="box"/> (the screen pane's) changed by <paramref name="draw"/> show, with HD art
+    /// on from <paramref name="pack"/> (none: off).
     /// </summary>
-    int64_t PixelsBetween(const std::optional<std::filesystem::path>& pack, uint8_t color, const MCRect& box,
-                          const std::function<void()>& draw)
+    std::vector<SDL_Color> ChangedPixels(const std::optional<std::filesystem::path>& pack, const MCRect& box,
+                                         const std::function<void()>& draw)
     {
         const std::shared_ptr<MCDisplay> display = MCInput::Display();
         const MCPane& pane = ScreenPort()->Frame();
-        std::array<SDL_Color, 256> colors{};
-        display->GetShownColors(colors);
         std::optional<MCHdArtOn> on;
 
         if (pack.has_value())
@@ -4684,8 +4986,7 @@ namespace
         REQUIRE(under.has_value());
         REQUIRE(drawn.has_value());
         const int32_t width = display->Width();
-        const SDL_Color shape = colors[color];
-        int64_t count = 0;
+        std::vector<SDL_Color> changed;
 
         for (int32_t row = box.Y0; row <= box.Y1; ++row)
         {
@@ -4694,13 +4995,33 @@ namespace
                 const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
                 const SDL_Color a = (*under)[at];
                 const SDL_Color b = (*drawn)[at];
-                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
-                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
-                count += same || shapeColor ? 0 : 1;
+
+                if (a.r != b.r || a.g != b.g || a.b != b.b)
+                {
+                    changed.push_back(b);
+                }
             }
         }
 
-        return count;
+        return changed;
+    }
+
+    bool SameColor(const SDL_Color& a, const SDL_Color& b)
+    {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    }
+
+    /// <summary>
+    /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
+    /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
+    /// </summary>
+    int64_t PixelsBetween(const std::optional<std::filesystem::path>& pack, uint8_t color, const MCRect& box,
+                          const std::function<void()>& draw)
+    {
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        return std::ranges::count_if(ChangedPixels(pack, box, draw),
+                                     [&](const SDL_Color& pixel) { return !SameColor(pixel, colors[color]); });
     }
 }
 
@@ -4807,6 +5128,87 @@ TEST_CASE_ISOLATED("game: HD art draws flat and Gouraud polygons with smooth edg
     }
 
     GamePaused = false;
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// A laser's beam is two Gouraud quads whose corners' colours needn't lie on a plane: with HD art on, a quad whose tail
+/// darkens again (head 0x30, sides 0x34, tail 0x31) draws, inside, only colour indices the original's walk draws (no
+/// plane through three corners running past the fourth's colour).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art steps a Gouraud quad's colours as the original's walk does")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_gouraud_quad");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Bulge = 10;
+    constexpr uint8_t Head = 0x30;
+    constexpr uint8_t Side = 0x34;
+    constexpr uint8_t Tail = 0x31;
+    constexpr int32_t Fixed = 1 << 16;
+    // Head, side bulge, tail, and the bulge's centre on the beam's axis, as MCProjectileLaser::Render draws one side.
+    const std::array<MCScreenVertex, 4> beam = {MCScreenVertex{x - Length, y - Length / 2, Head * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x + Bulge / 2, y - Bulge, Side * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x + Length, y + Length / 2, Tail * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x, y, Side * Fixed, 0, 0, 0}};
+    const MCRect box{x - Length - 1, y - Length / 2 - Bulge, x + Length + 1, y + Length / 2 + 1};
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    // The beam's colour indices (Head..Side) its pixels show; the HD edges' blends match none.
+    const auto indices = [&](const std::optional<std::filesystem::path>& from)
+    {
+        std::set<int32_t> shown;
+
+        for (const SDL_Color& pixel : ChangedPixels(from, box, [&] { VfxGouraudPolygon(pane, beam); }))
+        {
+            for (int32_t index = Head; index <= Side + Side - Head; ++index)
+            {
+                if (SameColor(pixel, colors[static_cast<size_t>(index)]))
+                {
+                    shown.insert(index);
+                    break;
+                }
+            }
+        }
+
+        return shown;
+    };
+
+    GamePaused = true;
+    const std::set<int32_t> original = indices(std::nullopt);
+    const std::set<int32_t> smooth = indices(pack);
+    GamePaused = false;
+    const auto list = [](const std::set<int32_t>& set)
+    {
+        std::string text;
+
+        for (const int32_t index : set)
+        {
+            text += std::format(" {:#04x}", index);
+        }
+
+        return text;
+    };
+
+    std::cout << std::format("  indices shown: original{}, HD art{}\n", list(original), list(smooth));
+    CHECK(original.contains(Head));
+    CHECK(original.contains(Side));
+    CHECK(std::ranges::includes(original, smooth));
     std::filesystem::remove_all(pack.parent_path());
 }
 
@@ -5383,13 +5785,17 @@ TEST_CASE_ISOLATED("tool: --hd-cursors pictures the cursors beside the original"
 
 namespace
 {
-    /// <summary>One kind of the game's art: how many frames of it there are, how many the pack holds, a few it lacks.</summary>
+    /// <summary>
+    /// One kind of the game's art: how many frames of it there are, how many the pack holds, a few it lacks, and whether
+    /// the game draws it (counted in the total).
+    /// </summary>
     struct ArtCoverage
     {
         std::string Name;
         size_t Frames = 0;
         size_t Found = 0;
         std::vector<std::string> Missing;
+        bool Drawn = true;
     };
 
     /// <summary>How many of a kind's missing frames are named.</summary>
@@ -5436,7 +5842,8 @@ namespace
 /// Tool: <c>--hd-coverage &lt;pack&gt;</c> counts, for each kind of the game's art, how many of its frames the HD art
 /// pack holds, as the extractors find them in the game's files: the mechs' and objects' sprites, the ground's tiles and
 /// overlays, the craters, the mech bar's icons, the shape tables loaded outside the sprite files and the menus' and
-/// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind.
+/// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind. Then
+/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack holds")
 {
@@ -5465,18 +5872,79 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     }
 
     std::map<std::string, ArtCoverage> objects;
+    std::set<std::filesystem::path> walked;
+    std::set<uint32_t> typed;
 
     for (const auto& [appearance, type] : PickedObjectAppearances())
     {
+        typed.insert(appearance.Id & AppearancePacketMask);
         const ObjectKindInfo& kind = KindInfo(appearance.Kind);
         ArtCoverage& coverage =
             objects.try_emplace(std::string(kind.Name), ArtCoverage{std::string(kind.Name)}).first->second;
-        NoteSequences(coverage, ObjectSequencesOf(type, kind.Blended).Sequences);
+        const std::vector<Sequence> sequences = ObjectSequencesOf(type, kind.Blended).Sequences;
+        NoteSequences(coverage, sequences);
+
+        for (const Sequence& sequence : sequences)
+        {
+            walked.insert(sequence.Folder);
+        }
     }
 
     for (auto& [name, coverage] : objects)
     {
         report.push_back(std::move(coverage));
+    }
+
+    // The packets of the sprite PAKs no type's walk above draws, as a check on the walks: the game's own lookups never
+    // reach them (the original's zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations), and
+    // the appearances no type uses are named.
+    ArtCoverage& packets = report.emplace_back(ArtCoverage{"sprite PAK packets no type draws", 0, 0, {}, false});
+    std::map<uint32_t, size_t> untyped;
+
+    for (uint32_t appearance = 0; appearance < SpriteManager()->GetNumAppearances(); ++appearance)
+    {
+        for (int32_t packet = 0; packet < SpriteManager()->GetNumShapes(appearance); ++packet)
+        {
+            const std::shared_ptr<MCShape> shape =
+                SpriteManager()->GetShapeData(appearance, static_cast<uint32_t>(packet), Turn, {});
+
+            if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()) || walked.contains(shape->HdFolder))
+            {
+                continue;
+            }
+
+            const std::span<const uint8_t> table = shape->FrameList();
+
+            for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+            {
+                std::expected<DecodedFrame, std::string> decoded = Decode(table, frame);
+
+                if (decoded.has_value() && decoded->Translucent)
+                {
+                    LeaveOutUndrawn(*decoded, true);
+                }
+
+                if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+                {
+                    continue;
+                }
+
+                const bool found =
+                    MCHdArt::FindInFolder(shape->HdFolder, frame, decoded->Width, decoded->Height) != nullptr;
+                untyped[appearance] += typed.contains(appearance) ? 0 : 1;
+                NoteFrame(packets, found,
+                          [&] { return std::format("{}/{}", shape->HdFolder.generic_string(), frame); });
+            }
+        }
+    }
+
+    for (const auto& [appearance, frames] : untyped)
+    {
+        if (frames != 0)
+        {
+            std::cout << std::format("  sprite PAK appearance {} ({}): {} frames, no type uses it\n", appearance,
+                                     SpriteManager()->ShapeFileName(appearance), frames);
+        }
     }
 
     ArtCoverage& ground = report.emplace_back(ArtCoverage{"ground tiles"});
@@ -5570,7 +6038,14 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
     for (const ArtCoverage& coverage : report)
     {
-        std::cout << std::format("  {}: {} of {} frames in the pack\n", coverage.Name, coverage.Found, coverage.Frames);
+        std::cout << std::format("  {}: {} of {} frames in the pack{}\n", coverage.Name, coverage.Found,
+                                 coverage.Frames, coverage.Drawn ? "" : " (never drawn: not in the total)");
+
+        if (!coverage.Drawn)
+        {
+            continue;
+        }
+
         frames += coverage.Frames;
         found += coverage.Found;
 

@@ -69,13 +69,16 @@ namespace
         return display != nullptr && SDL_TextInputActive(&display->Window());
     }
 
-    /// <summary>Starts or stops SDL's text input in the window, as <see cref="MCInput::SetTextInput"/> asks.</summary>
+    /// <summary>
+    /// Starts or stops SDL's text input in the window, as <see cref="MCInput::SetTextInput"/> asks, once no key SDL
+    /// read under the old setting waits in its queue.
+    /// </summary>
     void applyTextInput()
     {
         MCInputState& input = state();
         const std::shared_ptr<MCDisplay> display = input.Display.lock();
 
-        if (display == nullptr)
+        if (display == nullptr || SDL_HasEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_TEXT_INPUT))
         {
             return;
         }
@@ -419,15 +422,39 @@ namespace
     }
 
     /// <summary>
-    /// The Windows-1252 character a key makes with the modifiers held, in the keyboard layout, or -1 (a key that makes
-    /// none, or one the code page lacks): TranslateMessage's WM_CHAR, for when SDL's text input is off.
+    /// The Windows-1252 character a key (<paramref name="vk"/>) makes with the modifiers held, in the keyboard layout,
+    /// or -1 (a key that makes none, or one the code page lacks): TranslateMessage's WM_CHAR, for when SDL's text
+    /// input is off.
     /// </summary>
-    int typedCharacter(const SDL_KeyboardEvent& key)
+    int typedCharacter(const SDL_KeyboardEvent& key, int vk)
     {
+        // The keypad's keys (digits with NumLock on).
+        if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9)
+        {
+            return '0' + (vk - VK_NUMPAD0);
+        }
+
+        switch (vk)
+        {
+            case VK_MULTIPLY:
+                return '*';
+            case VK_ADD:
+                return '+';
+            case VK_SUBTRACT:
+                return '-';
+            case VK_DECIMAL:
+                return '.';
+            case VK_DIVIDE:
+                return '/';
+            default:
+                break;
+        }
+
         const SDL_Keycode typed = SDL_GetKeyFromScancode(key.scancode, key.mod, false);
 
         // Keys without a character have keycodes built from their scancode (or SDL's extended ones).
-        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 || typed < FirstPrintable || typed == SDLK_DELETE)
+        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 ||
+            typed < static_cast<SDL_Keycode>(FirstPrintable) || typed == SDLK_DELETE)
         {
             return -1;
         }
@@ -470,9 +497,10 @@ namespace
             int character = controlCharacter(vk, ctrlDown, altDown);
 
             // No text field has the keyboard: the key's own character (with it, SDL_EVENT_TEXT_INPUT brings the text).
-            if (character < 0 && !ctrlDown && !textInputActive())
+            // Command (the Windows key) chords are the system's shortcuts, and type nothing.
+            if (character < 0 && !ctrlDown && (key.mod & SDL_KMOD_GUI) == 0 && !textInputActive())
             {
-                character = typedCharacter(key);
+                character = typedCharacter(key, vk);
             }
 
             if (character >= 0)
@@ -532,6 +560,7 @@ namespace MCInput
 
         if (display == nullptr)
         {
+            input.CornerGuard.reset();
             return;
         }
 
@@ -585,7 +614,7 @@ namespace MCInput
             }
         }
 
-        // Before SDL reads the next keys (see SetTextInput).
+        // Between the batches of keys SDL reads (see SetTextInput).
         applyTextInput();
         SDL_Event event;
 
@@ -594,6 +623,7 @@ namespace MCInput
             HandleEvent(event);
         }
 
+        applyTextInput();
         return !input.Quit;
     }
 

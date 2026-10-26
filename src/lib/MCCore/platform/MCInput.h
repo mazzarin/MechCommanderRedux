@@ -66,8 +66,8 @@ namespace MCInput
 
     /// <summary>
     /// Whether a text field has the keyboard (the GUI's text focus): SDL's text input runs only then. It starts or
-    /// stops before the next events are read, not at once: SDL decides whether a key types text as it reads the key,
-    /// so a change among keys already read would lose or double their characters.
+    /// stops when the pump next finds no key waiting, not at once: SDL decides whether a key types text as it reads
+    /// the key, so a change among keys already read would lose or double their characters.
     /// </summary>
     void SetTextInput(bool on);
 

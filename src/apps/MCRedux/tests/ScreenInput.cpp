@@ -163,7 +163,7 @@ namespace MCScreenInput
         RealButton(false);
     }
 
-    void RealKey(SDL_Scancode scancode)
+    void RealKey(SDL_Scancode scancode, SDL_Keymod mod)
     {
         const std::shared_ptr<MCDisplay> display = MCInput::Display();
 
@@ -174,6 +174,7 @@ namespace MCScreenInput
             key.key.windowID = SDL_GetWindowID(&display->Window());
             key.key.scancode = scancode;
             key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+            key.key.mod = mod;
             key.key.down = down;
             MCInput::HandleEvent(key);
             MCTestGame::RunFrame(1.0f / 15.0f);

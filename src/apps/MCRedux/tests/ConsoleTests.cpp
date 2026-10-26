@@ -25,10 +25,13 @@ namespace
         }
     }
 
-    /// <summary>Presses and lets go of the key that types <paramref name="letter"/> in the keyboard layout.</summary>
-    void RealLetter(char letter)
+    /// <summary>
+    /// Presses and lets go of the key that types <paramref name="letter"/> in the keyboard layout, with
+    /// <paramref name="mod"/> held.
+    /// </summary>
+    void RealLetter(char letter, SDL_Keymod mod = SDL_KMOD_NONE)
     {
-        MCScreenInput::RealKey(SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(letter), nullptr));
+        MCScreenInput::RealKey(SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(letter), nullptr), mod);
     }
 }
 
@@ -93,8 +96,9 @@ TEST_CASE_ISOLATED("game: the debug console opens on Enter with -debug and blows
 
 /// <summary>
 /// SDL's text input (the system's input methods: an IME, macOS's press-and-hold accents) runs only while a text field
-/// has the keyboard. Elsewhere the keys make their own characters, so a cheat code typed in a mission still works; in
-/// the console's line, the text is text input's and the keys make none of their own.
+/// has the keyboard. Elsewhere the keys make their own characters, so a cheat code typed in a mission still works
+/// (Command chords, the system's shortcuts, type nothing); in the console's line, the text is text input's and the keys
+/// make none of their own.
 /// </summary>
 TEST_CASE_ISOLATED("game: keys go through text input only while a text field has the keyboard")
 {
@@ -110,6 +114,11 @@ TEST_CASE_ISOLATED("game: keys go through text input only while a text field has
 
     CheatsOn = true;
     const bool duh = Duh;
+
+    RealLetter('d');
+    RealLetter('u');
+    RealLetter('h', SDL_KMOD_LGUI);
+    CHECK(Duh == duh);
 
     for (const char letter : std::string_view("duh"))
     {

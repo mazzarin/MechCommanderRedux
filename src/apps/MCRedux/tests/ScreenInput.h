@@ -56,9 +56,9 @@ namespace MCScreenInput
 
     /// <summary>
     /// Presses and lets go of the key <paramref name="scancode"/> as play does: SDL key events (the game's WM_KEYDOWN,
-    /// WM_CHAR and WM_KEYUP), a frame after each.
+    /// WM_CHAR and WM_KEYUP), a frame after each, with <paramref name="mod"/> held.
     /// </summary>
-    void RealKey(SDL_Scancode scancode);
+    void RealKey(SDL_Scancode scancode, SDL_Keymod mod = SDL_KMOD_NONE);
 
     /// <summary>
     /// Turns the wheel <paramref name="notches"/> notches (positive up, away from the player) at the mouse as play

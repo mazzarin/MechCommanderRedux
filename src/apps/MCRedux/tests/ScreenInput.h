@@ -61,6 +61,18 @@ namespace MCScreenInput
     void RealKey(SDL_Scancode scancode, SDL_Keymod mod = SDL_KMOD_NONE);
 
     /// <summary>
+    /// Sends one SDL key event for <paramref name="scancode"/>, down or up, with <paramref name="mod"/> held, as play
+    /// does, then a frame.
+    /// </summary>
+    void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod);
+
+    /// <summary>
+    /// Holds <paramref name="modifier"/> (<paramref name="mod"/>), presses and lets go of <paramref name="scancode"/>,
+    /// then lets go of the modifier, as play does.
+    /// </summary>
+    void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode);
+
+    /// <summary>
     /// Turns the wheel <paramref name="notches"/> notches (positive up, away from the player) at the mouse as play
     /// does: an SDL wheel event, then a frame.
     /// </summary>

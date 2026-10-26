@@ -1,9 +1,17 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "ScreenInput.h"
+#include "camera/MCCamera.h"
 #include "gui/MCGuiSystem.h"
+#include "lib/MCFitIniFile.h"
+#include "logistics/MCPreferencesMenu.h"
+#include "main/MCSystemConfig.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
+#include "terrain/MCTacticalMap.h"
+#include "terrain/MCTerrain.h"
 
 namespace
 {
@@ -218,6 +226,257 @@ TEST_CASE_ISOLATED("game: UI RESOLUTION 480P draws the mission's UI 480 lines ta
 TEST_CASE_ISOLATED("game: UI RESOLUTION NATIVE stops at 1080 lines")
 {
     CheckUiResolution(0, MaxUiResolution);
+}
+
+/// <summary>
+/// A window-following screen's size: the window's pixels up to the most lines (UI RESOLUTION, or the window's points
+/// for NATIVE on a Retina screen), at the window's aspect; a bigger interface takes that many times fewer lines, never
+/// fewer than the smallest screen's 480; a window shorter than the most is the line count it divides.
+/// </summary>
+TEST_CASE("presenter: a bigger interface gives the screen that many times fewer lines")
+{
+    /// <summary>A window (pixels, pixels a point), the screen's limits at 1080P or NATIVE, and the screen it gets.</summary>
+    struct MCFitCase
+    {
+        int WindowWidth = 0;
+        int WindowHeight = 0;
+        float DisplayScale = 1.0f;
+        bool Native = false;
+        float InterfaceScale = 1.0f;
+        int ScreenWidth = 0;
+        int ScreenHeight = 0;
+    };
+
+    const MCFitCase cases[] = {
+        // 1600x1200 at 1080P: 1080 lines, then 864 at 125%, 720 at 150% and 540 at 200%.
+        {1600, 1200, 1.0f, false, 1.0f, 1440, 1080},
+        {1600, 1200, 1.0f, false, 1.25f, 1152, 864},
+        {1600, 1200, 1.0f, false, 1.5f, 960, 720},
+        {1600, 1200, 1.0f, false, 2.0f, 720, 540},
+        // A Retina MacBook's 3024x1890 at NATIVE: its 945 points, 630 lines at 150%, and 480 (not 473) at 200%.
+        {3024, 1890, 2.0f, true, 1.0f, 1512, 945},
+        {3024, 1890, 2.0f, true, 1.5f, 1008, 630},
+        {3024, 1890, 2.0f, true, 2.0f, 768, 480},
+        // A window shorter than the most: its own lines are divided.
+        {1280, 800, 1.0f, false, 1.0f, 1280, 800},
+        {1280, 800, 1.0f, false, 1.25f, 1024, 640},
+        // The smallest window keeps the smallest screen.
+        {640, 480, 1.0f, false, 2.0f, 640, 480},
+    };
+
+    for (const MCFitCase& fitCase : cases)
+    {
+        MCTest::Scope scope(std::format("{}x{} at {}x, interface {}", fitCase.WindowWidth, fitCase.WindowHeight,
+                                        fitCase.DisplayScale, fitCase.InterfaceScale));
+        const MCScreenFit fit{.MaxHeight = MaxUiResolution,
+                              .FollowDisplayScale = fitCase.Native,
+                              .InterfaceScale = fitCase.InterfaceScale};
+        const SDL_Point screen =
+            MCDisplay::FollowingScreenSize(fitCase.WindowWidth, fitCase.WindowHeight, fitCase.DisplayScale, fit);
+        CHECK_EQ(screen.x, fitCase.ScreenWidth);
+        CHECK_EQ(screen.y, fitCase.ScreenHeight);
+    }
+}
+
+/// <summary>The interface size keys step through INTERFACE SIZE's choices and stop at either end.</summary>
+TEST_CASE("presenter: the interface size steps through its choices")
+{
+    CHECK_EQ(SteppedInterfaceSize(OriginalInterfaceSize, 1), 125);
+    CHECK_EQ(SteppedInterfaceSize(150, -1), 125);
+    CHECK_EQ(SteppedInterfaceSize(175, 1), 200);
+    CHECK_EQ(SteppedInterfaceSize(200, 1), 200);
+    CHECK_EQ(SteppedInterfaceSize(OriginalInterfaceSize, -1), OriginalInterfaceSize);
+    // A size that isn't a choice counts as the original's.
+    CHECK_EQ(SteppedInterfaceSize(137, 1), 125);
+}
+
+namespace
+{
+    /// <summary>The window the interface size tests boot in: 1080P draws its screen 1080 lines tall.</summary>
+    constexpr int LargeWindowWidth = 1600;
+    constexpr int LargeWindowHeight = 1200;
+    constexpr int LargeWindowLines = 1080;
+
+    /// <summary>
+    /// Boots mission 1 in the 1600x1200 window at 1080P with the zoom free, the interface at the original's size.
+    /// </summary>
+    bool StartInLargeWindow()
+    {
+        MCTestGame::BootOptions.WindowWidth = LargeWindowWidth;
+        MCTestGame::BootOptions.WindowHeight = LargeWindowHeight;
+        MCTestGame::BootOptions.FixedZoomHeight = 0.0f;
+        MCTestGame::BootOptions.Started = []
+        {
+            GUiResolution = LargeWindowLines;
+            GInterfaceSize = OriginalInterfaceSize;
+        };
+
+        return MCTestGame::StartMission(1);
+    }
+
+    /// <summary>Sends an SDL mouse event at window point (<paramref name="x"/>, <paramref name="y"/>) as play does, then a frame.</summary>
+    void WindowMouse(SDL_EventType type, float x, float y)
+    {
+        SDL_Event event{};
+        event.type = type;
+
+        if (type == SDL_EVENT_MOUSE_MOTION)
+        {
+            event.motion.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+            event.motion.x = x;
+            event.motion.y = y;
+        }
+        else
+        {
+            event.button.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+            event.button.button = SDL_BUTTON_LEFT;
+            event.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            event.button.clicks = 1;
+            event.button.x = x;
+            event.button.y = y;
+        }
+
+        MCInput::HandleEvent(event);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+}
+
+/// <summary>
+/// INTERFACE SIZE 150% in a 1600x1200 window at 1080P: the screen goes from 1080 lines to 720 (960x720) at once, the
+/// main view still shows the same lines of the world (one world pixel per window pixel still 1200 of them), and a
+/// click where the window shows the tactical map's map moves the camera to that point of it.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERFACE SIZE 150% draws a 1080P mission's interface 720 lines tall over the same world")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(StartInLargeWindow());
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    const std::shared_ptr<MCViewWindow> view = MCMainView();
+    REQUIRE(display != nullptr);
+    REQUIRE(view != nullptr);
+    REQUIRE_EQ(display->Height(), LargeWindowLines);
+    const float zoom = view->ZoomHeight;
+    const int32_t worldHeight = view->WorldHeight();
+    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(LargeWindowHeight)) < 0.5f);
+
+    GInterfaceSize = 150;
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(display->Width(), 960);
+    CHECK_EQ(display->Height(), 720);
+    CHECK_EQ(GuiSystem().Height(), 720);
+    CHECK_EQ(view->Height(), 720);
+    CHECK_EQ(view->ZoomHeight, zoom);
+    CHECK_EQ(view->WorldHeight(), worldHeight);
+    CHECK(std::fabs(view->ZoomInHeight() - static_cast<float>(LargeWindowHeight)) < 0.5f);
+
+    // The middle of the map page, where the window shows it: the screen point times the window's pixels a line.
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    REQUIRE(map->IsHidden() == 0);
+    REQUIRE(map->DisplayType == MCTacmapPage::Map);
+    const int32_t localX = (map->MapRect.left + map->MapRect.right) / 2;
+    const int32_t localY = (map->MapRect.top + map->MapRect.bottom) / 2;
+    const float scale = static_cast<float>(LargeWindowHeight) / static_cast<float>(display->Height());
+    const float windowX = (static_cast<float>(map->GlobalX() + localX) + 0.5f) * scale;
+    const float windowY = (static_cast<float>(map->GlobalY() + localY) + 0.5f) * scale;
+    MCVector3D target(static_cast<float>(localX), static_cast<float>(localY), 0.0f);
+    map->TacMapToWorld(target, true);
+    const MCVector3D before = view->GetCamera()->GetPosition();
+    REQUIRE(std::fabs(before.X - target.X) + std::fabs(before.Y - target.Y) > 1.0f);
+
+    WindowMouse(SDL_EVENT_MOUSE_MOTION, windowX, windowY);
+    WindowMouse(SDL_EVENT_MOUSE_MOTION, windowX, windowY);
+    WindowMouse(SDL_EVENT_MOUSE_BUTTON_DOWN, windowX, windowY);
+    WindowMouse(SDL_EVENT_MOUSE_BUTTON_UP, windowX, windowY);
+    const MCVector3D position = view->GetCamera()->GetPosition();
+    CHECK(std::fabs(position.X - target.X) < 1.0f);
+    CHECK(std::fabs(position.Y - target.Y) < 1.0f);
+}
+
+/// <summary>
+/// In a mission, alt+= makes the interface a size bigger and alt+- a size smaller, at once, and PREFS keeps it; alt
+/// let go after them doesn't toggle the tactical map, as alt alone does.
+/// </summary>
+TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission and PREFS keeps it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(StartInLargeWindow());
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::optional<std::string> savedPrefs;
+
+    if (std::ifstream file(prefsPath, std::ios::binary); file)
+    {
+        savedPrefs = std::string(std::istreambuf_iterator<char>(file), {});
+    }
+
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    const int32_t mapHidden = map->IsHidden();
+
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, 125);
+    CHECK_EQ(display->Height(), 864);
+    CHECK_EQ(map->IsHidden(), mapHidden);
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        CHECK_EQ(prefs.Read<int32_t>("InterfaceSize"), MCFitResult<int32_t>(125));
+    }
+
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
+    CHECK_EQ(display->Height(), LargeWindowLines);
+    CHECK_EQ(map->IsHidden(), mapHidden);
+
+    // PREFS read back: a size that isn't a choice is the original's.
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Create(prefsPath.string()), 0);
+        prefs.WriteBlock("MechCommander");
+        prefs.WriteIdLong("InterfaceSize", 175);
+    }
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        ReadPreferences(prefs);
+        CHECK_EQ(GInterfaceSize, 175);
+        prefs.Close();
+        REQUIRE_EQ(prefs.Create(prefsPath.string()), 0);
+        prefs.WriteBlock("MechCommander");
+        prefs.WriteIdLong("InterfaceSize", 137);
+    }
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        ReadPreferences(prefs);
+        CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
+    }
+
+    // The test user folder as it was: later tests read its PREFS.
+    if (savedPrefs)
+    {
+        std::ofstream(prefsPath, std::ios::binary) << *savedPrefs;
+    }
+    else
+    {
+        std::filesystem::remove(prefsPath);
+    }
 }
 
 /// <summary>The renderer's name in PREFS "Renderer" and on the command line (-renderer), any case.</summary>

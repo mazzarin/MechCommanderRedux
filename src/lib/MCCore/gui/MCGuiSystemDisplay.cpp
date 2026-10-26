@@ -38,6 +38,15 @@ namespace
         return GUiResolution > 0 ? std::min(GUiResolution, MaxUiResolution) : MaxUiResolution;
     }
 
+    /// <summary>
+    /// How many times fewer lines the screen has for PREFS "InterfaceSize" (<see cref="GInterfaceSize"/>): 1.5 at 150
+    /// percent.
+    /// </summary>
+    float InterfaceScale()
+    {
+        return static_cast<float>(GInterfaceSize) / static_cast<float>(OriginalInterfaceSize);
+    }
+
     /// <summary>One gamma step over <paramref name="color"/>.</summary>
     MCVfxRgb Brighten(MCVfxRgb color)
     {
@@ -75,7 +84,8 @@ auto MCGuiSystem::OpenDisplay() -> void
     // draws into. The screen is the window's size in pixels (at least 640x480), not the mode PREFS "Resolution" asks
     // for; a scenario draws on all of it and follows the window (FollowWindowSize), the 640x480 screens use its
     // top-left corner. A window taller than PREFS "UIResolution" (1080 at most) gets a screen that many lines tall at
-    // its aspect, shown scaled up, with the world view composited at the window's pixels.
+    // its aspect, shown scaled up, with the world view composited at the window's pixels; PREFS "InterfaceSize" takes
+    // that many times fewer lines.
     MCDisplayOptions options;
     options.Title = AppName;
     options.Width = 640;
@@ -83,6 +93,7 @@ auto MCGuiSystem::OpenDisplay() -> void
     options.FollowWindow = true;
     options.MaxHeight = MaxScreenHeight();
     options.FollowDisplayScale = GUiResolution == 0;
+    options.InterfaceScale = InterfaceScale();
     options.Fullscreen = GFullScreen != 0;
     options.Stretch = GStretchToFit != 0;
     options.Hidden = GHiddenWindow;
@@ -166,6 +177,7 @@ auto MCGuiSystem::FollowWindowSize() -> bool
     int32_t height = 0;
     _Display->SetMaxHeight(MaxScreenHeight());
     _Display->SetFollowDisplayScale(GUiResolution == 0);
+    _Display->SetInterfaceScale(InterfaceScale());
     _Display->WindowScreenSize(width, height);
 
     if (width == _Display->Width() && height == _Display->Height())

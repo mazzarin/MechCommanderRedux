@@ -48,8 +48,31 @@ struct MCDisplayOptions
     /// on a 1x screen; see <see cref="MCDisplay::SetFollowDisplayScale"/>.
     /// </summary>
     bool FollowDisplayScale = false;
+    /// <summary>
+    /// A window-following screen has this many times fewer lines than the window and the limits above give it (but
+    /// no fewer than <see cref="Height"/>), so what is drawn on it at a fixed size is that much bigger; see
+    /// <see cref="MCDisplay::SetInterfaceScale"/>.
+    /// </summary>
+    float InterfaceScale = 1.0f;
     /// <summary>The renderer asked for; Vulkan falls back to software when it can't start.</summary>
     MCRendererKind Renderer = MCRendererKind::Vulkan;
+};
+
+/// <summary>
+/// The limits a window-following screen's size keeps to (<see cref="MCDisplay::WindowScreenSize"/>), as
+/// <see cref="MCDisplayOptions"/> and the setters give them.
+/// </summary>
+struct MCScreenFit
+{
+    /// <summary>The smallest the screen gets.</summary>
+    int MinWidth = 640;
+    int MinHeight = 480;
+    /// <summary>The tallest it gets (0: as tall as the window).</summary>
+    int MaxHeight = 0;
+    /// <summary>No taller than the window in points either.</summary>
+    bool FollowDisplayScale = false;
+    /// <summary>How many times fewer lines than the other limits give it (1: none).</summary>
+    float InterfaceScale = 1.0f;
 };
 
 /// <summary>
@@ -109,11 +132,18 @@ public:
     /// <summary>
     /// The size a window-following screen should have now: the window's size in pixels, or, for a window taller than
     /// the most (<see cref="SetMaxHeight"/>, or its height in points with <see cref="SetFollowDisplayScale"/>), that
-    /// many lines at the window's aspect; no smaller than the minimum
-    /// (<see cref="MCDisplayOptions::Width"/> x <see cref="MCDisplayOptions::Height"/>). A minimised window keeps the
-    /// current size.
+    /// many lines at the window's aspect; with an interface scale (<see cref="SetInterfaceScale"/>), that many times
+    /// fewer lines; no smaller than the minimum (<see cref="MCDisplayOptions::Width"/> x
+    /// <see cref="MCDisplayOptions::Height"/>). A minimised window keeps the current size.
     /// </summary>
     void WindowScreenSize(int& width, int& height) const;
+
+    /// <summary>
+    /// The pure form of <see cref="WindowScreenSize"/>: the screen a window <paramref name="pixelWidth"/> x
+    /// <paramref name="pixelHeight"/> pixels big, at <paramref name="displayScale"/> pixels a point, gets within
+    /// <paramref name="fit"/>'s limits.
+    /// </summary>
+    static SDL_Point FollowingScreenSize(int pixelWidth, int pixelHeight, float displayScale, const MCScreenFit& fit);
 
     /// <summary>
     /// Sets the tallest a window-following screen gets (0: as tall as the window), from the next
@@ -128,6 +158,13 @@ public:
     /// (<see cref="MCDisplayOptions::FollowDisplayScale"/>), from the next <see cref="WindowScreenSize"/> on.
     /// </summary>
     void SetFollowDisplayScale(bool follow) { _FollowDisplayScale = follow; }
+
+    /// <summary>
+    /// Sets how many times fewer lines a window-following screen has than it would otherwise (1: none; the interface
+    /// drawn on it is that much bigger, the world view keeps the window's pixels), from the next
+    /// <see cref="WindowScreenSize"/> on.
+    /// </summary>
+    void SetInterfaceScale(float scale) { _InterfaceScale = std::max(scale, 1.0f); }
 
     /// <summary>
     /// How many window pixels the underlays are composited at per screen pixel down: above 1 when the whole screen is
@@ -357,6 +394,7 @@ private:
     /// <summary>The tallest a window-following screen gets (0: no limit).</summary>
     int _MaxHeight = 0;
     bool _FollowDisplayScale = false;
+    float _InterfaceScale = 1.0f;
     bool _FollowWindow = false;
     /// <summary>
     /// The screen's window. Its pixels are shared by the screen ports; they are reallocated only when the screen grows

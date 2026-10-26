@@ -165,20 +165,29 @@ namespace MCScreenInput
 
     void RealKey(SDL_Scancode scancode, SDL_Keymod mod)
     {
-        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        RealKeyEvent(scancode, true, mod);
+        RealKeyEvent(scancode, false, mod);
+    }
 
-        for (bool down : {true, false})
-        {
-            SDL_Event key{};
-            key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
-            key.key.windowID = SDL_GetWindowID(&display->Window());
-            key.key.scancode = scancode;
-            key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
-            key.key.mod = mod;
-            key.key.down = down;
-            MCInput::HandleEvent(key);
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
+    void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
+    {
+        SDL_Event key{};
+        key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        key.key.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
+        key.key.scancode = scancode;
+        key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+        key.key.mod = mod;
+        key.key.down = down;
+        MCInput::HandleEvent(key);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode)
+    {
+        RealKeyEvent(modifier, true, mod);
+        RealKeyEvent(scancode, true, mod);
+        RealKeyEvent(scancode, false, mod);
+        RealKeyEvent(modifier, false, SDL_KMOD_NONE);
     }
 
     void RealWheel(int32_t notches)

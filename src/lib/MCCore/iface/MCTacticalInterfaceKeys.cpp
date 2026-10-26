@@ -7,6 +7,7 @@
 #include "gui/MCGuiChatWindow.h"
 #include "iface/MCCommandParser.h"
 #include "iface/MCMechBar.h"
+#include "logistics/MCPreferencesMenu.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCForces.h"
@@ -311,6 +312,13 @@ auto MCTacticalInterface::HandleKeyDown(MCGuiEvent& event) -> void
             {
                 ShowTacticalMapPage(MCTacmapPage::Info);
             }
+        }
+        else if (is(MCKeyCommand::InterfaceSizeUp) || is(MCKeyCommand::InterfaceSizeDown))
+        {
+            // Port-only: a bigger or smaller interface, kept in PREFS; the alt held with the key leaves the map as
+            // it is.
+            TacMapShown = false;
+            StepInterfaceSize(is(MCKeyCommand::InterfaceSizeUp) ? 1 : -1);
         }
         else if (is(MCKeyCommand::ZoomIn) || is(MCKeyCommand::ZoomInAlternate))
         {

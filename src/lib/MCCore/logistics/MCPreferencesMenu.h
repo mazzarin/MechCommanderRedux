@@ -28,6 +28,26 @@ void CancelPrefs();
 void WritePrefs();
 
 /// <summary>
+/// Port-only: writes the settings as they are now to prefs.cfg (<see cref="WritePrefs"/>' file; the in-mission
+/// interface size keys save through it too).
+/// </summary>
+void SavePrefs();
+
+/// <summary>
+/// Port-only: the interface size (<see cref="GInterfaceSize"/>'s percent) <paramref name="steps"/> choices of
+/// InterfaceSizes on from <paramref name="size"/>, bigger for positive steps, within the choices; a size not among them
+/// counts as the original's.
+/// </summary>
+int SteppedInterfaceSize(int size, int steps);
+
+/// <summary>
+/// Port-only: steps the interface size (<see cref="SteppedInterfaceSize"/>; the in-mission keys) and writes it to
+/// prefs.cfg. The screen takes it at the next frame, as it follows a resized window.
+/// </summary>
+/// <returns>Whether the size changed (not at the end of the choices).</returns>
+bool StepInterfaceSize(int steps);
+
+/// <summary>
 /// Port-only: lays the preferences screen <paramref name="screen"/> out on a panel over its art, with room for more
 /// settings: the brightness slider; the music, radio, sound effects and interface volume sliders; DIFFICULTY as a
 /// drop-down (EASY, REGULAR, HARD; <see cref="GameDifficulty"/>) in place of the original's checks; a RENDERER

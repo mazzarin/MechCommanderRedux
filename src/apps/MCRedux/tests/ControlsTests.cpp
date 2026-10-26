@@ -13,9 +13,7 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
-#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
-#include "platform/MCInput.h"
 
 // The player's key bindings (iface/MCKeyBindings) and the preferences' CONTROLS panel that edits them: the defaults
 // are the original's, every command a player can bind is listed once, the names read back, a key moves from the
@@ -104,28 +102,6 @@ namespace
         Frames();
     }
 
-    /// <summary>Sends one SDL key event as play does, then a frame.</summary>
-    void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod)
-    {
-        SDL_Event key{};
-        key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
-        key.key.windowID = SDL_GetWindowID(&MCInput::Display()->Window());
-        key.key.scancode = scancode;
-        key.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
-        key.key.mod = mod;
-        key.key.down = down;
-        MCInput::HandleEvent(key);
-        MCTestGame::RunFrame(1.0f / 15.0f);
-    }
-
-    /// <summary>Holds <paramref name="modifier"/>, presses and lets go of <paramref name="scancode"/>, lets go of the modifier.</summary>
-    void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode)
-    {
-        RealKeyEvent(modifier, true, mod);
-        RealKeyEvent(scancode, true, mod);
-        RealKeyEvent(scancode, false, mod);
-        RealKeyEvent(modifier, false, SDL_KMOD_NONE);
-    }
 }
 
 /// <summary>
@@ -437,7 +413,7 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
     // Ctrl+R for RUN's alternate; Escape while listening keeps the key and the screen.
     RealClickCell(*list, CellOf(MCKeyCommand::RunAlternate));
     CHECK_EQ(list->Status(), "PRESS THE NEW KEY FOR RUN ALTERNATE. ESC CANCELS.");
-    RealChord(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_SCANCODE_R);
+    MCScreenInput::RealChord(SDL_SCANCODE_LCTRL, SDL_KMOD_LCTRL, SDL_SCANCODE_R);
     CHECK_EQ(key(MCKeyCommand::RunAlternate), 0x13u | KeyCtrl);
     RealClickCell(*list, CellOf(MCKeyCommand::Stop));
 
@@ -454,9 +430,9 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
 
     // Alt alone, let go, binds alt (moving it from SHOW MAP).
     RealClickCell(*list, CellOf(MCKeyCommand::MapPage));
-    RealKeyEvent(SDL_SCANCODE_LALT, true, SDL_KMOD_LALT);
+    MCScreenInput::RealKeyEvent(SDL_SCANCODE_LALT, true, SDL_KMOD_LALT);
     CHECK(list->Listening().has_value());
-    RealKeyEvent(SDL_SCANCODE_LALT, false, SDL_KMOD_NONE);
+    MCScreenInput::RealKeyEvent(SDL_SCANCODE_LALT, false, SDL_KMOD_NONE);
     CHECK_EQ(key(MCKeyCommand::MapPage), 0x38u | KeyAlt);
     CHECK_EQ(key(MCKeyCommand::HoldTacticalMap), MCKeyBindings::NoKey);
 

@@ -416,8 +416,20 @@ void WritePrefs()
 {
     // Port: the keys CONTROLS edited become the player's, and are written after the settings.
     AcceptControls();
+    SavePrefs();
+    Cancel();
+}
+
+void SavePrefs()
+{
     MCFitIniFile prefs;
-    prefs.Create("prefs.cfg");
+
+    if (const int32_t result = prefs.Create("prefs.cfg"); result != 0)
+    {
+        SDL_Log("SavePrefs: cannot create prefs.cfg (%#x); the settings aren't saved", static_cast<uint32_t>(result));
+        return;
+    }
+
     prefs.WriteBlock("MechCommander");
     prefs.WriteIdBoolean("PaletteCycle", GuiSystem().PaletteCycle);
     prefs.WriteIdBoolean("DirectDraw", GFullScreen != 0);
@@ -437,10 +449,32 @@ void WritePrefs()
     prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
     prefs.WriteIdLong("UIResolution", GUiResolution);
     prefs.WriteIdLong("ScrollSpeed", GScrollSpeed);
+    prefs.WriteIdLong("InterfaceSize", GInterfaceSize);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     MCKeyBindings::WritePrefs(prefs);
-    Cancel();
+}
+
+int SteppedInterfaceSize(int size, int steps)
+{
+    const auto found = std::ranges::find(InterfaceSizes, size);
+    const ptrdiff_t index = found != InterfaceSizes.end() ? std::distance(InterfaceSizes.begin(), found) : 0;
+    const ptrdiff_t last = std::ssize(InterfaceSizes) - 1;
+    return InterfaceSizes[static_cast<size_t>(std::clamp<ptrdiff_t>(index + steps, 0, last))];
+}
+
+bool StepInterfaceSize(int steps)
+{
+    const int size = SteppedInterfaceSize(GInterfaceSize, steps);
+
+    if (size == GInterfaceSize)
+    {
+        return false;
+    }
+
+    GInterfaceSize = size;
+    SavePrefs();
+    return true;
 }
 
 void PrefScreenHandleEvent(MCGuiObject&, MCGuiEvent&)

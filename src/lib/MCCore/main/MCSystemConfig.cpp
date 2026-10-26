@@ -216,6 +216,10 @@ void ReadPreferences(MCFitIniFile& file)
     const int32_t scrollSpeed = file.Read<int32_t>("ScrollSpeed").value_or(OriginalScrollSpeed);
     GScrollSpeed = std::ranges::contains(ScrollSpeeds, scrollSpeed) ? scrollSpeed : OriginalScrollSpeed;
 
+    // Port-only: the in-mission interface's size in percent (one of InterfaceSizes, else the original's).
+    const int32_t interfaceSize = file.Read<int32_t>("InterfaceSize").value_or(OriginalInterfaceSize);
+    GInterfaceSize = std::ranges::contains(InterfaceSizes, interfaceSize) ? interfaceSize : OriginalInterfaceSize;
+
     // Port: the mode is still read, but the screen is the window's size (MCGuiSystem::OpenDisplay).
     switch (file.Read<int32_t>("Resolution").value_or(0))
     {

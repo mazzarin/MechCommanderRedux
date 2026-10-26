@@ -17,8 +17,8 @@ namespace
     };
 
     /// <summary>
-    /// The bindings <see cref="MCTacticalInterface::Init"/> set, in its order. Codes are DirectInput scan codes (0x1xx
-    /// = extended keys).
+    /// The bindings <see cref="MCTacticalInterface::Init"/> set, in its order, then the port's own. Codes are
+    /// DirectInput scan codes (0x1xx = extended keys).
     /// </summary>
     constexpr MCDefaultKey DefaultKeys[] = {
         {MCKeyCommand::Eject, 0x147, 0},
@@ -95,6 +95,9 @@ namespace
         {MCKeyCommand::TogglePalette, 0xf, 0},
         {MCKeyCommand::SelectVisible, 0x12, 0},
         {MCKeyCommand::Chat, 0x1c, 0},
+        // Port-only: the interface size, alt with the zoom keys' = and -.
+        {MCKeyCommand::InterfaceSizeUp, 0xd, KeyAlt},
+        {MCKeyCommand::InterfaceSizeDown, 0xc, KeyAlt},
     };
 
     /// <summary>
@@ -225,6 +228,8 @@ namespace
         {"MAP SCROLL LEFT", MCKeyCommand::TacticalMapScrollLeft},
         {"MAP SCROLL RIGHT", MCKeyCommand::TacticalMapScrollRight},
         {"COMMAND PALETTE", MCKeyCommand::TogglePalette},
+        {"BIGGER INTERFACE", MCKeyCommand::InterfaceSizeUp},
+        {"SMALLER INTERFACE", MCKeyCommand::InterfaceSizeDown},
         {"MULTIPLAYER"},
         {"CHAT", MCKeyCommand::Chat},
     };
@@ -309,6 +314,8 @@ namespace
         {MCKeyCommand::CameraFollow, "CameraFollow"},
         {MCKeyCommand::SelectVisible, "SelectVisible"},
         {MCKeyCommand::Chat, "Chat"},
+        {MCKeyCommand::InterfaceSizeUp, "InterfaceSizeUp"},
+        {MCKeyCommand::InterfaceSizeDown, "InterfaceSizeDown"},
     };
 
     /// <summary>A key's name (as PREFS keeps it), and the Mac keyboard's label for it when that differs.</summary>

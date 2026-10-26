@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "gameos/MCSoundResource.h"
+#include "lib/MCPacketFile.h"
 #include "platform/MCFlac.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
@@ -217,4 +218,108 @@ TEST_CASE("HD audio: music selection, streaming silence and short seamless loops
     CHECK(!MCHdAudio::Music(source.string()).has_value());
     MCSoundResource original(MCSoundResourceType::Stream, source.string());
     CHECK_EQ(original.Format.nSamplesPerSec, uint32_t{22050});
+}
+
+TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")
+{
+    const auto pack = MCTest::Option("hd-audio-pack");
+    const auto game = MCTest::Option("game");
+
+    if (!pack.has_value() || !game.has_value())
+    {
+        return;
+    }
+
+    const auto previous = MCHdArt::PackFolder();
+    MCHdArt::SetPackFolder(std::filesystem::path(*pack));
+    struct Restore
+    {
+        std::filesystem::path Folder;
+        ~Restore() { MCHdArt::SetPackFolder(Folder); }
+    } restore{previous};
+    size_t samples = 0;
+    size_t music = 0;
+    const auto checkSample = [&](std::span<const uint8_t> wave)
+    {
+        const auto original = MCAudio::ParseWave(wave);
+
+        if (!original)
+        {
+            return;
+        }
+
+        const auto path = MCHdAudio::Sample(wave);
+        CHECK(path.has_value());
+
+        if (!path)
+        {
+            return;
+        }
+
+        auto decoded = MCFlac::Open(*path);
+        CHECK(decoded != nullptr);
+
+        if (!decoded)
+        {
+            return;
+        }
+
+        CHECK(decoded->Validate());
+        CHECK(MCHdAudio::MatchesLength(*decoded, original->Samples.size() / original->Format.BlockAlign(),
+                                       original->Format.Rate));
+        MCSoundResource resource(wave);
+        CHECK_EQ(resource.Format.nSamplesPerSec, uint32_t{48000});
+        CHECK_EQ(resource.WaveSize, static_cast<uint32_t>(decoded->Frames() * decoded->Format().BlockAlign()));
+        ++samples;
+    };
+
+    for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(*game) / "data" / "sound"))
+    {
+        const auto name = entry.path().filename().string();
+        MCTest::Scope scope(name);
+
+        if (entry.path().extension() == ".PAK")
+        {
+            MCPacketFile file;
+            CHECK_EQ(file.Open(entry.path().string()), 0);
+
+            for (int32_t packet = 0; packet < file.GetNumPackets(); ++packet)
+            {
+                MCTest::Scope packetScope(std::format("packet {}", packet));
+
+                if (file.SeekPacket(packet) != 0 || file.GetPacketSize() == 0)
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> wave(static_cast<size_t>(file.GetPacketSize()));
+                CHECK_EQ(file.ReadPacket(packet, wave), file.GetPacketSize());
+                checkSample(wave);
+            }
+        }
+        else if (entry.path().extension() == ".WAV")
+        {
+            if (name.starts_with("MUSIC"))
+            {
+                const auto path = MCHdAudio::Music(entry.path().string());
+                CHECK(path.has_value());
+                MCSoundResource stream(MCSoundResourceType::Stream, entry.path().string());
+                CHECK_EQ(stream.Format.nSamplesPerSec, uint32_t{48000});
+                CHECK_EQ(stream.Format.nChannels, uint16_t{2});
+                CHECK_EQ(stream.WaveSize, uint32_t{0});
+                ++music;
+            }
+            else
+            {
+                std::ifstream file(entry.path(), std::ios::binary);
+                std::vector<uint8_t> wave(static_cast<size_t>(entry.file_size()));
+                file.read(reinterpret_cast<char*>(wave.data()), static_cast<std::streamsize>(wave.size()));
+                checkSample(wave);
+            }
+        }
+    }
+
+    CHECK(samples > 0);
+    CHECK(music > 0);
+    std::cout << "  verified " << music << " music tracks and " << samples << " samples with the engine's PAK reader\n";
 }

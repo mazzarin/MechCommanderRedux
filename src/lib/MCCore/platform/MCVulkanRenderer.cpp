@@ -2719,42 +2719,12 @@ bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, c
 
 bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command)
 {
+    constexpr size_t Segment = 2;
     constexpr size_t Triangle = 3;
     constexpr size_t MostCorners = 4;
     const size_t corners = command.Vertices.size();
 
     if (corners < Triangle || corners > MostCorners)
-    {
-        return false;
-    }
-
-    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
-    const auto corner = [&command](size_t i)
-    {
-        const MCScreenVertex& vertex = command.Vertices[i % command.Vertices.size()];
-        return std::array{command.OriginX + vertex.X, command.OriginY + vertex.Y};
-    };
-
-    int32_t turn = 0;
-
-    for (size_t i = 0; i < corners; ++i)
-    {
-        const auto a = corner(i);
-        const auto b = corner(i + 1);
-        const auto c = corner(i + 2);
-        const int64_t cross =
-            static_cast<int64_t>(b[0] - a[0]) * (c[1] - b[1]) - static_cast<int64_t>(b[1] - a[1]) * (c[0] - b[0]);
-        const int32_t sign = cross > 0 ? 1 : cross < 0 ? -1 : 0;
-
-        if (sign != 0 && turn != 0 && sign != turn)
-        {
-            return false;
-        }
-
-        turn = sign != 0 ? sign : turn;
-    }
-
-    if (turn == 0)
     {
         return false;
     }
@@ -2766,6 +2736,29 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
         return false;
     }
 
+    const auto corner = [&command](size_t i)
+    {
+        const MCScreenVertex& vertex = command.Vertices[i % command.Vertices.size()];
+        return std::array{command.OriginX + vertex.X, command.OriginY + vertex.Y};
+    };
+
+    // Each corner's turn: the sign of the cross product of the sides meeting there.
+    std::array<int32_t, MostCorners> turns{};
+
+    for (size_t i = 0; i < corners; ++i)
+    {
+        const auto a = corner(i + corners - 1);
+        const auto b = corner(i);
+        const auto c = corner(i + 1);
+        const int64_t cross =
+            static_cast<int64_t>(b[0] - a[0]) * (c[1] - b[1]) - static_cast<int64_t>(b[1] - a[1]) * (c[0] - b[0]);
+        turns[i] = cross > 0 ? 1 : cross < 0 ? -1 : 0;
+    }
+
+    const auto turning = std::span(turns).first(corners);
+    const auto left = static_cast<size_t>(std::ranges::count(turning, 1));
+    const auto right = static_cast<size_t>(std::ranges::count(turning, -1));
+
     // Each corner's colour index, rounded as the walk starts a side from it (a flat polygon's all its fill's). Four
     // Gouraud corners needn't lie on a plane, so the shader steps them as the walk does: down the sides, then across.
     constexpr float Fixed = 65536.0f;
@@ -2773,47 +2766,140 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
     constexpr uint32_t Round = 0x8000;
     const float flat =
         static_cast<float>(((static_cast<uint32_t>(command.Vertices[0].C) + Round) >> 16) & 0xff) + HalfIndex;
-    std::array<float, MostCorners> index{};
 
-    for (size_t i = 0; i < MostCorners; ++i)
+    // Adds the colour pass over the polygon's corners `drawn` (`count` of them): its edges smooth, `turn` the way round
+    // its corners go. With `skipped` (a concave quad's half), the triangle without that corner: the quad's two sides
+    // smooth, the diagonal hard (its pixels this half's when `owns`).
+    const auto add = [&](std::span<const size_t> drawn, int32_t turn, std::optional<size_t> skipped, bool owns)
     {
-        const MCScreenVertex& vertex = command.Vertices[std::min(i, corners - 1)];
-        index[i] = command.Kind == MCPolygonKind::Flat ? flat : static_cast<float>(vertex.C) / Fixed + HalfIndex;
-    }
+        Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
+                   std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
 
-    Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
-               std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
+        for (size_t i = 0; i < drawn.size(); ++i)
+        {
+            if (skipped.has_value() && drawn[i] == *skipped)
+            {
+                continue;
+            }
 
-    for (size_t i = 0; i < corners; ++i)
+            const auto [x, y] = corner(drawn[i]);
+            at = {std::min(at[0], x), std::min(at[1], y), std::max(at[2], x), std::max(at[3], y)};
+        }
+
+        at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
+              std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
+
+        if (!Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothPolygon, 0, 0, 0))
+        {
+            return;
+        }
+
+        // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners'
+        // count and turn in walk.xy, and a half's left-out corner (plus 1) and whether it owns the diagonal in walk.zw.
+        std::array<int32_t, 20>& draw = _Draws.back();
+        constexpr uint32_t LowHalf = 0xffff;
+        constexpr int HalfShift = 16;
+
+        for (size_t i = 0; i < MostCorners; ++i)
+        {
+            const size_t vertex = drawn[std::min(i, drawn.size() - 1)];
+            const auto [x, y] = corner(vertex);
+            draw[4 + i] =
+                static_cast<int32_t>((static_cast<uint32_t>(x) & LowHalf) | (static_cast<uint32_t>(y) << HalfShift));
+            const float index = command.Kind == MCPolygonKind::Flat
+                                    ? flat
+                                    : static_cast<float>(command.Vertices[vertex].C) / Fixed + HalfIndex;
+            draw[12 + i] = std::bit_cast<int32_t>(index);
+        }
+
+        draw[16] = static_cast<int32_t>(drawn.size());
+        draw[17] = turn;
+        draw[18] = skipped.has_value() ? static_cast<int32_t>(*skipped) + 1 : 0;
+        draw[19] = owns ? 1 : 0;
+    };
+
+    constexpr std::array<size_t, MostCorners> all = {0, 1, 2, 3};
+
+    // Whether the walk fills the whole polygon: going round it, its corners go down from one top to one bottom and
+    // back up (the walk stops at a side running upwards). A convex polygon's always do.
+    const auto filledWhole = [&]
     {
-        const auto [x, y] = corner(i);
-        at = {std::min(at[0], x), std::min(at[1], y), std::max(at[2], x), std::max(at[3], y)};
-    }
+        std::array<int32_t, MostCorners> steps{};
+        size_t moves = 0;
 
-    at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
-          std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
+        for (size_t i = 0; i < corners; ++i)
+        {
+            const int32_t dy = command.Vertices[(i + 1) % corners].Y - command.Vertices[i].Y;
 
-    if (!Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothPolygon, 0, 0, 0))
+            if (dy != 0)
+            {
+                steps[moves++] = dy > 0 ? 1 : -1;
+            }
+        }
+
+        size_t changes = 0;
+
+        for (size_t i = 0; i < moves; ++i)
+        {
+            changes += steps[i] != steps[(i + 1) % moves] ? 1 : 0;
+        }
+
+        constexpr size_t OneTopOneBottom = 2;
+        return changes == OneTopOneBottom;
+    };
+
+    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
+    if (left == 0 || right == 0)
     {
+        if (left + right == 0)
+        {
+            // Port-only: corners in a line, which the walk draws as a line of pixels (all of it when it fills the
+            // polygon whole): a line between the two corners farthest apart (the coverage of two sides along it,
+            // either way round).
+            if (!filledWhole())
+            {
+                return false;
+            }
+
+            std::array<size_t, Segment> ends = {0, 1};
+            int64_t longest = -1;
+
+            for (size_t a = 0; a < corners; ++a)
+            {
+                for (size_t b = a + 1; b < corners; ++b)
+                {
+                    const auto [ax, ay] = corner(a);
+                    const auto [bx, by] = corner(b);
+                    const int64_t length =
+                        static_cast<int64_t>(bx - ax) * (bx - ax) + static_cast<int64_t>(by - ay) * (by - ay);
+
+                    if (length > longest)
+                    {
+                        longest = length;
+                        ends = {a, b};
+                    }
+                }
+            }
+
+            add(ends, 1, std::nullopt, false);
+            return true;
+        }
+
+        add(std::span(all).first(corners), left > 0 ? 1 : -1, std::nullopt, false);
         return true;
     }
 
-    // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners' count
-    // and turn in walk.xy.
-    std::array<int32_t, 20>& draw = _Draws.back();
-    constexpr uint32_t LowHalf = 0xffff;
-    constexpr int HalfShift = 16;
-
-    for (size_t i = 0; i < MostCorners; ++i)
+    // Port-only: a quad with one corner turned in (a thin beam's rounding) that the walk fills whole is drawn as the
+    // two triangles either side of the diagonal from that corner.
+    if (corners != MostCorners || std::min(left, right) != 1 || left + right != MostCorners || !filledWhole())
     {
-        const auto [x, y] = corner(std::min(i, corners - 1));
-        draw[4 + i] =
-            static_cast<int32_t>((static_cast<uint32_t>(x) & LowHalf) | (static_cast<uint32_t>(y) << HalfShift));
+        return false;
     }
 
-    std::ranges::transform(index, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
-    draw[16] = static_cast<int32_t>(corners);
-    draw[17] = turn;
+    const int32_t turn = left > right ? 1 : -1;
+    const auto in = static_cast<size_t>(std::ranges::find(turning, -turn) - turning.begin());
+    add(all, turn, (in + 1) % MostCorners, true);
+    add(all, turn, (in + MostCorners - 1) % MostCorners, false);
     return true;
 }
 

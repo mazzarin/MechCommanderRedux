@@ -6189,6 +6189,204 @@ TEST_CASE_ISOLATED("game: HD art draws flat and Gouraud polygons with smooth edg
     std::filesystem::remove_all(pack.parent_path());
 }
 
+namespace
+{
+    /// <summary>A point's distance from the segment a-b (window coordinates).</summary>
+    float SegmentDistance(std::array<float, 2> p, std::array<float, 2> a, std::array<float, 2> b)
+    {
+        const float dx = b[0] - a[0];
+        const float dy = b[1] - a[1];
+        const float length2 = dx * dx + dy * dy;
+        const float t =
+            length2 > 0.0f ? std::clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2, 0.0f, 1.0f) : 0.0f;
+        return std::hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+    }
+
+    /// <summary>Whether a point lies in the triangle a, b, c (either way round, its edges included).</summary>
+    bool InTriangle(std::array<float, 2> p, std::array<float, 2> a, std::array<float, 2> b, std::array<float, 2> c)
+    {
+        const auto side = [&p](std::array<float, 2> from, std::array<float, 2> to)
+        { return (to[0] - from[0]) * (p[1] - from[1]) - (to[1] - from[1]) * (p[0] - from[0]); };
+        const float ab = side(a, b);
+        const float bc = side(b, c);
+        const float ca = side(c, a);
+        return (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f) || (ab <= 0.0f && bc <= 0.0f && ca <= 0.0f);
+    }
+}
+
+/// <summary>
+/// With HD art on, the polygons the smooth path left to the original's pixels are drawn smooth too: a quad with one
+/// corner turned in (a beam's rounding), as two triangles either side of the diagonal from that corner, and a quad
+/// whose corners lie in a line, as a line. Each, flat and Gouraud, shows pixels between its colour and what lies under it
+/// only with HD art on, keeps the screen's indices, and the concave quad shows its colour all over its inside (no
+/// seam along the diagonal).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws concave quads and quads in a line smooth")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_concave");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr uint8_t Color = 0x30;
+    constexpr int32_t Fixed = 1 << 16;
+    // A kite whose left side bends in at its third corner (the walk fills it whole: its sides only go down, then up),
+    // and a quad whose corners lie on a steep line.
+    const std::array<std::array<int32_t, 2>, 4> kite = {{{0, 0}, {30, 35}, {0, 60}, {10, 25}}};
+    const std::array<std::array<int32_t, 2>, 4> line = {{{0, 0}, {10, 20}, {20, 40}, {10, 20}}};
+    constexpr int32_t Margin = 1;
+    const MCRect box{x - Margin, y - Margin, x + 30 + Margin, y + 60 + Margin};
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    for (const auto& [name, corners] : {std::pair{"concave", std::cref(kite)}, std::pair{"in a line", std::cref(line)}})
+    {
+        std::array<MCScreenVertex, 4> vertices{};
+
+        for (size_t i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i] = MCScreenVertex{x + corners.get()[i][0], y + corners.get()[i][1], Color * Fixed, 0, 0, 0};
+        }
+
+        for (const bool gouraud : {false, true})
+        {
+            MCTest::Scope scope(std::format("{}, {}", name, gouraud ? "Gouraud" : "flat"));
+            const auto polygon = [&]
+            {
+                if (gouraud)
+                {
+                    VfxGouraudPolygon(pane, vertices);
+                }
+                else
+                {
+                    VfxFlatPolygon(pane, vertices);
+                }
+            };
+
+            const int64_t original = PixelsBetween(std::nullopt, Color, box, polygon);
+            const int64_t smooth = PixelsBetween(pack, Color, box, polygon);
+            std::cout << std::format("  {}, {}: pixels between the colours: {} with HD art off, {} on\n", name,
+                                     gouraud ? "Gouraud" : "flat", original, smooth);
+            CHECK_EQ(original, 0);
+            CHECK(smooth > 0);
+
+            // The screen's indices in the box, with HD art off and on.
+            const auto indices = [&](const std::optional<std::filesystem::path>& from)
+            {
+                std::optional<MCHdArtOn> on;
+
+                if (from.has_value())
+                {
+                    on.emplace(*from);
+                }
+
+                MCTestGame::RunFrame(FrameSeconds);
+                polygon();
+                const std::vector<uint8_t> screen = MCInput::Display()->ComposeScreen();
+                const int32_t width = MCInput::Display()->Width();
+                std::vector<uint8_t> inside;
+
+                for (int32_t row = box.Y0; row <= box.Y1; ++row)
+                {
+                    for (int32_t column = box.X0; column <= box.X1; ++column)
+                    {
+                        inside.push_back(screen[static_cast<size_t>(row + pane.Y0) * width + column + pane.X0]);
+                    }
+                }
+
+                return inside;
+            };
+
+            GamePaused = true;
+            const std::vector<uint8_t> plain = indices(std::nullopt);
+            const std::vector<uint8_t> sharp = indices(pack);
+            GamePaused = false;
+            CHECK(std::ranges::count(plain, Color) > 0);
+            CHECK(plain == sharp);
+        }
+    }
+
+    // The concave quad's inside, more than a window pixel and a half from its sides, shows its colour at every shown
+    // pixel: the halves meet along the diagonal without a gap.
+    std::array<MCScreenVertex, 4> vertices{};
+
+    for (size_t i = 0; i < vertices.size(); ++i)
+    {
+        vertices[i] = MCScreenVertex{x + kite[i][0], y + kite[i][1], Color * Fixed, 0, 0, 0};
+    }
+
+    GamePaused = true;
+    std::optional<MCHdArtOn> on(std::in_place, pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    VfxGouraudPolygon(pane, vertices);
+    const Shown seen = ReadShown(pack.parent_path());
+    on.reset();
+    GamePaused = false;
+
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(seen.Width) / static_cast<float>(width);
+    constexpr float Deep = 1.5f;
+    constexpr float Centre = 0.5f;
+    std::array<std::array<float, 2>, 4> at{};
+
+    for (size_t i = 0; i < at.size(); ++i)
+    {
+        // The corners' pixels' centres, in the screen's window coordinates.
+        at[i] = {static_cast<float>(pane.X0 + x + kite[i][0]) + Centre,
+                 static_cast<float>(pane.Y0 + y + kite[i][1]) + Centre};
+    }
+
+    int32_t deep = 0;
+    int32_t colored = 0;
+
+    for (auto row = static_cast<int32_t>(static_cast<float>(pane.Y0 + box.Y0) * scale);
+         row < static_cast<int32_t>(static_cast<float>(pane.Y0 + box.Y1 + 1) * scale); ++row)
+    {
+        for (auto column = static_cast<int32_t>(static_cast<float>(pane.X0 + box.X0) * scale);
+             column < static_cast<int32_t>(static_cast<float>(pane.X0 + box.X1 + 1) * scale); ++column)
+        {
+            const std::array<float, 2> p = {(static_cast<float>(column) + Centre) / scale,
+                                            (static_cast<float>(row) + Centre) / scale};
+            // The kite is the triangles either side of its diagonal from the bent-in corner (3) to corner 1.
+            const bool inside = InTriangle(p, at[3], at[0], at[1]) || InTriangle(p, at[1], at[2], at[3]);
+            float nearest = std::numeric_limits<float>::max();
+
+            for (size_t i = 0; i < at.size(); ++i)
+            {
+                nearest = std::min(nearest, SegmentDistance(p, at[i], at[(i + 1) % at.size()]));
+            }
+
+            if (inside && nearest > Deep)
+            {
+                ++deep;
+                const size_t offset = (static_cast<size_t>(row) * seen.Width + column) * BytesPerPixel;
+                const SDL_Color& want = colors[Color];
+                colored += seen.Pixels[offset] == want.r && seen.Pixels[offset + 1] == want.g &&
+                                   seen.Pixels[offset + 2] == want.b
+                               ? 1
+                               : 0;
+            }
+        }
+    }
+
+    std::cout << std::format("  the concave quad's inside: {} of {} shown pixels its colour\n", colored, deep);
+    CHECK(deep > 0);
+    CHECK_EQ(colored, deep);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
 /// <summary>
 /// A laser's beam is two Gouraud quads whose corners' colours needn't lie on a plane: with HD art on, a quad whose tail
 /// darkens again (head 0x30, sides 0x34, tail 0x31) draws, inside, only colour indices the original's walk draws (no

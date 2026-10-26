@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
 #include "ai/MCTacticalOrder.h"
+#include "camera/MCCamera.h"
 #include "camera/MCMainWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCCommandParser.h"
@@ -889,6 +891,118 @@ TEST_CASE_ISOLATED("game: held arrow keys scroll together, diagonally, until eac
     CHECK_EQ(iface->TacScrollDirection, -1);
     SendKey(left);
     CHECK_EQ(iface->ScrollDirection, 6);
+}
+
+namespace
+{
+    /// <summary>The right arrow (SCROLL RIGHT): it scrolls the camera along +x and +y alike.</summary>
+    constexpr int16_t ScrollRightKey = 0x14d;
+
+    /// <summary>How far one frame of <paramref name="seconds"/> moves the eye along x.</summary>
+    float ScrolledInFrame(float seconds)
+    {
+        const float before = Eye()->Position.X;
+        MCTestGame::RunFrame(seconds);
+        return Eye()->Position.X - before;
+    }
+}
+
+/// <summary>
+/// SCROLL SPEED (PREFS "ScrollSpeed") multiplies the battlefield's scrolling, by the scroll keys and at the screen's
+/// edge alike. At 1X, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
+/// Scroll Speed (48) halved, as the original did at full size.
+/// </summary>
+TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and at the screen's edge")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+    REQUIRE(iface != nullptr);
+    REQUIRE(Eye() != nullptr);
+    REQUIRE_EQ(Eye()->View()->WorldScaleY(), 1.0f);
+    REQUIRE_EQ(GScrollSpeed, OriginalScrollSpeed);
+    constexpr float frame = 1.0f / 15.0f;
+    const auto original = static_cast<float>(iface->ScrollSpeed / 2);
+    CHECK_EQ(original, 24.0f);
+    const auto scaled = [original](int percent)
+    { return original * static_cast<float>(percent) / static_cast<float>(OriginalScrollSpeed); };
+
+    // The keys: right, at each speed in turn.
+    SendKey(ScrollRightKey);
+
+    for (const int percent : ScrollSpeeds)
+    {
+        MCTest::Scope scope(std::format("keys at {}%", percent));
+        GScrollSpeed = percent;
+        const float beforeY = Eye()->Position.Y;
+        CHECK_EQ(ScrolledInFrame(frame), scaled(percent));
+        CHECK_EQ(Eye()->Position.Y - beforeY, scaled(percent));
+    }
+
+    SendKey(ScrollRightKey, 0, false);
+    GScrollSpeed = OriginalScrollSpeed;
+    CHECK_EQ(ScrolledInFrame(frame), 0.0f);
+
+    // The mouse at the left edge: back the other way, once the interface's start delay is over.
+    MCScreenInput::RealMove(0, GuiSystem().Height() / 2);
+    MCTestGame::RunFrame(frame);
+
+    for (const int percent : ScrollSpeeds)
+    {
+        MCTest::Scope scope(std::format("edge at {}%", percent));
+        GScrollSpeed = percent;
+        CHECK_EQ(ScrolledInFrame(frame), -scaled(percent));
+    }
+
+    GScrollSpeed = OriginalScrollSpeed;
+    MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
+    CHECK_EQ(ScrolledInFrame(frame), 0.0f);
+}
+
+/// <summary>
+/// OB-184 (fixed): the scrolling keeps its speed at any frame rate. The original scrolled a whole step a frame and
+/// dropped the rest, so a second of 100 frames scrolled 300 world pixels instead of 360, and one of 500 frames none (a
+/// step of 0.72). The rest now carries into the next frame.
+/// </summary>
+TEST_CASE_ISOLATED("game: the scrolling keeps its speed at any frame rate (OB-184)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
+    REQUIRE(iface != nullptr);
+    REQUIRE(Eye() != nullptr);
+    REQUIRE_EQ(Eye()->View()->WorldScaleY(), 1.0f);
+
+    // MCX.EXE's 15 steps a second (a hair under), each of Scroll Speed halved.
+    constexpr float stepsPerSecond = 15.0f;
+    const float perSecond = stepsPerSecond * static_cast<float>(iface->ScrollSpeed / 2);
+    SendKey(ScrollRightKey);
+
+    for (const int32_t framesPerSecond : {100, 500})
+    {
+        MCTest::Scope scope(std::format("{} frames a second", framesPerSecond));
+        const float before = Eye()->Position.X;
+
+        for (int32_t frame = 0; frame < framesPerSecond; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / static_cast<float>(framesPerSecond));
+        }
+
+        // Whole steps: the last one may still be a hair short.
+        const float scrolled = Eye()->Position.X - before;
+        CHECK(scrolled <= perSecond);
+        CHECK(scrolled >= perSecond - 1.0f);
+    }
+
+    SendKey(ScrollRightKey, 0, false);
 }
 
 TEST_CASE_ISOLATED("game: edge scrolling follows the window's new size (a window made full screen)")

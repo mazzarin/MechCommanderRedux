@@ -141,7 +141,8 @@ namespace
     /// <summary>
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 11 tall at (left, top), 104
     /// wide in the right column and 96 in the left, its list's rows 10 tall from top + 11. DIFFICULTY's field is at
-    /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 243) (VULKAN, SOFTWARE), HD ART's at (366, 347) (OFF, ON).
+    /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 243) (VULKAN, SOFTWARE), HD ART's at (366, 347) (OFF, ON),
+    /// SCROLL SPEED's at (488, 351) (1X to 3X).
     /// </summary>
     struct PrefsDropDown
     {
@@ -156,6 +157,7 @@ namespace
     constexpr PrefsDropDown DifficultyDropDown{176};
     constexpr PrefsDropDown RendererDropDown{243};
     constexpr PrefsDropDown HdArtDropDown{347, 366};
+    constexpr PrefsDropDown ScrollSpeedDropDown{351};
 
     /// <summary>Runs five frames: a click lands and the screen settles.</summary>
     void RunFrames()
@@ -708,6 +710,97 @@ TEST_CASE_ISOLATED("game: INTERFACE VOLUME sets the interface level, and CANCEL 
     CancelPrefs();
     CHECK_EQ(sound.InterfaceLevel, 90);
     CHECK_EQ(sound.DigitalMasterVolume, 40);
+}
+
+/// <summary>
+/// SCROLL SPEED shows the scroll speed when the screen opens (the original's, 1X) and offers 1X to 3X in half steps; a
+/// choice sets the speed, CANCEL puts it back (and the field shows it), and ACCEPT writes it to PREFS "ScrollSpeed".
+/// </summary>
+TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it back and ACCEPT saves it in PREFS")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::filesystem::remove(prefsPath);
+    REQUIRE_EQ(GScrollSpeed, OriginalScrollSpeed);
+
+    const auto frames = []
+    {
+        for (int32_t frame = 0; frame < 5; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    };
+
+    const auto choose = [&](int32_t row)
+    {
+        MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
+        frames();
+        MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.RowY(row));
+        frames();
+    };
+
+    ShowPreferences();
+    frames();
+    const std::shared_ptr<MCLogComboBox> dropDown = FindDropDown(ScrollSpeedDropDown);
+    REQUIRE(dropDown != nullptr);
+    const std::vector<MCLogComboBox::Item>& items = dropDown->Items();
+    REQUIRE_EQ(items.size(), ScrollSpeeds.size());
+    constexpr std::array<std::string_view, 5> Labels = {"1X (ORIGINAL)", "1.5X", "2X", "2.5X", "3X"};
+
+    for (size_t i = 0; i < items.size(); i++)
+    {
+        CHECK(items[i].Label == Labels[i]);
+        CHECK_EQ(items[i].Value, ScrollSpeeds[i]);
+    }
+
+    CHECK_EQ(dropDown->Selected(), 0);
+    const uint32_t originalShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs scroll speed", originalShown);
+
+    // The list open, then closed by a second click on the field.
+    MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
+    frames();
+    CHECK(dropDown->IsOpen());
+    MCScreenInput::SaveShot("prefs scroll speed choices", MCScreenInput::ScreenHash());
+    MCScreenInput::Click(ScrollSpeedDropDown.FieldX(), ScrollSpeedDropDown.FieldY());
+    frames();
+    CHECK(!dropDown->IsOpen());
+    CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
+
+    // 2X, then CANCEL: the original's speed again, shown when the screen opens.
+    choose(2);
+    CHECK_EQ(GScrollSpeed, 200);
+    MCScreenInput::SaveShot("prefs scroll speed 2x", MCScreenInput::ScreenHash());
+    CHECK(MCScreenInput::ScreenHash() != originalShown);
+    CancelPrefs();
+    frames();
+    CHECK_EQ(GScrollSpeed, OriginalScrollSpeed);
+    ShowPreferences();
+    frames();
+    CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
+
+    // 3X, then ACCEPT: written to PREFS.
+    choose(4);
+    CHECK_EQ(GScrollSpeed, 300);
+    WritePrefs();
+    frames();
+    CHECK_EQ(GScrollSpeed, 300);
+    int32_t saved = 0;
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        saved = prefs.Read<int32_t>("ScrollSpeed").value_or(0);
+    }
+
+    std::filesystem::remove(prefsPath);
+    CHECK_EQ(saved, 300);
 }
 
 /// <summary>

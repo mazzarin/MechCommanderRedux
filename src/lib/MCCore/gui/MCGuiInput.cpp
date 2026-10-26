@@ -430,6 +430,15 @@ namespace
             }
         }
     }
+
+    /// <summary>OB-184: the part of a whole step the last frame's scroll had left over, carried into the next.</summary>
+    float ScrollCarry = 0.0f;
+
+    /// <summary>Port: SCROLL SPEED (<see cref="GScrollSpeed"/>) as a factor of the original's speed.</summary>
+    float ScrollSpeedFactor()
+    {
+        return static_cast<float>(GScrollSpeed) / static_cast<float>(OriginalScrollSpeed);
+    }
 }
 
 auto DispatchGuiEvent(MCGuiEvent& event) -> void
@@ -660,8 +669,13 @@ auto ScrollScreen() -> void
         // At full size the original scrolls at half the speed (zoomed out, at the whole speed).
         speed = static_cast<int16_t>(speed / 2);
 
-        // MCX.EXE's constant is a hair under 15 (14.999999); it scrolled whole steps.
-        float step = std::trunc(FrameLength * 0x1.dffffep+3f * static_cast<float>(speed));
+        // MCX.EXE's constant is a hair under 15 (14.999999); it scrolled whole steps. OB-184 (fixed): it dropped the rest
+        // of each frame's step, so the more frames a second, the slower it scrolled (at iface.fit's speed, a fifth slower
+        // at 144 frames a second, and not at all past 360); the rest now carries into the next frame's step. Port: SCROLL
+        // SPEED multiplies it.
+        const float pace = FrameLength * 0x1.dffffep+3f * static_cast<float>(speed) * ScrollSpeedFactor() + ScrollCarry;
+        float step = std::trunc(pace);
+        const float carry = pace - step;
 
         // Port: the same speed on the screen at any zoom (the world surface's pixels per screen pixel). The step
         // stays fractional: zoomed in, a whole step would round to nothing.
@@ -670,6 +684,8 @@ auto ScrollScreen() -> void
             step /= camera->View()->WorldScaleY();
         }
 
+        // The direction first (dx and dy each -1, 0 or 1), then the step.
+        constexpr float unit = 1.0f;
         bool scroll = true;
 
         if (TacticalInterface()->ScrollDirection == -1)
@@ -697,20 +713,20 @@ auto ScrollScreen() -> void
                 {
                     if (cursor.x < scrollArea.left)
                     {
-                        dx = -step;
+                        dx = -unit;
                     }
                     else if (cursor.x > scrollArea.right)
                     {
-                        dx = step;
+                        dx = unit;
                     }
 
                     if (cursor.y < scrollArea.top)
                     {
-                        dy = -step;
+                        dy = -unit;
                     }
                     else if (cursor.y > scrollArea.bottom)
                     {
-                        dy = step;
+                        dy = unit;
                     }
                 }
             }
@@ -726,38 +742,38 @@ auto ScrollScreen() -> void
             switch (TacticalInterface()->ScrollDirection)
             {
                 case 0:
-                    dy = -step;
+                    dy = -unit;
                     break;
                 case 1:
                 {
-                    dx = step;
-                    dy = -step;
+                    dx = unit;
+                    dy = -unit;
                     break;
                 }
                 case 2:
-                    dx = step;
+                    dx = unit;
                     break;
                 case 3:
                 {
-                    dx = step;
+                    dx = unit;
                     dy = dx;
                     break;
                 }
                 case 4:
-                    dy = step;
+                    dy = unit;
                     break;
                 case 5:
                 {
-                    dx = -step;
-                    dy = step;
+                    dx = -unit;
+                    dy = unit;
                     break;
                 }
                 case 6:
-                    dx = -step;
+                    dx = -unit;
                     break;
                 case 7:
                 {
-                    dx = -step;
+                    dx = -unit;
                     dy = dx;
                     break;
                 }
@@ -766,6 +782,11 @@ auto ScrollScreen() -> void
                     break;
             }
         }
+
+        // OB-184: the carry stays while the map scrolls, even over frames too short for a whole step.
+        ScrollCarry = scroll && (dx != 0.0f || dy != 0.0f) ? carry : 0.0f;
+        dx *= step;
+        dy *= step;
 
         if (scroll && (dx != 0.0f || dy != 0.0f))
         {

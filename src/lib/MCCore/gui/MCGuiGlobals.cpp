@@ -45,6 +45,7 @@ bool GHiddenWindow = false;
 int GRenderer = 0;
 int GRendererPreference = 0;
 int GUiResolution = 0;
+int GScrollSpeed = OriginalScrollSpeed;
 int GShowFps = 0;
 int GShowFpsPreference = 0;
 bool GVSync = true;

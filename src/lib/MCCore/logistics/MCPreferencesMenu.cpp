@@ -66,8 +66,8 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 275};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER and UI RESOLUTION under DIFFICULTY, and
-    /// HD ART under SOUND.
+    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and SCROLL SPEED under
+    /// DIFFICULTY, and HD ART under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
     constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
@@ -75,6 +75,7 @@ namespace
     constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
     constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
+    constexpr MCPrefsPlace ScrollSpeedBoxPlace{132, 186, 120, 50};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
     constexpr uint8_t PanelOutlineColor = 0x18;
@@ -120,6 +121,8 @@ namespace
     constexpr int32_t DropDownTop = 21;
     /// <summary>UI RESOLUTION's native choice: its lines follow the screen's scale (GUiResolution).</summary>
     constexpr std::string_view NativeUiResolution = "NATIVE (RETINA/HD)";
+    /// <summary>SCROLL SPEED's choices are factors of the original's speed: "1.5X" is 150 percent.</summary>
+    constexpr double PercentPerFactor = 100.0;
 
     /// <summary>ACCEPT and CANCEL on the panel: side by side at its bottom right, 10 pixels in.</summary>
     constexpr int32_t AcceptLeft = 120;
@@ -132,12 +135,14 @@ namespace
     std::weak_ptr<MCLogSlider> InterfaceSlider;
 
     /// <summary>
-    /// The renderer choice, the UI resolution, the interface volume and HD art when the screen opened (for CancelPrefs).
+    /// The renderer choice, the UI resolution, the interface volume, HD art and the scroll speed when the screen opened
+    /// (for CancelPrefs).
     /// </summary>
     int32_t SavedRendererPreference = 0;
     int32_t SavedUiResolution = 0;
     int32_t SavedInterfaceLevel = 0;
     int32_t SavedHdArt = 0;
+    int32_t SavedScrollSpeed = OriginalScrollSpeed;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -326,6 +331,20 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
     AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
 
+    // SCROLL SPEED: the battlefield's scrolling, at the screen's edges and by the scroll keys, as a factor of the
+    // original's speed.
+    MCLogGroupBox& scrollSpeed = AddBox(screen, panel, ScrollSpeedBoxPlace, BoxOutlineColor);
+    AddLabel(screen, scrollSpeed, "SCROLL SPEED", BoxTitleLeft, BoxTitleTop);
+    std::vector<MCLogComboBox::Item> scrollSpeeds;
+
+    for (const int percent : ScrollSpeeds)
+    {
+        const std::string factor = std::format("{}X", percent / PercentPerFactor);
+        scrollSpeeds.push_back({percent == OriginalScrollSpeed ? factor + " (ORIGINAL)" : factor, percent});
+    }
+
+    AddDropDown(screen, scrollSpeed, GScrollSpeed, std::move(scrollSpeeds), nullptr);
+
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
 
@@ -351,6 +370,7 @@ void ShowPreferences()
     SavedUiResolution = GUiResolution;
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
     SavedHdArt = GHdArt;
+    SavedScrollSpeed = GScrollSpeed;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -388,6 +408,7 @@ void CancelPrefs()
     GRendererPreference = SavedRendererPreference;
     GUiResolution = SavedUiResolution;
     GHdArt = SavedHdArt;
+    GScrollSpeed = SavedScrollSpeed;
     Cancel();
 }
 
@@ -415,6 +436,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("SoftwareCursor", GSoftwareCursor != 0);
     prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
     prefs.WriteIdLong("UIResolution", GUiResolution);
+    prefs.WriteIdLong("ScrollSpeed", GScrollSpeed);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     MCKeyBindings::WritePrefs(prefs);

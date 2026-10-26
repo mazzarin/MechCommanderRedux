@@ -87,6 +87,15 @@ extern int GUiResolution;
 inline constexpr int MaxUiResolution = 1080;
 /// <summary>Port-only: the choices of <see cref="GUiResolution"/> other than native.</summary>
 inline constexpr std::array<int, 5> UiResolutions = {480, 600, 720, 900, 1080};
+/// <summary>
+/// Port-only: how fast the battlefield scrolls, at the screen's edges and by the scroll keys, in percent of the
+/// original's speed (PREFS "ScrollSpeed", the preferences screen's SCROLL SPEED box): one of <see cref="ScrollSpeeds"/>.
+/// </summary>
+extern int GScrollSpeed;
+/// <summary>Port-only: the original's scroll speed, <see cref="GScrollSpeed"/>'s default.</summary>
+inline constexpr int OriginalScrollSpeed = 100;
+/// <summary>Port-only: the choices of <see cref="GScrollSpeed"/>.</summary>
+inline constexpr std::array<int, 5> ScrollSpeeds = {OriginalScrollSpeed, 150, 200, 250, 300};
 /// <summary>Port-only: draw the frame counter in the top-right corner (PREFS "ShowFps", read by systemInit, or the
 /// command line's <c>-fps</c>).</summary>
 extern int GShowFps;

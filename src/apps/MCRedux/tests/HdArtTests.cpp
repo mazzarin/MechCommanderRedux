@@ -6489,11 +6489,17 @@ TEST_CASE_ISOLATED("tool: --hd-packet-pictures pictures sprite packets beside th
 
         for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()) && pictured < frames; ++frame)
         {
-            const std::expected<DecodedFrame, std::string> decoded = Decode(shape->FrameList(), frame);
+            std::expected<DecodedFrame, std::string> decoded = Decode(shape->FrameList(), frame);
 
             if (!decoded.has_value() || decoded->Width == 0)
             {
                 continue;
+            }
+
+            // A translucent frame's colours 0 and 255 draw nothing.
+            if (decoded->Translucent)
+            {
+                LeaveOutUndrawn(*decoded, true);
             }
 
             const std::shared_ptr<const MCHdArt::Frame> hd =

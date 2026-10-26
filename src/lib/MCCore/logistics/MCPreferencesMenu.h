@@ -54,7 +54,7 @@ bool StepInterfaceSize(int steps);
 /// drop-down (EASY, REGULAR, HARD; <see cref="GameDifficulty"/>) in place of the original's checks; a RENDERER
 /// drop-down (VULKAN, SOFTWARE; PREFS "Renderer"); a UI RESOLUTION drop-down (NATIVE, 480P .. 1080P; PREFS
 /// "UIResolution", <see cref="GUiResolution"/>); an HD ART drop-down (OFF, ON; PREFS "HDArt", <see cref="GHdArt"/>);
-/// a SCROLL SPEED drop-down (AUTO, 1X .. 3X; PREFS "ScrollSpeed", <see cref="GScrollSpeed"/>); and ACCEPT and CANCEL side by
+/// a SCROLL SPEED drop-down (AUTO, 1.5X .. 3X; PREFS "ScrollSpeed", <see cref="GScrollSpeed"/>); and ACCEPT and CANCEL side by
 /// side at the bottom right. The renderer takes effect at the next start, which the message dialog says when the
 /// drop-down picks another renderer than the running one; the UI resolution and HD art at the next scenario (the message
 /// dialog says when HD art is turned on without a pack).

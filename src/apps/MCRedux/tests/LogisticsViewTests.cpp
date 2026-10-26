@@ -727,7 +727,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
     // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
     std::filesystem::remove(prefsPath);
-    REQUIRE_EQ(GScrollSpeed, OriginalScrollSpeed);
+    REQUIRE_EQ(GScrollSpeed, AutoScrollSpeed);
 
     const auto frames = []
     {
@@ -751,7 +751,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
     REQUIRE(dropDown != nullptr);
     const std::vector<MCLogComboBox::Item>& items = dropDown->Items();
     REQUIRE_EQ(items.size(), ScrollSpeeds.size());
-    constexpr std::array<std::string_view, 6> Labels = {"AUTO", "1X (ORIGINAL)", "1.5X", "2X", "2.5X", "3X"};
+    constexpr std::array<std::string_view, 5> Labels = {"AUTO", "1.5X", "2X", "2.5X", "3X"};
 
     for (size_t i = 0; i < items.size(); i++)
     {
@@ -759,7 +759,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
         CHECK_EQ(items[i].Value, ScrollSpeeds[i]);
     }
 
-    CHECK_EQ(dropDown->Selected(), 1);
+    CHECK_EQ(dropDown->Selected(), 0);
     const uint32_t originalShown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs scroll speed", originalShown);
 
@@ -773,20 +773,20 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it bac
     CHECK(!dropDown->IsOpen());
     CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
 
-    // 2X, then CANCEL: the original's speed again, shown when the screen opens.
-    choose(3);
+    // 2X, then CANCEL: AUTO again, shown when the screen opens.
+    choose(2);
     CHECK_EQ(GScrollSpeed, 200);
     MCScreenInput::SaveShot("prefs scroll speed 2x", MCScreenInput::ScreenHash());
     CHECK(MCScreenInput::ScreenHash() != originalShown);
     CancelPrefs();
     frames();
-    CHECK_EQ(GScrollSpeed, OriginalScrollSpeed);
+    CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
     ShowPreferences();
     frames();
     CHECK_EQ(MCScreenInput::ScreenHash(), originalShown);
 
     // 3X, then ACCEPT: written to PREFS.
-    choose(5);
+    choose(4);
     CHECK_EQ(GScrollSpeed, 300);
     WritePrefs();
     frames();

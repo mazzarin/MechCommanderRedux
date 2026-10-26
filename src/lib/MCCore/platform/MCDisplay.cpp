@@ -227,11 +227,6 @@ namespace
         return maxHeight;
     }
 
-    /// <summary>
-    /// AUTO's lines a point of the window's height: about 1.33 points a line, so the 640x480-era interface keeps a
-    /// size to read and click on whatever the display.
-    /// </summary>
-    constexpr double AutoLinesPerPoint = 0.75;
     /// <summary>AUTO's steps and largest scale (the interface size choices': 100 to 200 percent by 25).</summary>
     constexpr double AutoScaleStep = 0.25;
     constexpr double AutoScaleMost = 2.0;
@@ -270,10 +265,9 @@ void MCDisplay::WindowScreenSize(int& width, int& height) const
     height = size.y;
 }
 
-float MCDisplay::AutoInterfaceScale(int lines, int pixelHeight, float displayScale)
+float MCDisplay::AutoInterfaceScale(int lines)
 {
-    const double points = static_cast<double>(pixelHeight) / std::max(static_cast<double>(displayScale), 1.0);
-    const double wanted = static_cast<double>(lines) / std::max(points * AutoLinesPerPoint, 1.0);
+    const double wanted = static_cast<double>(lines) / OriginalLines;
     return static_cast<float>(std::clamp(std::round(wanted / AutoScaleStep) * AutoScaleStep, 1.0, AutoScaleMost));
 }
 
@@ -287,10 +281,8 @@ float MCDisplay::AutoInterfaceScaleNow() const
         return 1.0f;
     }
 
-    const float displayScale = SDL_GetWindowDisplayScale(_Window.get());
-    const int maxHeight = UnscaledMaxHeight(pixelHeight, displayScale, ScreenFit());
-    return AutoInterfaceScale(maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight, pixelHeight,
-                              displayScale);
+    const int maxHeight = UnscaledMaxHeight(pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), ScreenFit());
+    return AutoInterfaceScale(maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight);
 }
 
 SDL_Point MCDisplay::FollowingScreenSize(int pixelWidth, int pixelHeight, float displayScale, const MCScreenFit& fit)
@@ -300,8 +292,7 @@ SDL_Point MCDisplay::FollowingScreenSize(int pixelWidth, int pixelHeight, float 
     // A bigger interface (AUTO's for the display, or the one asked for): that many times fewer lines than the limits
     // so far leave, but never fewer than the smallest screen's.
     const int lines = maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight;
-    const float interfaceScale =
-        fit.InterfaceScale == AutoInterface ? AutoInterfaceScale(lines, pixelHeight, displayScale) : fit.InterfaceScale;
+    const float interfaceScale = fit.InterfaceScale == AutoInterface ? AutoInterfaceScale(lines) : fit.InterfaceScale;
 
     if (interfaceScale > 1.0f)
     {

@@ -151,15 +151,15 @@ public:
 
     /// <summary>The interface scale that asks for <see cref="AutoInterfaceScale"/>.</summary>
     static constexpr float AutoInterface = 0.0f;
+    /// <summary>The original's screen's lines (640x480), whose proportions AUTO keeps.</summary>
+    static constexpr int OriginalLines = 480;
 
     /// <summary>
-    /// The interface scale that suits a screen of <paramref name="lines"/> lines in a window
-    /// <paramref name="pixelHeight"/> pixels tall at <paramref name="displayScale"/> pixels a point: about
-    /// <c>AutoLinesPerPoint</c> lines a point of the window's height, so the interface keeps about one size on any
-    /// display (a 14-inch Retina laptop at UI RESOLUTION 1080: 1.5; a 1440p desktop monitor: 1), in quarter steps from
-    /// 1 to 2.
+    /// The interface scale that keeps a screen of <paramref name="lines"/> lines to the original's proportions: its
+    /// lines over <see cref="OriginalLines"/>, in quarter steps from 1 to 2 (a Retina MacBook at NATIVE or 1080P, or a
+    /// 1080-line desktop: 2; 720P: 1.5).
     /// </summary>
-    static float AutoInterfaceScale(int lines, int pixelHeight, float displayScale);
+    static float AutoInterfaceScale(int lines);
 
     /// <summary>
     /// AUTO's interface scale (<see cref="AutoInterfaceScale"/>) for the window as it is now, whatever scale is set (1

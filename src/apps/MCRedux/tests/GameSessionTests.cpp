@@ -248,11 +248,11 @@ TEST_CASE("system config: PREFS.CFG gives the display, difficulty and volumes, w
     CHECK_EQ(InterfaceVolume, 12);
     CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
 
-    // SCROLL SPEED: one of its choices (AUTO's 0 among them), else AUTO.
+    // SCROLL SPEED: one of its choices, else AUTO (100 percent of the original's pace is AUTO's).
     ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=250\r\nFITend\r\n");
     CHECK_EQ(GScrollSpeed, 250);
     ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=100\r\nFITend\r\n");
-    CHECK_EQ(GScrollSpeed, OriginalScrollSpeed);
+    CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
     ReadPrefsText("FITini\r\n[MechCommander]\r\nl ScrollSpeed=175\r\nFITend\r\n");
     CHECK_EQ(GScrollSpeed, AutoScrollSpeed);
 }

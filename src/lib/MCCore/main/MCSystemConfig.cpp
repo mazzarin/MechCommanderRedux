@@ -212,7 +212,7 @@ void ReadPreferences(MCFitIniFile& file)
     const int32_t uiResolution = file.Read<int32_t>("UIResolution").value_or(0);
     GUiResolution = std::ranges::contains(UiResolutions, uiResolution) ? uiResolution : 0;
 
-    // Port-only: the battlefield's scroll speed, in percent of the original's (one of ScrollSpeeds, else AUTO).
+    // Port-only: the battlefield's scroll speed, in percent of the original's pace (one of ScrollSpeeds, else AUTO).
     const int32_t scrollSpeed = file.Read<int32_t>("ScrollSpeed").value_or(AutoScrollSpeed);
     GScrollSpeed = std::ranges::contains(ScrollSpeeds, scrollSpeed) ? scrollSpeed : AutoScrollSpeed;
 

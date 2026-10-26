@@ -79,8 +79,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   so edge scrolling no longer runs it into a screen corner and fires the corner's hot corner action (macOS's Lock
   Screen, Mission Control...).
 - Scrolling the battlefield, at the screen's edges or with the scroll keys, keeps its speed at any frame rate. The
-  original moved whole pixels each frame and dropped the rest, so the faster the game ran, the slower it scrolled. The
-  preferences screen's SCROLL SPEED makes it up to three times faster than the original's.
+  original moved whole pixels each frame and dropped the rest, so the faster the game ran, the slower it scrolled. It
+  crosses the screen at the original's pace at any UI resolution and interface size (SCROLL SPEED's AUTO), or up to
+  three times faster.
 - An item dragged in the logistics inventory moves with the cursor.
 - The mouse wheel works; the original didn't use it. Over the battlefield, wheel up zooms in and wheel down zooms out,
   a little per notch. Over the tactical map it zooms the map, as its zoom buttons do. Over any list or text with a

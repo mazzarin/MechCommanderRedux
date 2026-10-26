@@ -909,7 +909,7 @@ namespace
 
 /// <summary>
 /// SCROLL SPEED (PREFS "ScrollSpeed") multiplies the battlefield's scrolling, by the scroll keys and at the screen's
-/// edge alike (AUTO by the screen's lines over 480). At 1X, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
+/// edge alike, from the original's pace across the screen (AUTO). At AUTO in the tests' 480 lines, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
 /// Scroll Speed (48) halved, as the original did at full size.
 /// </summary>
 TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and at the screen's edge")
@@ -924,17 +924,18 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and 
     REQUIRE(iface != nullptr);
     REQUIRE(Eye() != nullptr);
     REQUIRE_EQ(Eye()->View()->WorldScaleY(), 1.0f);
-    REQUIRE_EQ(GScrollSpeed, OriginalScrollSpeed);
+    REQUIRE_EQ(GScrollSpeed, AutoScrollSpeed);
     constexpr float frame = 1.0f / 15.0f;
     const auto original = static_cast<float>(iface->ScrollSpeed / 2);
     CHECK_EQ(original, 24.0f);
-    // AUTO: the screen's lines over the original's 480 (the tests' 640x480 screen: 1X).
-    constexpr float OriginalLines = 480.0f;
+    // The original's pace: the screen's lines over the original's 480 (the tests' 640x480 screen: 1), times the choice
+    // (AUTO: 1).
     const auto scaled = [original](int percent)
     {
-        return original * (percent == AutoScrollSpeed
-                               ? std::max(static_cast<float>(GuiSystem().Height()) / OriginalLines, 1.0f)
-                               : static_cast<float>(percent) / static_cast<float>(OriginalScrollSpeed));
+        const float pace =
+            std::max(static_cast<float>(GuiSystem().Height()) / static_cast<float>(MCDisplay::OriginalLines), 1.0f);
+        return original * pace * static_cast<float>(percent == AutoScrollSpeed ? OriginalScrollSpeed : percent) /
+               static_cast<float>(OriginalScrollSpeed);
     };
 
     // The keys: right, at each speed in turn.
@@ -950,7 +951,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and 
     }
 
     SendKey(ScrollRightKey, 0, false);
-    GScrollSpeed = OriginalScrollSpeed;
+    GScrollSpeed = AutoScrollSpeed;
     CHECK_EQ(ScrolledInFrame(frame), 0.0f);
 
     // The mouse at the left edge: back the other way, once the interface's start delay is over.
@@ -964,7 +965,7 @@ TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and 
         CHECK_EQ(ScrolledInFrame(frame), -scaled(percent));
     }
 
-    GScrollSpeed = OriginalScrollSpeed;
+    GScrollSpeed = AutoScrollSpeed;
     MCScreenInput::RealMove(GuiSystem().Width() / 2, GuiSystem().Height() / 2);
     CHECK_EQ(ScrolledInFrame(frame), 0.0f);
 }

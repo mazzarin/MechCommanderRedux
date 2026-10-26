@@ -333,7 +333,7 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
 
     // SCROLL SPEED: the battlefield's scrolling, at the screen's edges and by the scroll keys: AUTO (the original's pace
-    // across the screen), or a factor of the original's speed.
+    // across the screen), or a factor of it.
     MCLogGroupBox& scrollSpeed = AddBox(screen, panel, ScrollSpeedBoxPlace, BoxOutlineColor);
     AddLabel(screen, scrollSpeed, "SCROLL SPEED", BoxTitleLeft, BoxTitleTop);
     std::vector<MCLogComboBox::Item> scrollSpeeds;
@@ -341,10 +341,7 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     for (const int percent : ScrollSpeeds)
     {
         const std::string factor = std::format("{}X", percent / PercentPerFactor);
-        scrollSpeeds.push_back({percent == AutoScrollSpeed       ? std::string("AUTO")
-                                : percent == OriginalScrollSpeed ? factor + " (ORIGINAL)"
-                                                                 : factor,
-                                percent});
+        scrollSpeeds.push_back({percent == AutoScrollSpeed ? std::string("AUTO") : factor, percent});
     }
 
     AddDropDown(screen, scrollSpeed, GScrollSpeed, std::move(scrollSpeeds), nullptr);

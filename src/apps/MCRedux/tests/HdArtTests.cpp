@@ -4072,15 +4072,16 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         TourScreens(shoot, detail);
     }
 
-    GHdArt = 0;
-    MCHdArt::SetPackFolder({});
-
+    // The tables are written with the pack still set: they say whether it has each picture drawn from the original.
     if (audit)
     {
         renderer->Audit = nullptr;
         ReportAudit(tally, folder / "audit", audited);
         WriteAuditTables(tally, detail, folder / "audit", audited);
     }
+
+    GHdArt = 0;
+    MCHdArt::SetPackFolder({});
 }
 
 namespace
@@ -5658,7 +5659,8 @@ namespace
 /// player's lance selected and sent at the nearest live enemy (again every ten seconds, and when it falls) for
 /// <c>--hd-audit-frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
 /// tallied by what it drew and whether it was sharp (ReportAudit, WriteAuditTables). <c>--hd-audit-zoom &lt;lines&gt;</c>
-/// zooms the view out first.
+/// zooms the view out first; <c>--hd-audit-settle &lt;n&gt;</c> runs that many frames first (default 15; 0 audits the
+/// first frame HD art is on).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the original's pixels")
 {
@@ -5689,11 +5691,16 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
 
     std::map<AuditKey, AuditTally> tally;
     AuditDetail detail;
-    // A second for HD art to settle: the first frame after the switch draws the interface's pictures before their
-    // textures are up (from the original's pixels, once), which a player who starts with HD art on never sees.
-    constexpr int32_t SettleFrames = 15;
+    // A second for the view to settle once HD art goes on (--hd-audit-settle <n> frames, 0 audits the first frame).
+    constexpr int32_t DefaultSettleFrames = 15;
+    int32_t settleFrames = DefaultSettleFrames;
 
-    for (int32_t frame = 0; frame < SettleFrames; ++frame)
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-audit-settle"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), settleFrames);
+    }
+
+    for (int32_t frame = 0; frame < settleFrames; ++frame)
     {
         MCTestGame::RunFrame(FrameSeconds);
     }
@@ -6221,6 +6228,128 @@ TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
     {
         CheckIndicesKept(*scene);
     }
+}
+
+/// <summary>
+/// A picture the HD art pack has is drawn from it from the first frame the screen is sharp (HD art just turned on, the
+/// game's first frame), not one frame on: copied onto mission 1's screen (shown larger) right after a frame shown with
+/// HD art off, it is drawn from the pack at once, its shown colours are the pack's, and the screen's indices under it
+/// are the picture's, as with HD art off.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's first sharp frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // A picture of its own: upright stripes of four colours.
+    constexpr int32_t Side = 32;
+    constexpr int32_t Stripe = 8;
+    constexpr uint8_t FirstColor = 0x30;
+    const std::shared_ptr<MCWindow> picture = MCWindow::Make(Side, Side);
+
+    for (int32_t y = 0; y < Side; ++y)
+    {
+        for (int32_t x = 0; x < Side; ++x)
+        {
+            picture->Pixels[static_cast<size_t>(y) * Side + x] = static_cast<uint8_t>(FirstColor + x / Stripe);
+        }
+    }
+
+    MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_frame";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(PictureFolderOf(pack));
+    DecodedFrame frame;
+    frame.Width = Side;
+    frame.Height = Side;
+    frame.Index.assign(picture->Bytes().begin(), picture->Bytes().end());
+    frame.Drawn.assign(frame.Index.size(), 1);
+    const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture->Bytes(), Side, Side));
+    WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    WritePaletteRgb(pack, colors);
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+
+    struct Copied
+    {
+        int64_t HdDrawn = 0;
+        Shown Seen;
+        std::vector<uint8_t> Indices;
+    };
+
+    // The copy is the first draw after a frame shown with HD art off; with hd, HD art goes on just before it.
+    const auto copy = [&](bool hd)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        std::optional<MCHdArtOn> on;
+
+        if (hd)
+        {
+            on.emplace(pack);
+        }
+
+        Copied copied;
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(picture), 0, 0, screen, left, top, VfxNoColor);
+        copied.HdDrawn = renderer->HdDrawn() - before;
+        copied.Seen = ReadShown(scratch);
+        copied.Indices = MCInput::Display()->ComposeScreen();
+        return copied;
+    };
+
+    GamePaused = true;
+    const Copied plain = copy(false);
+    const Copied sharp = copy(true);
+    GamePaused = false;
+
+    CHECK_EQ(plain.HdDrawn, 0);
+    CHECK_EQ(sharp.HdDrawn, 1);
+
+    // The picture's place in the shown frame (the screen shown larger), a pixel in from its edges.
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(sharp.Seen.Width) / static_cast<float>(width);
+    const int32_t x0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.X0 + left) * scale)) + 1;
+    const int32_t y0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.Y0 + top) * scale)) + 1;
+    const int32_t x1 = static_cast<int32_t>(static_cast<float>(screen.X0 + left + Side) * scale) - 2;
+    const int32_t y1 = static_cast<int32_t>(static_cast<float>(screen.Y0 + top + Side) * scale) - 2;
+    const MCRect inside{x0, y0, x1, y1};
+    const int32_t area = (x1 - x0 + 1) * (y1 - y0 + 1);
+    const Changed changed = Compare(plain.Seen, sharp.Seen, inside);
+    std::cout << std::format("  {} of the picture's {} shown pixels from the pack\n", changed.Count, area);
+    CHECK(changed.Count > area * 3 / 4);
+
+    // The indices under it are the picture's, both times.
+    REQUIRE_EQ(sharp.Indices.size(), plain.Indices.size());
+    int32_t kept = 0;
+
+    for (int32_t y = 0; y < Side; ++y)
+    {
+        for (int32_t x = 0; x < Side; ++x)
+        {
+            const size_t at = static_cast<size_t>(screen.Y0 + top + y) * width + screen.X0 + left + x;
+            const uint8_t index = picture->Pixels[static_cast<size_t>(y) * Side + x];
+            kept += plain.Indices[at] == index && sharp.Indices[at] == index ? 1 : 0;
+        }
+    }
+
+    CHECK_EQ(kept, Side * Side);
+    MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
 }
 
 namespace

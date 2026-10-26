@@ -694,6 +694,11 @@ void MCVulkanRenderer::BeginRecording()
 
     _Recording = true;
 
+    if (RecordingStarts)
+    {
+        RecordingStarts();
+    }
+
     // The atlas starts again when it has grown too big (nothing of the last frame is drawn from it any more).
     if (_Pages.size() > MaxPages)
     {
@@ -836,7 +841,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     if (_Audited.has_value())
     {
         const uint32_t kind = op & KindMask;
-        _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
+        _Audited->Scaled = DrawnLarger(surfaceIndex);
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
         _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSmoothPolygon ||
                            kind == KindSharpGlyph || kind == KindSmoothLine || kind == KindSmoothEllipse ||
@@ -1719,7 +1724,7 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
 {
-    return _Surfaces[target].Key == _ScaledScreen ? HdPicture(window) : nullptr;
+    return SharpScreenSurface(target) ? HdPicture(window) : nullptr;
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow& window)
@@ -2085,8 +2090,18 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
 
 bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
 {
+    return DrawnLarger(surface) && MCHdArt::Active();
+}
+
+bool MCVulkanRenderer::DrawnLarger(uint16_t surface) const
+{
     const Surface& drawn = _Surfaces[surface];
-    return drawn.DrawnWidth > drawn.RecordedWidth && MCHdArt::Active();
+    return SharpScreenSurface(surface) || drawn.DrawnWidth > drawn.RecordedWidth;
+}
+
+bool MCVulkanRenderer::SharpScreenSurface(uint16_t surface) const
+{
+    return _ScaledScreen && _Surfaces[surface].Key == _ScaledScreen;
 }
 
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
@@ -3103,8 +3118,7 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 
         // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp; the original's draw keeps
         // the indices.
-        if (_Surfaces[surface].Key == _ScaledScreen &&
-            AddSharpGlyph(surface, source, pitch, columns, rows, at, *command.Table))
+        if (SharpScreenSurface(surface) && AddSharpGlyph(surface, source, pitch, columns, rows, at, *command.Table))
         {
             op |= IndexOnly;
         }

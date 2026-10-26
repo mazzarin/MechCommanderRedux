@@ -18,6 +18,7 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
+#include "logistics/MCBriefingScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
@@ -64,6 +65,7 @@
 #include "lib/MCFile.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
 
 namespace
@@ -3438,6 +3440,10 @@ namespace
         int32_t WindowHeight = 0;
         std::string Owner;
         std::optional<DecodedFrame> Picture;
+        // The colours shown when it was first drawn (a copy's picture is saved in them), and what was on screen then
+        // (AuditLabel, when the tool sets one).
+        std::array<SDL_Color, 256> Colors{};
+        std::string Label;
         std::map<int32_t, DecodedFrame> ShapeFrames;
         std::optional<std::filesystem::path> Attached;
         std::optional<uint64_t> TableHash;
@@ -3445,6 +3451,9 @@ namespace
 
     /// <summary>How many of a shape table's frames an audit keeps (decoded as they are drawn) to picture.</summary>
     constexpr size_t AuditFramesKept = 4;
+
+    /// <summary>What a tool shows while it audits (a screen's name), noted with each tally's first draw.</summary>
+    std::string AuditLabel;
 
     std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
     void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
@@ -3924,10 +3933,16 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const bool original = MCTest::Option("hd-original").has_value();
     GHdArt = original ? 0 : 1;
     MCHdArt::SetPackFolder(pack);
+    // The logistics' shapes, loaded before HD art came on, tied to the pack as the game ties them with it on.
+    GlobalLog()->AttachHdArt();
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
     // Two seconds settle a screen change's wipe.
     constexpr int32_t SettleFrames = 30;
+    // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock its store is given to show.
+    constexpr int32_t MechTab = 0;
+    constexpr int32_t VehicleTab = 3;
+    constexpr int32_t StockShown = 2;
     // With --hd-audit-menus 1, every screen's draws are tallied as --hd-audit tallies a battle's.
     const bool audit = MCTest::Option("hd-audit-menus").has_value();
     const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
@@ -3942,6 +3957,8 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
 
     const auto shoot = [&](const std::string& name)
     {
+        AuditLabel = name;
+
         for (int32_t frame = 0; frame < SettleFrames; ++frame)
         {
             MCTestGame::RunFrame(FrameSeconds);
@@ -3960,10 +3977,24 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     LoadScreen();
     shoot("load");
     Cancel();
+    AuditLabel = "to briefing";
     NewCampaign();
     shoot("briefing");
+    GlobalLog()->BriefingScreen->SetUpMission();
+    shoot("briefing_mission");
+    AuditLabel = "to purchase";
     GlobalLog()->SetUpPurchaseScreen(true);
     shoot("purchase");
+    // The store's vehicles, then both in stock (a new campaign's store has none: its rows show the sold-out outlines).
+    GlobalLog()->CurrentInvTab = VehicleTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_vehicles");
+    MCTestGame::StockStore(StockShown);
+    shoot("purchase_vehicles_stocked");
+    GlobalLog()->CurrentInvTab = MechTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_stocked");
+    AuditLabel = "to repair";
     GlobalLog()->SetUpRepairScreen(true);
     shoot("repair");
     GHdArt = 0;
@@ -3972,6 +4003,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     if (audit)
     {
         renderer->Audit = nullptr;
+        AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
     }
 }
@@ -4608,6 +4640,8 @@ namespace
                 entry.WindowWidth = draw.Window->XMax + 1;
                 entry.WindowHeight = draw.Window->YMax + 1;
                 entry.Owner = AuditOwner(draw.Data);
+                entry.Label = AuditLabel;
+                MCInput::Display()->GetShownColors(entry.Colors);
 
                 if (const MCWindow* from = draw.From; from != nullptr && from->Pixels != nullptr && from->Size() > 0)
                 {
@@ -4685,17 +4719,21 @@ namespace
         {
             const auto& [key, entry] = original[rank];
             const auto& [command, sharp, data, from, window] = key;
-            std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}\n", rank, command,
+            // A copy's picture size stands in for its owner (it has no data).
+            const std::string owner = entry.Picture.has_value() && entry.Owner == "-"
+                                          ? std::format("{}x{}", entry.Picture->Width, entry.Picture->Height)
+                                          : entry.Owner;
+            std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}{}\n", rank, command,
                                      static_cast<const void*>(data), entry.WindowWidth, entry.WindowHeight,
                                      entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
-                                     entry.Owner, sharp ? " sharp" : "");
+                                     owner, entry.Label.empty() ? "" : " on " + entry.Label, sharp ? " sharp" : "");
 
             // A copy's picture as its window held it, and the pack's frame of it when it was drawn sharp.
             if (entry.Picture.has_value())
             {
                 const DecodedFrame& picture = *entry.Picture;
                 WriteFramePngs(
-                    folder / std::format("{:03}_{}", rank, command), picture, colors, 1,
+                    folder / std::format("{:03}_{}", rank, command), picture, entry.Colors, 1,
                     [](SDL_Color color) { return color; }, false);
 
                 if (const std::shared_ptr<const MCHdArt::Frame> hd =
@@ -5663,6 +5701,235 @@ TEST_CASE_ISOLATED("game: a shape table loaded outside the sprite files is drawn
     std::cout << std::format("  forest.shp frame 0: {}x{}, {} shown pixels changed\n", table->Frames.Frames[0].Width,
                              table->Frames.Frames[0].Height, changed);
     CHECK(changed > 0);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Line art redrawn as smooth strokes: a staircase run (a line of slope 1/3, its pixels stepping) is straightened, so the
+/// straight line's middle is covered where the steps left it bare; a square outline's corners stay sharp (covered at
+/// the corner pixel's centre); each redrawn pixel keeps its art pixel's byte; far from the art nothing is drawn.
+/// </summary>
+TEST_CASE("sharp lines: line art redrawn as strokes is straightened, keeps its corners and its bytes")
+{
+    constexpr int32_t Columns = 16;
+    constexpr int32_t Rows = 12;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    constexpr uint8_t Step = 5;
+    constexpr uint8_t Box = 9;
+    std::array<uint8_t, Columns * Rows> art{};
+    art.fill(No);
+    const auto put = [&](int32_t x, int32_t y, uint8_t value) { art[static_cast<size_t>(y * Columns + x)] = value; };
+
+    // A staircase from (0, 0) to (11, 3): runs of three, each a row lower.
+    constexpr int32_t RunLength = 3;
+    constexpr int32_t Runs = 4;
+
+    for (int32_t x = 0; x < RunLength * Runs; ++x)
+    {
+        put(x, x / RunLength, Step);
+    }
+
+    // A 5 x 5 square outline from (2, 6) to (6, 10).
+    constexpr int32_t BoxLeft = 2;
+    constexpr int32_t BoxTop = 6;
+    constexpr int32_t BoxSide = 5;
+
+    for (int32_t i = 0; i < BoxSide; ++i)
+    {
+        put(BoxLeft + i, BoxTop, Box);
+        put(BoxLeft + i, BoxTop + BoxSide - 1, Box);
+        put(BoxLeft, BoxTop + i, Box);
+        put(BoxLeft + BoxSide - 1, BoxTop + i, Box);
+    }
+
+    const std::vector<uint8_t> redrawn = MCSharpLines::Redraw(art, Columns, Columns, Rows);
+    constexpr int32_t Scale = MCSharpText::Scale;
+    REQUIRE_EQ(redrawn.size(), static_cast<size_t>(Columns * Scale * Rows * Scale * BytesPerPixel));
+
+    // The byte and coverage of the redrawn pixel at (x, y) in art pixels.
+    const auto at = [&](float x, float y)
+    {
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * Columns * Scale + column) * BytesPerPixel;
+        return std::pair{redrawn[offset], redrawn[offset + 1]};
+    };
+
+    constexpr uint8_t Full = 255;
+    // The straightened line through the run's ends' centres, (0.5, 0.5) to (11.5, 3.5), at x 3.0: y 1.32. The steps
+    // left that point between rows 0 and 1 (the original's pixels there are (2, 0) and (3, 1)).
+    constexpr float LineX = 3.0f;
+    constexpr float LineY = 0.5f + (LineX - 0.5f) * 3.0f / 11.0f;
+    CHECK_EQ(at(LineX, LineY).second, Full);
+    CHECK_EQ(at(LineX, LineY).first, Step);
+    // The box's corner pixel's centre, and the middle of a side.
+    CHECK_EQ(at(BoxLeft + 0.5f, BoxTop + 0.5f).second, Full);
+    CHECK_EQ(at(BoxLeft + 0.5f, BoxTop + 0.5f).first, Box);
+    CHECK_EQ(at(BoxLeft + 2.5f, BoxTop + BoxSide - 0.5f).second, Full);
+    // Inside the box, and far from everything.
+    CHECK_EQ(at(BoxLeft + 2.5f, BoxTop + 2.5f).second, uint8_t{0});
+    CHECK_EQ(at(14.5f, 10.5f).second, uint8_t{0});
+}
+
+namespace
+{
+    /// <summary>The mech store's shapes: the sold-out outlines, the pictures' repair shapes and the body diagrams' icons.</summary>
+    enum class MCStoreShape : uint8_t
+    {
+        Outline,
+        Picture,
+        Diagram,
+        Count
+    };
+
+    /// <summary>The draws of the store's shapes an audit saw: of each kind, how many, and how many sharp.</summary>
+    struct MCStoreDraws
+    {
+        std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> All{};
+        std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> Sharp{};
+
+        int32_t AllOf(MCStoreShape kind) const { return All[static_cast<size_t>(kind)]; }
+        int32_t SharpOf(MCStoreShape kind) const { return Sharp[static_cast<size_t>(kind)]; }
+    };
+
+    /// <summary>The screen's indices with its top band (the ticker and the clock, which move on) left out.</summary>
+    std::vector<uint8_t> StoreIndices()
+    {
+        constexpr size_t ChromeRows = 0x10;
+        std::vector<uint8_t> shown = MCInput::Display()->ComposeScreen();
+        const size_t width = static_cast<size_t>(MCInput::Display()->Screen().XMax) + 1;
+        shown.erase(shown.begin(),
+                    shown.begin() + static_cast<std::ptrdiff_t>(std::min(shown.size(), width * ChromeRows)));
+        return shown;
+    }
+}
+
+/// <summary>
+/// The purchase screen's mech store on a sharp screen with HD art on: its sold-out rows' outlines are redrawn as smooth
+/// strokes (line art), and, the store stocked, its rows' pictures (each mech's repair shapes, drawn in place) and body
+/// diagrams (the mech icons, tied to the pack's icons) come from the pack; every such draw is sharp, and the screen
+/// keeps the indices it has with HD art off.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and outlines sharp and keeps their indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    constexpr int32_t Width = 1280;
+    constexpr int32_t Height = 960;
+    constexpr int32_t SettleFrames = 30;
+    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+    SDL_SyncWindow(&MCInput::Display()->Window());
+    NewCampaign();
+    GlobalLog()->SetUpPurchaseScreen(false);
+    const std::shared_ptr<MCVulkanRenderer> renderer =
+        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+
+    // A pack of the mechs' repair shapes (under their bytes' hashes) but their sold-out outlines, which only line art
+    // can draw sharp, and the icons.
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    std::vector<Sequence> sequences;
+
+    for (const MCRegisteredBlock& shapes : GlobalLog()->MechRepShapes)
+    {
+        std::optional<LooseTable> table = MakeLooseTable(shapes.Bytes(), "mechrep");
+        REQUIRE(table.has_value());
+        REQUIRE(table->Frames.Frames.size() > static_cast<size_t>(MCLogistics::MechSoldOutShape));
+        table->Frames.Frames[static_cast<size_t>(MCLogistics::MechSoldOutShape)] = DecodedFrame{};
+        sequences.push_back(std::move(table->Frames));
+    }
+
+    size_t translucent = 0;
+    std::ranges::move(IconSequences(translucent), std::back_inserter(sequences));
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_store";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, sequences, colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+
+    const auto kindOf = [](const uint8_t* table, int32_t frame) -> std::optional<MCStoreShape>
+    {
+        const MCLogistics& log = *GlobalLog();
+
+        for (size_t i = 0; i < log.MechRepShapes.size(); ++i)
+        {
+            if (log.MechRepShapes[i].Bytes().data() == table)
+            {
+                return frame == MCLogistics::MechSoldOutShape ? MCStoreShape::Outline : MCStoreShape::Picture;
+            }
+
+            if (log.MechIconShapes[i].Bytes().data() == table)
+            {
+                return MCStoreShape::Diagram;
+            }
+        }
+
+        return std::nullopt;
+    };
+
+    const auto settle = []
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    };
+
+    // The store with HD art off, then on (its draws audited), and whether they show the same indices.
+    const auto compare = [&](std::string_view what)
+    {
+        MCTest::Scope scope{std::string(what)};
+        settle();
+        const std::vector<uint8_t> plain = StoreIndices();
+        GHdArt = 1;
+        MCHdArt::SetPackFolder(pack);
+        GlobalLog()->AttachHdArt();
+        // The screen is drawn at the window's size from the frame after HD art comes on.
+        MCTestGame::RunFrame(FrameSeconds);
+        MCStoreDraws draws;
+        renderer->Audit = [&](const MCVulkanRenderer::AuditedDraw& draw)
+        {
+            if (draw.Command != "Shape")
+            {
+                return;
+            }
+
+            if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame); kind.has_value())
+            {
+                ++draws.All[static_cast<size_t>(*kind)];
+                draws.Sharp[static_cast<size_t>(*kind)] += draw.Sharp ? 1 : 0;
+            }
+        };
+
+        settle();
+        const std::vector<uint8_t> sharp = StoreIndices();
+        renderer->Audit = nullptr;
+        GHdArt = 0;
+        MCHdArt::SetPackFolder({});
+        REQUIRE_EQ(sharp.size(), plain.size());
+        CHECK(sharp == plain);
+        std::cout << std::format("  {}: outlines {}/{}, pictures {}/{}, diagrams {}/{} sharp\n", what,
+                                 draws.SharpOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
+                                 draws.SharpOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
+                                 draws.SharpOf(MCStoreShape::Diagram), draws.AllOf(MCStoreShape::Diagram));
+        CHECK(draws.Sharp == draws.All);
+        return draws;
+    };
+
+    const MCStoreDraws soldOut = compare("sold out");
+    CHECK(soldOut.AllOf(MCStoreShape::Outline) > 0);
+    constexpr int32_t Stock = 2;
+    MCTestGame::StockStore(Stock);
+    const MCStoreDraws stocked = compare("in stock");
+    CHECK(stocked.AllOf(MCStoreShape::Picture) > 0);
+    CHECK(stocked.AllOf(MCStoreShape::Diagram) > 0);
     std::filesystem::remove_all(scratch);
 }
 

@@ -10,7 +10,12 @@
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
+#include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCLogSlider.h"
+#include "logistics/MCMechPurchaseBlock.h"
+#include "logistics/MCPurMechList.h"
+#include "logistics/MCPurVehicleList.h"
+#include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCSplashScreen.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "lib/MCPacketFile.h"
@@ -493,4 +498,32 @@ void MCTestGame::FaceMech(MCBattleMech& mech, float degrees)
     const auto s = static_cast<float>(std::sin(radians));
     MCFrameOfRef frame(MCVector3D(c, s, 0.0f), MCVector3D(-s, c, 0.0f), UnitZ);
     mech.SetFrame(frame);
+}
+
+void MCTestGame::StockStore(int32_t count)
+{
+    for (const auto& mech : GlobalLog()->PurMechList->Mechs)
+    {
+        for (const auto& variant : mech->Variants)
+        {
+            if (variant != nullptr)
+            {
+                variant->NumAvailable = count;
+            }
+        }
+
+        mech->Block->DrawBackground(mech->Block->Row);
+    }
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
+    {
+        item->Count = count;
+        item->PurchaseBlock->DrawBackground(item->PurchaseBlock->Row, item->MasterID);
+    }
+
+    for (const auto& vehicle : GlobalLog()->PurVehicleList->Vehicles)
+    {
+        vehicle->Data->NumAvailable = count;
+        vehicle->Block->DrawBackground(vehicle->Block->Row);
+    }
 }

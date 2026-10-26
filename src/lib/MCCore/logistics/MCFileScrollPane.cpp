@@ -108,19 +108,7 @@ auto MCFileScrollPane::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t h
     ContentPort->InitView(width - SliderWidth, height);
 
     // The splash screens' own slider art over the scroll pane's.
-    MCLogPort art;
-    art.Load(std::format("{}logart\\splashscroll.tga", ArtPath));
-    const int32_t numTiles = height / art.Height() - 1;
-
-    for (int32_t i = 0; i < numTiles; i++)
-    {
-        art.CopyTo(SliderPort->Frame(), 0, art.Height() * i + 1, true);
-    }
-
-    art.Load(std::format("{}logart\\splashsupbup.tga", ArtPath));
-    art.CopyTo(SliderPort->Frame(), 0, 0, true);
-    art.Load(std::format("{}logart\\splashsdnbup.tga", ArtPath));
-    art.CopyTo(SliderPort->Frame(), 0, height - 0xf, true);
+    ColumnArts.push_back(ColumnArt{"splashscroll.tga", "splashsupbup.tga", "splashsdnbup.tga"});
 
     // The column headers (operation, mission, resource points). Each is added and removed again straight away:
     // they are displayed by the pane itself, not as children.

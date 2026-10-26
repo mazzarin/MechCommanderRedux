@@ -56,6 +56,7 @@
 #include "platform/MCRegistry.h"
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 std::type_identity_t<std::array<bool, 7>> LogCheatActive{};
@@ -459,6 +460,7 @@ auto MCLogistics::Start() -> void
     }
 
     MCRenderer::RegisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)), MCDataKind::Tables);
+    AttachHdArt();
 
     RepairPorts[0] = NewArtPort("logart\\lsrupm03.tga");
     RepairPorts[1] = NewArtPort("logart\\lsrupm01.tga");
@@ -520,12 +522,52 @@ auto MCLogistics::Start() -> void
     ShowLogScreen(false, false);
 }
 
+auto MCLogistics::AttachHdArt() -> void
+{
+    // A new owner: ties made before go with the old one.
+    HdArtOwner = std::make_shared<const int>(0);
+    std::vector<MCHdArt::LineArtFrame> lineArt;
+
+    const auto attach = [&](const MCRegisteredBlock& icons, std::string file)
+    {
+        if (!icons.Empty())
+        {
+            MCHdArt::Attach(icons.Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::move(file)});
+        }
+    };
+
+    for (size_t i = 0; i < MechRepShapes.size(); ++i)
+    {
+        attach(MechIconShapes[i], std::format("mi{:02}", i));
+
+        if (!MechRepShapes[i].Empty())
+        {
+            lineArt.push_back({MechRepShapes[i].Bytes().data(), MechSoldOutShape});
+        }
+    }
+
+    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
+    {
+        attach(VehicleIconShapes[i], std::format("vi1{:02}", i));
+
+        if (!VehicleRepShapes[i].Empty())
+        {
+            lineArt.push_back({VehicleRepShapes[i].Bytes().data(), VehicleSoldOutShape});
+        }
+    }
+
+    MCHdArt::SetLineArtFrames(lineArt);
+}
+
 MCLogistics::~MCLogistics()
 {
     if (!_Started)
     {
         return;
     }
+
+    MCHdArt::SetLineArtFrames({});
+    HdArtOwner.reset();
 
     MCRenderer::UnregisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)));
     PlayerLights.reset();

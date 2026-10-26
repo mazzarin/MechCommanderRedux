@@ -76,6 +76,19 @@ public:
     /// </summary>
     void Start();
 
+    /// <summary>
+    /// Port-only: ties the mech and vehicle icons' damage shapes (<c>mi##.shp</c>, <c>vi1##.shp</c>) to the HD art
+    /// pack's (the mech bar's icons), and marks the sold-out outlines (<see cref="MechSoldOutShape"/>,
+    /// <see cref="VehicleSoldOutShape"/>) as line art, drawn as smooth strokes (MCHdArt::SetLineArtFrames). Start does
+    /// it; again when HD art comes on.
+    /// </summary>
+    void AttachHdArt();
+
+    /// <summary>The frame of a mech's repair shapes drawn as its sold-out outline (on the purchase screen).</summary>
+    static constexpr int32_t MechSoldOutShape = 0x13;
+    /// <summary>The frame of a vehicle's repair shapes drawn as its sold-out outline.</summary>
+    static constexpr int32_t VehicleSoldOutShape = 6;
+
     /// <summary>Draws the damage state of location <paramref name="location"/> of a mech into <paramref name="port"/>.</summary>
     static void DrawMechBodyLoc(MCLogMech& mech, int32_t location, MCLogPort& port, int32_t xPos, int32_t yPos);
 
@@ -406,6 +419,8 @@ public:
     std::array<MCRegisteredBlock, 35> VehicleIconShapes;
     /// <summary>Colour remap tables for drawing shapes (<c>VFX_shape_lookaside</c>).</summary>
     std::array<std::array<uint8_t, 256>, 10> ShapeLookaside{};
+    /// <summary>Port-only: what the icon shapes' ties to the HD art pack last while it lives (AttachHdArt).</summary>
+    std::shared_ptr<const int> HdArtOwner;
     /// <summary>The repair screen's mech picture background (<c>lsrupm00.tga</c>).</summary>
     std::shared_ptr<MCLogPort> RepairBackPort;
     /// <summary>The inventory block background (<c>invblock.tga</c>).</summary>

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
 #include "platform/MCFrameLog.h"
+#include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 #include "platform/MCVulkanShaders.h"
@@ -107,6 +108,11 @@ namespace
 
     /// <summary>The most colour tables held at once (the table texture's height).</summary>
     constexpr uint32_t MaxTableRows = 8192;
+    /// <summary>The table texture's row that leaves every colour as it is.</summary>
+    constexpr uint32_t IdentityRow = 0;
+    /// <summary>A decoded shape's bytes a pixel (DecodeShape): its value, then its state (1: drawn).</summary>
+    constexpr size_t DecodedBytes = 2;
+    constexpr uint8_t DecodedDrawn = 1;
     /// <summary>The width of the strip of written pixels.</summary>
     constexpr int32_t StripWidth = 4096;
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
@@ -838,9 +844,12 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         const uint32_t kind = op & KindMask;
         _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
+        // A table applied to what lies under a fill on a surface drawn larger (a fade: the logistics rows' darkening)
+        // recolours the drawn colours at the output's resolution, drawing nothing of the original's pixels.
+        const bool recolours = kind == KindFill && (op & TableAfter) != 0 && _Audited->Scaled;
         _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSmoothPolygon ||
                            kind == KindSharpGlyph || kind == KindSmoothLine || kind == KindSmoothEllipse ||
-                           (op & SmoothEdges) != 0;
+                           (op & SmoothEdges) != 0 || recolours;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -2032,9 +2041,25 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns,
                                      int32_t rows, const Quad& at, const MCColorTable& table)
 {
-    BeginRecording();
+    const uint64_t key = SharpKey(SharpKind::Glyph, glyph, pitch, columns, rows);
+    return AddSharpPicture(
+        surface, key, [&] { return MCSharpText::Redraw(glyph, pitch, columns, rows); }, columns, rows, at,
+        Quad{0, 0, 1, 1}, TableRow(table));
+}
 
-    // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once.
+bool MCVulkanRenderer::AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows,
+                                     const Quad& at, const Quad& from, uint32_t tableRow)
+{
+    const uint64_t key = SharpKey(SharpKind::Lines, art, columns, columns, rows);
+    return AddSharpPicture(
+        surface, key, [&] { return MCSharpLines::Redraw(art, columns, columns, rows); }, columns, rows, at, from,
+        tableRow);
+}
+
+uint64_t MCVulkanRenderer::SharpKey(SharpKind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns,
+                                    int32_t rows)
+{
+    // Kept by the pixels' bytes (and size), so the same glyph from any font or place is redrawn once.
     uint64_t key = HashBasis;
     const auto mix = [&key](uint64_t value)
     {
@@ -2042,6 +2067,7 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
         key *= HashPrime;
     };
 
+    mix(static_cast<uint64_t>(kind));
     mix(static_cast<uint64_t>(columns));
     mix(static_cast<uint64_t>(rows));
 
@@ -2050,15 +2076,23 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
         for (int32_t column = 0; column < columns; ++column)
         {
             const size_t offset = static_cast<size_t>(row) * static_cast<size_t>(pitch) + static_cast<size_t>(column);
-            mix(offset < glyph.size() ? glyph[offset] : MCSharpText::NoInk);
+            mix(offset < pixels.size() ? pixels[offset] : MCSharpText::NoInk);
         }
     }
 
+    return key;
+}
+
+bool MCVulkanRenderer::AddSharpPicture(uint16_t surface, uint64_t key,
+                                       const std::function<std::vector<uint8_t>()>& redraw, int32_t columns,
+                                       int32_t rows, const Quad& at, const Quad& from, uint32_t tableRow)
+{
+    BeginRecording();
     auto found = _SharpGlyphs.find(key);
 
     if (found == _SharpGlyphs.end())
     {
-        const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, pitch, columns, rows);
+        const std::vector<uint8_t> redrawn = redraw();
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
         Picture picture;
@@ -2076,10 +2110,9 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
         _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
     }
 
-    // The colour field carries the redrawn glyph's scale (shaders/draw.pshader's KindSharpGlyph).
-    const Quad from = {0, 0, 1, 1};
+    // The colour field carries the redrawn picture's scale (shaders/draw.pshader's KindSharpGlyph).
     Add(surface, SourceKind::Picture, UsePicture(found->second), at, from, KindSharpGlyph | AlphaBlend | TableBefore,
-        static_cast<uint32_t>(MCSharpText::Scale), TableRow(table), 0);
+        static_cast<uint32_t>(MCSharpText::Scale), tableRow, 0);
     return true;
 }
 
@@ -2201,11 +2234,37 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     bool hdTranslucent = false;
     bool hdBlended = false;
 
+    // Port-only: line art (the purchase screen's sold-out outlines) on a sharp screen is redrawn as smooth strokes at
+    // the output's resolution (MCSharpLines), in the colours its table gives its bytes; the original's draw keeps the
+    // indices.
+    bool lineArt = false;
+
+    if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && _Surfaces[surface].Key == _ScaledScreen &&
+        MCHdArt::LineArt(command.ShapeTable.data(), command.ShapeNum))
+    {
+        std::vector<uint8_t> decoded(static_cast<size_t>(width) * static_cast<size_t>(rows) * DecodedBytes);
+        DecodeShape(data, rows, width, decoded);
+        std::vector<uint8_t> art(static_cast<size_t>(width) * static_cast<size_t>(rows), MCSharpText::NoInk);
+
+        for (size_t pixel = 0; pixel < art.size(); ++pixel)
+        {
+            if (decoded[pixel * DecodedBytes + 1] == DecodedDrawn)
+            {
+                art[pixel] = decoded[pixel * DecodedBytes];
+            }
+        }
+
+        const Quad artFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
+        const uint32_t tableRow = command.Op == MCShapeOp::Xlat ? TableRow(*command.Table) : IdentityRow;
+        lineArt = AddSharpLines(surface, art, width, rows, at, artFrom, tableRow);
+        op |= lineArt ? IndexOnly : 0u;
+    }
+
     // Port-only: a shape the HD art pack has a frame of keeps the original's indices and is shown from the pack (its
     // bounds: the header's). A translucent shape's frame leaves out its blended pixels, which still blend below, unless
     // it holds them (an effect's); drawn through a table (XlatAlpha: the haze), such a frame's blended pixels take the
     // table's change of colour (draw.pshader's TableShift).
-    if (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent)
+    if (!lineArt && (command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat || translucent))
     {
         const int32_t boundsWidth = MCRead32(header, 0x10) - MCRead32(header, 0x08) + 1;
 

@@ -312,9 +312,12 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
     for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(*game) / "data" / "sound"))
     {
         const auto name = entry.path().filename().string();
+        std::string extension = entry.path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         MCTest::Scope scope(name);
 
-        if (entry.path().extension() == ".PAK")
+        if (extension == ".PAK")
         {
             MCPacketFile file;
             CHECK_EQ(file.Open(entry.path().string()), 0);
@@ -333,7 +336,7 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
                 checkSample(wave);
             }
         }
-        else if (entry.path().extension() == ".WAV")
+        else if (extension == ".WAV")
         {
             if (name.starts_with("MUSIC"))
             {

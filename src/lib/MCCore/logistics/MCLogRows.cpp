@@ -409,6 +409,12 @@ auto DrawInventoryList(MCInventoryList& inventory, MCLogPort& port) -> std::opti
 auto MCLogistics::DrawMechBodyLoc(MCLogMech& mech, int32_t location, MCLogPort& port, int32_t xPos, int32_t yPos)
     -> void
 {
+    DrawBodyLoc(GlobalLog()->MechIconShapes[mech.NameIndex].Bytes(), location, MechBodyLocState(mech, location), port,
+                xPos, yPos);
+}
+
+auto MCLogistics::MechBodyLocState(const MCLogMech& mech, int32_t location) -> int32_t
+{
     const MCLogMech::ArmorPoints& armor = mech.Armor[location];
     int32_t percent = static_cast<int32_t>(static_cast<double>(armor.CurArmor) / armor.MaxArmor * 100.0f);
 
@@ -424,23 +430,35 @@ auto MCLogistics::DrawMechBodyLoc(MCLogMech& mech, int32_t location, MCLogPort& 
         }
     }
 
-    int32_t state = DiagramState(percent, mech.Internals[location].CurArmor);
-    DrawDiagram(GlobalLog()->MechIconShapes[mech.NameIndex].Bytes(), location, state, port, xPos, yPos);
+    return DiagramState(percent, mech.Internals[location].CurArmor);
 }
 
 auto MCLogistics::DrawVehicleBodyLoc(MCLogVehicle& vehicle, int32_t location, MCLogPort& port, int32_t xPos,
                                      int32_t yPos) -> void
 {
+    if (const std::optional<int32_t> state = VehicleBodyLocState(vehicle, location); state.has_value())
+    {
+        DrawBodyLoc(GlobalLog()->VehicleIconShapes[vehicle.NameIndex].Bytes(), location, *state, port, xPos, yPos);
+    }
+}
+
+auto MCLogistics::VehicleBodyLocState(const MCLogVehicle& vehicle, int32_t location) -> std::optional<int32_t>
+{
     uint8_t maxArmor = vehicle.MaxArmorPoints[location];
 
     if (maxArmor == 0)
     {
-        return;
+        return std::nullopt;
     }
 
     int32_t percent = static_cast<int32_t>(static_cast<double>(vehicle.CurArmorPoints[location]) / maxArmor * 100.0f);
-    int32_t state = DiagramState(percent, vehicle.CurInternalStructure[location]);
-    DrawDiagram(GlobalLog()->VehicleIconShapes[vehicle.NameIndex].Bytes(), location, state, port, xPos, yPos);
+    return DiagramState(percent, vehicle.CurInternalStructure[location]);
+}
+
+auto MCLogistics::DrawBodyLoc(std::span<const uint8_t> shapes, int32_t location, int32_t state, MCLogPort& port,
+                              int32_t xPos, int32_t yPos) -> void
+{
+    DrawDiagram(shapes, location, state, port, xPos, yPos);
 }
 
 auto MCLogistics::DrawPilotSkillBar(MCLogWarrior& warrior, int32_t skill, int32_t xPos, int32_t yPos, int32_t row,

@@ -53,23 +53,9 @@ auto MCScrollPane::Init(int32_t width, int32_t height, int32_t xPos, int32_t yPo
     InitWithoutPort(xPos, yPos, width, height);
     _Port = ContentPort;
 
-    SliderPort = std::make_shared<MCLogPort>();
-    SliderPort->Init(SliderWidth, height);
-
     // The track tile repeats down the column, below the first row; the arrows go at the ends.
-    MCLogPort art;
-    art.Load(std::format("{}logart\\scroll.tga", ArtPath));
-    const int32_t numTiles = height / art.Height() - 1;
-
-    for (int32_t i = 0; i < numTiles; i++)
-    {
-        art.CopyTo(SliderPort->Frame(), 0, art.Height() * i + 1, true);
-    }
-
-    art.Load(std::format("{}logart\\supbup.tga", ArtPath));
-    art.CopyTo(SliderPort->Frame(), 0, 0, true);
-    art.Load(std::format("{}logart\\sdnbup.tga", ArtPath));
-    art.CopyTo(SliderPort->Frame(), 0, height - 15, true);
+    ColumnArts = {ColumnArt{"scroll.tga", "supbup.tga", "sdnbup.tga"}};
+    ColumnHeight = height;
 
     if (PanePort == nullptr)
     {
@@ -88,7 +74,7 @@ auto MCScrollPane::Destroy() -> void
     _Port.reset();
     MCLogObject::Destroy();
     ContentPort.reset();
-    SliderPort.reset();
+    ColumnArts.clear();
     FreeSlider();
     BackgroundCopy.reset();
     PanePort.reset();
@@ -231,7 +217,28 @@ auto MCScrollPane::PressedArrowArt(bool down) -> std::shared_ptr<MCLogPort>
 auto MCScrollPane::DrawSliderColumn(const MCPane& target, int32_t xPos, int32_t yPos, bool keyed) -> void
 {
     const int key = keyed ? -1 : 0;
-    SliderPort->CopyTo(target, xPos, yPos, key);
+
+    // The column, drawn in place: the original's picture of it started zeroed, and its art was copied in keyed (so it
+    // held no key colour, and copied keyed or not alike).
+    {
+        MCLogBlockPort column(target, xPos, yPos, SliderWidth, ColumnHeight, false);
+        VfxPaneWipe(column.Frame(), 0);
+
+        for (const ColumnArt& art : ColumnArts)
+        {
+            const std::shared_ptr<MCLogPort> track = LogScreenArt(art.Track);
+            const int32_t tiles = ColumnHeight / track->Height() - 1;
+
+            for (int32_t i = 0; i < tiles; i++)
+            {
+                track->CopyTo(column.Frame(), 0, track->Height() * i + 1, true);
+            }
+
+            LogScreenArt(art.UpArrow)->CopyTo(column.Frame(), 0, 0, true);
+            LogScreenArt(art.DownArrow)->CopyTo(column.Frame(), 0, ColumnHeight - ArrowArtHeight, true);
+        }
+    }
+
     const Arrow held = HeldArrow();
 
     if (held == Arrow::Up)

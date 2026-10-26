@@ -492,6 +492,33 @@ private:
                        int32_t rows, const Quad& at, int32_t sourceX, int32_t sourceY, const MCColorTable& table);
     /// <summary>Port-only: how <paramref name="font"/>'s two-tone glyphs are layered (kept until its bytes change).</summary>
     const MCSharpText::MCFontLayers& FontLayers(std::span<const uint8_t> font);
+    /// <summary>
+    /// Port-only: draws line art <paramref name="columns"/> x <paramref name="rows"/> (<paramref name="art"/>, its
+    /// pixels' bytes, <see cref="MCSharpText::NoInk"/> where none is drawn) over <paramref name="at"/> on a sharp screen,
+    /// reading it from <paramref name="from"/> (its first pixel and steps), redrawn as smooth strokes
+    /// (<see cref="MCSharpLines"/>) at the output's resolution in the colours table row <paramref name="tableRow"/> gives
+    /// its bytes. False when it can't be put on the GPU.
+    /// </summary>
+    bool AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows, const Quad& at,
+                       const Quad& from, uint32_t tableRow);
+    /// <summary>What a picture redrawn sharp was redrawn from (its key's space).</summary>
+    enum class SharpKind : uint8_t
+    {
+        Glyph = 1,
+        Lines,
+    };
+
+    /// <summary>The key a picture redrawn sharp is kept by: the kind, size and bytes of what it was redrawn from.</summary>
+    static uint64_t SharpKey(SharpKind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns,
+                             int32_t rows);
+    /// <summary>
+    /// Draws the picture kept by <paramref name="key"/> (<paramref name="redraw"/> makes it the first time: RGBA8,
+    /// <see cref="MCSharpText::Scale"/> times <paramref name="columns"/> x <paramref name="rows"/>, red the byte and green
+    /// the coverage) over <paramref name="at"/>, read from <paramref name="from"/>, in the colours table row
+    /// <paramref name="tableRow"/> gives its bytes (shaders/draw.pshader's KindSharpGlyph).
+    /// </summary>
+    bool AddSharpPicture(uint16_t surface, uint64_t key, const std::function<std::vector<uint8_t>()>& redraw,
+                         int32_t columns, int32_t rows, const Quad& at, const Quad& from, uint32_t tableRow);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -782,6 +809,20 @@ private:
 
     /// <summary>Marks <paramref name="picture"/> used this frame; returns its frame picture index.</summary>
     uint32_t UsePicture(Picture& picture);
+
+    /// <summary>
+    /// Port-only: the picture redrawn sharp kept by <paramref name="key"/> (<see cref="AddSharpPicture"/>'s), made by
+    /// <paramref name="redraw"/> the first time; null when it can't be put on the GPU.
+    /// </summary>
+    Picture* SharpPicture(uint64_t key, const std::function<std::vector<uint8_t>()>& redraw, int32_t columns,
+                          int32_t rows);
+    /// <summary>
+    /// Port-only: draws <paramref name="picture"/>, redrawn sharp, over <paramref name="at"/>, read from
+    /// <paramref name="from"/>, in the colours table row <paramref name="tableRow"/> gives its bytes, with
+    /// <paramref name="flags"/> above the scale in the colour field (shaders/draw.pshader's KindSharpGlyph).
+    /// </summary>
+    void DrawSharpPicture(uint16_t surface, Picture& picture, const Quad& at, const Quad& from, uint32_t tableRow,
+                          uint32_t flags);
 
     /// <summary>The frame's pictures in use (their textures).</summary>
     std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;

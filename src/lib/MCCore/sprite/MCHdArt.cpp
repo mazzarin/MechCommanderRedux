@@ -184,6 +184,8 @@ namespace
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<const uint8_t*> SmoothTables;
+        /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
+        std::set<std::pair<const uint8_t*, int32_t>> LineArtFrames;
     };
 
     State& TheState()
@@ -827,6 +829,22 @@ void MCHdArt::SetSmoothEdgeTables(std::span<const uint8_t* const> tables)
 bool MCHdArt::SmoothEdges(const uint8_t* table)
 {
     return GHdArt != 0 && TheState().SmoothTables.contains(table);
+}
+
+void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames)
+{
+    std::set<std::pair<const uint8_t*, int32_t>>& kept = TheState().LineArtFrames;
+    kept.clear();
+
+    for (const LineArtFrame& frame : frames)
+    {
+        kept.emplace(frame.Table, frame.Frame);
+    }
+}
+
+bool MCHdArt::LineArt(const uint8_t* table, int32_t frame)
+{
+    return GHdArt != 0 && TheState().LineArtFrames.contains({table, frame});
 }
 
 uint64_t MCHdArt::PackVersion()

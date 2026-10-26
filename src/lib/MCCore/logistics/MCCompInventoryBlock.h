@@ -70,8 +70,24 @@ public:
     bool CantMount = false;
     /// <summary>The component (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogInventoryItem> Item() const { return _Item.lock(); }
-    /// <summary>The component's icon.</summary>
-    std::shared_ptr<MCLogPort> IconPort;
+    /// <summary>
+    /// Port: the component's icon, drawn in place with its row (<see cref="DrawIcon"/>; the original painted it into a
+    /// picture once): its range colour's block background and picture (logistics art), its name and caption, and the
+    /// Clan mark's colour (none for Inner Sphere technology).
+    /// </summary>
+    struct Icon
+    {
+        std::string Background;
+        std::string Picture;
+        std::string Name;
+        std::string Caption;
+        std::optional<int32_t> ClanMark;
+    };
+
+    Icon IconArt;
+
+    /// <summary>Draws the icon but its background into <paramref name="port"/> (the icon's corner at 0, 0).</summary>
+    void DrawIcon(MCLogPort& port) const;
     /// <summary>Tonnage (plus its ammo's for ballistic and missile weapons).</summary>
     float Tonnage = 0.0f;
     /// <summary>The item's index in the owner's inventory list (set by whoever makes the block).</summary>

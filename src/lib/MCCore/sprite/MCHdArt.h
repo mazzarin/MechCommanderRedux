@@ -292,6 +292,23 @@ namespace MCHdArt
     /// <summary>Whether HD art is on and <paramref name="table"/> is one whose edges are drawn smooth.</summary>
     bool SmoothEdges(const uint8_t* table);
 
+    /// <summary>A frame of a shape table (the table's first byte).</summary>
+    struct LineArtFrame
+    {
+        const uint8_t* Table = nullptr;
+        int32_t Frame = 0;
+    };
+
+    /// <summary>
+    /// Sets the shape frames that are line art (one-pixel outlines: the purchase screen's sold-out mechs and vehicles),
+    /// redrawn as smooth strokes (platform/MCSharpLines) on a screen drawn at the size it's shown while HD art is on;
+    /// none needs a pack.
+    /// </summary>
+    void SetLineArtFrames(std::span<const LineArtFrame> frames);
+
+    /// <summary>Whether HD art is on and frame <paramref name="frame"/> of <paramref name="table"/> is line art.</summary>
+    bool LineArt(const uint8_t* table, int32_t frame);
+
     /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
     inline constexpr size_t PaletteBytes = 256 * 3;
 

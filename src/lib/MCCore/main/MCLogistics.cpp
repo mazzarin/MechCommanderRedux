@@ -526,33 +526,26 @@ auto MCLogistics::AttachHdArt() -> void
     HdArtOwner = std::make_shared<const int>(0);
     std::vector<MCHdArt::LineArtFrame> lineArt;
 
-    const auto attach = [&](const MCRegisteredBlock& icons, std::string file)
+    // Each unit's icons tied to the pack's (named as their files are), and its repair shapes' sold-out outline.
+    const auto attach = [&](std::span<const MCRegisteredBlock> repairs, std::span<const MCRegisteredBlock> icons,
+                            std::string_view prefix, int32_t soldOut)
     {
-        if (!icons.Empty())
+        for (size_t i = 0; i < repairs.size(); ++i)
         {
-            MCHdArt::Attach(icons.Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::move(file)});
+            if (!icons[i].Empty())
+            {
+                MCHdArt::Attach(icons[i].Bytes(), HdArtOwner, MCHdArt::IconShapeKey{std::format("{}{:02}", prefix, i)});
+            }
+
+            if (!repairs[i].Empty())
+            {
+                lineArt.push_back({repairs[i].Bytes().data(), soldOut});
+            }
         }
     };
 
-    for (size_t i = 0; i < MechRepShapes.size(); ++i)
-    {
-        attach(MechIconShapes[i], std::format("mi{:02}", i));
-
-        if (!MechRepShapes[i].Empty())
-        {
-            lineArt.push_back({MechRepShapes[i].Bytes().data(), MechSoldOutShape});
-        }
-    }
-
-    for (size_t i = 0; i < VehicleRepShapes.size(); ++i)
-    {
-        attach(VehicleIconShapes[i], std::format("vi1{:02}", i));
-
-        if (!VehicleRepShapes[i].Empty())
-        {
-            lineArt.push_back({VehicleRepShapes[i].Bytes().data(), VehicleSoldOutShape});
-        }
-    }
+    attach(MechRepShapes, MechIconShapes, "mi", MechSoldOutShape);
+    attach(VehicleRepShapes, VehicleIconShapes, "vi1", VehicleSoldOutShape);
 
     MCHdArt::SetLineArtFrames(lineArt);
 }
@@ -761,6 +754,8 @@ namespace
     constexpr int32_t SlideBack = 0x10;
     /// <summary>How far in from a slide picture's right edge a pane's slider column goes.</summary>
     constexpr int32_t SlideColumnInset = 0xe;
+    /// <summary>How long a slide takes: it crosses its width in this time.</summary>
+    constexpr double SlideSeconds = 0.25;
 
     /// <summary>
     /// The slide's picture of what <paramref name="pane"/> shows (the original drew it into a work picture wiped to
@@ -1285,13 +1280,13 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
     do
     {
         const int64_t start = MCPort::PerformanceCounter();
-        wipe->Offset = static_cast<int32_t>(static_cast<double>(elapsed) * 4.0 * 427.0);
+        wipe->Offset = static_cast<int32_t>(static_cast<double>(elapsed) / SlideSeconds * SlideWidth);
         UpdateDisplay(false, false, 0, false, 0);
         const int64_t end = MCPort::PerformanceCounter();
         // The original divided the low 32 bits of the tick difference by the low 32 bits of the frequency.
         const auto ticks = static_cast<uint32_t>(end - start);
         elapsed = static_cast<float>(static_cast<double>(ticks) / static_cast<int32_t>(frequency) + elapsed);
-    } while (elapsed < 0.25);
+    } while (elapsed < SlideSeconds);
 }
 
 auto MCLogistics::Darken(int32_t amount, MCColorTable fadeTable, MCLogPort& port) -> void

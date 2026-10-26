@@ -374,7 +374,15 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
     // The distance from each redrawn pixel's centre to the nearest stroke, in art pixels.
     std::vector<float> distance(static_cast<size_t>(width) * static_cast<size_t>(height),
                                 std::numeric_limits<float>::max());
-    const float reach = StrokeRadius + 1.0f / static_cast<float>(Scale);
+    // A redrawn pixel's centre in art pixels, and how far from a stroke one may be touched by it.
+    const auto artPoint = [](int32_t i, int32_t j)
+    {
+        return MCPoint{(static_cast<float>(i) + Centre) / static_cast<float>(Scale),
+                       (static_cast<float>(j) + Centre) / static_cast<float>(Scale)};
+    };
+
+    constexpr float RedrawnPixel = 1.0f / static_cast<float>(Scale);
+    const float reach = StrokeRadius + RedrawnPixel;
 
     const auto stroke = [&](MCPoint a, MCPoint b)
     {
@@ -388,8 +396,7 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
         {
             for (int32_t i = left; i <= right; ++i)
             {
-                const MCPoint centre{(static_cast<float>(i) + Centre) / static_cast<float>(Scale),
-                                     (static_cast<float>(j) + Centre) / static_cast<float>(Scale)};
+                const MCPoint centre = artPoint(i, j);
                 float& nearest = distance[static_cast<size_t>(j) * static_cast<size_t>(width) + static_cast<size_t>(i)];
                 nearest = std::min(nearest, DistanceTo(a, b, centre));
             }
@@ -434,8 +441,7 @@ std::vector<uint8_t> MCSharpLines::Redraw(std::span<const uint8_t> pixels, int32
             }
 
             // The byte of the art pixel nearest the redrawn one.
-            const float px = (static_cast<float>(i) + Centre) / static_cast<float>(Scale);
-            const float py = (static_cast<float>(j) + Centre) / static_cast<float>(Scale);
+            const auto [px, py] = artPoint(i, j);
             const auto gx = static_cast<int32_t>(px);
             const auto gy = static_cast<int32_t>(py);
             float nearest = std::numeric_limits<float>::max();

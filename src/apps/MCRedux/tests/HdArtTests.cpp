@@ -6496,10 +6496,15 @@ TEST_CASE_ISOLATED("tool: --hd-packet-pictures pictures sprite packets beside th
                 continue;
             }
 
-            // A translucent frame's colours 0 and 255 draw nothing.
+            // A translucent frame's colours 0 and 255 draw nothing; a frame with nothing drawn has no pack frame.
             if (decoded->Translucent)
             {
                 LeaveOutUndrawn(*decoded, true);
+            }
+
+            if (std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+            {
+                continue;
             }
 
             const std::shared_ptr<const MCHdArt::Frame> hd =

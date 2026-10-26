@@ -6239,12 +6239,12 @@ namespace
 
 /// <summary>
 /// With HD art on, the polygons the smooth path left to the original's pixels are drawn smooth too: a quad with one
-/// corner turned in (a beam's rounding), as two triangles either side of the diagonal from that corner, and a quad
-/// whose corners lie in a line, as a line. Each, flat and Gouraud, shows pixels between its colour and what lies under it
-/// only with HD art on, keeps the screen's indices, and the concave quad shows its colour all over its inside (no
-/// seam along the diagonal).
+/// corner turned in (a beam's rounding), as two triangles either side of the diagonal from that corner, a quad whose
+/// corners lie in a line, as a line, and one whose sides go out and back (a beam's sides on one point), as its sides.
+/// Each, flat and Gouraud, shows pixels between its colour and what lies under it only with HD art on, keeps the
+/// screen's indices, and the concave quad shows its colour all over its inside (no seam along the diagonal).
 /// </summary>
-TEST_CASE_ISOLATED("game: HD art draws concave quads and quads in a line smooth")
+TEST_CASE_ISOLATED("game: HD art draws concave quads and quads of no area smooth")
 {
     if (!MCTestGame::Available())
     {
@@ -6265,15 +6265,17 @@ TEST_CASE_ISOLATED("game: HD art draws concave quads and quads in a line smooth"
     constexpr uint8_t Color = 0x30;
     constexpr int32_t Fixed = 1 << 16;
     // A kite whose left side bends in at its third corner (the walk fills it whole: its sides only go down, then up),
-    // and a quad whose corners lie on a steep line.
+    // a quad whose corners lie on a steep line, and one going out to a bend and on, then back.
     const std::array<std::array<int32_t, 2>, 4> kite = {{{0, 0}, {30, 35}, {0, 60}, {10, 25}}};
     const std::array<std::array<int32_t, 2>, 4> line = {{{0, 0}, {10, 20}, {20, 40}, {10, 20}}};
+    const std::array<std::array<int32_t, 2>, 4> path = {{{0, 0}, {12, 14}, {8, 40}, {12, 14}}};
     constexpr int32_t Margin = 1;
     const MCRect box{x - Margin, y - Margin, x + 30 + Margin, y + 60 + Margin};
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
 
-    for (const auto& [name, corners] : {std::pair{"concave", std::cref(kite)}, std::pair{"in a line", std::cref(line)}})
+    for (const auto& [name, corners] : {std::pair{"concave", std::cref(kite)}, std::pair{"in a line", std::cref(line)},
+                                        std::pair{"out and back", std::cref(path)}})
     {
         std::array<MCScreenVertex, 4> vertices{};
 

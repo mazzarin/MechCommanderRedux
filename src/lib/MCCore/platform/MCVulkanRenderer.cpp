@@ -2848,34 +2848,43 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
         return changes == OneTopOneBottom;
     };
 
-    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
-    if (left == 0 || right == 0)
+    // Port-only: a polygon of no area (corners in a line, or a beam's sides on one point: a path out and back), which the
+    // walk draws as lines of pixels (all of them when it fills the polygon whole): corners in a line as a line between
+    // the two farthest apart, a path as its sides (each once). A line is the coverage of two sides along it, either way
+    // round. (A crossed quad whose halves' areas cancel isn't a path, and is left to the original's pixels.)
+    int64_t area = 0;
+
+    for (size_t i = 0; i < corners; ++i)
     {
+        const auto [ax, ay] = corner(i);
+        const auto [bx, by] = corner(i + 1);
+        area += static_cast<int64_t>(ax) * by - static_cast<int64_t>(bx) * ay;
+    }
+
+    if (area == 0)
+    {
+        if (!filledWhole())
+        {
+            return false;
+        }
+
+        const auto apart = [&corner](size_t a, size_t b)
+        {
+            const auto [ax, ay] = corner(a);
+            const auto [bx, by] = corner(b);
+            return static_cast<int64_t>(bx - ax) * (bx - ax) + static_cast<int64_t>(by - ay) * (by - ay);
+        };
+
         if (left + right == 0)
         {
-            // Port-only: corners in a line, which the walk draws as a line of pixels (all of it when it fills the
-            // polygon whole): a line between the two corners farthest apart (the coverage of two sides along it,
-            // either way round).
-            if (!filledWhole())
-            {
-                return false;
-            }
-
             std::array<size_t, Segment> ends = {0, 1};
-            int64_t longest = -1;
 
             for (size_t a = 0; a < corners; ++a)
             {
                 for (size_t b = a + 1; b < corners; ++b)
                 {
-                    const auto [ax, ay] = corner(a);
-                    const auto [bx, by] = corner(b);
-                    const int64_t length =
-                        static_cast<int64_t>(bx - ax) * (bx - ax) + static_cast<int64_t>(by - ay) * (by - ay);
-
-                    if (length > longest)
+                    if (apart(a, b) > apart(ends[0], ends[1]))
                     {
-                        longest = length;
                         ends = {a, b};
                     }
                 }
@@ -2885,6 +2894,52 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
             return true;
         }
 
+        // A path: each side's way back is a side too.
+        const auto back = [&](size_t i)
+        {
+            for (size_t j = 0; j < corners; ++j)
+            {
+                if (corner(j) == corner(i + 1) && corner(j + 1) == corner(i))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        for (size_t i = 0; i < corners; ++i)
+        {
+            if (apart(i, (i + 1) % corners) > 0 && !back(i))
+            {
+                return false;
+            }
+        }
+
+        std::vector<std::array<size_t, Segment>> sides;
+
+        for (size_t i = 0; i < corners; ++i)
+        {
+            const std::array<size_t, Segment> side = {i, (i + 1) % corners};
+            const auto same = [&](const std::array<size_t, Segment>& other)
+            {
+                return (corner(other[0]) == corner(side[0]) && corner(other[1]) == corner(side[1])) ||
+                       (corner(other[0]) == corner(side[1]) && corner(other[1]) == corner(side[0]));
+            };
+
+            if (apart(side[0], side[1]) > 0 && std::ranges::none_of(sides, same))
+            {
+                sides.push_back(side);
+                add(side, 1, std::nullopt, false);
+            }
+        }
+
+        return true;
+    }
+
+    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
+    if (left == 0 || right == 0)
+    {
         add(std::span(all).first(corners), left > 0 ? 1 : -1, std::nullopt, false);
         return true;
     }

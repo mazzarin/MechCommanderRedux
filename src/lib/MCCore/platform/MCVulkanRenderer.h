@@ -450,9 +450,9 @@ private:
 
     /// <summary>
     /// Port-only: adds the colour pass of a flat or Gouraud polygon (a laser's beam) at the output's resolution
-    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel; corners in a line as a line,
+    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel; a polygon of no area as lines,
     /// a quad with one corner turned in as two triangles. False for a polygon it can't draw so (more than four corners,
-    /// one row high, or concave otherwise).
+    /// one row high, one the walk doesn't fill whole, or concave otherwise).
     /// </summary>
     bool AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command);
 

@@ -1362,5 +1362,6 @@ std::unique_ptr<MCSmackTag> SmackOpen(std::string_view fileName, uint32_t flags,
 
     auto movie = std::make_unique<MCSmackTag>();
     movie->Player = std::move(*player);
+    movie->FileName = fileName;
     return movie;
 }

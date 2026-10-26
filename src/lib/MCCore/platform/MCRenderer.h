@@ -18,6 +18,11 @@
 #include "platform/MCAddressKey.h"
 #include "vfx/MCVfx.h"
 
+namespace MCHdArt
+{
+    struct Frame;
+}
+
 /// <summary>How a texture's pixels change (<see cref="MCRenderer::CreateTexture"/>).</summary>
 enum class MCTextureUse : uint8_t
 {
@@ -550,6 +555,20 @@ public:
     /// <summary>The pixels written since <see cref="LockTexture"/> are complete: renderers take them at the next use.</summary>
     static void UnlockTexture(MCTexture& texture);
 
+    /// <summary>
+    /// Port-only: shows <paramref name="frame"/> over <paramref name="texture"/>'s pixels from (<paramref name="x"/>,
+    /// <paramref name="y"/>), as far as the frame's original size reaches (a movie's HD frame over the window it decodes
+    /// into), where the hardware renderer copies them to a sharp screen; null shows the pixels alone again. It is kept
+    /// until the next call or the texture goes.
+    /// </summary>
+    static void ShowHdPicture(MCTexture& texture, std::shared_ptr<const MCHdArt::Frame> frame, int32_t x, int32_t y);
+
+    /// <summary>
+    /// Port-only: whether <see cref="ShowHdPicture"/>'s frames are seen: the GPU draws, onto a sharp screen (one shown
+    /// larger than the game draws it).
+    /// </summary>
+    static bool ShowsHdPictures();
+
     /// <summary>Every texture made and not yet destroyed.</summary>
     static std::span<const std::shared_ptr<MCTexture>> Textures();
 
@@ -803,6 +822,12 @@ protected:
 
     /// <summary>A texture is going (or its size changed): drop what is kept in its <c>Hardware</c>.</summary>
     virtual void OnTextureReleased(MCTexture&) {}
+
+    /// <summary>Port-only: <see cref="ShowHdPicture"/>'s frame for the texture.</summary>
+    virtual void OnShowHdPicture(MCTexture&, std::shared_ptr<const MCHdArt::Frame>, int32_t /*x*/, int32_t /*y*/) {}
+
+    /// <summary>Port-only: whether the screen is sharp (<see cref="ShowsHdPictures"/>).</summary>
+    virtual bool OnShowsHdPictures() const { return false; }
 
     /// <summary>
     /// A stream texture's lock while the GPU draws alone: memory to write <c>Locked</c> into (rows <c>Width</c> bytes

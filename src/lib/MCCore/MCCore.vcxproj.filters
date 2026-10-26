@@ -1159,6 +1159,9 @@
     <ClCompile Include="sprite\MCHdArt.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCHdMovie.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCMechActor.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2332,6 +2335,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCHdArt.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCHdMovie.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechActor.h">

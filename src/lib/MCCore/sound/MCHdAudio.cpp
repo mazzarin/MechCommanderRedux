@@ -25,6 +25,8 @@ namespace
         std::optional<uint64_t> Version;
         /// <summary>Whether the pack folder has an audio.cfg of a format this code reads.</summary>
         bool Readable = false;
+        /// <summary>Whether that pack has orchestral music.</summary>
+        bool Orchestral = false;
         /// <summary>The replacements by key (null: the wave has none), and their keys, most recently used first.</summary>
         std::unordered_map<std::string,
                            std::pair<std::shared_ptr<const MCHdAudio::Decoded>, std::list<std::string>::iterator>>
@@ -66,6 +68,9 @@ namespace
             state.Bytes = 0;
             state.Version = version;
             state.Readable = ReadsPack();
+            std::error_code error;
+            state.Orchestral = state.Readable && std::filesystem::is_directory(
+                                                     MCHdArt::PackFolder() / "audio" / "music" / "orchestral", error);
         }
 
         return state;
@@ -226,6 +231,11 @@ bool MCHdAudio::MatchesLength(const MCFlac& flac, uint64_t sourceFrames, uint32_
 bool MCHdAudio::PackReadable()
 {
     return Current().Readable;
+}
+
+bool MCHdAudio::HasOrchestral()
+{
+    return Current().Orchestral;
 }
 
 void MCHdAudio::Forget()

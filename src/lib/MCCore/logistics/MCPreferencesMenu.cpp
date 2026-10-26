@@ -329,10 +329,21 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
 
     // HD AUDIO: the HD audio pack's sounds where it has them (sound/MCHdAudio.h), from the next sound or track on.
+    // ORCHESTRAL only when the pack has orchestral music; without it, ORCHESTRAL plays the stereo music, as ON does.
     MCLogGroupBox& hdAudio = AddBox(screen, panel, HdAudioBoxPlace, BoxOutlineColor);
     AddLabel(screen, hdAudio, "HD AUDIO", BoxTitleLeft, BoxTitleTop);
-    AddDropDown(screen, hdAudio, GHdAudio, {{"OFF", HdAudioOff}, {"ON", HdAudioOn}, {"ORCHESTRAL", HdAudioOrchestral}},
-                HdAudioChanged);
+    std::vector<MCLogComboBox::Item> hdAudioItems = {{"OFF", HdAudioOff}, {"ON", HdAudioOn}};
+
+    if (MCHdAudio::HasOrchestral())
+    {
+        hdAudioItems.push_back({"ORCHESTRAL", HdAudioOrchestral});
+    }
+    else if (GHdAudio == HdAudioOrchestral)
+    {
+        GHdAudio = HdAudioOn;
+    }
+
+    AddDropDown(screen, hdAudio, GHdAudio, std::move(hdAudioItems), HdAudioChanged);
 
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);

@@ -388,8 +388,9 @@ TEST_CASE_ISOLATED("game: the preferences screen turns HD art on and saves it in
 }
 
 /// <summary>
-/// The preferences screen's HD AUDIO drop-down: ON or ORCHESTRAL without a pack in the user folder says where the pack
-/// goes, OFF says nothing, CANCEL puts OFF back (and the field shows it), ACCEPT writes PREFS "HDAudio".
+/// The preferences screen's HD AUDIO drop-down: without a pack it offers OFF and ON (ORCHESTRAL only with a pack's
+/// orchestral music), ON says where the pack goes, OFF says nothing, CANCEL puts OFF back (and the field shows it),
+/// ACCEPT writes PREFS "HDAudio".
 /// </summary>
 TEST_CASE_ISOLATED("game: the preferences screen turns HD audio on and saves it in PREFS")
 {
@@ -409,14 +410,15 @@ TEST_CASE_ISOLATED("game: the preferences screen turns HD audio on and saves it 
     ShowPreferences();
     RunFrames();
     REQUIRE(FindDropDown(HdAudioDropDown) != nullptr);
+    CHECK_EQ(FindDropDown(HdAudioDropDown)->Items().size(), size_t{2});
     const uint32_t offShown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs hd audio off", offShown);
-    ChooseIn(HdAudioDropDown, 2);
-    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOrchestral));
+    ChooseIn(HdAudioDropDown, 1);
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
     CloseMenuMessage("prefs hd audio needs a pack");
-    const uint32_t orchestralShown = MCScreenInput::ScreenHash();
-    MCScreenInput::SaveShot("prefs hd audio orchestral", orchestralShown);
-    CHECK(orchestralShown != offShown);
+    const uint32_t onShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs hd audio on", onShown);
+    CHECK(onShown != offShown);
 
     // OFF says nothing.
     ChooseIn(HdAudioDropDown, 0);
@@ -434,7 +436,7 @@ TEST_CASE_ISOLATED("game: the preferences screen turns HD audio on and saves it 
     RunFrames();
     CHECK_EQ(MCScreenInput::ScreenHash(), offShown);
 
-    ChooseIn(HdAudioDropDown, 2);
+    ChooseIn(HdAudioDropDown, 1);
     CloseMenuMessage("prefs hd audio needs a pack before accept");
     WritePrefs();
     RunFrames();
@@ -454,7 +456,7 @@ TEST_CASE_ISOLATED("game: the preferences screen turns HD audio on and saves it 
 
     std::filesystem::remove(prefsPath);
     GHdAudio = HdAudioOff;
-    CHECK(saved == std::optional<int32_t>(HdAudioOrchestral));
+    CHECK(saved == std::optional<int32_t>(HdAudioOn));
 }
 
 /// <summary>

@@ -14,7 +14,8 @@ l Format=1
 FITend
 ```
 
-ON plays the pack's stereo music; ORCHESTRAL its orchestral music where it has some (the stereo elsewhere). A
+ON plays the pack's stereo music; ORCHESTRAL, offered only when the pack has `audio/music/orchestral`, its
+orchestral music where it has some (the stereo elsewhere). The current pack has none. A
 missing, corrupt, or wrong-duration entry uses original audio. A change takes effect from the next sound and music
 track. Art's `pack.cfg` is unchanged.
 

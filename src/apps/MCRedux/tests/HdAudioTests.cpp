@@ -233,9 +233,13 @@ TEST_CASE("HD audio: music selection, streaming silence and short seamless loops
     stream.Read(block, false);
     CHECK_EQ(block[3840], uint8_t{0});
     // ORCHESTRAL takes the pack's orchestral music where it has some, its stereo music elsewhere; OFF the original.
+    // The preferences offer ORCHESTRAL only once the pack has orchestral music.
     GHdAudio = HdAudioOrchestral;
+    CHECK(!MCHdAudio::HasOrchestral());
     CHECK_EQ(MCHdAudio::Music(source.string())->string(), music.string());
     Write(fixture.Root / "audio/music/orchestral/MUSIC02.flac", Flac());
+    MCHdAudio::Forget();
+    CHECK(MCHdAudio::HasOrchestral());
     CHECK(MCHdAudio::Music(source.string())->parent_path().filename() == "orchestral");
     GHdAudio = HdAudioOff;
     CHECK(!MCHdAudio::Music(source.string()).has_value());

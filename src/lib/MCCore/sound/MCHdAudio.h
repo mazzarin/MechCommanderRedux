@@ -48,6 +48,8 @@ public:
     static bool MatchesLength(const MCFlac& flac, uint64_t sourceFrames, uint32_t sourceRate);
     /// <summary>Whether the pack folder has HD audio: an audio.cfg of a format this code reads.</summary>
     static bool PackReadable();
+    /// <summary>Whether the pack has orchestral music (<c>audio/music/orchestral</c>), for ORCHESTRAL to offer.</summary>
+    static bool HasOrchestral();
     /// <summary>Forgets what was found in the pack (the tests change a pack's files while it is in use).</summary>
     static void Forget();
 };

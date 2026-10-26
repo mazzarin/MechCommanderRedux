@@ -33,7 +33,8 @@ void WritePrefs();
 /// drop-down (EASY, REGULAR, HARD; <see cref="GameDifficulty"/>) in place of the original's checks; a RENDERER
 /// drop-down (VULKAN, SOFTWARE; PREFS "Renderer"); a UI RESOLUTION drop-down (NATIVE, 480P .. 1080P; PREFS
 /// "UIResolution", <see cref="GUiResolution"/>); an HD ART drop-down (OFF, ON; PREFS "HDArt", <see cref="GHdArt"/>);
-/// an HD AUDIO drop-down (OFF, ON, ORCHESTRAL; PREFS "HDAudio", <see cref="GHdAudio"/>); and ACCEPT and CANCEL side by
+/// an HD AUDIO drop-down (OFF, ON, and ORCHESTRAL when the pack has orchestral music; PREFS "HDAudio",
+/// <see cref="GHdAudio"/>); and ACCEPT and CANCEL side by
 /// side at the bottom right. The renderer takes effect at the next start, which the
 /// message dialog says when the drop-down picks another renderer than the running one; the UI resolution and HD art at
 /// the next scenario (the message dialog says when HD art is turned on without a pack); HD audio from the next

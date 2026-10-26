@@ -221,6 +221,13 @@ public:
     /// <summary>Port-only: called after every draw command while set (the HD art audit's).</summary>
     std::function<void(const AuditedDraw&)> Audit;
 
+    /// <summary>
+    /// Port-only: called as the renderer starts recording a frame (its first command), for the presenter to place the
+    /// screen (<see cref="SetScreenScale"/>) as the display will show the frame. The draws then know a sharp screen
+    /// from the frame it first is one (HD art just turned on, the game's first frame), not one frame on.
+    /// </summary>
+    std::function<void()> RecordingStarts;
+
 protected:
     /// <summary>The alpha colours go up again before the next draws.</summary>
     void OnAlphaTableChanged() override { _AlphaColorsChanged = true; }
@@ -431,6 +438,13 @@ private:
     /// HD art is on and the surface is drawn at more pixels than its window has.
     /// </summary>
     bool ScaledHdArt(uint16_t surface) const;
+    /// <summary>
+    /// Whether <paramref name="surface"/> is drawn at more pixels than its window has: the sharp screen as placed for
+    /// the frame being recorded, or a surface placed so when the last frame ran (an underlay).
+    /// </summary>
+    bool DrawnLarger(uint16_t surface) const;
+    /// <summary>Port-only: whether <paramref name="surface"/> is the sharp screen (<see cref="SetScreenScale"/>).</summary>
+    bool SharpScreenSurface(uint16_t surface) const;
 
     /// <summary>
     /// Port-only: adds the draw of an HD art frame of a textured polygon's picture (a tactical or briefing map's) as the
@@ -448,8 +462,9 @@ private:
 
     /// <summary>
     /// Port-only: adds the colour pass of a flat or Gouraud polygon (a laser's beam) at the output's resolution
-    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel. False for a polygon it can't
-    /// draw so (more than four corners, not convex, or flat).
+    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel; a polygon of no area as lines,
+    /// a quad with one corner turned in as two triangles. False for a polygon it can't draw so (more than four corners,
+    /// one row high, one the walk doesn't fill whole, or concave otherwise).
     /// </summary>
     bool AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command);
 

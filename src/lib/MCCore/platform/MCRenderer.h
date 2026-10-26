@@ -324,6 +324,11 @@ struct MCStatusBarCommand
     /// <summary>The bar's length inside each row (0: none), and its AlphaTable row.</summary>
     int32_t BarLength;
     int32_t AlphaColor;
+    /// <summary>
+    /// Port-only: the bar's length as the game measured it, <c>BarLength</c> to <c>BarLength</c> + 1 (the bar then ends
+    /// that far into its last pixel), which a renderer drawing at the output's resolution shows.
+    /// </summary>
+    float FillLength = 0.0f;
 };
 
 /// <summary>

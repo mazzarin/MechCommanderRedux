@@ -4,7 +4,8 @@
 // mcx\vfx\vfx_map_polygon.cpp: despite the name, the game's status bars, its pixel write and a transparent window
 // blit. (Inline assembly in the original.)
 
-void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaColor, int barLength)
+void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaColor, int barLength,
+                 std::optional<float> measured)
 {
     const std::shared_ptr<MCWindow> window = pane.Window.lock();
 
@@ -18,6 +19,8 @@ void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaCo
     int32_t clipX1 = pane.X1 < window->XMax + 1 ? pane.X1 : window->XMax;
     int32_t clipY1 = pane.Y1 < window->YMax + 1 ? pane.Y1 : window->YMax;
     MCClipToView(*window, clipX0, clipY0, clipX1, clipY1);
+    // Port-only: how far into the next pixel the measured length reaches.
+    const float past = measured.has_value() ? std::clamp(*measured - static_cast<float>(barLength), 0.0f, 1.0f) : 0.0f;
 
     if (x0 > x1)
     {
@@ -70,6 +73,10 @@ void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaCo
         barLength = 0;
     }
 
+    // Port-only: the length as measured, ending inside the pixel past the rounded length's (a bar the box stops keeps
+    // its rounded length, as does one the game lengthened to show something).
+    const float fill = static_cast<float>(barLength) + (barLength > 0 && barLength < x1 - x0 - 2 ? past : 0.0f);
+
     const int32_t width = x1 - x0;
 
     if (width < 3)
@@ -84,6 +91,7 @@ void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaCo
     command.FrameTop = topRow;
     command.FrameBottom = bottomRow;
     command.BarLength = barLength;
+    command.FillLength = fill;
     command.AlphaColor = alphaColor;
     MCRenderer::For(*window).StatusBar(*window, command);
 }

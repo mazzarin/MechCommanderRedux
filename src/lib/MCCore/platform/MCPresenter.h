@@ -136,6 +136,13 @@ class MCPresenter
 public:
     virtual ~MCPresenter() = default;
 
+    /// <summary>
+    /// Port-only: the frame being drawn as the display will show it (its view, output size and sharp screen; set by
+    /// the display). A GPU renderer asks for it as a frame's drawing starts, so its draws know whether the screen they
+    /// land on is drawn at the size it's shown before the frame is first presented so.
+    /// </summary>
+    std::function<MCFrame()> FrameLayout;
+
     /// <summary>The kind of renderer this presenter belongs to.</summary>
     virtual MCRendererKind Kind() const = 0;
 

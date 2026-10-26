@@ -24,6 +24,8 @@ struct MCPolyElementData
     bool StatusBar = false;
     /// <summary>The status bar's length (the last argument of <c>AGStatusBar</c>).</summary>
     int32_t BarPercent = 0;
+    /// <summary>Port-only: the status bar's length before it was rounded down to <c>BarPercent</c>.</summary>
+    std::optional<float> MeasuredBar;
     /// <summary>The status bar's colour.</summary>
     int32_t BarColor = 0;
     /// <summary>

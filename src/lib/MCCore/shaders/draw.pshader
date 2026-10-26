@@ -108,8 +108,11 @@ static const uint KindHdMap = 9;
 static const uint KindSmoothMap = 10;
 // Port-only: a flat or Gouraud polygon (a laser's beam) at the output's resolution, its edges smooth (SmoothPolygonPixel).
 static const uint KindSmoothPolygon = 11;
+// Port-only: a status bar's part (a health bar's) at the output's resolution, its fill ending where the game measured it
+// (SmoothBarPixel).
+static const uint KindSmoothBar = 12;
 // Port-only: an HD art frame drawn as KindHd is, its coverage the original's pixels smoothed (HdMaskCoverage) instead
-// of its alpha (their mask scaled up, which keeps the pixels' steps). Kinds 12 and 13 are left for other branches.
+// of its alpha (their mask scaled up, which keeps the pixels' steps). Kind 13 is left for other branches.
 static const uint KindHdSmooth = 14;
 // Port-only: a terrain tile's seam pass (terrain.vshader), drawn over every tile after them all (TerrainSeamPixel).
 static const uint KindTerrainSeam = 15;
@@ -960,14 +963,31 @@ float PolygonIndex(Input input, float2 window, uint corners)
 // Port-only: a flat or Gouraud polygon's colour at drawn pixel `target` (KindSmoothPolygon; its indices were written by
 // the original's spans, index-only): inside its corners' edges (through the pixels' centres, half a window pixel out, as
 // the spans take both ends), the edge ramped over a drawn pixel; its colour index stepped as the walk's (PolygonIndex),
-// wrapping as the walk's. Premultiplied, through the blend pipeline.
+// wrapping as the walk's. Two corners are a line (corners in a line), its two sides either way along it. A concave
+// quad is drawn as two triangles (walk.z: the corner one leaves out, plus 1): each takes its two sides of the quad, and
+// the diagonal between them is a hard edge (the pixels on it the half's with walk.w). Premultiplied, through the blend
+// pipeline.
 Output SmoothPolygonPixel(Input input, int2 target)
 {
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     const uint corners = input.walk.x;
     const float turn = (float)asint(input.walk.y);
+    const uint skipped = input.walk.z;
     float inside = 1e9;
+
+    if (skipped != 0)
+    {
+        const uint left = skipped - 1;
+        const float2 a = PolygonCorner(input, (left + corners - 1) % corners) + 0.5;
+        const float2 b = PolygonCorner(input, (left + 1) % corners) + 0.5;
+        const float side = turn * ((b.x - a.x) * (window.y - a.y) - (b.y - a.y) * (window.x - a.x));
+
+        if (side < 0.0 || (side == 0.0 && input.walk.w == 0))
+        {
+            discard;
+        }
+    }
 
     for (uint i = 0; i < 4; i++)
     {
@@ -976,8 +996,15 @@ Output SmoothPolygonPixel(Input input, int2 target)
             break;
         }
 
+        const uint next = (i + 1) % corners;
+
+        if (skipped != 0 && (i == skipped - 1 || next == skipped - 1))
+        {
+            continue;
+        }
+
         const float2 a = PolygonCorner(input, i) + 0.5;
-        const float2 b = PolygonCorner(input, (i + 1) % corners) + 0.5;
+        const float2 b = PolygonCorner(input, next) + 0.5;
         const float2 edge = b - a;
         const float along = max(length(edge), 1e-4);
         inside = min(inside, turn * (edge.x * (window.y - a.y) - edge.y * (window.x - a.x)) / along);
@@ -992,6 +1019,22 @@ Output SmoothPolygonPixel(Input input, int2 target)
 
     const uint index = (uint)(int)floor(PolygonIndex(input, window, corners)) & 255u;
     return Blended(float4(Shown(index), 1.0) * coverage);
+}
+
+// Port-only: a status bar's part at the output's resolution (KindSmoothBar): alpha colour op.w blended over the
+// rectangle as a fill's, its right edge at window x asfloat(span.x), so a health bar's fill ends where the game measured
+// it, the drawn pixel the edge crosses covered in part. Premultiplied, through the blend pipeline.
+Output SmoothBarPixel(Input input, int2 target)
+{
+    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x;
+    const float coverage = saturate(right - (float)target.x);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(Fetch(alphaTex, alphaSampler, int2((int)input.op.w, 1)) * coverage);
 }
 
 Output main(Input input)
@@ -1047,6 +1090,11 @@ Output main(Input input)
     if (kind == KindTerrainSeam)
     {
         return TerrainSeamPixel(input, target);
+    }
+
+    if (kind == KindSmoothBar)
+    {
+        return SmoothBarPixel(input, target);
     }
 
     const uint color = input.op.y & 255u;

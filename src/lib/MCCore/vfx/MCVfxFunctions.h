@@ -478,9 +478,11 @@ void AGEllipseFill(const MCPane& pane, int32_t xc, int32_t yc, int32_t width, in
 /// Draws a translucent status bar in the box (x0, y0)-(x1, y1), in window coordinates (the pane only clips): the
 /// top and bottom rows and the left and right columns are darkened through AlphaTable row 0x108, and the first
 /// <paramref name="barLength"/> + 1 pixels inside each other row are blended with alpha colour
-/// <paramref name="alphaColor"/>.
+/// <paramref name="alphaColor"/>. Port-only: <paramref name="measured"/> is the length the game measured before it
+/// rounded it down to <paramref name="barLength"/>, which a renderer drawing at the output's resolution shows.
 /// </summary>
-void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaColor, int barLength);
+void AGStatusBar(const MCPane& pane, int x0, int y0, int x1, int y1, int alphaColor, int barLength,
+                 std::optional<float> measured = std::nullopt);
 
 /// <summary>
 /// Writes a pixel (the low byte of <paramref name="color"/>) at pane coordinates (x, y), only strictly inside the

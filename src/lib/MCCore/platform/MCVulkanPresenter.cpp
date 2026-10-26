@@ -125,6 +125,15 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         {
             presenter->_Renderer = std::move(*renderer);
             MCRenderer::SetHardware(presenter->_Renderer, drawing);
+
+            // Port-only: each frame's draws see the screen placed as the frame will be shown.
+            presenter->_Renderer->RecordingStarts = [placing = presenter.get()]
+            {
+                if (placing->FrameLayout)
+                {
+                    placing->PlaceUnderlays(placing->FrameLayout());
+                }
+            };
         }
         else
         {
@@ -148,6 +157,12 @@ MCVulkanPresenter::~MCVulkanPresenter()
     if (_Renderer != nullptr && MCRenderer::Hardware() == _Renderer)
     {
         MCRenderer::SetHardware(nullptr, MCGpuDrawing::Off);
+    }
+
+    // Whoever still holds the renderer (a test) holds no pointer to this presenter.
+    if (_Renderer != nullptr)
+    {
+        _Renderer->RecordingStarts = nullptr;
     }
 
     _Renderer.reset();

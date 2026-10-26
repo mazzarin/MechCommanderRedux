@@ -43,9 +43,11 @@ namespace
     constexpr uint32_t KindSmoothMap = 10;
     /// <summary>Port-only: a flat or Gouraud polygon's colour pass at the output's resolution (a laser's beam).</summary>
     constexpr uint32_t KindSmoothPolygon = 11;
+    /// <summary>Port-only: a status bar's part at the output's resolution, its fill ending where the game measured it.</summary>
+    constexpr uint32_t KindSmoothBar = 12;
     /// <summary>
     /// Port-only: an HD art frame drawn as KindHd is, its edges from the original's pixels it draws, smoothed
-    /// (draw.pshader). Kinds 12 and 13 are left for other branches.
+    /// (draw.pshader). Kind 13 is left for other branches.
     /// </summary>
     constexpr uint32_t KindHdSmooth = 14;
     /// <summary>Port-only: a terrain tile's seam pass (shaders/terrain.vshader; drawn only there).</summary>
@@ -724,6 +726,11 @@ void MCVulkanRenderer::BeginRecording()
 
     _Recording = true;
 
+    if (RecordingStarts)
+    {
+        RecordingStarts();
+    }
+
     // The atlas starts again when it has grown too big (nothing of the last frame is drawn from it any more).
     if (_Pages.size() > MaxPages)
     {
@@ -866,14 +873,14 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     if (_Audited.has_value())
     {
         const uint32_t kind = op & KindMask;
-        _Audited->Scaled = surface.DrawnWidth > surface.RecordedWidth;
+        _Audited->Scaled = DrawnLarger(surfaceIndex);
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
         // A table applied to what lies under a fill on a surface drawn larger (a fade: the logistics rows' darkening)
         // recolours the drawn colours at the output's resolution, drawing nothing of the original's pixels.
         const bool recolours = kind == KindFill && (op & TableAfter) != 0 && _Audited->Scaled;
         _Audited->Sharp |= kind == KindHd || kind == KindHdSmooth || kind == KindHdMap || kind == KindSmoothMap ||
                            kind == KindSmoothPolygon || kind == KindSharpGlyph || kind == KindSmoothLine ||
-                           kind == KindSmoothEllipse || (op & SmoothEdges) != 0 || recolours;
+                           kind == KindSmoothEllipse || kind == KindSmoothBar || (op & SmoothEdges) != 0 || recolours;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -1753,7 +1760,7 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
 {
-    return _Surfaces[target].Key == _ScaledScreen ? HdPicture(window) : nullptr;
+    return SharpScreenSurface(target) ? HdPicture(window) : nullptr;
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow& window)
@@ -2247,8 +2254,18 @@ const MCSharpText::MCFontLayers& MCVulkanRenderer::FontLayers(std::span<const ui
 
 bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
 {
+    return DrawnLarger(surface) && MCHdArt::Active();
+}
+
+bool MCVulkanRenderer::DrawnLarger(uint16_t surface) const
+{
     const Surface& drawn = _Surfaces[surface];
-    return drawn.DrawnWidth > drawn.RecordedWidth && MCHdArt::Active();
+    return SharpScreenSurface(surface) || drawn.DrawnWidth > drawn.RecordedWidth;
+}
+
+bool MCVulkanRenderer::SharpScreenSurface(uint16_t surface) const
+{
+    return _ScaledScreen && _Surfaces[surface].Key == _ScaledScreen;
 }
 
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
@@ -2365,7 +2382,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     // indices.
     bool lineArt = false;
 
-    if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && _Surfaces[surface].Key == _ScaledScreen &&
+    if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
         MCHdArt::LineArt(command.ShapeTable.data(), command.ShapeNum))
     {
         std::vector<uint8_t> decoded(static_cast<size_t>(width) * static_cast<size_t>(rows) * DecodedBytes);
@@ -2923,42 +2940,12 @@ bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, c
 
 bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command)
 {
+    constexpr size_t Segment = 2;
     constexpr size_t Triangle = 3;
     constexpr size_t MostCorners = 4;
     const size_t corners = command.Vertices.size();
 
     if (corners < Triangle || corners > MostCorners)
-    {
-        return false;
-    }
-
-    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
-    const auto corner = [&command](size_t i)
-    {
-        const MCScreenVertex& vertex = command.Vertices[i % command.Vertices.size()];
-        return std::array{command.OriginX + vertex.X, command.OriginY + vertex.Y};
-    };
-
-    int32_t turn = 0;
-
-    for (size_t i = 0; i < corners; ++i)
-    {
-        const auto a = corner(i);
-        const auto b = corner(i + 1);
-        const auto c = corner(i + 2);
-        const int64_t cross =
-            static_cast<int64_t>(b[0] - a[0]) * (c[1] - b[1]) - static_cast<int64_t>(b[1] - a[1]) * (c[0] - b[0]);
-        const int32_t sign = cross > 0 ? 1 : cross < 0 ? -1 : 0;
-
-        if (sign != 0 && turn != 0 && sign != turn)
-        {
-            return false;
-        }
-
-        turn = sign != 0 ? sign : turn;
-    }
-
-    if (turn == 0)
     {
         return false;
     }
@@ -2970,6 +2957,29 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
         return false;
     }
 
+    const auto corner = [&command](size_t i)
+    {
+        const MCScreenVertex& vertex = command.Vertices[i % command.Vertices.size()];
+        return std::array{command.OriginX + vertex.X, command.OriginY + vertex.Y};
+    };
+
+    // Each corner's turn: the sign of the cross product of the sides meeting there.
+    std::array<int32_t, MostCorners> turns{};
+
+    for (size_t i = 0; i < corners; ++i)
+    {
+        const auto a = corner(i + corners - 1);
+        const auto b = corner(i);
+        const auto c = corner(i + 1);
+        const int64_t cross =
+            static_cast<int64_t>(b[0] - a[0]) * (c[1] - b[1]) - static_cast<int64_t>(b[1] - a[1]) * (c[0] - b[0]);
+        turns[i] = cross > 0 ? 1 : cross < 0 ? -1 : 0;
+    }
+
+    const auto turning = std::span(turns).first(corners);
+    const auto left = static_cast<size_t>(std::ranges::count(turning, 1));
+    const auto right = static_cast<size_t>(std::ranges::count(turning, -1));
+
     // Each corner's colour index, rounded as the walk starts a side from it (a flat polygon's all its fill's). Four
     // Gouraud corners needn't lie on a plane, so the shader steps them as the walk does: down the sides, then across.
     constexpr float Fixed = 65536.0f;
@@ -2977,47 +2987,195 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
     constexpr uint32_t Round = 0x8000;
     const float flat =
         static_cast<float>(((static_cast<uint32_t>(command.Vertices[0].C) + Round) >> 16) & 0xff) + HalfIndex;
-    std::array<float, MostCorners> index{};
 
-    for (size_t i = 0; i < MostCorners; ++i)
+    // Adds the colour pass over the polygon's corners `drawn` (`count` of them): its edges smooth, `turn` the way round
+    // its corners go. With `skipped` (a concave quad's half), the triangle without that corner: the quad's two sides
+    // smooth, the diagonal hard (its pixels this half's when `owns`).
+    const auto add = [&](std::span<const size_t> drawn, int32_t turn, std::optional<size_t> skipped, bool owns)
     {
-        const MCScreenVertex& vertex = command.Vertices[std::min(i, corners - 1)];
-        index[i] = command.Kind == MCPolygonKind::Flat ? flat : static_cast<float>(vertex.C) / Fixed + HalfIndex;
-    }
+        Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
+                   std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
 
-    Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
-               std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min()};
+        for (size_t i = 0; i < drawn.size(); ++i)
+        {
+            if (skipped.has_value() && drawn[i] == *skipped)
+            {
+                continue;
+            }
+
+            const auto [x, y] = corner(drawn[i]);
+            at = {std::min(at[0], x), std::min(at[1], y), std::max(at[2], x), std::max(at[3], y)};
+        }
+
+        at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
+              std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
+
+        if (!Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothPolygon, 0, 0, 0))
+        {
+            return;
+        }
+
+        // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners'
+        // count and turn in walk.xy, and a half's left-out corner (plus 1) and whether it owns the diagonal in walk.zw.
+        std::array<int32_t, 20>& draw = _Draws.back();
+        constexpr uint32_t LowHalf = 0xffff;
+        constexpr int HalfShift = 16;
+
+        for (size_t i = 0; i < MostCorners; ++i)
+        {
+            const size_t vertex = drawn[std::min(i, drawn.size() - 1)];
+            const auto [x, y] = corner(vertex);
+            draw[4 + i] =
+                static_cast<int32_t>((static_cast<uint32_t>(x) & LowHalf) | (static_cast<uint32_t>(y) << HalfShift));
+            const float index = command.Kind == MCPolygonKind::Flat
+                                    ? flat
+                                    : static_cast<float>(command.Vertices[vertex].C) / Fixed + HalfIndex;
+            draw[12 + i] = std::bit_cast<int32_t>(index);
+        }
+
+        draw[16] = static_cast<int32_t>(drawn.size());
+        draw[17] = turn;
+        draw[18] = skipped.has_value() ? static_cast<int32_t>(*skipped) + 1 : 0;
+        draw[19] = owns ? 1 : 0;
+    };
+
+    constexpr std::array<size_t, MostCorners> all = {0, 1, 2, 3};
+
+    // Whether the walk fills the whole polygon: going round it, its corners go down from one top to one bottom and
+    // back up (the walk stops at a side running upwards). A convex polygon's always do.
+    const auto filledWhole = [&]
+    {
+        std::array<int32_t, MostCorners> steps{};
+        size_t moves = 0;
+
+        for (size_t i = 0; i < corners; ++i)
+        {
+            const int32_t dy = command.Vertices[(i + 1) % corners].Y - command.Vertices[i].Y;
+
+            if (dy != 0)
+            {
+                steps[moves++] = dy > 0 ? 1 : -1;
+            }
+        }
+
+        size_t changes = 0;
+
+        for (size_t i = 0; i < moves; ++i)
+        {
+            changes += steps[i] != steps[(i + 1) % moves] ? 1 : 0;
+        }
+
+        constexpr size_t OneTopOneBottom = 2;
+        return changes == OneTopOneBottom;
+    };
+
+    // Port-only: a polygon of no area (corners in a line, or a beam's sides on one point: a path out and back), which the
+    // walk draws as lines of pixels (all of them when it fills the polygon whole): corners in a line as a line between
+    // the two farthest apart, a path as its sides (each once). A line is the coverage of two sides along it, either way
+    // round. (A crossed quad whose halves' areas cancel isn't a path, and is left to the original's pixels.)
+    int64_t area = 0;
 
     for (size_t i = 0; i < corners; ++i)
     {
-        const auto [x, y] = corner(i);
-        at = {std::min(at[0], x), std::min(at[1], y), std::max(at[2], x), std::max(at[3], y)};
+        const auto [ax, ay] = corner(i);
+        const auto [bx, by] = corner(i + 1);
+        area += static_cast<int64_t>(ax) * by - static_cast<int64_t>(bx) * ay;
     }
 
-    at = {std::max(at[0], command.OriginX), std::max(at[1], command.OriginY),
-          std::min(at[2], command.OriginX + command.XMax), std::min(at[3], command.OriginY + command.YMax)};
-
-    if (!Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothPolygon, 0, 0, 0))
+    if (area == 0)
     {
+        if (!filledWhole())
+        {
+            return false;
+        }
+
+        const auto apart = [&corner](size_t a, size_t b)
+        {
+            const auto [ax, ay] = corner(a);
+            const auto [bx, by] = corner(b);
+            return static_cast<int64_t>(bx - ax) * (bx - ax) + static_cast<int64_t>(by - ay) * (by - ay);
+        };
+
+        if (left + right == 0)
+        {
+            std::array<size_t, Segment> ends = {0, 1};
+
+            for (size_t a = 0; a < corners; ++a)
+            {
+                for (size_t b = a + 1; b < corners; ++b)
+                {
+                    if (apart(a, b) > apart(ends[0], ends[1]))
+                    {
+                        ends = {a, b};
+                    }
+                }
+            }
+
+            add(ends, 1, std::nullopt, false);
+            return true;
+        }
+
+        // A path: each side's way back is a side too.
+        const auto back = [&](size_t i)
+        {
+            for (size_t j = 0; j < corners; ++j)
+            {
+                if (corner(j) == corner(i + 1) && corner(j + 1) == corner(i))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        for (size_t i = 0; i < corners; ++i)
+        {
+            if (apart(i, (i + 1) % corners) > 0 && !back(i))
+            {
+                return false;
+            }
+        }
+
+        std::vector<std::array<size_t, Segment>> sides;
+
+        for (size_t i = 0; i < corners; ++i)
+        {
+            const std::array<size_t, Segment> side = {i, (i + 1) % corners};
+            const auto same = [&](const std::array<size_t, Segment>& other)
+            {
+                return (corner(other[0]) == corner(side[0]) && corner(other[1]) == corner(side[1])) ||
+                       (corner(other[0]) == corner(side[1]) && corner(other[1]) == corner(side[0]));
+            };
+
+            if (apart(side[0], side[1]) > 0 && std::ranges::none_of(sides, same))
+            {
+                sides.push_back(side);
+                add(side, 1, std::nullopt, false);
+            }
+        }
+
         return true;
     }
 
-    // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners' count
-    // and turn in walk.xy.
-    std::array<int32_t, 20>& draw = _Draws.back();
-    constexpr uint32_t LowHalf = 0xffff;
-    constexpr int HalfShift = 16;
-
-    for (size_t i = 0; i < MostCorners; ++i)
+    // Convex, one way round (the coverage is the nearest edge's distance); the turn's sign goes to the shader.
+    if (left == 0 || right == 0)
     {
-        const auto [x, y] = corner(std::min(i, corners - 1));
-        draw[4 + i] =
-            static_cast<int32_t>((static_cast<uint32_t>(x) & LowHalf) | (static_cast<uint32_t>(y) << HalfShift));
+        add(std::span(all).first(corners), left > 0 ? 1 : -1, std::nullopt, false);
+        return true;
     }
 
-    std::ranges::transform(index, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
-    draw[16] = static_cast<int32_t>(corners);
-    draw[17] = turn;
+    // Port-only: a quad with one corner turned in (a thin beam's rounding) that the walk fills whole is drawn as the
+    // two triangles either side of the diagonal from that corner.
+    if (corners != MostCorners || std::min(left, right) != 1 || left + right != MostCorners || !filledWhole())
+    {
+        return false;
+    }
+
+    const int32_t turn = left > right ? 1 : -1;
+    const auto in = static_cast<size_t>(std::ranges::find(turning, -turn) - turning.begin());
+    add(all, turn, (in + 1) % MostCorners, true);
+    add(all, turn, (in + MostCorners - 1) % MostCorners, false);
     return true;
 }
 
@@ -3203,19 +3361,32 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
     const auto fill = static_cast<uint32_t>(command.AlphaColor);
     const MCRect& box = command.Box;
     const int32_t width = box.X1 - box.X0;
-    const uint32_t op = KindFill | AlphaBlend | GivenAlpha;
+    const auto blends = [](uint32_t color) { return color < SpecialColor.size() && SpecialColor[color] != 0; };
+
+    // Port-only: on a surface shown at the output's resolution with HD art on, a bar that blends (an opaque colour
+    // writes indices) is drawn there (KindSmoothBar): its fill ends where the game measured it, inside its last pixel;
+    // its frame, on whole pixels, as before.
+    const bool smooth = ScaledHdArt(surface) && blends(frame) && blends(fill);
+    const uint32_t op = (smooth ? KindSmoothBar : KindFill) | AlphaBlend | GivenAlpha;
 
     // The frame's top and bottom rows (the pixels between the corners), then the body rows: their left and right
     // pixels through the frame's table, then the bar through the fill's. A pixel the bar shares with the right
-    // edge is mapped by both, in that order (each part reads the pixels the one before left).
+    // edge is mapped by both, in that order (each part reads the pixels the one before left). A smooth part ends at
+    // window x right (exclusive).
     bool join = false;
-    const auto add = [&](int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t table, bool joins)
+    const auto add = [&](int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t table, bool joins,
+                         std::optional<float> right = std::nullopt)
     {
         const Quad at = {x0, y0, x1, y1};
 
         if (Add(surface, SourceKind::None, 0, at, std::nullopt, op, 0, 0, table, joins && join))
         {
             join = true;
+
+            if (smooth)
+            {
+                _Draws.back()[12] = std::bit_cast<int32_t>(right.value_or(static_cast<float>(x1 + 1)));
+            }
         }
     };
 
@@ -3259,9 +3430,15 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
 
     if (command.BarLength != 0)
     {
+        // The fill covers its length plus one pixels from the frame's left column on, so it ends (exclusive) two
+        // pixels past that column plus its length: the measured length reaches into the pixel past the rounded one's.
+        const float right =
+            static_cast<float>(box.X0 + 2) + (smooth ? command.FillLength : static_cast<float>(command.BarLength));
+        const int32_t last = static_cast<int32_t>(std::ceil(right)) - 1;
+
         for (const auto& [y0, y1] : body)
         {
-            add(box.X0 + 1, y0, box.X0 + command.BarLength + 1, y1, fill, false);
+            add(box.X0 + 1, y0, last, y1, fill, false, right);
         }
     }
 }
@@ -3328,7 +3505,7 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
         const int32_t height = VfxFontHeight(font);
         const size_t whole = static_cast<size_t>(pitch) * static_cast<size_t>(std::max(height, 0));
 
-        if (_Surfaces[surface].Key == _ScaledScreen && glyphAt + GlyphPixelsAt + whole <= font.size() &&
+        if (SharpScreenSurface(surface) && glyphAt + GlyphPixelsAt + whole <= font.size() &&
             AddSharpGlyph(surface, font, font.subspan(glyphAt + GlyphPixelsAt, whole), pitch, height, at,
                           command.SourceX, command.SourceY, *command.Table))
         {

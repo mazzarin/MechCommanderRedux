@@ -220,6 +220,41 @@ TEST_CASE("HD audio: music selection, streaming silence and short seamless loops
     CHECK_EQ(original.Format.nSamplesPerSec, uint32_t{22050});
 }
 
+TEST_CASE("HD audio: an absent audio configuration disables otherwise valid replacements")
+{
+    Fixture fixture;
+    const auto disabled = fixture.Root / "no_config";
+    Write(disabled / "audio/samples" / (MCHdAudio::SampleKey(Original()) + ".flac"), Flac());
+    Write(disabled / "audio/music/stereo/MUSIC02.flac", Flac());
+    MCHdArt::SetPackFolder(disabled);
+    CHECK(!MCHdAudio::Sample(Original()).has_value());
+    CHECK(!MCHdAudio::Music("MUSIC02.WAV").has_value());
+    MCSoundResource resource(Original());
+    CHECK_EQ(resource.Format.nSamplesPerSec, uint32_t{22050});
+    CHECK_EQ(resource.WaveSize, uint32_t{441});
+}
+
+TEST_CASE("HD audio: corrupt and wrong-duration music fall back before playback")
+{
+    Fixture fixture;
+    const auto source = fixture.Root / "MUSIC02.WAV";
+    const auto music = fixture.Root / "audio/music/stereo/MUSIC02.flac";
+    Write(source, Original());
+    auto corrupt = Flac();
+    corrupt.resize(corrupt.size() - 4);
+    Write(music, corrupt);
+    MCSoundResource broken(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(broken.Format.nSamplesPerSec, uint32_t{22050});
+    CHECK_EQ(broken.DurationMs, uint32_t{20});
+    Write(music, Flac());
+    Write(source, Original(882));
+    MCSoundResource wrongLength(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(wrongLength.Format.nSamplesPerSec, uint32_t{22050});
+    CHECK_EQ(wrongLength.DurationMs, uint32_t{40});
+    fixture.Config("../other");
+    CHECK(!MCHdAudio::Music(source.string()).has_value());
+}
+
 TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")
 {
     const auto pack = MCTest::Option("hd-audio-pack");

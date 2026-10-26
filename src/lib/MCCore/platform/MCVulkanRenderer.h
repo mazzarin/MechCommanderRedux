@@ -335,8 +335,12 @@ private:
         uint64_t Version = 0;
         bool Usable = false;
         Texture Atlas;
-        /// <summary>The HD art pack's tiles, at HdScale times the atlas's places (none without HD terrain).</summary>
+        /// <summary>
+        /// The HD art pack's tiles at HdScale, in shelves across MaxHdAtlasSide-wide atlases: a big map's need the
+        /// second (none without HD terrain). Each image says which, and where (shaders/terrain.vshader).
+        /// </summary>
         Texture HdAtlas;
+        Texture HdAtlas2;
         int32_t HdScale = 0;
         /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
         uint64_t HdPack = 0;
@@ -429,6 +433,13 @@ private:
     /// <paramref name="source"/> (the picture's surface). False when the polygon's vertices lie in a line.
     /// </summary>
     bool AddSmoothMap(uint16_t surface, SourceRef source, const MCPolygonCommand& command);
+
+    /// <summary>
+    /// Port-only: adds the colour pass of a flat or Gouraud polygon (a laser's beam) at the output's resolution
+    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel. False for a polygon it can't
+    /// draw so (more than four corners, not convex, or flat).
+    /// </summary>
+    bool AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command);
 
     /// <summary>
     /// Port-only: adds a draw of kind and flags <paramref name="op"/> over a textured polygon's bounds, reading
@@ -572,10 +583,10 @@ private:
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
     /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
     static uint64_t HdPackInUse();
-    /// <summary>Makes the terrain's HD atlas (BC7), or says why there is none.</summary>
-    std::expected<void, std::string> MakeHdTerrainAtlas(uint32_t width, uint32_t height);
-    /// <summary>Puts an HD terrain tile's colours into the HD atlas at (x, y), a block corner.</summary>
-    void UploadHdTile(const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
+    /// <summary>Makes one of the terrain's HD atlases (BC7, MaxHdAtlasSide wide), or says why there is none.</summary>
+    std::expected<void, std::string> MakeHdTerrainAtlas(Texture& atlas, uint32_t height);
+    /// <summary>Puts an HD terrain tile's colours into HD atlas <paramref name="atlas"/> at (x, y), a block corner.</summary>
+    void UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>
     void ReleaseTerrainMesh();
     /// <summary>Queues <paramref name="size"/> bytes for an upload into a buffer: where to write them.</summary>

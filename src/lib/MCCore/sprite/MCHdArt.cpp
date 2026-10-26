@@ -1064,6 +1064,14 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
     }
 }
 
+void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
+{
+    if (shape != nullptr && !shape->HdFolder.empty())
+    {
+        AttachTo(shape->FrameList(), shape, shape->HdFolder);
+    }
+}
+
 void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
                      const CraterShapeKey& key)
 {
@@ -1098,6 +1106,18 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
     }
 
     return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
+}
+
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesystem::path& folder, int32_t frame,
+                                                            int32_t width, int32_t height)
+{
+    if (!Active())
+    {
+        return nullptr;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / folder, Naming::Number), static_cast<uint64_t>(frame)}, width,
+                 height);
 }
 
 std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)

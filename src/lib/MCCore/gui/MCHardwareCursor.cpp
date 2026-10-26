@@ -3,6 +3,8 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
 #include "platform/MCInput.h"
+#include "sprite/MCBc7.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -13,6 +15,44 @@ namespace
     /// <summary>What this frame's cursor carries (MCHardwareCursorCarry).</summary>
     bool Carrying = false;
     MCCursorImage Carried;
+
+    /// <summary>
+    /// Port-only: whether the shapes were preloaded, and the HD art pack then (its version, and whether HD art was on):
+    /// the pictures are made again when it changes.
+    /// </summary>
+    bool Preloaded = false;
+    uint64_t PreloadedPack = 0;
+    bool PreloadedHdArt = false;
+
+    /// <summary>
+    /// Port-only: the HD art pack's copy of frame <paramref name="shapeNum"/> (its bounds <paramref name="width"/> x
+    /// <paramref name="height"/>) of the cursor shapes <paramref name="table"/> (a whole PAK packet, found by its bytes'
+    /// hash as the renderer finds it); none when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const MCCursorHd> HdCursor(std::span<const uint8_t> table, int32_t shapeNum, int32_t width,
+                                               int32_t height)
+    {
+        const std::shared_ptr<const MCHdArt::Frame> frame =
+            MCHdArt::Active() ? MCHdArt::FindShape(MCHdArt::ShapeTableHash(table), shapeNum, width, height) : nullptr;
+
+        if (frame == nullptr || frame->Blended)
+        {
+            return nullptr;
+        }
+
+        auto hd = std::make_shared<MCCursorHd>();
+        hd->Scale = frame->Scale;
+        hd->Rgba = frame->Format == MCHdArt::ColorFormat::Bc7
+                       ? MCBc7::Decode(frame->Colors, frame->Width, frame->Height)
+                       : frame->Colors;
+
+        if (const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& made = MCHdArt::MadeWith(); made)
+        {
+            hd->MadeWith.assign(made->begin(), made->end());
+        }
+
+        return hd;
+    }
 
     /// <summary>Draws a shape onto a pane of <paramref name="fill"/>, hot spot at (hotX, hotY).</summary>
     std::vector<uint8_t> DrawShape(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t width, int32_t height,
@@ -55,6 +95,7 @@ MCCursorImage MCCursorImageFromShape(std::span<const uint8_t> shapeTable, int32_
         image.Opaque[i] = 1;
     }
 
+    image.Hd = HdCursor(shapeTable, shapeNum, width, height);
     return image;
 }
 
@@ -92,6 +133,9 @@ MCCursorImage MCCursorImageFromPane(const MCPane& pane, int32_t hotX, int32_t ho
 
 void MCHardwareCursorPreload(std::span<const MCRegisteredBlock> shapes)
 {
+    Preloaded = true;
+    PreloadedPack = MCHdArt::PackVersion();
+    PreloadedHdArt = MCHdArt::Active();
     ShapeImages.assign(128, {});
 
     for (size_t shape = 0; shape < ShapeImages.size() && shape < shapes.size(); ++shape)
@@ -142,6 +186,12 @@ bool MCHardwareCursorCarry(MCGuiObject& object, const MCPane& pixels)
 
 void MCHardwareCursorUpdate()
 {
+    // Port-only: HD art turned on or off, or another pack: the pictures again.
+    if (Preloaded && (MCHdArt::PackVersion() != PreloadedPack || MCHdArt::Active() != PreloadedHdArt))
+    {
+        MCHardwareCursorPreload(GuiSystem().CursorShapes());
+    }
+
     const int32_t shape = GuiSystem().CursorShape;
     const bool hasShape = shape >= 0 && static_cast<size_t>(shape) < ShapeImages.size() &&
                           ShapeImages[static_cast<size_t>(shape)].Width > 0;

@@ -20,7 +20,8 @@ struct Image
 {
     // Where the tile lies in the terrain atlas (xy) and its bounding box's size (zw).
     int4 atlas;
-    // The tile's hot spot (xy: subtracted from the draw position); z: 1 when the HD atlas has its colours.
+    // The tile's hot spot (xy: subtracted from the draw position); z: the HD atlas with its colours (1 or 2; 0 none), w
+    // its place there in whole 4 x 4 blocks (x the low 16 bits, y the high).
     int4 hot;
 };
 
@@ -200,8 +201,11 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)
     {
+        // The tile's HD place (walk.xy), its place in the atlas (walk.zw), its size and HD atlas (span.xyz).
+        const uint packed = (uint)image.hot.w;
         output.op = uint4(flags | HdColors, color, before, (uint)mesh.y);
-        output.walk = uint4(image.atlas);
+        output.walk = uint4((packed & 0xffffu) * 4u, (packed >> 16) * 4u, (uint)image.atlas.x, (uint)image.atlas.y);
+        output.span = int4(image.atlas.zw, image.hot.z - 1, 0);
     }
 
     return output;

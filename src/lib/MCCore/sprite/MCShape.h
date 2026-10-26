@@ -36,6 +36,11 @@ public:
     int32_t LastTurnUsed = 0;
     /// <summary>The type that uses the shape; expired once the type is gone (the cache then drops the shape).</summary>
     std::weak_ptr<MCAppearanceType> Owner;
+    /// <summary>
+    /// Port-only: the HD art pack's folder of the shape's frames (sprite/MCHdArt.h's FolderOf its key), kept so a shape
+    /// loaded while HD art was off can be attached when it goes on (MCSpriteManager::AttachHdArt).
+    /// </summary>
+    std::filesystem::path HdFolder;
 
 private:
     /// <summary>The packet.</summary>

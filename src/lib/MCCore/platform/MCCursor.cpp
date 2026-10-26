@@ -365,6 +365,96 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>The most a colour channel is scaled by when today's colour differs from the pack's (as the GPU's).</summary>
+    constexpr float MaxCorrection = 4.0f;
+    /// <summary>Coverage below this (BC7's error around a frame's empty pixels) is transparent.</summary>
+    constexpr float CoverageFloor = 1.5f / 255.0f;
+    constexpr float Full = 255.0f;
+    constexpr size_t Channels = 4;
+
+    /// <summary>
+    /// The colour (straight, 0..255) and coverage (0..255) of <paramref name="image"/>'s HD copy at bitmap pixel
+    /// (x, y) of a bitmap scaled by (scaleX, scaleY): between the four HD pixels around its centre, corrected by the
+    /// colour today's palette gives the original pixel under it.
+    /// </summary>
+    std::array<uint8_t, Channels> HdCursorPixel(const MCCursorImage& image, const std::array<SDL_Color, 256>& colors,
+                                                float scaleX, float scaleY, int x, int y)
+    {
+        const MCCursorHd& hd = *image.Hd;
+        const int width = image.Width * hd.Scale;
+        const int height = image.Height * hd.Scale;
+        const float atX = (static_cast<float>(x) + 0.5f) / scaleX * static_cast<float>(hd.Scale) - 0.5f;
+        const float atY = (static_cast<float>(y) + 0.5f) / scaleY * static_cast<float>(hd.Scale) - 0.5f;
+        const int baseX = static_cast<int>(std::floor(atX));
+        const int baseY = static_cast<int>(std::floor(atY));
+        const float fx = atX - static_cast<float>(baseX);
+        const float fy = atY - static_cast<float>(baseY);
+        std::array<float, Channels> sum{};
+
+        for (int dy = 0; dy < 2; ++dy)
+        {
+            for (int dx = 0; dx < 2; ++dx)
+            {
+                const int sx = baseX + dx;
+                const int sy = baseY + dy;
+
+                if (sx < 0 || sy < 0 || sx >= width || sy >= height)
+                {
+                    continue;
+                }
+
+                const float weight = (dx != 0 ? fx : 1.0f - fx) * (dy != 0 ? fy : 1.0f - fy);
+                const size_t at = (static_cast<size_t>(sy) * width + sx) * Channels;
+
+                for (size_t c = 0; c < Channels; ++c)
+                {
+                    sum[c] += weight * static_cast<float>(hd.Rgba[at + c]) / Full;
+                }
+            }
+        }
+
+        const float coverage = sum[3];
+
+        if (coverage < CoverageFloor)
+        {
+            return {};
+        }
+
+        // Today's colour of the original pixel under the centre over the one the pack was made from.
+        std::array<float, 3> correction = {1.0f, 1.0f, 1.0f};
+        const int originalX = std::min(image.Width - 1, static_cast<int>((static_cast<float>(x) + 0.5f) / scaleX));
+        const int originalY = std::min(image.Height - 1, static_cast<int>((static_cast<float>(y) + 0.5f) / scaleY));
+        const size_t original = static_cast<size_t>(originalY) * image.Width + originalX;
+        constexpr size_t PaletteBytes = 768;
+
+        if (hd.MadeWith.size() == PaletteBytes && image.Opaque[original] != 0)
+        {
+            const uint8_t index = image.Pixels[original];
+            const SDL_Color now = colors[index];
+            const std::array<uint8_t, 3> shown = {now.r, now.g, now.b};
+
+            for (size_t c = 0; c < correction.size(); ++c)
+            {
+                const float then = std::max(static_cast<float>(hd.MadeWith[index * 3 + c]), 1.0f);
+                correction[c] = std::clamp(static_cast<float>(shown[c]) / then, 0.0f, MaxCorrection);
+            }
+        }
+
+        std::array<uint8_t, Channels> out{};
+
+        for (size_t c = 0; c < correction.size(); ++c)
+        {
+            out[c] =
+                static_cast<uint8_t>(std::lround(std::clamp(sum[c] / coverage * correction[c], 0.0f, 1.0f) * Full));
+        }
+
+        out[3] = static_cast<uint8_t>(std::lround(std::clamp(coverage, 0.0f, 1.0f) * Full));
+        return out;
+    }
+}
+
 namespace MCCursor
 {
     MCCursorBitmap Rasterize(const MCCursorImage& image, const std::array<SDL_Color, 256>& colors, float scaleX,
@@ -384,6 +474,23 @@ namespace MCCursor
         bitmap.HotX = std::clamp(static_cast<int>(std::floor(image.HotX * scaleX)), 0, bitmap.Width - 1);
         bitmap.HotY = std::clamp(static_cast<int>(std::floor(image.HotY * scaleY)), 0, bitmap.Height - 1);
         bitmap.Rgba.assign(static_cast<size_t>(bitmap.Width) * bitmap.Height * 4, 0);
+
+        // Port-only: the HD copy, where the picture has one of its size.
+        if (const std::shared_ptr<const MCCursorHd>& hd = image.Hd;
+            hd != nullptr && hd->Scale > 0 &&
+            hd->Rgba.size() == static_cast<size_t>(image.Width) * image.Height * hd->Scale * hd->Scale * Channels)
+        {
+            for (int y = 0; y < bitmap.Height; ++y)
+            {
+                for (int x = 0; x < bitmap.Width; ++x)
+                {
+                    std::ranges::copy(HdCursorPixel(image, colors, scaleX, scaleY, x, y),
+                                      bitmap.Rgba.begin() + (static_cast<ptrdiff_t>(y) * bitmap.Width + x) * 4);
+                }
+            }
+
+            return bitmap;
+        }
 
         for (int y = 0; y < bitmap.Height; ++y)
         {

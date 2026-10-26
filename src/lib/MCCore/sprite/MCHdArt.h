@@ -199,6 +199,12 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
+    /// Notes that <paramref name="shape"/>'s frames are in its <c>HdFolder</c> (none: nothing), as <see cref="Attach"/>
+    /// with its key does. Does nothing while HD art is off.
+    /// </summary>
+    void AttachFolder(const std::shared_ptr<MCShape>& shape);
+
+    /// <summary>
     /// Notes that shape table <paramref name="table"/> was loaded from <paramref name="key"/>: while
     /// <paramref name="owner"/> lives, its frames are drawn from the pack's when it has them. Does nothing while HD art
     /// is off.
@@ -218,6 +224,14 @@ namespace MCHdArt
     /// none when it isn't attached (or its owner is gone).
     /// </summary>
     std::optional<std::filesystem::path> AttachedFolder(const uint8_t* table);
+
+    /// <summary>
+    /// For the tools: frame <paramref name="frame"/> (its original bounds <paramref name="width"/> x
+    /// <paramref name="height"/>) of the pack's folder <paramref name="folder"/> (relative to the pack, its frames named
+    /// by number, as an attached shape's), read the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindInFolder(const std::filesystem::path& folder, int32_t frame, int32_t width,
+                                              int32_t height);
 
     /// <summary>
     /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its

@@ -40,6 +40,7 @@
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlHandle.h"
 #include "platform/MCVulkanRenderer.h"
+#include "sprite/MCArmAppearanceType.h"
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
@@ -1223,8 +1224,7 @@ namespace
 
     /// <summary>
     /// The appearances the object PAK's types use, by type id: each with the kind of the first class that uses it
-    /// (ClassKinds; an effect's when none does), except mechs' and those of classes without shapes of their own (lines,
-    /// weapon effects).
+    /// (ClassKinds; an effect's when none does), except mechs' and lines' (no shapes of their own).
     /// </summary>
     std::map<uint32_t, ObjectAppearance> FindObjectAppearances()
     {
@@ -1256,7 +1256,7 @@ namespace
 
             if (!appearance.has_value() ||
                 (appearanceClass != MCAppearanceClass::Vfx && appearanceClass != MCAppearanceClass::GroundVehicle &&
-                 appearanceClass != MCAppearanceClass::Building &&
+                 appearanceClass != MCAppearanceClass::Arm && appearanceClass != MCAppearanceClass::Building &&
                  appearanceClass != MCAppearanceClass::ElementalTree && appearanceClass != MCAppearanceClass::PopUp))
             {
                 continue;
@@ -1342,6 +1342,20 @@ namespace
                 }
 
                 KeepLoaded(vehicle.ShapeList, shapes);
+                break;
+            }
+            case MCAppearanceClass::Arm:
+            {
+                // A weapon's flash at its shooter (a projectile laser's), one packet a facing.
+                auto& arm = static_cast<MCArmAppearanceType&>(*type);
+
+                for (int32_t rotation = FirstRotation; rotation < LastRotation; ++rotation)
+                {
+                    bool reverse = false;
+                    arm.GetShape(rotation, frameRate, reverse);
+                }
+
+                KeepLoaded(arm.ShapeList, shapes);
                 break;
             }
             case MCAppearanceClass::Building:
@@ -4842,16 +4856,14 @@ TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
 namespace
 {
     /// <summary>
-    /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
-    /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
+    /// What the pixels of <paramref name="box"/> (the screen pane's) changed by <paramref name="draw"/> show, with HD art
+    /// on from <paramref name="pack"/> (none: off).
     /// </summary>
-    int64_t PixelsBetween(const std::optional<std::filesystem::path>& pack, uint8_t color, const MCRect& box,
-                          const std::function<void()>& draw)
+    std::vector<SDL_Color> ChangedPixels(const std::optional<std::filesystem::path>& pack, const MCRect& box,
+                                         const std::function<void()>& draw)
     {
         const std::shared_ptr<MCDisplay> display = MCInput::Display();
         const MCPane& pane = ScreenPort()->Frame();
-        std::array<SDL_Color, 256> colors{};
-        display->GetShownColors(colors);
         std::optional<MCHdArtOn> on;
 
         if (pack.has_value())
@@ -4866,8 +4878,7 @@ namespace
         REQUIRE(under.has_value());
         REQUIRE(drawn.has_value());
         const int32_t width = display->Width();
-        const SDL_Color shape = colors[color];
-        int64_t count = 0;
+        std::vector<SDL_Color> changed;
 
         for (int32_t row = box.Y0; row <= box.Y1; ++row)
         {
@@ -4876,13 +4887,33 @@ namespace
                 const size_t at = static_cast<size_t>(row + pane.Y0) * width + column + pane.X0;
                 const SDL_Color a = (*under)[at];
                 const SDL_Color b = (*drawn)[at];
-                const bool same = a.r == b.r && a.g == b.g && a.b == b.b;
-                const bool shapeColor = b.r == shape.r && b.g == shape.g && b.b == shape.b;
-                count += same || shapeColor ? 0 : 1;
+
+                if (a.r != b.r || a.g != b.g || a.b != b.b)
+                {
+                    changed.push_back(b);
+                }
             }
         }
 
-        return count;
+        return changed;
+    }
+
+    bool SameColor(const SDL_Color& a, const SDL_Color& b)
+    {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    }
+
+    /// <summary>
+    /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
+    /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
+    /// </summary>
+    int64_t PixelsBetween(const std::optional<std::filesystem::path>& pack, uint8_t color, const MCRect& box,
+                          const std::function<void()>& draw)
+    {
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        return std::ranges::count_if(ChangedPixels(pack, box, draw),
+                                     [&](const SDL_Color& pixel) { return !SameColor(pixel, colors[color]); });
     }
 }
 
@@ -4989,6 +5020,87 @@ TEST_CASE_ISOLATED("game: HD art draws flat and Gouraud polygons with smooth edg
     }
 
     GamePaused = false;
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// A laser's beam is two Gouraud quads whose corners' colours needn't lie on a plane: with HD art on, a quad whose tail
+/// darkens again (head 0x30, sides 0x34, tail 0x31) draws, inside, only colour indices the original's walk draws (no
+/// plane through three corners running past the fourth's colour).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art steps a Gouraud quad's colours as the original's walk does")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_gouraud_quad");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Bulge = 10;
+    constexpr uint8_t Head = 0x30;
+    constexpr uint8_t Side = 0x34;
+    constexpr uint8_t Tail = 0x31;
+    constexpr int32_t Fixed = 1 << 16;
+    // Head, side bulge, tail, and the bulge's centre on the beam's axis, as MCProjectileLaser::Render draws one side.
+    const std::array<MCScreenVertex, 4> beam = {MCScreenVertex{x - Length, y - Length / 2, Head * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x + Bulge / 2, y - Bulge, Side * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x + Length, y + Length / 2, Tail * Fixed, 0, 0, 0},
+                                                MCScreenVertex{x, y, Side * Fixed, 0, 0, 0}};
+    const MCRect box{x - Length - 1, y - Length / 2 - Bulge, x + Length + 1, y + Length / 2 + 1};
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    // The beam's colour indices (Head..Side) its pixels show; the HD edges' blends match none.
+    const auto indices = [&](const std::optional<std::filesystem::path>& from)
+    {
+        std::set<int32_t> shown;
+
+        for (const SDL_Color& pixel : ChangedPixels(from, box, [&] { VfxGouraudPolygon(pane, beam); }))
+        {
+            for (int32_t index = Head; index <= Side + Side - Head; ++index)
+            {
+                if (SameColor(pixel, colors[static_cast<size_t>(index)]))
+                {
+                    shown.insert(index);
+                    break;
+                }
+            }
+        }
+
+        return shown;
+    };
+
+    GamePaused = true;
+    const std::set<int32_t> original = indices(std::nullopt);
+    const std::set<int32_t> smooth = indices(pack);
+    GamePaused = false;
+    const auto list = [](const std::set<int32_t>& set)
+    {
+        std::string text;
+
+        for (const int32_t index : set)
+        {
+            text += std::format(" {:#04x}", index);
+        }
+
+        return text;
+    };
+
+    std::cout << std::format("  indices shown: original{}, HD art{}\n", list(original), list(smooth));
+    CHECK(original.contains(Head));
+    CHECK(original.contains(Side));
+    CHECK(std::ranges::includes(original, smooth));
     std::filesystem::remove_all(pack.parent_path());
 }
 
@@ -5565,13 +5677,17 @@ TEST_CASE_ISOLATED("tool: --hd-cursors pictures the cursors beside the original"
 
 namespace
 {
-    /// <summary>One kind of the game's art: how many frames of it there are, how many the pack holds, a few it lacks.</summary>
+    /// <summary>
+    /// One kind of the game's art: how many frames of it there are, how many the pack holds, a few it lacks, and whether
+    /// the game draws it (counted in the total).
+    /// </summary>
     struct ArtCoverage
     {
         std::string Name;
         size_t Frames = 0;
         size_t Found = 0;
         std::vector<std::string> Missing;
+        bool Drawn = true;
     };
 
     /// <summary>How many of a kind's missing frames are named.</summary>
@@ -5618,7 +5734,8 @@ namespace
 /// Tool: <c>--hd-coverage &lt;pack&gt;</c> counts, for each kind of the game's art, how many of its frames the HD art
 /// pack holds, as the extractors find them in the game's files: the mechs' and objects' sprites, the ground's tiles and
 /// overlays, the craters, the mech bar's icons, the shape tables loaded outside the sprite files and the menus' and
-/// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind.
+/// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind. Then
+/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack holds")
 {
@@ -5647,18 +5764,79 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     }
 
     std::map<std::string, ArtCoverage> objects;
+    std::set<std::filesystem::path> walked;
+    std::set<uint32_t> typed;
 
     for (const auto& [appearance, type] : PickedObjectAppearances())
     {
+        typed.insert(appearance.Id & AppearancePacketMask);
         const ObjectKindInfo& kind = KindInfo(appearance.Kind);
         ArtCoverage& coverage =
             objects.try_emplace(std::string(kind.Name), ArtCoverage{std::string(kind.Name)}).first->second;
-        NoteSequences(coverage, ObjectSequencesOf(type, kind.Blended).Sequences);
+        const std::vector<Sequence> sequences = ObjectSequencesOf(type, kind.Blended).Sequences;
+        NoteSequences(coverage, sequences);
+
+        for (const Sequence& sequence : sequences)
+        {
+            walked.insert(sequence.Folder);
+        }
     }
 
     for (auto& [name, coverage] : objects)
     {
         report.push_back(std::move(coverage));
+    }
+
+    // The packets of the sprite PAKs no type's walk above draws, as a check on the walks: the game's own lookups never
+    // reach them (the original's zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations), and
+    // the appearances no type uses are named.
+    ArtCoverage& packets = report.emplace_back(ArtCoverage{"sprite PAK packets no type draws", 0, 0, {}, false});
+    std::map<uint32_t, size_t> untyped;
+
+    for (uint32_t appearance = 0; appearance < SpriteManager()->GetNumAppearances(); ++appearance)
+    {
+        for (int32_t packet = 0; packet < SpriteManager()->GetNumShapes(appearance); ++packet)
+        {
+            const std::shared_ptr<MCShape> shape =
+                SpriteManager()->GetShapeData(appearance, static_cast<uint32_t>(packet), Turn, {});
+
+            if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()) || walked.contains(shape->HdFolder))
+            {
+                continue;
+            }
+
+            const std::span<const uint8_t> table = shape->FrameList();
+
+            for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+            {
+                std::expected<DecodedFrame, std::string> decoded = Decode(table, frame);
+
+                if (decoded.has_value() && decoded->Translucent)
+                {
+                    LeaveOutUndrawn(*decoded, true);
+                }
+
+                if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+                {
+                    continue;
+                }
+
+                const bool found =
+                    MCHdArt::FindInFolder(shape->HdFolder, frame, decoded->Width, decoded->Height) != nullptr;
+                untyped[appearance] += typed.contains(appearance) ? 0 : 1;
+                NoteFrame(packets, found,
+                          [&] { return std::format("{}/{}", shape->HdFolder.generic_string(), frame); });
+            }
+        }
+    }
+
+    for (const auto& [appearance, frames] : untyped)
+    {
+        if (frames != 0)
+        {
+            std::cout << std::format("  sprite PAK appearance {} ({}): {} frames, no type uses it\n", appearance,
+                                     SpriteManager()->ShapeFileName(appearance), frames);
+        }
     }
 
     ArtCoverage& ground = report.emplace_back(ArtCoverage{"ground tiles"});
@@ -5752,7 +5930,14 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
     for (const ArtCoverage& coverage : report)
     {
-        std::cout << std::format("  {}: {} of {} frames in the pack\n", coverage.Name, coverage.Found, coverage.Frames);
+        std::cout << std::format("  {}: {} of {} frames in the pack{}\n", coverage.Name, coverage.Found,
+                                 coverage.Frames, coverage.Drawn ? "" : " (never drawn: not in the total)");
+
+        if (!coverage.Drawn)
+        {
+            continue;
+        }
+
         frames += coverage.Frames;
         found += coverage.Found;
 

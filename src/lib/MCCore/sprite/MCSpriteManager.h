@@ -89,6 +89,9 @@ public:
     /// <summary>The number of packets in appearance <paramref name="appearanceNum"/>'s PAK (0 when it has none).</summary>
     int32_t GetNumShapes(uint32_t appearanceNum);
 
+    /// <summary>Port-only: how many appearance numbers the sprite PAKs have packets for (the larger PAK's count).</summary>
+    uint32_t GetNumAppearances() const;
+
     /// <summary>
     /// The name (lower case, without ".pak") of the sprite PAK <see cref="GetShapeData"/> reads appearance
     /// <paramref name="appearanceNum"/> from ("shapes90", or "shapes" for one it leaves empty); empty when neither has

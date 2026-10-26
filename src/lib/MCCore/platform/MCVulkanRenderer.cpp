@@ -2742,36 +2742,26 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
         return false;
     }
 
-    // The colour index across the window: a flat polygon's (rounded, as its fill), else the Gouraud colour's plane
-    // through the first two corners and the last (16.16, truncated as the walk steps it).
+    // A polygon one row high draws nothing (the walk's first check).
+    if (std::ranges::all_of(command.Vertices,
+                            [&command](const MCScreenVertex& vertex) { return vertex.Y == command.Vertices[0].Y; }))
+    {
+        return false;
+    }
+
+    // Each corner's colour index, rounded as the walk starts a side from it (a flat polygon's all its fill's). Four
+    // Gouraud corners needn't lie on a plane, so the shader steps them as the walk does: down the sides, then across.
     constexpr float Fixed = 65536.0f;
     constexpr float HalfIndex = 0.5f;
-    std::array<float, 3> index{};
+    constexpr uint32_t Round = 0x8000;
+    const float flat =
+        static_cast<float>(((static_cast<uint32_t>(command.Vertices[0].C) + Round) >> 16) & 0xff) + HalfIndex;
+    std::array<float, MostCorners> index{};
 
-    if (command.Kind == MCPolygonKind::Flat)
+    for (size_t i = 0; i < MostCorners; ++i)
     {
-        constexpr uint32_t Round = 0x8000;
-        index[2] =
-            static_cast<float>(((static_cast<uint32_t>(command.Vertices[0].C) + Round) >> 16) & 0xff) + HalfIndex;
-    }
-    else
-    {
-        const auto point = [&command](const MCScreenVertex& vertex)
-        {
-            return MappedPoint{static_cast<float>(command.OriginX + vertex.X),
-                               static_cast<float>(command.OriginY + vertex.Y),
-                               static_cast<float>(vertex.C) / Fixed - HalfIndex, 0.0f};
-        };
-
-        const std::optional<std::array<float, 6>> plane =
-            TextureMapping(point(command.Vertices[0]), point(command.Vertices[1]), point(command.Vertices.back()));
-
-        if (!plane)
-        {
-            return false;
-        }
-
-        std::copy_n(plane->begin(), index.size(), index.begin());
+        const MCScreenVertex& vertex = command.Vertices[std::min(i, corners - 1)];
+        index[i] = command.Kind == MCPolygonKind::Flat ? flat : static_cast<float>(vertex.C) / Fixed + HalfIndex;
     }
 
     Quad at = {std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(),
@@ -2791,7 +2781,7 @@ bool MCVulkanRenderer::AddSmoothPolygon(uint16_t surface, const MCPolygonCommand
         return true;
     }
 
-    // The corners in source (x in the low 16 bits, y in the high), the index's plane in span.xyz, the corners' count
+    // The corners in source (x in the low 16 bits, y in the high), their colour indices in span, the corners' count
     // and turn in walk.xy.
     std::array<int32_t, 20>& draw = _Draws.back();
     constexpr uint32_t LowHalf = 0xffff;

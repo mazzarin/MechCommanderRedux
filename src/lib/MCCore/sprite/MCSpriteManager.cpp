@@ -362,6 +362,12 @@ auto MCSpriteManager::GetNumShapes(uint32_t appearanceNum) -> int32_t
     return OpenAppearanceFile(appearanceNum) ? _AppearanceFiles[appearanceNum]->GetNumPackets() : 0;
 }
 
+auto MCSpriteManager::GetNumAppearances() const -> uint32_t
+{
+    return static_cast<uint32_t>(
+        std::max(_SpriteFiles[PreferredSprites]->GetNumPackets(), _SpriteFiles[FallbackSprites]->GetNumPackets()));
+}
+
 auto MCSpriteManager::MechShadow(size_t index) const -> std::span<const uint8_t>
 {
     return index < _MechShadows.size() ? _MechShadows[index].Bytes() : std::span<const uint8_t>();

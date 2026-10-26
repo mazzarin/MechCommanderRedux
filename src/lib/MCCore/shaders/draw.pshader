@@ -143,6 +143,10 @@ static const uint HdLight = 1u << 21;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
+// The same for an HD frame's coverage and the blended pixels under it (KindHdSmooth, SmoothBlendedPixel), a little
+// lower, so a thin line or a lone pixel of the original (a lamp's shadow, a palm's trunk) keeps most of its strength.
+static const float SpriteEdgeLow = 0.2;
+static const float SpriteEdgeHigh = 0.6;
 // An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
 static const float HdMaskAlpha = 0.5;
 // An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
@@ -559,8 +563,8 @@ Output SmoothBlendedPixel(Input input, int2 target)
         }
     }
 
-    const float frameCoverage = smoothstep(EdgeLow, EdgeHigh, opaqueWeight);
-    const float shapeCoverage = smoothstep(EdgeLow, EdgeHigh, opaqueWeight + blendedWeight);
+    const float frameCoverage = smoothstep(SpriteEdgeLow, SpriteEdgeHigh, opaqueWeight);
+    const float shapeCoverage = smoothstep(SpriteEdgeLow, SpriteEdgeHigh, opaqueWeight + blendedWeight);
     const float share = frameCoverage < 1.0 ? saturate((shapeCoverage - frameCoverage) / (1.0 - frameCoverage)) : 0.0;
 
     if (blendedWeight <= 0.0 || share <= 0.0)
@@ -640,7 +644,7 @@ float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
         }
     }
 
-    return smoothstep(EdgeLow, EdgeHigh, coverage);
+    return smoothstep(SpriteEdgeLow, SpriteEdgeHigh, coverage);
 }
 
 // An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD

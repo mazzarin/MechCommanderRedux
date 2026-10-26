@@ -73,6 +73,34 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
+// The final audit's screen tour and call stacks.
+#include "gui/MCScrollPane.h"
+#include "gui/MCUpdateDisplay.h"
+#include "linkup/MCSessionManager.h"
+#include "logistics/MCBriefingScreen.h"
+#include "logistics/MCConnectMenu.h"
+#include "logistics/MCLogTextObject.h"
+#include "logistics/MCMechBriefBlock.h"
+#include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCRepairScreen.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCLogMech.h"
+#include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
+#include "mission/MCScenario.h"
+#include "network/MCMultiPlayer.h"
+#if __has_include("logistics/MCLogTextButton.h")
+// A build with the preferences' CONTROLS panel (the controls branch): the tour shows it.
+#include "logistics/MCLogTextButton.h"
+#define MC_AUDIT_CONTROLS 1
+#endif
+#if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
+#include <dlfcn.h>
+#include <execinfo.h>
+#define MC_AUDIT_STACKS 1
+#endif
 
 namespace
 {
@@ -3898,11 +3926,79 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
     std::filesystem::remove_all(scene->Scratch);
 }
 
+namespace
+{
+    /// <summary>
+    /// The audit's details beside its tally (--hd-audit, and --sharp-menus with --hd-audit-menus), for telling what drew
+    /// each thing from the original's pixels: per tally entry, the call stack of its first draw, the font a glyph is
+    /// from and the screens it was drawn on; and per call stack, the draws from the original's pixels (commands without
+    /// data, a clear, a polygon, a status bar, can only be told apart by where they are drawn from).
+    /// </summary>
+    struct AuditDetail
+    {
+        /// <summary>A tally entry's details, taken at its first draw (the screens: every draw's).</summary>
+        struct Entry
+        {
+            std::vector<uintptr_t> Stack;
+            std::string Font;
+            std::set<std::string> Screens;
+            /// <summary>The colours shown at the first draw (a menu picture's palette is its screen's).</summary>
+            std::array<SDL_Color, 256> Colors{};
+            /// <summary>
+            /// A copy's picture as its latest draw from the original's pixels copied it, and the colours then (a
+            /// window composed at run time is often still empty at its first copy).
+            /// </summary>
+            std::optional<DecodedFrame> Latest;
+            std::array<SDL_Color, 256> LatestColors{};
+        };
+
+        /// <summary>The draws from the original's pixels of one command, on windows of one size, from one call stack.</summary>
+        struct Site
+        {
+            bool Scaled = false;
+            int64_t Count = 0;
+            int64_t Pixels = 0;
+            std::set<std::string> Screens;
+        };
+
+        /// <summary>A site: the command, the window's width and height, and the call stack.</summary>
+        using SiteKey = std::tuple<std::string, int32_t, int32_t, std::vector<uintptr_t>>;
+        std::map<AuditKey, Entry> Entries;
+        std::map<SiteKey, Site> Sites;
+        /// <summary>The screen being shown, which every draw is tagged with.</summary>
+        std::string Screen = "mission";
+    };
+
+    /// <summary>AuditInto's tally of each draw, with <paramref name="detail"/>'s details beside it.</summary>
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInDetail(std::map<AuditKey, AuditTally>& tally,
+                                                                            AuditDetail& detail);
+
+    /// <summary>
+    /// Writes an audit's tables into <paramref name="folder"/> for working through across runs: <c>audit.tsv</c>, every
+    /// tally entry drawn from the original's pixels with a stable id, whether the pack has its art, its call stack and
+    /// screens; <c>sites.tsv</c>, those draws by call stack; and <c>items/&lt;id&gt;.png</c>, a picture of each.
+    /// </summary>
+    void WriteAuditTables(const std::map<AuditKey, AuditTally>& tally, const AuditDetail& detail,
+                          const std::filesystem::path& folder, int32_t frames);
+
+    /// <summary>
+    /// Shows the screens --sharp-menus' first round leaves out, each through <paramref name="shoot"/> (named): the other
+    /// inventory tabs of the mech bay and the purchase screen, the briefing's operation tab, the main menu in a campaign, the save and single-mission load screens, the exit question, the multiplayer screens (the
+    /// connection menu, the serial and modem screens, the IPX/TCP question, the LAN games, hosting's ready room and
+    /// session screen), the expansion's briefing, then a mission launched from the briefing (its loading screen),
+    /// paused, the tactical map's info, objectives and salvage pages, the preferences' CONTROLS panel where the build
+    /// has one, the results and debriefing, and logistics after the mission.
+    /// </summary>
+    void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail);
+}
+
 /// <summary>
 /// Tool: <c>--sharp-menus &lt;folder&gt;</c> shows the main menu and the logistics screens in a window the size of a
 /// Retina MacBook's screen (<c>--window WxH</c>, default 3024x1890) with HD art on (a sharp screen: text redrawn sharp,
 /// and the pack's menu art with <c>--hd-pack &lt;pack&gt;</c>), and saves each as shown into the folder; with
-/// <c>--hd-original 1</c>, as the game shows them without.
+/// <c>--hd-original 1</c>, as the game shows them without. With <c>--hd-audit-menus 1</c> every draw is audited as
+/// --hd-audit's are (into the folder's audit/), and with it or <c>--sharp-menus-tour 1</c> every other screen is shown
+/// too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off")
 {
@@ -3956,16 +4052,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
     REQUIRE(renderer != nullptr);
     std::map<AuditKey, AuditTally> tally;
+    AuditDetail detail;
     int32_t audited = 0;
 
     if (audit)
     {
-        renderer->Audit = AuditInto(tally);
+        renderer->Audit = AuditInDetail(tally, detail);
     }
 
     const auto shoot = [&](const std::string& name)
     {
         AuditLabel = name;
+        detail.Screen = name;
 
         for (int32_t frame = 0; frame < SettleFrames; ++frame)
         {
@@ -4039,6 +4137,13 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     slide("briefing", [] { GlobalLog()->SetUpBriefingScreen(true); });
     shoot("briefing_again");
     MCTestGame::OnPresent = nullptr;
+
+    // With --hd-audit-menus or --sharp-menus-tour 1, every other screen too.
+    if (audit || MCTest::Option("sharp-menus-tour").has_value())
+    {
+        TourScreens(shoot, detail);
+    }
+
     GHdArt = 0;
     MCHdArt::SetPackFolder({});
 
@@ -4047,6 +4152,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
         renderer->Audit = nullptr;
         AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
+        WriteAuditTables(tally, detail, folder / "audit", audited);
     }
 }
 
@@ -4868,12 +4974,770 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>How many return addresses an audit's call stack keeps.</summary>
+    constexpr int32_t AuditStackDepth = 32;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (the ids in the audit's tables).</summary>
+    constexpr uint64_t AuditFnvBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t AuditFnvPrime = 0x100000001b3ull;
+    /// <summary>How many bytes of what a draw drew its id hashes (a fast shape's header and first rows).</summary>
+    constexpr size_t AuditDataBytes = 256;
+    /// <summary>How many frame numbers (or a font's characters) a table row lists.</summary>
+    constexpr size_t AuditFramesListed = 24;
+    /// <summary>A picture smaller than this on its longer side is drawn larger in the tables' pictures, up to 4 times.</summary>
+    constexpr int32_t AuditPictureSide = 64;
+    constexpr int32_t AuditMaxZoom = 4;
+    /// <summary>The gap between a font's characters in its picture.</summary>
+    constexpr int32_t AuditGlyphGap = 2;
+    /// <summary>The first and last printable ASCII characters (a glyph's character is listed as itself, else by number).</summary>
+    constexpr int32_t AuditFirstPrintable = 0x21;
+    constexpr int32_t AuditLastPrintable = 0x7e;
+
+    uint64_t AuditFnv(std::span<const uint8_t> bytes, uint64_t hash = AuditFnvBasis)
+    {
+        for (const uint8_t byte : bytes)
+        {
+            hash = (hash ^ byte) * AuditFnvPrime;
+        }
+
+        return hash;
+    }
+
+    /// <summary>A picture's id: its size and indices hashed (the extractor's pictures and a copy's alike).</summary>
+    uint64_t AuditPictureHash(std::span<const uint8_t> index, int32_t width, int32_t height)
+    {
+        constexpr int32_t HalfWord = 32;
+        return AuditFnv(index, AuditFnvBasis ^ (static_cast<uint64_t>(static_cast<uint32_t>(width)) << HalfWord |
+                                                static_cast<uint32_t>(height)));
+    }
+
+    /// <summary>The return addresses of the call stack (none where the platform can't walk it).</summary>
+    std::vector<uintptr_t> AuditStack()
+    {
+#if MC_AUDIT_STACKS
+        std::array<void*, AuditStackDepth> frames{};
+        const int count = backtrace(frames.data(), AuditStackDepth);
+        std::vector<uintptr_t> stack;
+
+        for (int i = 0; i < count; ++i)
+        {
+            stack.push_back(reinterpret_cast<uintptr_t>(frames[static_cast<size_t>(i)]));
+        }
+
+        return stack;
+#else
+        return {};
+#endif
+    }
+
+    /// <summary>Where this program is loaded, which its call stacks are symbolized against (atos -l), or 0.</summary>
+    uintptr_t AuditImageBase()
+    {
+#if MC_AUDIT_STACKS
+        Dl_info info{};
+        return dladdr(reinterpret_cast<const void*>(&AuditImageBase), &info) != 0
+                   ? reinterpret_cast<uintptr_t>(info.dli_fbase)
+                   : 0;
+#else
+        return 0;
+#endif
+    }
+
+    /// <summary>The install's fonts, read once (for telling which font a glyph is from).</summary>
+    const std::vector<MCGameFont>& AuditFonts()
+    {
+        static const std::vector<MCGameFont> fonts = GameFonts();
+        return fonts;
+    }
+
+    /// <summary>The font file <paramref name="data"/> holds (a glyph draw's data starts at its font), or "?".</summary>
+    std::string AuditFontName(std::span<const uint8_t> data)
+    {
+        for (const MCGameFont& font : AuditFonts())
+        {
+            if (data.size() >= font.Data.size() && std::ranges::equal(data.first(font.Data.size()), font.Data))
+            {
+                return font.Name;
+            }
+        }
+
+        return "?";
+    }
+
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInDetail(std::map<AuditKey, AuditTally>& tally,
+                                                                            AuditDetail& detail)
+    {
+        return [tallied = AuditInto(tally), &detail](const MCVulkanRenderer::AuditedDraw& draw)
+        {
+            tallied(draw);
+            AuditDetail::Entry& entry =
+                detail.Entries[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
+
+            if (entry.Screens.empty())
+            {
+                entry.Stack = AuditStack();
+                entry.Font = draw.Command == "Glyph" ? AuditFontName(draw.Data) : std::string();
+                MCInput::Display()->GetShownColors(entry.Colors);
+            }
+
+            entry.Screens.insert(detail.Screen);
+
+            if (const MCWindow* from = draw.From;
+                !draw.Sharp && from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+            {
+                DecodedFrame& latest = entry.Latest.emplace();
+                latest.Width = from->XMax + 1;
+                latest.Height = from->YMax + 1;
+                latest.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+                MCInput::Display()->GetShownColors(entry.LatestColors);
+            }
+
+            if (!draw.Sharp)
+            {
+                AuditDetail::Site& site =
+                    detail
+                        .Sites[{std::string(draw.Command), draw.Window->XMax + 1, draw.Window->YMax + 1, AuditStack()}];
+                site.Scaled |= draw.Scaled;
+                ++site.Count;
+                site.Pixels += draw.Pixels;
+                site.Screens.insert(detail.Screen);
+            }
+        };
+    }
+
+    /// <summary>
+    /// Saves <paramref name="index"/> (<paramref name="width"/> x <paramref name="height"/>, drawn where
+    /// <paramref name="drawn"/> says, every pixel without it) in <paramref name="colors"/> as a PNG, a small picture
+    /// drawn larger.
+    /// </summary>
+    void SaveAuditPicture(const std::filesystem::path& path, int32_t width, int32_t height,
+                          std::span<const uint8_t> index, std::span<const uint8_t> drawn,
+                          std::span<const SDL_Color, 256> colors)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        const int32_t zoom = std::clamp(AuditPictureSide / std::max(width, height), 1, AuditMaxZoom);
+        // A picture that shows nothing in its colours (an effect's alpha colours, a diagram drawn through a table) is
+        // pictured by its indices, as greys.
+        constexpr int32_t Dark = 24;
+        constexpr int32_t GreyFloor = 48;
+        bool dark = true;
+
+        for (size_t i = 0; i < index.size() && dark; ++i)
+        {
+            const SDL_Color color = colors[index[i]];
+            dark = (!drawn.empty() && drawn[i] == 0) || color.r + color.g + color.b < Dark;
+        }
+
+        std::array<SDL_Color, 256> greys{};
+
+        for (size_t i = 0; i < greys.size(); ++i)
+        {
+            const auto level = static_cast<uint8_t>(GreyFloor + static_cast<int32_t>(i) * (255 - GreyFloor) / 255);
+            greys[i] = SDL_Color{level, level, level, 255};
+        }
+
+        const std::span<const SDL_Color, 256> shownIn = dark ? std::span<const SDL_Color, 256>(greys) : colors;
+        const int32_t outWidth = width * zoom;
+        const int32_t outHeight = height * zoom;
+        std::vector<uint8_t> rgba(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * BytesPerPixel, 0);
+
+        for (int32_t y = 0; y < outHeight; ++y)
+        {
+            for (int32_t x = 0; x < outWidth; ++x)
+            {
+                const size_t from = static_cast<size_t>(y / zoom) * static_cast<size_t>(width) + x / zoom;
+
+                if (!drawn.empty() && drawn[from] == 0)
+                {
+                    continue;
+                }
+
+                const SDL_Color color = shownIn[index[from]];
+                uint8_t* pixel = &rgba[(static_cast<size_t>(y) * static_cast<size_t>(outWidth) + x) * BytesPerPixel];
+                pixel[0] = color.r;
+                pixel[1] = color.g;
+                pixel[2] = color.b;
+                pixel[3] = 255;
+            }
+        }
+
+        SavePng(path, outWidth, outHeight, rgba);
+    }
+
+    /// <summary>Saves the characters <paramref name="characters"/> of <paramref name="font"/> in a row, ink white.</summary>
+    void SaveAuditGlyphs(const std::filesystem::path& path, std::span<const uint8_t> font,
+                         const std::set<int32_t>& characters)
+    {
+        const int32_t height = VfxFontHeight(font);
+        const int32_t count = MCVfxRead32(font, 4);
+        std::vector<std::pair<std::span<const uint8_t>, int32_t>> glyphs;
+        int32_t width = 0;
+
+        for (const int32_t character : characters)
+        {
+            int32_t glyphWidth = 0;
+
+            if (character < 0 || character >= count || glyphs.size() >= AuditFramesListed)
+            {
+                continue;
+            }
+
+            const std::span<const uint8_t> glyph = GlyphOf(font, character, glyphWidth);
+
+            if (glyphWidth > 0)
+            {
+                glyphs.emplace_back(glyph, glyphWidth);
+                width += glyphWidth + AuditGlyphGap;
+            }
+        }
+
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        std::vector<uint8_t> index(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+        int32_t left = 0;
+
+        for (const auto& [glyph, glyphWidth] : glyphs)
+        {
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < glyphWidth; ++x)
+                {
+                    const bool inked =
+                        glyph[static_cast<size_t>(y) * static_cast<size_t>(glyphWidth) + x] != MCSharpText::NoInk;
+                    index[static_cast<size_t>(y) * static_cast<size_t>(width) + left + x] = inked ? 255 : 1;
+                }
+            }
+
+            left += glyphWidth + AuditGlyphGap;
+        }
+
+        std::array<SDL_Color, 256> grey{};
+        grey[1] = SDL_Color{48, 48, 48, 255};
+        grey[255] = SDL_Color{255, 255, 255, 255};
+        SaveAuditPicture(path, width, height, index, {}, grey);
+    }
+
+    /// <summary>A tally entry's frames (or a glyph entry's characters, as text), the first few.</summary>
+    std::string AuditFramesText(const AuditKey& key, const AuditTally& entry)
+    {
+        const bool glyph = std::get<0>(key) == "Glyph";
+        std::string text;
+
+        for (const int32_t frame : entry.Frames | std::views::take(AuditFramesListed))
+        {
+            if (glyph)
+            {
+                text += frame >= AuditFirstPrintable && frame <= AuditLastPrintable
+                            ? std::string(1, static_cast<char>(frame))
+                            : std::format("<{}>", frame);
+            }
+            else
+            {
+                text += std::format("{}{}", text.empty() ? "" : ",", frame);
+            }
+        }
+
+        return text.empty() ? "-" : text;
+    }
+
+    /// <summary>The audit's screens or call stack in a table cell.</summary>
+    std::string AuditJoined(const std::set<std::string>& screens)
+    {
+        std::string text;
+
+        for (const std::string& screen : screens)
+        {
+            text += (text.empty() ? "" : ",") + screen;
+        }
+
+        return text;
+    }
+
+    std::string AuditStackText(const std::vector<uintptr_t>& stack)
+    {
+        std::string text;
+
+        for (const uintptr_t address : stack)
+        {
+            text += std::format("{}{:x}", text.empty() ? "" : " ", address);
+        }
+
+        return text;
+    }
+
+    void WriteAuditTables(const std::map<AuditKey, AuditTally>& tally, const AuditDetail& detail,
+                          const std::filesystem::path& folder, int32_t frames)
+    {
+        const std::filesystem::path items = folder / "items";
+        std::filesystem::create_directories(items);
+        std::array<SDL_Color, 256> shown{};
+        MCInput::Display()->GetShownColors(shown);
+
+        // The pictures the menu extractor finds (what the pack's menu art was made from), by id, read when a copy
+        // drawn from the original's pixels asks.
+        std::optional<std::set<uint64_t>> sources;
+
+        const auto isSource = [&](const DecodedFrame& picture) -> std::string
+        {
+            if (GuiSystem().ArtFile == nullptr)
+            {
+                return "?";
+            }
+
+            if (!sources.has_value())
+            {
+                sources.emplace();
+                int32_t skipped = 0;
+                ForEachPicture(shown, skipped,
+                               [&](std::string_view, std::span<const uint8_t> pixels, int32_t width, int32_t height,
+                                   std::span<const SDL_Color, 256>)
+                               { sources->insert(AuditPictureHash(pixels, width, height)); });
+            }
+
+            return sources->contains(AuditPictureHash(picture.Index, picture.Width, picture.Height)) ? "source"
+                                                                                                     : "made";
+        };
+
+        std::vector<std::pair<const AuditKey*, const AuditTally*>> original;
+
+        for (const auto& [key, entry] : tally)
+        {
+            if (!std::get<1>(key))
+            {
+                original.emplace_back(&key, &entry);
+            }
+        }
+
+        std::ranges::sort(original, std::ranges::greater{}, [](const auto& row) { return row.second->Pixels; });
+        // The characters drawn from the original's pixels in each font, pictured once the rows are written.
+        std::map<std::string, std::set<int32_t>> fontCharacters;
+        std::ofstream table(folder / "audit.tsv", std::ios::binary);
+        table << std::format("# frames {} load {:x}\n", frames, AuditImageBase());
+        // The source column: a copy's picture is the extractor's (source) or made at run time (made); a shape's
+        // frames that show nothing (blank).
+        table << "id\tcommand\twindow\tscaled\tdraws\tpixels\tper_draw\tper_frame\tframes\towner\tfont\tpack\tsource\t"
+                 "screens\tstack\n";
+
+        for (const auto& [key, entry] : original)
+        {
+            const std::string& command = std::get<0>(*key);
+            const auto found = detail.Entries.find(*key);
+            const AuditDetail::Entry* extra = found != detail.Entries.end() ? &found->second : nullptr;
+            std::string id;
+            std::string pack = "-";
+            std::string source = "-";
+
+            if (entry->Picture.has_value())
+            {
+                const DecodedFrame& picture = *entry->Picture;
+                id = std::format("picture-{:016x}", AuditPictureHash(picture.Index, picture.Width, picture.Height));
+                pack = MCHdArt::FindPicture(picture.Index, picture.Width, picture.Height) != nullptr ? "has" : "lacks";
+                source = isSource(picture);
+
+                if (const std::filesystem::path path = items / (id + ".png"); !std::filesystem::exists(path))
+                {
+                    if (extra != nullptr && extra->Latest.has_value())
+                    {
+                        const DecodedFrame& latest = *extra->Latest;
+                        SaveAuditPicture(path, latest.Width, latest.Height, latest.Index, {}, extra->LatestColors);
+                    }
+                    else
+                    {
+                        SaveAuditPicture(path, picture.Width, picture.Height, picture.Index, {},
+                                         extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                    }
+                }
+            }
+            else if (entry->TableHash.has_value())
+            {
+                id = std::format("shape-{:016x}", *entry->TableHash);
+                int32_t has = 0;
+
+                for (const auto& [frame, decoded] : entry->ShapeFrames)
+                {
+                    const std::shared_ptr<const MCHdArt::Frame> hd =
+                        entry->Attached.has_value()
+                            ? MCHdArt::FindInFolder(*entry->Attached, frame, decoded.Width, decoded.Height)
+                            : MCHdArt::FindShape(*entry->TableHash, frame, decoded.Width, decoded.Height);
+                    has += hd != nullptr ? 1 : 0;
+                }
+
+                const auto kept = static_cast<int32_t>(entry->ShapeFrames.size());
+                pack = kept == 0     ? "?"
+                       : has == kept ? "has"
+                       : has == 0    ? "lacks"
+                                     : std::format("part {}/{}", has, kept);
+
+                // Frames that show nothing: no pixel drawn, or an alpha sprite's every pixel colour 0 (AlphaPal.ini's
+                // marker colour, transparent).
+                const auto blank = std::ranges::count_if(entry->ShapeFrames,
+                                                         [](const auto& frameKept)
+                                                         {
+                                                             const DecodedFrame& frame = frameKept.second;
+
+                                                             for (size_t i = 0; i < frame.Index.size(); ++i)
+                                                             {
+                                                                 if (frame.Drawn[i] != 0 &&
+                                                                     (!frame.Translucent || frame.Index[i] != 0))
+                                                                 {
+                                                                     return false;
+                                                                 }
+                                                             }
+
+                                                             return true;
+                                                         });
+                source = std::format("blank {}/{}", blank, kept);
+
+                if (const std::filesystem::path path = items / (id + ".png");
+                    !entry->ShapeFrames.empty() && !std::filesystem::exists(path))
+                {
+                    const DecodedFrame& first = entry->ShapeFrames.begin()->second;
+                    SaveAuditPicture(path, first.Width, first.Height, first.Index, first.Drawn,
+                                     extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                }
+            }
+            else if (extra != nullptr && !extra->Font.empty())
+            {
+                id = std::format("font-{}", extra->Font);
+                pack = "font";
+                fontCharacters[extra->Font].insert(entry->Frames.begin(), entry->Frames.end());
+            }
+            else
+            {
+                id = std::format("{}-{}x{}", command, entry->WindowWidth, entry->WindowHeight);
+            }
+
+            table << std::format("{}\t{}\t{}x{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", id, command,
+                                 entry->WindowWidth, entry->WindowHeight, entry->Scaled ? "scaled" : "1:1",
+                                 entry->Count, entry->Pixels, entry->Count > 0 ? entry->Pixels / entry->Count : 0,
+                                 frames > 0 ? static_cast<double>(entry->Pixels) / frames : 0.0,
+                                 AuditFramesText(*key, *entry), entry->Owner.empty() ? "-" : entry->Owner,
+                                 extra != nullptr && !extra->Font.empty() ? extra->Font : "-", pack, source,
+                                 extra != nullptr ? AuditJoined(extra->Screens) : "-",
+                                 extra != nullptr ? AuditStackText(extra->Stack) : "-");
+        }
+
+        for (const auto& [name, characters] : fontCharacters)
+        {
+            if (const auto font = std::ranges::find(AuditFonts(), name, &MCGameFont::Name); font != AuditFonts().end())
+            {
+                SaveAuditGlyphs(items / std::format("font-{}.png", name), font->Data, characters);
+            }
+        }
+
+        std::ofstream sites(folder / "sites.tsv", std::ios::binary);
+        sites << std::format("# frames {} load {:x}\n", frames, AuditImageBase());
+        sites << "command\twindow\tscaled\tdraws\tpixels\tper_frame\tscreens\tstack\n";
+
+        for (const auto& [key, site] : detail.Sites)
+        {
+            const auto& [command, width, height, stack] = key;
+            sites << std::format("{}\t{}x{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\n", command, width, height,
+                                 site.Scaled ? "scaled" : "1:1", site.Count, site.Pixels,
+                                 frames > 0 ? static_cast<double>(site.Pixels) / frames : 0.0,
+                                 AuditJoined(site.Screens), AuditStackText(stack));
+        }
+
+        std::cout << std::format("  audit tables: {} ({} entries from the original's pixels, {} sites)\n",
+                                 folder.string(), original.size(), detail.Sites.size());
+    }
+
+    /// <summary>Runs <paramref name="count"/> frames.</summary>
+    void RunFrames(int32_t count)
+    {
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>Runs frames until <paramref name="done"/> (at most <paramref name="limit"/>); whether it came.</summary>
+    bool RunUntil(const std::function<bool()>& done, int32_t limit)
+    {
+        for (int32_t frame = 0; frame < limit; ++frame)
+        {
+            if (done())
+            {
+                return true;
+            }
+
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        return done();
+    }
+
+    /// <summary>Closes the logistics message dialog without its callback (a question shown only to be pictured).</summary>
+    void DismissMessage()
+    {
+        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        dialog.Callback = nullptr;
+        dialog.Deactivate(0);
+    }
+
+#if MC_AUDIT_CONTROLS
+    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
+    std::shared_ptr<MCLogTextButton> FindAuditTextButton(const MCGuiObject& parent, std::string_view label)
+    {
+        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
+        {
+            if (auto button = std::dynamic_pointer_cast<MCLogTextButton>(child);
+                button != nullptr && button->Label() == label)
+            {
+                return button;
+            }
+
+            if (std::shared_ptr<MCLogTextButton> found = FindAuditTextButton(*child, label); found != nullptr)
+            {
+                return found;
+            }
+        }
+
+        return nullptr;
+    }
+#endif
+
+    /// <summary>The multiplayer screens, hosting a LAN game on the loopback as the session screen tests do.</summary>
+    void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
+    {
+        constexpr std::string_view HostAddress = "127.0.0.1:28877";
+        // The logistics states of the LAN and session screens (as MCConnectMenu sets them).
+        constexpr int32_t LanState = 0xb;
+        constexpr int32_t SessionState = 8;
+        ConnectScreen();
+        shoot("mp_connect");
+        ShowSerialScreen();
+        shoot("mp_serial");
+        CancelToConnect();
+        ShowModemScreen();
+        shoot("mp_modem");
+        CancelToConnect();
+        ShowLanScreen();
+        shoot("mp_protocol_question");
+        DismissMessage();
+
+        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
+        {
+            std::cout << "  no multiplayer: the LAN, ready room and session screens are left out\n";
+            return;
+        }
+
+        MultiPlayer()->SessionManager->ConnectTcp(HostAddress);
+        MCSplashScreen& lan = *GlobalLog()->LanScreen;
+        GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
+        lan.ShowGuiWindow(true);
+        lan.ShowBlock(0);
+        GlobalLog()->SetCurrentScreen(lan);
+        GlobalLog()->LogisticsState = LanState;
+        lan.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
+        lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
+        lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+        shoot("mp_lan");
+        CreateSession();
+        shoot("mp_ready_room");
+        // The session screen as GO shows it (its activation sends a lone host back to the main menu, so its art
+        // shows without the players).
+        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+        GlobalLog()->SetCurrentScreen(*GlobalLog()->SessionScreen);
+        GlobalLog()->ShowLogScreen(true, true);
+        GlobalLog()->LogisticsState = SessionState;
+        shoot("mp_session");
+        DoExit();
+        shoot("main_menu_after_mp");
+    }
+
+    /// <summary>
+    /// Mission 1 of a new campaign launched from its briefing (the first mech deployed, as a player drags it), through
+    /// the loading screen to the mission; whether it came up.
+    /// </summary>
+    bool LaunchFromBriefing(AuditDetail& detail)
+    {
+        constexpr int32_t SettleFrames = 30;
+        constexpr int32_t LoadFrames = 600;
+        constexpr int32_t LaunchX = 0x230;
+        constexpr int32_t LaunchY = 0x152;
+        NewCampaign();
+        RunFrames(SettleFrames);
+        MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
+        MCScrollPane& pane = *briefing.DeployPane;
+
+        if (pane.NumberOfChildren() == 0)
+        {
+            std::cout << "  the briefing has no mech to deploy\n";
+            return false;
+        }
+
+        const std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
+        const RECT& slot = briefing.SlotRects[0];
+        MCMechBriefBlock& block = *mech->BriefBlock;
+        MCScreenInput::Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2,
+                            (slot.left + slot.right) / 2, (slot.top + slot.bottom) / 2);
+        RunFrames(SettleFrames);
+        detail.Screen = "loading";
+        MCScreenInput::RealClick(LaunchX, LaunchY);
+        return RunUntil([] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; },
+                        LoadFrames);
+    }
+
+    void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail)
+    {
+        constexpr int32_t BattleFrames = 150;
+        constexpr int32_t ResultsFrames = 60;
+        constexpr int32_t ResultsSteps = 3000;
+        constexpr int32_t ResultsShotStep = 40;
+        constexpr uint32_t TicksPerFrame = 5;
+        constexpr uint32_t ScenarioWon = 4;
+        constexpr int32_t LogisticsFrames = 3000;
+
+        // The inventory tabs the first round leaves out, and the briefing's operation tab.
+        GlobalLog()->RepairScreen->SetUpPilotInv(true, true);
+        shoot("repair_pilots");
+        GlobalLog()->RepairScreen->SetUpVhclInv(true, true);
+        shoot("repair_vehicles");
+        GlobalLog()->SetUpPurchaseScreen(true);
+        GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true);
+        shoot("purchase_pilots");
+        GlobalLog()->PurchaseScreen->SetUpCompInv(true, true);
+        shoot("purchase_components");
+        GlobalLog()->PurchaseScreen->SetUpVhclInv(true, true);
+        shoot("purchase_vehicles");
+        GlobalLog()->SetUpBriefingScreen(true);
+        GlobalLog()->BriefingScreen->SetUpOperation();
+        shoot("briefing_operation");
+        GlobalLog()->BriefingScreen->SetUpMission();
+
+        // The main menu in a campaign, and what it opens.
+        Cancel();
+        shoot("main_menu_campaign");
+        SaveScreen();
+        shoot("save");
+        Cancel();
+        SoloLoadScreen();
+        shoot("load_solo");
+        Cancel();
+        CheckExit();
+        shoot("exit_question");
+        DismissMessage();
+#if MC_AUDIT_CONTROLS
+        detail.Screen = "controls";
+        ShowPreferences();
+
+        if (const std::shared_ptr<MCLogTextButton> controls = FindAuditTextButton(*GlobalLog()->PrefScreen, "CONTROLS");
+            controls != nullptr)
+        {
+            MCScreenInput::RealClick(controls->GlobalX() + controls->Width() / 2,
+                                     controls->GlobalY() + controls->Height() / 2);
+            shoot("controls");
+        }
+
+        CancelPrefs();
+#endif
+        TourMultiplayer(shoot);
+        NewMcxCampaign();
+        shoot("briefing_expansion");
+
+        if (!LaunchFromBriefing(detail))
+        {
+            std::cout << "  the mission never came up: the mission's screens are left out\n";
+            return;
+        }
+
+        if (const std::shared_ptr<MCMover> enemy = NearestEnemy(); enemy != nullptr)
+        {
+            SendLanceAt(enemy);
+        }
+
+        detail.Screen = "mission";
+        RunFrames(BattleFrames);
+        shoot("mission");
+
+        // Escape pauses (the game's only in-mission menu: Enter then ends the mission).
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+        GamePaused = true;
+        shoot("paused");
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+        GamePaused = false;
+
+        // The tactical map's pages.
+        for (const auto& [page, name] :
+             {std::pair{MCTacmapPage::Info, "tacmap_info"}, std::pair{MCTacmapPage::Mission, "tacmap_objectives"},
+              std::pair{MCTacmapPage::Salvage, "tacmap_salvage"}, std::pair{MCTacmapPage::Map, "tacmap_map"}})
+        {
+            TacticalMap()->HideMe(false);
+            TacticalMap()->SetDisplayType(page);
+            shoot(name);
+        }
+
+        // Won: the results screen counts through its steps (its timer counted here, as the results tests do), then
+        // the debriefing.
+        MouseTimerKill();
+
+        for (int32_t i = 0; i < Scenario()->Objectives.Count(); i++)
+        {
+            Scenario()->Objectives[i].Status = 1;
+        }
+
+        ScenarioResult = ScenarioWon;
+        detail.Screen = "results";
+
+        if (!RunUntil([] { return Mission()->State == MCMissionState::Results && Mission()->ResultsScreen != nullptr; },
+                      ResultsFrames))
+        {
+            std::cout << "  the results screen never came up\n";
+            return;
+        }
+
+        for (int32_t step = 0;
+             step < ResultsSteps && Mission()->ResultsScreen != nullptr && !Mission()->ResultsScreen->Finished();
+             ++step)
+        {
+            MouseTicks += TicksPerFrame;
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (step == ResultsShotStep)
+            {
+                shoot("results");
+            }
+        }
+
+        shoot("debriefing");
+        Mission()->CloseResultsScreen();
+        detail.Screen = "after_mission";
+
+        if (!RunUntil(
+                []
+                {
+                    return Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
+                           GlobalLog()->CurrentScreen() != nullptr && GuiSystem().SmackerWindow == nullptr;
+                },
+                LogisticsFrames))
+        {
+            std::cout << "  logistics never came back after the mission\n";
+            return;
+        }
+
+        shoot("logistics_after_mission");
+        GlobalLog()->SetUpPurchaseScreen(true);
+        shoot("purchase_after_mission");
+    }
+}
+
 /// <summary>
 /// Tool: <c>--hd-audit &lt;pack&gt; --shots &lt;folder&gt;</c> lists what is still drawn from the original's pixels
 /// with HD art on: a mission (<c>--mission &lt;n&gt;</c>, default 1) drawn by the GPU as --hd-pack's pictures are, the
 /// player's lance selected and sent at the nearest live enemy (again every ten seconds, and when it falls) for
 /// <c>--hd-audit-frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
-/// tallied by what it drew and whether it was sharp (ReportAudit).
+/// tallied by what it drew and whether it was sharp (ReportAudit, WriteAuditTables). <c>--hd-audit-zoom &lt;lines&gt;</c>
+/// zooms the view out first.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the original's pixels")
 {
@@ -4891,8 +5755,29 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     REQUIRE(renderer != nullptr);
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
+
+    // With --hd-audit-zoom <lines>, the view zoomed to show that many game lines (480 closest, 2160 furthest).
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-audit-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        const float lines = std::strtof(std::string(*zoom).c_str(), nullptr);
+        MCFixedZoomHeight = 0.0f;
+        REQUIRE(MCMainView() != nullptr);
+        REQUIRE(MCMainView()->ZoomTo(lines));
+    }
+
     std::map<AuditKey, AuditTally> tally;
-    renderer->Audit = AuditInto(tally);
+    AuditDetail detail;
+    // A second for HD art to settle: the first frame after the switch draws the interface's pictures before their
+    // textures are up (from the original's pixels, once), which a player who starts with HD art on never sees.
+    constexpr int32_t SettleFrames = 15;
+
+    for (int32_t frame = 0; frame < SettleFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    renderer->Audit = AuditInDetail(tally, detail);
     constexpr int32_t DefaultFrames = 900;
     constexpr int32_t RetargetFrames = 150;
     int32_t frames = DefaultFrames;
@@ -4927,6 +5812,7 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     std::cout << std::format("  {} enemies targeted, {} fell\n", targets, fallen);
     renderer->Audit = nullptr;
     ReportAudit(tally, folder, frames);
+    WriteAuditTables(tally, detail, folder, frames);
 }
 
 /// <summary>

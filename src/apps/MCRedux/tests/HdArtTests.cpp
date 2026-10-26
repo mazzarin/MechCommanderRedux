@@ -3990,8 +3990,31 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     shoot("briefing");
     GlobalLog()->BriefingScreen->SetUpMission();
     shoot("briefing_mission");
-    AuditLabel = "to purchase";
-    GlobalLog()->SetUpPurchaseScreen(true);
+    // A screen change's slide pictured part way (its SlideShot'th present).
+    constexpr int32_t SlideShot = 2;
+    int32_t slidePresents = -1;
+    std::string slideName;
+    MCTestGame::OnPresent = [&]
+    {
+        if (slidePresents >= 0 && ++slidePresents == SlideShot)
+        {
+            const std::filesystem::path path =
+                folder / std::format("{}_slide_{}.png", slideName, original ? "original" : "sharp");
+            REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+            std::cout << std::format("  {} slide: {}\n", slideName, path.string());
+        }
+    };
+
+    const auto slide = [&](std::string name, const std::function<void()>& change)
+    {
+        AuditLabel = "to " + name;
+        slideName = std::move(name);
+        slidePresents = 0;
+        change();
+        slidePresents = -1;
+    };
+
+    slide("purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); });
     shoot("purchase");
     // The store's vehicles, then both in stock (a new campaign's store has none: its rows show the sold-out outlines).
     GlobalLog()->CurrentInvTab = VehicleTab;
@@ -4011,9 +4034,11 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     GlobalLog()->SetUpPurchaseScreen(false);
     GlobalLog()->PurMechList->Mechs.front()->Block->OnBuyConfirmed(1, 1);
     shoot("purchase_stocked");
-    AuditLabel = "to repair";
-    GlobalLog()->SetUpRepairScreen(true);
+    slide("repair", [] { GlobalLog()->SetUpRepairScreen(true); });
     shoot("repair");
+    slide("briefing", [] { GlobalLog()->SetUpBriefingScreen(true); });
+    shoot("briefing_again");
+    MCTestGame::OnPresent = nullptr;
     GHdArt = 0;
     MCHdArt::SetPackFolder({});
 

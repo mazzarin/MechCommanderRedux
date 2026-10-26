@@ -214,8 +214,22 @@ public:
     /// <summary>Reads the current mission's tonnage, briefing, map and drop zones.</summary>
     void GetCurrentMission();
 
+    /// <summary>
+    /// Port: what a screen change slides over the screen's right part (<see cref="Transition"/>): paints the picture
+    /// (<see cref="SlideWidth"/> x <see cref="SlideHeight"/>) into the port given, its corner at the port's (0, 0), as the
+    /// original put it together in a work picture before the slide. The slide paints it each frame, so with HD art on it
+    /// is drawn sharp.
+    /// </summary>
+    using MCSlidePicture = std::function<void(MCLogPort& picture)>;
+
+    /// <summary>The slide's place on the screen and its size (the original's work pictures').</summary>
+    static constexpr int32_t SlideX = 0xd3;
+    static constexpr int32_t SlideY = 0x10;
+    static constexpr int32_t SlideWidth = 0x1ab;
+    static constexpr int32_t SlideHeight = 0x1ce;
+
     /// <summary>Slides from <paramref name="from"/> to <paramref name="to"/> (a screen change).</summary>
-    void Transition(MCLogPort& from, MCLogPort& to, int direction) const;
+    void Transition(const MCSlidePicture& from, const MCSlidePicture& to, int direction) const;
 
     /// <summary>Darkens <paramref name="port"/> through the fade table.</summary>
     static void Darken(int32_t amount, MCColorTable fadeTable, MCLogPort& port);
@@ -458,9 +472,6 @@ public:
     std::array<std::shared_ptr<MCLogPort>, 6> RepairPorts;
     /// <summary>The purchase screen pieces (<c>lspcb05, 07, 06, 09.tga</c>).</summary>
     std::array<std::shared_ptr<MCLogPort>, 4> PurchasePorts;
-    /// <summary>The two full-screen work ports (0x1ab x 0x1ce) the screen changes draw into.</summary>
-    std::shared_ptr<MCLogPort> WorkPort1;
-    std::shared_ptr<MCLogPort> WorkPort0;
     /// <summary>The screen switch buttons' pictures: button 0, exit, buttons 1..3; normal, highlighted, gray.</summary>
     std::array<std::array<std::shared_ptr<MCLogPort>, 3>, 5> ScreenButtonPorts;
     /// <summary>The inventory tab icons: mechs, pilots, components, vehicles (<c>lscii?.tga</c>).</summary>

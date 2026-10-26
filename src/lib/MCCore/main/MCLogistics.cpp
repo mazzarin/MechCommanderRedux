@@ -187,8 +187,6 @@ auto MCLogistics::Start() -> void
     }
 
     LogisticsState = 0;
-    WorkPort0 = NewPort(0x1ab, 0x1ce);
-    WorkPort1 = NewPort(0x1ab, 0x1ce);
 
     for (size_t lance = 0; lance < NumLances; ++lance)
     {
@@ -593,9 +591,6 @@ MCLogistics::~MCLogistics()
         port.reset();
     }
 
-    WorkPort0.reset();
-    WorkPort1.reset();
-
     for (auto& ports : ScreenButtonPorts)
     {
         for (std::shared_ptr<MCLogPort>& port : ports)
@@ -762,28 +757,50 @@ namespace
         lights.SetDepth(100);
     }
 
-    /// <summary>
-    /// Draws what <paramref name="pane"/> shows into <paramref name="dest"/> for a screen change: its background
-    /// copy at (<paramref name="backX"/>, 1), its scrolled contents (through <paramref name="scratch"/>) at (0, 1)
-    /// and its slider at the right edge.
-    /// </summary>
-    void DrawPaneForTransition(MCScrollPane& pane, MCLogPort& scratch, MCLogPort& dest, int32_t backX)
-    {
-        if (pane.BackgroundCopy != nullptr)
-        {
-            pane.BackgroundCopy->CopyTo(dest.Frame(), backX, 1, true);
-        }
+    /// <summary>The colour the original wiped its work pictures to before it drew a pane into one.</summary>
+    constexpr int32_t SlideBack = 0x10;
+    /// <summary>How far in from a slide picture's right edge a pane's slider column goes.</summary>
+    constexpr int32_t SlideColumnInset = 0xe;
 
-        VfxPaneWipe(scratch.Frame(), 0xff);
-        pane.DrawContentTo(scratch.Frame(), 0, 0);
-        scratch.CopyTo(dest.Frame(), 0, 1, true);
-        pane.DrawSliderColumn(dest.Frame(), dest.Width() - 0xe, 1, true);
+    /// <summary>
+    /// The slide's picture of what <paramref name="pane"/> shows (the original drew it into a work picture wiped to
+    /// 0x10): its background copy at (<paramref name="backX"/>, 1), its scrolled contents at (0, 1) keyed (through a
+    /// scratch picture wiped to the key) and its slider column at the right edge.
+    /// </summary>
+    MCLogistics::MCSlidePicture PaneSlide(MCScrollPane& pane, int32_t backX)
+    {
+        return [&pane, backX](MCLogPort& picture)
+        {
+            VfxPaneWipe(picture.Frame(), SlideBack);
+
+            if (pane.BackgroundCopy != nullptr)
+            {
+                pane.BackgroundCopy->CopyTo(picture.Frame(), backX, 1, true);
+            }
+
+            {
+                MCLogBlockPort content(picture.Frame(), 0, 1, pane.Width(), pane.Height(), true);
+                pane.DrawContentTo(content.Frame(), 0, 0);
+            }
+
+            pane.DrawSliderColumn(picture.Frame(), picture.Width() - SlideColumnInset, 1, true);
+        };
     }
 
-    /// <summary>A scratch port the size of a screen's unit pane (every screen's pane is that size).</summary>
-    std::shared_ptr<MCLogPort> NewPaneScratch(MCScrollPane& pane)
+    /// <summary>
+    /// The slide's picture of the briefing screen: the part of its look (PaintLook and the screen's chrome, over a new
+    /// zeroed picture) under the slide.
+    /// </summary>
+    MCLogistics::MCSlidePicture BriefingSlide(MCBriefingScreen& briefing)
     {
-        return NewPort(pane.Width(), pane.Height());
+        return [&briefing](MCLogPort& picture)
+        {
+            VfxPaneWipe(picture.Frame(), 0);
+            MCLogBlockPort look(picture.Frame(), -MCLogistics::SlideX, -MCLogistics::SlideY, briefing.Width(),
+                                briefing.Height(), false);
+            briefing.PaintLook(look.Frame());
+            GlobalLog()->DrawScreenChrome(briefing, look.Frame());
+        };
     }
 }
 
@@ -863,27 +880,12 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 
     if (animate)
     {
-        VfxPaneWipe(WorkPort0->Frame(), 0x10);
-        VfxPaneWipe(WorkPort1->Frame(), 0x10);
         std::shared_ptr<MCScrollPane> pane = screen.UnitPane;
-        const std::shared_ptr<MCLogPort> scratch = NewPaneScratch(*pane);
-        DrawPaneForTransition(*pane, *scratch, *WorkPort0, 0);
-        int direction;
-
-        if (previous == RepairScreen)
-        {
-            DrawPaneForTransition(*RepairScreen->UnitPane, *scratch, *WorkPort1, 0);
-            direction = 1;
-        }
-        else
-        {
-            const std::shared_ptr<MCLogPort> look = BriefingScreen->NewLookPicture();
-            VfxPaneCopy(look->Frame(), 0xd3, 0x10, WorkPort1->Frame(), 0, 0, -1);
-            direction = 0;
-        }
-
+        const std::shared_ptr<MCScrollPane> previousPane = RepairScreen->UnitPane;
+        const bool fromRepair = previous == RepairScreen;
         pane->ShowGuiWindow(false);
-        Transition(*WorkPort1, *WorkPort0, direction);
+        Transition(fromRepair ? PaneSlide(*previousPane, 0) : BriefingSlide(*BriefingScreen), PaneSlide(*pane, 0),
+                   fromRepair ? 1 : 0);
         pane->ShowGuiWindow(true);
     }
 
@@ -1057,16 +1059,9 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
     if (animate)
     {
-        const std::shared_ptr<MCLogPort> look = briefing.NewLookPicture();
-        VfxPaneCopy(look->Frame(), 0xd3, 0x10, WorkPort0->Frame(), 0, 0, -1);
-        MCLogPort& from = *WorkPort1;
-        VfxPaneWipe(from.Frame(), 0x10);
-        const std::shared_ptr<MCLogPort> scratch = NewPaneScratch(*PurchaseScreen->UnitPane);
-        VfxPaneWipe(scratch->Frame(), 0xff);
-        std::shared_ptr<MCScrollPane> pane =
+        const std::shared_ptr<MCScrollPane> pane =
             previous == RepairScreen ? RepairScreen->UnitPane : PurchaseScreen->UnitPane;
-        DrawPaneForTransition(*pane, *scratch, from, 1);
-        Transition(from, *WorkPort0, 1);
+        Transition(PaneSlide(*pane, 1), BriefingSlide(briefing), 1);
     }
 
     return 0;
@@ -1155,24 +1150,10 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 
     if (animate)
     {
-        VfxPaneWipe(WorkPort0->Frame(), 0x10);
-        VfxPaneWipe(WorkPort1->Frame(), 0x10);
-        const std::shared_ptr<MCLogPort> scratch = NewPaneScratch(*PurchaseScreen->UnitPane);
-        VfxPaneWipe(scratch->Frame(), 0xff);
-        DrawPaneForTransition(*repair.UnitPane, *scratch, *WorkPort0, 1);
-
-        if (previous == PurchaseScreen)
-        {
-            DrawPaneForTransition(*PurchaseScreen->UnitPane, *scratch, *WorkPort1, 0);
-        }
-        else
-        {
-            const std::shared_ptr<MCLogPort> look = BriefingScreen->NewLookPicture();
-            VfxPaneCopy(look->Frame(), 0xd3, 0x10, WorkPort1->Frame(), 0, 0, -1);
-        }
-
+        const std::shared_ptr<MCScrollPane> previousPane = PurchaseScreen->UnitPane;
         repair.UnitPane->ShowGuiWindow(false);
-        Transition(*WorkPort1, *WorkPort0, 0);
+        Transition(previous == PurchaseScreen ? PaneSlide(*previousPane, 0) : BriefingSlide(*BriefingScreen),
+                   PaneSlide(*repair.UnitPane, 1), 0);
         repair.UnitPane->ShowGuiWindow(true);
     }
 
@@ -1196,22 +1177,42 @@ namespace
                 return;
             }
 
-            if (!From.has_value() || !To.has_value())
+            if (From == nullptr || To == nullptr)
             {
                 return;
             }
 
             MCPane& target = Lport()->Frame();
 
+            // Put together once (HD art off): copied as the original copied its work pictures.
+            if (FromPicture != nullptr && ToPicture != nullptr)
+            {
+                if (Direction == 0)
+                {
+                    FromPicture->CopyTo(target, 0, 0, true);
+                    VfxPaneCopy(ToPicture->Frame(), Width() - Offset, 0, target, 0, 0, VfxNoColor);
+                }
+                else
+                {
+                    ToPicture->CopyTo(target, 0, 0, true);
+                    VfxPaneCopy(FromPicture->Frame(), Offset, 0, target, 0, 0, VfxNoColor);
+                }
+
+                return;
+            }
+
+            // Painted each frame: the picture under the other keyed; the other's part shown opaque over it, cut to its
+            // place: direction 0 shows the new picture's right part at the left, else the old one's from the slide's
+            // offset.
             if (Direction == 0)
             {
-                From->get().CopyTo(target, 0, 0, true);
-                VfxPaneCopy(To->get().Frame(), 0x1ab - Offset, 0, target, 0, 0, -1);
+                Paint(*From, 0, Width(), true);
+                Paint(*To, Offset - Width(), Offset, false);
             }
             else
             {
-                To->get().CopyTo(target, 0, 0, true);
-                VfxPaneCopy(From->get().Frame(), Offset, 0, target, 0, 0, -1);
+                Paint(*To, 0, Width(), true);
+                Paint(*From, -Offset, Width() - Offset, false);
             }
         }
 
@@ -1219,23 +1220,60 @@ namespace
         bool DrawsLive() override { return true; }
 
         /// <summary>The screen shown before the change, and the one after.</summary>
-        MCOptionalRef<MCLogPort> From;
-        MCOptionalRef<MCLogPort> To;
+        const MCLogistics::MCSlidePicture* From = nullptr;
+        const MCLogistics::MCSlidePicture* To = nullptr;
+        /// <summary>
+        /// Without a sharp screen, the two put together once in pictures, as the original's work pictures were (the
+        /// GPU then draws the slide as it always did); with one, none: they are painted each frame, sharp.
+        /// </summary>
+        std::shared_ptr<MCLogPort> FromPicture;
+        std::shared_ptr<MCLogPort> ToPicture;
         /// <summary>0: the new picture slides in from the right; otherwise the old one slides out to the left.</summary>
         int Direction = 0;
         /// <summary>How far the slide has gone, in pixels.</summary>
         int32_t Offset = 0;
+
+    private:
+        /// <summary>
+        /// Paints <paramref name="picture"/> with its corner at x <paramref name="xPos"/> of the slide, cut to its first
+        /// <paramref name="shown"/> columns, keyed or not (as the original copied the picture).
+        /// </summary>
+        void Paint(const MCLogistics::MCSlidePicture& picture, int32_t xPos, int32_t shown, bool keyed)
+        {
+            if (shown <= 0)
+            {
+                return;
+            }
+
+            MCLogBlockPort part(Lport()->Frame(), 0, 0, std::min(shown, Width()), Height(), keyed);
+            MCLogBlockPort placed(part.Frame(), xPos, 0, Width(), Height(), keyed);
+            picture(placed);
+        }
     };
 }
 
-auto MCLogistics::Transition(MCLogPort& from, MCLogPort& to, int direction) const -> void
+auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& to, int direction) const -> void
 {
     // A pane over the screen's right part, redrawn each frame for a quarter of a second: direction 0 slides the new
     // picture in from the right over the old one, any other slides the old one out to the left off the new one.
     const MCGuiOwned<MCTransitionWipe> wipe = MCMakeGui<MCTransitionWipe>();
-    wipe->Init(0xd3, 0x10, from.Width(), from.Height());
-    wipe->From = from;
-    wipe->To = to;
+    wipe->Init(SlideX, SlideY, SlideWidth, SlideHeight);
+    wipe->From = &from;
+    wipe->To = &to;
+
+    if (!MCInput::Display()->SharpScreen())
+    {
+        const auto picture = [](const MCSlidePicture& paint)
+        {
+            std::shared_ptr<MCLogPort> made = NewPort(SlideWidth, SlideHeight);
+            paint(*made);
+            return made;
+        };
+
+        wipe->FromPicture = picture(from);
+        wipe->ToPicture = picture(to);
+    }
+
     wipe->Direction = direction;
     CurrentScreen()->AddChild(wipe);
     wipe->ShowGuiWindow(true);

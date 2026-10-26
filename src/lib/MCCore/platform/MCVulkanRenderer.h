@@ -2,6 +2,7 @@
 
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
+#include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 
 #include <unordered_set>
@@ -480,13 +481,17 @@ private:
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
 
     /// <summary>
-    /// Port-only: draws the glyph <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows
-    /// <paramref name="pitch"/> apart) over <paramref name="at"/> on a sharp screen, redrawn as strokes
-    /// (<see cref="MCSharpText"/>) at the output's resolution in the colours <paramref name="table"/> gives its bytes.
-    /// False when it can't be put on the GPU (the original then draws the colours as well).
+    /// Port-only: draws the part from (<paramref name="sourceX"/>, <paramref name="sourceY"/>) of the glyph
+    /// <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows a glyph's width apart) of
+    /// <paramref name="font"/> over <paramref name="at"/> on a sharp screen, the whole glyph redrawn as strokes
+    /// (<see cref="MCSharpText"/>; a two-tone glyph as a layer per byte, as its font's layers say) at the output's
+    /// resolution in the colours <paramref name="table"/> gives its bytes. False when it can't be put on the GPU (the
+    /// original then draws the colours as well).
     /// </summary>
-    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns, int32_t rows,
-                       const Quad& at, const MCColorTable& table);
+    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph, int32_t columns,
+                       int32_t rows, const Quad& at, int32_t sourceX, int32_t sourceY, const MCColorTable& table);
+    /// <summary>Port-only: how <paramref name="font"/>'s two-tone glyphs are layered (kept until its bytes change).</summary>
+    const MCSharpText::MCFontLayers& FontLayers(std::span<const uint8_t> font);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -747,6 +752,8 @@ private:
     /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;
+    /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
+    std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;

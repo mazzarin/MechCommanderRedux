@@ -9,6 +9,7 @@
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
+#include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
@@ -64,6 +65,7 @@
 #include "lib/MCFile.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCPurchaseScreen.h"
 #include "platform/MCSharpText.h"
 
 namespace
@@ -201,6 +203,11 @@ namespace
         }
 
         return decoded;
+    }
+
+    bool SameColor(const SDL_Color& a, const SDL_Color& b)
+    {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
     }
 
     /// <summary>Saves <paramref name="width"/> x <paramref name="height"/> RGBA pixels as a PNG.</summary>
@@ -3964,6 +3971,11 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     shoot("briefing");
     GlobalLog()->SetUpPurchaseScreen(true);
     shoot("purchase");
+    GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true);
+    shoot("purchase_pilots");
+    GlobalLog()->PurchaseScreen->SetUpCompInv(true, true);
+    shoot("purchase_components");
+    GlobalLog()->PurchaseScreen->SetUpMechInv(true, true);
     GlobalLog()->SetUpRepairScreen(true);
     shoot("repair");
     GHdArt = 0;
@@ -4179,6 +4191,444 @@ TEST_CASE_ISOLATED("game: a sharp screen draws the menus at the window's resolut
     CHECK(sharp == plain);
 }
 
+namespace
+{
+    /// <summary>
+    /// A glyph's redrawn coverage at (x, y) in its redrawn pixels, between their centres, as shaders/draw.pshader takes
+    /// it: none past its border, or, for a layer that runs on (<paramref name="runsOn"/>), its border's.
+    /// </summary>
+    float CoverageBetween(std::span<const uint8_t> redrawn, int32_t width, int32_t height, bool runsOn, float x,
+                          float y)
+    {
+        const auto texel = [&](int32_t i, int32_t j)
+        {
+            if (!runsOn && (i < 0 || j < 0 || i >= width || j >= height))
+            {
+                return 0.0f;
+            }
+
+            const size_t at = static_cast<size_t>(std::clamp(j, 0, height - 1)) * static_cast<size_t>(width) +
+                              static_cast<size_t>(std::clamp(i, 0, width - 1));
+            return static_cast<float>(redrawn[at * BytesPerPixel + 1]) / 255.0f;
+        };
+
+        const auto i = static_cast<int32_t>(std::floor(x));
+        const auto j = static_cast<int32_t>(std::floor(y));
+        const float fx = x - static_cast<float>(i);
+        const float fy = y - static_cast<float>(j);
+        const float top = std::lerp(texel(i, j), texel(i + 1, j), fx);
+        const float bottom = std::lerp(texel(i, j + 1), texel(i + 1, j + 1), fx);
+        return std::lerp(top, bottom, fy);
+    }
+}
+
+/// <summary>
+/// On a sharp screen, two-tone text (yelldrp.fnt, the logistics screens' yellow figures, a body and its drop shadow) is
+/// shown from its layers: each pixel of the window is the glyphs' layers (MCSharpText::RedrawLayers, the whole glyph
+/// where a pane cuts it) sampled where it lies, each over the one behind it; the indices stay the original's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a sharp screen shows two-tone text from its layers and keeps its indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    REQUIRE(YellowDropFont != nullptr);
+    REQUIRE(!YellowDropFont->FontData.Empty());
+    constexpr int32_t Width = 2560;
+    constexpr int32_t Height = 1920;
+    constexpr int32_t SettleFrames = 30;
+    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+    SDL_SyncWindow(&MCInput::Display()->Window());
+
+    const auto settle = []
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    };
+
+    // A box of one colour (neither of the font's, in the screen's settled palette), the text in it, its first letter
+    // cut by the box's left side.
+    settle();
+    const std::span<const uint8_t> font = YellowDropFont->FontData.Bytes();
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    REQUIRE(fontLayers.Shadow.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const auto background =
+        static_cast<uint8_t>(std::ranges::find_if(colors,
+                                                  [&](const SDL_Color& color)
+                                                  {
+                                                      return !SameColor(color, colors[fontLayers.Shadow->Body]) &&
+                                                             !SameColor(color, colors[fontLayers.Shadow->Shadow]);
+                                                  }) -
+                             colors.begin());
+    const std::string_view text = "A25 Tons AVKWxy47";
+    constexpr int32_t Cut = 2;
+    constexpr int32_t Margin = 3;
+    const int32_t fontHeight = VfxFontHeight(font);
+    const MCPane& screen = ScreenPort()->Frame();
+    const MCPane box{screen.Window, screen.X0 + 40, screen.Y0 + 40,
+                     screen.X0 + 40 + YellowDropFont->Width(text) - Cut + Margin,
+                     screen.Y0 + 40 + fontHeight + 2 * Margin};
+
+    const auto drawn = [&]
+    {
+        settle();
+        VfxPaneWipe(box, background);
+        YellowDropFont->WriteString(box, -Cut, Margin, text);
+        return MCInput::Display()->ComposeScreen();
+    };
+
+    const std::vector<uint8_t> plain = drawn();
+    GHdArt = 1;
+    const std::vector<uint8_t> sharp = drawn();
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_sharp_two_tone";
+    std::filesystem::create_directories(scratch);
+    const Shown shown = ReadShown(scratch);
+    GHdArt = 0;
+    std::filesystem::remove_all(scratch);
+    CHECK(sharp == plain);
+
+    // Each glyph's place in the window and its layers (as a one-colour glyph, the space, its one).
+    struct Placed
+    {
+        int32_t X = 0;
+        int32_t Columns = 0;
+        std::vector<std::vector<uint8_t>> Layers;
+        MCSharpText::MCGlyphLayers How;
+    };
+
+    std::vector<Placed> glyphs;
+    int32_t x = box.X0 - Cut;
+
+    for (const char c : text)
+    {
+        const auto character = static_cast<uint8_t>(c);
+        const int32_t columns = VfxCharacterWidth(font, character);
+        const auto offset = static_cast<size_t>(static_cast<uint32_t>(MCVfxRead32(font, 0x10 + character * 4))) + 4;
+        const std::span<const uint8_t> glyph =
+            font.subspan(offset, static_cast<size_t>(columns) * static_cast<size_t>(fontHeight));
+        Placed placed{x, columns, {}, {}};
+
+        if (MCSharpText::Layered(glyph, columns, columns, fontHeight))
+        {
+            placed.How = MCSharpText::LayersOf(glyph, columns, columns, fontHeight, fontLayers);
+            placed.Layers = MCSharpText::RedrawLayers(glyph, columns, columns, fontHeight, placed.How);
+        }
+        else
+        {
+            placed.Layers.push_back(MCSharpText::Redraw(glyph, columns, columns, fontHeight));
+        }
+
+        glyphs.push_back(std::move(placed));
+        x += columns;
+    }
+
+    // Every shown pixel inside the box, against the layers sampled as shaders/draw.pshader's KindSharpGlyph does.
+    constexpr int32_t Scale = MCSharpText::Scale;
+    constexpr int32_t Tolerance = 3;
+    const float perX = static_cast<float>(MCInput::Display()->Width()) / static_cast<float>(shown.Width);
+    const float perY = static_cast<float>(MCInput::Display()->Height()) / static_cast<float>(shown.Height);
+    int32_t worst = 0;
+    int64_t compared = 0;
+    int64_t covered = 0;
+
+    for (int32_t oy = 0; oy < shown.Height; ++oy)
+    {
+        const float wy = (static_cast<float>(oy) + 0.5f) * perY;
+
+        for (int32_t ox = 0; ox < shown.Width; ++ox)
+        {
+            const float wx = (static_cast<float>(ox) + 0.5f) * perX;
+
+            if (wx < static_cast<float>(box.X0) || wx >= static_cast<float>(box.X1 + 1) ||
+                wy < static_cast<float>(box.Y0) || wy >= static_cast<float>(box.Y1 + 1))
+            {
+                continue;
+            }
+
+            std::array<float, 3> expected = {static_cast<float>(colors[background].r),
+                                             static_cast<float>(colors[background].g),
+                                             static_cast<float>(colors[background].b)};
+            const float gy = wy - static_cast<float>(box.Y0 + Margin);
+
+            for (const Placed& glyph : glyphs)
+            {
+                const float gx = wx - static_cast<float>(glyph.X);
+
+                if (gx < 0.0f || gx >= static_cast<float>(glyph.Columns) || gy < 0.0f ||
+                    gy >= static_cast<float>(fontHeight))
+                {
+                    continue;
+                }
+
+                for (size_t place = 0; place < glyph.Layers.size(); ++place)
+                {
+                    const std::vector<uint8_t>& layer = glyph.Layers[place];
+                    const int32_t width = glyph.Columns * Scale;
+                    const int32_t height = fontHeight * Scale;
+                    const float coverage = CoverageBetween(layer, width, height, glyph.How.RunsOn(place),
+                                                           gx * Scale - 0.5f, gy * Scale - 0.5f);
+                    const size_t nearest =
+                        static_cast<size_t>(std::clamp(static_cast<int32_t>(gy * Scale), 0, height - 1)) *
+                            static_cast<size_t>(width) +
+                        static_cast<size_t>(std::clamp(static_cast<int32_t>(gx * Scale), 0, width - 1));
+                    const SDL_Color& color = colors[layer[nearest * BytesPerPixel]];
+                    covered += coverage > 0.0f ? 1 : 0;
+                    expected = {std::lerp(expected[0], static_cast<float>(color.r), coverage),
+                                std::lerp(expected[1], static_cast<float>(color.g), coverage),
+                                std::lerp(expected[2], static_cast<float>(color.b), coverage)};
+                }
+            }
+
+            const uint8_t* pixel =
+                &shown.Pixels[(static_cast<size_t>(oy) * static_cast<size_t>(shown.Width) + ox) * BytesPerPixel];
+
+            for (size_t channel = 0; channel < expected.size(); ++channel)
+            {
+                worst = std::max(worst, std::abs(static_cast<int32_t>(pixel[channel]) -
+                                                 static_cast<int32_t>(std::lround(expected[channel]))));
+            }
+
+            ++compared;
+        }
+    }
+
+    std::cout << std::format("  {} shown pixels compared ({} under a layer), farthest {} from the layers\n", compared,
+                             covered, worst);
+    CHECK(compared > 0);
+    CHECK(covered > 0);
+    CHECK(worst <= Tolerance);
+}
+
+namespace
+{
+    /// <summary>A redrawn glyph's half coverage: a pixel brought back to the glyph's size is ink from here on.</summary>
+    constexpr uint8_t HalfCoverage = 128;
+    /// <summary>How far a covered redrawn pixel's centre may lie from an ink pixel, in glyph pixels: half a pixel, and
+    /// the smoothing's half a redrawn pixel.</summary>
+    constexpr float StrokeReach = 0.5f + 0.5f / static_cast<float>(MCSharpText::Scale) + 1e-4f;
+
+    /// <summary>The byte and coverage of a redrawn glyph's pixel at (x, y) in glyph pixels (MCSharpText's RGBA8).</summary>
+    std::pair<uint8_t, uint8_t> RedrawnAt(std::span<const uint8_t> redrawn, int32_t columns, float x, float y)
+    {
+        constexpr int32_t Scale = MCSharpText::Scale;
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * static_cast<size_t>(columns * Scale) + column) * BytesPerPixel;
+        return {redrawn[offset], redrawn[offset + 1]};
+    }
+
+    /// <summary>
+    /// A glyph's layers brought back to its size: at each pixel's centre, the byte of the topmost layer covering it at
+    /// least half; no ink where none does.
+    /// </summary>
+    std::vector<uint8_t> ReadBack(const std::vector<std::vector<uint8_t>>& layers, int32_t columns, int32_t rows)
+    {
+        std::vector<uint8_t> bytes(static_cast<size_t>(columns) * static_cast<size_t>(rows), MCSharpText::NoInk);
+
+        for (int32_t y = 0; y < rows; ++y)
+        {
+            for (int32_t x = 0; x < columns; ++x)
+            {
+                for (const std::vector<uint8_t>& layer : layers)
+                {
+                    const auto [byte, coverage] =
+                        RedrawnAt(layer, columns, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
+
+                    if (coverage >= HalfCoverage)
+                    {
+                        bytes[static_cast<size_t>(y) * static_cast<size_t>(columns) + x] = byte;
+                    }
+                }
+            }
+        }
+
+        return bytes;
+    }
+
+    /// <summary>The covered redrawn pixel farthest from the glyph's ink, and how far, in glyph pixels.</summary>
+    struct Farthest
+    {
+        float Distance = 0.0f;
+        float X = 0.0f;
+        float Y = 0.0f;
+    };
+
+    /// <summary>
+    /// The covered pixel of <paramref name="redrawn"/> (the glyph <paramref name="glyph"/>, <paramref name="columns"/> x
+    /// <paramref name="rows"/>, redrawn) that lies farthest from the glyph's ink pixels.
+    /// </summary>
+    Farthest FarthestCover(std::span<const uint8_t> redrawn, std::span<const uint8_t> glyph, int32_t columns,
+                           int32_t rows)
+    {
+        constexpr int32_t Scale = MCSharpText::Scale;
+        const auto ink = [&](int32_t x, int32_t y)
+        {
+            return x >= 0 && y >= 0 && x < columns && y < rows &&
+                   glyph[static_cast<size_t>(y) * static_cast<size_t>(columns) + x] != MCSharpText::NoInk;
+        };
+
+        Farthest farthest;
+
+        for (int32_t j = 0; j < rows * Scale; ++j)
+        {
+            for (int32_t i = 0; i < columns * Scale; ++i)
+            {
+                if (redrawn[(static_cast<size_t>(j) * static_cast<size_t>(columns * Scale) + i) * BytesPerPixel + 1] ==
+                    0)
+                {
+                    continue;
+                }
+
+                const float px = (static_cast<float>(i) + 0.5f) / Scale;
+                const float py = (static_cast<float>(j) + 0.5f) / Scale;
+                float nearest = std::numeric_limits<float>::max();
+
+                for (int32_t y = static_cast<int32_t>(py) - 1; y <= static_cast<int32_t>(py) + 1; ++y)
+                {
+                    for (int32_t x = static_cast<int32_t>(px) - 1; x <= static_cast<int32_t>(px) + 1; ++x)
+                    {
+                        if (ink(x, y))
+                        {
+                            const float dx = std::max(std::abs(px - (static_cast<float>(x) + 0.5f)) - 0.5f, 0.0f);
+                            const float dy = std::max(std::abs(py - (static_cast<float>(y) + 0.5f)) - 0.5f, 0.0f);
+                            nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy));
+                        }
+                    }
+                }
+
+                if (nearest > farthest.Distance)
+                {
+                    farthest = {nearest, px, py};
+                }
+            }
+        }
+
+        return farthest;
+    }
+
+    /// <summary>
+    /// A VFX font (vfx/MCVfxFunctions.h's fonts) of <paramref name="glyphs"/>, characters 0 on, each its width and its
+    /// pixels, <paramref name="height"/> rows of them.
+    /// </summary>
+    std::vector<uint8_t> MakeFont(int32_t height, const std::vector<std::pair<int32_t, std::vector<uint8_t>>>& glyphs)
+    {
+        constexpr size_t CountAt = 4;
+        constexpr size_t HeightAt = 8;
+        constexpr size_t TableAt = 0x10;
+        constexpr size_t Word = 4;
+        std::vector<uint8_t> font(TableAt + glyphs.size() * Word, 0);
+
+        const auto put = [&font](size_t at, int32_t value) { std::memcpy(font.data() + at, &value, Word); };
+        put(CountAt, static_cast<int32_t>(glyphs.size()));
+        put(HeightAt, height);
+
+        for (size_t character = 0; character < glyphs.size(); ++character)
+        {
+            put(TableAt + character * Word, static_cast<int32_t>(font.size()));
+            font.resize(font.size() + Word);
+            put(font.size() - Word, glyphs[character].first);
+            font.insert(font.end(), glyphs[character].second.begin(), glyphs[character].second.end());
+        }
+
+        return font;
+    }
+}
+
+/// <summary>
+/// A two-tone glyph, a body with its drop shadow one pixel down and one down and right (yelldrp.fnt's), is redrawn as
+/// two layers: the body's strokes, over the same strokes swept between the shadow's offsets. Brought back to the
+/// glyph's size it is the glyph; the shadow lies under the body's diagonal, never above it.
+/// </summary>
+TEST_CASE("sharp text: a body and its drop shadow are redrawn as two layers, the shadow swept under the body")
+{
+    constexpr int32_t Columns = 4;
+    constexpr int32_t Rows = 4;
+    constexpr uint8_t Body = 161;
+    constexpr uint8_t Shade = 16;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    // A diagonal from (0, 0) to (2, 2), its shadow under it.
+    const std::vector<uint8_t> glyph = {Body,  No,    No,    No, //
+                                        Shade, Body,  No,    No, //
+                                        No,    Shade, Body,  No, //
+                                        No,    No,    Shade, Shade};
+    const std::vector<uint8_t> font = MakeFont(Rows, {{Columns, glyph}});
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    REQUIRE(fontLayers.Shadow.has_value());
+    CHECK_EQ(fontLayers.Shadow->Body, Body);
+    CHECK_EQ(fontLayers.Shadow->Shadow, Shade);
+    CHECK(MCSharpText::Layered(glyph, Columns, Columns, Rows));
+
+    const MCSharpText::MCGlyphLayers layers = MCSharpText::LayersOf(glyph, Columns, Columns, Rows, fontLayers);
+    const std::vector<uint8_t> backToFront = {Shade, Body};
+    CHECK(layers.Bytes == backToFront);
+    CHECK(layers.Shadow.has_value());
+    const std::vector<std::vector<uint8_t>> redrawn = MCSharpText::RedrawLayers(glyph, Columns, Columns, Rows, layers);
+    REQUIRE_EQ(redrawn.size(), size_t{2});
+    CHECK(ReadBack(redrawn, Columns, Rows) == glyph);
+
+    const std::vector<uint8_t>& shadow = redrawn[0];
+    const std::vector<uint8_t>& body = redrawn[1];
+    constexpr uint8_t Whole = 255;
+    CHECK_EQ(RedrawnAt(body, Columns, 1.0f, 1.0f).first, Body);
+    CHECK_EQ(RedrawnAt(body, Columns, 1.0f, 1.0f).second, Whole);
+    // Under the diagonal, the shadow (the diagonal moved down, and swept right): not the body.
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.0f, 2.0f).first, Shade);
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.0f, 2.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(shadow, Columns, 0.6f, 1.8f).second, Whole);
+    CHECK_EQ(RedrawnAt(body, Columns, 0.6f, 1.8f).second, uint8_t{0});
+    // Above it, neither.
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.4f, 0.6f).second, uint8_t{0});
+    CHECK_EQ(RedrawnAt(body, Columns, 1.6f, 0.4f).second, uint8_t{0});
+    CHECK(FarthestCover(shadow, glyph, Columns, Rows).Distance <= StrokeReach);
+}
+
+/// <summary>
+/// A letter on a box (dim.fnt's, the small lblue.fnt's) is redrawn as the letter's strokes over the box, the box's
+/// edges on the glyph's border carried on past it: its corners are square, so boxes side by side join, and it fills
+/// the corners between the letter's strokes and itself.
+/// </summary>
+TEST_CASE("sharp text: a letter on a box is redrawn over the box, which keeps its square corners")
+{
+    constexpr int32_t Columns = 3;
+    constexpr int32_t Rows = 3;
+    constexpr uint8_t Letter = 227;
+    constexpr uint8_t Box = 31;
+    // A box with a diagonal through it: the box has more pixels, so it lies behind.
+    const std::vector<uint8_t> glyph = {Letter, Box, Box, Box, Letter, Box, Box, Box, Letter};
+    const std::vector<uint8_t> font = MakeFont(Rows, {{Columns, glyph}});
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    CHECK(!fontLayers.Shadow.has_value());
+
+    const MCSharpText::MCGlyphLayers layers = MCSharpText::LayersOf(glyph, Columns, Columns, Rows, fontLayers);
+    const std::vector<uint8_t> backToFront = {Box, Letter};
+    REQUIRE(layers.Bytes == backToFront);
+    const std::vector<std::vector<uint8_t>> redrawn = MCSharpText::RedrawLayers(glyph, Columns, Columns, Rows, layers);
+    REQUIRE_EQ(redrawn.size(), size_t{2});
+    CHECK(ReadBack(redrawn, Columns, Rows) == glyph);
+
+    const std::vector<uint8_t>& box = redrawn[0];
+    const std::vector<uint8_t>& letter = redrawn[1];
+    // The box's corner pixels, at the glyph's corners, are whole (one-colour strokes would round them).
+    constexpr uint8_t Whole = 255;
+    CHECK_EQ(RedrawnAt(box, Columns, 2.97f, 0.03f).second, Whole);
+    CHECK_EQ(RedrawnAt(box, Columns, 0.03f, 2.97f).second, Whole);
+    // Between the box and the diagonal, the box (its strokes join the letter's pixels); on it, the letter, whose own
+    // strokes are a one-colour glyph's.
+    CHECK_EQ(RedrawnAt(box, Columns, 1.95f, 1.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(letter, Columns, 1.95f, 1.0f).second, uint8_t{0});
+    CHECK_EQ(RedrawnAt(letter, Columns, 1.0f, 1.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(letter, Columns, 2.5f, 0.5f).second, uint8_t{0});
+}
+
 /// <summary>
 /// A glyph redrawn sharp covers its ink pixels' centres fully, keeps each one's font byte, joins diagonal neighbours
 /// with a straight stroke (the middle of a diagonal pair is covered), and leaves the background far from the ink empty.
@@ -4276,9 +4726,10 @@ namespace
 }
 
 /// <summary>
-/// Every glyph of every font in the install, redrawn as strokes (what a sharp screen shows), reads as the original:
-/// brought back down to the font's size (each glyph pixel's centre) it is the glyph, ink and bytes, and no stroke
-/// reaches farther than half a glyph pixel (and the edge's smoothing) from an ink pixel.
+/// Every glyph of every font in the install, redrawn as strokes (what a sharp screen shows; a two-tone glyph as a layer
+/// per byte), reads as the original: brought back down to the font's size (each glyph pixel's centre) it is the glyph,
+/// ink and bytes, and no stroke reaches farther than half a glyph pixel (and the edge's smoothing) from an ink pixel.
+/// The two drop-shadow fonts are taken as such.
 /// </summary>
 TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the originals")
 {
@@ -4287,16 +4738,14 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
         return;
     }
 
-    constexpr int32_t Scale = MCSharpText::Scale;
-    constexpr uint8_t Half = 128;
-    // How far a covered redrawn pixel's centre may lie from an ink pixel, in glyph pixels: half a pixel, and the
-    // smoothing's half a redrawn pixel.
-    constexpr float Reach = 0.5f + 0.5f / static_cast<float>(Scale) + 1e-4f;
     const std::vector<MCGameFont> fonts = GameFonts();
     REQUIRE(!fonts.empty());
     int64_t glyphs = 0;
+    int64_t layered = 0;
     int64_t wrong = 0;
     std::string first;
+    std::set<std::string> twoTone;
+    std::set<std::string> shadowed;
 
     const auto fail = [&](const MCGameFont& font, int32_t character, std::string_view what)
     {
@@ -4309,6 +4758,12 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
     for (const MCGameFont& font : fonts)
     {
         const int32_t height = VfxFontHeight(font.Data);
+        const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font.Data);
+
+        if (fontLayers.Shadow.has_value())
+        {
+            shadowed.insert(font.Name);
+        }
 
         for (int32_t character = 0; character < MCVfxRead32(font.Data, 4); ++character)
         {
@@ -4320,76 +4775,78 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
                 continue;
             }
 
+            // As a sharp screen draws it: a two-tone glyph a layer per byte.
             ++glyphs;
-            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
-            const int32_t redrawnWidth = width * Scale;
-            const auto texel = [&](int32_t x, int32_t y)
-            { return &redrawn[(static_cast<size_t>(y) * static_cast<size_t>(redrawnWidth) + x) * 4]; };
-            const auto ink = [&](int32_t x, int32_t y)
-            {
-                return x >= 0 && y >= 0 && x < width && y < height &&
-                       glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x] != MCSharpText::NoInk;
-            };
+            std::vector<std::vector<uint8_t>> redrawn;
 
-            for (int32_t y = 0; y < height; ++y)
+            if (MCSharpText::Layered(glyph, width, width, height))
             {
-                for (int32_t x = 0; x < width; ++x)
+                ++layered;
+                twoTone.insert(font.Name);
+                const MCSharpText::MCGlyphLayers layers =
+                    MCSharpText::LayersOf(glyph, width, width, height, fontLayers);
+                redrawn = MCSharpText::RedrawLayers(glyph, width, width, height, layers);
+
+                if (redrawn.size() != layers.Bytes.size())
                 {
-                    const uint8_t* centre = texel(x * Scale + Scale / 2, y * Scale + Scale / 2);
-                    const uint8_t byte = glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x];
-
-                    if (ink(x, y) != (centre[1] >= Half) || (ink(x, y) && centre[0] != byte))
-                    {
-                        fail(font, character,
-                             std::format("pixel ({}, {}) comes back {:#x} at {}", x, y, centre[0], centre[1]));
-                    }
+                    fail(font, character, std::format("{} layers for {} bytes", redrawn.size(), layers.Bytes.size()));
+                    continue;
                 }
             }
-
-            for (int32_t j = 0; j < height * Scale; ++j)
+            else
             {
-                for (int32_t i = 0; i < redrawnWidth; ++i)
+                redrawn.push_back(MCSharpText::Redraw(glyph, width, width, height));
+            }
+
+            const std::vector<uint8_t> back = ReadBack(redrawn, width, height);
+
+            if (const auto differs = std::ranges::mismatch(back, glyph); differs.in1 != back.end())
+            {
+                const auto at = static_cast<int32_t>(differs.in1 - back.begin());
+                fail(font, character,
+                     std::format("pixel ({}, {}) comes back {:#x}, not {:#x}", at % width, at / width, *differs.in1,
+                                 *differs.in2));
+            }
+
+            for (const std::vector<uint8_t>& layer : redrawn)
+            {
+                if (const Farthest farthest = FarthestCover(layer, glyph, width, height);
+                    farthest.Distance > StrokeReach)
                 {
-                    if (texel(i, j)[1] == 0)
-                    {
-                        continue;
-                    }
-
-                    const float px = (static_cast<float>(i) + 0.5f) / Scale;
-                    const float py = (static_cast<float>(j) + 0.5f) / Scale;
-                    float nearest = std::numeric_limits<float>::max();
-
-                    for (int32_t y = static_cast<int32_t>(py) - 1; y <= static_cast<int32_t>(py) + 1; ++y)
-                    {
-                        for (int32_t x = static_cast<int32_t>(px) - 1; x <= static_cast<int32_t>(px) + 1; ++x)
-                        {
-                            if (ink(x, y))
-                            {
-                                const float dx = std::max(std::abs(px - (static_cast<float>(x) + 0.5f)) - 0.5f, 0.0f);
-                                const float dy = std::max(std::abs(py - (static_cast<float>(y) + 0.5f)) - 0.5f, 0.0f);
-                                nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy));
-                            }
-                        }
-                    }
-
-                    if (nearest > Reach)
-                    {
-                        fail(font, character,
-                             std::format("stroke at ({:.2f}, {:.2f}) is {:.2f} from the ink", px, py, nearest));
-                    }
+                    fail(font, character,
+                         std::format("stroke at ({:.2f}, {:.2f}) is {:.2f} from the ink", farthest.X, farthest.Y,
+                                     farthest.Distance));
                 }
             }
         }
     }
 
-    std::cout << std::format("  {} fonts, {} glyphs, {} wrong{}{}\n", fonts.size(), glyphs, wrong,
-                             wrong > 0 ? ", first: " : "", first);
+    const auto names = [](const std::set<std::string>& set)
+    {
+        std::string joined;
+
+        for (const std::string& name : set)
+        {
+            joined += std::format("{}{}", joined.empty() ? "" : " ", name);
+        }
+
+        return joined;
+    };
+
+    std::cout << std::format("  {} fonts, {} glyphs ({} two-tone), {} wrong{}{}\n  two-tone: {}\n  drop shadows: {}\n",
+                             fonts.size(), glyphs, layered, wrong, wrong > 0 ? ", first: " : "", first, names(twoTone),
+                             names(shadowed));
     CHECK_EQ(wrong, int64_t{0});
+    // The logistics screens' yellow and blue text: a body and its shadow.
+    CHECK(shadowed.contains("yelldrp.fnt"));
+    CHECK(shadowed.contains("bluedrp.fnt"));
+    CHECK(!shadowed.contains("dim.fnt"));
 }
 
 /// <summary>
 /// Tool: <c>--sharp-fonts &lt;folder&gt;</c> writes every font's glyph set as <c>&lt;font&gt;.png</c>, each glyph's
-/// original (scaled up nearest) over its sharp redraw, so every letter can be checked by eye.
+/// original (scaled up nearest) over its sharp redraw, so every letter can be checked by eye; a two-tone glyph's bytes
+/// in greys, its back byte darkest.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original over sharp")
 {
@@ -4404,6 +4861,8 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
     constexpr int32_t PerRow = 16;
     constexpr int32_t Gap = 4;
     constexpr uint8_t Ground = 24;
+    /// The backmost byte's grey in a two-tone glyph.
+    constexpr int32_t BackShade = 96;
     const std::filesystem::path folder(*out);
     std::filesystem::create_directories(folder);
 
@@ -4411,6 +4870,7 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
     {
         const int32_t height = VfxFontHeight(font.Data);
         const int32_t count = MCVfxRead32(font.Data, 4);
+        const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font.Data);
         int32_t widest = 1;
 
         for (int32_t character = 0; character < count; ++character)
@@ -4445,7 +4905,29 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
                 continue;
             }
 
-            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
+            // A two-tone glyph as a sharp screen draws it, a layer per byte, its bytes grey to white back to front.
+            std::vector<std::vector<uint8_t>> redrawn;
+            std::vector<uint8_t> bytes;
+
+            if (MCSharpText::Layered(glyph, width, width, height))
+            {
+                const MCSharpText::MCGlyphLayers layers =
+                    MCSharpText::LayersOf(glyph, width, width, height, fontLayers);
+                redrawn = MCSharpText::RedrawLayers(glyph, width, width, height, layers);
+                bytes = layers.Bytes;
+            }
+            else
+            {
+                redrawn.push_back(MCSharpText::Redraw(glyph, width, width, height));
+            }
+
+            const auto shade = [&](size_t place)
+            {
+                return bytes.size() < 2 ? 255
+                                        : BackShade + (255 - BackShade) * static_cast<int32_t>(place) /
+                                                          static_cast<int32_t>(bytes.size() - 1);
+            };
+
             const int32_t left = (character % PerRow) * cellWidth;
             const int32_t top = (character / PerRow) * cellHeight;
 
@@ -4453,11 +4935,19 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
             {
                 for (int32_t i = 0; i < width * Scale; ++i)
                 {
-                    const bool inked = glyph[static_cast<size_t>(j / Scale) * static_cast<size_t>(width) + i / Scale] !=
-                                       MCSharpText::NoInk;
-                    put(left + i, top + Gap + j, inked ? 255 : 0);
-                    put(left + i, top + 2 * Gap + height * Scale + j,
-                        redrawn[(static_cast<size_t>(j) * static_cast<size_t>(width * Scale) + i) * 4 + 1]);
+                    const uint8_t byte = glyph[static_cast<size_t>(j / Scale) * static_cast<size_t>(width) + i / Scale];
+                    const auto place = static_cast<size_t>(std::ranges::find(bytes, byte) - bytes.begin());
+                    put(left + i, top + Gap + j, byte == MCSharpText::NoInk ? 0 : shade(place));
+                    int32_t level = 0;
+
+                    for (size_t layer = 0; layer < redrawn.size(); ++layer)
+                    {
+                        const int32_t coverage =
+                            redrawn[layer][(static_cast<size_t>(j) * static_cast<size_t>(width * Scale) + i) * 4 + 1];
+                        level = (level * (255 - coverage) + shade(layer) * coverage) / 255;
+                    }
+
+                    put(left + i, top + 2 * Gap + height * Scale + j, level);
                 }
             }
         }
@@ -5032,11 +5522,6 @@ namespace
         }
 
         return changed;
-    }
-
-    bool SameColor(const SDL_Color& a, const SDL_Color& b)
-    {
-        return a.r == b.r && a.g == b.g && a.b == b.b;
     }
 
     /// <summary>

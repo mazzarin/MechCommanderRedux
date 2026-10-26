@@ -539,9 +539,19 @@ Output SmoothMapPixel(Input input, int2 target)
     return Blended(float4(Shown(value), 1.0) * coverage);
 }
 
-// A redrawn glyph's texel (red the font byte, green the coverage), nothing outside its size.
-float4 GlyphTexel(int2 texel, int2 size)
+// A sharp glyph's colour field, above its scale (the low byte): the layer runs on past the glyph's border
+// (MCVulkanRenderer.cpp's SharpGlyphRunsOn).
+static const uint SharpGlyphRunsOn = 1u << 8;
+
+// A redrawn glyph's texel (red the font byte, green the coverage): nothing outside its size, or, for a layer that runs
+// on past the glyph's border (a box behind letters), its border's, so it runs into the next glyph's without fading.
+float4 GlyphTexel(int2 texel, int2 size, bool runsOn)
 {
+    if (runsOn)
+    {
+        return Fetch(sourceTex, sourceSampler, clamp(texel, int2(0, 0), size - 1));
+    }
+
     if (any(texel < 0) || any(texel >= size))
     {
         return float4(0.0, 0.0, 0.0, 0.0);
@@ -551,7 +561,7 @@ float4 GlyphTexel(int2 texel, int2 size)
 }
 
 // A sharp glyph's pixel: the source is the place in the glyph of the rectangle's first pixel, op.y the redrawn
-// glyph's scale, op.z the glyph's table.
+// glyph's scale (and SharpGlyphRunsOn), op.z the glyph's table.
 Output SharpGlyphPixel(Input input, int2 target)
 {
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
@@ -562,11 +572,13 @@ Output SharpGlyphPixel(Input input, int2 target)
     sourceTex.GetDimensions(width, height);
     const int2 size = int2((int)width, (int)height);
 
+    const bool runsOn = (input.op.y & SharpGlyphRunsOn) != 0;
     const float2 at = glyph * glyphScale - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
-    const float top = lerp(GlyphTexel(base, size).g, GlyphTexel(base + int2(1, 0), size).g, f.x);
-    const float bottom = lerp(GlyphTexel(base + int2(0, 1), size).g, GlyphTexel(base + int2(1, 1), size).g, f.x);
+    const float top = lerp(GlyphTexel(base, size, runsOn).g, GlyphTexel(base + int2(1, 0), size, runsOn).g, f.x);
+    const float bottom =
+        lerp(GlyphTexel(base + int2(0, 1), size, runsOn).g, GlyphTexel(base + int2(1, 1), size, runsOn).g, f.x);
     const float coverage = lerp(top, bottom, f.y);
 
     if (coverage <= 0.0)

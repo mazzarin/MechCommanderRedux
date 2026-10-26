@@ -9,6 +9,7 @@
 #include "sprite/MCHdArt.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
+#include "vfx/MCVfxFunctions.h"
 
 namespace
 {
@@ -101,6 +102,13 @@ namespace
     constexpr uint32_t HdTerrainAtlases = 2;
     /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
     constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
+    /// <summary>
+    /// Port-only: a sharp glyph's colour field, above its scale (the low byte): the layer runs on past the glyph's
+    /// border (MCSharpText::MCGlyphLayers::RunsOn), so its texels outside are its border's (shaders/draw.pshader).
+    /// </summary>
+    constexpr uint32_t SharpGlyphRunsOn = 1u << 8;
+    /// <summary>A VFX font glyph's pixels follow its width (vfx/MCVfxFunctions.h's fonts).</summary>
+    constexpr size_t GlyphPixelsAt = 4;
     /// <summary>FNV-1a's 64-bit offset basis and prime (a redrawn glyph is kept by its bytes' hash).</summary>
     constexpr uint64_t HashBasis = 0xcbf29ce484222325ull;
     constexpr uint64_t HashPrime = 0x100000001b3ull;
@@ -1291,6 +1299,7 @@ void MCVulkanRenderer::OnDataChanged(MCAddressKey first, size_t size)
 {
     _DataImages.erase(_DataImages.lower_bound({first, 0}), _DataImages.lower_bound({first + size, 0}));
     _ShapeHashes.erase(_ShapeHashes.lower_bound(first), _ShapeHashes.lower_bound(first + size));
+    _FontLayers.erase(_FontLayers.lower_bound(first), _FontLayers.lower_bound(first + size));
 
     // Tables reaching into the bytes: their rows stay as they are for the draws recorded, and are reused from the
     // next frame on.
@@ -2029,12 +2038,14 @@ std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& fram
     return UsePicture(found->second);
 }
 
-bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns,
-                                     int32_t rows, const Quad& at, const MCColorTable& table)
+bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,
+                                     int32_t columns, int32_t rows, const Quad& at, int32_t sourceX, int32_t sourceY,
+                                     const MCColorTable& table)
 {
     BeginRecording();
 
-    // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once.
+    // Kept by the glyph's bytes (and size), so the same glyph from any font or place is redrawn once; a two-tone glyph
+    // by its layers as well (its font's say how its bytes stack).
     uint64_t key = HashBasis;
     const auto mix = [&key](uint64_t value)
     {
@@ -2045,42 +2056,104 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
     mix(static_cast<uint64_t>(columns));
     mix(static_cast<uint64_t>(rows));
 
-    for (int32_t row = 0; row < rows; ++row)
+    for (const uint8_t byte : glyph)
     {
-        for (int32_t column = 0; column < columns; ++column)
+        mix(byte);
+    }
+
+    std::optional<MCSharpText::MCGlyphLayers> layers;
+
+    if (MCSharpText::Layered(glyph, columns, columns, rows))
+    {
+        layers = MCSharpText::LayersOf(glyph, columns, columns, rows, FontLayers(font));
+
+        for (const uint8_t byte : layers->Bytes)
         {
-            const size_t offset = static_cast<size_t>(row) * static_cast<size_t>(pitch) + static_cast<size_t>(column);
-            mix(offset < glyph.size() ? glyph[offset] : MCSharpText::NoInk);
+            mix(byte);
+        }
+
+        if (const std::optional<MCSharpText::MCDropShadow>& shadow = layers->Shadow; shadow.has_value())
+        {
+            for (const int32_t offset : {shadow->FromX, shadow->FromY, shadow->ToX, shadow->ToY})
+            {
+                mix(static_cast<uint64_t>(offset));
+            }
         }
     }
 
-    auto found = _SharpGlyphs.find(key);
+    // One picture per layer (a one-colour glyph's one), each by the glyph's key and its place.
+    const size_t count = layers.has_value() ? layers->Bytes.size() : 1;
+    std::vector<uint64_t> keys;
 
-    if (found == _SharpGlyphs.end())
+    for (size_t layer = 0; layer < count; ++layer)
     {
-        const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, pitch, columns, rows);
+        keys.push_back((key ^ layer) * HashPrime);
+    }
+
+    if (std::ranges::any_of(keys, [&](uint64_t layerKey) { return !_SharpGlyphs.contains(layerKey); }))
+    {
+        const std::vector<std::vector<uint8_t>> redrawn =
+            layers.has_value() ? MCSharpText::RedrawLayers(glyph, columns, columns, rows, *layers)
+                               : std::vector<std::vector<uint8_t>>{MCSharpText::Redraw(glyph, columns, columns, rows)};
         const auto width = static_cast<uint32_t>(columns * MCSharpText::Scale);
         const auto height = static_cast<uint32_t>(rows * MCSharpText::Scale);
-        Picture picture;
 
-        if (redrawn.empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                              SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+        if (redrawn.size() != count)
         {
             return false;
         }
 
-        std::ranges::copy(redrawn, QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdRgbaBytes).begin());
-        found = _SharpGlyphs.emplace(key, picture).first;
-        _SharpGlyphBytes += redrawn.size();
-        ++_FrameUploads.Pictures;
-        _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
+        for (size_t layer = 0; layer < count; ++layer)
+        {
+            if (_SharpGlyphs.contains(keys[layer]))
+            {
+                continue;
+            }
+
+            Picture picture;
+
+            if (redrawn[layer].empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                                         SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
+            {
+                return false;
+            }
+
+            std::ranges::copy(redrawn[layer],
+                              QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdRgbaBytes).begin());
+            _SharpGlyphs.emplace(keys[layer], picture);
+            _SharpGlyphBytes += redrawn[layer].size();
+            ++_FrameUploads.Pictures;
+            _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn[layer].size());
+        }
     }
 
-    // The colour field carries the redrawn glyph's scale (shaders/draw.pshader's KindSharpGlyph).
-    const Quad from = {0, 0, 1, 1};
-    Add(surface, SourceKind::Picture, UsePicture(found->second), at, from, KindSharpGlyph | AlphaBlend | TableBefore,
-        static_cast<uint32_t>(MCSharpText::Scale), TableRow(table), 0);
+    // Back to front, each blended over the one before. The colour field carries the redrawn glyph's scale, and whether
+    // the layer runs on past the glyph's border (shaders/draw.pshader's KindSharpGlyph); the source, the drawn part's
+    // place in the glyph.
+    const Quad from = {sourceX, sourceY, 1, 1};
+
+    for (size_t layer = 0; layer < count; ++layer)
+    {
+        const bool runsOn = layers.has_value() && layers->RunsOn(layer);
+        Add(surface, SourceKind::Picture, UsePicture(_SharpGlyphs.at(keys[layer])), at, from,
+            KindSharpGlyph | AlphaBlend | TableBefore,
+            static_cast<uint32_t>(MCSharpText::Scale) | (runsOn ? SharpGlyphRunsOn : 0u), TableRow(table), 0);
+    }
+
     return true;
+}
+
+const MCSharpText::MCFontLayers& MCVulkanRenderer::FontLayers(std::span<const uint8_t> font)
+{
+    const MCAddressKey key = MCAddressKey::OfData(font);
+    auto found = _FontLayers.find(key);
+
+    if (found == _FontLayers.end())
+    {
+        found = _FontLayers.emplace(key, MCSharpText::LayersOf(font)).first;
+    }
+
+    return found->second;
 }
 
 bool MCVulkanRenderer::ScaledHdArt(uint16_t surface) const
@@ -3052,8 +3125,9 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
     const std::span<const uint8_t> font = command.Font;
     const auto glyphAt = static_cast<uint32_t>(MCRead32(font, 0x10 + static_cast<size_t>(command.Character) * 4));
     const int32_t pitch = MCRead32(font, glyphAt);
-    const std::span<const uint8_t> source = font.subspan(
-        glyphAt + 4 + static_cast<size_t>(static_cast<intptr_t>(command.SourceY) * pitch + command.SourceX));
+    const std::span<const uint8_t> source =
+        font.subspan(glyphAt + GlyphPixelsAt +
+                     static_cast<size_t>(static_cast<intptr_t>(command.SourceY) * pitch + command.SourceX));
     const int32_t columns = command.Columns;
     const int32_t rows = command.Rows;
 
@@ -3101,10 +3175,14 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
         op |= TableBefore | SkipKeyAfterTable;
         before = TableRow(*command.Table);
 
-        // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp; the original's draw keeps
-        // the indices.
-        if (_Surfaces[surface].Key == _ScaledScreen &&
-            AddSharpGlyph(surface, source, pitch, columns, rows, at, *command.Table))
+        // Port-only: on a sharp screen, the text is shown from its glyphs redrawn sharp (whole, the drawn part shown);
+        // the original's draw keeps the indices.
+        const int32_t height = VfxFontHeight(font);
+        const size_t whole = static_cast<size_t>(pitch) * static_cast<size_t>(std::max(height, 0));
+
+        if (_Surfaces[surface].Key == _ScaledScreen && glyphAt + GlyphPixelsAt + whole <= font.size() &&
+            AddSharpGlyph(surface, font, font.subspan(glyphAt + GlyphPixelsAt, whole), pitch, height, at,
+                          command.SourceX, command.SourceY, *command.Table))
         {
             op |= IndexOnly;
         }

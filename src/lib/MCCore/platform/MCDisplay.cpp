@@ -427,6 +427,28 @@ bool MCDisplay::SharpScreen() const
            MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
+namespace
+{
+    /// <summary>
+    /// Whether <paramref name="viewport"/> shows more window pixels than <paramref name="screenWidth"/> x
+    /// <paramref name="screenHeight"/> (scaled up), and then how many.
+    /// </summary>
+    bool ShownScaledUp(const MCViewport& viewport, int screenWidth, int screenHeight, int& width, int& height)
+    {
+        const auto shownWidth = static_cast<int>(std::lround(viewport.W));
+        const auto shownHeight = static_cast<int>(std::lround(viewport.H));
+
+        if (shownWidth <= screenWidth || shownHeight <= screenHeight)
+        {
+            return false;
+        }
+
+        width = shownWidth;
+        height = shownHeight;
+        return true;
+    }
+}
+
 bool MCDisplay::ScaledOutput(int& width, int& height) const
 {
     const bool wholeScreen = _View.x == 0 && _View.y == 0 && _View.w == _Width && _View.h == _Height;
@@ -436,18 +458,12 @@ bool MCDisplay::ScaledOutput(int& width, int& height) const
         return false;
     }
 
-    const MCViewport viewport = ShownViewport();
-    const auto shownWidth = static_cast<int>(std::lround(viewport.W));
-    const auto shownHeight = static_cast<int>(std::lround(viewport.H));
+    return ShownScaledUp(ShownViewport(), _View.w, _View.h, width, height);
+}
 
-    if (shownWidth <= _View.w || shownHeight <= _View.h)
-    {
-        return false;
-    }
-
-    width = shownWidth;
-    height = shownHeight;
-    return true;
+bool MCDisplay::WholeScreenOutput(int& width, int& height) const
+{
+    return _FollowWindow && ShownScaledUp(_Presenter->Viewport(_Width, _Height), _Width, _Height, width, height);
 }
 
 float MCDisplay::UnderlayScale() const
@@ -455,6 +471,13 @@ float MCDisplay::UnderlayScale() const
     int width = 0;
     int height = 0;
     return ScaledOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_View.h) : 1.0f;
+}
+
+float MCDisplay::ScreenScale() const
+{
+    int width = 0;
+    int height = 0;
+    return WholeScreenOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_Height) : 1.0f;
 }
 
 void MCDisplay::PixelScale(float& scaleX, float& scaleY) const

@@ -55,6 +55,7 @@ namespace
 namespace MCTestGame
 {
     std::function<void()> OnPresent;
+    MCBootOptions BootOptions;
 
     namespace
     {
@@ -358,7 +359,7 @@ namespace MCTestGame
             MCPort::SeedRand(seed ? static_cast<uint32_t>(std::stoul(std::string(*seed))) : 10u);
             // The world view shows 480 lines (one world pixel per screen pixel in the 640x480 window) at any zoom
             // request, so what is on screen, and so updated, is the same every run.
-            MCFixedZoomHeight = 480.0f;
+            MCFixedZoomHeight = BootOptions.FixedZoomHeight;
             PaletteName = "palette.gif";
             MCGameContext::Current().SetGuiSystem(std::make_unique<MCGuiSystem>());
 
@@ -371,6 +372,19 @@ namespace MCTestGame
             if (const std::shared_ptr<MCDisplay> display = MCInput::Display(); display != nullptr)
             {
                 display->OnPresent = Presented;
+
+                if (BootOptions.Started)
+                {
+                    BootOptions.Started();
+                }
+
+                // Another window size: the screen follows it, as it does for a player's window in the menus.
+                if (BootOptions.WindowWidth > 0 && BootOptions.WindowHeight > 0)
+                {
+                    SDL_SetWindowSize(&display->Window(), BootOptions.WindowWidth, BootOptions.WindowHeight);
+                    SDL_SyncWindow(&display->Window());
+                    MCFollowWindowSize();
+                }
             }
 
             for (int32_t i = 0; i < ScreenWindow()->NumberOfChildren(); i++)

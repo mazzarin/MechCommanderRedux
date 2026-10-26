@@ -39,7 +39,8 @@ namespace
     /// <summary>
     /// Port: the window pixels a screen pixel covers down where the world view is shown (above 1 when the UI is drawn
     /// at fewer lines than the window has, PREFS "UIResolution"), so one world pixel per screen pixel is one per
-    /// window pixel.
+    /// window pixel. The whole screen's, as the scenario shows it: a view that starts while the display still shows
+    /// the menus' corner (at the mission's start) starts as it would on the whole screen.
     /// </summary>
     float ShownScale()
     {
@@ -49,7 +50,7 @@ namespace
         }
 
         const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
-        return display != nullptr ? display->UnderlayScale() : 1.0f;
+        return display != nullptr ? display->ScreenScale() : 1.0f;
     }
 
     /// <summary>

@@ -136,6 +136,12 @@ public:
     float UnderlayScale() const;
 
     /// <summary>
+    /// How many window pixels a screen pixel covers down when the whole screen is shown, as a running scenario shows
+    /// it: <see cref="UnderlayScale"/> for the whole screen, even while only part of it is shown (the menus' corner).
+    /// </summary>
+    float ScreenScale() const;
+
+    /// <summary>
     /// The largest size <see cref="WindowScreenSize"/> can return on this machine: the biggest desktop of any display,
     /// in pixels (at least the current screen).
     /// </summary>
@@ -323,6 +329,11 @@ private:
     /// 640x480 screens'); false (and nothing set) otherwise.
     /// </summary>
     bool ScaledOutput(int& width, int& height) const;
+    /// <summary>
+    /// <see cref="ScaledOutput"/> for the whole screen shown, whatever part of it is shown now: the window pixels it
+    /// would cover when the screen follows the window and is shown scaled up; false (and nothing set) otherwise.
+    /// </summary>
+    bool WholeScreenOutput(int& width, int& height) const;
 
     /// <summary>The window; the presenter shares it, so it outlives what draws into it.</summary>
     std::shared_ptr<SDL_Window> _Window;

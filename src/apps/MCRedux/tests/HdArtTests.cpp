@@ -3429,9 +3429,22 @@ namespace
         int64_t Count = 0;
         int64_t Pixels = 0;
         bool Scaled = false;
-        std::span<const uint8_t> Data;
         std::set<int32_t> Frames;
+
+        // Taken as they are drawn, since a closed screen's windows and data are gone by the report: the window's size,
+        // what drew (AuditOwner), a copy's picture, and the first few frames of a shape table with how the pack finds
+        // them (its attached folder, else its hash).
+        int32_t WindowWidth = 0;
+        int32_t WindowHeight = 0;
+        std::string Owner;
+        std::optional<DecodedFrame> Picture;
+        std::map<int32_t, DecodedFrame> ShapeFrames;
+        std::optional<std::filesystem::path> Attached;
+        std::optional<uint64_t> TableHash;
     };
+
+    /// <summary>How many of a shape table's frames an audit keeps (decoded as they are drawn) to picture.</summary>
+    constexpr size_t AuditFramesKept = 4;
 
     std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
     void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
@@ -4530,7 +4543,10 @@ namespace
             return "terrain overlay";
         }
 
-        const std::span<const std::vector<uint8_t>> craters = CraterManager().Shapes();
+        // The menus have no crater manager.
+        const std::span<const std::vector<uint8_t>> craters = MCGameContext::Current().HasCraterManager()
+                                                                  ? CraterManager().Shapes()
+                                                                  : std::span<const std::vector<uint8_t>>();
 
         for (size_t i = 0; i < craters.size(); ++i)
         {
@@ -4585,10 +4601,41 @@ namespace
         {
             AuditTally& entry =
                 tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
+            const bool table = VfxIsShapeTable(draw.Data);
+
+            if (entry.Count == 0)
+            {
+                entry.WindowWidth = draw.Window->XMax + 1;
+                entry.WindowHeight = draw.Window->YMax + 1;
+                entry.Owner = AuditOwner(draw.Data);
+
+                if (const MCWindow* from = draw.From; from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+                {
+                    DecodedFrame& picture = entry.Picture.emplace();
+                    picture.Width = from->XMax + 1;
+                    picture.Height = from->YMax + 1;
+                    picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+                    picture.Drawn.assign(from->Size(), 1);
+                }
+
+                if (table)
+                {
+                    entry.Attached = MCHdArt::AttachedFolder(draw.Data.data());
+                    entry.TableHash = MCHdArt::ShapeTableHash(draw.Data);
+                }
+            }
+
+            if (table && entry.ShapeFrames.size() < AuditFramesKept && !entry.ShapeFrames.contains(draw.Frame))
+            {
+                if (auto decoded = Decode(draw.Data, draw.Frame); decoded.has_value() && decoded->Width > 0)
+                {
+                    entry.ShapeFrames.emplace(draw.Frame, std::move(*decoded));
+                }
+            }
+
             ++entry.Count;
             entry.Pixels += draw.Pixels;
             entry.Scaled |= draw.Scaled;
-            entry.Data = draw.Data;
             entry.Frames.insert(draw.Frame);
         };
     }
@@ -4639,18 +4686,14 @@ namespace
             const auto& [key, entry] = original[rank];
             const auto& [command, sharp, data, from, window] = key;
             std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}\n", rank, command,
-                                     static_cast<const void*>(data), window->XMax + 1, window->YMax + 1,
+                                     static_cast<const void*>(data), entry.WindowWidth, entry.WindowHeight,
                                      entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
-                                     AuditOwner(entry.Data), sharp ? " sharp" : "");
+                                     entry.Owner, sharp ? " sharp" : "");
 
-            // A copy's picture as its window holds it, and the pack's frame of it when it was drawn sharp.
-            if (from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+            // A copy's picture as its window held it, and the pack's frame of it when it was drawn sharp.
+            if (entry.Picture.has_value())
             {
-                DecodedFrame picture;
-                picture.Width = from->XMax + 1;
-                picture.Height = from->YMax + 1;
-                picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
-                picture.Drawn.assign(from->Size(), 1);
+                const DecodedFrame& picture = *entry.Picture;
                 WriteFramePngs(
                     folder / std::format("{:03}_{}", rank, command), picture, colors, 1,
                     [](SDL_Color color) { return color; }, false);
@@ -4667,25 +4710,14 @@ namespace
             }
 
             // With --hd-audit-all, a sharp shape's pack frames (their stored colours) for its first frames drawn.
-            constexpr size_t FramesShown = 4;
-
-            if (sharp && all && command == "Shape" && VfxIsShapeTable(entry.Data))
+            if (sharp && all && command == "Shape" && entry.TableHash.has_value())
             {
-                const std::optional<std::filesystem::path> attached = MCHdArt::AttachedFolder(entry.Data.data());
-
-                for (const int32_t frame : entry.Frames | std::views::take(FramesShown))
+                for (const auto& [frame, decoded] : entry.ShapeFrames)
                 {
-                    const auto decoded = Decode(entry.Data, frame);
-
-                    if (!decoded.has_value() || decoded->Width == 0)
-                    {
-                        continue;
-                    }
-
                     const std::shared_ptr<const MCHdArt::Frame> hd =
-                        attached.has_value() ? MCHdArt::FindInFolder(*attached, frame, decoded->Width, decoded->Height)
-                                             : MCHdArt::FindShape(MCHdArt::ShapeTableHash(entry.Data), frame,
-                                                                  decoded->Width, decoded->Height);
+                        entry.Attached.has_value()
+                            ? MCHdArt::FindInFolder(*entry.Attached, frame, decoded.Width, decoded.Height)
+                            : MCHdArt::FindShape(*entry.TableHash, frame, decoded.Width, decoded.Height);
 
                     if (hd != nullptr)
                     {
@@ -4698,16 +4730,12 @@ namespace
                 }
             }
 
-            if (!sharp && (command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
+            if (!sharp && (command == "Shape" || command == "ShapeBlit") && !entry.ShapeFrames.empty())
             {
-                if (const auto decoded = Decode(entry.Data, *entry.Frames.begin());
-                    decoded.has_value() && decoded->Width > 0)
-                {
-                    Sequence sequence;
-                    sequence.Folder = std::format("{:03}_{}", rank, command);
-                    sequence.Frames.push_back(*decoded);
-                    WritePack(folder, std::span(&sequence, 1), colors, 1, [](SDL_Color color) { return color; });
-                }
+                Sequence sequence;
+                sequence.Folder = std::format("{:03}_{}", rank, command);
+                sequence.Frames.push_back(entry.ShapeFrames.begin()->second);
+                WritePack(folder, std::span(&sequence, 1), colors, 1, [](SDL_Color color) { return color; });
             }
         }
     }

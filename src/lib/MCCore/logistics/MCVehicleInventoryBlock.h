@@ -40,8 +40,19 @@ public:
     /// </summary>
     void OnSellConfirmed(int32_t result) const;
 
-    /// <summary>The cached damage diagram (0x1c x 0x1e).</summary>
+    /// <summary>The cached damage diagram (0x1c x 0x1e), for the sale dialog.</summary>
     std::shared_ptr<MCLogPort> PicturePort;
+    /// <summary>The body locations the diagram shows.</summary>
+    static constexpr int32_t DiagramLocations = 5;
+    /// <summary>
+    /// Port: the diagram's locations' damage states as <see cref="DrawBackground"/> made it (none: a location without
+    /// armor, not drawn). The rows and the info box draw it in place from these (<see cref="PaintDiagram"/>; the
+    /// original copied the picture), so with HD art on it shows from the pack.
+    /// </summary>
+    std::optional<std::array<std::optional<int32_t>, DiagramLocations>> DiagramStates;
+
+    /// <summary>Draws the diagram into <paramref name="port"/> (its corner at 0, 0), as the original's picture held it.</summary>
+    void PaintDiagram(MCLogPort& port) const;
     /// <summary>The vehicle (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogVehicle> Vehicle() const { return _Vehicle.lock(); }
     /// <summary>The weight class (string table 0x4f..0x52 by tonnage).</summary>

@@ -220,6 +220,13 @@ namespace MCHdArt
     std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
 
     /// <summary>
+    /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
+    /// (the mech bar's damage diagrams: the interface's pixel art), not the original's pixels' smoothed (the renderer's
+    /// default for a frame that doesn't hold its blended pixels).
+    /// </summary>
+    bool KeepsFrameEdges(const uint8_t* table);
+
+    /// <summary>
     /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
     /// none when it isn't attached (or its owner is gone).
     /// </summary>
@@ -291,6 +298,23 @@ namespace MCHdArt
 
     /// <summary>Whether HD art is on and <paramref name="table"/> is one whose edges are drawn smooth.</summary>
     bool SmoothEdges(const uint8_t* table);
+
+    /// <summary>A frame of a shape table (the table's first byte).</summary>
+    struct LineArtFrame
+    {
+        const uint8_t* Table = nullptr;
+        int32_t Frame = 0;
+    };
+
+    /// <summary>
+    /// Sets the shape frames that are line art (one-pixel outlines: the purchase screen's sold-out mechs and vehicles),
+    /// redrawn as smooth strokes (platform/MCSharpLines) on a screen drawn at the size it's shown while HD art is on;
+    /// none needs a pack.
+    /// </summary>
+    void SetLineArtFrames(std::span<const LineArtFrame> frames);
+
+    /// <summary>Whether HD art is on and frame <paramref name="frame"/> of <paramref name="table"/> is line art.</summary>
+    bool LineArt(const uint8_t* table, int32_t frame);
 
     /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
     inline constexpr size_t PaletteBytes = 256 * 3;

@@ -2,6 +2,7 @@
 
 #include "platform/MCPresenter.h"
 #include "platform/MCSdlHandle.h"
+#include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 
 #include <unordered_set>
@@ -220,6 +221,13 @@ public:
     /// <summary>Port-only: called after every draw command while set (the HD art audit's).</summary>
     std::function<void(const AuditedDraw&)> Audit;
 
+    /// <summary>
+    /// Port-only: called as the renderer starts recording a frame (its first command), for the presenter to place the
+    /// screen (<see cref="SetScreenScale"/>) as the display will show the frame. The draws then know a sharp screen
+    /// from the frame it first is one (HD art just turned on, the game's first frame), not one frame on.
+    /// </summary>
+    std::function<void()> RecordingStarts;
+
 protected:
     /// <summary>The alpha colours go up again before the next draws.</summary>
     void OnAlphaTableChanged() override { _AlphaColorsChanged = true; }
@@ -415,10 +423,28 @@ private:
     };
 
     /// <summary>
+    /// Port-only: where an HD art frame's edges come from: its alpha (a menu's picture, an effect's blended pixels), or
+    /// the original's pixels it draws, smoothed at the output's resolution (KindHdSmooth: a sprite's or an overlay's
+    /// frame, whose alpha is only their mask scaled up, steps and all).
+    /// </summary>
+    enum class HdEdges : uint8_t
+    {
+        Frame,
+        Smooth,
+    };
+
+    /// <summary>
     /// Port-only: whether <paramref name="surface"/> shows what is drawn from the original at the output's resolution:
     /// HD art is on and the surface is drawn at more pixels than its window has.
     /// </summary>
     bool ScaledHdArt(uint16_t surface) const;
+    /// <summary>
+    /// Whether <paramref name="surface"/> is drawn at more pixels than its window has: the sharp screen as placed for
+    /// the frame being recorded, or a surface placed so when the last frame ran (an underlay).
+    /// </summary>
+    bool DrawnLarger(uint16_t surface) const;
+    /// <summary>Port-only: whether <paramref name="surface"/> is the sharp screen (<see cref="SetScreenScale"/>).</summary>
+    bool SharpScreenSurface(uint16_t surface) const;
 
     /// <summary>
     /// Port-only: adds the draw of an HD art frame of a textured polygon's picture (a tactical or briefing map's) as the
@@ -436,8 +462,9 @@ private:
 
     /// <summary>
     /// Port-only: adds the colour pass of a flat or Gouraud polygon (a laser's beam) at the output's resolution
-    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel. False for a polygon it can't
-    /// draw so (more than four corners, not convex, or flat).
+    /// (KindSmoothPolygon): its edges smooth, its colour index taken at every drawn pixel; a polygon of no area as lines,
+    /// a quad with one corner turned in as two triangles. False for a polygon it can't draw so (more than four corners,
+    /// one row high, one the walk doesn't fill whole, or concave otherwise).
     /// </summary>
     bool AddSmoothPolygon(uint16_t surface, const MCPolygonCommand& command);
 
@@ -454,11 +481,11 @@ private:
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as
     /// <paramref name="colours"/> says; a keyed copy (<paramref name="key"/>) leaves out the original's pixels of the
-    /// key. False when the frame can't be put on the GPU.
+    /// key; its edges as <paramref name="edges"/> says. False when the frame can't be put on the GPU.
     /// </summary>
     bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
                const std::optional<MCColorTable>& table, std::optional<uint8_t> key = std::nullopt,
-               HdColours colours = HdColours::Corrected);
+               HdColours colours = HdColours::Corrected, HdEdges edges = HdEdges::Frame);
 
     /// <summary>
     /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
@@ -478,15 +505,52 @@ private:
                                                   int32_t height);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
+    /// <summary>
+    /// Port-only: how HD art frame <paramref name="frame"/> of shape table <paramref name="table"/> draws its edges: its
+    /// own when it holds its blended pixels (an effect's) or its table keeps them (MCHdArt::KeepsFrameEdges), else
+    /// smooth.
+    /// </summary>
+    static HdEdges HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table);
 
     /// <summary>
-    /// Port-only: draws the glyph <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows
-    /// <paramref name="pitch"/> apart) over <paramref name="at"/> on a sharp screen, redrawn as strokes
-    /// (<see cref="MCSharpText"/>) at the output's resolution in the colours <paramref name="table"/> gives its bytes.
-    /// False when it can't be put on the GPU (the original then draws the colours as well).
+    /// Port-only: draws the part from (<paramref name="sourceX"/>, <paramref name="sourceY"/>) of the glyph
+    /// <paramref name="columns"/> x <paramref name="rows"/> at <paramref name="glyph"/> (rows a glyph's width apart) of
+    /// <paramref name="font"/> over <paramref name="at"/> on a sharp screen, the whole glyph redrawn as strokes
+    /// (<see cref="MCSharpText"/>; a two-tone glyph as a layer per byte, as its font's layers say) at the output's
+    /// resolution in the colours <paramref name="table"/> gives its bytes. False when it can't be put on the GPU (the
+    /// original then draws the colours as well).
     /// </summary>
-    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> glyph, int32_t pitch, int32_t columns, int32_t rows,
-                       const Quad& at, const MCColorTable& table);
+    bool AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph, int32_t columns,
+                       int32_t rows, const Quad& at, int32_t sourceX, int32_t sourceY, const MCColorTable& table);
+    /// <summary>Port-only: how <paramref name="font"/>'s two-tone glyphs are layered (kept until its bytes change).</summary>
+    const MCSharpText::MCFontLayers& FontLayers(std::span<const uint8_t> font);
+    /// <summary>
+    /// Port-only: draws line art <paramref name="columns"/> x <paramref name="rows"/> (<paramref name="art"/>, its
+    /// pixels' bytes, <see cref="MCSharpText::NoInk"/> where none is drawn) over <paramref name="at"/> on a sharp screen,
+    /// reading it from <paramref name="from"/> (its first pixel and steps), redrawn as smooth strokes
+    /// (<see cref="MCSharpLines"/>) at the output's resolution in the colours table row <paramref name="tableRow"/> gives
+    /// its bytes. False when it can't be put on the GPU.
+    /// </summary>
+    bool AddSharpLines(uint16_t surface, std::span<const uint8_t> art, int32_t columns, int32_t rows, const Quad& at,
+                       const Quad& from, uint32_t tableRow);
+    /// <summary>What a picture redrawn sharp was redrawn from (its key's space).</summary>
+    enum class SharpKind : uint8_t
+    {
+        Glyph = 1,
+        Lines,
+    };
+
+    /// <summary>The key a picture redrawn sharp is kept by: the kind, size and bytes of what it was redrawn from.</summary>
+    static uint64_t SharpKey(SharpKind kind, std::span<const uint8_t> pixels, int32_t pitch, int32_t columns,
+                             int32_t rows);
+    /// <summary>
+    /// Draws the picture kept by <paramref name="key"/> (<paramref name="redraw"/> makes it the first time: RGBA8,
+    /// <see cref="MCSharpText::Scale"/> times <paramref name="columns"/> x <paramref name="rows"/>, red the byte and green
+    /// the coverage) over <paramref name="at"/>, read from <paramref name="from"/>, in the colours table row
+    /// <paramref name="tableRow"/> gives its bytes (shaders/draw.pshader's KindSharpGlyph).
+    /// </summary>
+    bool AddSharpPicture(uint16_t surface, uint64_t key, const std::function<std::vector<uint8_t>()>& redraw,
+                         int32_t columns, int32_t rows, const Quad& at, const Quad& from, uint32_t tableRow);
     /// <summary>A registered table's row of the table texture, and a number no other table's bytes ever had.</summary>
     struct TableSlot
     {
@@ -612,6 +676,8 @@ private:
     /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
+    /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
     std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
@@ -747,6 +813,8 @@ private:
     /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;
+    /// <summary>Port-only: how each font's two-tone glyphs are layered, by the font's address, until its bytes change.</summary>
+    std::map<MCAddressKey, MCSharpText::MCFontLayers> _FontLayers;
     int64_t _HdDrawn = 0;
     /// <summary>The draw command being audited (while <see cref="Audit"/> is set).</summary>
     std::optional<AuditedDraw> _Audited;
@@ -775,6 +843,20 @@ private:
 
     /// <summary>Marks <paramref name="picture"/> used this frame; returns its frame picture index.</summary>
     uint32_t UsePicture(Picture& picture);
+
+    /// <summary>
+    /// Port-only: the picture redrawn sharp kept by <paramref name="key"/> (<see cref="AddSharpPicture"/>'s), made by
+    /// <paramref name="redraw"/> the first time; null when it can't be put on the GPU.
+    /// </summary>
+    Picture* SharpPicture(uint64_t key, const std::function<std::vector<uint8_t>()>& redraw, int32_t columns,
+                          int32_t rows);
+    /// <summary>
+    /// Port-only: draws <paramref name="picture"/>, redrawn sharp, over <paramref name="at"/>, read from
+    /// <paramref name="from"/>, in the colours table row <paramref name="tableRow"/> gives its bytes, with
+    /// <paramref name="flags"/> above the scale in the colour field (shaders/draw.pshader's KindSharpGlyph).
+    /// </summary>
+    void DrawSharpPicture(uint16_t surface, Picture& picture, const Quad& at, const Quad& from, uint32_t tableRow,
+                          uint32_t flags);
 
     /// <summary>The frame's pictures in use (their textures).</summary>
     std::vector<std::shared_ptr<SDL_GPUTexture>> _FramePictures;

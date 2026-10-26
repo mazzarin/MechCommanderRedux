@@ -101,4 +101,10 @@ namespace MCTestGame
 
     /// <summary>Turns <paramref name="mech"/> to face <paramref name="degrees"/> (about the world's up axis).</summary>
     void FaceMech(MCBattleMech& mech, float degrees);
+
+    /// <summary>
+    /// Puts <paramref name="count"/> of every mech variant, component and vehicle in the logistics store, each store
+    /// row readied again as the game does when its stock changes.
+    /// </summary>
+    void StockStore(int32_t count);
 }

@@ -90,6 +90,9 @@ int32_t FastShapeDraw(const MCPane& pane, std::span<const uint8_t> shapeTable, i
     command.EndRow = endRow;
     command.StartX = sx;
     command.ClipX0 = clipX0;
+    command.ClipX1 = clipX1;
+    command.ClipY0 = clipY0;
+    command.ClipY1 = clipY1;
     command.LeftSkip = leftSkip;
     command.Limit = limit;
     command.Alpha = Read16(shape, Read16(shape, 0xc)) == 1;

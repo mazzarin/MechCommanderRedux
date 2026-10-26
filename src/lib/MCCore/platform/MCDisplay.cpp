@@ -150,6 +150,7 @@ std::expected<std::unique_ptr<MCDisplay>, std::string> MCDisplay::Create(const M
     }
 
     display->_Presenter = std::move(*presenter);
+    display->_Presenter->FrameLayout = [shown = display.get()] { return shown->LayoutFrame(); };
     SDL_Log("MCDisplay: renderer %s", display->_Presenter->Name().c_str());
     display->SetTitle(options.Title);
 
@@ -560,7 +561,7 @@ void MCDisplay::PixelScale(float& scaleX, float& scaleY) const
     scaleY = viewport.H / static_cast<float>(_View.h);
 }
 
-MCFrame MCDisplay::BuildFrame(bool allColors)
+MCFrame MCDisplay::LayoutFrame() const
 {
     MCFrame frame{.Screen = *_Screen};
     frame.Pixels = Pixels();
@@ -570,6 +571,12 @@ MCFrame MCDisplay::BuildFrame(bool allColors)
     frame.Ops = *_Ops;
     ScaledOutput(frame.OutputWidth, frame.OutputHeight);
     frame.SharpScreen = frame.ScaledOutput() && SharpScreen();
+    return frame;
+}
+
+MCFrame MCDisplay::BuildFrame(bool allColors)
+{
+    MCFrame frame = LayoutFrame();
     _FrameUnderlays = ScreenUnderlays();
     frame.Underlays = _FrameUnderlays;
 

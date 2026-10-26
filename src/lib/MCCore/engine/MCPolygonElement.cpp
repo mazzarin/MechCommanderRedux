@@ -12,7 +12,7 @@ auto MCPolygonElement::Draw() -> void
     if (Data.StatusBar)
     {
         AGStatusBar(*GlobalPane, Data.Vertices[0].X, Data.Vertices[0].Y, Data.Vertices[1].X, Data.Vertices[1].Y,
-                    Data.BarColor, Data.BarPercent);
+                    Data.BarColor, Data.BarPercent, Data.MeasuredBar);
         return;
     }
 

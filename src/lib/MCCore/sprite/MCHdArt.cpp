@@ -139,6 +139,8 @@ namespace
     {
         std::weak_ptr<const void> Owner;
         uint32_t Folder = 0;
+        /// <summary>Whether its frames keep their own edges (MCHdArt::KeepsFrameEdges).</summary>
+        bool KeepsEdges = false;
     };
 
     /// <summary>A frame read (null: the pack has none, or it is unusable), and its place in State::Order.</summary>
@@ -184,6 +186,8 @@ namespace
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<const uint8_t*> SmoothTables;
+        /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
+        std::set<std::pair<const uint8_t*, int32_t>> LineArtFrames;
     };
 
     State& TheState()
@@ -829,6 +833,22 @@ bool MCHdArt::SmoothEdges(const uint8_t* table)
     return GHdArt != 0 && TheState().SmoothTables.contains(table);
 }
 
+void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames)
+{
+    std::set<std::pair<const uint8_t*, int32_t>>& kept = TheState().LineArtFrames;
+    kept.clear();
+
+    for (const LineArtFrame& frame : frames)
+    {
+        kept.emplace(frame.Table, frame.Frame);
+    }
+}
+
+bool MCHdArt::LineArt(const uint8_t* table, int32_t frame)
+{
+    return GHdArt != 0 && TheState().LineArtFrames.contains({table, frame});
+}
+
 uint64_t MCHdArt::PackVersion()
 {
     return TheState().Version;
@@ -1001,7 +1021,7 @@ namespace
     /// (MCHdArt::NumberedFolders: HD art is on, and the pack was made from this game's sprite files).
     /// </summary>
     void AttachTo(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner,
-                  const std::filesystem::path& folder)
+                  const std::filesystem::path& folder, bool keepsEdges = false)
     {
         if (owner == nullptr || table.empty() || !MCHdArt::NumberedFolders())
         {
@@ -1023,7 +1043,7 @@ namespace
             std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Owner.expired(); });
         }
 
-        state.Sequences[table.data()] = Sequence{owner, FolderIndex(path, Naming::Number)};
+        state.Sequences[table.data()] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
     }
 }
 
@@ -1080,7 +1100,8 @@ void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const
 
 void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const void>& owner, const IconShapeKey& key)
 {
-    AttachTo(table, owner, FolderOf(key));
+    // The interface's pixel art keeps the crisp edges its frames were made with.
+    AttachTo(table, owner, FolderOf(key), true);
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)
@@ -1118,6 +1139,13 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesyste
 
     return Cache(FrameKey{FolderIndex(PackFolder() / folder, Naming::Number), static_cast<uint64_t>(frame)}, width,
                  height);
+}
+
+bool MCHdArt::KeepsFrameEdges(const uint8_t* table)
+{
+    const State& state = TheState();
+    const auto found = state.Sequences.find(table);
+    return found != state.Sequences.end() && found->second.KeepsEdges;
 }
 
 std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)

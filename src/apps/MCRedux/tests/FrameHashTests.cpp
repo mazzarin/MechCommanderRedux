@@ -655,32 +655,7 @@ namespace
                  // Enough points and stock to buy with; the store shows the stock, as the game redraws a row whose stock
                  // changed.
                  ResourcePoints = 100000;
-
-                 for (const auto& mech : GlobalLog()->PurMechList->Mechs)
-                 {
-                     for (const auto& variant : mech->Variants)
-                     {
-                         if (variant != nullptr)
-                         {
-                             variant->NumAvailable = 2;
-                         }
-                     }
-
-                     mech->Block->DrawBackground(mech->Block->Row);
-                 }
-
-                 for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
-                 {
-                     item->Count = 2;
-                     item->PurchaseBlock->DrawBackground(item->PurchaseBlock->Row, item->MasterID);
-                 }
-
-                 for (const auto& vehicle : GlobalLog()->PurVehicleList->Vehicles)
-                 {
-                     vehicle->Data->NumAvailable = 2;
-                     vehicle->Block->DrawBackground(vehicle->Block->Row);
-                 }
-
+                 MCTestGame::StockStore(2);
                  Click(100, 60);
              },
              0x7949d30bu},

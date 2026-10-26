@@ -76,12 +76,45 @@ public:
     /// </summary>
     void Start();
 
+    /// <summary>
+    /// Port-only: ties the mech and vehicle icons' damage shapes (<c>mi##.shp</c>, <c>vi1##.shp</c>) to the HD art
+    /// pack's (the mech bar's icons), and marks the sold-out outlines (<see cref="MechSoldOutShape"/>,
+    /// <see cref="VehicleSoldOutShape"/>) as line art, drawn as smooth strokes (MCHdArt::SetLineArtFrames). Start does
+    /// it; again when HD art comes on.
+    /// </summary>
+    void AttachHdArt();
+
+    /// <summary>The frame of a mech's repair shapes drawn as its sold-out outline (on the purchase screen).</summary>
+    static constexpr int32_t MechSoldOutShape = 0x13;
+    /// <summary>The frame of a vehicle's repair shapes drawn as its sold-out outline.</summary>
+    static constexpr int32_t VehicleSoldOutShape = 6;
+
     /// <summary>Draws the damage state of location <paramref name="location"/> of a mech into <paramref name="port"/>.</summary>
     static void DrawMechBodyLoc(MCLogMech& mech, int32_t location, MCLogPort& port, int32_t xPos, int32_t yPos);
 
     /// <summary>Draws the damage state of location <paramref name="location"/> of a vehicle into <paramref name="port"/>.</summary>
     static void DrawVehicleBodyLoc(MCLogVehicle& vehicle, int32_t location, MCLogPort& port, int32_t xPos,
                                    int32_t yPos);
+
+    /// <summary>
+    /// Port: the damage state <see cref="DrawMechBodyLoc"/> draws location <paramref name="location"/> of a mech in
+    /// (-1 undamaged, 0..3 worse).
+    /// </summary>
+    static int32_t MechBodyLocState(const MCLogMech& mech, int32_t location);
+
+    /// <summary>
+    /// Port: the damage state <see cref="DrawVehicleBodyLoc"/> draws location <paramref name="location"/> of a vehicle
+    /// in; none for a location without armor, which it doesn't draw.
+    /// </summary>
+    static std::optional<int32_t> VehicleBodyLocState(const MCLogVehicle& vehicle, int32_t location);
+
+    /// <summary>
+    /// Port: draws diagram shape <paramref name="location"/> of <paramref name="shapes"/> (a mech's or vehicle's icon
+    /// shapes) in damage state <paramref name="state"/> at (<paramref name="xPos"/>, <paramref name="yPos"/>) of
+    /// <paramref name="port"/>, as <see cref="DrawMechBodyLoc"/> does.
+    /// </summary>
+    static void DrawBodyLoc(std::span<const uint8_t> shapes, int32_t location, int32_t state, MCLogPort& port,
+                            int32_t xPos, int32_t yPos);
 
     /// <summary>Makes the multiplayer lists and drop slots and reads the net mech/warrior/vehicle lists.</summary>
     void InitializeMultiplayer();
@@ -181,8 +214,22 @@ public:
     /// <summary>Reads the current mission's tonnage, briefing, map and drop zones.</summary>
     void GetCurrentMission();
 
+    /// <summary>
+    /// Port: what a screen change slides over the screen's right part (<see cref="Transition"/>): paints the picture
+    /// (<see cref="SlideWidth"/> x <see cref="SlideHeight"/>) into the port given, its corner at the port's (0, 0), as the
+    /// original put it together in a work picture before the slide. The slide paints it each frame, so with HD art on it
+    /// is drawn sharp.
+    /// </summary>
+    using MCSlidePicture = std::function<void(MCLogPort& picture)>;
+
+    /// <summary>The slide's place on the screen and its size (the original's work pictures').</summary>
+    static constexpr int32_t SlideX = 0xd3;
+    static constexpr int32_t SlideY = 0x10;
+    static constexpr int32_t SlideWidth = 0x1ab;
+    static constexpr int32_t SlideHeight = 0x1ce;
+
     /// <summary>Slides from <paramref name="from"/> to <paramref name="to"/> (a screen change).</summary>
-    void Transition(MCLogPort& from, MCLogPort& to, int direction) const;
+    void Transition(const MCSlidePicture& from, const MCSlidePicture& to, int direction) const;
 
     /// <summary>Darkens <paramref name="port"/> through the fade table.</summary>
     static void Darken(int32_t amount, MCColorTable fadeTable, MCLogPort& port);
@@ -406,6 +453,8 @@ public:
     std::array<MCRegisteredBlock, 35> VehicleIconShapes;
     /// <summary>Colour remap tables for drawing shapes (<c>VFX_shape_lookaside</c>).</summary>
     std::array<std::array<uint8_t, 256>, 10> ShapeLookaside{};
+    /// <summary>Port-only: what the icon shapes' ties to the HD art pack last while it lives (AttachHdArt).</summary>
+    std::shared_ptr<const int> HdArtOwner;
     /// <summary>The repair screen's mech picture background (<c>lsrupm00.tga</c>).</summary>
     std::shared_ptr<MCLogPort> RepairBackPort;
     /// <summary>The inventory block background (<c>invblock.tga</c>).</summary>
@@ -423,9 +472,6 @@ public:
     std::array<std::shared_ptr<MCLogPort>, 6> RepairPorts;
     /// <summary>The purchase screen pieces (<c>lspcb05, 07, 06, 09.tga</c>).</summary>
     std::array<std::shared_ptr<MCLogPort>, 4> PurchasePorts;
-    /// <summary>The two full-screen work ports (0x1ab x 0x1ce) the screen changes draw into.</summary>
-    std::shared_ptr<MCLogPort> WorkPort1;
-    std::shared_ptr<MCLogPort> WorkPort0;
     /// <summary>The screen switch buttons' pictures: button 0, exit, buttons 1..3; normal, highlighted, gray.</summary>
     std::array<std::array<std::shared_ptr<MCLogPort>, 3>, 5> ScreenButtonPorts;
     /// <summary>The inventory tab icons: mechs, pilots, components, vehicles (<c>lscii?.tga</c>).</summary>

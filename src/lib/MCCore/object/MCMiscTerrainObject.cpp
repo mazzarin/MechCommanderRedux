@@ -311,6 +311,7 @@ auto MCMiscTerrainObject::DrawBars(MCVector2D screenPos) -> void
     data.Vertices[1].Y =
         static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(top + barHeight + 1.0f))));
     data.BarPercent = static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(barLength))));
+    data.MeasuredBar = barLength;
 
     if (0 < data.BarPercent)
     {

@@ -9,6 +9,7 @@
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
+#include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
@@ -18,6 +19,13 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
+#include "logistics/MCBriefingScreen.h"
+#include "main/MCInventoryList.h"
+#include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCMechPurchaseBlock.h"
+#include "logistics/MCPurMechList.h"
+#include "logistics/MCPurVehicleList.h"
+#include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
@@ -64,7 +72,36 @@
 #include "lib/MCFile.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
+// The final audit's screen tour and call stacks.
+#include "gui/MCScrollPane.h"
+#include "gui/MCUpdateDisplay.h"
+#include "linkup/MCSessionManager.h"
+#include "logistics/MCBriefingScreen.h"
+#include "logistics/MCConnectMenu.h"
+#include "logistics/MCLogTextObject.h"
+#include "logistics/MCMechBriefBlock.h"
+#include "logistics/MCPurchaseScreen.h"
+#include "logistics/MCRepairScreen.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCLogMech.h"
+#include "mission/MCMission.h"
+#include "mission/MCMissionResultsScreen.h"
+#include "mission/MCScenario.h"
+#include "network/MCMultiPlayer.h"
+#if __has_include("logistics/MCLogTextButton.h")
+// A build with the preferences' CONTROLS panel (the controls branch): the tour shows it.
+#include "logistics/MCLogTextButton.h"
+#define MC_AUDIT_CONTROLS 1
+#endif
+#if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
+#include <dlfcn.h>
+#include <execinfo.h>
+#define MC_AUDIT_STACKS 1
+#endif
 
 namespace
 {
@@ -201,6 +238,11 @@ namespace
         }
 
         return decoded;
+    }
+
+    bool SameColor(const SDL_Color& a, const SDL_Color& b)
+    {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
     }
 
     /// <summary>Saves <paramref name="width"/> x <paramref name="height"/> RGBA pixels as a PNG.</summary>
@@ -1214,7 +1256,10 @@ namespace
     constexpr int32_t FirstRotation = -180;
     constexpr int32_t LastRotation = 180;
 
-    /// <summary>An appearance the pack can hold: its type id, kind, and the names of the object types that use it.</summary>
+    /// <summary>
+    /// An appearance the pack can hold: its type id, kind, and the names of the object types that use it (none: no
+    /// object type uses it, every packet is one no type draws).
+    /// </summary>
     struct ObjectAppearance
     {
         uint32_t Id = 0;
@@ -1408,6 +1453,67 @@ namespace
         return shapes;
     }
 
+    /// <summary>
+    /// Which of an appearance's packets the object tools take (<c>--hd-packets drawn|all|undrawn</c>): those its type's
+    /// lookups draw (the default), every packet of its PAK, or only those its lookups never reach (the original's
+    /// zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations). Past the default, the
+    /// appearances no object type uses are taken too, every packet of each.
+    /// </summary>
+    enum class PacketChoice : uint8_t
+    {
+        Drawn,
+        All,
+        Undrawn,
+    };
+
+    constexpr std::array<std::pair<std::string_view, PacketChoice>, 3> PacketChoices = {
+        {{"drawn", PacketChoice::Drawn}, {"all", PacketChoice::All}, {"undrawn", PacketChoice::Undrawn}}};
+
+    /// <summary>The packets <c>--hd-packets</c> picks.</summary>
+    PacketChoice PacketsOption()
+    {
+        const std::string_view name = MCTest::Option("hd-packets").value_or(PacketChoices.front().first);
+        const auto found = std::ranges::find(PacketChoices, name, &std::pair<std::string_view, PacketChoice>::first);
+        MCTest::Scope scope(std::format("--hd-packets {} (drawn, all or undrawn)", name));
+        REQUIRE(found != PacketChoices.end());
+        return found->second;
+    }
+
+    /// <summary>
+    /// The shapes of <paramref name="type"/>'s PAK that <paramref name="packets"/> picks, by packet: those it draws
+    /// (<see cref="DrawnShapes"/>), every one, or every one it doesn't draw.
+    /// </summary>
+    std::map<uint32_t, std::shared_ptr<MCShape>> ChosenShapes(const std::shared_ptr<MCAppearanceType>& type,
+                                                              PacketChoice packets)
+    {
+        std::map<uint32_t, std::shared_ptr<MCShape>> drawn = DrawnShapes(type);
+
+        if (packets == PacketChoice::Drawn)
+        {
+            return drawn;
+        }
+
+        const uint32_t appearance = type->AppearanceNum & AppearancePacketMask;
+        std::map<uint32_t, std::shared_ptr<MCShape>> shapes;
+
+        for (int32_t packet = 0; packet < SpriteManager()->GetNumShapes(appearance); ++packet)
+        {
+            const auto number = static_cast<uint32_t>(packet);
+
+            if (packets == PacketChoice::Undrawn && drawn.contains(number))
+            {
+                continue;
+            }
+
+            if (std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(appearance, number, Turn, type))
+            {
+                shapes.emplace(number, std::move(shape));
+            }
+        }
+
+        return shapes;
+    }
+
     /// <summary>The frames of <paramref name="sequence"/> with pixels (those a pack holds).</summary>
     size_t DrawnFrames(const Sequence& sequence)
     {
@@ -1453,10 +1559,11 @@ namespace
     };
 
     /// <summary>
-    /// <paramref name="type"/>'s sequences, their translucent frames holding their blended pixels when
-    /// <paramref name="keepBlended"/> (an effect's).
+    /// <paramref name="type"/>'s sequences (one a packet <paramref name="packets"/> picks), their translucent frames
+    /// holding their blended pixels when <paramref name="keepBlended"/> (an effect's).
     /// </summary>
-    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type, bool keepBlended)
+    ObjectSequences ObjectSequencesOf(const std::shared_ptr<MCAppearanceType>& type, bool keepBlended,
+                                      PacketChoice packets = PacketChoice::Drawn)
     {
         const std::shared_ptr<MCSpriteManager> sprites = SpriteManager();
         REQUIRE(sprites != nullptr);
@@ -1469,7 +1576,7 @@ namespace
             made.Delta = static_cast<const MCVfxAppearanceType&>(*type).Delta;
         }
 
-        for (const auto& [packet, shape] : DrawnShapes(type))
+        for (const auto& [packet, shape] : ChosenShapes(type, packets))
         {
             if (!VfxIsShapeTable(shape->FrameList()))
             {
@@ -1535,10 +1642,85 @@ namespace
     }
 
     /// <summary>
-    /// The appearances <c>--kind &lt;name,...&gt;</c> and <c>--appearance &lt;packet,...&gt;</c> pick (every one when
-    /// neither is given), each loaded.
+    /// The classes an appearance no object type uses is tried as (its FIT in the sprite PAK, the first class whose loader
+    /// takes it), and the kind each gives it: the classes with blocks of their own first, the VFX's before the pop-ups'
+    /// (whose FIT a VFX one, with Symmetrical in its states, also fits). A VFX appearance's kind is whether it is Scaled
+    /// (<see cref="VfxKind"/>), not the one here.
     /// </summary>
-    std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> PickedObjectAppearances()
+    constexpr std::array<std::pair<MCAppearanceClass, ObjectKind>, 6> UntypedClasses = {{
+        {MCAppearanceClass::ElementalTree, ObjectKind::Elemental},
+        {MCAppearanceClass::GroundVehicle, ObjectKind::Vehicle},
+        {MCAppearanceClass::Arm, ObjectKind::Effect},
+        {MCAppearanceClass::Building, ObjectKind::Building},
+        {MCAppearanceClass::Vfx, ObjectKind::Object},
+        {MCAppearanceClass::PopUp, ObjectKind::Turret},
+    }};
+
+    /// <summary>
+    /// The kind a VFX appearance no object type uses is made as: a still object when it is Scaled (has the original's
+    /// zoomed-out views, as the world's trees, buildings and objects do), else an effect (explosions, fire, smoke). Of the
+    /// VFX appearances types use, 631 of 648 are of the kind this gives (lights and two effects are Scaled).
+    /// </summary>
+    ObjectKind VfxKind(const MCVfxAppearanceType& vfx)
+    {
+        return vfx.Scaled ? ObjectKind::Object : ObjectKind::Effect;
+    }
+
+    /// <summary>
+    /// The sprite PAK's appearances with shapes that no appearance in <paramref name="typed"/> is, each with the first
+    /// class of <see cref="UntypedClasses"/> its FIT loads as and that class's kind; one none loads is named and left out.
+    /// </summary>
+    std::map<uint32_t, ObjectAppearance> FindUntypedAppearances(const std::map<uint32_t, ObjectAppearance>& typed)
+    {
+        std::set<uint32_t> typedPackets;
+
+        for (const auto& [id, appearance] : typed)
+        {
+            typedPackets.insert(id & AppearancePacketMask);
+        }
+
+        std::map<uint32_t, ObjectAppearance> found;
+
+        for (uint32_t packet = 0; packet < SpriteManager()->GetNumAppearances(); ++packet)
+        {
+            if (typedPackets.contains(packet) || SpriteManager()->GetNumShapes(packet) <= 0)
+            {
+                continue;
+            }
+
+            std::shared_ptr<MCAppearanceType> type;
+            const auto loads =
+                std::ranges::find_if(UntypedClasses,
+                                     [packet, &type](const std::pair<MCAppearanceClass, ObjectKind>& candidate)
+                                     {
+                                         type = AppearanceTypeList().GetAppearance(
+                                             std::to_underlying(candidate.first) << AppearanceClassShift | packet);
+                                         return type != nullptr;
+                                     });
+
+            if (loads == UntypedClasses.end())
+            {
+                std::cout << std::format("  sprite PAK appearance {} ({}): no type uses it and its FIT loads as no "
+                                         "class; left out\n",
+                                         packet, SpriteManager()->ShapeFileName(packet));
+                continue;
+            }
+
+            const ObjectKind kind = loads->first == MCAppearanceClass::Vfx
+                                        ? VfxKind(static_cast<const MCVfxAppearanceType&>(*type))
+                                        : loads->second;
+            found.emplace(type->AppearanceNum, ObjectAppearance{type->AppearanceNum, kind, {}});
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The appearances <c>--kind &lt;name,...&gt;</c> and <c>--appearance &lt;packet,...&gt;</c> pick (every one when
+    /// neither is given), each loaded; past <see cref="PacketChoice::Drawn"/>, those no object type uses too.
+    /// </summary>
+    std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> PickedObjectAppearances(
+        PacketChoice packetChoice = PacketChoice::Drawn)
     {
         const std::set<std::string> kinds = ListOption("kind");
         std::set<uint32_t> packets;
@@ -1553,8 +1735,14 @@ namespace
         }
 
         std::vector<std::pair<ObjectAppearance, std::shared_ptr<MCAppearanceType>>> picked;
+        std::map<uint32_t, ObjectAppearance> appearances = FindObjectAppearances();
 
-        for (const auto& [id, appearance] : FindObjectAppearances())
+        if (packetChoice != PacketChoice::Drawn)
+        {
+            appearances.merge(FindUntypedAppearances(appearances));
+        }
+
+        for (const auto& [id, appearance] : appearances)
         {
             if ((!kinds.empty() && !kinds.contains(std::string(KindInfo(appearance.Kind).Name))) ||
                 (!packets.empty() && !packets.contains(id & AppearancePacketMask)))
@@ -1569,6 +1757,15 @@ namespace
         }
 
         return picked;
+    }
+
+    /// <summary>
+    /// The packets of <paramref name="appearance"/> that <paramref name="packets"/> picks: every one of an appearance no
+    /// object type uses (no type draws any).
+    /// </summary>
+    PacketChoice PacketsOf(const ObjectAppearance& appearance, PacketChoice packets)
+    {
+        return appearance.Types.empty() ? PacketChoice::All : packets;
     }
 
     /// <summary>What --hd-objects counts per kind, and how much of it repeats another sequence (made once).</summary>
@@ -1607,7 +1804,8 @@ namespace
 /// --hd-extract-objects: a line "object &lt;kind&gt; &lt;type id&gt; &lt;folder&gt; &lt;sequences&gt; &lt;frames&gt;
 /// &lt;pixels&gt; &lt;delta&gt; &lt;object types&gt;" each (the kinds: vehicle, elemental, turret and effect animated;
 /// building, tree and object still), then each kind's totals and the sequences that repeat another's shape table (made
-/// once). <c>--kind</c> and <c>--appearance</c> pick as --hd-extract-objects does.
+/// once). <c>--kind</c>, <c>--appearance</c> and <c>--hd-packets</c> pick as --hd-extract-objects does (an appearance no
+/// type uses is listed with "(no type)").
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and objects")
 {
@@ -1620,9 +1818,19 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
     std::array<KindTotals, ObjectKinds.size()> totals{};
     MCRepeats repeats;
 
-    for (const auto& [appearance, type] : PickedObjectAppearances())
+    const PacketChoice packets = PacketsOption();
+
+    for (const auto& [appearance, type] : PickedObjectAppearances(packets))
     {
-        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
+        const ObjectSequences made =
+            ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended, PacketsOf(appearance, packets));
+
+        // An appearance no type uses is listed only when it has frames.
+        if (appearance.Types.empty() && made.Sequences.empty())
+        {
+            continue;
+        }
+
         KindTotals& total = totals[static_cast<size_t>(appearance.Kind)];
         size_t frames = 0;
 
@@ -1641,7 +1849,7 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
             }
         }
 
-        std::string types;
+        std::string types = appearance.Types.empty() ? std::string(" (no type)") : std::string();
 
         for (const std::string& name : appearance.Types)
         {
@@ -1685,7 +1893,10 @@ TEST_CASE_ISOLATED("tool: --hd-objects lists the vehicles, Elementals and object
 /// still draws, except an effect's, which holds them premultiplied), plus <c>objects.json</c> (each appearance's kind,
 /// whether it is animated or still, whether it holds its blended pixels, and its sequences' frames' bounds, as
 /// --hd-extract's) and the shown colours as palette.rgb. A sequence whose shape table an earlier one has (made the same
-/// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it.
+/// way) is written only as <c>"same_as": "&lt;that one's folder&gt;"</c>: the generator copies it. With
+/// <c>--hd-packets all</c> every packet of each appearance's PAK is written, with <c>--hd-packets undrawn</c> only those
+/// no lookup reaches (the original's zoomed-out views...), each under the folder the game would look it up by; either
+/// adds the appearances no object type uses (no types in objects.json), each of the kind its class gives.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals' and objects' frames")
 {
@@ -1707,9 +1918,12 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
     size_t frames = 0;
     MCRepeats repeats;
 
-    for (const auto& [appearance, type] : PickedObjectAppearances())
+    const PacketChoice packets = PacketsOption();
+
+    for (const auto& [appearance, type] : PickedObjectAppearances(packets))
     {
-        const ObjectSequences made = ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended);
+        const ObjectSequences made =
+            ObjectSequencesOf(type, KindInfo(appearance.Kind).Blended, PacketsOf(appearance, packets));
 
         if (made.Sequences.empty())
         {
@@ -3140,6 +3354,322 @@ TEST_CASE_ISOLATED("game: an effect's HD frame drawn through a table takes the t
 
 namespace
 {
+    /// <summary>The appearance the smooth-edge tests' pack keeps their frame under (none of the game's).</summary>
+    constexpr uint32_t TestEdgeAppearance = 0xffffe;
+    /// <summary>The rows of the smooth-edge tests' shapes: a staircase, one pixel longer each row.</summary>
+    constexpr int32_t StairRows = 24;
+    /// <summary>The original rows left out at the staircase's top and bottom, where its corners round.</summary>
+    constexpr int32_t StairEnds = 4;
+    /// <summary>A shape row's run of n pixels (the VFX encoding: n << 1 | 1, then the pixels), and its end.</summary>
+    constexpr uint8_t RunOf(int32_t pixels)
+    {
+        return static_cast<uint8_t>(pixels << 1 | 1);
+    }
+
+    constexpr uint8_t RowEnd = 0;
+
+    /// <summary>
+    /// Writes a frame that leaves out the blended pixels (MCHdArt::Frame not Blended) as a PNG pair,
+    /// <paramref name="stem"/>.png and _idx.png: <paramref name="width"/> x <paramref name="height"/> original pixels,
+    /// <paramref name="scale"/> HD pixels each (nearest, so its alpha keeps the original's steps), the pixels
+    /// <paramref name="indexAt"/> gives an index opaque in <paramref name="color"/>, the rest transparent.
+    /// </summary>
+    void WriteSteppedFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
+                           SDL_Color color, const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt)
+    {
+        std::vector<uint8_t> colors(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
+        std::vector<uint8_t> index(colors.size());
+
+        for (int32_t y = 0; y < height * scale; ++y)
+        {
+            for (int32_t x = 0; x < width * scale; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
+                const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
+                const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
+                std::ranges::copy(std::array{color.r, color.g, color.b, alpha},
+                                  colors.begin() + static_cast<ptrdiff_t>(at));
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), alpha, 0, HasIndex},
+                                  index.begin() + static_cast<ptrdiff_t>(at));
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width * scale, height * scale, colors);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width * scale, height * scale, index);
+    }
+
+    /// <summary>A free colour (10..245, not a special one) far from <paramref name="from"/>'s.</summary>
+    uint8_t ContrastingIndex(std::span<const SDL_Color, 256> colors, uint8_t from)
+    {
+        constexpr int32_t FirstFree = 10;
+        constexpr int32_t EndFree = 246;
+        constexpr int32_t Apart = 240;
+        const SDL_Color& a = colors[from];
+        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto found =
+            std::ranges::find_if(free,
+                                 [&](int32_t i)
+                                 {
+                                     const SDL_Color& b = colors[static_cast<size_t>(i)];
+                                     return SpecialColor[static_cast<size_t>(i)] == 0 &&
+                                            std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) >= Apart;
+                                 });
+        REQUIRE(found != free.end());
+        return static_cast<uint8_t>(*found);
+    }
+
+    /// <summary>How far a shown pixel's colour lies from another's (the channels' differences summed).</summary>
+    int32_t ColourDistance(const uint8_t* a, const uint8_t* b)
+    {
+        return std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
+    }
+
+    /// <summary>
+    /// What a smooth-edge test saw of a staircase drawn over a plain colour: per shown row of what changed, how many
+    /// pixels' worth it covers (each changed pixel's distance from the plain colour over a whole pixel's), and the
+    /// scale the screen is shown at.
+    /// </summary>
+    struct StairCover
+    {
+        std::vector<double> Rows;
+        double Scale = 1.0;
+    };
+
+    /// <summary>
+    /// The staircase <paramref name="draw"/> draws on the screen pane over a plain colour (index
+    /// <paramref name="plain"/>), with HD art on from <paramref name="pack"/> (none: off): per shown row, its cover
+    /// (StairCover), a whole pixel being as far from the plain colour as the shown pixel at <paramref name="full"/> of
+    /// what changed (fractions of its width and height).
+    /// </summary>
+    StairCover CoverOfStairs(const std::optional<std::filesystem::path>& pack, uint8_t plain,
+                             const std::function<void()>& draw, std::pair<double, double> full,
+                             const std::filesystem::path& scratch)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (pack.has_value())
+        {
+            on.emplace(*pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(ScreenPort()->Frame(), plain);
+        const Shown before = ReadShown(scratch);
+        draw();
+        const Shown after = ReadShown(scratch);
+        REQUIRE_EQ(before.Width, after.Width);
+        MCRect box{after.Width, after.Height, -1, -1};
+
+        for (int32_t y = 0; y < after.Height; ++y)
+        {
+            for (int32_t x = 0; x < after.Width; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * after.Width + x) * BytesPerPixel;
+
+                if (ColourDistance(&before.Pixels[at], &after.Pixels[at]) != 0)
+                {
+                    box = {std::min(box.X0, x), std::min(box.Y0, y), std::max(box.X1, x), std::max(box.Y1, y)};
+                }
+            }
+        }
+
+        REQUIRE(box.X1 >= box.X0);
+        const auto pixel = [&](const Shown& shown, int32_t x, int32_t y)
+        { return &shown.Pixels[(static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel]; };
+        const int32_t fullX = box.X0 + static_cast<int32_t>(full.first * (box.X1 - box.X0));
+        const int32_t fullY = box.Y0 + static_cast<int32_t>(full.second * (box.Y1 - box.Y0));
+        const double whole = ColourDistance(pixel(before, fullX, fullY), pixel(after, fullX, fullY));
+        REQUIRE(whole > 0.0);
+        StairCover cover;
+        cover.Scale = static_cast<double>(box.Y1 - box.Y0 + 1) / StairRows;
+
+        for (int32_t y = box.Y0; y <= box.Y1; ++y)
+        {
+            double row = 0.0;
+
+            for (int32_t x = box.X0; x <= box.X1; ++x)
+            {
+                row += std::min(ColourDistance(pixel(before, x, y), pixel(after, x, y)) / whole, 1.0);
+            }
+
+            cover.Rows.push_back(row);
+        }
+
+        return cover;
+    }
+
+    /// <summary>
+    /// The largest change of cover between neighbouring shown rows, away from the staircase's ends: its edge's slope
+    /// (a pixel a row) where it is smooth, about the screen's scale where it keeps the original's steps.
+    /// </summary>
+    double LargestStep(const StairCover& cover)
+    {
+        const auto ends = static_cast<size_t>(StairEnds * cover.Scale);
+        double largest = 0.0;
+
+        for (size_t row = ends; row + 1 + ends < cover.Rows.size(); ++row)
+        {
+            largest = std::max(largest, cover.Rows[row + 1] - cover.Rows[row]);
+        }
+
+        return largest;
+    }
+
+    /// <summary>
+    /// A shape of <paramref name="rows"/> (OneFrameTable's) drawn by the smooth-edge tests, its frame in a pack under
+    /// TestEdgeAppearance, and the scratch folder.
+    /// </summary>
+    struct StairShape
+    {
+        std::shared_ptr<MCShape> Shape;
+        std::filesystem::path Scratch;
+        std::filesystem::path Pack;
+        MCHdArt::ObjectShapeKey Key{"shapes", TestEdgeAppearance, 0};
+    };
+
+    StairShape MakeStairShape(std::string_view name, int32_t width, std::span<const uint8_t> rows)
+    {
+        StairShape stairs;
+        const std::vector<uint8_t> table = OneFrameTable(width, StairRows, rows);
+        MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+        std::ranges::copy(table, block.Bytes().begin());
+        stairs.Shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+        REQUIRE(!stairs.Shape->FrameList().empty());
+        stairs.Scratch = std::filesystem::temp_directory_path() / name;
+        std::filesystem::remove_all(stairs.Scratch);
+        stairs.Pack = stairs.Scratch / "pack";
+        std::filesystem::create_directories(stairs.Pack / MCHdArt::FolderOf(stairs.Key));
+        return stairs;
+    }
+}
+
+/// <summary>
+/// An HD frame's edges come from the original's pixels, smoothed: a staircase (a pixel longer each row) drawn on the
+/// screen by the GPU over mission 1 (a window shown larger than the screen), its frame's alpha the original's steps
+/// scaled up, shows with HD art off a jump of about the screen's scale every few shown rows, and with it on an edge
+/// that moves about a pixel a shown row.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a sprite's HD frame with its original's edges smoothed")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.push_back(RunOf(row + 1));
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), opaque);
+        rows.push_back(RowEnd);
+    }
+
+    const StairShape stairs = MakeStairShape("mc_tests_hd_smooth_frame", StairRows, rows);
+    constexpr int32_t Scale = 2;
+    WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", StairRows, StairRows, Scale, colors[opaque],
+                      [&](int32_t x, int32_t y) { return x <= y ? std::optional(opaque) : std::nullopt; });
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto draw = [&]
+    {
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+    };
+
+    // A whole pixel: the bottom row's left end, inside the staircase.
+    constexpr std::pair<double, double> Inside = {0.1, 0.99};
+    GamePaused = true;
+    const StairCover original = CoverOfStairs(std::nullopt, plain, draw, Inside, stairs.Scratch);
+    const StairCover smooth = CoverOfStairs(stairs.Pack, plain, draw, Inside, stairs.Scratch);
+    GamePaused = false;
+    std::cout << std::format("  largest step between rows (scale {:.2f}): {:.2f} with HD art off, {:.2f} on\n",
+                             smooth.Scale, LargestStep(original), LargestStep(smooth));
+    CHECK(LargestStep(original) > smooth.Scale * 0.75);
+    CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+/// <summary>
+/// A translucent shape's blended pixels that its HD frame leaves out (a shadow) are drawn with smooth edges: a shape
+/// whose rows hold two opaque pixels and then a halving staircase (a pixel longer each row), drawn as the frame test's,
+/// shows the shadow's edge with HD art off stepping about the screen's scale every few shown rows, and with it on
+/// moving about a pixel a shown row.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a translucent sprite's shadow with smooth edges under its HD frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    if (StartScaledUp(MCGpuDrawing::On) == nullptr)
+    {
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+    const uint8_t plain = ContrastingIndex(colors, opaque);
+    constexpr uint8_t Mark = 0;
+    constexpr uint8_t Halves = 254;
+    constexpr int32_t Opaque = 2;
+    REQUIRE(SpecialColor[Halves] != 0);
+    std::vector<uint8_t> rows;
+
+    // Each row: the translucent shape's mark (a pixel of colour 0), two opaque pixels, then the shadow.
+    for (int32_t row = 0; row < StairRows; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(1), Mark, RunOf(Opaque + row + 1), opaque, opaque});
+        rows.insert(rows.end(), static_cast<size_t>(row + 1), Halves);
+        rows.push_back(RowEnd);
+    }
+
+    constexpr int32_t Width = 1 + Opaque + StairRows;
+    const StairShape stairs = MakeStairShape("mc_tests_hd_smooth_shadow", Width, rows);
+    REQUIRE(MCAgShapeIsAlpha(stairs.Shape->FrameList(), 0));
+    constexpr int32_t Scale = 2;
+    WriteSteppedFrame(stairs.Pack / MCHdArt::FolderOf(stairs.Key) / "0", Width, StairRows, Scale, colors[opaque],
+                      [&](int32_t x, int32_t) { return x >= 1 && x <= Opaque ? std::optional(opaque) : std::nullopt; });
+    WritePaletteRgb(stairs.Pack, colors);
+
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const auto draw = [&]
+    {
+        MCHdArt::Attach(stairs.Shape, stairs.Key);
+        AGShapeDraw(pane, stairs.Shape->FrameList(), 0, x, y);
+    };
+
+    // A whole pixel of shadow: the bottom row's middle.
+    constexpr std::pair<double, double> Inside = {0.6, 0.99};
+    GamePaused = true;
+    const StairCover original = CoverOfStairs(std::nullopt, plain, draw, Inside, stairs.Scratch);
+    const StairCover smooth = CoverOfStairs(stairs.Pack, plain, draw, Inside, stairs.Scratch);
+    GamePaused = false;
+    std::cout << std::format("  largest step between rows (scale {:.2f}): {:.2f} with HD art off, {:.2f} on\n",
+                             smooth.Scale, LargestStep(original), LargestStep(smooth));
+    CHECK(LargestStep(original) > smooth.Scale * 0.75);
+    CHECK(LargestStep(smooth) < smooth.Scale * 0.6);
+    std::filesystem::remove_all(stairs.Scratch);
+}
+
+namespace
+{
     /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
@@ -3429,12 +3959,69 @@ namespace
         int64_t Count = 0;
         int64_t Pixels = 0;
         bool Scaled = false;
-        std::span<const uint8_t> Data;
         std::set<int32_t> Frames;
+
+        // Taken as they are drawn, since a closed screen's windows and data are gone by the report: the window's size,
+        // what drew (AuditOwner), a copy's picture, and the first few frames of a shape table with how the pack finds
+        // them (its attached folder, else its hash).
+        int32_t WindowWidth = 0;
+        int32_t WindowHeight = 0;
+        std::string Owner;
+        std::optional<DecodedFrame> Picture;
+        // The colours shown when it was first drawn (a copy's picture is saved in them), and what was on screen then
+        // (AuditLabel, when the tool sets one).
+        std::array<SDL_Color, 256> Colors{};
+        std::string Label;
+        std::map<int32_t, DecodedFrame> ShapeFrames;
+        std::optional<std::filesystem::path> Attached;
+        std::optional<uint64_t> TableHash;
     };
+
+    /// <summary>How many of a shape table's frames an audit keeps (decoded as they are drawn) to picture.</summary>
+    constexpr size_t AuditFramesKept = 4;
+
+    /// <summary>What a tool shows while it audits (a screen's name), noted with each tally's first draw.</summary>
+    std::string AuditLabel;
 
     std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
     void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
+
+    /// <summary>
+    /// Whether a shape's frame shows nothing: no pixel drawn, or a translucent one's every pixel colour 0 (AlphaPal.ini's
+    /// marker colour, transparent).
+    /// </summary>
+    bool BlankFrame(const DecodedFrame& frame)
+    {
+        for (size_t i = 0; i < frame.Index.size(); ++i)
+        {
+            if (frame.Drawn[i] != 0 && (!frame.Translucent || frame.Index[i] != 0))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the audit counts a draw as sharp: drawn so, or showing nothing (it covered no pixels, or its shape's
+    /// frame is blank: invisible with HD art on or off), so nothing of the original's pixels shows.
+    /// </summary>
+    bool AuditSharp(const MCVulkanRenderer::AuditedDraw& draw)
+    {
+        if (draw.Sharp || draw.Pixels == 0)
+        {
+            return true;
+        }
+
+        if (!VfxIsShapeTable(draw.Data) || draw.Frame < 0)
+        {
+            return false;
+        }
+
+        const auto decoded = Decode(draw.Data, draw.Frame);
+        return decoded.has_value() && BlankFrame(*decoded);
+    }
 }
 
 namespace
@@ -3870,11 +4457,219 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
     std::filesystem::remove_all(scene->Scratch);
 }
 
+namespace
+{
+    /// <summary>
+    /// The audit's details beside its tally (--hd-audit, and --sharp-menus with --hd-audit-menus), for telling what drew
+    /// each thing from the original's pixels: per tally entry, the call stack of its first draw, the font a glyph is
+    /// from and the screens it was drawn on; and per call stack, the draws from the original's pixels (commands without
+    /// data, a clear, a polygon, a status bar, can only be told apart by where they are drawn from).
+    /// </summary>
+    struct AuditDetail
+    {
+        /// <summary>A tally entry's details, taken at its first draw (the screens: every draw's).</summary>
+        struct Entry
+        {
+            std::vector<uintptr_t> Stack;
+            std::string Font;
+            std::set<std::string> Screens;
+            /// <summary>The colours shown at the first draw (a menu picture's palette is its screen's).</summary>
+            std::array<SDL_Color, 256> Colors{};
+            /// <summary>
+            /// A copy's picture as its latest draw from the original's pixels copied it, and the colours then (a
+            /// window composed at run time is often still empty at its first copy).
+            /// </summary>
+            std::optional<DecodedFrame> Latest;
+            std::array<SDL_Color, 256> LatestColors{};
+        };
+
+        /// <summary>The draws from the original's pixels of one command, on windows of one size, from one call stack.</summary>
+        struct Site
+        {
+            bool Scaled = false;
+            int64_t Count = 0;
+            int64_t Pixels = 0;
+            std::set<std::string> Screens;
+        };
+
+        /// <summary>A site: the command, the window's width and height, and the call stack.</summary>
+        using SiteKey = std::tuple<std::string, int32_t, int32_t, std::vector<uintptr_t>>;
+        std::map<AuditKey, Entry> Entries;
+        std::map<SiteKey, Site> Sites;
+        /// <summary>The screen being shown, which every draw is tagged with.</summary>
+        std::string Screen = "mission";
+    };
+
+    /// <summary>AuditInto's tally of each draw, with <paramref name="detail"/>'s details beside it.</summary>
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInDetail(std::map<AuditKey, AuditTally>& tally,
+                                                                            AuditDetail& detail);
+
+    /// <summary>
+    /// Writes an audit's tables into <paramref name="folder"/> for working through across runs: <c>audit.tsv</c>, every
+    /// tally entry drawn from the original's pixels with a stable id, whether the pack has its art, its call stack and
+    /// screens; <c>sites.tsv</c>, those draws by call stack; and <c>items/&lt;id&gt;.png</c>, a picture of each.
+    /// </summary>
+    void WriteAuditTables(const std::map<AuditKey, AuditTally>& tally, const AuditDetail& detail,
+                          const std::filesystem::path& folder, int32_t frames);
+
+    /// <summary>
+    /// Shows the screens --sharp-menus' first round leaves out, each through <paramref name="shoot"/> (named): the other
+    /// inventory tabs of the mech bay and the purchase screen, the briefing's operation tab, the main menu in a campaign, the save and single-mission load screens, the exit question, the multiplayer screens (the
+    /// connection menu, the serial and modem screens, the IPX/TCP question, the LAN games, hosting's ready room and
+    /// session screen), the expansion's briefing, then a mission launched from the briefing (its loading screen),
+    /// paused, the tactical map's info, objectives and salvage pages, the preferences' CONTROLS panel where the build
+    /// has one, the results and debriefing, and logistics after the mission.
+    /// </summary>
+    void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail);
+}
+
+namespace
+{
+    /// <summary>The seam test's two tile colours, a channel apart: a tile's every HD pixel is one of them.</summary>
+    constexpr SDL_Color SeamRed = {220, 30, 30, 255};
+    constexpr SDL_Color SeamBlue = {30, 30, 220, 255};
+    /// <summary>How far a shown channel may be from the colour it is taken for.</summary>
+    constexpr int32_t SeamTolerance = 12;
+    /// <summary>A mix of the two lies this far from both, at least, in red.</summary>
+    constexpr int32_t SeamMixed = 40;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (a tile's colour is picked by its name's hash).</summary>
+    constexpr uint64_t SeamHashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t SeamHashPrime = 0x100000001b3ull;
+
+    /// <summary>
+    /// Writes HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder, each one colour
+    /// (SeamRed or SeamBlue, by its name's hash), at TerrainScale, with the index picture WriteTerrainPack writes.
+    /// </summary>
+    size_t WriteTwoColourTerrain(const std::filesystem::path& pack, const MCTerrainMesh& mesh)
+    {
+        const std::filesystem::path folder = pack / "terrain";
+        std::filesystem::create_directories(folder);
+        size_t written = 0;
+
+        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        {
+            const DecodedTile decoded = DecodeTile(tile);
+
+            if (decoded.Width == 0)
+            {
+                continue;
+            }
+
+            const std::string name = MCHdArt::TerrainTileName(tile);
+            // FNV-1a over the name: the same split on every platform.
+            uint64_t hash = SeamHashBasis;
+
+            for (const char c : name)
+            {
+                hash = (hash ^ static_cast<uint8_t>(c)) * SeamHashPrime;
+            }
+
+            const SDL_Color colour = hash % 2 == 0 ? SeamRed : SeamBlue;
+            const int32_t width = decoded.Width * TerrainScale;
+            const int32_t height = decoded.Height * TerrainScale;
+            std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel);
+            std::vector<uint8_t> index(color.size());
+
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < width; ++x)
+                {
+                    const size_t from = static_cast<size_t>(y / TerrainScale) * decoded.Width + x / TerrainScale;
+                    const size_t to = (static_cast<size_t>(y) * width + x) * BytesPerPixel;
+                    std::ranges::copy(std::array{colour.r, colour.g, colour.b, HasIndex},
+                                      color.begin() + static_cast<ptrdiff_t>(to));
+                    index[to] = decoded.Index[from];
+                    index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
+                    index[to + 3] = HasIndex;
+                }
+            }
+
+            SavePng(folder / (name + ".png"), width, height, color);
+            SavePng(folder / (name + "_idx.png"), width, height, index);
+            ++written;
+        }
+
+        return written;
+    }
+}
+
+/// <summary>
+/// HD ground: the tiles' HD colours fade into each other across their seams (each tile is upscaled on its own): with a
+/// pack whose tiles are each one of two colours, the shown ground holds mixes of the two along the tiles' seams, and is
+/// still mostly the two colours inside the tiles.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their seams")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    RevealAll();
+    SingleStepMode = 1;
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    REQUIRE(WriteTwoColourTerrain(pack, *mesh) > 0);
+    WritePaletteRgb(pack, colors);
+    const MCHdArtOn hdArt(pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(scene->Renderer->HdTerrain());
+    const Shown shown = ReadShown(scene->Scratch);
+
+    // The view's middle half (the interface lies around it).
+    const auto near = [](const uint8_t* pixel, const SDL_Color& colour)
+    {
+        return std::abs(pixel[0] - colour.r) <= SeamTolerance && std::abs(pixel[1] - colour.g) <= SeamTolerance &&
+               std::abs(pixel[2] - colour.b) <= SeamTolerance;
+    };
+
+    int64_t plain = 0;
+    int64_t mixed = 0;
+    int64_t pixels = 0;
+
+    for (int32_t y = shown.Height / 4; y < shown.Height * 3 / 4; ++y)
+    {
+        for (int32_t x = shown.Width / 4; x < shown.Width * 3 / 4; ++x)
+        {
+            const uint8_t* pixel = &shown.Pixels[(static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel];
+            const int32_t sum = pixel[0] + pixel[2];
+            ++pixels;
+
+            if (near(pixel, SeamRed) || near(pixel, SeamBlue))
+            {
+                ++plain;
+            }
+            else if (std::abs(pixel[1] - SeamRed.g) <= SeamTolerance &&
+                     std::abs(sum - (SeamRed.r + SeamRed.b)) <= 2 * SeamTolerance &&
+                     pixel[0] >= SeamBlue.r + SeamMixed && pixel[0] <= SeamRed.r - SeamMixed)
+            {
+                ++mixed;
+            }
+        }
+    }
+
+    std::cout << std::format("  of {} pixels: {} one tile's colour, {} a mix of two\n", pixels, plain, mixed);
+    // Without the fade, every tile's pixel would be one colour or the other; the seams' mixes are a band a few shown
+    // pixels wide along them.
+    constexpr int64_t MixedShare = 1000;
+    CHECK(plain * 2 > pixels);
+    CHECK(mixed * MixedShare > pixels);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 /// <summary>
 /// Tool: <c>--sharp-menus &lt;folder&gt;</c> shows the main menu and the logistics screens in a window the size of a
 /// Retina MacBook's screen (<c>--window WxH</c>, default 3024x1890) with HD art on (a sharp screen: text redrawn sharp,
 /// and the pack's menu art with <c>--hd-pack &lt;pack&gt;</c>), and saves each as shown into the folder; with
-/// <c>--hd-original 1</c>, as the game shows them without.
+/// <c>--hd-original 1</c>, as the game shows them without. With <c>--hd-audit-menus 1</c> every draw is audited as
+/// --hd-audit's are (into the folder's audit/), and with it or <c>--sharp-menus-tour 1</c> every other screen is shown
+/// too (TourScreens: the multiplayer screens, a mission from its loading screen to its results, and more).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off")
 {
@@ -3911,24 +4706,36 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     const bool original = MCTest::Option("hd-original").has_value();
     GHdArt = original ? 0 : 1;
     MCHdArt::SetPackFolder(pack);
+    // The logistics' shapes, loaded before HD art came on, tied to the pack as the game ties them with it on.
+    GlobalLog()->AttachHdArt();
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
     // Two seconds settle a screen change's wipe.
     constexpr int32_t SettleFrames = 30;
+    // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock its store is given to show.
+    constexpr int32_t MechTab = 0;
+    constexpr int32_t PilotTab = 1;
+    constexpr int32_t ComponentTab = 2;
+    constexpr int32_t VehicleTab = 3;
+    constexpr int32_t StockShown = 2;
     // With --hd-audit-menus 1, every screen's draws are tallied as --hd-audit tallies a battle's.
     const bool audit = MCTest::Option("hd-audit-menus").has_value();
     const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
     REQUIRE(renderer != nullptr);
     std::map<AuditKey, AuditTally> tally;
+    AuditDetail detail;
     int32_t audited = 0;
 
     if (audit)
     {
-        renderer->Audit = AuditInto(tally);
+        renderer->Audit = AuditInDetail(tally, detail);
     }
 
     const auto shoot = [&](const std::string& name)
     {
+        AuditLabel = name;
+        detail.Screen = name;
+
         for (int32_t frame = 0; frame < SettleFrames; ++frame)
         {
             MCTestGame::RunFrame(FrameSeconds);
@@ -3947,20 +4754,78 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     LoadScreen();
     shoot("load");
     Cancel();
+    AuditLabel = "to briefing";
     NewCampaign();
     shoot("briefing");
-    GlobalLog()->SetUpPurchaseScreen(true);
-    shoot("purchase");
-    GlobalLog()->SetUpRepairScreen(true);
-    shoot("repair");
-    GHdArt = 0;
-    MCHdArt::SetPackFolder({});
+    GlobalLog()->BriefingScreen->SetUpMission();
+    shoot("briefing_mission");
+    // A screen change's slide pictured part way (its SlideShot'th present).
+    constexpr int32_t SlideShot = 2;
+    int32_t slidePresents = -1;
+    std::string slideName;
+    MCTestGame::OnPresent = [&]
+    {
+        if (slidePresents >= 0 && ++slidePresents == SlideShot)
+        {
+            const std::filesystem::path path =
+                folder / std::format("{}_slide_{}.png", slideName, original ? "original" : "sharp");
+            REQUIRE(MCInput::Display()->SaveShownScreenshot(path).has_value());
+            std::cout << std::format("  {} slide: {}\n", slideName, path.string());
+        }
+    };
 
+    const auto slide = [&](std::string name, const std::function<void()>& change)
+    {
+        AuditLabel = "to " + name;
+        slideName = std::move(name);
+        slidePresents = 0;
+        change();
+        slidePresents = -1;
+    };
+
+    slide("purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); });
+    shoot("purchase");
+    // The store's vehicles, then both in stock (a new campaign's store has none: its rows show the sold-out outlines).
+    GlobalLog()->CurrentInvTab = VehicleTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_vehicles");
+    MCTestGame::StockStore(StockShown);
+    // One of the first vehicle bought (the inventory list shows it, with its diagram).
+    GlobalLog()->PurVehicleList->Vehicles.front()->Block->OnBuyConfirmed(1, 1);
+    shoot("purchase_vehicles_stocked");
+    GlobalLog()->CurrentInvTab = PilotTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_pilots");
+    GlobalLog()->CurrentInvTab = ComponentTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_components");
+    GlobalLog()->CurrentInvTab = MechTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    GlobalLog()->PurMechList->Mechs.front()->Block->OnBuyConfirmed(1, 1);
+    shoot("purchase_stocked");
+    slide("repair", [] { GlobalLog()->SetUpRepairScreen(true); });
+    shoot("repair");
+    slide("briefing", [] { GlobalLog()->SetUpBriefingScreen(true); });
+    shoot("briefing_again");
+    MCTestGame::OnPresent = nullptr;
+
+    // With --hd-audit-menus or --sharp-menus-tour 1, every other screen too.
+    if (audit || MCTest::Option("sharp-menus-tour").has_value())
+    {
+        TourScreens(shoot, detail);
+    }
+
+    // The tables are written with the pack still set: they say whether it has each picture drawn from the original.
     if (audit)
     {
         renderer->Audit = nullptr;
+        AuditLabel.clear();
         ReportAudit(tally, folder / "audit", audited);
+        WriteAuditTables(tally, detail, folder / "audit", audited);
     }
+
+    GHdArt = 0;
+    MCHdArt::SetPackFolder({});
 }
 
 namespace
@@ -4166,6 +5031,444 @@ TEST_CASE_ISOLATED("game: a sharp screen draws the menus at the window's resolut
     CHECK(sharp == plain);
 }
 
+namespace
+{
+    /// <summary>
+    /// A glyph's redrawn coverage at (x, y) in its redrawn pixels, between their centres, as shaders/draw.pshader takes
+    /// it: none past its border, or, for a layer that runs on (<paramref name="runsOn"/>), its border's.
+    /// </summary>
+    float CoverageBetween(std::span<const uint8_t> redrawn, int32_t width, int32_t height, bool runsOn, float x,
+                          float y)
+    {
+        const auto texel = [&](int32_t i, int32_t j)
+        {
+            if (!runsOn && (i < 0 || j < 0 || i >= width || j >= height))
+            {
+                return 0.0f;
+            }
+
+            const size_t at = static_cast<size_t>(std::clamp(j, 0, height - 1)) * static_cast<size_t>(width) +
+                              static_cast<size_t>(std::clamp(i, 0, width - 1));
+            return static_cast<float>(redrawn[at * BytesPerPixel + 1]) / 255.0f;
+        };
+
+        const auto i = static_cast<int32_t>(std::floor(x));
+        const auto j = static_cast<int32_t>(std::floor(y));
+        const float fx = x - static_cast<float>(i);
+        const float fy = y - static_cast<float>(j);
+        const float top = std::lerp(texel(i, j), texel(i + 1, j), fx);
+        const float bottom = std::lerp(texel(i, j + 1), texel(i + 1, j + 1), fx);
+        return std::lerp(top, bottom, fy);
+    }
+}
+
+/// <summary>
+/// On a sharp screen, two-tone text (yelldrp.fnt, the logistics screens' yellow figures, a body and its drop shadow) is
+/// shown from its layers: each pixel of the window is the glyphs' layers (MCSharpText::RedrawLayers, the whole glyph
+/// where a pane cuts it) sampled where it lies, each over the one behind it; the indices stay the original's.
+/// </summary>
+TEST_CASE_ISOLATED("game: a sharp screen shows two-tone text from its layers and keeps its indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    REQUIRE(YellowDropFont != nullptr);
+    REQUIRE(!YellowDropFont->FontData.Empty());
+    constexpr int32_t Width = 2560;
+    constexpr int32_t Height = 1920;
+    constexpr int32_t SettleFrames = 30;
+    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+    SDL_SyncWindow(&MCInput::Display()->Window());
+
+    const auto settle = []
+    {
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    };
+
+    // A box of one colour (neither of the font's, in the screen's settled palette), the text in it, its first letter
+    // cut by the box's left side.
+    settle();
+    const std::span<const uint8_t> font = YellowDropFont->FontData.Bytes();
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    REQUIRE(fontLayers.Shadow.has_value());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const auto background =
+        static_cast<uint8_t>(std::ranges::find_if(colors,
+                                                  [&](const SDL_Color& color)
+                                                  {
+                                                      return !SameColor(color, colors[fontLayers.Shadow->Body]) &&
+                                                             !SameColor(color, colors[fontLayers.Shadow->Shadow]);
+                                                  }) -
+                             colors.begin());
+    const std::string_view text = "A25 Tons AVKWxy47";
+    constexpr int32_t Cut = 2;
+    constexpr int32_t Margin = 3;
+    const int32_t fontHeight = VfxFontHeight(font);
+    const MCPane& screen = ScreenPort()->Frame();
+    const MCPane box{screen.Window, screen.X0 + 40, screen.Y0 + 40,
+                     screen.X0 + 40 + YellowDropFont->Width(text) - Cut + Margin,
+                     screen.Y0 + 40 + fontHeight + 2 * Margin};
+
+    const auto drawn = [&]
+    {
+        settle();
+        VfxPaneWipe(box, background);
+        YellowDropFont->WriteString(box, -Cut, Margin, text);
+        return MCInput::Display()->ComposeScreen();
+    };
+
+    const std::vector<uint8_t> plain = drawn();
+    GHdArt = 1;
+    const std::vector<uint8_t> sharp = drawn();
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_sharp_two_tone";
+    std::filesystem::create_directories(scratch);
+    const Shown shown = ReadShown(scratch);
+    GHdArt = 0;
+    std::filesystem::remove_all(scratch);
+    CHECK(sharp == plain);
+
+    // Each glyph's place in the window and its layers (as a one-colour glyph, the space, its one).
+    struct Placed
+    {
+        int32_t X = 0;
+        int32_t Columns = 0;
+        std::vector<std::vector<uint8_t>> Layers;
+        MCSharpText::MCGlyphLayers How;
+    };
+
+    std::vector<Placed> glyphs;
+    int32_t x = box.X0 - Cut;
+
+    for (const char c : text)
+    {
+        const auto character = static_cast<uint8_t>(c);
+        const int32_t columns = VfxCharacterWidth(font, character);
+        const auto offset = static_cast<size_t>(static_cast<uint32_t>(MCVfxRead32(font, 0x10 + character * 4))) + 4;
+        const std::span<const uint8_t> glyph =
+            font.subspan(offset, static_cast<size_t>(columns) * static_cast<size_t>(fontHeight));
+        Placed placed{x, columns, {}, {}};
+
+        if (MCSharpText::Layered(glyph, columns, columns, fontHeight))
+        {
+            placed.How = MCSharpText::LayersOf(glyph, columns, columns, fontHeight, fontLayers);
+            placed.Layers = MCSharpText::RedrawLayers(glyph, columns, columns, fontHeight, placed.How);
+        }
+        else
+        {
+            placed.Layers.push_back(MCSharpText::Redraw(glyph, columns, columns, fontHeight));
+        }
+
+        glyphs.push_back(std::move(placed));
+        x += columns;
+    }
+
+    // Every shown pixel inside the box, against the layers sampled as shaders/draw.pshader's KindSharpGlyph does.
+    constexpr int32_t Scale = MCSharpText::Scale;
+    constexpr int32_t Tolerance = 3;
+    const float perX = static_cast<float>(MCInput::Display()->Width()) / static_cast<float>(shown.Width);
+    const float perY = static_cast<float>(MCInput::Display()->Height()) / static_cast<float>(shown.Height);
+    int32_t worst = 0;
+    int64_t compared = 0;
+    int64_t covered = 0;
+
+    for (int32_t oy = 0; oy < shown.Height; ++oy)
+    {
+        const float wy = (static_cast<float>(oy) + 0.5f) * perY;
+
+        for (int32_t ox = 0; ox < shown.Width; ++ox)
+        {
+            const float wx = (static_cast<float>(ox) + 0.5f) * perX;
+
+            if (wx < static_cast<float>(box.X0) || wx >= static_cast<float>(box.X1 + 1) ||
+                wy < static_cast<float>(box.Y0) || wy >= static_cast<float>(box.Y1 + 1))
+            {
+                continue;
+            }
+
+            std::array<float, 3> expected = {static_cast<float>(colors[background].r),
+                                             static_cast<float>(colors[background].g),
+                                             static_cast<float>(colors[background].b)};
+            const float gy = wy - static_cast<float>(box.Y0 + Margin);
+
+            for (const Placed& glyph : glyphs)
+            {
+                const float gx = wx - static_cast<float>(glyph.X);
+
+                if (gx < 0.0f || gx >= static_cast<float>(glyph.Columns) || gy < 0.0f ||
+                    gy >= static_cast<float>(fontHeight))
+                {
+                    continue;
+                }
+
+                for (size_t place = 0; place < glyph.Layers.size(); ++place)
+                {
+                    const std::vector<uint8_t>& layer = glyph.Layers[place];
+                    const int32_t width = glyph.Columns * Scale;
+                    const int32_t height = fontHeight * Scale;
+                    const float coverage = CoverageBetween(layer, width, height, glyph.How.RunsOn(place),
+                                                           gx * Scale - 0.5f, gy * Scale - 0.5f);
+                    const size_t nearest =
+                        static_cast<size_t>(std::clamp(static_cast<int32_t>(gy * Scale), 0, height - 1)) *
+                            static_cast<size_t>(width) +
+                        static_cast<size_t>(std::clamp(static_cast<int32_t>(gx * Scale), 0, width - 1));
+                    const SDL_Color& color = colors[layer[nearest * BytesPerPixel]];
+                    covered += coverage > 0.0f ? 1 : 0;
+                    expected = {std::lerp(expected[0], static_cast<float>(color.r), coverage),
+                                std::lerp(expected[1], static_cast<float>(color.g), coverage),
+                                std::lerp(expected[2], static_cast<float>(color.b), coverage)};
+                }
+            }
+
+            const uint8_t* pixel =
+                &shown.Pixels[(static_cast<size_t>(oy) * static_cast<size_t>(shown.Width) + ox) * BytesPerPixel];
+
+            for (size_t channel = 0; channel < expected.size(); ++channel)
+            {
+                worst = std::max(worst, std::abs(static_cast<int32_t>(pixel[channel]) -
+                                                 static_cast<int32_t>(std::lround(expected[channel]))));
+            }
+
+            ++compared;
+        }
+    }
+
+    std::cout << std::format("  {} shown pixels compared ({} under a layer), farthest {} from the layers\n", compared,
+                             covered, worst);
+    CHECK(compared > 0);
+    CHECK(covered > 0);
+    CHECK(worst <= Tolerance);
+}
+
+namespace
+{
+    /// <summary>A redrawn glyph's half coverage: a pixel brought back to the glyph's size is ink from here on.</summary>
+    constexpr uint8_t HalfCoverage = 128;
+    /// <summary>How far a covered redrawn pixel's centre may lie from an ink pixel, in glyph pixels: half a pixel, and
+    /// the smoothing's half a redrawn pixel.</summary>
+    constexpr float StrokeReach = 0.5f + 0.5f / static_cast<float>(MCSharpText::Scale) + 1e-4f;
+
+    /// <summary>The byte and coverage of a redrawn glyph's pixel at (x, y) in glyph pixels (MCSharpText's RGBA8).</summary>
+    std::pair<uint8_t, uint8_t> RedrawnAt(std::span<const uint8_t> redrawn, int32_t columns, float x, float y)
+    {
+        constexpr int32_t Scale = MCSharpText::Scale;
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * static_cast<size_t>(columns * Scale) + column) * BytesPerPixel;
+        return {redrawn[offset], redrawn[offset + 1]};
+    }
+
+    /// <summary>
+    /// A glyph's layers brought back to its size: at each pixel's centre, the byte of the topmost layer covering it at
+    /// least half; no ink where none does.
+    /// </summary>
+    std::vector<uint8_t> ReadBack(const std::vector<std::vector<uint8_t>>& layers, int32_t columns, int32_t rows)
+    {
+        std::vector<uint8_t> bytes(static_cast<size_t>(columns) * static_cast<size_t>(rows), MCSharpText::NoInk);
+
+        for (int32_t y = 0; y < rows; ++y)
+        {
+            for (int32_t x = 0; x < columns; ++x)
+            {
+                for (const std::vector<uint8_t>& layer : layers)
+                {
+                    const auto [byte, coverage] =
+                        RedrawnAt(layer, columns, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
+
+                    if (coverage >= HalfCoverage)
+                    {
+                        bytes[static_cast<size_t>(y) * static_cast<size_t>(columns) + x] = byte;
+                    }
+                }
+            }
+        }
+
+        return bytes;
+    }
+
+    /// <summary>The covered redrawn pixel farthest from the glyph's ink, and how far, in glyph pixels.</summary>
+    struct Farthest
+    {
+        float Distance = 0.0f;
+        float X = 0.0f;
+        float Y = 0.0f;
+    };
+
+    /// <summary>
+    /// The covered pixel of <paramref name="redrawn"/> (the glyph <paramref name="glyph"/>, <paramref name="columns"/> x
+    /// <paramref name="rows"/>, redrawn) that lies farthest from the glyph's ink pixels.
+    /// </summary>
+    Farthest FarthestCover(std::span<const uint8_t> redrawn, std::span<const uint8_t> glyph, int32_t columns,
+                           int32_t rows)
+    {
+        constexpr int32_t Scale = MCSharpText::Scale;
+        const auto ink = [&](int32_t x, int32_t y)
+        {
+            return x >= 0 && y >= 0 && x < columns && y < rows &&
+                   glyph[static_cast<size_t>(y) * static_cast<size_t>(columns) + x] != MCSharpText::NoInk;
+        };
+
+        Farthest farthest;
+
+        for (int32_t j = 0; j < rows * Scale; ++j)
+        {
+            for (int32_t i = 0; i < columns * Scale; ++i)
+            {
+                if (redrawn[(static_cast<size_t>(j) * static_cast<size_t>(columns * Scale) + i) * BytesPerPixel + 1] ==
+                    0)
+                {
+                    continue;
+                }
+
+                const float px = (static_cast<float>(i) + 0.5f) / Scale;
+                const float py = (static_cast<float>(j) + 0.5f) / Scale;
+                float nearest = std::numeric_limits<float>::max();
+
+                for (int32_t y = static_cast<int32_t>(py) - 1; y <= static_cast<int32_t>(py) + 1; ++y)
+                {
+                    for (int32_t x = static_cast<int32_t>(px) - 1; x <= static_cast<int32_t>(px) + 1; ++x)
+                    {
+                        if (ink(x, y))
+                        {
+                            const float dx = std::max(std::abs(px - (static_cast<float>(x) + 0.5f)) - 0.5f, 0.0f);
+                            const float dy = std::max(std::abs(py - (static_cast<float>(y) + 0.5f)) - 0.5f, 0.0f);
+                            nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy));
+                        }
+                    }
+                }
+
+                if (nearest > farthest.Distance)
+                {
+                    farthest = {nearest, px, py};
+                }
+            }
+        }
+
+        return farthest;
+    }
+
+    /// <summary>
+    /// A VFX font (vfx/MCVfxFunctions.h's fonts) of <paramref name="glyphs"/>, characters 0 on, each its width and its
+    /// pixels, <paramref name="height"/> rows of them.
+    /// </summary>
+    std::vector<uint8_t> MakeFont(int32_t height, const std::vector<std::pair<int32_t, std::vector<uint8_t>>>& glyphs)
+    {
+        constexpr size_t CountAt = 4;
+        constexpr size_t HeightAt = 8;
+        constexpr size_t TableAt = 0x10;
+        constexpr size_t Word = 4;
+        std::vector<uint8_t> font(TableAt + glyphs.size() * Word, 0);
+
+        const auto put = [&font](size_t at, int32_t value) { std::memcpy(font.data() + at, &value, Word); };
+        put(CountAt, static_cast<int32_t>(glyphs.size()));
+        put(HeightAt, height);
+
+        for (size_t character = 0; character < glyphs.size(); ++character)
+        {
+            put(TableAt + character * Word, static_cast<int32_t>(font.size()));
+            font.resize(font.size() + Word);
+            put(font.size() - Word, glyphs[character].first);
+            font.insert(font.end(), glyphs[character].second.begin(), glyphs[character].second.end());
+        }
+
+        return font;
+    }
+}
+
+/// <summary>
+/// A two-tone glyph, a body with its drop shadow one pixel down and one down and right (yelldrp.fnt's), is redrawn as
+/// two layers: the body's strokes, over the same strokes swept between the shadow's offsets. Brought back to the
+/// glyph's size it is the glyph; the shadow lies under the body's diagonal, never above it.
+/// </summary>
+TEST_CASE("sharp text: a body and its drop shadow are redrawn as two layers, the shadow swept under the body")
+{
+    constexpr int32_t Columns = 4;
+    constexpr int32_t Rows = 4;
+    constexpr uint8_t Body = 161;
+    constexpr uint8_t Shade = 16;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    // A diagonal from (0, 0) to (2, 2), its shadow under it.
+    const std::vector<uint8_t> glyph = {Body,  No,    No,    No, //
+                                        Shade, Body,  No,    No, //
+                                        No,    Shade, Body,  No, //
+                                        No,    No,    Shade, Shade};
+    const std::vector<uint8_t> font = MakeFont(Rows, {{Columns, glyph}});
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    REQUIRE(fontLayers.Shadow.has_value());
+    CHECK_EQ(fontLayers.Shadow->Body, Body);
+    CHECK_EQ(fontLayers.Shadow->Shadow, Shade);
+    CHECK(MCSharpText::Layered(glyph, Columns, Columns, Rows));
+
+    const MCSharpText::MCGlyphLayers layers = MCSharpText::LayersOf(glyph, Columns, Columns, Rows, fontLayers);
+    const std::vector<uint8_t> backToFront = {Shade, Body};
+    CHECK(layers.Bytes == backToFront);
+    CHECK(layers.Shadow.has_value());
+    const std::vector<std::vector<uint8_t>> redrawn = MCSharpText::RedrawLayers(glyph, Columns, Columns, Rows, layers);
+    REQUIRE_EQ(redrawn.size(), size_t{2});
+    CHECK(ReadBack(redrawn, Columns, Rows) == glyph);
+
+    const std::vector<uint8_t>& shadow = redrawn[0];
+    const std::vector<uint8_t>& body = redrawn[1];
+    constexpr uint8_t Whole = 255;
+    CHECK_EQ(RedrawnAt(body, Columns, 1.0f, 1.0f).first, Body);
+    CHECK_EQ(RedrawnAt(body, Columns, 1.0f, 1.0f).second, Whole);
+    // Under the diagonal, the shadow (the diagonal moved down, and swept right): not the body.
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.0f, 2.0f).first, Shade);
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.0f, 2.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(shadow, Columns, 0.6f, 1.8f).second, Whole);
+    CHECK_EQ(RedrawnAt(body, Columns, 0.6f, 1.8f).second, uint8_t{0});
+    // Above it, neither.
+    CHECK_EQ(RedrawnAt(shadow, Columns, 1.4f, 0.6f).second, uint8_t{0});
+    CHECK_EQ(RedrawnAt(body, Columns, 1.6f, 0.4f).second, uint8_t{0});
+    CHECK(FarthestCover(shadow, glyph, Columns, Rows).Distance <= StrokeReach);
+}
+
+/// <summary>
+/// A letter on a box (dim.fnt's, the small lblue.fnt's) is redrawn as the letter's strokes over the box, the box's
+/// edges on the glyph's border carried on past it: its corners are square, so boxes side by side join, and it fills
+/// the corners between the letter's strokes and itself.
+/// </summary>
+TEST_CASE("sharp text: a letter on a box is redrawn over the box, which keeps its square corners")
+{
+    constexpr int32_t Columns = 3;
+    constexpr int32_t Rows = 3;
+    constexpr uint8_t Letter = 227;
+    constexpr uint8_t Box = 31;
+    // A box with a diagonal through it: the box has more pixels, so it lies behind.
+    const std::vector<uint8_t> glyph = {Letter, Box, Box, Box, Letter, Box, Box, Box, Letter};
+    const std::vector<uint8_t> font = MakeFont(Rows, {{Columns, glyph}});
+    const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font);
+    CHECK(!fontLayers.Shadow.has_value());
+
+    const MCSharpText::MCGlyphLayers layers = MCSharpText::LayersOf(glyph, Columns, Columns, Rows, fontLayers);
+    const std::vector<uint8_t> backToFront = {Box, Letter};
+    REQUIRE(layers.Bytes == backToFront);
+    const std::vector<std::vector<uint8_t>> redrawn = MCSharpText::RedrawLayers(glyph, Columns, Columns, Rows, layers);
+    REQUIRE_EQ(redrawn.size(), size_t{2});
+    CHECK(ReadBack(redrawn, Columns, Rows) == glyph);
+
+    const std::vector<uint8_t>& box = redrawn[0];
+    const std::vector<uint8_t>& letter = redrawn[1];
+    // The box's corner pixels, at the glyph's corners, are whole (one-colour strokes would round them).
+    constexpr uint8_t Whole = 255;
+    CHECK_EQ(RedrawnAt(box, Columns, 2.97f, 0.03f).second, Whole);
+    CHECK_EQ(RedrawnAt(box, Columns, 0.03f, 2.97f).second, Whole);
+    // Between the box and the diagonal, the box (its strokes join the letter's pixels); on it, the letter, whose own
+    // strokes are a one-colour glyph's.
+    CHECK_EQ(RedrawnAt(box, Columns, 1.95f, 1.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(letter, Columns, 1.95f, 1.0f).second, uint8_t{0});
+    CHECK_EQ(RedrawnAt(letter, Columns, 1.0f, 1.0f).second, Whole);
+    CHECK_EQ(RedrawnAt(letter, Columns, 2.5f, 0.5f).second, uint8_t{0});
+}
+
 /// <summary>
 /// A glyph redrawn sharp covers its ink pixels' centres fully, keeps each one's font byte, joins diagonal neighbours
 /// with a straight stroke (the middle of a diagonal pair is covered), and leaves the background far from the ink empty.
@@ -4263,9 +5566,10 @@ namespace
 }
 
 /// <summary>
-/// Every glyph of every font in the install, redrawn as strokes (what a sharp screen shows), reads as the original:
-/// brought back down to the font's size (each glyph pixel's centre) it is the glyph, ink and bytes, and no stroke
-/// reaches farther than half a glyph pixel (and the edge's smoothing) from an ink pixel.
+/// Every glyph of every font in the install, redrawn as strokes (what a sharp screen shows; a two-tone glyph as a layer
+/// per byte), reads as the original: brought back down to the font's size (each glyph pixel's centre) it is the glyph,
+/// ink and bytes, and no stroke reaches farther than half a glyph pixel (and the edge's smoothing) from an ink pixel.
+/// The two drop-shadow fonts are taken as such.
 /// </summary>
 TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the originals")
 {
@@ -4274,16 +5578,14 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
         return;
     }
 
-    constexpr int32_t Scale = MCSharpText::Scale;
-    constexpr uint8_t Half = 128;
-    // How far a covered redrawn pixel's centre may lie from an ink pixel, in glyph pixels: half a pixel, and the
-    // smoothing's half a redrawn pixel.
-    constexpr float Reach = 0.5f + 0.5f / static_cast<float>(Scale) + 1e-4f;
     const std::vector<MCGameFont> fonts = GameFonts();
     REQUIRE(!fonts.empty());
     int64_t glyphs = 0;
+    int64_t layered = 0;
     int64_t wrong = 0;
     std::string first;
+    std::set<std::string> twoTone;
+    std::set<std::string> shadowed;
 
     const auto fail = [&](const MCGameFont& font, int32_t character, std::string_view what)
     {
@@ -4296,6 +5598,12 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
     for (const MCGameFont& font : fonts)
     {
         const int32_t height = VfxFontHeight(font.Data);
+        const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font.Data);
+
+        if (fontLayers.Shadow.has_value())
+        {
+            shadowed.insert(font.Name);
+        }
 
         for (int32_t character = 0; character < MCVfxRead32(font.Data, 4); ++character)
         {
@@ -4307,76 +5615,78 @@ TEST_CASE_ISOLATED("game: every font's glyphs redrawn sharp read as the original
                 continue;
             }
 
+            // As a sharp screen draws it: a two-tone glyph a layer per byte.
             ++glyphs;
-            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
-            const int32_t redrawnWidth = width * Scale;
-            const auto texel = [&](int32_t x, int32_t y)
-            { return &redrawn[(static_cast<size_t>(y) * static_cast<size_t>(redrawnWidth) + x) * 4]; };
-            const auto ink = [&](int32_t x, int32_t y)
-            {
-                return x >= 0 && y >= 0 && x < width && y < height &&
-                       glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x] != MCSharpText::NoInk;
-            };
+            std::vector<std::vector<uint8_t>> redrawn;
 
-            for (int32_t y = 0; y < height; ++y)
+            if (MCSharpText::Layered(glyph, width, width, height))
             {
-                for (int32_t x = 0; x < width; ++x)
+                ++layered;
+                twoTone.insert(font.Name);
+                const MCSharpText::MCGlyphLayers layers =
+                    MCSharpText::LayersOf(glyph, width, width, height, fontLayers);
+                redrawn = MCSharpText::RedrawLayers(glyph, width, width, height, layers);
+
+                if (redrawn.size() != layers.Bytes.size())
                 {
-                    const uint8_t* centre = texel(x * Scale + Scale / 2, y * Scale + Scale / 2);
-                    const uint8_t byte = glyph[static_cast<size_t>(y) * static_cast<size_t>(width) + x];
-
-                    if (ink(x, y) != (centre[1] >= Half) || (ink(x, y) && centre[0] != byte))
-                    {
-                        fail(font, character,
-                             std::format("pixel ({}, {}) comes back {:#x} at {}", x, y, centre[0], centre[1]));
-                    }
+                    fail(font, character, std::format("{} layers for {} bytes", redrawn.size(), layers.Bytes.size()));
+                    continue;
                 }
             }
-
-            for (int32_t j = 0; j < height * Scale; ++j)
+            else
             {
-                for (int32_t i = 0; i < redrawnWidth; ++i)
+                redrawn.push_back(MCSharpText::Redraw(glyph, width, width, height));
+            }
+
+            const std::vector<uint8_t> back = ReadBack(redrawn, width, height);
+
+            if (const auto differs = std::ranges::mismatch(back, glyph); differs.in1 != back.end())
+            {
+                const auto at = static_cast<int32_t>(differs.in1 - back.begin());
+                fail(font, character,
+                     std::format("pixel ({}, {}) comes back {:#x}, not {:#x}", at % width, at / width, *differs.in1,
+                                 *differs.in2));
+            }
+
+            for (const std::vector<uint8_t>& layer : redrawn)
+            {
+                if (const Farthest farthest = FarthestCover(layer, glyph, width, height);
+                    farthest.Distance > StrokeReach)
                 {
-                    if (texel(i, j)[1] == 0)
-                    {
-                        continue;
-                    }
-
-                    const float px = (static_cast<float>(i) + 0.5f) / Scale;
-                    const float py = (static_cast<float>(j) + 0.5f) / Scale;
-                    float nearest = std::numeric_limits<float>::max();
-
-                    for (int32_t y = static_cast<int32_t>(py) - 1; y <= static_cast<int32_t>(py) + 1; ++y)
-                    {
-                        for (int32_t x = static_cast<int32_t>(px) - 1; x <= static_cast<int32_t>(px) + 1; ++x)
-                        {
-                            if (ink(x, y))
-                            {
-                                const float dx = std::max(std::abs(px - (static_cast<float>(x) + 0.5f)) - 0.5f, 0.0f);
-                                const float dy = std::max(std::abs(py - (static_cast<float>(y) + 0.5f)) - 0.5f, 0.0f);
-                                nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy));
-                            }
-                        }
-                    }
-
-                    if (nearest > Reach)
-                    {
-                        fail(font, character,
-                             std::format("stroke at ({:.2f}, {:.2f}) is {:.2f} from the ink", px, py, nearest));
-                    }
+                    fail(font, character,
+                         std::format("stroke at ({:.2f}, {:.2f}) is {:.2f} from the ink", farthest.X, farthest.Y,
+                                     farthest.Distance));
                 }
             }
         }
     }
 
-    std::cout << std::format("  {} fonts, {} glyphs, {} wrong{}{}\n", fonts.size(), glyphs, wrong,
-                             wrong > 0 ? ", first: " : "", first);
+    const auto names = [](const std::set<std::string>& set)
+    {
+        std::string joined;
+
+        for (const std::string& name : set)
+        {
+            joined += std::format("{}{}", joined.empty() ? "" : " ", name);
+        }
+
+        return joined;
+    };
+
+    std::cout << std::format("  {} fonts, {} glyphs ({} two-tone), {} wrong{}{}\n  two-tone: {}\n  drop shadows: {}\n",
+                             fonts.size(), glyphs, layered, wrong, wrong > 0 ? ", first: " : "", first, names(twoTone),
+                             names(shadowed));
     CHECK_EQ(wrong, int64_t{0});
+    // The logistics screens' yellow and blue text: a body and its shadow.
+    CHECK(shadowed.contains("yelldrp.fnt"));
+    CHECK(shadowed.contains("bluedrp.fnt"));
+    CHECK(!shadowed.contains("dim.fnt"));
 }
 
 /// <summary>
 /// Tool: <c>--sharp-fonts &lt;folder&gt;</c> writes every font's glyph set as <c>&lt;font&gt;.png</c>, each glyph's
-/// original (scaled up nearest) over its sharp redraw, so every letter can be checked by eye.
+/// original (scaled up nearest) over its sharp redraw, so every letter can be checked by eye; a two-tone glyph's bytes
+/// in greys, its back byte darkest.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original over sharp")
 {
@@ -4391,6 +5701,8 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
     constexpr int32_t PerRow = 16;
     constexpr int32_t Gap = 4;
     constexpr uint8_t Ground = 24;
+    /// The backmost byte's grey in a two-tone glyph.
+    constexpr int32_t BackShade = 96;
     const std::filesystem::path folder(*out);
     std::filesystem::create_directories(folder);
 
@@ -4398,6 +5710,7 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
     {
         const int32_t height = VfxFontHeight(font.Data);
         const int32_t count = MCVfxRead32(font.Data, 4);
+        const MCSharpText::MCFontLayers fontLayers = MCSharpText::LayersOf(font.Data);
         int32_t widest = 1;
 
         for (int32_t character = 0; character < count; ++character)
@@ -4432,7 +5745,29 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
                 continue;
             }
 
-            const std::vector<uint8_t> redrawn = MCSharpText::Redraw(glyph, width, width, height);
+            // A two-tone glyph as a sharp screen draws it, a layer per byte, its bytes grey to white back to front.
+            std::vector<std::vector<uint8_t>> redrawn;
+            std::vector<uint8_t> bytes;
+
+            if (MCSharpText::Layered(glyph, width, width, height))
+            {
+                const MCSharpText::MCGlyphLayers layers =
+                    MCSharpText::LayersOf(glyph, width, width, height, fontLayers);
+                redrawn = MCSharpText::RedrawLayers(glyph, width, width, height, layers);
+                bytes = layers.Bytes;
+            }
+            else
+            {
+                redrawn.push_back(MCSharpText::Redraw(glyph, width, width, height));
+            }
+
+            const auto shade = [&](size_t place)
+            {
+                return bytes.size() < 2 ? 255
+                                        : BackShade + (255 - BackShade) * static_cast<int32_t>(place) /
+                                                          static_cast<int32_t>(bytes.size() - 1);
+            };
+
             const int32_t left = (character % PerRow) * cellWidth;
             const int32_t top = (character / PerRow) * cellHeight;
 
@@ -4440,11 +5775,19 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
             {
                 for (int32_t i = 0; i < width * Scale; ++i)
                 {
-                    const bool inked = glyph[static_cast<size_t>(j / Scale) * static_cast<size_t>(width) + i / Scale] !=
-                                       MCSharpText::NoInk;
-                    put(left + i, top + Gap + j, inked ? 255 : 0);
-                    put(left + i, top + 2 * Gap + height * Scale + j,
-                        redrawn[(static_cast<size_t>(j) * static_cast<size_t>(width * Scale) + i) * 4 + 1]);
+                    const uint8_t byte = glyph[static_cast<size_t>(j / Scale) * static_cast<size_t>(width) + i / Scale];
+                    const auto place = static_cast<size_t>(std::ranges::find(bytes, byte) - bytes.begin());
+                    put(left + i, top + Gap + j, byte == MCSharpText::NoInk ? 0 : shade(place));
+                    int32_t level = 0;
+
+                    for (size_t layer = 0; layer < redrawn.size(); ++layer)
+                    {
+                        const int32_t coverage =
+                            redrawn[layer][(static_cast<size_t>(j) * static_cast<size_t>(width * Scale) + i) * 4 + 1];
+                        level = (level * (255 - coverage) + shade(layer) * coverage) / 255;
+                    }
+
+                    put(left + i, top + 2 * Gap + height * Scale + j, level);
                 }
             }
         }
@@ -4530,7 +5873,10 @@ namespace
             return "terrain overlay";
         }
 
-        const std::span<const std::vector<uint8_t>> craters = CraterManager().Shapes();
+        // The menus have no crater manager.
+        const std::span<const std::vector<uint8_t>> craters = MCGameContext::Current().HasCraterManager()
+                                                                  ? CraterManager().Shapes()
+                                                                  : std::span<const std::vector<uint8_t>>();
 
         for (size_t i = 0; i < craters.size(); ++i)
         {
@@ -4584,11 +5930,44 @@ namespace
         return [&tally](const MCVulkanRenderer::AuditedDraw& draw)
         {
             AuditTally& entry =
-                tally[{std::string(draw.Command), draw.Sharp, draw.Data.data(), draw.From, draw.Window}];
+                tally[{std::string(draw.Command), AuditSharp(draw), draw.Data.data(), draw.From, draw.Window}];
+            const bool table = VfxIsShapeTable(draw.Data);
+
+            if (entry.Count == 0)
+            {
+                entry.WindowWidth = draw.Window->XMax + 1;
+                entry.WindowHeight = draw.Window->YMax + 1;
+                entry.Owner = AuditOwner(draw.Data);
+                entry.Label = AuditLabel;
+                MCInput::Display()->GetShownColors(entry.Colors);
+
+                if (const MCWindow* from = draw.From; from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+                {
+                    DecodedFrame& picture = entry.Picture.emplace();
+                    picture.Width = from->XMax + 1;
+                    picture.Height = from->YMax + 1;
+                    picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+                    picture.Drawn.assign(from->Size(), 1);
+                }
+
+                if (table)
+                {
+                    entry.Attached = MCHdArt::AttachedFolder(draw.Data.data());
+                    entry.TableHash = MCHdArt::ShapeTableHash(draw.Data);
+                }
+            }
+
+            if (table && entry.ShapeFrames.size() < AuditFramesKept && !entry.ShapeFrames.contains(draw.Frame))
+            {
+                if (auto decoded = Decode(draw.Data, draw.Frame); decoded.has_value() && decoded->Width > 0)
+                {
+                    entry.ShapeFrames.emplace(draw.Frame, std::move(*decoded));
+                }
+            }
+
             ++entry.Count;
             entry.Pixels += draw.Pixels;
             entry.Scaled |= draw.Scaled;
-            entry.Data = draw.Data;
             entry.Frames.insert(draw.Frame);
         };
     }
@@ -4638,21 +6017,21 @@ namespace
         {
             const auto& [key, entry] = original[rank];
             const auto& [command, sharp, data, from, window] = key;
-            std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}\n", rank, command,
-                                     static_cast<const void*>(data), window->XMax + 1, window->YMax + 1,
+            // A copy's picture size stands in for its owner (it has no data).
+            const std::string owner = entry.Picture.has_value() && entry.Owner == "-"
+                                          ? std::format("{}x{}", entry.Picture->Width, entry.Picture->Height)
+                                          : entry.Owner;
+            std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}{}\n", rank, command,
+                                     static_cast<const void*>(data), entry.WindowWidth, entry.WindowHeight,
                                      entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
-                                     AuditOwner(entry.Data), sharp ? " sharp" : "");
+                                     owner, entry.Label.empty() ? "" : " on " + entry.Label, sharp ? " sharp" : "");
 
-            // A copy's picture as its window holds it, and the pack's frame of it when it was drawn sharp.
-            if (from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+            // A copy's picture as its window held it, and the pack's frame of it when it was drawn sharp.
+            if (entry.Picture.has_value())
             {
-                DecodedFrame picture;
-                picture.Width = from->XMax + 1;
-                picture.Height = from->YMax + 1;
-                picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
-                picture.Drawn.assign(from->Size(), 1);
+                const DecodedFrame& picture = *entry.Picture;
                 WriteFramePngs(
-                    folder / std::format("{:03}_{}", rank, command), picture, colors, 1,
+                    folder / std::format("{:03}_{}", rank, command), picture, entry.Colors, 1,
                     [](SDL_Color color) { return color; }, false);
 
                 if (const std::shared_ptr<const MCHdArt::Frame> hd =
@@ -4667,25 +6046,14 @@ namespace
             }
 
             // With --hd-audit-all, a sharp shape's pack frames (their stored colours) for its first frames drawn.
-            constexpr size_t FramesShown = 4;
-
-            if (sharp && all && command == "Shape" && VfxIsShapeTable(entry.Data))
+            if (sharp && all && command == "Shape" && entry.TableHash.has_value())
             {
-                const std::optional<std::filesystem::path> attached = MCHdArt::AttachedFolder(entry.Data.data());
-
-                for (const int32_t frame : entry.Frames | std::views::take(FramesShown))
+                for (const auto& [frame, decoded] : entry.ShapeFrames)
                 {
-                    const auto decoded = Decode(entry.Data, frame);
-
-                    if (!decoded.has_value() || decoded->Width == 0)
-                    {
-                        continue;
-                    }
-
                     const std::shared_ptr<const MCHdArt::Frame> hd =
-                        attached.has_value() ? MCHdArt::FindInFolder(*attached, frame, decoded->Width, decoded->Height)
-                                             : MCHdArt::FindShape(MCHdArt::ShapeTableHash(entry.Data), frame,
-                                                                  decoded->Width, decoded->Height);
+                        entry.Attached.has_value()
+                            ? MCHdArt::FindInFolder(*entry.Attached, frame, decoded.Width, decoded.Height)
+                            : MCHdArt::FindShape(*entry.TableHash, frame, decoded.Width, decoded.Height);
 
                     if (hd != nullptr)
                     {
@@ -4698,16 +6066,12 @@ namespace
                 }
             }
 
-            if (!sharp && (command == "Shape" || command == "ShapeBlit") && VfxIsShapeTable(entry.Data))
+            if (!sharp && (command == "Shape" || command == "ShapeBlit") && !entry.ShapeFrames.empty())
             {
-                if (const auto decoded = Decode(entry.Data, *entry.Frames.begin());
-                    decoded.has_value() && decoded->Width > 0)
-                {
-                    Sequence sequence;
-                    sequence.Folder = std::format("{:03}_{}", rank, command);
-                    sequence.Frames.push_back(*decoded);
-                    WritePack(folder, std::span(&sequence, 1), colors, 1, [](SDL_Color color) { return color; });
-                }
+                Sequence sequence;
+                sequence.Folder = std::format("{:03}_{}", rank, command);
+                sequence.Frames.push_back(entry.ShapeFrames.begin()->second);
+                WritePack(folder, std::span(&sequence, 1), colors, 1, [](SDL_Color color) { return color; });
             }
         }
     }
@@ -4760,12 +6124,757 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>How many return addresses an audit's call stack keeps.</summary>
+    constexpr int32_t AuditStackDepth = 32;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (the ids in the audit's tables).</summary>
+    constexpr uint64_t AuditFnvBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t AuditFnvPrime = 0x100000001b3ull;
+    /// <summary>How many bytes of what a draw drew its id hashes (a fast shape's header and first rows).</summary>
+    constexpr size_t AuditDataBytes = 256;
+    /// <summary>How many frame numbers (or a font's characters) a table row lists.</summary>
+    constexpr size_t AuditFramesListed = 24;
+    /// <summary>A picture smaller than this on its longer side is drawn larger in the tables' pictures, up to 4 times.</summary>
+    constexpr int32_t AuditPictureSide = 64;
+    constexpr int32_t AuditMaxZoom = 4;
+    /// <summary>The gap between a font's characters in its picture.</summary>
+    constexpr int32_t AuditGlyphGap = 2;
+    /// <summary>The first and last printable ASCII characters (a glyph's character is listed as itself, else by number).</summary>
+    constexpr int32_t AuditFirstPrintable = 0x21;
+    constexpr int32_t AuditLastPrintable = 0x7e;
+
+    uint64_t AuditFnv(std::span<const uint8_t> bytes, uint64_t hash = AuditFnvBasis)
+    {
+        for (const uint8_t byte : bytes)
+        {
+            hash = (hash ^ byte) * AuditFnvPrime;
+        }
+
+        return hash;
+    }
+
+    /// <summary>A picture's id: its size and indices hashed (the extractor's pictures and a copy's alike).</summary>
+    uint64_t AuditPictureHash(std::span<const uint8_t> index, int32_t width, int32_t height)
+    {
+        constexpr int32_t HalfWord = 32;
+        return AuditFnv(index, AuditFnvBasis ^ (static_cast<uint64_t>(static_cast<uint32_t>(width)) << HalfWord |
+                                                static_cast<uint32_t>(height)));
+    }
+
+    /// <summary>The return addresses of the call stack (none where the platform can't walk it).</summary>
+    std::vector<uintptr_t> AuditStack()
+    {
+#if MC_AUDIT_STACKS
+        std::array<void*, AuditStackDepth> frames{};
+        const int count = backtrace(frames.data(), AuditStackDepth);
+        std::vector<uintptr_t> stack;
+
+        for (int i = 0; i < count; ++i)
+        {
+            stack.push_back(reinterpret_cast<uintptr_t>(frames[static_cast<size_t>(i)]));
+        }
+
+        return stack;
+#else
+        return {};
+#endif
+    }
+
+    /// <summary>Where this program is loaded, which its call stacks are symbolized against (atos -l), or 0.</summary>
+    uintptr_t AuditImageBase()
+    {
+#if MC_AUDIT_STACKS
+        Dl_info info{};
+        return dladdr(reinterpret_cast<const void*>(&AuditImageBase), &info) != 0
+                   ? reinterpret_cast<uintptr_t>(info.dli_fbase)
+                   : 0;
+#else
+        return 0;
+#endif
+    }
+
+    /// <summary>The install's fonts, read once (for telling which font a glyph is from).</summary>
+    const std::vector<MCGameFont>& AuditFonts()
+    {
+        static const std::vector<MCGameFont> fonts = GameFonts();
+        return fonts;
+    }
+
+    /// <summary>The font file <paramref name="data"/> holds (a glyph draw's data starts at its font), or "?".</summary>
+    std::string AuditFontName(std::span<const uint8_t> data)
+    {
+        for (const MCGameFont& font : AuditFonts())
+        {
+            if (data.size() >= font.Data.size() && std::ranges::equal(data.first(font.Data.size()), font.Data))
+            {
+                return font.Name;
+            }
+        }
+
+        return "?";
+    }
+
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInDetail(std::map<AuditKey, AuditTally>& tally,
+                                                                            AuditDetail& detail)
+    {
+        return [tallied = AuditInto(tally), &detail](const MCVulkanRenderer::AuditedDraw& draw)
+        {
+            tallied(draw);
+            const bool sharp = AuditSharp(draw);
+            AuditDetail::Entry& entry =
+                detail.Entries[{std::string(draw.Command), sharp, draw.Data.data(), draw.From, draw.Window}];
+
+            if (entry.Screens.empty())
+            {
+                entry.Stack = AuditStack();
+                entry.Font = draw.Command == "Glyph" ? AuditFontName(draw.Data) : std::string();
+                MCInput::Display()->GetShownColors(entry.Colors);
+            }
+
+            entry.Screens.insert(detail.Screen);
+
+            if (const MCWindow* from = draw.From;
+                !sharp && from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+            {
+                DecodedFrame& latest = entry.Latest.emplace();
+                latest.Width = from->XMax + 1;
+                latest.Height = from->YMax + 1;
+                latest.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+                MCInput::Display()->GetShownColors(entry.LatestColors);
+            }
+
+            if (!sharp)
+            {
+                AuditDetail::Site& site =
+                    detail
+                        .Sites[{std::string(draw.Command), draw.Window->XMax + 1, draw.Window->YMax + 1, AuditStack()}];
+                site.Scaled |= draw.Scaled;
+                ++site.Count;
+                site.Pixels += draw.Pixels;
+                site.Screens.insert(detail.Screen);
+            }
+        };
+    }
+
+    /// <summary>
+    /// Saves <paramref name="index"/> (<paramref name="width"/> x <paramref name="height"/>, drawn where
+    /// <paramref name="drawn"/> says, every pixel without it) in <paramref name="colors"/> as a PNG, a small picture
+    /// drawn larger.
+    /// </summary>
+    void SaveAuditPicture(const std::filesystem::path& path, int32_t width, int32_t height,
+                          std::span<const uint8_t> index, std::span<const uint8_t> drawn,
+                          std::span<const SDL_Color, 256> colors)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        const int32_t zoom = std::clamp(AuditPictureSide / std::max(width, height), 1, AuditMaxZoom);
+        // A picture that shows nothing in its colours (an effect's alpha colours, a diagram drawn through a table) is
+        // pictured by its indices, as greys.
+        constexpr int32_t Dark = 24;
+        constexpr int32_t GreyFloor = 48;
+        bool dark = true;
+
+        for (size_t i = 0; i < index.size() && dark; ++i)
+        {
+            const SDL_Color color = colors[index[i]];
+            dark = (!drawn.empty() && drawn[i] == 0) || color.r + color.g + color.b < Dark;
+        }
+
+        std::array<SDL_Color, 256> greys{};
+
+        for (size_t i = 0; i < greys.size(); ++i)
+        {
+            const auto level = static_cast<uint8_t>(GreyFloor + static_cast<int32_t>(i) * (255 - GreyFloor) / 255);
+            greys[i] = SDL_Color{level, level, level, 255};
+        }
+
+        const std::span<const SDL_Color, 256> shownIn = dark ? std::span<const SDL_Color, 256>(greys) : colors;
+        const int32_t outWidth = width * zoom;
+        const int32_t outHeight = height * zoom;
+        std::vector<uint8_t> rgba(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * BytesPerPixel, 0);
+
+        for (int32_t y = 0; y < outHeight; ++y)
+        {
+            for (int32_t x = 0; x < outWidth; ++x)
+            {
+                const size_t from = static_cast<size_t>(y / zoom) * static_cast<size_t>(width) + x / zoom;
+
+                if (!drawn.empty() && drawn[from] == 0)
+                {
+                    continue;
+                }
+
+                const SDL_Color color = shownIn[index[from]];
+                uint8_t* pixel = &rgba[(static_cast<size_t>(y) * static_cast<size_t>(outWidth) + x) * BytesPerPixel];
+                pixel[0] = color.r;
+                pixel[1] = color.g;
+                pixel[2] = color.b;
+                pixel[3] = 255;
+            }
+        }
+
+        SavePng(path, outWidth, outHeight, rgba);
+    }
+
+    /// <summary>Saves the characters <paramref name="characters"/> of <paramref name="font"/> in a row, ink white.</summary>
+    void SaveAuditGlyphs(const std::filesystem::path& path, std::span<const uint8_t> font,
+                         const std::set<int32_t>& characters)
+    {
+        const int32_t height = VfxFontHeight(font);
+        const int32_t count = MCVfxRead32(font, 4);
+        std::vector<std::pair<std::span<const uint8_t>, int32_t>> glyphs;
+        int32_t width = 0;
+
+        for (const int32_t character : characters)
+        {
+            int32_t glyphWidth = 0;
+
+            if (character < 0 || character >= count || glyphs.size() >= AuditFramesListed)
+            {
+                continue;
+            }
+
+            const std::span<const uint8_t> glyph = GlyphOf(font, character, glyphWidth);
+
+            if (glyphWidth > 0)
+            {
+                glyphs.emplace_back(glyph, glyphWidth);
+                width += glyphWidth + AuditGlyphGap;
+            }
+        }
+
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        std::vector<uint8_t> index(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+        int32_t left = 0;
+
+        for (const auto& [glyph, glyphWidth] : glyphs)
+        {
+            for (int32_t y = 0; y < height; ++y)
+            {
+                for (int32_t x = 0; x < glyphWidth; ++x)
+                {
+                    const bool inked =
+                        glyph[static_cast<size_t>(y) * static_cast<size_t>(glyphWidth) + x] != MCSharpText::NoInk;
+                    index[static_cast<size_t>(y) * static_cast<size_t>(width) + left + x] = inked ? 255 : 1;
+                }
+            }
+
+            left += glyphWidth + AuditGlyphGap;
+        }
+
+        std::array<SDL_Color, 256> grey{};
+        grey[1] = SDL_Color{48, 48, 48, 255};
+        grey[255] = SDL_Color{255, 255, 255, 255};
+        SaveAuditPicture(path, width, height, index, {}, grey);
+    }
+
+    /// <summary>A tally entry's frames (or a glyph entry's characters, as text), the first few.</summary>
+    std::string AuditFramesText(const AuditKey& key, const AuditTally& entry)
+    {
+        const bool glyph = std::get<0>(key) == "Glyph";
+        std::string text;
+
+        for (const int32_t frame : entry.Frames | std::views::take(AuditFramesListed))
+        {
+            if (glyph)
+            {
+                text += frame >= AuditFirstPrintable && frame <= AuditLastPrintable
+                            ? std::string(1, static_cast<char>(frame))
+                            : std::format("<{}>", frame);
+            }
+            else
+            {
+                text += std::format("{}{}", text.empty() ? "" : ",", frame);
+            }
+        }
+
+        return text.empty() ? "-" : text;
+    }
+
+    /// <summary>The audit's screens or call stack in a table cell.</summary>
+    std::string AuditJoined(const std::set<std::string>& screens)
+    {
+        std::string text;
+
+        for (const std::string& screen : screens)
+        {
+            text += (text.empty() ? "" : ",") + screen;
+        }
+
+        return text;
+    }
+
+    std::string AuditStackText(const std::vector<uintptr_t>& stack)
+    {
+        std::string text;
+
+        for (const uintptr_t address : stack)
+        {
+            text += std::format("{}{:x}", text.empty() ? "" : " ", address);
+        }
+
+        return text;
+    }
+
+    void WriteAuditTables(const std::map<AuditKey, AuditTally>& tally, const AuditDetail& detail,
+                          const std::filesystem::path& folder, int32_t frames)
+    {
+        const std::filesystem::path items = folder / "items";
+        std::filesystem::create_directories(items);
+        std::array<SDL_Color, 256> shown{};
+        MCInput::Display()->GetShownColors(shown);
+
+        // The pictures the menu extractor finds (what the pack's menu art was made from), by id, read when a copy
+        // drawn from the original's pixels asks.
+        std::optional<std::set<uint64_t>> sources;
+
+        const auto isSource = [&](const DecodedFrame& picture) -> std::string
+        {
+            if (GuiSystem().ArtFile == nullptr)
+            {
+                return "?";
+            }
+
+            if (!sources.has_value())
+            {
+                sources.emplace();
+                int32_t skipped = 0;
+                ForEachPicture(shown, skipped,
+                               [&](std::string_view, std::span<const uint8_t> pixels, int32_t width, int32_t height,
+                                   std::span<const SDL_Color, 256>)
+                               { sources->insert(AuditPictureHash(pixels, width, height)); });
+            }
+
+            return sources->contains(AuditPictureHash(picture.Index, picture.Width, picture.Height)) ? "source"
+                                                                                                     : "made";
+        };
+
+        std::vector<std::pair<const AuditKey*, const AuditTally*>> original;
+
+        for (const auto& [key, entry] : tally)
+        {
+            if (!std::get<1>(key))
+            {
+                original.emplace_back(&key, &entry);
+            }
+        }
+
+        std::ranges::sort(original, std::ranges::greater{}, [](const auto& row) { return row.second->Pixels; });
+        // The characters drawn from the original's pixels in each font, pictured once the rows are written.
+        std::map<std::string, std::set<int32_t>> fontCharacters;
+        std::ofstream table(folder / "audit.tsv", std::ios::binary);
+        table << std::format("# frames {} load {:x}\n", frames, AuditImageBase());
+        // The source column: a copy's picture is the extractor's (source) or made at run time (made); a shape's
+        // frames that show nothing (blank).
+        table << "id\tcommand\twindow\tscaled\tdraws\tpixels\tper_draw\tper_frame\tframes\towner\tfont\tpack\tsource\t"
+                 "screens\tstack\n";
+
+        for (const auto& [key, entry] : original)
+        {
+            const std::string& command = std::get<0>(*key);
+            const auto found = detail.Entries.find(*key);
+            const AuditDetail::Entry* extra = found != detail.Entries.end() ? &found->second : nullptr;
+            std::string id;
+            std::string pack = "-";
+            std::string source = "-";
+
+            if (entry->Picture.has_value())
+            {
+                const DecodedFrame& picture = *entry->Picture;
+                id = std::format("picture-{:016x}", AuditPictureHash(picture.Index, picture.Width, picture.Height));
+                pack = MCHdArt::FindPicture(picture.Index, picture.Width, picture.Height) != nullptr ? "has" : "lacks";
+                source = isSource(picture);
+
+                if (const std::filesystem::path path = items / (id + ".png"); !std::filesystem::exists(path))
+                {
+                    if (extra != nullptr && extra->Latest.has_value())
+                    {
+                        const DecodedFrame& latest = *extra->Latest;
+                        SaveAuditPicture(path, latest.Width, latest.Height, latest.Index, {}, extra->LatestColors);
+                    }
+                    else
+                    {
+                        SaveAuditPicture(path, picture.Width, picture.Height, picture.Index, {},
+                                         extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                    }
+                }
+            }
+            else if (entry->TableHash.has_value())
+            {
+                id = std::format("shape-{:016x}", *entry->TableHash);
+                int32_t has = 0;
+
+                for (const auto& [frame, decoded] : entry->ShapeFrames)
+                {
+                    const std::shared_ptr<const MCHdArt::Frame> hd =
+                        entry->Attached.has_value()
+                            ? MCHdArt::FindInFolder(*entry->Attached, frame, decoded.Width, decoded.Height)
+                            : MCHdArt::FindShape(*entry->TableHash, frame, decoded.Width, decoded.Height);
+                    has += hd != nullptr ? 1 : 0;
+                }
+
+                const auto kept = static_cast<int32_t>(entry->ShapeFrames.size());
+                pack = kept == 0     ? "?"
+                       : has == kept ? "has"
+                       : has == 0    ? "lacks"
+                                     : std::format("part {}/{}", has, kept);
+
+                // Frames that show nothing (the audit counts their draws as sharp, so none should be listed here).
+                const auto blank = std::ranges::count_if(entry->ShapeFrames, [](const auto& frameKept)
+                                                         { return BlankFrame(frameKept.second); });
+                source = std::format("blank {}/{}", blank, kept);
+
+                if (const std::filesystem::path path = items / (id + ".png");
+                    !entry->ShapeFrames.empty() && !std::filesystem::exists(path))
+                {
+                    const DecodedFrame& first = entry->ShapeFrames.begin()->second;
+                    SaveAuditPicture(path, first.Width, first.Height, first.Index, first.Drawn,
+                                     extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                }
+            }
+            else if (extra != nullptr && !extra->Font.empty())
+            {
+                id = std::format("font-{}", extra->Font);
+                pack = "font";
+                fontCharacters[extra->Font].insert(entry->Frames.begin(), entry->Frames.end());
+            }
+            else
+            {
+                id = std::format("{}-{}x{}", command, entry->WindowWidth, entry->WindowHeight);
+            }
+
+            table << std::format("{}\t{}\t{}x{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", id, command,
+                                 entry->WindowWidth, entry->WindowHeight, entry->Scaled ? "scaled" : "1:1",
+                                 entry->Count, entry->Pixels, entry->Count > 0 ? entry->Pixels / entry->Count : 0,
+                                 frames > 0 ? static_cast<double>(entry->Pixels) / frames : 0.0,
+                                 AuditFramesText(*key, *entry), entry->Owner.empty() ? "-" : entry->Owner,
+                                 extra != nullptr && !extra->Font.empty() ? extra->Font : "-", pack, source,
+                                 extra != nullptr ? AuditJoined(extra->Screens) : "-",
+                                 extra != nullptr ? AuditStackText(extra->Stack) : "-");
+        }
+
+        for (const auto& [name, characters] : fontCharacters)
+        {
+            if (const auto font = std::ranges::find(AuditFonts(), name, &MCGameFont::Name); font != AuditFonts().end())
+            {
+                SaveAuditGlyphs(items / std::format("font-{}.png", name), font->Data, characters);
+            }
+        }
+
+        std::ofstream sites(folder / "sites.tsv", std::ios::binary);
+        sites << std::format("# frames {} load {:x}\n", frames, AuditImageBase());
+        sites << "command\twindow\tscaled\tdraws\tpixels\tper_frame\tscreens\tstack\n";
+
+        for (const auto& [key, site] : detail.Sites)
+        {
+            const auto& [command, width, height, stack] = key;
+            sites << std::format("{}\t{}x{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\n", command, width, height,
+                                 site.Scaled ? "scaled" : "1:1", site.Count, site.Pixels,
+                                 frames > 0 ? static_cast<double>(site.Pixels) / frames : 0.0,
+                                 AuditJoined(site.Screens), AuditStackText(stack));
+        }
+
+        std::cout << std::format("  audit tables: {} ({} entries from the original's pixels, {} sites)\n",
+                                 folder.string(), original.size(), detail.Sites.size());
+    }
+
+    /// <summary>Runs <paramref name="count"/> frames.</summary>
+    void RunFrames(int32_t count)
+    {
+        for (int32_t frame = 0; frame < count; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>Runs frames until <paramref name="done"/> (at most <paramref name="limit"/>); whether it came.</summary>
+    bool RunUntil(const std::function<bool()>& done, int32_t limit)
+    {
+        for (int32_t frame = 0; frame < limit; ++frame)
+        {
+            if (done())
+            {
+                return true;
+            }
+
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        return done();
+    }
+
+    /// <summary>Closes the logistics message dialog without its callback (a question shown only to be pictured).</summary>
+    void DismissMessage()
+    {
+        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        dialog.Callback = nullptr;
+        dialog.Deactivate(0);
+    }
+
+#if MC_AUDIT_CONTROLS
+    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
+    std::shared_ptr<MCLogTextButton> FindAuditTextButton(const MCGuiObject& parent, std::string_view label)
+    {
+        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
+        {
+            if (auto button = std::dynamic_pointer_cast<MCLogTextButton>(child);
+                button != nullptr && button->Label() == label)
+            {
+                return button;
+            }
+
+            if (std::shared_ptr<MCLogTextButton> found = FindAuditTextButton(*child, label); found != nullptr)
+            {
+                return found;
+            }
+        }
+
+        return nullptr;
+    }
+#endif
+
+    /// <summary>The multiplayer screens, hosting a LAN game on the loopback as the session screen tests do.</summary>
+    void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
+    {
+        constexpr std::string_view HostAddress = "127.0.0.1:28877";
+        // The logistics states of the LAN and session screens (as MCConnectMenu sets them).
+        constexpr int32_t LanState = 0xb;
+        constexpr int32_t SessionState = 8;
+        ConnectScreen();
+        shoot("mp_connect");
+        ShowSerialScreen();
+        shoot("mp_serial");
+        CancelToConnect();
+        ShowModemScreen();
+        shoot("mp_modem");
+        CancelToConnect();
+        ShowLanScreen();
+        shoot("mp_protocol_question");
+        DismissMessage();
+
+        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
+        {
+            std::cout << "  no multiplayer: the LAN, ready room and session screens are left out\n";
+            return;
+        }
+
+        MultiPlayer()->SessionManager->ConnectTcp(HostAddress);
+        MCSplashScreen& lan = *GlobalLog()->LanScreen;
+        GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
+        lan.ShowGuiWindow(true);
+        lan.ShowBlock(0);
+        GlobalLog()->SetCurrentScreen(lan);
+        GlobalLog()->LogisticsState = LanState;
+        lan.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
+        lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
+        lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+        shoot("mp_lan");
+        CreateSession();
+        shoot("mp_ready_room");
+        // The session screen as GO shows it (its activation sends a lone host back to the main menu, so its art
+        // shows without the players).
+        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+        GlobalLog()->SetCurrentScreen(*GlobalLog()->SessionScreen);
+        GlobalLog()->ShowLogScreen(true, true);
+        GlobalLog()->LogisticsState = SessionState;
+        shoot("mp_session");
+        DoExit();
+        shoot("main_menu_after_mp");
+    }
+
+    /// <summary>
+    /// Mission 1 of a new campaign launched from its briefing (the first mech deployed, as a player drags it), through
+    /// the loading screen to the mission; whether it came up.
+    /// </summary>
+    bool LaunchFromBriefing(AuditDetail& detail)
+    {
+        constexpr int32_t SettleFrames = 30;
+        constexpr int32_t LoadFrames = 600;
+        constexpr int32_t LaunchX = 0x230;
+        constexpr int32_t LaunchY = 0x152;
+        NewCampaign();
+        RunFrames(SettleFrames);
+        MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
+        MCScrollPane& pane = *briefing.DeployPane;
+
+        if (pane.NumberOfChildren() == 0)
+        {
+            std::cout << "  the briefing has no mech to deploy\n";
+            return false;
+        }
+
+        const std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
+        const RECT& slot = briefing.SlotRects[0];
+        MCMechBriefBlock& block = *mech->BriefBlock;
+        MCScreenInput::Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2,
+                            (slot.left + slot.right) / 2, (slot.top + slot.bottom) / 2);
+        RunFrames(SettleFrames);
+        detail.Screen = "loading";
+        MCScreenInput::RealClick(LaunchX, LaunchY);
+        return RunUntil([] { return Scenario() != nullptr && Mission()->State == MCMissionState::Scenario; },
+                        LoadFrames);
+    }
+
+    void TourScreens(const std::function<void(const std::string&)>& shoot, AuditDetail& detail)
+    {
+        constexpr int32_t BattleFrames = 150;
+        constexpr int32_t ResultsFrames = 60;
+        constexpr int32_t ResultsSteps = 3000;
+        constexpr int32_t ResultsShotStep = 40;
+        constexpr uint32_t TicksPerFrame = 5;
+        constexpr uint32_t ScenarioWon = 4;
+        constexpr int32_t LogisticsFrames = 3000;
+
+        // The inventory tabs the first round leaves out, and the briefing's operation tab.
+        GlobalLog()->RepairScreen->SetUpPilotInv(true, true);
+        shoot("repair_pilots");
+        GlobalLog()->RepairScreen->SetUpVhclInv(true, true);
+        shoot("repair_vehicles");
+        GlobalLog()->SetUpPurchaseScreen(true);
+        GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true);
+        shoot("purchase_pilots");
+        GlobalLog()->PurchaseScreen->SetUpCompInv(true, true);
+        shoot("purchase_components");
+        GlobalLog()->PurchaseScreen->SetUpVhclInv(true, true);
+        shoot("purchase_vehicles");
+        GlobalLog()->SetUpBriefingScreen(true);
+        GlobalLog()->BriefingScreen->SetUpOperation();
+        shoot("briefing_operation");
+        GlobalLog()->BriefingScreen->SetUpMission();
+
+        // The main menu in a campaign, and what it opens.
+        Cancel();
+        shoot("main_menu_campaign");
+        SaveScreen();
+        shoot("save");
+        Cancel();
+        SoloLoadScreen();
+        shoot("load_solo");
+        Cancel();
+        CheckExit();
+        shoot("exit_question");
+        DismissMessage();
+#if MC_AUDIT_CONTROLS
+        detail.Screen = "controls";
+        ShowPreferences();
+
+        if (const std::shared_ptr<MCLogTextButton> controls = FindAuditTextButton(*GlobalLog()->PrefScreen, "CONTROLS");
+            controls != nullptr)
+        {
+            MCScreenInput::RealClick(controls->GlobalX() + controls->Width() / 2,
+                                     controls->GlobalY() + controls->Height() / 2);
+            shoot("controls");
+        }
+
+        CancelPrefs();
+#endif
+        TourMultiplayer(shoot);
+        NewMcxCampaign();
+        shoot("briefing_expansion");
+
+        if (!LaunchFromBriefing(detail))
+        {
+            std::cout << "  the mission never came up: the mission's screens are left out\n";
+            return;
+        }
+
+        if (const std::shared_ptr<MCMover> enemy = NearestEnemy(); enemy != nullptr)
+        {
+            SendLanceAt(enemy);
+        }
+
+        detail.Screen = "mission";
+        RunFrames(BattleFrames);
+        shoot("mission");
+
+        // Escape pauses (the game's only in-mission menu: Enter then ends the mission).
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+        GamePaused = true;
+        shoot("paused");
+        MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+        GamePaused = false;
+
+        // The tactical map's pages.
+        for (const auto& [page, name] :
+             {std::pair{MCTacmapPage::Info, "tacmap_info"}, std::pair{MCTacmapPage::Mission, "tacmap_objectives"},
+              std::pair{MCTacmapPage::Salvage, "tacmap_salvage"}, std::pair{MCTacmapPage::Map, "tacmap_map"}})
+        {
+            TacticalMap()->HideMe(false);
+            TacticalMap()->SetDisplayType(page);
+            shoot(name);
+        }
+
+        // Won: the results screen counts through its steps (its timer counted here, as the results tests do), then
+        // the debriefing.
+        MouseTimerKill();
+
+        for (int32_t i = 0; i < Scenario()->Objectives.Count(); i++)
+        {
+            Scenario()->Objectives[i].Status = 1;
+        }
+
+        ScenarioResult = ScenarioWon;
+        detail.Screen = "results";
+
+        if (!RunUntil([] { return Mission()->State == MCMissionState::Results && Mission()->ResultsScreen != nullptr; },
+                      ResultsFrames))
+        {
+            std::cout << "  the results screen never came up\n";
+            return;
+        }
+
+        for (int32_t step = 0;
+             step < ResultsSteps && Mission()->ResultsScreen != nullptr && !Mission()->ResultsScreen->Finished();
+             ++step)
+        {
+            MouseTicks += TicksPerFrame;
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (step == ResultsShotStep)
+            {
+                shoot("results");
+            }
+        }
+
+        shoot("debriefing");
+        Mission()->CloseResultsScreen();
+        detail.Screen = "after_mission";
+
+        if (!RunUntil(
+                []
+                {
+                    return Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
+                           GlobalLog()->CurrentScreen() != nullptr && GuiSystem().SmackerWindow == nullptr;
+                },
+                LogisticsFrames))
+        {
+            std::cout << "  logistics never came back after the mission\n";
+            return;
+        }
+
+        shoot("logistics_after_mission");
+        GlobalLog()->SetUpPurchaseScreen(true);
+        shoot("purchase_after_mission");
+    }
+}
+
 /// <summary>
 /// Tool: <c>--hd-audit &lt;pack&gt; --shots &lt;folder&gt;</c> lists what is still drawn from the original's pixels
 /// with HD art on: a mission (<c>--mission &lt;n&gt;</c>, default 1) drawn by the GPU as --hd-pack's pictures are, the
 /// player's lance selected and sent at the nearest live enemy (again every ten seconds, and when it falls) for
 /// <c>--hd-audit-frames &lt;n&gt;</c> frames (default 900, a minute) with the camera following it, every draw command
-/// tallied by what it drew and whether it was sharp (ReportAudit).
+/// tallied by what it drew and whether it was sharp (ReportAudit, WriteAuditTables). <c>--hd-audit-zoom &lt;lines&gt;</c>
+/// zooms the view out first; <c>--hd-audit-settle &lt;n&gt;</c> runs that many frames first (default 15; 0 audits the
+/// first frame HD art is on).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the original's pixels")
 {
@@ -4783,8 +6892,34 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     REQUIRE(renderer != nullptr);
     const std::filesystem::path folder(*shots);
     std::filesystem::create_directories(folder);
+
+    // With --hd-audit-zoom <lines>, the view zoomed to show that many game lines (480 closest, 2160 furthest).
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-audit-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        const float lines = std::strtof(std::string(*zoom).c_str(), nullptr);
+        MCFixedZoomHeight = 0.0f;
+        REQUIRE(MCMainView() != nullptr);
+        REQUIRE(MCMainView()->ZoomTo(lines));
+    }
+
     std::map<AuditKey, AuditTally> tally;
-    renderer->Audit = AuditInto(tally);
+    AuditDetail detail;
+    // A second for the view to settle once HD art goes on (--hd-audit-settle <n> frames, 0 audits the first frame).
+    constexpr int32_t DefaultSettleFrames = 15;
+    int32_t settleFrames = DefaultSettleFrames;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-audit-settle"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), settleFrames);
+    }
+
+    for (int32_t frame = 0; frame < settleFrames; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    renderer->Audit = AuditInDetail(tally, detail);
     constexpr int32_t DefaultFrames = 900;
     constexpr int32_t RetargetFrames = 150;
     int32_t frames = DefaultFrames;
@@ -4819,6 +6954,7 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     std::cout << std::format("  {} enemies targeted, {} fell\n", targets, fallen);
     renderer->Audit = nullptr;
     ReportAudit(tally, folder, frames);
+    WriteAuditTables(tally, detail, folder, frames);
 }
 
 /// <summary>
@@ -5006,11 +7142,6 @@ namespace
         return changed;
     }
 
-    bool SameColor(const SDL_Color& a, const SDL_Color& b)
-    {
-        return a.r == b.r && a.g == b.g && a.b == b.b;
-    }
-
     /// <summary>
     /// How many pixels of <paramref name="box"/> (the screen pane's) show neither colour <paramref name="color"/> nor what
     /// was under them once <paramref name="draw"/> has drawn, with HD art on from <paramref name="pack"/> (none: off).
@@ -5065,6 +7196,142 @@ TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolu
     std::cout << std::format("  pixels between the colours: {} with HD art off, {} on\n", original, smooth);
     CHECK_EQ(original, 0);
     CHECK(smooth > 0);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// With HD art on, a health bar is drawn at the output's resolution: its fill ends where the game measured it, inside its
+/// last window pixel. Two bars over one colour on mission 1's screen (shown larger), one measured a whole number of
+/// pixels long and one half a pixel longer, show alike with HD art off (the original rounds the length down) and differ
+/// with it on, only about the first's fill's end; the screen's indices under them are the same either way.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a health bar's fill as long as measured, at the output's resolution")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_health_bar");
+    MCPane& screen = ScreenPort()->Frame();
+    const std::shared_ptr<MCWindow> window = screen.Window.lock();
+    REQUIRE(window != nullptr);
+    // A mech's bar (MCMechActor's): a box 40 pixels wide and 6 high, green, its fill half full; the second bar Gap rows
+    // below the first.
+    constexpr int32_t BoxWidth = 40;
+    constexpr int32_t BoxHeight = 6;
+    constexpr int32_t Length = 19;
+    constexpr float HalfPixel = 0.5f;
+    constexpr int32_t Gap = 20;
+    constexpr int32_t Green = 0x101;
+    constexpr int32_t Background = 0x30;
+    const int32_t x0 = screen.X0 + (screen.X1 - screen.X0) / 2 - BoxWidth / 2;
+    const int32_t y0 = screen.Y0 + (screen.Y1 - screen.Y0) / 2;
+    constexpr int32_t Margin = 2;
+    const MCRect under{x0 - Margin, y0 - Margin, x0 + BoxWidth + Margin, y0 + Gap + BoxHeight + Margin};
+
+    struct Drawn
+    {
+        Shown Seen;
+        std::vector<uint8_t> Indices;
+    };
+
+    const auto draw = [&](bool hd)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (hd)
+        {
+            on.emplace(pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(MCPane{window, under.X0, under.Y0, under.X1, under.Y1}, Background);
+        AGStatusBar(screen, x0, y0, x0 + BoxWidth, y0 + BoxHeight, Green, Length, static_cast<float>(Length));
+        AGStatusBar(screen, x0, y0 + Gap, x0 + BoxWidth, y0 + Gap + BoxHeight, Green, Length,
+                    static_cast<float>(Length) + HalfPixel);
+        Drawn drawn;
+        drawn.Seen = ReadShown(pack.parent_path());
+        drawn.Indices = MCInput::Display()->ComposeScreen();
+        return drawn;
+    };
+
+    GamePaused = true;
+    const Drawn plain = draw(false);
+    const Drawn sharp = draw(true);
+    GamePaused = false;
+
+    // The shown pixels of the first bar's box against the second's, Gap window rows (a whole number of shown rows)
+    // below; the window column of each that differs.
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(sharp.Seen.Width) / static_cast<float>(width);
+    const float rows = static_cast<float>(Gap) * scale;
+    constexpr float Whole = 0.01f;
+    REQUIRE(std::abs(rows - std::round(rows)) < Whole);
+    const auto offset = static_cast<int32_t>(std::round(rows));
+    const auto differing = [&](const Shown& seen)
+    {
+        std::set<int32_t> columns;
+        int32_t count = 0;
+
+        for (auto y = static_cast<int32_t>(static_cast<float>(y0) * scale);
+             y < static_cast<int32_t>(static_cast<float>(y0 + BoxHeight + 1) * scale); ++y)
+        {
+            for (auto x = static_cast<int32_t>(static_cast<float>(x0) * scale);
+                 x < static_cast<int32_t>(static_cast<float>(x0 + BoxWidth + 1) * scale); ++x)
+            {
+                const size_t a = (static_cast<size_t>(y) * seen.Width + x) * BytesPerPixel;
+                const size_t b = (static_cast<size_t>(y + offset) * seen.Width + x) * BytesPerPixel;
+
+                if (std::memcmp(&seen.Pixels[a], &seen.Pixels[b], 3) != 0)
+                {
+                    ++count;
+                    columns.insert(static_cast<int32_t>((static_cast<float>(x) + HalfPixel) / scale));
+                }
+            }
+        }
+
+        std::cout << std::format("  {} shown pixels differ between the bars\n", count);
+        return columns;
+    };
+
+    CHECK(differing(plain.Seen).empty());
+    const std::set<int32_t> columns = differing(sharp.Seen);
+    // The first bar, on whole pixels, shows as with HD art off.
+    const MCRect first{static_cast<int32_t>(static_cast<float>(under.X0) * scale),
+                       static_cast<int32_t>(static_cast<float>(under.Y0) * scale),
+                       static_cast<int32_t>(static_cast<float>(x0 + BoxWidth + 1) * scale) - 1,
+                       static_cast<int32_t>(static_cast<float>(y0 + BoxHeight + 1) * scale) - 1};
+    CHECK_EQ(Compare(plain.Seen, sharp.Seen, first).Count, 0);
+    // The rounded fill's last pixel is x0 + Length + 1; the measured one ends half way across the next.
+    const int32_t last = x0 + Length + 1;
+    CHECK(!columns.empty());
+    CHECK(std::ranges::all_of(columns, [&](int32_t column) { return column == last || column == last + 1; }));
+
+    // The indices under the bars are the same with HD art on.
+    REQUIRE_EQ(sharp.Indices.size(), plain.Indices.size());
+    int32_t kept = 0;
+    int32_t pixels = 0;
+
+    for (int32_t y = under.Y0; y <= under.Y1; ++y)
+    {
+        for (int32_t x = under.X0; x <= under.X1; ++x)
+        {
+            const size_t at = static_cast<size_t>(y) * width + x;
+            kept += plain.Indices[at] == sharp.Indices[at] ? 1 : 0;
+            ++pixels;
+        }
+    }
+
+    CHECK_EQ(kept, pixels);
     std::filesystem::remove_all(pack.parent_path());
 }
 
@@ -5128,6 +7395,206 @@ TEST_CASE_ISOLATED("game: HD art draws flat and Gouraud polygons with smooth edg
     }
 
     GamePaused = false;
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+namespace
+{
+    /// <summary>A point's distance from the segment a-b (window coordinates).</summary>
+    float SegmentDistance(std::array<float, 2> p, std::array<float, 2> a, std::array<float, 2> b)
+    {
+        const float dx = b[0] - a[0];
+        const float dy = b[1] - a[1];
+        const float length2 = dx * dx + dy * dy;
+        const float t =
+            length2 > 0.0f ? std::clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2, 0.0f, 1.0f) : 0.0f;
+        return std::hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+    }
+
+    /// <summary>Whether a point lies in the triangle a, b, c (either way round, its edges included).</summary>
+    bool InTriangle(std::array<float, 2> p, std::array<float, 2> a, std::array<float, 2> b, std::array<float, 2> c)
+    {
+        const auto side = [&p](std::array<float, 2> from, std::array<float, 2> to)
+        { return (to[0] - from[0]) * (p[1] - from[1]) - (to[1] - from[1]) * (p[0] - from[0]); };
+        const float ab = side(a, b);
+        const float bc = side(b, c);
+        const float ca = side(c, a);
+        return (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f) || (ab <= 0.0f && bc <= 0.0f && ca <= 0.0f);
+    }
+}
+
+/// <summary>
+/// With HD art on, the polygons the smooth path left to the original's pixels are drawn smooth too: a quad with one
+/// corner turned in (a beam's rounding), as two triangles either side of the diagonal from that corner, a quad whose
+/// corners lie in a line, as a line, and one whose sides go out and back (a beam's sides on one point), as its sides.
+/// Each, flat and Gouraud, shows pixels between its colour and what lies under it only with HD art on, keeps the
+/// screen's indices, and the concave quad shows its colour all over its inside (no seam along the diagonal).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws concave quads and quads of no area smooth")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_concave");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr uint8_t Color = 0x30;
+    constexpr int32_t Fixed = 1 << 16;
+    // A kite whose left side bends in at its third corner (the walk fills it whole: its sides only go down, then up),
+    // a quad whose corners lie on a steep line, and one going out to a bend and on, then back.
+    const std::array<std::array<int32_t, 2>, 4> kite = {{{0, 0}, {30, 35}, {0, 60}, {10, 25}}};
+    const std::array<std::array<int32_t, 2>, 4> line = {{{0, 0}, {10, 20}, {20, 40}, {10, 20}}};
+    const std::array<std::array<int32_t, 2>, 4> path = {{{0, 0}, {12, 14}, {8, 40}, {12, 14}}};
+    constexpr int32_t Margin = 1;
+    const MCRect box{x - Margin, y - Margin, x + 30 + Margin, y + 60 + Margin};
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    for (const auto& [name, corners] : {std::pair{"concave", std::cref(kite)}, std::pair{"in a line", std::cref(line)},
+                                        std::pair{"out and back", std::cref(path)}})
+    {
+        std::array<MCScreenVertex, 4> vertices{};
+
+        for (size_t i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i] = MCScreenVertex{x + corners.get()[i][0], y + corners.get()[i][1], Color * Fixed, 0, 0, 0};
+        }
+
+        for (const bool gouraud : {false, true})
+        {
+            MCTest::Scope scope(std::format("{}, {}", name, gouraud ? "Gouraud" : "flat"));
+            const auto polygon = [&]
+            {
+                if (gouraud)
+                {
+                    VfxGouraudPolygon(pane, vertices);
+                }
+                else
+                {
+                    VfxFlatPolygon(pane, vertices);
+                }
+            };
+
+            const int64_t original = PixelsBetween(std::nullopt, Color, box, polygon);
+            const int64_t smooth = PixelsBetween(pack, Color, box, polygon);
+            std::cout << std::format("  {}, {}: pixels between the colours: {} with HD art off, {} on\n", name,
+                                     gouraud ? "Gouraud" : "flat", original, smooth);
+            CHECK_EQ(original, 0);
+            CHECK(smooth > 0);
+
+            // The screen's indices in the box, with HD art off and on.
+            const auto indices = [&](const std::optional<std::filesystem::path>& from)
+            {
+                std::optional<MCHdArtOn> on;
+
+                if (from.has_value())
+                {
+                    on.emplace(*from);
+                }
+
+                MCTestGame::RunFrame(FrameSeconds);
+                polygon();
+                const std::vector<uint8_t> screen = MCInput::Display()->ComposeScreen();
+                const int32_t width = MCInput::Display()->Width();
+                std::vector<uint8_t> inside;
+
+                for (int32_t row = box.Y0; row <= box.Y1; ++row)
+                {
+                    for (int32_t column = box.X0; column <= box.X1; ++column)
+                    {
+                        inside.push_back(screen[static_cast<size_t>(row + pane.Y0) * width + column + pane.X0]);
+                    }
+                }
+
+                return inside;
+            };
+
+            GamePaused = true;
+            const std::vector<uint8_t> plain = indices(std::nullopt);
+            const std::vector<uint8_t> sharp = indices(pack);
+            GamePaused = false;
+            CHECK(std::ranges::count(plain, Color) > 0);
+            CHECK(plain == sharp);
+        }
+    }
+
+    // The concave quad's inside, more than a window pixel and a half from its sides, shows its colour at every shown
+    // pixel: the halves meet along the diagonal without a gap.
+    std::array<MCScreenVertex, 4> vertices{};
+
+    for (size_t i = 0; i < vertices.size(); ++i)
+    {
+        vertices[i] = MCScreenVertex{x + kite[i][0], y + kite[i][1], Color * Fixed, 0, 0, 0};
+    }
+
+    GamePaused = true;
+    std::optional<MCHdArtOn> on(std::in_place, pack);
+    MCTestGame::RunFrame(FrameSeconds);
+    VfxGouraudPolygon(pane, vertices);
+    const Shown seen = ReadShown(pack.parent_path());
+    on.reset();
+    GamePaused = false;
+
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(seen.Width) / static_cast<float>(width);
+    constexpr float Deep = 1.5f;
+    constexpr float Centre = 0.5f;
+    std::array<std::array<float, 2>, 4> at{};
+
+    for (size_t i = 0; i < at.size(); ++i)
+    {
+        // The corners' pixels' centres, in the screen's window coordinates.
+        at[i] = {static_cast<float>(pane.X0 + x + kite[i][0]) + Centre,
+                 static_cast<float>(pane.Y0 + y + kite[i][1]) + Centre};
+    }
+
+    int32_t deep = 0;
+    int32_t colored = 0;
+
+    for (auto row = static_cast<int32_t>(static_cast<float>(pane.Y0 + box.Y0) * scale);
+         row < static_cast<int32_t>(static_cast<float>(pane.Y0 + box.Y1 + 1) * scale); ++row)
+    {
+        for (auto column = static_cast<int32_t>(static_cast<float>(pane.X0 + box.X0) * scale);
+             column < static_cast<int32_t>(static_cast<float>(pane.X0 + box.X1 + 1) * scale); ++column)
+        {
+            const std::array<float, 2> p = {(static_cast<float>(column) + Centre) / scale,
+                                            (static_cast<float>(row) + Centre) / scale};
+            // The kite is the triangles either side of its diagonal from the bent-in corner (3) to corner 1.
+            const bool inside = InTriangle(p, at[3], at[0], at[1]) || InTriangle(p, at[1], at[2], at[3]);
+            float nearest = std::numeric_limits<float>::max();
+
+            for (size_t i = 0; i < at.size(); ++i)
+            {
+                nearest = std::min(nearest, SegmentDistance(p, at[i], at[(i + 1) % at.size()]));
+            }
+
+            if (inside && nearest > Deep)
+            {
+                ++deep;
+                const size_t offset = (static_cast<size_t>(row) * seen.Width + column) * BytesPerPixel;
+                const SDL_Color& want = colors[Color];
+                colored += seen.Pixels[offset] == want.r && seen.Pixels[offset + 1] == want.g &&
+                                   seen.Pixels[offset + 2] == want.b
+                               ? 1
+                               : 0;
+            }
+        }
+    }
+
+    std::cout << std::format("  the concave quad's inside: {} of {} shown pixels its colour\n", colored, deep);
+    CHECK(deep > 0);
+    CHECK_EQ(colored, deep);
     std::filesystem::remove_all(pack.parent_path());
 }
 
@@ -5306,6 +7773,128 @@ TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
     {
         CheckIndicesKept(*scene);
     }
+}
+
+/// <summary>
+/// A picture the HD art pack has is drawn from it from the first frame the screen is sharp (HD art just turned on, the
+/// game's first frame), not one frame on: copied onto mission 1's screen (shown larger) right after a frame shown with
+/// HD art off, it is drawn from the pack at once, its shown colours are the pack's, and the screen's indices under it
+/// are the picture's, as with HD art off.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's first sharp frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // A picture of its own: upright stripes of four colours.
+    constexpr int32_t Side = 32;
+    constexpr int32_t Stripe = 8;
+    constexpr uint8_t FirstColor = 0x30;
+    const std::shared_ptr<MCWindow> picture = MCWindow::Make(Side, Side);
+
+    for (int32_t y = 0; y < Side; ++y)
+    {
+        for (int32_t x = 0; x < Side; ++x)
+        {
+            picture->Pixels[static_cast<size_t>(y) * Side + x] = static_cast<uint8_t>(FirstColor + x / Stripe);
+        }
+    }
+
+    MCRenderer::CreateTexture(*picture, MCTextureUse::Static);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_first_frame";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    std::filesystem::create_directories(PictureFolderOf(pack));
+    DecodedFrame frame;
+    frame.Width = Side;
+    frame.Height = Side;
+    frame.Index.assign(picture->Bytes().begin(), picture->Bytes().end());
+    frame.Drawn.assign(frame.Index.size(), 1);
+    const std::string name = MCHdArt::PictureName(MCHdArt::PictureHash(picture->Bytes(), Side, Side));
+    WriteFramePngs(PictureFolderOf(pack) / name, frame, colors, TestPackScale, Inverted, false);
+    WritePaletteRgb(pack, colors);
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+
+    struct Copied
+    {
+        int64_t HdDrawn = 0;
+        Shown Seen;
+        std::vector<uint8_t> Indices;
+    };
+
+    // The copy is the first draw after a frame shown with HD art off; with hd, HD art goes on just before it.
+    const auto copy = [&](bool hd)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        std::optional<MCHdArtOn> on;
+
+        if (hd)
+        {
+            on.emplace(pack);
+        }
+
+        Copied copied;
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(picture), 0, 0, screen, left, top, VfxNoColor);
+        copied.HdDrawn = renderer->HdDrawn() - before;
+        copied.Seen = ReadShown(scratch);
+        copied.Indices = MCInput::Display()->ComposeScreen();
+        return copied;
+    };
+
+    GamePaused = true;
+    const Copied plain = copy(false);
+    const Copied sharp = copy(true);
+    GamePaused = false;
+
+    CHECK_EQ(plain.HdDrawn, 0);
+    CHECK_EQ(sharp.HdDrawn, 1);
+
+    // The picture's place in the shown frame (the screen shown larger), a pixel in from its edges.
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(sharp.Seen.Width) / static_cast<float>(width);
+    const int32_t x0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.X0 + left) * scale)) + 1;
+    const int32_t y0 = static_cast<int32_t>(std::ceil(static_cast<float>(screen.Y0 + top) * scale)) + 1;
+    const int32_t x1 = static_cast<int32_t>(static_cast<float>(screen.X0 + left + Side) * scale) - 2;
+    const int32_t y1 = static_cast<int32_t>(static_cast<float>(screen.Y0 + top + Side) * scale) - 2;
+    const MCRect inside{x0, y0, x1, y1};
+    const int32_t area = (x1 - x0 + 1) * (y1 - y0 + 1);
+    const Changed changed = Compare(plain.Seen, sharp.Seen, inside);
+    std::cout << std::format("  {} of the picture's {} shown pixels from the pack\n", changed.Count, area);
+    CHECK(changed.Count > area * 3 / 4);
+
+    // The indices under it are the picture's, both times.
+    REQUIRE_EQ(sharp.Indices.size(), plain.Indices.size());
+    int32_t kept = 0;
+
+    for (int32_t y = 0; y < Side; ++y)
+    {
+        for (int32_t x = 0; x < Side; ++x)
+        {
+            const size_t at = static_cast<size_t>(screen.Y0 + top + y) * width + screen.X0 + left + x;
+            const uint8_t index = picture->Pixels[static_cast<size_t>(y) * Side + x];
+            kept += plain.Indices[at] == index && sharp.Indices[at] == index ? 1 : 0;
+        }
+    }
+
+    CHECK_EQ(kept, Side * Side);
+    MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
 }
 
 namespace
@@ -5639,6 +8228,357 @@ TEST_CASE_ISOLATED("game: a shape table loaded outside the sprite files is drawn
 }
 
 /// <summary>
+/// Line art redrawn as smooth strokes: a staircase run (a line of slope 1/3, its pixels stepping) is straightened, so the
+/// straight line's middle is covered where the steps left it bare; a square outline's corners stay sharp (covered at
+/// the corner pixel's centre); each redrawn pixel keeps its art pixel's byte; far from the art nothing is drawn.
+/// </summary>
+TEST_CASE("sharp lines: line art redrawn as strokes is straightened, keeps its corners and its bytes")
+{
+    constexpr int32_t Columns = 16;
+    constexpr int32_t Rows = 12;
+    constexpr uint8_t No = MCSharpText::NoInk;
+    constexpr uint8_t Step = 5;
+    constexpr uint8_t Box = 9;
+    std::array<uint8_t, Columns * Rows> art{};
+    art.fill(No);
+    const auto put = [&](int32_t x, int32_t y, uint8_t value) { art[static_cast<size_t>(y * Columns + x)] = value; };
+
+    // A staircase from (0, 0) to (11, 3): runs of three, each a row lower.
+    constexpr int32_t RunLength = 3;
+    constexpr int32_t Runs = 4;
+
+    for (int32_t x = 0; x < RunLength * Runs; ++x)
+    {
+        put(x, x / RunLength, Step);
+    }
+
+    // A 5 x 5 square outline from (2, 6) to (6, 10).
+    constexpr int32_t BoxLeft = 2;
+    constexpr int32_t BoxTop = 6;
+    constexpr int32_t BoxSide = 5;
+
+    for (int32_t i = 0; i < BoxSide; ++i)
+    {
+        put(BoxLeft + i, BoxTop, Box);
+        put(BoxLeft + i, BoxTop + BoxSide - 1, Box);
+        put(BoxLeft, BoxTop + i, Box);
+        put(BoxLeft + BoxSide - 1, BoxTop + i, Box);
+    }
+
+    const std::vector<uint8_t> redrawn = MCSharpLines::Redraw(art, Columns, Columns, Rows);
+    constexpr int32_t Scale = MCSharpText::Scale;
+    REQUIRE_EQ(redrawn.size(), static_cast<size_t>(Columns * Scale * Rows * Scale * BytesPerPixel));
+
+    // The byte and coverage of the redrawn pixel at (x, y) in art pixels.
+    const auto at = [&](float x, float y)
+    {
+        const auto column = static_cast<size_t>(x * Scale);
+        const auto row = static_cast<size_t>(y * Scale);
+        const size_t offset = (row * Columns * Scale + column) * BytesPerPixel;
+        return std::pair{redrawn[offset], redrawn[offset + 1]};
+    };
+
+    constexpr uint8_t Full = 255;
+    // The straightened line through the run's ends' centres, (0.5, 0.5) to (11.5, 3.5), at x 3.0: y 1.32. The steps
+    // left that point between rows 0 and 1 (the original's pixels there are (2, 0) and (3, 1)).
+    constexpr float LineX = 3.0f;
+    constexpr float LineY = 0.5f + (LineX - 0.5f) * 3.0f / 11.0f;
+    CHECK_EQ(at(LineX, LineY).second, Full);
+    CHECK_EQ(at(LineX, LineY).first, Step);
+    // The box's corner pixel's centre, and the middle of a side.
+    CHECK_EQ(at(BoxLeft + 0.5f, BoxTop + 0.5f).second, Full);
+    CHECK_EQ(at(BoxLeft + 0.5f, BoxTop + 0.5f).first, Box);
+    CHECK_EQ(at(BoxLeft + 2.5f, BoxTop + BoxSide - 0.5f).second, Full);
+    // Inside the box, and far from everything.
+    CHECK_EQ(at(BoxLeft + 2.5f, BoxTop + 2.5f).second, uint8_t{0});
+    CHECK_EQ(at(14.5f, 10.5f).second, uint8_t{0});
+}
+
+namespace
+{
+    /// <summary>The mech store's shapes: the sold-out outlines, the pictures' repair shapes and the body diagrams' icons.</summary>
+    enum class MCStoreShape : uint8_t
+    {
+        Outline,
+        Picture,
+        Diagram,
+        Count
+    };
+
+    /// <summary>The draws of the store's shapes an audit saw: of each kind, how many, and how many sharp.</summary>
+    struct MCStoreDraws
+    {
+        std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> All{};
+        std::array<int32_t, static_cast<size_t>(MCStoreShape::Count)> Sharp{};
+
+        int32_t AllOf(MCStoreShape kind) const { return All[static_cast<size_t>(kind)]; }
+        int32_t SharpOf(MCStoreShape kind) const { return Sharp[static_cast<size_t>(kind)]; }
+    };
+
+    /// <summary>The screen's indices with its top band (the ticker and the clock, which move on) left out.</summary>
+    std::vector<uint8_t> LogisticsIndices()
+    {
+        constexpr size_t ChromeRows = 0x10;
+        std::vector<uint8_t> shown = MCInput::Display()->ComposeScreen();
+        const size_t width = static_cast<size_t>(MCInput::Display()->Screen().XMax) + 1;
+        shown.erase(shown.begin(),
+                    shown.begin() + static_cast<std::ptrdiff_t>(std::min(shown.size(), width * ChromeRows)));
+        return shown;
+    }
+
+    /// <summary>The frames a logistics screen is run for before it is looked at (a screen change's wipe settles).</summary>
+    constexpr int32_t LogisticsSettleFrames = 30;
+
+    void SettleLogistics()
+    {
+        for (int32_t frame = 0; frame < LogisticsSettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Boots to logistics with the GPU drawing alone in a 1280x960 window (a screen drawn sharp at twice its size with
+    /// HD art on) and starts a new campaign; null when the GPU can't draw alone.
+    /// </summary>
+    std::shared_ptr<MCVulkanRenderer> StartSharpLogistics()
+    {
+        constexpr int32_t Width = 1280;
+        constexpr int32_t Height = 960;
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartLogistics());
+        REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+        REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+        SDL_SyncWindow(&MCInput::Display()->Window());
+        NewCampaign();
+        return std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    }
+
+    /// <summary>
+    /// Shows the logistics screen as it stands with HD art off, then on with <paramref name="pack"/> (the logistics'
+    /// shapes tied to it; from the first frame drawn sharp, every draw given to <paramref name="audit"/>), and checks
+    /// it keeps the indices it had (its top band left out).
+    /// </summary>
+    void CheckSharpKeepsIndices(const std::filesystem::path& pack, MCVulkanRenderer& renderer,
+                                std::function<void(const MCVulkanRenderer::AuditedDraw&)> audit)
+    {
+        SettleLogistics();
+        const std::vector<uint8_t> plain = LogisticsIndices();
+        GHdArt = 1;
+        MCHdArt::SetPackFolder(pack);
+        GlobalLog()->AttachHdArt();
+        // The screen is drawn at the window's size from the frame after HD art comes on.
+        MCTestGame::RunFrame(FrameSeconds);
+        renderer.Audit = std::move(audit);
+        SettleLogistics();
+        const std::vector<uint8_t> sharp = LogisticsIndices();
+        renderer.Audit = nullptr;
+        GHdArt = 0;
+        MCHdArt::SetPackFolder({});
+        REQUIRE_EQ(sharp.size(), plain.size());
+        CHECK(sharp == plain);
+
+        if (sharp != plain)
+        {
+            // Where they differ (window pixels below the top band).
+            const auto width = static_cast<size_t>(MCInput::Display()->Screen().XMax) + 1;
+            MCRect differs{std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(), -1, -1};
+            size_t count = 0;
+
+            for (size_t i = 0; i < sharp.size(); ++i)
+            {
+                if (sharp[i] != plain[i])
+                {
+                    const auto x = static_cast<int32_t>(i % width);
+                    const auto y = static_cast<int32_t>(i / width);
+                    differs = MCRect{std::min(differs.X0, x), std::min(differs.Y0, y), std::max(differs.X1, x),
+                                     std::max(differs.Y1, y)};
+                    ++count;
+                }
+            }
+
+            std::cout << std::format("  {} pixels differ, in ({}, {})..({}, {}) below the top band\n", count,
+                                     differs.X0, differs.Y0, differs.X1, differs.Y1);
+        }
+    }
+}
+
+/// <summary>
+/// The purchase screen's mech store on a sharp screen with HD art on: its sold-out rows' outlines are redrawn as smooth
+/// strokes (line art), and, the store stocked, its rows' pictures (each mech's repair shapes, drawn in place) and body
+/// diagrams (the mech icons, tied to the pack's icons) come from the pack; every such draw is sharp, and the screen
+/// keeps the indices it has with HD art off.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and outlines sharp and keeps their indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    REQUIRE(renderer != nullptr);
+    GlobalLog()->SetUpPurchaseScreen(false);
+
+    // A pack of the mechs' repair shapes (under their bytes' hashes) but their sold-out outlines, which only line art
+    // can draw sharp, and the icons.
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    std::vector<Sequence> sequences;
+
+    for (const MCRegisteredBlock& shapes : GlobalLog()->MechRepShapes)
+    {
+        std::optional<LooseTable> table = MakeLooseTable(shapes.Bytes(), "mechrep");
+        REQUIRE(table.has_value());
+        REQUIRE(table->Frames.Frames.size() > static_cast<size_t>(MCLogistics::MechSoldOutShape));
+        table->Frames.Frames[static_cast<size_t>(MCLogistics::MechSoldOutShape)] = DecodedFrame{};
+        sequences.push_back(std::move(table->Frames));
+    }
+
+    size_t translucent = 0;
+    std::ranges::move(IconSequences(translucent), std::back_inserter(sequences));
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_store";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, sequences, colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+
+    const auto kindOf = [](const uint8_t* table, int32_t frame) -> std::optional<MCStoreShape>
+    {
+        const MCLogistics& log = *GlobalLog();
+
+        for (size_t i = 0; i < log.MechRepShapes.size(); ++i)
+        {
+            if (log.MechRepShapes[i].Bytes().data() == table)
+            {
+                return frame == MCLogistics::MechSoldOutShape ? MCStoreShape::Outline : MCStoreShape::Picture;
+            }
+
+            if (log.MechIconShapes[i].Bytes().data() == table)
+            {
+                return MCStoreShape::Diagram;
+            }
+        }
+
+        return std::nullopt;
+    };
+
+    // The store with HD art off, then on (its draws audited), and whether they show the same indices.
+    const auto compare = [&](std::string_view what)
+    {
+        MCTest::Scope scope{std::string(what)};
+        MCStoreDraws draws;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   if (draw.Command != "Shape")
+                                   {
+                                       return;
+                                   }
+
+                                   if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame);
+                                       kind.has_value())
+                                   {
+                                       ++draws.All[static_cast<size_t>(*kind)];
+                                       draws.Sharp[static_cast<size_t>(*kind)] += draw.Sharp ? 1 : 0;
+                                   }
+                               });
+        std::cout << std::format("  {}: outlines {}/{}, pictures {}/{}, diagrams {}/{} sharp\n", what,
+                                 draws.SharpOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
+                                 draws.SharpOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
+                                 draws.SharpOf(MCStoreShape::Diagram), draws.AllOf(MCStoreShape::Diagram));
+        CHECK(draws.Sharp == draws.All);
+        return draws;
+    };
+
+    const MCStoreDraws soldOut = compare("sold out");
+    CHECK(soldOut.AllOf(MCStoreShape::Outline) > 0);
+    constexpr int32_t Stock = 2;
+    MCTestGame::StockStore(Stock);
+    const MCStoreDraws stocked = compare("in stock");
+    CHECK(stocked.AllOf(MCStoreShape::Picture) > 0);
+    CHECK(stocked.AllOf(MCStoreShape::Diagram) > 0);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// The logistics' pictures the game put together once and copied each frame are drawn in place, keeping the indices
+/// with HD art on: the mission tab's briefing text (no copy of its 0xb3-wide picture; its letters drawn on the screen),
+/// the component rows' icons (their component pictures, lscicc##, copied onto the screen) and the scroll columns
+/// (their track tiles, scroll.tga, copied onto the screen).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place and keeps their indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    REQUIRE(renderer != nullptr);
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_composed");
+    constexpr int32_t MissionPictureWidth = 0xb3;
+    constexpr int32_t ComponentTab = 2;
+    // Whether a draw copies one of the logistics art pictures named.
+    const auto fromArt = [](const MCVulkanRenderer::AuditedDraw& draw, const std::set<std::string>& names)
+    {
+        return draw.Command == "Copy" && draw.From != nullptr &&
+               std::ranges::any_of(names,
+                                   [&](const std::string& name)
+                                   {
+                                       const std::shared_ptr<MCTexture> art =
+                                           LogScreenArt(name)->Bitmap().Texture.lock();
+                                       return art != nullptr && draw.From->Texture.lock() == art;
+                                   });
+    };
+
+    {
+        MCTest::Scope scope("the mission tab");
+        // The briefing first starts its operation movie (its tab), then the mission tab is chosen.
+        SettleLogistics();
+        GlobalLog()->BriefingScreen->SetUpMission();
+        int32_t pictureCopies = 0;
+        int32_t glyphs = 0;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   pictureCopies += draw.Command == "Copy" && draw.From != nullptr &&
+                                                            draw.From->XMax + 1 == MissionPictureWidth
+                                                        ? 1
+                                                        : 0;
+                                   glyphs += draw.Command == "Glyph" && draw.Sharp ? 1 : 0;
+                               });
+        CHECK_EQ(pictureCopies, 0);
+        CHECK(glyphs > 0);
+    }
+
+    {
+        MCTest::Scope scope("the component tab");
+        GlobalLog()->CurrentInvTab = ComponentTab;
+        GlobalLog()->SetUpPurchaseScreen(false);
+        std::set<std::string> componentPictures;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->ComponentInventory->Items)
+        {
+            componentPictures.insert(item->InventoryBlock->IconArt.Picture);
+        }
+
+        REQUIRE(!componentPictures.empty());
+        const std::set<std::string> track = {"scroll.tga"};
+        int32_t pictures = 0;
+        int32_t tracks = 0;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   pictures += fromArt(draw, componentPictures) ? 1 : 0;
+                                   tracks += fromArt(draw, track) ? 1 : 0;
+                               });
+        CHECK(pictures > 0);
+        CHECK(tracks > 0);
+    }
+}
+
+/// <summary>
 /// With HD art on (a pack with no frames), the tactical map's fog of war (a picture the game draws, one texel a terrain
 /// vertex) is drawn with smooth edges at the output's resolution: of the map page's two mapped polygons a frame, the
 /// fog's is drawn sharp and the map picture's (not in the pack) isn't.
@@ -5718,6 +8658,111 @@ TEST_CASE_ISOLATED("game: the system cursor's pictures come from the HD art pack
     CHECK_EQ(image.Hd->Rgba.size(),
              static_cast<size_t>(image.Width) * image.Height * TestPackScale * TestPackScale * 4);
     std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Tool: <c>--hd-pictures &lt;pack&gt; --shots &lt;folder&gt; --hd-picture-names NAME[,NAME]</c> writes the menus'
+/// pictures whose file names hold one of the names (ignoring case) as a keyed copy shows them, over dark grey: the
+/// original at the pack's scale (nearest) beside the pack's copy, <c>&lt;file&gt;.png</c>.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-pictures pictures menu pictures beside the pack's copies")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-pictures");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+    const std::optional<std::string_view> named = MCTest::Option("hd-picture-names");
+
+    if (!pack.has_value() || !shots.has_value() || !named.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const auto lower = [](std::string text)
+    {
+        std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
+
+    std::vector<std::string> names;
+
+    for (const auto part : std::views::split(*named, ','))
+    {
+        names.push_back(lower(std::string(std::string_view(part))));
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> shown{};
+    MCInput::Display()->GetShownColors(shown);
+    MCHdArtOn hdArt(std::filesystem::absolute(std::filesystem::path(*pack)));
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+
+    // The key (magenta, as the game's 6-bit palettes give it), and the grey both pictures are shown over.
+    const auto keyed = [](SDL_Color color) { return color.r >= 252 && color.g == 0 && color.b >= 252; };
+    constexpr uint8_t Under = 48;
+    constexpr int32_t Gap = 8;
+    int32_t skipped = 0;
+    int32_t written = 0;
+    ForEachPicture(
+        shown, skipped,
+        [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
+            std::span<const SDL_Color, 256> colors)
+        {
+            const std::string file = lower(std::string(source.substr(source.find_last_of("\\/") + 1)));
+
+            if (std::ranges::none_of(names, [&](const std::string& name) { return file.contains(name); }))
+            {
+                return;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindPicture(pixels, width, height);
+            const int32_t scale = hd != nullptr ? hd->Scale : TestPackScale;
+            const int32_t side = width * scale;
+            const int32_t outWidth = side * 2 + Gap;
+            const int32_t outHeight = height * scale;
+            std::vector<uint8_t> out(static_cast<size_t>(outWidth) * outHeight * BytesPerPixel, Under);
+            const std::vector<uint8_t> rgba = hd == nullptr ? std::vector<uint8_t>()
+                                              : hd->Format == MCHdArt::ColorFormat::Bc7
+                                                  ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
+                                                  : hd->Colors;
+
+            for (int32_t y = 0; y < outHeight; ++y)
+            {
+                for (int32_t x = 0; x < side; ++x)
+                {
+                    const SDL_Color color = colors[pixels[static_cast<size_t>(y / scale) * width + x / scale]];
+                    uint8_t* left = &out[(static_cast<size_t>(y) * outWidth + x) * BytesPerPixel];
+                    uint8_t* right = left + static_cast<size_t>(side + Gap) * BytesPerPixel;
+                    left[3] = right[3] = 255;
+
+                    if (keyed(color))
+                    {
+                        continue;
+                    }
+
+                    left[0] = color.r;
+                    left[1] = color.g;
+                    left[2] = color.b;
+
+                    if (!rgba.empty() && x < hd->Width && y < hd->Height)
+                    {
+                        // Premultiplied over the grey.
+                        const uint8_t* texel = &rgba[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+
+                        for (int32_t c = 0; c < 3; ++c)
+                        {
+                            right[c] = static_cast<uint8_t>(std::min(255, texel[c] + Under * (255 - texel[3]) / 255));
+                        }
+                    }
+                }
+            }
+
+            SavePng(folder / (file.substr(0, file.find('.')) + ".png"), outWidth, outHeight, out);
+            std::cout << std::format("  {}: {}x{}, {}\n", source, width, height,
+                                     hd != nullptr ? std::format("HD {}x", hd->Scale) : "not in the pack");
+            ++written;
+        });
+
+    CHECK(written > 0);
 }
 
 /// <summary>
@@ -5843,7 +8888,8 @@ namespace
 /// pack holds, as the extractors find them in the game's files: the mechs' and objects' sprites, the ground's tiles and
 /// overlays, the craters, the mech bar's icons, the shape tables loaded outside the sprite files and the menus' and
 /// logistics' pictures (font sheets left out: the GPU redraws the fonts). Names a few missing frames of each kind. Then
-/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks.
+/// every other packet of the sprite PAKs, which nothing should draw, as a check on the extractors' walks (the pack holds
+/// them when made with --hd-extract-objects --hd-packets undrawn), their frames as their appearance's kind keeps them.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack holds")
 {
@@ -5897,9 +8943,18 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
     // The packets of the sprite PAKs no type's walk above draws, as a check on the walks: the game's own lookups never
     // reach them (the original's zoomed-out views, buildings' packets 10 and 11, facings past a type's rotations), and
-    // the appearances no type uses are named.
+    // the appearances no type uses are named. A frame counts as --hd-packets undrawn extracts it: with its blended
+    // pixels only for an appearance of a kind that keeps them (an appearance no type uses, of the kind its class gives).
     ArtCoverage& packets = report.emplace_back(ArtCoverage{"sprite PAK packets no type draws", 0, 0, {}, false});
     std::map<uint32_t, size_t> untyped;
+    std::map<uint32_t, ObjectAppearance> kinds = FindObjectAppearances();
+    kinds.merge(FindUntypedAppearances(kinds));
+    std::map<uint32_t, bool> keepsBlended;
+
+    for (const auto& [id, appearance] : kinds)
+    {
+        keepsBlended.emplace(id & AppearancePacketMask, KindInfo(appearance.Kind).Blended);
+    }
 
     for (uint32_t appearance = 0; appearance < SpriteManager()->GetNumAppearances(); ++appearance)
     {
@@ -5914,6 +8969,8 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
             }
 
             const std::span<const uint8_t> table = shape->FrameList();
+            const auto keeps = keepsBlended.find(appearance);
+            const bool keepBlended = keeps == keepsBlended.end() || keeps->second;
 
             for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
             {
@@ -5921,7 +8978,7 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
 
                 if (decoded.has_value() && decoded->Translucent)
                 {
-                    LeaveOutUndrawn(*decoded, true);
+                    LeaveOutUndrawn(*decoded, keepBlended);
                 }
 
                 if (!decoded.has_value() || std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
@@ -6056,6 +9113,156 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     }
 
     std::cout << std::format("  all: {} of {} frames ({} pictures unreadable)\n", found, frames, skipped);
+}
+
+namespace
+{
+    /// <summary>The grey a packet's pictures are shown over, and the gap between the original and the pack's copy.</summary>
+    constexpr uint8_t PacketUnder = 48;
+    constexpr int32_t PacketGap = 8;
+    /// <summary>The frames of each packet --hd-packet-pictures pictures unless --hd-picture-frames says.</summary>
+    constexpr int32_t PacketFramesPictured = 4;
+
+    /// <summary>
+    /// <paramref name="original"/>'s drawn pixels in <paramref name="colors"/>, each scaled up to
+    /// <paramref name="hd"/>'s scale by the nearest pixel, beside <paramref name="hd"/> (premultiplied), both over grey.
+    /// </summary>
+    void SavePacketPicture(const std::filesystem::path& path, const DecodedFrame& original, const MCHdArt::Frame& hd,
+                           std::span<const SDL_Color, 256> colors)
+    {
+        const int32_t scale = hd.Scale;
+        const int32_t side = original.Width * scale;
+        const int32_t width = side * 2 + PacketGap;
+        const int32_t height = original.Height * scale;
+        std::vector<uint8_t> out(static_cast<size_t>(width) * height * BytesPerPixel, PacketUnder);
+        const std::vector<uint8_t> rgba =
+            hd.Format == MCHdArt::ColorFormat::Bc7 ? MCBc7::Decode(hd.Colors, hd.Width, hd.Height) : hd.Colors;
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            for (int32_t x = 0; x < side; ++x)
+            {
+                const size_t source = static_cast<size_t>(y / scale) * original.Width + x / scale;
+                uint8_t* left = &out[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                uint8_t* right = left + static_cast<size_t>(side + PacketGap) * BytesPerPixel;
+                left[3] = right[3] = std::numeric_limits<uint8_t>::max();
+
+                if (original.Drawn[source] != 0)
+                {
+                    const SDL_Color color = colors[original.Index[source]];
+                    left[0] = color.r;
+                    left[1] = color.g;
+                    left[2] = color.b;
+                }
+
+                if (x < hd.Width && y < hd.Height)
+                {
+                    const uint8_t* texel = &rgba[(static_cast<size_t>(y) * hd.Width + x) * BytesPerPixel];
+
+                    for (int32_t c = 0; c < 3; ++c)
+                    {
+                        right[c] = static_cast<uint8_t>(std::min(255, texel[c] + PacketUnder * (255 - texel[3]) / 255));
+                    }
+                }
+            }
+        }
+
+        SavePng(path, width, height, out);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-packet-pictures &lt;pack&gt; --shots &lt;folder&gt; --hd-folders &lt;folder,...&gt;</c> pictures sprite PAK
+/// packets' frames beside the pack's copies, whether or not a type draws them (the original's zoomed-out views...): each
+/// folder as the pack names it (<c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;</c>), its first
+/// <c>--hd-picture-frames</c> frames (4 unless given) as <c>&lt;shape PAK&gt;_&lt;appearance&gt;_&lt;packet&gt;_&lt;frame&gt;.png</c>:
+/// the original scaled up by the nearest pixel beside the pack's frame, over grey.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-packet-pictures pictures sprite packets beside the pack's copies")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-packet-pictures");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t frames = PacketFramesPictured;
+
+    if (const std::optional<std::string_view> option = MCTest::Option("hd-picture-frames"); option.has_value())
+    {
+        const auto [end, error] = std::from_chars(option->data(), option->data() + option->size(), frames);
+        MCTest::Scope scope(std::format("--hd-picture-frames {}", *option));
+        REQUIRE((error == std::errc() && end == option->data() + option->size() && frames > 0));
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    MCHdArtOn hdArt(std::filesystem::absolute(std::filesystem::path(*pack)));
+    const std::filesystem::path out(*shots);
+    std::filesystem::create_directories(out);
+    int32_t written = 0;
+
+    for (const std::string& name : ListOption("hd-folders"))
+    {
+        // objects/<shape PAK>/<appearance>/<packet>
+        const std::filesystem::path folder(name);
+        const std::vector<std::filesystem::path> parts(folder.begin(), folder.end());
+        MCTest::Scope scope(std::format("--hd-folders {}", name));
+        REQUIRE(parts.size() == 4);
+        const std::string shapeFile = parts[1].string();
+        uint32_t appearance = 0;
+        uint32_t packet = 0;
+
+        for (const auto& [part, number] : {std::pair{parts[2].string(), &appearance}, {parts[3].string(), &packet}})
+        {
+            const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), *number);
+            REQUIRE((error == std::errc() && end == part.data() + part.size()));
+        }
+
+        REQUIRE(SpriteManager()->ShapeFileName(appearance) == shapeFile);
+        const std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(appearance, packet, Turn, {});
+        REQUIRE((shape != nullptr && VfxIsShapeTable(shape->FrameList())));
+        int32_t pictured = 0;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()) && pictured < frames; ++frame)
+        {
+            std::expected<DecodedFrame, std::string> decoded = Decode(shape->FrameList(), frame);
+
+            if (!decoded.has_value() || decoded->Width == 0)
+            {
+                continue;
+            }
+
+            // A translucent frame's colours 0 and 255 draw nothing; a frame with nothing drawn has no pack frame.
+            if (decoded->Translucent)
+            {
+                LeaveOutUndrawn(*decoded, true);
+            }
+
+            if (std::ranges::find(decoded->Drawn, 1) == decoded->Drawn.end())
+            {
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindInFolder(shape->HdFolder, frame, decoded->Width, decoded->Height);
+            std::cout << std::format("  {}/{}: {}x{}, {}\n", name, frame, decoded->Width, decoded->Height,
+                                     hd != nullptr ? std::format("HD {}x", hd->Scale) : "not in the pack");
+
+            if (hd != nullptr)
+            {
+                SavePacketPicture(out / std::format("{}_{}_{}_{}.png", shapeFile, appearance, packet, frame), *decoded,
+                                  *hd, colors);
+                ++pictured;
+                ++written;
+            }
+        }
+    }
+
+    CHECK(written > 0);
 }
 
 /// <summary>

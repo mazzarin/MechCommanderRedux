@@ -1582,6 +1582,7 @@ auto MCMechActor::DrawBars() -> void
     data.Vertices[1].Y = floorInt(barY + barHeight + 1.0f);
     const int32_t barLength = floorInt(health * barWidth);
     data.BarPercent = barLength;
+    data.MeasuredBar = health * barWidth;
 
     // A mech that isn't quite dead shows at least one pixel.
     if (static_cast<double>(barLength) < 1.0 && health > 0.001)

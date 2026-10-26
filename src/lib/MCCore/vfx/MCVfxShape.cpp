@@ -86,6 +86,8 @@ namespace
         command.Left = x0;
         command.Lo = clip.X0;
         command.Hi = clip.X1;
+        command.ClipTop = clip.Y0;
+        command.ClipBottom = clip.Y1;
         command.Op = xlat.has_value() ? MCShapeOp::Xlat : MCShapeOp::Draw;
         command.Table = xlat;
         MCRenderer::For(clip.Target()).Shape(clip.Target(), command);

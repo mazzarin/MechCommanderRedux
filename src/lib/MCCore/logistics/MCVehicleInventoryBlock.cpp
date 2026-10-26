@@ -19,6 +19,10 @@ namespace
 {
     /// <summary>The vehicle rows' drag.</summary>
     MCDragState VehicleDrag;
+    /// <summary>The damage diagram's size, and the colour its picture was wiped to.</summary>
+    constexpr int32_t DiagramWidth = 0x1c;
+    constexpr int32_t DiagramHeight = 0x1e;
+    constexpr int32_t DiagramBack = 0x10;
 }
 
 MCVehicleInventoryBlock::~MCVehicleInventoryBlock()
@@ -41,6 +45,7 @@ auto MCVehicleInventoryBlock::Destroy() -> void
     WeightClassText.clear();
     ArmorText.clear();
     PicturePort.reset();
+    DiagramStates.reset();
     MCInventoryBlock::Destroy();
 }
 
@@ -292,13 +297,34 @@ auto MCVehicleInventoryBlock::DrawBackground() -> void
         return;
     }
 
-    PicturePort = std::make_shared<MCLogPort>();
-    PicturePort->Init(0x1c, 0x1e);
-    VfxPaneWipe(PicturePort->Frame(), 0x10);
+    std::array<std::optional<int32_t>, DiagramLocations>& states = DiagramStates.emplace();
 
-    for (int32_t location = 0; location < 5; ++location)
+    for (int32_t location = 0; location < DiagramLocations; ++location)
     {
-        MCLogistics::DrawVehicleBodyLoc(*Vehicle(), location, *PicturePort, 0, 0);
+        states[static_cast<size_t>(location)] = MCLogistics::VehicleBodyLocState(*Vehicle(), location);
+    }
+
+    PicturePort = std::make_shared<MCLogPort>();
+    PicturePort->Init(DiagramWidth, DiagramHeight);
+    PaintDiagram(*PicturePort);
+}
+
+auto MCVehicleInventoryBlock::PaintDiagram(MCLogPort& port) const -> void
+{
+    if (!DiagramStates.has_value())
+    {
+        return;
+    }
+
+    VfxPaneWipe(port.Frame(), DiagramBack);
+
+    for (int32_t location = 0; location < DiagramLocations; ++location)
+    {
+        if (const std::optional<int32_t> state = (*DiagramStates)[static_cast<size_t>(location)]; state.has_value())
+        {
+            MCLogistics::DrawBodyLoc(GlobalLog()->VehicleIconShapes[static_cast<size_t>(Vehicle()->NameIndex)].Bytes(),
+                                     location, *state, port, 0, 0);
+        }
     }
 }
 
@@ -310,9 +336,11 @@ auto MCVehicleInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
               MCFormatPrintf(LoadGameString(0x53, 0xfe).c_str(), static_cast<double>(Vehicle()->CurTonnage),
                              WeightClassText.c_str()));
 
-    if (PicturePort != nullptr)
+    // The diagram, drawn in place (the original copied its picture keyed).
+    if (DiagramStates.has_value())
     {
-        PicturePort->CopyTo(port.Frame(), 5, top + 2, true);
+        MCLogBlockPort diagram(port.Frame(), 5, top + 2, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(diagram);
     }
 }
 
@@ -324,9 +352,10 @@ auto MCVehicleInventoryBlock::DrawInfo(MCLogPort& port) -> void
     MCLogBlockPort square(port.Frame(), 9, 0x191, 0x1e, 0x1e, false);
     VfxPaneCopy(GlobalLog()->InvBlockPort->Frame(), 3, 2, square.Frame(), 0, 0, -1);
 
-    if (PicturePort != nullptr)
+    if (DiagramStates.has_value())
     {
-        PicturePort->CopyTo(square.Frame(), 2, 0, true);
+        MCLogBlockPort diagram(square.Frame(), 2, 0, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(diagram);
     }
 
     WriteText(*YellowDropFont, port, 0x53, 0x193,

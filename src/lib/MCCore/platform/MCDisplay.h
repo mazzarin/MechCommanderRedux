@@ -376,6 +376,11 @@ private:
     /// they changed since the last frame, or always with <paramref name="allColors"/>).
     /// </summary>
     MCFrame BuildFrame(bool allColors);
+    /// <summary>
+    /// This frame as it will be shown: the screen, its pixels and ops, the view, the output's size and whether the
+    /// screen is sharp (no underlays or colours; <see cref="MCPresenter::FrameLayout"/>).
+    /// </summary>
+    MCFrame LayoutFrame() const;
     /// <summary>The underlays shown on the screen now (those that lie under it and have pixels).</summary>
     std::vector<MCUnderlay> ScreenUnderlays() const;
     /// <summary>

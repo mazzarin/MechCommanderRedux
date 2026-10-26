@@ -22,6 +22,32 @@ namespace
 
     /// <summary>The order the 8 body-location shapes of the mech diagram are drawn in.</summary>
     constexpr std::array<int32_t, 8> BodyTrans = {7, 6, 4, 5, 0, 1, 2, 3};
+    /// <summary>The picture's and the diagram's size, the colour they are wiped to, and where they go in a row.</summary>
+    constexpr int32_t PictureWidth = 0x4b;
+    constexpr int32_t PictureHeight = 100;
+    constexpr int32_t PictureX = 0xed;
+    constexpr int32_t PictureY = 6;
+    constexpr int32_t DiagramSide = 0x1e;
+    constexpr int32_t DiagramX = 7;
+    constexpr int32_t DiagramY = 0x22;
+    constexpr int32_t PictureBack = 0x10;
+    /// <summary>The picture's shapes: the mech's eight armor shapes, and its eight internal ones (its shadow) after them.</summary>
+    constexpr int32_t PictureShapes = 8;
+    constexpr int32_t ShadowShapes = 0xb;
+    /// <summary>The lookaside tables the picture's shadow and mech are drawn through (MCLogistics::ShapeLookaside).</summary>
+    constexpr size_t ShadowLookaside = 5;
+    constexpr size_t MechLookaside = 0;
+
+    /// <summary>The mech's small body diagram (mechicon <paramref name="nameIndex"/>) over <paramref name="pane"/>, wiped first.</summary>
+    void DrawDiagram(const MCPane& pane, int32_t nameIndex)
+    {
+        VfxPaneWipe(pane, PictureBack);
+
+        for (int32_t location : BodyTrans)
+        {
+            AGShapeDraw(pane, GlobalLog()->MechIconShapes[static_cast<size_t>(nameIndex)].Bytes(), location, 3, 0);
+        }
+    }
 
     /// <summary>The name art of each variant (A, W, J) in stock, and sold out.</summary>
     constexpr std::array<std::string_view, 3> VariantNameArt = {"lspflma", "lspflmw", "lspflmj"};
@@ -49,7 +75,7 @@ MCMechPurchaseBlock::~MCMechPurchaseBlock()
 
 auto MCMechPurchaseBlock::Init(std::shared_ptr<MCPurMech> newPurMech) -> void
 {
-    PicturePort.reset();
+    PictureIndex.reset();
     DiagramPort.reset();
     _PurMech = newPurMech;
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
@@ -59,7 +85,7 @@ auto MCMechPurchaseBlock::Init(std::shared_ptr<MCPurMech> newPurMech) -> void
 auto MCMechPurchaseBlock::Destroy() -> void
 {
     _PurMech.reset();
-    PicturePort.reset();
+    PictureIndex.reset();
     DiagramPort.reset();
     WeightClassText.clear();
     ArmorText.clear();
@@ -271,39 +297,17 @@ auto MCMechPurchaseBlock::DrawBackground(int32_t) -> void
 {
     MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(CurVariant)];
 
-    if (PicturePort == nullptr)
+    // The mech the picture and the diagram show (the row draws them; the original made them here and kept them).
+    if (!PictureIndex.has_value())
     {
-        // The mech's picture: its shadow (shapes 0xb..0x12 through the shadow table), then the mech (0..7).
-        PicturePort = std::make_shared<MCLogPort>();
-        PicturePort->Init(0x4b, 100);
-        VfxPaneWipe(PicturePort->Frame(), 0x10);
-        VfxShapeLookaside(GlobalLog()->ShapeLookaside[5]);
-
-        for (int32_t shape = 0; shape < 8; ++shape)
-        {
-            VfxShapeTranslateDraw(PicturePort->Frame(), GlobalLog()->MechRepShapes[data.NameIndex].Bytes(), shape + 0xb,
-                                  0, 0);
-        }
-
-        VfxShapeLookaside(GlobalLog()->ShapeLookaside[0]);
-
-        for (int32_t shape = 0; shape < 8; ++shape)
-        {
-            VfxShapeTranslateDraw(PicturePort->Frame(), GlobalLog()->MechRepShapes[data.NameIndex].Bytes(), shape, 0,
-                                  0);
-        }
+        PictureIndex = data.NameIndex;
     }
 
     if (DiagramPort == nullptr)
     {
         DiagramPort = std::make_shared<MCLogPort>();
-        DiagramPort->Init(0x1e, 0x1e);
-        VfxPaneWipe(DiagramPort->Frame(), 0x10);
-
-        for (int32_t location : BodyTrans)
-        {
-            AGShapeDraw(DiagramPort->Frame(), GlobalLog()->MechIconShapes[data.NameIndex].Bytes(), location, 3, 0);
-        }
+        DiagramPort->Init(DiagramSide, DiagramSide);
+        DrawDiagram(DiagramPort->Frame(), *PictureIndex);
     }
 
     // The class texts.
@@ -341,9 +345,26 @@ auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
     CopyArt(*row, 5, 4, std::format("lspflma{:02}.tga", data.NameIndex));
     CopyArt(*row, 0x13a, 6, std::format("lscdsm{:02}.tga", data.NameIndex));
 
-    if (PicturePort != nullptr)
+    // The mech's picture, drawn in place (the original copied a picture made once, keyed): its shadow (the internal
+    // shapes through the shadow table), then the mech (the armor shapes).
+    if (PictureIndex.has_value())
     {
-        PicturePort->CopyTo(row->Frame(), 0xed, 6, true);
+        const std::span<const uint8_t> shapes = GlobalLog()->MechRepShapes[static_cast<size_t>(*PictureIndex)].Bytes();
+        MCLogBlockPort picture(row->Frame(), PictureX, PictureY, PictureWidth, PictureHeight, true);
+        VfxPaneWipe(picture.Frame(), PictureBack);
+        VfxShapeLookaside(GlobalLog()->ShapeLookaside[ShadowLookaside]);
+
+        for (int32_t shape = 0; shape < PictureShapes; ++shape)
+        {
+            VfxShapeTranslateDraw(picture.Frame(), shapes, shape + ShadowShapes, 0, 0);
+        }
+
+        VfxShapeLookaside(GlobalLog()->ShapeLookaside[MechLookaside]);
+
+        for (int32_t shape = 0; shape < PictureShapes; ++shape)
+        {
+            VfxShapeTranslateDraw(picture.Frame(), shapes, shape, 0, 0);
+        }
     }
 
     WriteText(*YellowDropFont, *row, 0x51, 0x23, std::format("{:.0f} {}", data.CurTonnage, LoadGameString(0x6e, 0x1e)));
@@ -447,9 +468,11 @@ auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
 
     if (shown.NumAvailable != 0)
     {
-        if (DiagramPort != nullptr)
+        // The diagram, drawn in place (the original copied the one made for the purchase dialog).
+        if (PictureIndex.has_value())
         {
-            VfxPaneCopy(DiagramPort->Frame(), 0, 0, port.Frame(), 7, top + 0x22, -1);
+            MCLogBlockPort diagram(port.Frame(), DiagramX, top + DiagramY, DiagramSide, DiagramSide, false);
+            DrawDiagram(diagram.Frame(), *PictureIndex);
         }
     }
     else

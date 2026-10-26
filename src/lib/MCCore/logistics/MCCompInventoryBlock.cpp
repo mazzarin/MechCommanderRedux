@@ -134,36 +134,24 @@ auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> 
 
     // The icon: the range colour's block background, name, a caption and the component picture.
     const std::string_view background = range < 76.0f ? "greeninv.tga" : range < 151.0f ? "blueinv.tga" : "redinv.tga";
-    const std::string backgroundPath = std::format("{}logart\\{}", ArtPath, background);
-    IconPort = std::make_shared<MCLogPort>();
-    IconPort->Load(backgroundPath);
     auto own = std::make_shared<MCLogPort>();
-    own->Load(backgroundPath);
+    own->Load(std::format("{}logart\\{}", ArtPath, background));
     SetOwnPort(std::move(own));
-    WriteText(*YellowDropFont, *IconPort, 0x26, 7, component.Name);
-    WriteText(*BlueDropFont, *IconPort, 0x26, 0x15, LoadGameString(0x37d, 0xfe));
-    MCLogPort picture;
-    picture.Load(std::format("{}logart\\lscicc{:02}.tga", ArtPath, Item()->RangeIndex));
-    picture.CopyTo(IconPort->Frame(), 3, 2, true);
+    IconArt = Icon{std::string(background), std::format("lscicc{:02}.tga", Item()->RangeIndex), component.Name,
+                   LoadGameString(0x37d, 0xfe), std::nullopt};
 
     if (component.TechBase == 1)
     {
         // Clan technology: a small mark in the range colour.
         const float longRange = component.WeaponRange[3];
-        int32_t color = longRange < 76.0f ? 0xe : longRange < 151.0f ? 0xe5 : 0xee;
-        MCPane& frame = IconPort->Frame();
-        VfxLineDraw(frame, 5, 7, 5, 8, color);
-        VfxLineDraw(frame, 6, 5, 6, 8, color);
-        VfxLineDraw(frame, 7, 4, 7, 8, color);
-        VfxLineDraw(frame, 8, 5, 8, 8, color);
-        VfxLineDraw(frame, 9, 7, 9, 8, color);
+        IconArt.ClanMark = longRange < 76.0f ? 0xe : longRange < 151.0f ? 0xe5 : 0xee;
     }
 }
 
 auto MCCompInventoryBlock::Destroy() -> void
 {
     _Item.reset();
-    IconPort.reset();
+    IconArt = {};
     MCInventoryBlock::Destroy();
 }
 
@@ -474,10 +462,29 @@ auto MCCompInventoryBlock::DrawBackground() -> void
                 !CanMount(Item()->MasterID, Tonnage, MCOptionalOf(GlobalLog()->RepairScreen->SelectedMech()));
 }
 
+auto MCCompInventoryBlock::DrawIcon(MCLogPort& port) const -> void
+{
+    WriteText(*YellowDropFont, port, 0x26, 7, IconArt.Name);
+    WriteText(*BlueDropFont, port, 0x26, 0x15, IconArt.Caption);
+    LogScreenArt(IconArt.Picture)->CopyTo(port.Frame(), 3, 2, true);
+
+    if (IconArt.ClanMark.has_value())
+    {
+        const int32_t color = *IconArt.ClanMark;
+        MCPane& frame = port.Frame();
+        VfxLineDraw(frame, 5, 7, 5, 8, color);
+        VfxLineDraw(frame, 6, 5, 6, 8, color);
+        VfxLineDraw(frame, 7, 4, 7, 8, color);
+        VfxLineDraw(frame, 8, 5, 8, 8, color);
+        VfxLineDraw(frame, 9, 7, 9, 8, color);
+    }
+}
+
 auto MCCompInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
 {
-    // Put together in place, as the original did in the block's own picture, then copied opaque.
-    std::shared_ptr<MCLogBlockPort> row = RowPicture(*IconPort, port, top, false);
+    // Put together in place, as the original did in the block's own picture, then copied opaque; the icon too.
+    std::shared_ptr<MCLogBlockPort> row = RowPicture(*LogScreenArt(IconArt.Background), port, top, false);
+    DrawIcon(*row);
     WriteText(*BlueDropFont, *row, 0x67, 0x15, std::format("{}", Item()->Count));
 
     if (CantMount)

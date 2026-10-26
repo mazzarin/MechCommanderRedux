@@ -19,6 +19,8 @@ public:
     static constexpr int32_t SliderWidth = 13;
     /// <summary>The height of each arrow at the ends of the column (the slider travels between them).</summary>
     static constexpr int32_t ArrowHeight = 0x10;
+    /// <summary>Port: how far above the column's bottom its down arrow's art goes.</summary>
+    static constexpr int32_t ArrowArtHeight = 15;
 
     /// <summary>Which arrow of the column is held down.</summary>
     enum class Arrow : uint8_t
@@ -119,8 +121,22 @@ public:
     /// keeps it (the logistics store keeps its views and resizes them).
     /// </summary>
     std::shared_ptr<MCLogPort> ContentPort;
-    /// <summary>The slider column (13 wide).</summary>
-    std::shared_ptr<MCLogPort> SliderPort;
+    /// <summary>Port: the art of a slider column: its track tile and its two arrows (logistics art names).</summary>
+    struct ColumnArt
+    {
+        std::string Track;
+        std::string UpArrow;
+        std::string DownArrow;
+    };
+
+    /// <summary>
+    /// Port: the slider column's art (13 wide), each over the one before: the track tile repeated down the column below
+    /// its first row, and the arrows at the ends. The original copied them into a picture of the column once; they are
+    /// drawn in place (<see cref="DrawSliderColumn"/>), so with HD art on they are drawn from the pack.
+    /// </summary>
+    std::vector<ColumnArt> ColumnArts;
+    /// <summary>Port: the slider column's height (the pane's when <see cref="Init"/> made it).</summary>
+    int32_t ColumnHeight = 0;
     /// <summary>Content pixels per scroll unit: 1% of the content's height (set by <see cref="SetDisplayPort"/>).</summary>
     float ScrollUnit = 0.0f;
     /// <summary>The largest scroll position.</summary>

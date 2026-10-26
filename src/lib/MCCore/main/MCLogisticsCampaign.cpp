@@ -21,6 +21,7 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCSessionScreen.h"
+#include "logistics/MCSmuti.h"
 #include "logistics/MCUnitLimits.h"
 #include "logistics/MCVehicleRepairBlock.h"
 #include "main/MCGamePaths.h"
@@ -229,6 +230,50 @@ namespace
         }
 
         return profile.Read<bool>("Assigned").value_or(false);
+    }
+
+    /// <summary>The mission tab's picture's width, the margin round its text, and the rows below the text.</summary>
+    constexpr int32_t MissionPortWidth = 0xb3;
+    constexpr int32_t MissionMargin = 2;
+    constexpr int32_t MissionBottom = 10;
+    constexpr int32_t MissionBack = 0x10;
+
+    /// <summary>
+    /// Port: the mission tab's content, <paramref name="text"/> (the briefing) formatted <paramref name="width"/> x
+    /// <paramref name="height"/>: a view the mission pane draws each frame, so with HD art on its text shows sharp. The
+    /// original formatted the text into a picture wiped to the key, copied that two pixels into one wiped to 0x10
+    /// (MissionPortWidth wide, MissionBottom rows taller), which the pane copied keyed. The view draws the same: the
+    /// margin in 0x10, the text over what the pane shows beneath, formatted by <paramref name="formatter"/> as it stood
+    /// when the original formatted it.
+    /// </summary>
+    std::shared_ptr<MCLogPort> MissionTextPort(std::string text, const MCSmuti& formatter, int32_t width,
+                                               int32_t height)
+    {
+        auto port = std::make_shared<MCLogPort>();
+        const int32_t portHeight = height + MissionBottom;
+        port->InitView(MissionPortWidth, portHeight);
+        port->DrawContent = [text = std::move(text), formatter, width, height, portHeight](MCGuiPort& view)
+        {
+            const auto wipe = [&view](int32_t xPos, int32_t yPos, int32_t boxWidth, int32_t boxHeight)
+            {
+                if (boxWidth > 0 && boxHeight > 0)
+                {
+                    MCLogBlockPort box(view.Frame(), xPos, yPos, boxWidth, boxHeight, false);
+                    VfxPaneWipe(box.Frame(), MissionBack);
+                }
+            };
+
+            const int32_t right = MissionMargin + width;
+            wipe(0, 0, MissionPortWidth, MissionMargin);
+            wipe(0, MissionMargin + height, MissionPortWidth, portHeight - MissionMargin - height);
+            wipe(0, MissionMargin, MissionMargin, height);
+            wipe(right, MissionMargin, MissionPortWidth - right, height);
+            MCLogBlockPort block(view.Frame(), MissionMargin, MissionMargin, width, height, true);
+            MCSmuti writer = formatter;
+            writer.Process(text, block, 0, 0);
+        };
+
+        return port;
     }
 }
 
@@ -833,14 +878,14 @@ auto MCLogistics::GetCurrentMission() -> void
     std::string text = GamePath(MissionPath, briefingFile);
     const int32_t height = std::max(GuiSystem().TextFormatter.ProcessFile(text, std::nullopt, paneWidth - 0x11), 0xbf);
     {
+        // The port draws the text in place (MissionTextPort), formatted as the formatter stands now; the formatting
+        // into a picture is kept for the state it leaves the formatter in.
+        const MCSmuti formatter = GuiSystem().TextFormatter;
         MCLogPort textPort;
         textPort.Init(paneWidth - 0x11, height);
         VfxPaneWipe(textPort.Frame(), 0xff);
         GuiSystem().TextFormatter.ProcessFile(text, textPort, 0);
-        briefing.MissionPort = std::make_shared<MCLogPort>();
-        briefing.MissionPort->Init(0xb3, height + 10);
-        VfxPaneWipe(briefing.MissionPort->Frame(), 0x10);
-        VfxPaneCopy(textPort.Frame(), 0, 0, briefing.MissionPort->Frame(), 2, 2, -1);
+        briefing.MissionPort = MissionTextPort(MCSmuti::ReadFile(text), formatter, paneWidth - 0x11, height);
     }
 
     Assert(ReadText(file, "MapFile", 0xff, text), 0, " Could not find MapFile variable in mission file ");

@@ -21,6 +21,10 @@ namespace
 {
     /// <summary>The mech rows' drag.</summary>
     MCDragState MechDrag;
+    /// <summary>The damage diagram's size, and the colour its picture was wiped to.</summary>
+    constexpr int32_t DiagramWidth = 0x1c;
+    constexpr int32_t DiagramHeight = 0x1e;
+    constexpr int32_t DiagramBack = 0x10;
 }
 
 MCMechInventoryBlock::~MCMechInventoryBlock()
@@ -30,7 +34,7 @@ MCMechInventoryBlock::~MCMechInventoryBlock()
 
 auto MCMechInventoryBlock::Init(std::shared_ptr<MCLogMech> logMech) -> void
 {
-    DiagramPort.reset();
+    Diagram.reset();
     _Mech = logMech;
     InitRow();
     ListIndex = Mech()->NameIndex;
@@ -38,7 +42,7 @@ auto MCMechInventoryBlock::Init(std::shared_ptr<MCLogMech> logMech) -> void
 
 auto MCMechInventoryBlock::Destroy() -> void
 {
-    DiagramPort.reset();
+    Diagram.reset();
     _Mech.reset();
     MCInventoryBlock::Destroy();
 }
@@ -53,24 +57,39 @@ auto MCMechInventoryBlock::Draw() -> void
 
 auto MCMechInventoryBlock::DrawBackground() -> void
 {
-    if (DiagramPort != nullptr)
+    if (Diagram.has_value())
     {
         return;
     }
 
-    DiagramPort = std::make_shared<MCLogPort>();
-    DiagramPort->Init(0x1c, 0x1e);
-    VfxPaneWipe(DiagramPort->Frame(), 0x10);
+    DiagramLook& look = Diagram.emplace();
 
-    for (int32_t location = 0; location < 8; ++location)
+    for (int32_t location = 0; location < DiagramLocations; ++location)
     {
-        MCLogistics::DrawMechBodyLoc(*Mech(), location, *DiagramPort, 2, 0);
+        look.States[static_cast<size_t>(location)] = MCLogistics::MechBodyLocState(*Mech(), location);
     }
 
     // The battle rating bar along the left edge: 26 pixels at 18010.
-    int32_t bar = static_cast<int32_t>(static_cast<double>(Mech()->BattleRating) * 0x1.d1c6674f499a1p-15 * 26.0);
-    VfxLineDraw(DiagramPort->Frame(), 0, 0x1b, 0, 0x1b - bar, 0xe4);
-    VfxLineDraw(DiagramPort->Frame(), 1, 0x1b, 1, 0x1b - bar, 0xe4);
+    look.Bar = static_cast<int32_t>(static_cast<double>(Mech()->BattleRating) * 0x1.d1c6674f499a1p-15 * 26.0);
+}
+
+auto MCMechInventoryBlock::PaintDiagram(MCLogPort& port) const -> void
+{
+    if (!Diagram.has_value())
+    {
+        return;
+    }
+
+    VfxPaneWipe(port.Frame(), DiagramBack);
+
+    for (int32_t location = 0; location < DiagramLocations; ++location)
+    {
+        MCLogistics::DrawBodyLoc(GlobalLog()->MechIconShapes[static_cast<size_t>(Mech()->NameIndex)].Bytes(), location,
+                                 Diagram->States[static_cast<size_t>(location)], port, 2, 0);
+    }
+
+    VfxLineDraw(port.Frame(), 0, 0x1b, 0, 0x1b - Diagram->Bar, 0xe4);
+    VfxLineDraw(port.Frame(), 1, 0x1b, 1, 0x1b - Diagram->Bar, 0xe4);
 }
 
 auto MCMechInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
@@ -82,9 +101,11 @@ auto MCMechInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
               MCFormatPrintf(LoadGameString(0x4e, 0xfe).c_str(), static_cast<double>(mech->CurTonnage),
                              mech->WeightClassName.c_str()));
 
-    if (DiagramPort != nullptr)
+    // The diagram, drawn in place (the original copied its picture keyed).
+    if (Diagram.has_value())
     {
-        DiagramPort->CopyTo(port.Frame(), 5, top + 2, true);
+        MCLogBlockPort diagram(port.Frame(), 5, top + 2, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(diagram);
     }
 }
 
@@ -96,9 +117,10 @@ auto MCMechInventoryBlock::DrawInfo(MCLogPort& port) -> void
     MCLogBlockPort square(port.Frame(), 9, 0x191, 0x1e, 0x1e, false);
     VfxPaneCopy(GlobalLog()->InvBlockPort->Frame(), 3, 2, square.Frame(), 0, 0, -1);
 
-    if (DiagramPort != nullptr)
+    if (Diagram.has_value())
     {
-        DiagramPort->CopyTo(square.Frame(), 2, 0, true);
+        MCLogBlockPort diagram(square.Frame(), 2, 0, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(diagram);
     }
 
     WriteText(*YellowDropFont, port, 0x53, 0x193,
@@ -113,7 +135,7 @@ auto MCMechInventoryBlock::DrawInfo(MCLogPort& port) -> void
 
 auto MCMechInventoryBlock::DeleteDiagram() -> void
 {
-    DiagramPort.reset();
+    Diagram.reset();
 }
 
 auto MCMechInventoryBlock::OfferSale() -> void
@@ -131,9 +153,13 @@ auto MCMechInventoryBlock::OfferSale() -> void
     int32_t price = SalePrice(mech->ResourcePoints);
     // The dialog shows a copy of the diagram over the store's colour.
     MCLogPort picture;
-    picture.Init(DiagramPort->Width(), DiagramPort->Height());
-    VfxPaneWipe(picture.Frame(), 0x10);
-    DiagramPort->CopyTo(picture.Frame(), 2, 0, true);
+    picture.Init(DiagramWidth, DiagramHeight);
+    VfxPaneWipe(picture.Frame(), DiagramBack);
+    {
+        MCLogBlockPort diagram(picture.Frame(), 2, 0, DiagramWidth, DiagramHeight, true);
+        PaintDiagram(diagram);
+    }
+
     OpenPurchaseDialog(1, -price, 1, mech->FileName, title, picture,
                        [this](int32_t result, int32_t) { OnSellConfirmed(result); });
 }

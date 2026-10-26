@@ -59,9 +59,13 @@ public:
     int32_t NameIndex = 0;
     /// <summary>The variant shown (0..2), -1 before the shop list picks one.</summary>
     int32_t CurVariant = -1;
-    /// <summary>The mech's picture (0x4b x 100), made by the first <see cref="DrawBackground"/>.</summary>
-    std::shared_ptr<MCLogPort> PicturePort;
-    /// <summary>The small body diagram (0x1e x 0x1e), made by the first <see cref="DrawBackground"/>.</summary>
+    /// <summary>
+    /// Port: the name index of the mech the picture (0x4b x 100) and the diagram show, set by the first
+    /// <see cref="DrawBackground"/> (the original made the pictures then, and kept them). The row draws them in place
+    /// (<see cref="DrawRow"/>), so with HD art on they are drawn from the pack, sharp.
+    /// </summary>
+    std::optional<int32_t> PictureIndex;
+    /// <summary>The small body diagram (0x1e x 0x1e) for the purchase dialog, made by the first <see cref="DrawBackground"/>.</summary>
     std::shared_ptr<MCLogPort> DiagramPort;
     /// <summary>The weight class by current tonnage.</summary>
     std::string WeightClassText;

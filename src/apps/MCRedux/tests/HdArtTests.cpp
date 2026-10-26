@@ -6375,6 +6375,145 @@ TEST_CASE_ISOLATED("tool: --hd-coverage counts the game's art the HD art pack ho
     std::cout << std::format("  all: {} of {} frames ({} pictures unreadable)\n", found, frames, skipped);
 }
 
+namespace
+{
+    /// <summary>The grey a packet's pictures are shown over, and the gap between the original and the pack's copy.</summary>
+    constexpr uint8_t PacketUnder = 48;
+    constexpr int32_t PacketGap = 8;
+    /// <summary>The frames of each packet --hd-packet-pictures pictures unless --hd-picture-frames says.</summary>
+    constexpr int32_t PacketFramesPictured = 4;
+
+    /// <summary>
+    /// <paramref name="original"/>'s drawn pixels in <paramref name="colors"/>, each scaled up to
+    /// <paramref name="hd"/>'s scale by the nearest pixel, beside <paramref name="hd"/> (premultiplied), both over grey.
+    /// </summary>
+    void SavePacketPicture(const std::filesystem::path& path, const DecodedFrame& original, const MCHdArt::Frame& hd,
+                           std::span<const SDL_Color, 256> colors)
+    {
+        const int32_t scale = hd.Scale;
+        const int32_t side = original.Width * scale;
+        const int32_t width = side * 2 + PacketGap;
+        const int32_t height = original.Height * scale;
+        std::vector<uint8_t> out(static_cast<size_t>(width) * height * BytesPerPixel, PacketUnder);
+        const std::vector<uint8_t> rgba =
+            hd.Format == MCHdArt::ColorFormat::Bc7 ? MCBc7::Decode(hd.Colors, hd.Width, hd.Height) : hd.Colors;
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            for (int32_t x = 0; x < side; ++x)
+            {
+                const size_t source = static_cast<size_t>(y / scale) * original.Width + x / scale;
+                uint8_t* left = &out[(static_cast<size_t>(y) * width + x) * BytesPerPixel];
+                uint8_t* right = left + static_cast<size_t>(side + PacketGap) * BytesPerPixel;
+                left[3] = right[3] = std::numeric_limits<uint8_t>::max();
+
+                if (original.Drawn[source] != 0)
+                {
+                    const SDL_Color color = colors[original.Index[source]];
+                    left[0] = color.r;
+                    left[1] = color.g;
+                    left[2] = color.b;
+                }
+
+                if (x < hd.Width && y < hd.Height)
+                {
+                    const uint8_t* texel = &rgba[(static_cast<size_t>(y) * hd.Width + x) * BytesPerPixel];
+
+                    for (int32_t c = 0; c < 3; ++c)
+                    {
+                        right[c] = static_cast<uint8_t>(std::min(255, texel[c] + PacketUnder * (255 - texel[3]) / 255));
+                    }
+                }
+            }
+        }
+
+        SavePng(path, width, height, out);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-packet-pictures &lt;pack&gt; --shots &lt;folder&gt; --hd-folders &lt;folder,...&gt;</c> pictures sprite PAK
+/// packets' frames beside the pack's copies, whether or not a type draws them (the original's zoomed-out views...): each
+/// folder as the pack names it (<c>objects/&lt;shape PAK&gt;/&lt;appearance&gt;/&lt;packet&gt;</c>), its first
+/// <c>--hd-picture-frames</c> frames (4 unless given) as <c>&lt;shape PAK&gt;_&lt;appearance&gt;_&lt;packet&gt;_&lt;frame&gt;.png</c>:
+/// the original scaled up by the nearest pixel beside the pack's frame, over grey.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-packet-pictures pictures sprite packets beside the pack's copies")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-packet-pictures");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t frames = PacketFramesPictured;
+
+    if (const std::optional<std::string_view> option = MCTest::Option("hd-picture-frames"); option.has_value())
+    {
+        const auto [end, error] = std::from_chars(option->data(), option->data() + option->size(), frames);
+        MCTest::Scope scope(std::format("--hd-picture-frames {}", *option));
+        REQUIRE((error == std::errc() && end == option->data() + option->size() && frames > 0));
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    MCHdArtOn hdArt(std::filesystem::absolute(std::filesystem::path(*pack)));
+    const std::filesystem::path out(*shots);
+    std::filesystem::create_directories(out);
+    int32_t written = 0;
+
+    for (const std::string& name : ListOption("hd-folders"))
+    {
+        // objects/<shape PAK>/<appearance>/<packet>
+        const std::filesystem::path folder(name);
+        const std::vector<std::filesystem::path> parts(folder.begin(), folder.end());
+        MCTest::Scope scope(std::format("--hd-folders {}", name));
+        REQUIRE(parts.size() == 4);
+        const std::string shapeFile = parts[1].string();
+        uint32_t appearance = 0;
+        uint32_t packet = 0;
+
+        for (const auto& [part, number] : {std::pair{parts[2].string(), &appearance}, {parts[3].string(), &packet}})
+        {
+            const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), *number);
+            REQUIRE((error == std::errc() && end == part.data() + part.size()));
+        }
+
+        REQUIRE(SpriteManager()->ShapeFileName(appearance) == shapeFile);
+        const std::shared_ptr<MCShape> shape = SpriteManager()->GetShapeData(appearance, packet, Turn, {});
+        REQUIRE((shape != nullptr && VfxIsShapeTable(shape->FrameList())));
+        int32_t pictured = 0;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(shape->FrameList()) && pictured < frames; ++frame)
+        {
+            const std::expected<DecodedFrame, std::string> decoded = Decode(shape->FrameList(), frame);
+
+            if (!decoded.has_value() || decoded->Width == 0)
+            {
+                continue;
+            }
+
+            const std::shared_ptr<const MCHdArt::Frame> hd =
+                MCHdArt::FindInFolder(shape->HdFolder, frame, decoded->Width, decoded->Height);
+            std::cout << std::format("  {}/{}: {}x{}, {}\n", name, frame, decoded->Width, decoded->Height,
+                                     hd != nullptr ? std::format("HD {}x", hd->Scale) : "not in the pack");
+
+            if (hd != nullptr)
+            {
+                SavePacketPicture(out / std::format("{}_{}_{}_{}.png", shapeFile, appearance, packet, frame), *decoded,
+                                  *hd, colors);
+                ++pictured;
+                ++written;
+            }
+        }
+    }
+
+    CHECK(written > 0);
+}
+
 /// <summary>
 /// Tool: <c>--hd-map-shots &lt;pack&gt; --shots &lt;folder&gt;</c> pictures the ground across a mission's map
 /// (<c>--mission</c>, default 1) as --hd-pack does: the camera moved to points of a grid across the map's diamond,

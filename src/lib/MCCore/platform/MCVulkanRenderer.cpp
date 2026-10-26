@@ -3154,7 +3154,8 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
 
     if (command.BarLength != 0)
     {
-        // The measured length reaches into the pixel past the last one the rounded length fills.
+        // The fill covers its length plus one pixels from the frame's left column on, so it ends (exclusive) two
+        // pixels past that column plus its length: the measured length reaches into the pixel past the rounded one's.
         const float right =
             static_cast<float>(box.X0 + 2) + (smooth ? command.FillLength : static_cast<float>(command.BarLength));
         const int32_t last = static_cast<int32_t>(std::ceil(right)) - 1;

@@ -1941,13 +1941,24 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             return;
         }
 
-        if (!hd->Blended && MCAgShapeIsAlpha(command.ShapeTable, command.ShapeNum))
+        const HdEdges edges = HdEdgesOf(*hd, command.ShapeTable);
+        const bool smooth = edges == HdEdges::Smooth;
+        const bool blendsOwn = !hd->Blended && MCAgShapeIsAlpha(command.ShapeTable, command.ShapeNum);
+
+        if (blendsOwn && smooth)
         {
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
 
         AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table, std::nullopt, HdColours::Corrected,
-              HdEdgesOf(*hd, command.ShapeTable));
+              edges);
+
+        // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
+        if (blendsOwn && !smooth)
+        {
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, true);
+        }
+
         return;
     }
 
@@ -2247,13 +2258,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     }
 
     // Port-only: a smooth-edged draw's place (window pixels and its first source pixel), a window pixel wider each way
-    // the shape isn't clipped, as its smooth edges reach a little past its pixels (draw.pshader's SmoothCoverage).
+    // the pane allows, as its smooth edges reach a little past its pixels (draw.pshader's SmoothCoverage).
     const auto widened = [&](const Quad& rect, const Quad& source)
     {
+        const bool rowsKnown = command.ClipBottom >= command.ClipTop;
         const int32_t left = std::max(rect[0] - 1, command.Lo);
-        const int32_t top = rect[1] - (command.SkipRows == 0 ? 1 : 0);
+        const int32_t top = rowsKnown ? std::max(rect[1] - 1, command.ClipTop) : rect[1];
         const int32_t right = std::min(rect[2] + 1, command.Hi);
-        const int32_t bottom = rect[3] + (command.SkipRows + command.Rows >= headerRows ? 1 : 0);
+        const int32_t bottom = rowsKnown ? std::min(rect[3] + 1, command.ClipBottom) : rect[3];
         return std::pair{Quad{left, top, right, bottom},
                          Quad{source[0] - (rect[0] - left), source[1] - (rect[1] - top), source[2], source[3]}};
     };
@@ -2291,18 +2303,26 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             const Quad hdAt = {at[0], at[1], std::min(command.Left + boundsWidth - 1, command.Hi), at[3]};
             const Quad shapeFrom = {at[0] - command.Left, command.SkipRows, 1, 1};
             const HdEdges edges = HdEdgesOf(*hd, command.ShapeTable);
+            const bool smooth = edges == HdEdges::Smooth;
+            const bool blendsOwn = translucent && !hd->Blended;
 
-            if (translucent && !hd->Blended)
+            if (blendsOwn && smooth)
             {
                 const auto [blendedAt, blendedFrom] = widened(at, from);
                 addSmooth(blendedAt, blendedFrom, op | SmoothEdges | BlendedOnly);
             }
 
-            const auto [frameAt, frameFrom] =
-                edges == HdEdges::Smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
+            const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
             AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
             Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
                 before, after);
+
+            // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
+            if (blendsOwn && !smooth)
+            {
+                Add(surface, SourceKind::Atlas, place->Page, at, from, op | BlendedOnly, 0, before, after);
+            }
+
             return;
         }
     }
@@ -2396,7 +2416,7 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
 
     // Port-only: an overlay the HD art pack has a frame of is shown from it, the original's draw keeping its indices; a
     // translucent one's frame holds its blended pixels too (MCHdArt::Frame::Blended), and the original draws nothing.
-    // An opaque one's edges are smooth (KindHdSmooth), reaching a window pixel past it each way it isn't clipped.
+    // An opaque one's edges are smooth (KindHdSmooth), reaching a window pixel past it each way the pane allows.
     if (const std::shared_ptr<const MCHdArt::Frame> hd = MCHdArt::FindOverlay(shape.first(*size), width, height);
         hd != nullptr && hd->Blended == command.Alpha)
     {
@@ -2404,13 +2424,11 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
         Quad frameAt = at;
         Quad frameFrom = {column, command.FirstRow, 1, 1};
 
-        if (edges == HdEdges::Smooth)
+        if (edges == HdEdges::Smooth && command.ClipX1 >= command.ClipX0 && command.ClipY1 >= command.ClipY0)
         {
-            const int32_t left = command.LeftSkip > 0 ? 0 : 1;
-            const int32_t top = command.FirstRow > 0 ? 0 : 1;
-            frameAt = {at[0] - left, at[1] - top, at[2] + (column + command.Limit < width ? 0 : 1),
-                       at[3] + (command.EndRow < height ? 0 : 1)};
-            frameFrom = {column - left, command.FirstRow - top, 1, 1};
+            frameAt = {std::max(at[0] - 1, command.ClipX0), std::max(at[1] - 1, command.ClipY0),
+                       std::min(at[2] + 1, command.ClipX1), std::min(at[3] + 1, command.ClipY1)};
+            frameFrom = {column - (at[0] - frameAt[0]), command.FirstRow - (at[1] - frameAt[1]), 1, 1};
         }
 
         if (AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges))

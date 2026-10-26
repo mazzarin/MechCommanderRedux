@@ -143,6 +143,12 @@ struct MCShapeCommand
     MCShapeOp Op;
     /// <summary>The table of the Xlat ops (none otherwise).</summary>
     std::optional<MCColorTable> Table;
+    /// <summary>
+    /// Port-only: the rows the pane lets it write, inclusive (none when the bottom is above the top), so a smooth edge
+    /// drawn at the output's resolution may reach a little past the shape's rows without leaving the pane.
+    /// </summary>
+    int32_t ClipTop = 0;
+    int32_t ClipBottom = -1;
 };
 
 /// <summary>
@@ -166,6 +172,13 @@ struct MCFastShapeCommand
     bool Alpha;
     /// <summary>The colour table, or none.</summary>
     std::optional<MCColorTable> Table;
+    /// <summary>
+    /// Port-only: the pane's last column and its rows, inclusive (none when the last is before the first), so a smooth
+    /// edge drawn at the output's resolution may reach a little past the shape without leaving the pane.
+    /// </summary>
+    int32_t ClipX1 = -1;
+    int32_t ClipY0 = 0;
+    int32_t ClipY1 = -1;
 };
 
 /// <summary>A terrain tile (VFX_nTile_draw) with its clipping resolved.</summary>

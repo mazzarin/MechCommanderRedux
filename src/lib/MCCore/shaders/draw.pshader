@@ -672,11 +672,14 @@ Output HdPixelAt(Input input, float2 shape)
     const float4 bottom = lerp(HdTexel(base + int2(0, 1), size, texelScale, flags, key),
                                HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
     float4 color = lerp(top, bottom, f.y);
+    int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
 
+    // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
     if ((flags & 15u) == KindHdSmooth)
     {
         int2 nearest;
         const float coverage = HdMaskCoverage(original, texelScale, shape, nearest);
+        texel = nearest;
         const float4 inside = HdTexel(nearest * texelScale + texelScale / 2, size, texelScale, flags, key);
         const float3 own = color.a > 0.0 ? color.rgb / color.a : float3(0.0, 0.0, 0.0);
         const float3 near = inside.a > 0.0 ? inside.rgb / inside.a : own;
@@ -696,7 +699,6 @@ Output HdPixelAt(Input input, float2 shape)
 
     // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
     // brightness.
-    const int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
     const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
     if (Byte(entry.g) == 255u && (input.op.x & HdAsMade) == 0)

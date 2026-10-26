@@ -50,6 +50,8 @@ void MCAgDrawShape(const MCPane& pane, std::span<const uint8_t> shapeTable, int3
     command.Left = left;
     command.Lo = clip.X0;
     command.Hi = clip.X1;
+    command.ClipTop = clip.Y0;
+    command.ClipBottom = clip.Y1;
     command.Op = op;
     command.Table = xlat;
     MCRenderer::For(clip.Target()).Shape(clip.Target(), command);

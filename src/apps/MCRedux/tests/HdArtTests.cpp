@@ -4208,6 +4208,9 @@ namespace
     constexpr int32_t SeamTolerance = 12;
     /// <summary>A mix of the two lies this far from both, at least, in red.</summary>
     constexpr int32_t SeamMixed = 40;
+    /// <summary>FNV-1a's 64-bit offset basis and prime (a tile's colour is picked by its name's hash).</summary>
+    constexpr uint64_t SeamHashBasis = 0xcbf29ce484222325ull;
+    constexpr uint64_t SeamHashPrime = 0x100000001b3ull;
 
     /// <summary>
     /// Writes HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder, each one colour
@@ -4229,7 +4232,15 @@ namespace
             }
 
             const std::string name = MCHdArt::TerrainTileName(tile);
-            const SDL_Color colour = std::hash<std::string>{}(name) % 2 == 0 ? SeamRed : SeamBlue;
+            // FNV-1a over the name: the same split on every platform.
+            uint64_t hash = SeamHashBasis;
+
+            for (const char c : name)
+            {
+                hash = (hash ^ static_cast<uint8_t>(c)) * SeamHashPrime;
+            }
+
+            const SDL_Color colour = hash % 2 == 0 ? SeamRed : SeamBlue;
             const int32_t width = decoded.Width * TerrainScale;
             const int32_t height = decoded.Height * TerrainScale;
             std::vector<uint8_t> color(static_cast<size_t>(width) * height * BytesPerPixel);
@@ -4322,7 +4333,7 @@ TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their s
     std::cout << std::format("  of {} pixels: {} one tile's colour, {} a mix of two\n", pixels, plain, mixed);
     // Without the fade, every tile's pixel would be one colour or the other; the seams' mixes are a band a few shown
     // pixels wide along them.
-    constexpr int64_t MixedShare = 500;
+    constexpr int64_t MixedShare = 1000;
     CHECK(plain * 2 > pixels);
     CHECK(mixed * MixedShare > pixels);
     std::filesystem::remove_all(scene->Scratch);

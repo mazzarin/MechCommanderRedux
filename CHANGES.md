@@ -94,6 +94,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   - power up and down on P and Shift+P, and eject on Shift+E;
   - zoom on = and -;
   - hold Ctrl, R or H to force an order, a run or a jump.
+- The system's input methods (an IME, or macOS's accent menu on a held letter) work in text fields only, so they no
+  longer hold back or swallow mission keys.
 
 ### Sound
 

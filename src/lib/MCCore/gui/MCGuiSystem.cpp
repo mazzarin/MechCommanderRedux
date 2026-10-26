@@ -85,6 +85,9 @@ MCGuiSystem::~MCGuiSystem()
     Screen.reset();
     TimerManager.reset();
     FreeFonts();
+
+    // No text field outlives the GUI.
+    MCInput::SetTextInput(false);
 }
 
 auto MCGuiSystem::Width() -> int32_t
@@ -554,6 +557,7 @@ auto MCGuiSystem::SetText(std::weak_ptr<MCGuiObject> obj) -> void
     }
 
     TextFocus = obj;
+    MCInput::SetTextInput(!TextFocus.expired());
 
     if (const std::shared_ptr<MCGuiObject> holder = obj.lock(); holder != nullptr)
     {
@@ -588,6 +592,7 @@ auto MCGuiSystem::ReleaseText() -> void
     }
 
     TextFocus.reset();
+    MCInput::SetTextInput(false);
 }
 
 auto MCGuiSystem::LetGo(MCGuiObject& obj) -> void
@@ -606,6 +611,7 @@ auto MCGuiSystem::LetGo(MCGuiObject& obj) -> void
         event.Target = TextFocus;
         obj.HandleEvent(event);
         TextFocus.reset();
+        MCInput::SetTextInput(false);
     }
 
     if (MCRefersTo(Modal, obj))

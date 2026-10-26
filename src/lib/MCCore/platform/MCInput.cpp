@@ -42,6 +42,8 @@ namespace
         bool OutsidePicture = false;
         uint32_t DoubleClickTime = 500;
         bool Active = false;
+        /// <summary>Whether a text field has the keyboard (<see cref="MCInput::SetTextInput"/>).</summary>
+        bool TextInput = false;
 
         /// <summary>The last button press, for double clicks.</summary>
         int LastClickButton = -1;
@@ -53,6 +55,41 @@ namespace
     {
         static MCInputState instance;
         return instance;
+    }
+
+    /// <summary>The first printable character: WM_CHAR below it is a control character.</summary>
+    constexpr int FirstPrintable = 0x20;
+
+    /// <summary>Whether SDL's text input runs in the attached window (keys type their text through it).</summary>
+    bool textInputActive()
+    {
+        const std::shared_ptr<MCDisplay> display = state().Display.lock();
+        return display != nullptr && SDL_TextInputActive(&display->Window());
+    }
+
+    /// <summary>Starts or stops SDL's text input in the window, as <see cref="MCInput::SetTextInput"/> asks.</summary>
+    void applyTextInput()
+    {
+        MCInputState& input = state();
+        const std::shared_ptr<MCDisplay> display = input.Display.lock();
+
+        if (display == nullptr)
+        {
+            return;
+        }
+
+        SDL_Window* window = &display->Window();
+
+        if (SDL_TextInputActive(window) == input.TextInput)
+        {
+            return;
+        }
+
+        if (!(input.TextInput ? SDL_StartTextInput(window) : SDL_StopTextInput(window)))
+        {
+            SDL_Log("MCInput: can't %s text input in window %u: %s", input.TextInput ? "start" : "stop",
+                    SDL_GetWindowID(window), SDL_GetError());
+        }
     }
 
     /// <summary>Sends a message to the window procedure.</summary>
@@ -364,6 +401,23 @@ namespace
         return -1;
     }
 
+    /// <summary>
+    /// The Windows-1252 character a key makes with the modifiers held, in the keyboard layout, or -1 (a key that makes
+    /// none, or one the code page lacks): TranslateMessage's WM_CHAR, for when SDL's text input is off.
+    /// </summary>
+    int typedCharacter(const SDL_KeyboardEvent& key)
+    {
+        const SDL_Keycode typed = SDL_GetKeyFromScancode(key.scancode, key.mod, false);
+
+        // Keys without a character have keycodes built from their scancode (or SDL's extended ones).
+        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 || typed < FirstPrintable || typed == SDLK_DELETE)
+        {
+            return -1;
+        }
+
+        return MCInput::CodePointToWindows1252(typed);
+    }
+
     void handleKey(const SDL_KeyboardEvent& key)
     {
         MCInputState& input = state();
@@ -397,6 +451,12 @@ namespace
         if (down && !system)
         {
             int character = controlCharacter(vk, ctrlDown, altDown);
+
+            // No text field has the keyboard: the key's own character (with it, SDL_EVENT_TEXT_INPUT brings the text).
+            if (character < 0 && !ctrlDown && !textInputActive())
+            {
+                character = typedCharacter(key);
+            }
 
             if (character >= 0)
             {
@@ -458,7 +518,7 @@ namespace MCInput
             return;
         }
 
-        SDL_StartTextInput(&display->Window());
+        applyTextInput();
         SDL_Keymod mod = SDL_GetModState();
         input.Toggled[VK_CAPITAL] = (mod & SDL_KMOD_CAPS) != 0;
         input.Toggled[VK_NUMLOCK] = (mod & SDL_KMOD_NUM) != 0;
@@ -482,6 +542,11 @@ namespace MCInput
         state().Proc = std::move(proc);
     }
 
+    void SetTextInput(bool on)
+    {
+        state().TextInput = on;
+    }
+
     bool PumpMessages()
     {
         MCInputState& input = state();
@@ -503,6 +568,8 @@ namespace MCInput
             }
         }
 
+        // Before SDL reads the next keys (see SetTextInput).
+        applyTextInput();
         SDL_Event event;
 
         while (SDL_PollEvent(&event))
@@ -515,6 +582,7 @@ namespace MCInput
 
     bool WaitMessage(int timeoutMs)
     {
+        applyTextInput();
         SDL_Event event;
 
         if (SDL_WaitEventTimeout(&event, timeoutMs))
@@ -734,7 +802,7 @@ namespace MCInput
                 {
                     int character = CodePointToWindows1252(codePoint);
 
-                    if (character >= 0x20)
+                    if (character >= FirstPrintable)
                     {
                         send(WM_CHAR, static_cast<uint32_t>(character), 1);
                     }
@@ -846,6 +914,7 @@ namespace MCInput
         input.CursorCounter = 0;
         input.DoubleClickTime = 500;
         input.Active = false;
+        input.TextInput = false;
         input.LastClickButton = -1;
         input.LastClickTime = 0;
         input.LastClickPos = {};

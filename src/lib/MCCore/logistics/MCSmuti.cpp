@@ -8,6 +8,11 @@
 
 auto MCSmuti::ProcessFile(std::string_view fileName, MCOptionalRef<MCGuiPort> port, int32_t width) -> int32_t
 {
+    return Process(ReadFile(fileName), port, width, 0);
+}
+
+auto MCSmuti::ReadFile(std::string_view fileName) -> std::string
+{
     MCFile file;
     const int32_t result = file.Open(fileName);
     Assert(result == 0, result, "Could not open SMUTI file");
@@ -15,8 +20,9 @@ auto MCSmuti::ProcessFile(std::string_view fileName, MCOptionalRef<MCGuiPort> po
     file.Read(text);
     file.Close();
     // The last two bytes (the file's closing CR LF) are dropped.
-    const size_t length = text.size() >= 2 ? text.size() - 2 : 0;
-    return Process(std::string_view(reinterpret_cast<const char*>(text.data()), length), port, width, 0);
+    constexpr size_t LineEnd = 2;
+    const size_t length = text.size() >= LineEnd ? text.size() - LineEnd : 0;
+    return std::string(reinterpret_cast<const char*>(text.data()), length);
 }
 
 auto MCSmuti::At(int32_t index) const -> char

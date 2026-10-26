@@ -19,6 +19,12 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCBriefingScreen.h"
+#include "main/MCInventoryList.h"
+#include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCMechPurchaseBlock.h"
+#include "logistics/MCPurMechList.h"
+#include "logistics/MCPurVehicleList.h"
+#include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
@@ -3941,6 +3947,8 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     constexpr int32_t SettleFrames = 30;
     // The purchase screen's tabs (MCLogistics::CurrentInvTab), and the stock its store is given to show.
     constexpr int32_t MechTab = 0;
+    constexpr int32_t PilotTab = 1;
+    constexpr int32_t ComponentTab = 2;
     constexpr int32_t VehicleTab = 3;
     constexpr int32_t StockShown = 2;
     // With --hd-audit-menus 1, every screen's draws are tallied as --hd-audit tallies a battle's.
@@ -3990,9 +3998,18 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     GlobalLog()->SetUpPurchaseScreen(false);
     shoot("purchase_vehicles");
     MCTestGame::StockStore(StockShown);
+    // One of the first vehicle bought (the inventory list shows it, with its diagram).
+    GlobalLog()->PurVehicleList->Vehicles.front()->Block->OnBuyConfirmed(1, 1);
     shoot("purchase_vehicles_stocked");
+    GlobalLog()->CurrentInvTab = PilotTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_pilots");
+    GlobalLog()->CurrentInvTab = ComponentTab;
+    GlobalLog()->SetUpPurchaseScreen(false);
+    shoot("purchase_components");
     GlobalLog()->CurrentInvTab = MechTab;
     GlobalLog()->SetUpPurchaseScreen(false);
+    GlobalLog()->PurMechList->Mechs.front()->Block->OnBuyConfirmed(1, 1);
     shoot("purchase_stocked");
     AuditLabel = "to repair";
     GlobalLog()->SetUpRepairScreen(true);
@@ -5793,7 +5810,7 @@ namespace
     };
 
     /// <summary>The screen's indices with its top band (the ticker and the clock, which move on) left out.</summary>
-    std::vector<uint8_t> StoreIndices()
+    std::vector<uint8_t> LogisticsIndices()
     {
         constexpr size_t ChromeRows = 0x10;
         std::vector<uint8_t> shown = MCInput::Display()->ComposeScreen();
@@ -5801,6 +5818,82 @@ namespace
         shown.erase(shown.begin(),
                     shown.begin() + static_cast<std::ptrdiff_t>(std::min(shown.size(), width * ChromeRows)));
         return shown;
+    }
+
+    /// <summary>The frames a logistics screen is run for before it is looked at (a screen change's wipe settles).</summary>
+    constexpr int32_t LogisticsSettleFrames = 30;
+
+    void SettleLogistics()
+    {
+        for (int32_t frame = 0; frame < LogisticsSettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Boots to logistics with the GPU drawing alone in a 1280x960 window (a screen drawn sharp at twice its size with
+    /// HD art on) and starts a new campaign; null when the GPU can't draw alone.
+    /// </summary>
+    std::shared_ptr<MCVulkanRenderer> StartSharpLogistics()
+    {
+        constexpr int32_t Width = 1280;
+        constexpr int32_t Height = 960;
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        REQUIRE(MCTestGame::StartLogistics());
+        REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+        REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
+        SDL_SyncWindow(&MCInput::Display()->Window());
+        NewCampaign();
+        return std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    }
+
+    /// <summary>
+    /// Shows the logistics screen as it stands with HD art off, then on with <paramref name="pack"/> (the logistics'
+    /// shapes tied to it; from the first frame drawn sharp, every draw given to <paramref name="audit"/>), and checks
+    /// it keeps the indices it had (its top band left out).
+    /// </summary>
+    void CheckSharpKeepsIndices(const std::filesystem::path& pack, MCVulkanRenderer& renderer,
+                                std::function<void(const MCVulkanRenderer::AuditedDraw&)> audit)
+    {
+        SettleLogistics();
+        const std::vector<uint8_t> plain = LogisticsIndices();
+        GHdArt = 1;
+        MCHdArt::SetPackFolder(pack);
+        GlobalLog()->AttachHdArt();
+        // The screen is drawn at the window's size from the frame after HD art comes on.
+        MCTestGame::RunFrame(FrameSeconds);
+        renderer.Audit = std::move(audit);
+        SettleLogistics();
+        const std::vector<uint8_t> sharp = LogisticsIndices();
+        renderer.Audit = nullptr;
+        GHdArt = 0;
+        MCHdArt::SetPackFolder({});
+        REQUIRE_EQ(sharp.size(), plain.size());
+        CHECK(sharp == plain);
+
+        if (sharp != plain)
+        {
+            // Where they differ (window pixels below the top band).
+            const auto width = static_cast<size_t>(MCInput::Display()->Screen().XMax) + 1;
+            MCRect differs{std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max(), -1, -1};
+            size_t count = 0;
+
+            for (size_t i = 0; i < sharp.size(); ++i)
+            {
+                if (sharp[i] != plain[i])
+                {
+                    const auto x = static_cast<int32_t>(i % width);
+                    const auto y = static_cast<int32_t>(i / width);
+                    differs = MCRect{std::min(differs.X0, x), std::min(differs.Y0, y), std::max(differs.X1, x),
+                                     std::max(differs.Y1, y)};
+                    ++count;
+                }
+            }
+
+            std::cout << std::format("  {} pixels differ, in ({}, {})..({}, {}) below the top band\n", count,
+                                     differs.X0, differs.Y0, differs.X1, differs.Y1);
+        }
     }
 }
 
@@ -5817,19 +5910,9 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
         return;
     }
 
-    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
-    REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
-    constexpr int32_t Width = 1280;
-    constexpr int32_t Height = 960;
-    constexpr int32_t SettleFrames = 30;
-    REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), Width, Height));
-    SDL_SyncWindow(&MCInput::Display()->Window());
-    NewCampaign();
-    GlobalLog()->SetUpPurchaseScreen(false);
-    const std::shared_ptr<MCVulkanRenderer> renderer =
-        std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
     REQUIRE(renderer != nullptr);
+    GlobalLog()->SetUpPurchaseScreen(false);
 
     // A pack of the mechs' repair shapes (under their bytes' hashes) but their sold-out outlines, which only line art
     // can draw sharp, and the icons.
@@ -5874,47 +5957,26 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
         return std::nullopt;
     };
 
-    const auto settle = []
-    {
-        for (int32_t frame = 0; frame < SettleFrames; ++frame)
-        {
-            MCTestGame::RunFrame(FrameSeconds);
-        }
-    };
-
     // The store with HD art off, then on (its draws audited), and whether they show the same indices.
     const auto compare = [&](std::string_view what)
     {
         MCTest::Scope scope{std::string(what)};
-        settle();
-        const std::vector<uint8_t> plain = StoreIndices();
-        GHdArt = 1;
-        MCHdArt::SetPackFolder(pack);
-        GlobalLog()->AttachHdArt();
-        // The screen is drawn at the window's size from the frame after HD art comes on.
-        MCTestGame::RunFrame(FrameSeconds);
         MCStoreDraws draws;
-        renderer->Audit = [&](const MCVulkanRenderer::AuditedDraw& draw)
-        {
-            if (draw.Command != "Shape")
-            {
-                return;
-            }
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   if (draw.Command != "Shape")
+                                   {
+                                       return;
+                                   }
 
-            if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame); kind.has_value())
-            {
-                ++draws.All[static_cast<size_t>(*kind)];
-                draws.Sharp[static_cast<size_t>(*kind)] += draw.Sharp ? 1 : 0;
-            }
-        };
-
-        settle();
-        const std::vector<uint8_t> sharp = StoreIndices();
-        renderer->Audit = nullptr;
-        GHdArt = 0;
-        MCHdArt::SetPackFolder({});
-        REQUIRE_EQ(sharp.size(), plain.size());
-        CHECK(sharp == plain);
+                                   if (const std::optional<MCStoreShape> kind = kindOf(draw.Data.data(), draw.Frame);
+                                       kind.has_value())
+                                   {
+                                       ++draws.All[static_cast<size_t>(*kind)];
+                                       draws.Sharp[static_cast<size_t>(*kind)] += draw.Sharp ? 1 : 0;
+                                   }
+                               });
         std::cout << std::format("  {}: outlines {}/{}, pictures {}/{}, diagrams {}/{} sharp\n", what,
                                  draws.SharpOf(MCStoreShape::Outline), draws.AllOf(MCStoreShape::Outline),
                                  draws.SharpOf(MCStoreShape::Picture), draws.AllOf(MCStoreShape::Picture),
@@ -5931,6 +5993,83 @@ TEST_CASE_ISOLATED("game: HD art draws the purchase screen's mech pictures and o
     CHECK(stocked.AllOf(MCStoreShape::Picture) > 0);
     CHECK(stocked.AllOf(MCStoreShape::Diagram) > 0);
     std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// The logistics' pictures the game put together once and copied each frame are drawn in place, keeping the indices
+/// with HD art on: the mission tab's briefing text (no copy of its 0xb3-wide picture; its letters drawn on the screen),
+/// the component rows' icons (their component pictures, lscicc##, copied onto the screen) and the scroll columns
+/// (their track tiles, scroll.tga, copied onto the screen).
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place and keeps their indices")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartSharpLogistics();
+    REQUIRE(renderer != nullptr);
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_composed");
+    constexpr int32_t MissionPictureWidth = 0xb3;
+    constexpr int32_t ComponentTab = 2;
+    // Whether a draw copies one of the logistics art pictures named.
+    const auto fromArt = [](const MCVulkanRenderer::AuditedDraw& draw, const std::set<std::string>& names)
+    {
+        return draw.Command == "Copy" && draw.From != nullptr &&
+               std::ranges::any_of(names,
+                                   [&](const std::string& name)
+                                   {
+                                       const std::shared_ptr<MCTexture> art =
+                                           LogScreenArt(name)->Bitmap().Texture.lock();
+                                       return art != nullptr && draw.From->Texture.lock() == art;
+                                   });
+    };
+
+    {
+        MCTest::Scope scope("the mission tab");
+        // The briefing first starts its operation movie (its tab), then the mission tab is chosen.
+        SettleLogistics();
+        GlobalLog()->BriefingScreen->SetUpMission();
+        int32_t pictureCopies = 0;
+        int32_t glyphs = 0;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   pictureCopies += draw.Command == "Copy" && draw.From != nullptr &&
+                                                            draw.From->XMax + 1 == MissionPictureWidth
+                                                        ? 1
+                                                        : 0;
+                                   glyphs += draw.Command == "Glyph" && draw.Sharp ? 1 : 0;
+                               });
+        CHECK_EQ(pictureCopies, 0);
+        CHECK(glyphs > 0);
+    }
+
+    {
+        MCTest::Scope scope("the component tab");
+        GlobalLog()->CurrentInvTab = ComponentTab;
+        GlobalLog()->SetUpPurchaseScreen(false);
+        std::set<std::string> componentPictures;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->ComponentInventory->Items)
+        {
+            componentPictures.insert(item->InventoryBlock->IconArt.Picture);
+        }
+
+        REQUIRE(!componentPictures.empty());
+        const std::set<std::string> track = {"scroll.tga"};
+        int32_t pictures = 0;
+        int32_t tracks = 0;
+        CheckSharpKeepsIndices(pack, *renderer,
+                               [&](const MCVulkanRenderer::AuditedDraw& draw)
+                               {
+                                   pictures += fromArt(draw, componentPictures) ? 1 : 0;
+                                   tracks += fromArt(draw, track) ? 1 : 0;
+                               });
+        CHECK(pictures > 0);
+        CHECK(tracks > 0);
+    }
 }
 
 /// <summary>

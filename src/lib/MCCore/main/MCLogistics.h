@@ -96,6 +96,26 @@ public:
     static void DrawVehicleBodyLoc(MCLogVehicle& vehicle, int32_t location, MCLogPort& port, int32_t xPos,
                                    int32_t yPos);
 
+    /// <summary>
+    /// Port: the damage state <see cref="DrawMechBodyLoc"/> draws location <paramref name="location"/> of a mech in
+    /// (-1 undamaged, 0..3 worse).
+    /// </summary>
+    static int32_t MechBodyLocState(const MCLogMech& mech, int32_t location);
+
+    /// <summary>
+    /// Port: the damage state <see cref="DrawVehicleBodyLoc"/> draws location <paramref name="location"/> of a vehicle
+    /// in; none for a location without armor, which it doesn't draw.
+    /// </summary>
+    static std::optional<int32_t> VehicleBodyLocState(const MCLogVehicle& vehicle, int32_t location);
+
+    /// <summary>
+    /// Port: draws diagram shape <paramref name="location"/> of <paramref name="shapes"/> (a mech's or vehicle's icon
+    /// shapes) in damage state <paramref name="state"/> at (<paramref name="xPos"/>, <paramref name="yPos"/>) of
+    /// <paramref name="port"/>, as <see cref="DrawMechBodyLoc"/> does.
+    /// </summary>
+    static void DrawBodyLoc(std::span<const uint8_t> shapes, int32_t location, int32_t state, MCLogPort& port,
+                            int32_t xPos, int32_t yPos);
+
     /// <summary>Makes the multiplayer lists and drop slots and reads the net mech/warrior/vehicle lists.</summary>
     void InitializeMultiplayer();
 

@@ -29,6 +29,9 @@ public:
     /// <returns>The height used, as <see cref="Process"/>.</returns>
     int32_t ProcessFile(std::string_view fileName, MCOptionalRef<MCGuiPort> port, int32_t width);
 
+    /// <summary>The text of the file <paramref name="fileName"/> as <see cref="ProcessFile"/> formats it.</summary>
+    static std::string ReadFile(std::string_view fileName);
+
     /// <summary>
     /// Formats <paramref name="text"/> (up to a NUL) into <paramref name="port"/> starting at line
     /// <paramref name="startY"/>; <paramref name="width"/> is the wrap width when there is no port (otherwise the

@@ -44,8 +44,25 @@ public:
     /// </summary>
     void OnSellConfirmed(int32_t result) const;
 
-    /// <summary>The cached small damage diagram (0x1c x 0x1e).</summary>
-    std::shared_ptr<MCLogPort> DiagramPort;
+    /// <summary>The body locations the diagram shows.</summary>
+    static constexpr int32_t DiagramLocations = 8;
+
+    /// <summary>
+    /// Port: the small damage diagram (0x1c x 0x1e) as <see cref="DrawBackground"/> made it: each location's damage
+    /// state and the battle rating bar's length. The original kept a picture of it until
+    /// <see cref="DeleteDiagram"/>; it is drawn in place from this (<see cref="PaintDiagram"/>), so with HD art on it
+    /// shows from the pack.
+    /// </summary>
+    struct DiagramLook
+    {
+        std::array<int32_t, DiagramLocations> States{};
+        int32_t Bar = 0;
+    };
+
+    std::optional<DiagramLook> Diagram;
+
+    /// <summary>Draws the diagram into <paramref name="port"/> (its corner at 0, 0), as the original's picture held it.</summary>
+    void PaintDiagram(MCLogPort& port) const;
     /// <summary>The mech (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogMech> Mech() const { return _Mech.lock(); }
 

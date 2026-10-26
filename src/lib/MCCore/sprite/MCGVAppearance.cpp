@@ -433,6 +433,7 @@ auto MCGVAppearance::DrawBars() -> void
     }
 
     data.BarPercent = static_cast<int32_t>(barLength);
+    data.MeasuredBar = barLength;
 
     if (data.BarPercent > 0)
     {

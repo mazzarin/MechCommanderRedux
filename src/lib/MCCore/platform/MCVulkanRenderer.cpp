@@ -41,6 +41,8 @@ namespace
     constexpr uint32_t KindSmoothMap = 10;
     /// <summary>Port-only: a flat or Gouraud polygon's colour pass at the output's resolution (a laser's beam).</summary>
     constexpr uint32_t KindSmoothPolygon = 11;
+    /// <summary>Port-only: a status bar's part at the output's resolution, its fill ending where the game measured it.</summary>
+    constexpr uint32_t KindSmoothBar = 12;
     /// <summary>The kind's bits of a draw's op.</summary>
     constexpr uint32_t KindMask = 15;
     constexpr uint32_t OpaqueSource = 1u << 4;
@@ -845,7 +847,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         _Audited->Pixels += static_cast<int64_t>(draw[2] - draw[0] + 1) * (draw[3] - draw[1] + 1);
         _Audited->Sharp |= kind == KindHd || kind == KindHdMap || kind == KindSmoothMap || kind == KindSmoothPolygon ||
                            kind == KindSharpGlyph || kind == KindSmoothLine || kind == KindSmoothEllipse ||
-                           (op & SmoothEdges) != 0;
+                           kind == KindSmoothBar || (op & SmoothEdges) != 0;
     }
 
     draw[8] = static_cast<int32_t>(op);
@@ -2997,19 +2999,32 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
     const auto fill = static_cast<uint32_t>(command.AlphaColor);
     const MCRect& box = command.Box;
     const int32_t width = box.X1 - box.X0;
-    const uint32_t op = KindFill | AlphaBlend | GivenAlpha;
+    const auto blends = [](uint32_t color) { return color < SpecialColor.size() && SpecialColor[color] != 0; };
+
+    // Port-only: on a surface shown at the output's resolution with HD art on, a bar that blends (an opaque colour
+    // writes indices) is drawn there (KindSmoothBar): its fill ends where the game measured it, inside its last pixel;
+    // its frame, on whole pixels, as before.
+    const bool smooth = ScaledHdArt(surface) && blends(frame) && blends(fill);
+    const uint32_t op = (smooth ? KindSmoothBar : KindFill) | AlphaBlend | GivenAlpha;
 
     // The frame's top and bottom rows (the pixels between the corners), then the body rows: their left and right
     // pixels through the frame's table, then the bar through the fill's. A pixel the bar shares with the right
-    // edge is mapped by both, in that order (each part reads the pixels the one before left).
+    // edge is mapped by both, in that order (each part reads the pixels the one before left). A smooth part ends at
+    // window x right (exclusive).
     bool join = false;
-    const auto add = [&](int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t table, bool joins)
+    const auto add = [&](int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t table, bool joins,
+                         std::optional<float> right = std::nullopt)
     {
         const Quad at = {x0, y0, x1, y1};
 
         if (Add(surface, SourceKind::None, 0, at, std::nullopt, op, 0, 0, table, joins && join))
         {
             join = true;
+
+            if (smooth)
+            {
+                _Draws.back()[12] = std::bit_cast<int32_t>(right.value_or(static_cast<float>(x1 + 1)));
+            }
         }
     };
 
@@ -3053,9 +3068,14 @@ void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& com
 
     if (command.BarLength != 0)
     {
+        // The measured length reaches into the pixel past the last one the rounded length fills.
+        const float right =
+            static_cast<float>(box.X0 + 2) + (smooth ? command.FillLength : static_cast<float>(command.BarLength));
+        const int32_t last = static_cast<int32_t>(std::ceil(right)) - 1;
+
         for (const auto& [y0, y1] : body)
         {
-            add(box.X0 + 1, y0, box.X0 + command.BarLength + 1, y1, fill, false);
+            add(box.X0 + 1, y0, last, y1, fill, false, right);
         }
     }
 }

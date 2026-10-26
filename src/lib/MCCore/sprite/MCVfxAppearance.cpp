@@ -441,6 +441,7 @@ auto MCDrawDamageBar(const MCAppearance& appearance, std::shared_ptr<MCAppearanc
     }
 
     data.BarPercent = static_cast<int32_t>(barLength);
+    data.MeasuredBar = barLength;
 
     if (data.BarPercent > 0)
     {

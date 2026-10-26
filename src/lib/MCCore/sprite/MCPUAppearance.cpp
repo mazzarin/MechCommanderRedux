@@ -430,6 +430,7 @@ auto MCPUAppearance::DrawBars() -> void
     data.Vertices[1].X = static_cast<int32_t>(barX + barWidth + 1.0f);
     data.Vertices[1].Y = static_cast<int32_t>(barY + barHeight + 1.0f);
     data.BarPercent = static_cast<int32_t>(barLength);
+    data.MeasuredBar = barLength;
 
     if (data.BarPercent > 0)
     {

@@ -5991,6 +5991,142 @@ TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolu
 }
 
 /// <summary>
+/// With HD art on, a health bar is drawn at the output's resolution: its fill ends where the game measured it, inside its
+/// last window pixel. Two bars over one colour on mission 1's screen (shown larger), one measured a whole number of
+/// pixels long and one half a pixel longer, show alike with HD art off (the original rounds the length down) and differ
+/// with it on, only about the first's fill's end; the screen's indices under them are the same either way.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a health bar's fill as long as measured, at the output's resolution")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_health_bar");
+    MCPane& screen = ScreenPort()->Frame();
+    const std::shared_ptr<MCWindow> window = screen.Window.lock();
+    REQUIRE(window != nullptr);
+    // A mech's bar (MCMechActor's): a box 40 pixels wide and 6 high, green, its fill half full; the second bar Gap rows
+    // below the first.
+    constexpr int32_t BoxWidth = 40;
+    constexpr int32_t BoxHeight = 6;
+    constexpr int32_t Length = 19;
+    constexpr float HalfPixel = 0.5f;
+    constexpr int32_t Gap = 20;
+    constexpr int32_t Green = 0x101;
+    constexpr int32_t Background = 0x30;
+    const int32_t x0 = screen.X0 + (screen.X1 - screen.X0) / 2 - BoxWidth / 2;
+    const int32_t y0 = screen.Y0 + (screen.Y1 - screen.Y0) / 2;
+    constexpr int32_t Margin = 2;
+    const MCRect under{x0 - Margin, y0 - Margin, x0 + BoxWidth + Margin, y0 + Gap + BoxHeight + Margin};
+
+    struct Drawn
+    {
+        Shown Seen;
+        std::vector<uint8_t> Indices;
+    };
+
+    const auto draw = [&](bool hd)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (hd)
+        {
+            on.emplace(pack);
+        }
+
+        MCTestGame::RunFrame(FrameSeconds);
+        VfxPaneWipe(MCPane{window, under.X0, under.Y0, under.X1, under.Y1}, Background);
+        AGStatusBar(screen, x0, y0, x0 + BoxWidth, y0 + BoxHeight, Green, Length, static_cast<float>(Length));
+        AGStatusBar(screen, x0, y0 + Gap, x0 + BoxWidth, y0 + Gap + BoxHeight, Green, Length,
+                    static_cast<float>(Length) + HalfPixel);
+        Drawn drawn;
+        drawn.Seen = ReadShown(pack.parent_path());
+        drawn.Indices = MCInput::Display()->ComposeScreen();
+        return drawn;
+    };
+
+    GamePaused = true;
+    const Drawn plain = draw(false);
+    const Drawn sharp = draw(true);
+    GamePaused = false;
+
+    // The shown pixels of the first bar's box against the second's, Gap window rows (a whole number of shown rows)
+    // below; the window column of each that differs.
+    const int32_t width = MCInput::Display()->Width();
+    REQUIRE(width > 0);
+    const float scale = static_cast<float>(sharp.Seen.Width) / static_cast<float>(width);
+    const float rows = static_cast<float>(Gap) * scale;
+    constexpr float Whole = 0.01f;
+    REQUIRE(std::abs(rows - std::round(rows)) < Whole);
+    const auto offset = static_cast<int32_t>(std::round(rows));
+    const auto differing = [&](const Shown& seen)
+    {
+        std::set<int32_t> columns;
+        int32_t count = 0;
+
+        for (auto y = static_cast<int32_t>(static_cast<float>(y0) * scale);
+             y < static_cast<int32_t>(static_cast<float>(y0 + BoxHeight + 1) * scale); ++y)
+        {
+            for (auto x = static_cast<int32_t>(static_cast<float>(x0) * scale);
+                 x < static_cast<int32_t>(static_cast<float>(x0 + BoxWidth + 1) * scale); ++x)
+            {
+                const size_t a = (static_cast<size_t>(y) * seen.Width + x) * BytesPerPixel;
+                const size_t b = (static_cast<size_t>(y + offset) * seen.Width + x) * BytesPerPixel;
+
+                if (std::memcmp(&seen.Pixels[a], &seen.Pixels[b], 3) != 0)
+                {
+                    ++count;
+                    columns.insert(static_cast<int32_t>((static_cast<float>(x) + HalfPixel) / scale));
+                }
+            }
+        }
+
+        std::cout << std::format("  {} shown pixels differ between the bars\n", count);
+        return columns;
+    };
+
+    CHECK(differing(plain.Seen).empty());
+    const std::set<int32_t> columns = differing(sharp.Seen);
+    // The first bar, on whole pixels, shows as with HD art off.
+    const MCRect first{static_cast<int32_t>(static_cast<float>(under.X0) * scale),
+                       static_cast<int32_t>(static_cast<float>(under.Y0) * scale),
+                       static_cast<int32_t>(static_cast<float>(x0 + BoxWidth + 1) * scale) - 1,
+                       static_cast<int32_t>(static_cast<float>(y0 + BoxHeight + 1) * scale) - 1};
+    CHECK_EQ(Compare(plain.Seen, sharp.Seen, first).Count, 0);
+    // The rounded fill's last pixel is x0 + Length + 1; the measured one ends half way across the next.
+    const int32_t last = x0 + Length + 1;
+    CHECK(!columns.empty());
+    CHECK(std::ranges::all_of(columns, [&](int32_t column) { return column == last || column == last + 1; }));
+
+    // The indices under the bars are the same with HD art on.
+    REQUIRE_EQ(sharp.Indices.size(), plain.Indices.size());
+    int32_t kept = 0;
+    int32_t pixels = 0;
+
+    for (int32_t y = under.Y0; y <= under.Y1; ++y)
+    {
+        for (int32_t x = under.X0; x <= under.X1; ++x)
+        {
+            const size_t at = static_cast<size_t>(y) * width + x;
+            kept += plain.Indices[at] == sharp.Indices[at] ? 1 : 0;
+            ++pixels;
+        }
+    }
+
+    CHECK_EQ(kept, pixels);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
 /// With HD art on, a flat or Gouraud polygon (a laser's beam) is drawn at the output's resolution: its slanted edges
 /// show pixels between its colour and what lies under it, which the original's whole pixels never do.
 /// </summary>

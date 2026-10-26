@@ -106,6 +106,9 @@ static const uint KindHdMap = 9;
 static const uint KindSmoothMap = 10;
 // Port-only: a flat or Gouraud polygon (a laser's beam) at the output's resolution, its edges smooth (SmoothPolygonPixel).
 static const uint KindSmoothPolygon = 11;
+// Port-only: a status bar's part (a health bar's) at the output's resolution, its fill ending where the game measured it
+// (SmoothBarPixel).
+static const uint KindSmoothBar = 12;
 
 // Flags (op.x).
 static const uint OpaqueSource = 1u << 4;
@@ -750,6 +753,22 @@ Output SmoothPolygonPixel(Input input, int2 target)
     return Blended(float4(Shown(index), 1.0) * coverage);
 }
 
+// Port-only: a status bar's part at the output's resolution (KindSmoothBar): alpha colour op.w blended over the
+// rectangle as a fill's, its right edge at window x asfloat(span.x), so a health bar's fill ends where the game measured
+// it, the drawn pixel the edge crosses covered in part. Premultiplied, through the blend pipeline.
+Output SmoothBarPixel(Input input, int2 target)
+{
+    const float right = asfloat(input.span.x) * (float)scale.z / (float)scale.x;
+    const float coverage = saturate(right - (float)target.x);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(Fetch(alphaTex, alphaSampler, int2((int)input.op.w, 1)) * coverage);
+}
+
 Output main(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
@@ -792,6 +811,11 @@ Output main(Input input)
     if (kind == KindSmoothPolygon)
     {
         return SmoothPolygonPixel(input, target);
+    }
+
+    if (kind == KindSmoothBar)
+    {
+        return SmoothBarPixel(input, target);
     }
 
     const uint color = input.op.y & 255u;

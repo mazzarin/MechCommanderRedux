@@ -12,6 +12,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
+#include "gui/MCHardwareCursor.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFastFile.h"
@@ -4890,4 +4891,105 @@ TEST_CASE_ISOLATED("game: HD art draws the tactical map's fog of war with smooth
     CHECK_EQ(polygons, 2);
     CHECK_EQ(sharp, 1);
     std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
+/// The system cursor's pictures come from the HD art pack: with HD art on and a pack holding a cursor shape's frame (its
+/// PAK packet found by its bytes' hash, as the renderer finds it), the shape's picture has an HD copy, at the pack's
+/// scale; without the pack, none.
+/// </summary>
+TEST_CASE_ISOLATED("game: the system cursor's pictures come from the HD art pack")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::span<const MCRegisteredBlock> shapes = GuiSystem().CursorShapes();
+    const auto cursor = std::ranges::find_if(shapes, [](const MCRegisteredBlock& shape) { return !shape.Empty(); });
+    REQUIRE(cursor != shapes.end());
+    const std::optional<LooseTable> table = MakeLooseTable(cursor->Bytes(), "cursor");
+    REQUIRE(table.has_value());
+    REQUIRE(table->Frames.Frames[0].Width > 0);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_cursor";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    WritePack(pack, std::span(&table->Frames, 1), colors, TestPackScale, Inverted);
+    WritePaletteRgb(pack, colors);
+
+    CHECK(MCCursorImageFromShape(cursor->Bytes(), 0).Hd == nullptr);
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    const MCCursorImage image = MCCursorImageFromShape(cursor->Bytes(), 0);
+    hdArt.reset();
+    REQUIRE(image.Hd != nullptr);
+    CHECK_EQ(image.Hd->Scale, TestPackScale);
+    CHECK_EQ(image.Hd->Rgba.size(),
+             static_cast<size_t>(image.Width) * image.Height * TestPackScale * TestPackScale * 4);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Tool: <c>--hd-cursors &lt;pack&gt; --shots &lt;folder&gt;</c> pictures every cursor shape as the system cursor
+/// shows it on a Retina MacBook (the UI 720 lines tall in 1890 pixels): <c>cursor_&lt;n&gt;.png</c>, the original
+/// scaled by the nearest pixel beside the HD art pack's copy.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-cursors pictures the cursors beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-cursors");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    REQUIRE(MCTestGame::StartMission(1));
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    constexpr float RetinaScale = 1890.0f / 720.0f;
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const std::span<const MCRegisteredBlock> shapes = GuiSystem().CursorShapes();
+    MCHdArtOn hdArt(packFolder);
+    int32_t pictured = 0;
+    int32_t hd = 0;
+
+    for (size_t i = 0; i < shapes.size(); ++i)
+    {
+        if (shapes[i].Empty())
+        {
+            continue;
+        }
+
+        MCCursorImage image = MCCursorImageFromShape(shapes[i].Bytes(), 0);
+
+        if (image.Width == 0)
+        {
+            continue;
+        }
+
+        const MCCursorBitmap smooth = MCCursor::Rasterize(image, colors, RetinaScale, RetinaScale);
+        hd += image.Hd != nullptr ? 1 : 0;
+        image.Hd.reset();
+        const MCCursorBitmap original = MCCursor::Rasterize(image, colors, RetinaScale, RetinaScale);
+        std::vector<uint8_t> both(static_cast<size_t>(original.Width) * 2 * original.Height * 4, 0);
+
+        for (int32_t y = 0; y < original.Height; ++y)
+        {
+            const size_t row = static_cast<size_t>(original.Width) * 4;
+            std::ranges::copy_n(original.Rgba.begin() + static_cast<ptrdiff_t>(y * row), static_cast<ptrdiff_t>(row),
+                                both.begin() + static_cast<ptrdiff_t>(y * row * 2));
+            std::ranges::copy_n(smooth.Rgba.begin() + static_cast<ptrdiff_t>(y * row), static_cast<ptrdiff_t>(row),
+                                both.begin() + static_cast<ptrdiff_t>(y * row * 2 + row));
+        }
+
+        SavePng(folder / std::format("cursor_{}.png", i), original.Width * 2, original.Height, both);
+        ++pictured;
+    }
+
+    std::cout << std::format("  {} cursors pictured, {} from the pack\n", pictured, hd);
 }

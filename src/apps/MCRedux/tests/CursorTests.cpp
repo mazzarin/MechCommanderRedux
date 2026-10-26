@@ -162,6 +162,53 @@ TEST_CASE("cursor: Rasterize scales by the nearest pixel and puts the hot spot o
     CHECK_EQ(red(stretched, 2, 0), 'B');
 }
 
+/// <summary>
+/// Port-only: a picture with an HD copy is drawn from it, between its pixels (so its edges are smooth at any size), each
+/// colour corrected by today's colour of the original pixel under it against the pack's.
+/// </summary>
+TEST_CASE("cursor: Rasterize draws a picture's HD copy smoothly, in today's colours")
+{
+    constexpr uint8_t Left = 1;
+    constexpr uint8_t Right = 2;
+    constexpr int HdScale = 2;
+    // The pack's colours of the two pixels, and today's: the left one half as bright now.
+    constexpr std::array<uint8_t, 3> LeftThen = {200, 40, 40};
+    constexpr std::array<uint8_t, 3> RightThen = {40, 40, 200};
+    MCCursorImage image = FromRows({"\x01\x02"}, 0, 0);
+    auto hd = std::make_shared<MCCursorHd>();
+    hd->Scale = HdScale;
+    hd->MadeWith.assign(768, 0);
+    std::ranges::copy(LeftThen, hd->MadeWith.begin() + Left * 3);
+    std::ranges::copy(RightThen, hd->MadeWith.begin() + Right * 3);
+
+    for (int y = 0; y < HdScale; ++y)
+    {
+        for (int x = 0; x < 2 * HdScale; ++x)
+        {
+            const std::array<uint8_t, 3>& color = x < HdScale ? LeftThen : RightThen;
+            hd->Rgba.insert(hd->Rgba.end(), {color[0], color[1], color[2], 255});
+        }
+    }
+
+    image.Hd = hd;
+    std::array<SDL_Color, 256> colors{};
+    colors[Left] = SDL_Color{100, 20, 20, 255};
+    colors[Right] = SDL_Color{40, 40, 200, 255};
+    constexpr float Scale = 4.0f;
+    const MCCursorBitmap bitmap = MCCursor::Rasterize(image, colors, Scale, Scale);
+    REQUIRE_EQ(bitmap.Width, 8);
+    REQUIRE_EQ(bitmap.Height, 4);
+    const auto pixel = [&](int x, int y)
+    { return std::span(bitmap.Rgba).subspan(static_cast<size_t>((y * bitmap.Width + x) * 4), 4); };
+
+    CHECK_EQ(pixel(1, 1)[0], 100);
+    CHECK_EQ(pixel(1, 1)[3], 255);
+    CHECK_EQ(pixel(6, 2)[2], 200);
+    // Where the two meet, a colour between them (the nearest pixel would give one or the other).
+    CHECK(pixel(4, 1)[0] > RightThen[0]);
+    CHECK(pixel(4, 1)[0] < LeftThen[0]);
+}
+
 TEST_CASE("cursor: a pane becomes an opaque picture with the given hot spot")
 {
     // A 3x2 pane at (1, 1) inside a 5x4 window.

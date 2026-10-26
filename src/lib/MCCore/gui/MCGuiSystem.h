@@ -211,6 +211,9 @@ public:
         return _CursorShapes[static_cast<size_t>(index)].Bytes();
     }
 
+    /// <summary>Port-only: every cursor's shape table (the hardware cursor makes its pictures from them).</summary>
+    std::span<const MCRegisteredBlock> CursorShapes() const { return _CursorShapes; }
+
     /// <summary>Where the mouse scrolls the map: outside (1, 1)..(width - 4, height - 4).</summary>
     tagRECT ScrollRect = {};
     std::unique_ptr<MCGuiTimerManager> TimerManager;

@@ -4,6 +4,18 @@
 /// An 8-bit cursor picture: palette indices, which of them show, and the hot spot (the pixel the mouse position is
 /// on). The hot spot is always inside the picture.
 /// </summary>
+/// <summary>
+/// Port-only: a cursor picture's HD copy (the HD art pack's frame of its shape): premultiplied RGBA at <see cref="Scale"/>
+/// times the picture's size, and the colours the pack was made from (768 bytes; none: shown as made), by which today's
+/// palette corrects it as the GPU corrects the pack's frames.
+/// </summary>
+struct MCCursorHd
+{
+    int Scale = 1;
+    std::vector<uint8_t> Rgba;
+    std::vector<uint8_t> MadeWith;
+};
+
 struct MCCursorImage
 {
     int Width = 0;
@@ -14,6 +26,11 @@ struct MCCursorImage
     std::vector<uint8_t> Pixels;
     /// <summary>1 where the pixel shows, 0 where it is transparent; as <see cref="Pixels"/>.</summary>
     std::vector<uint8_t> Opaque;
+    /// <summary>
+    /// Port-only: the picture's HD copy, shown instead of its pixels (smoothly, at the size it is shown); none for a
+    /// picture the pack has no frame of. A picture made from others (an overlay, a grown one) has none.
+    /// </summary>
+    std::shared_ptr<const MCCursorHd> Hd;
 
     bool operator==(const MCCursorImage&) const = default;
 
@@ -79,8 +96,9 @@ namespace MCCursor
 
     /// <summary>
     /// <paramref name="image"/> in <paramref name="colors"/> scaled by <paramref name="scaleX"/> x
-    /// <paramref name="scaleY"/> (nearest pixel), transparent pixels alpha 0. The hot spot lands on the top-left of
-    /// its scaled pixel.
+    /// <paramref name="scaleY"/> (nearest pixel), transparent pixels alpha 0; or, when it has an HD copy, that copy
+    /// sampled between its pixels and corrected by <paramref name="colors"/>. The hot spot lands on the top-left of its
+    /// scaled pixel.
     /// </summary>
     MCCursorBitmap Rasterize(const MCCursorImage& image, const std::array<SDL_Color, 256>& colors, float scaleX,
                              float scaleY);

@@ -52,3 +52,4 @@ The first command exercises synthetic decoding, streaming, seek, EOF padding, sh
 music selection, controls and fallback. The second checks all supplied original assets against a generated pack
 using the engine's own PAK reader. Generation tools, measurements, sample-library/model notices and listening
 comparisons are maintained separately in the workspace's `tools/audio` and `audio/listen` folders.
+Pass `--hd-audio-samples-only 1` to that tool while the sample pack is ready and music is still being generated.

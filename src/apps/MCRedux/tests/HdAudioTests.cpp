@@ -274,6 +274,7 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
     } restore{previous};
     size_t samples = 0;
     size_t music = 0;
+    const bool samplesOnly = MCTest::Option("hd-audio-samples-only").has_value();
     const auto checkSample = [&](std::span<const uint8_t> wave)
     {
         const auto original = MCAudio::ParseWave(wave);
@@ -336,6 +337,11 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
         {
             if (name.starts_with("MUSIC"))
             {
+                if (samplesOnly)
+                {
+                    continue;
+                }
+
                 const auto path = MCHdAudio::Music(entry.path().string());
                 CHECK(path.has_value());
                 MCSoundResource stream(MCSoundResourceType::Stream, entry.path().string());
@@ -355,6 +361,6 @@ TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voic
     }
 
     CHECK(samples > 0);
-    CHECK(music > 0);
+    CHECK(music > 0 || samplesOnly);
     std::cout << "  verified " << music << " music tracks and " << samples << " samples with the engine's PAK reader\n";
 }

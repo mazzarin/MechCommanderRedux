@@ -2922,16 +2922,20 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
     REQUIRE(!shape->FrameList().empty());
     REQUIRE(MCAgShapeIsAlpha(shape->FrameList(), 0));
 
-    // The frame: nothing, light, black covering what is under it, and the opaque colour at half its brightness, by the
+    // The frame: the faint error a generated frame holds where it is empty (drawn: nothing, or stacked copies would add it
+    // up into a box), light, black covering what is under it, and the opaque colour at half its brightness, by the
     // original's columns.
     constexpr int32_t Scale = 2;
     constexpr SDL_Color Light = {90, 60, 30, 0};
+    // Light loses draw.pshader's floor (its LightFloor, in 8-bit steps), below which an effect's frame holds only error.
+    constexpr int32_t LightFloor = 6;
+    constexpr SDL_Color Error = {4, 4, 4, 3};
     constexpr SDL_Color Cover = {0, 0, 0, 255};
     const SDL_Color lit = {static_cast<uint8_t>(colors[opaque].r / 2), static_cast<uint8_t>(colors[opaque].g / 2),
                            static_cast<uint8_t>(colors[opaque].b / 2), 255};
     const auto frameColor = [&](int32_t column)
     {
-        return column == 0 ? SDL_Color{0, 0, 0, 0} : column < 3 ? Light : column < 5 ? Cover : lit;
+        return column == 0 ? Error : column < 3 ? Light : column < 5 ? Cover : lit;
     };
 
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_effect_frame";
@@ -2982,8 +2986,9 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
             }
             else if (column < 3)
             {
-                CHECK(sameAs(drawn, std::min(under.r + Light.r, 255), std::min(under.g + Light.g, 255),
-                             std::min(under.b + Light.b, 255)));
+                CHECK(sameAs(drawn, std::min(under.r + Light.r - LightFloor, 255),
+                             std::min(under.g + Light.g - LightFloor, 255),
+                             std::min(under.b + Light.b - LightFloor, 255)));
             }
             else if (column < 5)
             {
@@ -3412,6 +3417,28 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
 
 namespace
 {
+    /// <summary>
+    /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
+    /// copied from), and where.
+    /// </summary>
+    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
+
+    /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
+    struct AuditTally
+    {
+        int64_t Count = 0;
+        int64_t Pixels = 0;
+        bool Scaled = false;
+        std::span<const uint8_t> Data;
+        std::set<int32_t> Frames;
+    };
+
+    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
+    void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
+}
+
+namespace
+{
     /// <summary>The pictures a weapon of --hd-weapons gets: frames after it fires, spread over its flight and hit.</summary>
     constexpr int32_t WeaponShots = 6;
 
@@ -3437,10 +3464,10 @@ namespace
     /// <summary>
     /// Sends <paramref name="masterId"/>'s weapon effect from <paramref name="shooter"/>'s right arm to
     /// <paramref name="target"/>'s centre torso as a hit of MCBattleMech::FireWeapon launches it (its LaunchWeaponFX),
-    /// with a shot that does no damage, so the target stands for every weapon. Returns the effect.
+    /// with a shot doing <paramref name="damage"/> (none: the target stands for every weapon). Returns the effect.
     /// </summary>
     std::shared_ptr<MCGameObject> LaunchWeapon(MCBattleMech& shooter, const std::shared_ptr<MCBattleMech>& target,
-                                               int32_t masterId)
+                                               int32_t masterId, float damage = 0.0f)
     {
         const MCMasterComponent& weapon = MasterComponentList[static_cast<size_t>(masterId)];
         std::shared_ptr<MCGameObject> fx = CreateObject(static_cast<int32_t>(WeaponFXTable[weapon.WeaponEffect]));
@@ -3451,7 +3478,7 @@ namespace
         const int32_t targetHotSpot = target->BodyAt(MechCenterTorso).HotSpotNumber;
         const float entryAngle = target->RelFacingTo(shooter.GetPosition(), -1);
         const auto aim = [&](MCWeaponShotInfo& shot)
-        { shot.Init(source, masterId, 0.0f, MechCenterTorso, entryAngle); };
+        { shot.Init(source, masterId, damage, MechCenterTorso, entryAngle); };
         const auto launch = [&](auto& effect, MCWeaponShotInfo& shot)
         {
             aim(shot);
@@ -3584,6 +3611,77 @@ TEST_CASE_ISOLATED("tool: --hd-weapons pictures weapons firing beside the origin
         }
 
         std::cout << std::format("  {}: the shot flew {} frames\n", weapon.Name, lasted);
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-mech-death &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a mech's death: --hd-weapons' scene, the
+/// shot a PPC doing enough damage to destroy its target's centre torso, then a picture every few frames from its fall
+/// to its wreck (<c>death_&lt;frame&gt;_hd.png</c>, or with <c>--hd-original 1</c> without HD art). With
+/// <c>--hd-audit-frames n</c>, the draws of its first n frames are tallied as --hd-audit tallies a battle's (into
+/// <c>audit</c> in the folder).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-mech-death pictures a mech's death beside the original")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-mech-death");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const auto shooter = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId));
+    const auto target = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId + 1));
+    REQUIRE(shooter != nullptr);
+    REQUIRE(target != nullptr);
+    const MCVector3D from = shooter->GetPosition();
+    const MCVector3D to = target->GetPosition();
+    FaceMechTo(*shooter, to);
+    Eye()->ChangeTarget(nullptr, true);
+    Eye()->SetPosition(to);
+
+    // A PPC's master id, a hit no centre torso survives, and the pictures' spacing and the frames after the blast.
+    constexpr int32_t Ppc = 0x91;
+    constexpr float Lethal = 1000.0f;
+    constexpr int32_t Every = 3;
+    constexpr int32_t MostFrames = 600;
+    constexpr int32_t AfterBlast = 30;
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+    REQUIRE(renderer != nullptr);
+    const int32_t audited = std::stoi(std::string(MCTest::Option("hd-audit-frames").value_or("0")));
+    std::map<AuditKey, AuditTally> tally;
+    LaunchWeapon(*shooter, target, Ppc, Lethal);
+    int32_t blast = -1;
+
+    for (int32_t frame = 1; frame <= MostFrames && (blast < 0 || frame <= blast + AfterBlast); ++frame)
+    {
+        renderer->Audit = frame <= audited ? AuditInto(tally) : nullptr;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (blast < 0 && target->DeathExplosionDone)
+        {
+            blast = frame;
+        }
+
+        if (frame % Every == 0)
+        {
+            Shoot(folder, std::format("death_{:03}", frame), original);
+        }
+    }
+
+    renderer->Audit = nullptr;
+    std::cout << std::format("  destroyed: {}, blew up at frame {}\n", target->IsDestroyed() != 0, blast);
+    CHECK(blast > 0);
+
+    if (audited > 0)
+    {
+        ReportAudit(tally, folder / "audit", audited);
     }
 }
 
@@ -3770,28 +3868,6 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
     }
 
     std::filesystem::remove_all(scene->Scratch);
-}
-
-namespace
-{
-    /// <summary>
-    /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
-    /// copied from), and where.
-    /// </summary>
-    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
-
-    /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
-    struct AuditTally
-    {
-        int64_t Count = 0;
-        int64_t Pixels = 0;
-        bool Scaled = false;
-        std::span<const uint8_t> Data;
-        std::set<int32_t> Frames;
-    };
-
-    std::function<void(const MCVulkanRenderer::AuditedDraw&)> AuditInto(std::map<AuditKey, AuditTally>& tally);
-    void ReportAudit(const std::map<AuditKey, AuditTally>& tally, const std::filesystem::path& folder, int32_t frames);
 }
 
 /// <summary>
@@ -4587,6 +4663,38 @@ namespace
                                                     ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
                                                     : hd->Colors;
                     SavePng(folder / std::format("{:03}_{}_hd.png", rank, command), hd->Width, hd->Height, rgba);
+                }
+            }
+
+            // With --hd-audit-all, a sharp shape's pack frames (their stored colours) for its first frames drawn.
+            constexpr size_t FramesShown = 4;
+
+            if (sharp && all && command == "Shape" && VfxIsShapeTable(entry.Data))
+            {
+                const std::optional<std::filesystem::path> attached = MCHdArt::AttachedFolder(entry.Data.data());
+
+                for (const int32_t frame : entry.Frames | std::views::take(FramesShown))
+                {
+                    const auto decoded = Decode(entry.Data, frame);
+
+                    if (!decoded.has_value() || decoded->Width == 0)
+                    {
+                        continue;
+                    }
+
+                    const std::shared_ptr<const MCHdArt::Frame> hd =
+                        attached.has_value() ? MCHdArt::FindInFolder(*attached, frame, decoded->Width, decoded->Height)
+                                             : MCHdArt::FindShape(MCHdArt::ShapeTableHash(entry.Data), frame,
+                                                                  decoded->Width, decoded->Height);
+
+                    if (hd != nullptr)
+                    {
+                        std::vector<uint8_t> rgba = hd->Format == MCHdArt::ColorFormat::Bc7
+                                                        ? MCBc7::Decode(hd->Colors, hd->Width, hd->Height)
+                                                        : hd->Colors;
+                        SavePng(folder / std::format("{:03}_{}_{}_hd.png", rank, command, frame), hd->Width, hd->Height,
+                                rgba);
+                    }
                 }
             }
 

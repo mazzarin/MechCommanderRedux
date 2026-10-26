@@ -138,8 +138,11 @@ static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
 // The most an HD colour channel is scaled by when today's colour differs from the pack's.
 static const float MaxCorrection = 4.0;
-// Light below this (under two steps of 8 bits) is BC7's error around a frame's empty pixels, not the frame's.
-static const float LightFloor = 1.5 / 255.0;
+// An effect's frame (HdLight) holds faint error in its empty parts (the network's and BC7's: up to about 5/255 of light
+// and 4/255 of coverage), which the copies of an effect the game stacks on one place (a dying mech's critical hits,
+// each with its own) would add up into a lit box. Coverage below its floor is none, and light loses its floor.
+static const float LightFloor = 6.0 / 255.0;
+static const float CoverageFloor = 4.5 / 255.0;
 
 // The alpha colours' kinds.
 static const uint AlphaNothing = 0;
@@ -450,8 +453,13 @@ Output HdPixelAt(Input input, float2 shape)
                                HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
     float4 color = lerp(top, bottom, f.y);
 
-    // A frame holding its blended pixels may add light where it has no coverage (BC7's error adds none).
-    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb < LightFloor)))
+    // A frame holding its blended pixels may add light where it has no coverage (its error adds none).
+    if ((input.op.x & HdLight) != 0 && color.a < CoverageFloor)
+    {
+        color = float4(max(color.rgb - LightFloor, 0.0), 0.0);
+    }
+
+    if (color.a <= 0.0 && ((input.op.x & HdLight) == 0 || all(color.rgb <= 0.0)))
     {
         discard;
     }

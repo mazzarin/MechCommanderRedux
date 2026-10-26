@@ -220,6 +220,14 @@ namespace MCHdArt
     std::optional<std::filesystem::path> AttachedFolder(const uint8_t* table);
 
     /// <summary>
+    /// For the tools: frame <paramref name="frame"/> (its original bounds <paramref name="width"/> x
+    /// <paramref name="height"/>) of the pack's folder <paramref name="folder"/> (relative to the pack, its frames named
+    /// by number, as an attached shape's), read the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindInFolder(const std::filesystem::path& folder, int32_t frame, int32_t width,
+                                              int32_t height);
+
+    /// <summary>
     /// The name an HD art pack gives a picture (the menus' and logistics' art): a hash of its
     /// <paramref name="width"/> x <paramref name="height"/> palette indices, the same whichever file or packet they came
     /// from. A picture the game has drawn into has another, so it is shown as it is.

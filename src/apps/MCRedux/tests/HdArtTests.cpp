@@ -36,7 +36,10 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCArtillery.h"
 #include "object/MCBattleMech.h"
+#include "object/MCCommander.h"
+#include "object/MCForces.h"
 #include "object/MCBullet.h"
 #include "object/MCExplosion.h"
 #include "object/MCGroundVehicleGameSystem.h"
@@ -613,7 +616,8 @@ namespace
         REQUIRE(SDL_SetWindowSize(&MCInput::Display()->Window(), width, height));
         SDL_SyncWindow(&MCInput::Display()->Window());
         MCTestGame::RunFrame(FrameSeconds);
-        REQUIRE(MCInput::Display()->UnderlayScale() > 1.0f);
+        // A window no taller than the UI (640x480 for 720 lines) shows the screen as it is.
+        REQUIRE((height <= lines || MCInput::Display()->UnderlayScale() > 1.0f));
     }
 }
 
@@ -5807,6 +5811,21 @@ TEST_CASE_ISOLATED("tool: --sharp-fonts pictures every font's glyphs, original o
 namespace
 {
 
+    /// <summary><paramref name="mover"/> ordered (by the player, unless <paramref name="origin"/> says otherwise) to
+    /// attack <paramref name="target"/>.</summary>
+    void OrderAttack(MCMover& mover, const std::shared_ptr<MCMover>& target,
+                     MCOrderOrigin origin = MCOrderOrigin::Player)
+    {
+        MCTacticalOrder order;
+        order.Reset(origin, MCTacticalOrderCode::AttackObject, 0);
+        order.Target = target;
+        order.AttackParams.Type = 1;
+        order.AttackParams.Method = 0;
+        order.AttackParams.Range = -1;
+        order.AttackParams.Pursue = -1;
+        mover.HandleTacticalOrder(order, 1, 0);
+    }
+
     /// <summary>
     /// The player's lance selected (its brackets and bars drawn) and ordered to attack <paramref name="target"/>, the
     /// camera on the player's mech.
@@ -5835,14 +5854,7 @@ namespace
                 continue;
             }
 
-            MCTacticalOrder order;
-            order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
-            order.Target = target;
-            order.AttackParams.Type = 1;
-            order.AttackParams.Method = 0;
-            order.AttackParams.Range = -1;
-            order.AttackParams.Pursue = -1;
-            mover->HandleTacticalOrder(order, 1, 0);
+            OrderAttack(*mover, target);
         }
 
         Eye()->ChangeTarget(GetMoverFromPartId(PlayerMechPartId), true);
@@ -6965,19 +6977,274 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     WriteAuditTables(tally, detail, folder, frames);
 }
 
+namespace
+{
+    /// <summary>A showcase option's whole number (<c>--showcase-&lt;name&gt; &lt;n&gt;</c>), else <paramref name="fallback"/>.</summary>
+    int32_t ShowcaseOption(std::string_view name, int32_t fallback)
+    {
+        int32_t value = fallback;
+
+        if (const std::optional<std::string_view> given = MCTest::Option(std::format("showcase-{}", name));
+            given.has_value())
+        {
+            std::from_chars(given->data(), given->data() + given->size(), value);
+        }
+
+        return value;
+    }
+
+    /// <summary>A showcase option's frames (<c>--showcase-&lt;name&gt; &lt;n&gt;,&lt;n&gt;...</c>), else none.</summary>
+    std::vector<int32_t> ShowcaseFrames(std::string_view name)
+    {
+        std::vector<int32_t> frames;
+
+        if (const std::optional<std::string_view> given = MCTest::Option(std::format("showcase-{}", name));
+            given.has_value())
+        {
+            for (const auto part : std::views::split(*given, ','))
+            {
+                int32_t frame = 0;
+                std::from_chars(part.data(), part.data() + part.size(), frame);
+                frames.push_back(frame);
+            }
+        }
+
+        return frames;
+    }
+
+    /// <summary>The most mechs a player fields (part ids from <see cref="PlayerMechPartId"/>).</summary>
+    constexpr int32_t PlayerMechs = 12;
+
+    /// <summary>The player's mechs still fighting, in part order.</summary>
+    std::vector<std::shared_ptr<MCMover>> LiveLance()
+    {
+        std::vector<std::shared_ptr<MCMover>> lance;
+
+        for (int32_t partId = PlayerMechPartId; partId < PlayerMechPartId + PlayerMechs; ++partId)
+        {
+            if (std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+                mover != nullptr && mover->IsDisabled() == 0)
+            {
+                lance.push_back(std::move(mover));
+            }
+        }
+
+        return lance;
+    }
+
+    /// <summary><paramref name="mover"/>'s armor gone and its internal structure cut to <paramref name="share"/> of
+    /// full, so the next hits take it apart.</summary>
+    void Weaken(MCMover& mover, float share)
+    {
+        for (MCArmorLocation& armor : mover.Armor)
+        {
+            armor.CurArmor = 0.0f;
+        }
+
+        for (MCBodyLocation& body : mover.Body)
+        {
+            body.CurInternalStructure = std::min(body.CurInternalStructure, body.MaxInternalStructure * share);
+        }
+    }
+
+    /// <summary>The live enemy mech nearest <paramref name="from"/>, or none.</summary>
+    std::shared_ptr<MCMover> NearestEnemyMech(MCMover& from)
+    {
+        const std::shared_ptr<MCTeam> team = from.Team.lock();
+        const MCVector3D at = from.GetPosition();
+        std::shared_ptr<MCMover> nearest;
+        float best = std::numeric_limits<float>::max();
+
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
+        {
+            const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+            if (mover == nullptr || mover->Team.lock() == team || mover->IsDisabled() != 0 ||
+                mover->ObjectClass != MCObjectClass::BattleMech)
+            {
+                continue;
+            }
+
+            const MCVector3D to = mover->GetPosition();
+            const float distance = (to.X - at.X) * (to.X - at.X) + (to.Y - at.Y) * (to.Y - at.Y);
+
+            if (distance < best)
+            {
+                best = distance;
+                nearest = mover;
+            }
+        }
+
+        return nearest;
+    }
+
+    /// <summary>Whether <paramref name="mover"/> is a mech in the air.</summary>
+    bool Jumping(const MCMover& mover)
+    {
+        return mover.ObjectClass == MCObjectClass::BattleMech && static_cast<const MCBattleMech&>(mover).InJump;
+    }
+
+    /// <summary>
+    /// <paramref name="mover"/> ordered to jump at <paramref name="target"/> when it can and the target is in reach:
+    /// landing <see cref="JumpLanding"/> of the way there, or as far as its jets take it. Returns whether it jumps.
+    /// </summary>
+    bool JumpAt(MCMover& mover, MCMover& target)
+    {
+        // A jump lands three quarters of the way to the target; one shorter than a third of the range isn't worth it.
+        constexpr double JumpLanding = 0.75;
+        constexpr float ShortestJump = 1.0f / 3.0f;
+        const float range = mover.GetJumpRange();
+
+        if (mover.CanJump() == 0 || Jumping(mover) || range <= 0.0f)
+        {
+            return false;
+        }
+
+        const MCVector3D from = mover.GetPosition();
+        const MCVector3D to = target.GetPosition();
+        const double dx = static_cast<double>(to.X) - from.X;
+        const double dy = static_cast<double>(to.Y) - from.Y;
+        const double distance = std::sqrt(dx * dx + dy * dy);
+
+        if (distance < range * ShortestJump || distance * JumpLanding > range)
+        {
+            return false;
+        }
+
+        const double share = JumpLanding;
+        const MCWayPathPoint point{
+            MCVector3D(static_cast<float>(from.X + dx * share), static_cast<float>(from.Y + dy * share), to.Z), false};
+        MCTacticalOrder order;
+        order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::JumpToPoint, 0);
+        order.InitWayPath(std::span(&point, 1));
+        order.MoveParams.Wait = 0;
+        mover.HandleTacticalOrder(order, 1, 0);
+        return true;
+    }
+
+    /// <summary>
+    /// The other sides' units whose names hold one of <paramref name="names"/> (comma-separated) ordered by their
+    /// commander to attack the nearest mech of <paramref name="lance"/>. Returns how many.
+    /// </summary>
+    int32_t Converge(std::string_view names, const std::vector<std::shared_ptr<MCMover>>& lance)
+    {
+        if (lance.empty())
+        {
+            return 0;
+        }
+
+        const std::shared_ptr<MCTeam> team = lance.front()->Team.lock();
+        int32_t ordered = 0;
+
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
+        {
+            const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+            if (mover == nullptr || mover->Team.lock() == team || mover->IsDisabled() != 0)
+            {
+                continue;
+            }
+
+            const std::string_view name = mover->GetIfaceName();
+            bool named = false;
+
+            for (const auto part : std::views::split(names, ','))
+            {
+                named = named || name.find(std::string_view(part.begin(), part.end())) != std::string_view::npos;
+            }
+
+            if (!named)
+            {
+                continue;
+            }
+
+            const MCVector3D at = mover->GetPosition();
+            const auto nearest =
+                std::ranges::min_element(lance, {},
+                                         [&](const std::shared_ptr<MCMover>& mech)
+                                         {
+                                             const MCVector3D to = mech->GetPosition();
+                                             return (to.X - at.X) * (to.X - at.X) + (to.Y - at.Y) * (to.Y - at.Y);
+                                         });
+            OrderAttack(*mover, *nearest, MCOrderOrigin::Commander);
+            ++ordered;
+        }
+
+        return ordered;
+    }
+
+    /// <summary>ffmpeg reading raw RGBA frames on its input, writing an H.264 video.</summary>
+    class MCVideoPipe
+    {
+    public:
+        MCVideoPipe(const std::filesystem::path& path, int width, int height, int framesPerSecond)
+        {
+            // CRF 10: near lossless, so the edit's own encode is the only loss that shows.
+            const std::string command = std::format(
+                "ffmpeg -v error -y -f rawvideo -pix_fmt rgba -s {}x{} -r {} -i - -c:v libx264 -preset fast "
+                "-crf 10 -pix_fmt yuv420p \"{}\"",
+                width, height, framesPerSecond, path.string());
+#ifdef _WIN32
+            _Pipe = _popen(command.c_str(), "wb");
+#else
+            _Pipe = popen(command.c_str(), "w");
+#endif
+        }
+
+        ~MCVideoPipe()
+        {
+            if (_Pipe != nullptr)
+            {
+#ifdef _WIN32
+                _pclose(_Pipe);
+#else
+                pclose(_Pipe);
+#endif
+            }
+        }
+
+        MCVideoPipe(const MCVideoPipe&) = delete;
+        MCVideoPipe& operator=(const MCVideoPipe&) = delete;
+
+        /// <summary>Whether ffmpeg started.</summary>
+        bool Open() const { return _Pipe != nullptr; }
+
+        /// <summary>Writes a frame; false when ffmpeg took less.</summary>
+        bool Write(std::span<const SDL_Color> pixels)
+        {
+            return std::fwrite(pixels.data(), sizeof(SDL_Color), pixels.size(), _Pipe) == pixels.size();
+        }
+
+    private:
+        FILE* _Pipe = nullptr;
+    };
+}
+
 /// <summary>
-/// Tool: <c>--showcase &lt;pack&gt; --shots &lt;folder&gt;</c> records mission 1's battle for a before/after video,
-/// picture and sound: the game booted with its sound on, into a mixer without a device whose mix is taken frame by frame,
-/// drawn as --hd-pack's pictures are (<c>--window</c>), the lance sent at the nearest enemy as --hd-audit plays it. Each
-/// of <c>--showcase-frames &lt;n&gt;</c> frames (default 900: 30 seconds at 30 a second) from frame
+/// Tool: <c>--showcase &lt;pack&gt; --shots &lt;folder&gt;</c> records a mission's battle (<c>--mission &lt;n&gt;</c>,
+/// default 1) for a before/after video, picture and sound: the game booted with its original sound on (so pilots'
+/// videos play with their radio calls), into a mixer without a device whose mix is taken frame by frame, drawn as --hd-pack's
+/// pictures are (<c>--window</c>), the player's mechs (up to 12) sent at the nearest enemy as --hd-audit plays it. Each of
+/// <c>--showcase-frames &lt;n&gt;</c> frames (default 900: 30 seconds at 30 a second) from frame
 /// <c>--showcase-from &lt;n&gt;</c> on (default 0; the earlier ones are played, their sound mixed and dropped) is saved
-/// as <c>frames/NNNNN.png</c> and its share of the mix appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float), with
-/// HD art and HD audio on from the pack, or with <c>--hd-original 1</c> both off; <c>--showcase-frames 0</c> scouts two
-/// minutes, saving only a look every <c>--showcase-peek &lt;n&gt;</c> frames (<c>peek/NNNNN.png</c>). Each second's mix
-/// level is printed. A run plays out the same every time, so the two runs differ
-/// only in how they look and sound.
+/// as <c>frames/NNNNN.png</c>, or with <c>--showcase-video 1</c> into <c>video.mp4</c>, and its share of the mix
+/// appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float), with HD art on from the pack, or with
+/// <c>--hd-original 1</c> off; <c>--showcase-frames 0</c> scouts two minutes, saving only a look every
+/// <c>--showcase-peek &lt;n&gt;</c> frames (<c>peek/NNNNN.png</c>). Staging, all optional:
+/// <c>--showcase-zoom &lt;lines&gt;</c> zooms the view to that many game lines (480 the closest a player gets, fewer
+/// fixed as a taller screen's closest);
+/// <c>--showcase-hud &lt;percent&gt;</c> sets the interface size (200 the biggest) on a 1080-line UI;
+/// <c>--showcase-jump &lt;n&gt;</c> has the lance's jump-jet mechs jump at the target every n frames when it is in reach;
+/// <c>--showcase-strike &lt;frame&gt;,...</c> drops a large artillery strike on the target at those frames;
+/// <c>--showcase-kill &lt;frame&gt;,...</c> weakens the enemy mech nearest the lance at those frames and sends the
+/// lance at it;
+/// <c>--showcase-converge &lt;names&gt;</c> sends the other sides' units named so (comma-separated parts of names) at
+/// the lance (at the hero, once there is one); <c>--showcase-hero &lt;frame&gt;,...</c> gives up one more of the
+/// lance's mechs at each frame (the last still fighting first: armor gone, internal structure cut) and puts the camera
+/// on it; <c>--showcase-eject &lt;n&gt;</c> ejects the last one's pilot n frames after it was given up. The lance is printed first, and each second's mix level and state. A run plays out the same every time, so the
+/// two runs differ only in how they look and sound.
 /// </summary>
-TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sound, for a before/after video")
+TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sound, for a before/after video")
 {
     const std::optional<std::string_view> pack = MCTest::Option("showcase");
     const std::optional<std::string_view> shots = MCTest::Option("shots");
@@ -6992,10 +7259,11 @@ TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sou
     MCTestContextScope scope;
     scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
     MCTestGame::BootOptions.Sound = true;
-    // HD audio from the boot on, as a player's PREFS have it: the mission's sounds are read as it loads.
+    // The original's sound in both runs: the radio's lines last as long in each, so when the next one starts, and the
+    // dice it takes, match (HD audio's lines differ by a few samples, enough to part the runs within minutes).
     MCTestGame::BootOptions.Started = [&]
     {
-        GHdAudio = original ? HdAudioOff : HdAudioOn;
+        GHdAudio = HdAudioOff;
         MCHdArt::SetPackFolder(original ? std::filesystem::path() : packFolder);
     };
 
@@ -7016,24 +7284,80 @@ TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sou
     constexpr int32_t RetargetFrames = 150;
     constexpr size_t SoundChannels = 2;
     constexpr int32_t ScoutFrames = 3600;
-    int32_t frames = DefaultFrames;
-    int32_t from = 0;
+    constexpr int32_t LargeStrike = 1;
+    constexpr int32_t StrikeDelaySeconds = 1;
+    // A hero keeps 60% of its internal structure: it takes a few hits apart (limbs, then all of it); a kill's 30% goes
+    // in a volley or two.
+    constexpr float HeroStructure = 0.6f;
+    constexpr float KillStructure = 0.3f;
+    constexpr int HudUiLines = 1080;
+    const int32_t frames = ShowcaseOption("frames", DefaultFrames);
+    const int32_t from = ShowcaseOption("from", 0);
+    const int32_t peek = ShowcaseOption("peek", 0);
+    const int32_t zoom = ShowcaseOption("zoom", 0);
+    const int32_t hud = ShowcaseOption("hud", 0);
+    const int32_t jumpEvery = ShowcaseOption("jump", 0);
+    const std::vector<int32_t> strikes = ShowcaseFrames("strike");
+    const std::vector<int32_t> kills = ShowcaseFrames("kill");
+    const std::vector<int32_t> heroFrames = ShowcaseFrames("hero");
+    const int32_t ejectDelay = ShowcaseOption("eject", -1);
+    const bool video = ShowcaseOption("video", 0) != 0;
+    const std::optional<std::string_view> converge = MCTest::Option("showcase-converge");
 
-    if (const std::optional<std::string_view> given = MCTest::Option("showcase-frames"); given.has_value())
+    if (hud > 0)
     {
-        std::from_chars(given->data(), given->data() + given->size(), frames);
+        GUiResolution = HudUiLines;
+        GInterfaceSize = hud;
+        MCTestGame::RunFrame(ShowcaseFrameSeconds);
     }
 
-    if (const std::optional<std::string_view> given = MCTest::Option("showcase-from"); given.has_value())
+    // Closer than a player's closest zoom (480 lines, 2.25 window pixels a game pixel at 1080) stands for a taller
+    // screen's closest: 360 lines is a 1440-line screen's.
+    if (zoom > 0)
     {
-        std::from_chars(given->data(), given->data() + given->size(), from);
+        constexpr int32_t ClosestPlayerZoom = 480;
+        MCFixedZoomHeight = zoom < ClosestPlayerZoom ? static_cast<float>(zoom) : 0.0f;
+        REQUIRE(MCMainView() != nullptr);
+        MCMainView()->ZoomTo(static_cast<float>(zoom));
+        std::cout << std::format("  zoom: {:.0f} lines\n", MCMainView()->ZoomTarget);
     }
 
-    int32_t peek = 0;
-
-    if (const std::optional<std::string_view> given = MCTest::Option("showcase-peek"); given.has_value())
+    // Every mech of the player's, with its pilot and the pilot's voice.
+    for (int32_t partId = PlayerMechPartId; partId < PlayerMechPartId + PlayerMechs; ++partId)
     {
-        std::from_chars(given->data(), given->data() + given->size(), peek);
+        const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+        if (mover == nullptr || mover->IsDisabled() != 0)
+        {
+            continue;
+        }
+
+        const std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
+        std::cout << std::format("  player: {} (part {:#x}), pilot {} voice {} video {}, jump range {:.0f}\n",
+                                 mover->GetIfaceName(), partId, pilot != nullptr ? pilot->Callsign : "-",
+                                 pilot != nullptr ? pilot->AudioStr : "-", pilot != nullptr ? pilot->VideoStr : "-",
+                                 mover->CanJump() != 0 ? mover->GetJumpRange() : 0.0f);
+    }
+
+    // The other sides' units by name, to choose a mission.
+    if (const std::vector<std::shared_ptr<MCMover>> lance = LiveLance(); !lance.empty())
+    {
+        const std::shared_ptr<MCTeam> team = lance.front()->Team.lock();
+        std::map<std::string, int32_t> enemies;
+
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
+        {
+            if (const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+                mover != nullptr && mover->Team.lock() != team && mover->IsDisabled() == 0)
+            {
+                ++enemies[std::string(mover->GetIfaceName())];
+            }
+        }
+
+        for (const auto& [name, count] : enemies)
+        {
+            std::cout << std::format("  enemy: {} x{}\n", name, count);
+        }
     }
 
     // A scout plays two minutes and saves nothing but its looks (--showcase-peek).
@@ -7044,24 +7368,160 @@ TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sou
     std::filesystem::create_directories(folder / "frames");
     std::ofstream soundFile(folder / "sound.f32", std::ios::binary);
     REQUIRE(soundFile.good());
+    std::optional<MCVideoPipe> pipe;
     std::vector<float> mix;
     uint64_t rendered = 0;
     std::shared_ptr<MCMover> target;
+    // The lance's mechs given up, one by one, the newest last.
+    std::vector<std::shared_ptr<MCMover>> heroes;
+    int32_t lastHeroFrame = -1;
+    std::map<int32_t, bool> wasJumping;
+    std::set<int32_t> fell;
     int32_t fallen = 0;
+    int32_t jumps = 0;
     double secondEnergy = 0.0;
+
+    // The lance (the first three) as SendLanceAt sends it, and the player's other mechs with it.
+    const auto SendAllAt = [](const std::shared_ptr<MCMover>& at)
+    {
+        constexpr int32_t LanceSize = 3;
+        SendLanceAt(at);
+
+        for (const std::shared_ptr<MCMover>& mover : LiveLance())
+        {
+            if (mover->PartId >= PlayerMechPartId + LanceSize)
+            {
+                OrderAttack(*mover, at);
+            }
+        }
+    };
 
     for (int32_t frame = 0; frame < last; ++frame)
     {
         const bool down = target != nullptr && target->IsDisabled() != 0;
         fallen += down ? 1 : 0;
+        const std::vector<std::shared_ptr<MCMover>> lance = LiveLance();
+
+        // A hero: the lance's last mech still fighting that isn't one yet, weakened for the enemy to take apart.
+        if (std::ranges::contains(heroFrames, frame))
+        {
+            for (const std::shared_ptr<MCMover>& mover : std::views::reverse(lance))
+            {
+                if (!std::ranges::contains(heroes, mover))
+                {
+                    Weaken(*mover, HeroStructure);
+                    heroes.push_back(mover);
+                    lastHeroFrame = frame;
+                    std::cout << std::format("  frame {}: hero {} (part {:#x})\n", frame, mover->GetIfaceName(),
+                                             mover->PartId);
+                    break;
+                }
+            }
+        }
+
+        const std::shared_ptr<MCMover> hero = heroes.empty() ? nullptr : heroes.back();
+
+        // The last hero's pilot ejects --showcase-eject <n> frames after it was given up, if it still stands.
+        if (ejectDelay >= 0 && heroes.size() == heroFrames.size() && frame == lastHeroFrame + ejectDelay &&
+            hero != nullptr && hero->IsDisabled() == 0 && hero->ObjectClass == MCObjectClass::BattleMech)
+        {
+            static_cast<MCBattleMech&>(*hero).HandleEjection();
+            std::cout << std::format("  frame {}: {} ejects\n", frame, hero->GetIfaceName());
+        }
 
         if (target == nullptr || down || frame % RetargetFrames == 0)
         {
             if (std::shared_ptr<MCMover> next = NearestEnemy(); next != nullptr)
             {
                 target = std::move(next);
-                SendLanceAt(target);
+                SendAllAt(target);
             }
+        }
+
+        if (converge.has_value() && frame % RetargetFrames == 0)
+        {
+            // Once there is a hero, everyone goes for it.
+            const int32_t ordered = Converge(*converge, hero != nullptr && hero->IsDisabled() == 0
+                                                            ? std::vector<std::shared_ptr<MCMover>>{hero}
+                                                            : lance);
+
+            if (frame == 0)
+            {
+                std::cout << std::format("  {} enemies sent at the lance\n", ordered);
+            }
+        }
+
+        // A mech that has landed goes back to the attack.
+        for (const std::shared_ptr<MCMover>& mover : lance)
+        {
+            const bool jumping = Jumping(*mover);
+
+            if (wasJumping[mover->PartId] && !jumping && target != nullptr)
+            {
+                OrderAttack(*mover, target);
+            }
+
+            wasJumping[mover->PartId] = jumping;
+        }
+
+        if (target != nullptr && jumpEvery > 0 && frame % jumpEvery == 0)
+        {
+            for (const std::shared_ptr<MCMover>& mover : lance)
+            {
+                if (JumpAt(*mover, *target))
+                {
+                    ++jumps;
+                    std::cout << std::format("  frame {}: {} jumps\n", frame, mover->GetIfaceName());
+                }
+            }
+        }
+
+        if (target != nullptr && std::ranges::contains(strikes, frame))
+        {
+            const std::shared_ptr<MCCommander> commander = HomeCommander();
+            commander->SetNumLargeStrikes(commander->NumLargeStrikes + 1);
+            CallArtillery(commander->Id, LargeStrike, target->GetPosition(), StrikeDelaySeconds, 0);
+            std::cout << std::format("  frame {}: strike on {}\n", frame, target->GetIfaceName());
+        }
+
+        // A kill: the enemy mech nearest the lance weakened and made the lance's target.
+        if (!lance.empty() && std::ranges::contains(kills, frame))
+        {
+            if (std::shared_ptr<MCMover> mech = NearestEnemyMech(*lance.front()); mech != nullptr)
+            {
+                Weaken(*mech, KillStructure);
+                target = std::move(mech);
+                SendAllAt(target);
+                std::cout << std::format("  frame {}: {} (part {:#x}) weakened\n", frame, target->GetIfaceName(),
+                                         target->PartId);
+            }
+        }
+
+        // Who falls, and when.
+        for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
+        {
+            const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+            if (mover != nullptr && mover->IsDisabled() != 0 && !fell.contains(partId))
+            {
+                fell.insert(partId);
+
+                if (frame > 0)
+                {
+                    std::cout << std::format("  frame {}: {} (part {:#x}) down\n", frame, mover->GetIfaceName(),
+                                             partId);
+                }
+            }
+        }
+
+        // The camera on the hero once there is one, else on the lance's first mech still fighting.
+        if (hero != nullptr)
+        {
+            Eye()->ChangeTarget(hero, true);
+        }
+        else if (!lance.empty())
+        {
+            Eye()->ChangeTarget(lance.front(), true);
         }
 
         for (int64_t tick = static_cast<int64_t>(frame) * ResultsStepTicks / FramesPerSecond;
@@ -7107,12 +7567,28 @@ TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sou
 
         soundFile.write(reinterpret_cast<const char*>(mix.data()),
                         static_cast<std::streamsize>(mix.size() * sizeof(float)));
-        const std::filesystem::path picture = folder / "frames" / std::format("{:05}.png", frame - from);
-        REQUIRE(MCInput::Display()->SaveShownScreenshot(picture).has_value());
+
+        if (!video)
+        {
+            const std::filesystem::path picture = folder / "frames" / std::format("{:05}.png", frame - from);
+            REQUIRE(MCInput::Display()->SaveShownScreenshot(picture).has_value());
+            continue;
+        }
+
+        auto shown = MCInput::Display()->ReadShownScreen();
+        REQUIRE(shown.has_value());
+
+        if (!pipe.has_value())
+        {
+            pipe.emplace(folder / "video.mp4", shown->Width, shown->Height, FramesPerSecond);
+            REQUIRE(pipe->Open());
+        }
+
+        REQUIRE(pipe->Write(shown->Pixels));
     }
 
-    std::cout << std::format("  frames {} to {} saved ({} HD), {} frames with the target down\n", from, last,
-                             original ? "without" : "with", fallen);
+    std::cout << std::format("  frames {} to {} saved ({} HD), {} frames with the target down, {} jumps\n", from, last,
+                             original ? "without" : "with", fallen, jumps);
 }
 
 /// <summary>

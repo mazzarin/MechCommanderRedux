@@ -331,6 +331,17 @@ public:
     /// </summary>
     std::expected<void, std::string> SaveShownScreenshot(const std::filesystem::path& path);
 
+    /// <summary>The picture <see cref="ReadShownScreen"/> reads: its RGBA pixels, row after row.</summary>
+    struct MCShownScreen
+    {
+        int Width = 0;
+        int Height = 0;
+        std::vector<SDL_Color> Pixels;
+    };
+
+    /// <summary>The picture <see cref="SaveShownScreenshot"/> writes, as pixels.</summary>
+    std::expected<MCShownScreen, std::string> ReadShownScreen();
+
     /// <summary>
     /// The whole screen as the player sees it, at the screen's size: its pixels with the underlays' pixels in place of
     /// the key, as <see cref="Present"/> shows them (nearest). When the GPU draws the frame, read back from it (what was

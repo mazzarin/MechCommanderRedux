@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCHdMovieFixture.h"
+#include "fakes/MCNullAudioDevice.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -29,6 +30,9 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGameContext.h"
+#include "sound/MCHdAudio.h"
+#include "platform/MCAudio.h"
+#include "gameos/MCSoundRenderer.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
@@ -6959,6 +6963,156 @@ TEST_CASE_ISOLATED("tool: --hd-audit lists what a battle still draws from the or
     renderer->Audit = nullptr;
     ReportAudit(tally, folder, frames);
     WriteAuditTables(tally, detail, folder, frames);
+}
+
+/// <summary>
+/// Tool: <c>--showcase &lt;pack&gt; --shots &lt;folder&gt;</c> records mission 1's battle for a before/after video,
+/// picture and sound: the game booted with its sound on, into a mixer without a device whose mix is taken frame by frame,
+/// drawn as --hd-pack's pictures are (<c>--window</c>), the lance sent at the nearest enemy as --hd-audit plays it. Each
+/// of <c>--showcase-frames &lt;n&gt;</c> frames (default 900: 30 seconds at 30 a second) from frame
+/// <c>--showcase-from &lt;n&gt;</c> on (default 0; the earlier ones are played, their sound mixed and dropped) is saved
+/// as <c>frames/NNNNN.png</c> and its share of the mix appended to <c>sound.f32</c> (48 kHz stereo, 32-bit float), with
+/// HD art and HD audio on from the pack, or with <c>--hd-original 1</c> both off; <c>--showcase-frames 0</c> scouts two
+/// minutes, saving only a look every <c>--showcase-peek &lt;n&gt;</c> frames (<c>peek/NNNNN.png</c>). Each second's mix
+/// level is printed. A run plays out the same every time, so the two runs differ
+/// only in how they look and sound.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --showcase records mission 1's battle, picture and sound, for a before/after video")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("showcase");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const bool original = MCTest::Option("hd-original").has_value();
+    const std::filesystem::path packFolder = std::filesystem::absolute(std::filesystem::path(*pack));
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCTestGame::BootOptions.Sound = true;
+    // HD audio from the boot on, as a player's PREFS have it: the mission's sounds are read as it loads.
+    MCTestGame::BootOptions.Started = [&]
+    {
+        GHdAudio = original ? HdAudioOff : HdAudioOn;
+        MCHdArt::SetPackFolder(original ? std::filesystem::path() : packFolder);
+    };
+
+    std::optional<MCHdArtOn> hdArt;
+    StartPictures(*pack, hdArt);
+    const std::shared_ptr<MCSoundRenderer> sound = MCGameContext::Current().SoundRenderer();
+    REQUIRE(sound != nullptr);
+    REQUIRE(!sound->Mixer().HasDevice());
+    // The mouse timer's thread counts its ticks and services the sound's streams in real time, which a slower run (one
+    // taking pictures, or without HD art) would see later: when a radio message ends decides when the next starts and
+    // the dice it takes. Its ticks are counted here instead, frame by frame, so every run plays out the same.
+    // (The timer ticks ResultsStepTicks times a second.)
+    MouseTimerKill();
+
+    constexpr int32_t FramesPerSecond = 30;
+    constexpr float ShowcaseFrameSeconds = 1.0f / FramesPerSecond;
+    constexpr int32_t DefaultFrames = 900;
+    constexpr int32_t RetargetFrames = 150;
+    constexpr size_t SoundChannels = 2;
+    constexpr int32_t ScoutFrames = 3600;
+    int32_t frames = DefaultFrames;
+    int32_t from = 0;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("showcase-frames"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), frames);
+    }
+
+    if (const std::optional<std::string_view> given = MCTest::Option("showcase-from"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), from);
+    }
+
+    int32_t peek = 0;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("showcase-peek"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), peek);
+    }
+
+    // A scout plays two minutes and saves nothing but its looks (--showcase-peek).
+    const bool scout = frames == 0;
+    const int32_t last = scout ? ScoutFrames : from + frames;
+
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder / "frames");
+    std::ofstream soundFile(folder / "sound.f32", std::ios::binary);
+    REQUIRE(soundFile.good());
+    std::vector<float> mix;
+    uint64_t rendered = 0;
+    std::shared_ptr<MCMover> target;
+    int32_t fallen = 0;
+    double secondEnergy = 0.0;
+
+    for (int32_t frame = 0; frame < last; ++frame)
+    {
+        const bool down = target != nullptr && target->IsDisabled() != 0;
+        fallen += down ? 1 : 0;
+
+        if (target == nullptr || down || frame % RetargetFrames == 0)
+        {
+            if (std::shared_ptr<MCMover> next = NearestEnemy(); next != nullptr)
+            {
+                target = std::move(next);
+                SendLanceAt(target);
+            }
+        }
+
+        for (int64_t tick = static_cast<int64_t>(frame) * ResultsStepTicks / FramesPerSecond;
+             tick < static_cast<int64_t>(frame + 1) * ResultsStepTicks / FramesPerSecond; ++tick)
+        {
+            MouseTimerTick();
+        }
+
+        MCTestGame::RunFrame(ShowcaseFrameSeconds);
+        // The frame's share of the mix, its sample count rounded as the frames add up (1600 at 30 a second).
+        const uint64_t until = static_cast<uint64_t>(frame + 1) * MCAudio::OutputRate / FramesPerSecond;
+        mix.resize(static_cast<size_t>(until - rendered) * SoundChannels);
+        sound->Mixer().Render(mix);
+        rendered = until;
+
+        for (const float sample : mix)
+        {
+            secondEnergy += static_cast<double>(sample) * sample;
+        }
+
+        if ((frame + 1) % FramesPerSecond == 0)
+        {
+            constexpr double SilenceFloor = 1e-12;
+            const double meanSquare = secondEnergy / (static_cast<double>(MCAudio::OutputRate) * SoundChannels);
+            std::cout << std::format("  second {}: mix {:.1f} dB, state {:08x}{}\n", (frame + 1) / FramesPerSecond,
+                                     10.0 * std::log10(meanSquare + SilenceFloor), MCTestGame::StateHash(),
+                                     down ? ", target down" : "");
+            secondEnergy = 0.0;
+        }
+
+        // A scout's look every --showcase-peek <n> frames, to choose where the recording starts.
+        if (scout && peek > 0 && frame % peek == 0)
+        {
+            std::filesystem::create_directories(folder / "peek");
+            const std::filesystem::path picture = folder / "peek" / std::format("{:05}.png", frame);
+            REQUIRE(MCInput::Display()->SaveShownScreenshot(picture).has_value());
+        }
+
+        if (scout || frame < from)
+        {
+            continue;
+        }
+
+        soundFile.write(reinterpret_cast<const char*>(mix.data()),
+                        static_cast<std::streamsize>(mix.size() * sizeof(float)));
+        const std::filesystem::path picture = folder / "frames" / std::format("{:05}.png", frame - from);
+        REQUIRE(MCInput::Display()->SaveShownScreenshot(picture).has_value());
+    }
+
+    std::cout << std::format("  frames {} to {} saved ({} HD), {} frames with the target down\n", from, last,
+                             original ? "without" : "with", fallen);
 }
 
 /// <summary>

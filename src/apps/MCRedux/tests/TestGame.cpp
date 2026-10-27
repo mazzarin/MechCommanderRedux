@@ -361,7 +361,7 @@ namespace MCTestGame
             // RunGame, up to MCGuiSystem::Run. SystemInit reads the paths from SYSTEM.CFG; the FastFiles it opens are
             // every *.fst, so none may be open yet.
             GHiddenWindow = 1;
-            GNoSound = true;
+            GNoSound = !BootOptions.Sound;
             // Deterministic runs: game time only moves with RunFrame, and the dice start the same way (RunGame seeds
             // them from the time of day). --seed <n> picks other dice. With the default, mission 1's Uller has its
             // pilot knocked out (4 wounds) in the fight the mission tests stage.

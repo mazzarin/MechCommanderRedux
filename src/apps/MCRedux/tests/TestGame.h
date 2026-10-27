@@ -31,6 +31,11 @@ namespace MCTestGame
         float FixedZoomHeight = 480.0f;
         /// <summary>Called once the game has started (PREFS read, the display open), before the window is resized.</summary>
         std::function<void()> Started;
+        /// <summary>
+        /// Whether the game's sound runs (SYSTEM.CFG's sound and music, into the context's audio device); off, the game
+        /// boots with GNoSound, as the tests run.
+        /// </summary>
+        bool Sound = false;
     };
 
     /// <summary>The options the next boot uses (set them before it).</summary>

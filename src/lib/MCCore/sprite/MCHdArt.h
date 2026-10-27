@@ -326,6 +326,11 @@ namespace MCHdArt
     uint64_t PackVersion();
 
     /// <summary>
+    /// A number for <see cref="Frame::Id"/> that no other frame read in this run has (a movie's frames take one too).
+    /// </summary>
+    uint64_t NewFrameId();
+
+    /// <summary>
     /// The pack's HD frames for the Smacker movie <paramref name="movie"/> (its game path or name; folders, extension and
     /// case don't matter), when HD art is on and the pack has them.
     /// </summary>

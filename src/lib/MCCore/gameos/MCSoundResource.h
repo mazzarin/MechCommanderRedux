@@ -3,6 +3,7 @@
 #include "platform/MCWin32Defs.h"
 
 class MCFile;
+class MCFlac;
 
 /// <summary>Where a sound resource's samples come from.</summary>
 enum class MCSoundResourceType : int32_t
@@ -75,6 +76,15 @@ private:
     /// the duration. Fatal on a bad file.
     /// </summary>
     void OpenStream();
+    /// <summary>The HD audio pack's replacement for the wave, when there is one (<see cref="MCHdAudio::Sample"/>).</summary>
+    void TryHdSample();
+    /// <summary>
+    /// The HD audio pack's music for the stream, when it has some as long as the original's
+    /// <paramref name="sourceFrames"/> and not cut short; the original's file is closed then.
+    /// </summary>
+    void TryHdStream(uint64_t sourceFrames);
+    /// <summary>Read for the HD music: as the wave's, silence past the end unless it loops.</summary>
+    void ReadFlac(std::span<uint8_t> buffer, bool loop);
 
     /// <summary>The file name, for a file or stream.</summary>
     std::string _FileName;
@@ -86,4 +96,6 @@ private:
     std::unique_ptr<MCFile> _Stream;
     /// <summary>A stream's data chunk position in the file.</summary>
     int32_t _DataStart = 0;
+    /// <summary>The HD music's decoder, when it plays in place of the stream's file.</summary>
+    std::unique_ptr<MCFlac> _Flac;
 };

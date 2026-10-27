@@ -2,6 +2,7 @@
 
 #include "gui/MCGuiObject.h"
 #include "platform/MCSmacker.h"
+#include "sprite/MCHdMovie.h"
 
 /// <summary>
 /// A window playing a Smacker movie into a pane of its own, copied to the screen each frame.
@@ -60,6 +61,28 @@ public:
     std::shared_ptr<MCWindow> MovieWindow;
     /// <summary>Whether the movie plays full screen (its own palette).</summary>
     bool FullScreen = false;
+    /// <summary>
+    /// Port-only: the HD art pack's frames for the movie (<see cref="MCHdArt::FindMovie"/>), when it has as many as the
+    /// movie, its size scaled by a whole number, and the screen is sharp; each frame the movie decodes is shown from
+    /// the next one. Null once they fail (the movie plays on as it is).
+    /// </summary>
+    std::unique_ptr<MCHdMovie> HdMovie;
+
+private:
+    /// <summary>Port-only: opens the HD art pack's frames for the movie (<see cref="HdMovie"/>), from the first.</summary>
+    void OpenHdMovie();
+    /// <summary>
+    /// Port-only: shows the movie's frame <paramref name="shown"/>, just decoded into <paramref name="rect"/> of
+    /// <paramref name="texture"/>, from its HD frame.
+    /// </summary>
+    void ShowHdFrame(MCTexture& texture, const MCRect& rect, uint32_t shown);
+    /// <summary>Port-only: stops showing HD frames, saying why.</summary>
+    void DropHdMovie(MCTexture& texture, std::string_view why);
+
+    /// <summary>The movie's frame the next HD frame is for.</summary>
+    uint32_t HdNextFrame = 0;
+    /// <summary>The original's frame under the HD one (its indices), reused frame to frame.</summary>
+    std::vector<uint8_t> HdOriginal;
 };
 
 /// <summary>

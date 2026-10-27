@@ -3,6 +3,8 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCFlac.h"
+#include "sound/MCHdAudio.h"
 
 namespace
 {
@@ -28,12 +30,25 @@ namespace
 
         return value;
     }
+
+    /// <summary>The wave format of a decoded HD replacement (PCM).</summary>
+    tWAVEFORMATEX WaveFormatOf(const MCSoundFormat& format)
+    {
+        return {1,
+                format.Channels,
+                format.Rate,
+                format.BytesPerSecond(),
+                static_cast<uint16_t>(format.BlockAlign()),
+                format.Bits,
+                0};
+    }
 }
 
 MCSoundResource::MCSoundResource(std::span<const uint8_t> image)
     : Type(MCSoundResourceType::Memory), _Image(image.begin(), image.end())
 {
     ReadWaveInfo();
+    TryHdSample();
 }
 
 MCSoundResource::MCSoundResource(MCSoundResourceType type, std::string_view fileName) : Type(type), _FileName(fileName)
@@ -71,6 +86,47 @@ void MCSoundResource::LoadFile()
     file.seekg(0, std::ios::beg);
     file.read(reinterpret_cast<char*>(_Image.data()), static_cast<std::streamsize>(_Image.size()));
     ReadWaveInfo();
+    TryHdSample();
+}
+
+void MCSoundResource::TryHdSample()
+{
+    const std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(_Image);
+
+    if (decoded == nullptr)
+    {
+        return;
+    }
+
+    Format = WaveFormatOf(decoded->Format);
+    _Image = decoded->Pcm;
+    _WaveOffset = 0;
+    WaveSize = static_cast<uint32_t>(_Image.size());
+}
+
+void MCSoundResource::TryHdStream(uint64_t sourceFrames)
+{
+    const auto path = MCHdAudio::Music(_FileName);
+
+    if (!path.has_value())
+    {
+        return;
+    }
+
+    auto flac = MCFlac::Open(*path);
+
+    // A file cut short falls back before playback starts; the check decodes only the last frame, so a track change
+    // doesn't hold the frame up. A bad frame further in plays as silence.
+    if (!flac || !MCHdAudio::MatchesLength(*flac, sourceFrames, Format.nSamplesPerSec) || !flac->CheckEnd())
+    {
+        return;
+    }
+
+    Format = WaveFormatOf(flac->Format());
+    // DurationMs stays the original's: the game uses it for music scheduling and fades.
+    _Flac = std::move(flac);
+    _Stream->Close();
+    _Stream.reset();
 }
 
 void MCSoundResource::ReadWaveInfo()
@@ -118,6 +174,12 @@ void MCSoundResource::ReadWaveInfo()
 
 uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t depth)
 {
+    if (_Flac != nullptr)
+    {
+        ReadFlac(buffer, loop);
+        return static_cast<uint32_t>(buffer.size());
+    }
+
     const auto bytes = static_cast<uint32_t>(buffer.size());
 
     if (depth > 3)
@@ -147,8 +209,43 @@ uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t dep
     return bytes;
 }
 
+void MCSoundResource::ReadFlac(std::span<uint8_t> buffer, bool loop)
+{
+    // The ring is sized and filled in whole frames; a partial frame at the end (none is expected) stays silent.
+    const size_t whole = buffer.size() - buffer.size() % Format.nBlockAlign;
+    size_t done = 0;
+    bool rewound = false;
+
+    while (done < whole)
+    {
+        const size_t read = _Flac->Read(buffer.subspan(done, whole - done));
+        done += read;
+
+        if (done == whole)
+        {
+            break;
+        }
+
+        // The end (or a bad frame): a looping stream starts again, unless it just did and read nothing.
+        if (!loop || (read == 0 && rewound) || !_Flac->Seek(0))
+        {
+            break;
+        }
+
+        rewound = true;
+    }
+
+    std::ranges::fill(buffer.subspan(done), uint8_t{0});
+}
+
 void MCSoundResource::Rewind()
 {
+    if (_Flac != nullptr)
+    {
+        _Flac->Seek(0);
+        return;
+    }
+
     if (_Stream != nullptr)
     {
         _Stream->Seek(_DataStart, SEEK_SET);
@@ -234,4 +331,5 @@ void MCSoundResource::OpenStream()
     DurationMs = Format.nAvgBytesPerSec == 0
                      ? 0
                      : static_cast<uint32_t>(static_cast<int64_t>(dataSize) * 1000 / Format.nAvgBytesPerSec);
+    TryHdStream(frameBytes <= 0 ? 0 : dataSize / static_cast<uint32_t>(frameBytes));
 }

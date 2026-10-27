@@ -546,8 +546,9 @@ namespace
     /// RESOLUTION box (2026-10-18) took the preferences step to 0xd7aa9185 and the folds to 0xcfbe6bb8 and 0xac3d91aa
     /// (GPU 0x8d317260 and 0xd056cb3d), only there. The drop-down boxes lined up with the sliders' labels, wide enough
     /// for NATIVE (RETINA/HD), the CONTROLS button and the HD ART box (2026-10-25) took the preferences step to
-    /// 0xa73fbdbc (software and GPU agree); the folds still need re-recording on the recording machine, whose test user
-    /// folder (and so its load screen) can't be reproduced elsewhere.
+    /// 0xa73fbdbc (software and GPU agree). The SCROLL SPEED and HD AUDIO boxes, the panel taller for HD AUDIO
+    /// (personal, 2026-10-27) took it to 0x46079767 (software and GPU agree); the folds still need re-recording on the
+    /// recording machine, whose test user folder (and so its load screen) can't be reproduced elsewhere.
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -629,7 +630,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0x59acc997u},
-            {"preferences", [] { ShowPreferences(); }, 0xa73fbdbcu},
+            {"preferences", [] { ShowPreferences(); }, 0x46079767u},
             {"main menu after preferences", [] { CancelPrefs(); }, 0x59acc997u},
             {"load screen", [] { LoadScreen(); }, 0xb773197eu},
             {"main menu after load", [] { Cancel(); }, 0x59acc997u},

@@ -528,7 +528,7 @@ namespace
                 }
 
                 auto made = std::make_shared<MCHdArt::Frame>(std::move(**archived));
-                made->Id = ++TheState().LastId;
+                made->Id = MCHdArt::NewFrameId();
                 return made;
             }
 
@@ -561,7 +561,7 @@ namespace
         }
 
         auto made = std::make_shared<MCHdArt::Frame>(std::move(*read));
-        made->Id = ++TheState().LastId;
+        made->Id = MCHdArt::NewFrameId();
         return made;
     }
 
@@ -1272,6 +1272,11 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t 
     return Cache(
         FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), static_cast<uint64_t>(frame)},
         width, height);
+}
+
+uint64_t MCHdArt::NewFrameId()
+{
+    return ++TheState().LastId;
 }
 
 std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)

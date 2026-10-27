@@ -4,6 +4,7 @@
 #include "lib/MCFatal.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSmacker.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
 // Port: a full-screen movie (fullScreen set while the game is full screen) switched the original's display to 16-bit
@@ -73,12 +74,86 @@ auto MCGuiSmackerWindow::StartSmackerMovie(std::unique_ptr<MCSmackTag> newMovie,
         RemapToGamePalette(*Movie);
     }
 
+    OpenHdMovie();
     return 0;
+}
+
+auto MCGuiSmackerWindow::OpenHdMovie() -> void
+{
+    HdMovie.reset();
+    HdNextFrame = 0;
+    const std::optional<std::filesystem::path> path = MCHdArt::FindMovie(Movie->FileName);
+
+    // Off a sharp screen the frames wouldn't be seen: none are decoded.
+    if (!path.has_value() || !MCRenderer::ShowsHdPictures())
+    {
+        return;
+    }
+
+    const MCSmackerPlayer& player = *Movie->Player;
+    std::expected<std::unique_ptr<MCHdMovie>, std::string> opened = MCHdMovie::Open(*path);
+
+    if (!opened)
+    {
+        SDL_Log("HD movie: %s; the original plays", opened.error().c_str());
+        return;
+    }
+
+    const MCHdMovie& movie = **opened;
+
+    if (!movie.ScaleOver(player.Width(), player.Height()).has_value() || movie.Frames() != player.Frames())
+    {
+        SDL_Log("HD movie: %s's %u frames of %dx%d don't fit the movie's %u of %dx%d; the original plays",
+                Movie->FileName.c_str(), movie.Frames(), movie.Width(), movie.Height(), player.Frames(), player.Width(),
+                player.Height());
+        return;
+    }
+
+    HdMovie = std::move(*opened);
+}
+
+auto MCGuiSmackerWindow::ShowHdFrame(MCTexture& texture, const MCRect& rect, uint32_t shown) -> void
+{
+    // The frame shown last, decoded again (a movie at its end whose window is still up), keeps its HD frame.
+    if (HdMovie == nullptr || shown + 1 == HdNextFrame)
+    {
+        return;
+    }
+
+    if (shown != HdNextFrame)
+    {
+        DropHdMovie(texture, std::format("frame {} played where {} was due", shown, HdNextFrame));
+        return;
+    }
+
+    const MCSmackerPlayer& player = *Movie->Player;
+    HdOriginal.resize(static_cast<size_t>(player.Width()) * player.Height());
+    player.CopyFrame(HdOriginal, 0, 0, player.Width(), player.Height());
+    std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> frame =
+        HdMovie->Next(HdOriginal, player.Width(), player.Height(), player.Width());
+
+    if (!frame)
+    {
+        DropHdMovie(texture, frame.error());
+        return;
+    }
+
+    ++HdNextFrame;
+    MCRenderer::ShowHdPicture(texture, std::move(*frame), rect.X0, rect.Y0);
+}
+
+auto MCGuiSmackerWindow::DropHdMovie(MCTexture& texture, std::string_view why) -> void
+{
+    SDL_Log("HD movie: %s: %.*s; the original plays on", Movie->FileName.c_str(), static_cast<int>(why.size()),
+            why.data());
+    HdMovie.reset();
+    MCRenderer::ShowHdPicture(texture, nullptr, 0, 0);
 }
 
 auto MCGuiSmackerWindow::Destroy() -> void
 {
     Movie.reset();
+    HdMovie.reset();
 
     if (MovieWindow != nullptr)
     {
@@ -176,8 +251,10 @@ auto MCGuiSmackerWindow::Display() -> void
         const std::span<uint8_t> locked = MCRenderer::LockTexture(texture, rect);
         const size_t lockedSize =
             static_cast<size_t>(player.Height() - 1) * texture.Width + static_cast<size_t>(texture.Width - rect.X0);
+        const uint32_t shown = player.FrameNum();
         const bool more = NextFrame(locked.first(lockedSize), texture.Width, player.Height());
         MCRenderer::UnlockTexture(texture);
+        ShowHdFrame(texture, rect, shown);
 
         if (!more)
         {

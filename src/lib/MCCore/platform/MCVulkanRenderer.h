@@ -493,6 +493,20 @@ private:
     /// isn't a sharp screen.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> HdPictureFor(uint16_t target, const MCWindow& window);
+
+    /// <summary>Where a copy onto a sharp screen shows a frame shown over its source's pixels (OnShowHdPicture).</summary>
+    struct ShownHdPart
+    {
+        std::shared_ptr<const MCHdArt::Frame> Frame;
+        Quad At;
+        Quad From;
+    };
+
+    /// <summary>
+    /// The part of <paramref name="command"/>'s copy onto <paramref name="surface"/> its source's shown HD frame covers
+    /// (<see cref="MCRenderer::ShowHdPicture"/>): where on the target, and where in the frame; none off a sharp screen.
+    /// </summary>
+    std::optional<ShownHdPart> ShownHdPartOf(uint16_t surface, const MCCopyCommand& command);
     /// <summary>Port-only: <see cref="HdPictureFor"/> whatever the target: null when there is none.</summary>
     std::shared_ptr<const MCHdArt::Frame> HdPicture(const MCWindow& window);
     /// <summary>
@@ -841,6 +855,18 @@ private:
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                       size_t bytesPerPixel);
 
+    /// <summary>
+    /// Drops <paramref name="it"/>'s picture from <paramref name="pictures"/>, taking what it took from
+    /// <paramref name="bytes"/>.
+    /// </summary>
+    /// <returns>The next picture.</returns>
+    std::unordered_map<uint64_t, Picture>::iterator DropPicture(std::unordered_map<uint64_t, Picture>& pictures,
+                                                                std::unordered_map<uint64_t, Picture>::iterator it,
+                                                                size_t& bytes, size_t bytesPerPixel);
+
+    /// <summary>Drops the HD art frame <paramref name="id"/>'s picture now (a movie frame shown for the last time).</summary>
+    void ForgetHdPicture(uint64_t id);
+
     /// <summary>Marks <paramref name="picture"/> used this frame; returns its frame picture index.</summary>
     uint32_t UsePicture(Picture& picture);
 
@@ -895,6 +921,13 @@ private:
         std::shared_ptr<const MCHdArt::Frame> Hd;
         bool HdLooked = false;
         uint64_t HdPack = 0;
+        /// <summary>
+        /// Port-only: a frame shown over the pixels from (ShownHdX, ShownHdY) on (MCRenderer::ShowHdPicture: a movie's
+        /// HD frame), or null.
+        /// </summary>
+        std::shared_ptr<const MCHdArt::Frame> ShownHd;
+        int32_t ShownHdX = 0;
+        int32_t ShownHdY = 0;
     };
 
     /// <summary>What is kept for <paramref name="texture"/> (made when missing).</summary>
@@ -914,6 +947,9 @@ private:
 
     /// <summary>Drops what is kept for a texture (its copy goes once the frame recorded has run).</summary>
     void OnTextureReleased(MCTexture& texture) override;
+    void OnShowHdPicture(MCTexture& texture, std::shared_ptr<const MCHdArt::Frame> frame, int32_t x,
+                         int32_t y) override;
+    bool OnShowsHdPictures() const override { return static_cast<bool>(_ScaledScreen); }
     /// <summary>Maps the texture's own upload memory, cycled so a frame in flight is never waited on.</summary>
     std::span<uint8_t> OnLockStream(MCTexture& texture) override;
     /// <summary>Queues the locked rectangle's upload from that memory (filled from <paramref name="written"/> when

@@ -7393,12 +7393,10 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="target"/> set down on its line from <paramref name="shooter"/> (or, with
-    /// <paramref name="moveShooter"/>, the shooter on its line from the target) where every one of the shooter's weapons
-    /// reaches it: halfway between their longest minimum range and their shortest maximum. Returns that distance
-    /// (meters).
+    /// Where every one of <paramref name="shooter"/>'s weapons reaches (meters): halfway between their longest minimum
+    /// range and their shortest maximum.
     /// </summary>
-    float BringWithinReach(MCMover& shooter, MCMover& target, bool moveShooter = false)
+    float WeaponsReach(MCMover& shooter)
     {
         float shortest = 0.0f;
         float longest = std::numeric_limits<float>::max();
@@ -7410,7 +7408,17 @@ namespace
             longest = std::min(longest, weapon.WeaponRange[3]);
         }
 
-        const float meters = shortest < longest ? (shortest + longest) * 0.5f : longest;
+        return shortest < longest ? (shortest + longest) * 0.5f : longest;
+    }
+
+    /// <summary>
+    /// <paramref name="target"/> set down on its line from <paramref name="shooter"/> (or, with
+    /// <paramref name="moveShooter"/>, the shooter on its line from the target) where every one of the shooter's weapons
+    /// reaches it (<see cref="WeaponsReach"/>). Returns that distance (meters).
+    /// </summary>
+    float BringWithinReach(MCMover& shooter, MCMover& target, bool moveShooter = false)
+    {
+        const float meters = WeaponsReach(shooter);
         const float reach = meters * WorldUnitsPerMeter;
         MCMover& moved = moveShooter ? shooter : target;
         MCMover& stays = moveShooter ? target : shooter;
@@ -7793,8 +7801,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
     // Its mech fired at for staged damage, from FireLeadFrames before it is due until it lands, every weapon that
     // reaches it readied when the fire starts and again when it is due if no hit has come (shots miss): the two enemy
-    // mechs nearest it are sent at it ApproachFrames before, and if fewer than two weapons reach it at either volley,
-    // the nearest is set down within its reach.
+    // mechs nearest it are sent at it ApproachFrames before (the nearest set down within its reach if it is further),
+    // and if fewer than two weapons reach it at either volley, the nearest is set down within its reach then.
     const auto FireFor =
         [&](const std::shared_ptr<MCMover>& victim, int32_t frame, int32_t due, int32_t mech, char kind)
     {
@@ -7805,8 +7813,23 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         if (frame == due - ApproachFrames)
         {
-            for (const std::shared_ptr<MCMover>& enemy :
-                 EnemyMechsByDistance(*victim) | std::views::take(ApproachingMechs))
+            const std::vector<std::shared_ptr<MCMover>> nearest = EnemyMechsByDistance(*victim);
+
+            // The nearest not where all its weapons reach: set down there (the camera is mostly elsewhere yet).
+            if (!nearest.empty())
+            {
+                const MCVector3D at = victim->GetPosition();
+                const MCVector3D from = nearest.front()->GetPosition();
+
+                if (std::hypot(at.X - from.X, at.Y - from.Y) > WeaponsReach(*nearest.front()) * WorldUnitsPerMeter)
+                {
+                    std::cout << std::format("  frame {}: {} brought {:.0f} m from {}\n", frame,
+                                             nearest.front()->GetIfaceName(),
+                                             BringWithinReach(*nearest.front(), *victim, true), victim->GetIfaceName());
+                }
+            }
+
+            for (const std::shared_ptr<MCMover>& enemy : nearest | std::views::take(ApproachingMechs))
             {
                 OrderAttack(*enemy, victim, MCOrderOrigin::Commander);
             }

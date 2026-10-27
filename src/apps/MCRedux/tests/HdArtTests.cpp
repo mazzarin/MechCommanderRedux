@@ -51,6 +51,7 @@
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "object/MCSensorSystem.h"
+#include "object/MCSmoke.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -7361,31 +7362,81 @@ namespace
         return left;
     }
 
+    /// <summary>Whether either is on screen, where a unit set down would be seen to jump.</summary>
+    bool EitherOnScreen(MCMover& one, MCMover& other)
+    {
+        return one.OnScreen() != 0 || other.OnScreen() != 0;
+    }
+
+    /// <summary>When units' weapons were last readied out of turn (mission seconds, by part id).</summary>
+    using MCReadiedAt = std::map<int32_t, float>;
+
     /// <summary>
-    /// Every live unit not on <paramref name="victim"/>'s side firing each weapon that is ready and reaches it, every one
-    /// readied first with <paramref name="ready"/>. Returns how many fired.
+    /// A weapon readied out of turn is one this share of the way through its recycle since it last fired: so none ever
+    /// fires again much sooner than it would.
     /// </summary>
-    int32_t FireAt(const std::shared_ptr<MCMover>& victim, bool ready)
+    constexpr float RecycledShare = 0.65f;
+
+    /// <summary>Whether the weapon has done RecycledShare of its recycle since it last fired (or never has).</summary>
+    bool Recycled(const MCInventoryItem& item)
+    {
+        return item.ReadyTime - ScenarioTime <= MasterComponentList[item.MasterID].RecycleTime * (1.0f - RecycledShare);
+    }
+
+    /// <summary>
+    /// Every live unit not on <paramref name="victim"/>'s side firing each weapon that is ready and reaches it. First the
+    /// <paramref name="readyNearest"/> units nearest it that have not been readied for <paramref name="rest"/> seconds
+    /// (<paramref name="readiedAt"/>) have the weapons that reach it and have nearly recycled readied (those of
+    /// <paramref name="form"/> only, if given): out of turn, so only a few, never all at once. Returns how many fired.
+    /// </summary>
+    int32_t FireAt(const std::shared_ptr<MCMover>& victim, int32_t readyNearest, MCReadiedAt& readiedAt, float rest,
+                   std::optional<MCComponentForm> form = std::nullopt)
     {
         const std::shared_ptr<MCTeam> team = victim->Team.lock();
-        int32_t fired = 0;
+        const MCVector3D at = victim->GetPosition();
+        std::vector<std::pair<float, std::shared_ptr<MCMover>>> shooters;
 
         for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; ++partId)
         {
-            const std::shared_ptr<MCMover> shooter = GetMoverFromPartId(partId);
-
-            if (shooter == nullptr || shooter->Team.lock() == team || shooter->IsDisabled() != 0)
+            if (const std::shared_ptr<MCMover> shooter = GetMoverFromPartId(partId);
+                shooter != nullptr && shooter->Team.lock() != team && shooter->IsDisabled() == 0)
             {
-                continue;
+                const MCVector3D from = shooter->GetPosition();
+                shooters.emplace_back(std::hypot(at.X - from.X, at.Y - from.Y) / WorldUnitsPerMeter, shooter);
+            }
+        }
+
+        std::ranges::sort(shooters, {}, &std::pair<float, std::shared_ptr<MCMover>>::first);
+        int32_t readied = 0;
+        int32_t fired = 0;
+
+        for (const auto& [meters, shooter] : shooters)
+        {
+            const auto last = readiedAt.find(shooter->PartId);
+            const bool rested = last == readiedAt.end() || ScenarioTime - last->second >= rest;
+            bool ready = false;
+
+            for (int32_t i = 0; i < shooter->NumWeapons && readied < readyNearest && rested; ++i)
+            {
+                MCInventoryItem& item = shooter->Inventory[shooter->NumOther + i];
+                const MCMasterComponent& weapon = MasterComponentList[item.MasterID];
+
+                if (meters >= weapon.WeaponRange[0] && meters <= weapon.WeaponRange[3] && Recycled(item) &&
+                    (!form.has_value() || weapon.Form == *form))
+                {
+                    item.ReadyTime = 0.0f;
+                    ready = true;
+                }
+            }
+
+            if (ready)
+            {
+                readiedAt[shooter->PartId] = ScenarioTime;
+                ++readied;
             }
 
             for (int32_t i = 0; i < shooter->NumWeapons; ++i)
             {
-                if (ready)
-                {
-                    shooter->Inventory[shooter->NumOther + i].ReadyTime = 0.0f;
-                }
-
                 fired += shooter->FireWeapon(victim, 0.0f, shooter->NumOther + i, 0, -1, std::nullopt) == 0 ? 1 : 0;
             }
         }
@@ -7433,11 +7484,11 @@ namespace
         return meters;
     }
 
-    /// <summary><paramref name="mover"/> ordered by <paramref name="origin"/> to walk (not run) to
+    /// <summary><paramref name="mover"/> ordered by <paramref name="origin"/> to walk (or <paramref name="run"/>) to
     /// <paramref name="point"/>.</summary>
-    void WalkTo(MCMover& mover, const MCVector3D& point, MCOrderOrigin origin = MCOrderOrigin::Player)
+    void WalkTo(MCMover& mover, const MCVector3D& point, MCOrderOrigin origin = MCOrderOrigin::Player, bool run = false)
     {
-        const MCWayPathPoint way{point, false};
+        const MCWayPathPoint way{point, run};
         MCTacticalOrder order;
         order.Reset(origin, MCTacticalOrderCode::MoveToPoint, 0);
         order.InitWayPath(std::span(&way, 1));
@@ -7520,8 +7571,10 @@ namespace
 /// the target every n frames or at those, <c>--showcase-dfa</c> one mech at the enemy mech nearest it;
 /// <c>--showcase-strike &lt;frame&gt;,...</c> drops a large artillery strike on the target, and
 /// <c>--showcase-incoming &lt;frame&gt;[:mech],...</c> the other side's beside that mech (the first), marked;
-/// <c>--showcase-mines</c> sets a mine off under a mech; <c>--showcase-alpha</c> brings the enemy mech nearest a mech
-/// within its reach a second before (if it is further) and has it fire every weapon at it; <c>--showcase-destroy
+/// <c>--showcase-mines</c> sets a mine off under a mech, <c>--showcase-smoke</c> has smoke stream from it (its
+/// object type in hex as the what, a damaged mech's if none);
+/// <c>--showcase-alpha</c> brings the enemy mech nearest a mech within its reach the frame before (if it is further)
+/// and has it fire every weapon at it, the camera between them if on it; <c>--showcase-destroy
 /// &lt;frame&gt;[:mech],...</c> blows apart the alpha strike's target (that mech's), or the enemy mech nearest that
 /// mech (the camera's) the force reaches;
 /// <c>--showcase-kill &lt;frame&gt;,...</c> weakens the enemy mech nearest the force and sends the force at it.
@@ -7530,7 +7583,8 @@ namespace
 /// camera's once it falls; the four nearest set down just out of sight first); <c>--showcase-volley</c> readies every
 /// enemy weapon and has those in range (missiles and all) fire at a mech for a second; <c>--showcase-loss</c> takes a
 /// mech's leg, an arm (the left, then the right), its life (<c>die</c>: blown apart) or its pilot (<c>eject</c>), each
-/// on a hit: whatever reaches the mech fires at it just before (<c>hit</c>: only that, for a call of enemy fire). With losses staged, the force's armor holds until
+/// on a hit: whatever reaches the mech fires at it just before, the nearest three readied (<c>hit</c>: only that, for a
+/// call of enemy fire); once the force is gone, no one fires. With losses staged, the force's armor holds until
 /// then, so none falls before its time. The player's mechs are printed first, and each second's mix level and state.
 /// A run plays out the same every time, so the two runs differ only in how they look and sound.
 /// </summary>
@@ -7585,10 +7639,16 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     // Staged damage lands with a hit: whatever reaches its mech fires at it from FireLeadFrames before it is due, and
     // the first hit from HitWindowFrames before takes the part (with none by HitGraceFrames after, it goes anyway).
     constexpr int32_t FireLeadFrames = 12;
-    constexpr int32_t HitWindowFrames = 4;
-    constexpr int32_t HitGraceFrames = 24;
-    constexpr int32_t ApproachFrames = 60;
-    constexpr size_t ApproachingMechs = 2;
+    constexpr int32_t HitWindowFrames = 8;
+    constexpr int32_t HitGraceFrames = 30;
+    // The force's head armor is held at this many times its full, so no one frame's fire breaks the head (its
+    // structure is small) and kills the pilot before their staged end; the rest is held at full.
+    constexpr float HeadArmorHeld = 10.0f;
+    constexpr int32_t ApproachFrames = 90;
+    constexpr size_t ApproachingMechs = 3;
+    // Out of turn, only the weapons of this many units nearest a target are readied, a unit no more often than this.
+    constexpr int32_t ReadiedShooters = 4;
+    constexpr float ShooterRestSeconds = 2.0f;
     // The force sees as far as its tiles' heights let it (the sight its mechs give is not used), its sensors further.
     // The fog's edge is the first spot ahead of the force it does not see between frames (spots tried this much
     // further along the line from the first mech at a time, world units); a unit there is seen about a fifth further
@@ -7623,12 +7683,23 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     constexpr float IncomingStep = 20.0f;
     constexpr float IncomingFarthest = 300.0f;
     constexpr int32_t IncomingTurns = 8;
-    // A volley: every enemy weapon in range fires at the mech as it comes ready, for a second.
+    // A volley: the missiles of this many enemy units nearest the mech readied at once, and fired as they reach it,
+    // for a second.
     constexpr int32_t VolleyFrames = 30;
+    constexpr int32_t VolleyShooters = 6;
     // An alpha strike: the mech fires every weapon as it comes to bear, for a second and a half, its target brought
-    // within reach a second before.
+    // within reach the frame before (staged on a cut to the mech, so the camera is elsewhere then). The camera, on the
+    // mech since before, looks this share of the way from it to the target.
     constexpr int32_t AlphaFrames = 45;
-    constexpr int32_t AlphaBringFrames = 30;
+    constexpr int32_t AlphaBringFrames = 1;
+    // Before it, the mech holds the fire of the weapons that come ready this long, so they go together, and the enemy
+    // mech nearest it runs to within its reach this long before (of its own accord, where the camera may see).
+    constexpr int32_t AlphaHoldFrames = 60;
+    constexpr int32_t AlphaApproachFrames = 150;
+    constexpr float AlphaShare = 0.5f;
+    // Smoke streams from a mech this long, from up to MaxSmokes of its hot spots (the type of a damaged mech's).
+    constexpr int32_t DamageSmoke = 0x1c2;
+    constexpr float SmokeSeconds = 15.0f;
     // Those closing in run to a ring this far around the mech, ordered again every two seconds; the four nearest are
     // set down twice as far first.
     constexpr float CloseRadius = 160.0f;
@@ -7658,6 +7729,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const std::vector<MCShowcaseEvent> closes = ShowcaseEvents("close");
     const std::vector<MCShowcaseEvent> volleys = ShowcaseEvents("volley");
     const std::vector<MCShowcaseEvent> losses = ShowcaseEvents("loss");
+    const std::vector<MCShowcaseEvent> smokes = ShowcaseEvents("smoke");
     const bool video = ShowcaseOption("video", 0) != 0;
     const std::optional<std::string_view> converge = MCTest::Option("showcase-converge");
     const std::optional<std::string_view> closeNames = MCTest::Option("showcase-close-names");
@@ -7749,6 +7821,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     std::set<std::tuple<int32_t, int32_t, char>> landed;
     std::map<int32_t, bool> wasJumping;
     std::set<int32_t> fell;
+    MCReadiedAt readiedAt;
+    // The health the force's vital parts started with (by part id and inventory index), held with its armor.
+    std::map<std::pair<int32_t, size_t>, uint8_t> vitals;
     int32_t fallen = 0;
     int32_t jumps = 0;
     double secondEnergy = 0.0;
@@ -7869,10 +7944,10 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         return true;
     };
 
-    // Its mech fired at for staged damage, from FireLeadFrames before it is due until it lands, every weapon that
-    // reaches it readied when the fire starts and again when it is due if no hit has come (shots miss): the two enemy
-    // mechs nearest it are sent at it ApproachFrames before (the nearest set down within its reach if it is further),
-    // and if fewer than two weapons reach it at either volley, the nearest is set down within its reach then.
+    // Its mech fired at for staged damage, from FireLeadFrames before it is due until it lands, the nearly recycled
+    // weapons that reach it of the units nearest it readied when the fire starts and again when it is due if no hit
+    // has come (shots miss): the ApproachingMechs enemy mechs nearest it are sent at it ApproachFrames before (the
+    // nearest set down within its reach if it is further and neither is on screen).
     const auto FireFor =
         [&](const std::shared_ptr<MCMover>& victim, int32_t frame, int32_t due, int32_t mech, char kind)
     {
@@ -7885,13 +7960,14 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             const std::vector<std::shared_ptr<MCMover>> nearest = EnemyMechsByDistance(*victim);
 
-            // The nearest not where all its weapons reach: set down there (the camera is mostly elsewhere yet).
+            // The nearest not where all its weapons reach: set down there, unless either is on screen.
             if (!nearest.empty())
             {
                 const MCVector3D at = victim->GetPosition();
                 const MCVector3D from = nearest.front()->GetPosition();
 
-                if (std::hypot(at.X - from.X, at.Y - from.Y) > WeaponsReach(*nearest.front()) * WorldUnitsPerMeter)
+                if (std::hypot(at.X - from.X, at.Y - from.Y) > WeaponsReach(*nearest.front()) * WorldUnitsPerMeter &&
+                    !EitherOnScreen(*nearest.front(), *victim))
                 {
                     std::cout << std::format("  frame {}: {} brought {:.0f} m from {}\n", frame,
                                              nearest.front()->GetIfaceName(),
@@ -7910,25 +7986,27 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             return;
         }
 
-        constexpr int32_t FewestWeapons = 2;
         const bool volley = frame == due - FireLeadFrames || frame == due;
-        const int32_t fired = FireAt(victim, volley);
+        const int32_t fired = FireAt(victim, volley ? ReadiedShooters : 0, readiedAt, ShooterRestSeconds);
 
         if (volley)
         {
             std::cout << std::format("  frame {}: {} weapons fire at {} (part {:#x})\n", frame, fired,
                                      victim->GetIfaceName(), victim->PartId);
         }
+    };
 
-        if (volley && fired < FewestWeapons)
+    // When the camera came to the mech it follows: the last --showcase-camera's frame (0 before any).
+    const auto CameraSince = [&](int32_t frame)
+    {
+        int32_t since = 0;
+
+        for (const MCShowcaseEvent& camera : cameras)
         {
-            if (const std::shared_ptr<MCMover> enemy = NearestEnemyMech(*victim); enemy != nullptr)
-            {
-                std::cout << std::format("  frame {}: {} brought {:.0f} m from {}\n", frame, enemy->GetIfaceName(),
-                                         BringWithinReach(*enemy, *victim, true), victim->GetIfaceName());
-                FireAt(victim, true);
-            }
+            since = camera.Frame <= frame && PlayerMech(camera.Mech) != nullptr ? camera.Frame : since;
         }
+
+        return since;
     };
 
     // The mech the camera follows: the last --showcase-camera's from before this frame (fallen or not), else the
@@ -8061,12 +8139,14 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& volley : volleys)
         {
-            // Every enemy weapon readied at once when it starts, so they fire together.
+            // The missiles of those near it readied at once when it starts, so they fire together.
             if (const std::shared_ptr<MCMover> mech = PlayerMech(volley.Mech);
                 mech != nullptr && mech->IsDisabled() == 0 && frame >= volley.Frame &&
                 frame < volley.Frame + VolleyFrames)
             {
-                if (const int32_t fired = FireAt(mech, frame == volley.Frame); fired > 0)
+                if (const int32_t fired = FireAt(mech, frame == volley.Frame ? VolleyShooters : 0, readiedAt, 0.0f,
+                                                 MCComponentForm::WeaponMissile);
+                    fired > 0)
                 {
                     std::cout << std::format("  frame {}: {} enemy weapons fire at {}\n", frame, fired,
                                              mech->GetIfaceName());
@@ -8074,8 +8154,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
-        // With losses staged, the force's armor and the structure of what it still has hold until its staged end: the
-        // hits show, none falls before.
+        // With losses staged, the force's armor, the structure of what it still has, its vital parts (engine, gyro,
+        // cockpit, life support: in its torso and head) and its pilots hold until its staged end: the hits show, none
+        // falls before.
         for (const std::shared_ptr<MCMover>& mover : lance)
         {
             if (losses.empty())
@@ -8083,15 +8164,33 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                 break;
             }
 
-            for (MCArmorLocation& armor : mover->Armor)
+            for (size_t location = 0; location < mover->Armor.size(); ++location)
             {
-                armor.CurArmor = armor.MaxArmor;
+                MCArmorLocation& armor = mover->Armor[location];
+                armor.CurArmor = armor.MaxArmor * (location == MechHead ? HeadArmorHeld : 1.0f);
             }
 
             for (MCBodyLocation& body : mover->Body)
             {
                 body.CurInternalStructure =
                     body.CurInternalStructure > 0.0f ? body.MaxInternalStructure : body.CurInternalStructure;
+            }
+
+            for (size_t i = 0; i < mover->Inventory.size(); ++i)
+            {
+                MCInventoryItem& item = mover->Inventory[i];
+
+                if (const MCComponentForm form = MasterComponentList[item.MasterID].Form;
+                    form == MCComponentForm::Engine || form == MCComponentForm::Gyroscope ||
+                    form == MCComponentForm::Cockpit || form == MCComponentForm::LifeSupport)
+                {
+                    item.Health = vitals.try_emplace({mover->PartId, i}, item.Health).first->second;
+                }
+            }
+
+            if (const std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot(); pilot != nullptr)
+            {
+                pilot->Wounds = 0.0f;
             }
         }
 
@@ -8230,8 +8329,10 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
-        // While the force walks, no unit fires (its weapons come ready a moment after).
-        for (int32_t partId = MCMover::FirstPartId; walking && partId < MCMover::EndPartId; ++partId)
+        // While the force walks, and once it is gone, no unit fires (its weapons come ready a moment after).
+        const bool ceasefire = walking || (frame > walkFrame && lance.empty());
+
+        for (int32_t partId = MCMover::FirstPartId; ceasefire && partId < MCMover::EndPartId; ++partId)
         {
             constexpr float HeldSeconds = 0.3f;
 
@@ -8431,6 +8532,35 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
+        // Smoke streaming from the mech as from damaged equipment (its armor holds, so none is).
+        for (const MCShowcaseEvent& smoke : smokes)
+        {
+            const std::shared_ptr<MCMover> mover = PlayerMech(smoke.Mech);
+
+            if (frame != smoke.Frame || mover == nullptr || mover->IsDisabled() != 0 ||
+                mover->ObjectClass != MCObjectClass::BattleMech)
+            {
+                continue;
+            }
+
+            auto& mech = static_cast<MCBattleMech&>(*mover);
+            // The smoke's object type (hex) if given, else a damaged mech's.
+            int32_t type = DamageSmoke;
+            std::from_chars(smoke.What.data(), smoke.What.data() + smoke.What.size(), type, 16);
+
+            for (int32_t i = 0; i < MCBattleMech::MaxSmokes; ++i)
+            {
+                if (mech.Smoke[i] == nullptr)
+                {
+                    mech.Smoke[i] = CreateObjectAs<MCSmoke>(type);
+                    mech.SmokeHotSpot[i] = i % std::max<int32_t>(mech.NumWeapons, 1);
+                    mech.SmokeTime[i] = SmokeSeconds;
+                }
+            }
+
+            std::cout << std::format("  frame {}: {} smokes ({:#x})\n", frame, mech.GetIfaceName(), type);
+        }
+
         // A mine under the mech, a step ahead of it in turn left and right of where it stands.
         for (size_t index = 0; index < mines.size(); ++index)
         {
@@ -8446,9 +8576,10 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
-        // An alpha strike: the enemy mech nearest the mech brought in along its line to within reach AlphaBringFrames
-        // before (the camera mostly elsewhere yet), the mech turned on it with every weapon readied, each fired as it
-        // comes to bear (the pilot fires each one as it comes ready, so they never are all at once otherwise).
+        // An alpha strike: the mech holds its fire for AlphaHoldFrames, the enemy mech nearest it is brought in along
+        // its line to within reach AlphaBringFrames before (the camera elsewhere yet), and the mech turns on it with
+        // every weapon that has (nearly) recycled, each fired as it comes to bear, the rest as they come ready (the
+        // pilot fires each one as it comes ready, so they never go together otherwise).
         for (const MCShowcaseEvent& alpha : alphas)
         {
             const std::shared_ptr<MCMover> mech = PlayerMech(alpha.Mech);
@@ -8459,7 +8590,28 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
 
             if (const std::shared_ptr<MCMover> enemy = NearestEnemyMech(*mech);
-                frame == alpha.Frame - AlphaBringFrames && enemy != nullptr)
+                frame == alpha.Frame - AlphaApproachFrames && enemy != nullptr)
+            {
+                const MCVector3D from = mech->GetPosition();
+                const MCVector3D to = enemy->GetPosition();
+                const float length = std::max(std::hypot(to.X - from.X, to.Y - from.Y), 1.0f);
+                const float reach = std::min(WeaponsReach(*mech) * WorldUnitsPerMeter, length);
+                WalkTo(*enemy,
+                       MCVector3D(from.X + (to.X - from.X) / length * reach, from.Y + (to.Y - from.Y) / length * reach,
+                                  to.Z),
+                       MCOrderOrigin::Commander, true);
+            }
+
+            // Held: a weapon ready waits a frame at a time.
+            for (int32_t i = 0; frame >= alpha.Frame - AlphaHoldFrames && frame < alpha.Frame && i < mech->NumWeapons;
+                 ++i)
+            {
+                float& ready = mech->Inventory[mech->NumOther + i].ReadyTime;
+                ready = std::max(ready, ScenarioTime + ShowcaseFrameSeconds);
+            }
+
+            if (const std::shared_ptr<MCMover> enemy = NearestEnemyMech(*mech);
+                frame == alpha.Frame - AlphaBringFrames && enemy != nullptr && !EitherOnScreen(*enemy, *mech))
             {
                 const MCVector3D from = mech->GetPosition();
                 const MCVector3D to = enemy->GetPosition();
@@ -8490,10 +8642,14 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
                 for (int32_t i = 0; i < mech->NumWeapons; ++i)
                 {
-                    mech->Inventory[mech->NumOther + i].ReadyTime = 0.0f;
+                    if (MCInventoryItem& item = mech->Inventory[mech->NumOther + i]; Recycled(item))
+                    {
+                        item.ReadyTime = 0.0f;
+                    }
                 }
 
                 OrderAttack(*mech, alphaTarget);
+                OrderAttack(*alphaTarget, mech, MCOrderOrigin::Commander);
             }
         }
 
@@ -8538,15 +8694,15 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                         break;
                     }
 
-                    killing = FireAt(enemy, true) > 0 ? enemy : nullptr;
+                    killing = FireAt(enemy, ReadiedShooters, readiedAt, ShooterRestSeconds) > 0 ? enemy : nullptr;
                 }
 
-                // None in reach: the nearest brought within the mech's.
+                // None in reach: the nearest brought within the mech's, unless either is on screen.
                 if (killing == nullptr)
                 {
                     killing = NearestEnemyMech(*near);
 
-                    if (killing != nullptr)
+                    if (killing != nullptr && !EitherOnScreen(*killing, *near))
                     {
                         std::cout << std::format("  frame {}: {} brought {:.0f} m from {}\n", frame,
                                                  killing->GetIfaceName(), BringWithinReach(*near, *killing),
@@ -8593,6 +8749,28 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                     std::cout << std::format("  frame {}: {} (part {:#x}) down\n", frame, mover->GetIfaceName(),
                                              partId);
                 }
+
+                // One of the force not by a staged loss: why.
+                if (const std::shared_ptr<MCMechWarrior> pilot = mover->GetPilot();
+                    partId >= PlayerMechPartId && partId < PlayerMechPartId + PlayerMechs && pilot != nullptr &&
+                    !std::ranges::any_of(
+                        landed,
+                        [&](const auto& staged)
+                        {
+                            const char kind = std::get<2>(staged);
+                            return (kind == 'd' || kind == 'e') && PlayerMech(std::get<1>(staged)) == mover;
+                        }))
+                {
+                    std::string broken;
+
+                    for (const MCInventoryItem& item : mover->Inventory)
+                    {
+                        broken += item.Health == 0 ? std::format(" {}", MasterComponentList[item.MasterID].Name) : "";
+                    }
+
+                    std::cout << std::format("    unstaged: status {}, pilot status {} wounds {:.1f}, broken:{}\n",
+                                             mover->Status, pilot->Status, pilot->Wounds, broken);
+                }
             }
         }
 
@@ -8620,6 +8798,17 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             Eye()->SetPosition(walking && watchAt.has_value() ? *watchAt
                                                               : MCVector3D(at.X + (to.X - at.X) * FightShare,
                                                                            at.Y + (to.Y - at.Y) * FightShare, at.Z));
+        }
+
+        // A mech firing an alpha strike since the camera came to it: between it and its target (or the wreck).
+        else if (followed != nullptr && followed == alphaShooter && alphaTarget != nullptr &&
+                 alphaFrame >= CameraSince(frame))
+        {
+            const MCVector3D from = followed->GetPosition();
+            const MCVector3D to = alphaTarget->GetPosition();
+            Eye()->ChangeTarget(nullptr, true);
+            Eye()->SetPosition(
+                MCVector3D(from.X + (to.X - from.X) * AlphaShare, from.Y + (to.Y - from.Y) * AlphaShare, from.Z));
         }
         else if (followed != nullptr)
         {

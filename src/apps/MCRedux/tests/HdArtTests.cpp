@@ -7680,7 +7680,8 @@ namespace
 /// <c>--showcase-walk &lt;frame&gt;</c> has the force walk at the target until then, no one firing, and
 /// <c>--showcase-contact &lt;frame&gt;</c> sets the nearest converging enemy mech down ahead of the force (halted a
 /// second before), on its sensors and out of its sight (the rest kept off its sensors): it walks in as a blip, steps
-/// into sight just before the walk's end and is the force's first target;
+/// into sight just before the walk's end (<c>--showcase-contact-step &lt;frames&gt;</c> before, default 100) and is the
+/// force's first target;
 /// <c>--showcase-watch &lt;from&gt;,&lt;to&gt;</c> puts
 /// the camera between the first mech and the contact between those frames, the fog's edge, zoomed out to
 /// <c>--showcase-watch-zoom &lt;lines&gt;</c> if given; <c>--showcase-converge &lt;names&gt;</c> sends the other
@@ -7799,7 +7800,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     // further along the line from the first mech at a time, world units); a unit there is seen about a fifth further
     // out. The contact is set down this many times the edge's distance from the force's nearest mech, walks in to stand
     // this many (a blip on the sensors, in the fog), and steps into sight, this many, ContactStepFrames before the
-    // walk's end (it walks about 8 m a second).
+    // walk's end (it walks about 8 m a second; --showcase-contact-step gives a ground whose sight reaches further more).
     constexpr float ContactTry = 10.0f;
     constexpr float ContactFrom = 1.55f;
     constexpr float ContactOutside = 1.4f;
@@ -7867,6 +7868,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const std::vector<MCShowcaseEvent> incoming = ShowcaseEvents("incoming");
     const int32_t walkFrame = ShowcaseOption("walk", 0);
     const int32_t contactFrame = ShowcaseOption("contact", -1);
+    const int32_t contactStep = ShowcaseOption("contact-step", ContactStepFrames);
     const std::vector<int32_t> kills = ShowcaseFrames("kill");
     const std::vector<int32_t> watch = ShowcaseFrames("watch");
     const int32_t watchZoom = ShowcaseOption("watch-zoom", 0);
@@ -8259,8 +8261,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         landed.insert({due, mech, kind});
         lastLanded[victim.PartId] = kind == 'h' ? lastLanded[victim.PartId] : frame;
-        std::cout << std::format("  frame {}: {} (part {:#x}) {} ({})\n", frame, victim.GetIfaceName(), victim.PartId,
-                                 what, struck ? "on a hit" : "no hit came");
+        std::cout << std::format("  frame {}: {} (part {:#x}) {} at bar {:.2f} ({})\n", frame, victim.GetIfaceName(),
+                                 victim.PartId, what, victim.GetTotalEffectiveness(),
+                                 struck ? "on a hit" : "no hit came");
         return true;
     };
 
@@ -8757,7 +8760,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         }
 
         // It steps into sight before the fight.
-        if (contactMech != nullptr && contactMech->IsDisabled() == 0 && frame == walkFrame - ContactStepFrames)
+        if (contactMech != nullptr && contactMech->IsDisabled() == 0 && frame == walkFrame - contactStep)
         {
             WalkTo(*contactMech, contactInSight, MCOrderOrigin::Commander);
         }
@@ -9012,6 +9015,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
             const MCVector3D at = mover->GetPosition();
             std::vector<std::pair<float, std::shared_ptr<MCMiscTerrainObject>>> forests;
+            // The nearest forest at any distance, for the log (a mission's ground may have none in reach).
+            float nearest = std::numeric_limits<float>::max();
 
             for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
             {
@@ -9025,8 +9030,16 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                     const auto forest = std::static_pointer_cast<MCMiscTerrainObject>(object);
                     const MCVector3D where = forest->GetPosition();
 
-                    if (const float meters = std::hypot(where.X - at.X, where.Y - at.Y) / WorldUnitsPerMeter;
-                        forest->Kind == MCMiscTerrainKind::Forest && meters <= SmokeTreeMeters)
+                    const float meters = std::hypot(where.X - at.X, where.Y - at.Y) / WorldUnitsPerMeter;
+
+                    if (forest->Kind != MCMiscTerrainKind::Forest)
+                    {
+                        continue;
+                    }
+
+                    nearest = std::min(nearest, meters);
+
+                    if (meters <= SmokeTreeMeters)
                     {
                         forests.emplace_back(meters, forest);
                     }
@@ -9042,8 +9055,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                 alight += forest->FireObject != nullptr ? 1 : 0;
             }
 
-            std::cout << std::format("  frame {}: {} smokes ({} forests alight, the nearest {:.0f} m off)\n", frame,
-                                     mover->GetIfaceName(), alight, forests.empty() ? 0.0f : forests.front().first);
+            std::cout << std::format("  frame {}: {} smokes ({} forests alight, the nearest forest {:.0f} m off)\n",
+                                     frame, mover->GetIfaceName(), alight, nearest);
         }
 
         // A mine under the mech, a step ahead of it in turn left and right of where it stands.
@@ -9446,16 +9459,21 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                                      10.0 * std::log10(meanSquare + SilenceFloor), MCTestGame::StateHash(),
                                      down ? ", target down" : "");
             secondEnergy = 0.0;
-            // The force's health bars, as the game measures them.
+            // The force's health bars, as the game measures them, and where each stands (world units).
             std::string bars;
+            std::string places;
 
             for (const std::shared_ptr<MCMover>& mover : LiveLance())
             {
                 bars += std::format("{}{} {:.2f}", bars.empty() ? "" : ", ", mover->GetIfaceName(),
                                     mover->GetTotalEffectiveness());
+                const MCVector3D at = mover->GetPosition();
+                places +=
+                    std::format("{}{} {:.0f} {:.0f}", places.empty() ? "" : ", ", mover->GetIfaceName(), at.X, at.Y);
             }
 
             std::cout << std::format("  second {} bars: {}\n", (frame + 1) / FramesPerSecond, bars);
+            std::cout << std::format("  second {} at: {}\n", (frame + 1) / FramesPerSecond, places);
         }
 
         // A scout's look every --showcase-peek <n> frames, to choose where the recording starts.
@@ -12092,6 +12110,104 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
             MCTestGame::RunFrame(FrameSeconds);
             MCTestGame::RunFrame(FrameSeconds);
             Shoot(folder, std::format("ground_{}", shot++), original);
+        }
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-map-mosaic &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a whole map (<c>--mission</c>, default 1)
+/// for a mosaic, the map revealed and the view zoomed out as far as it goes: the camera stepped along the screen's own
+/// axes by half a view, so each shot's middle half meets its neighbours', <c>tile_&lt;row&gt;_&lt;column&gt;_hd.png</c>
+/// (or _original.png with <c>--hd-original 1</c>) over the map's diamond, each tile's world point printed.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-map-mosaic pictures a whole map in tiles")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-map-mosaic");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    const std::shared_ptr<MCViewWindow> view = MCMainView();
+    REQUIRE(view != nullptr);
+    view->ZoomTo(std::numeric_limits<float>::max());
+
+    // The zoom eases in over real time.
+    constexpr int32_t MaxZoomFrames = 600;
+
+    for (int32_t frame = 0; frame < MaxZoomFrames && view->ZoomHeight != view->ZoomTarget; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+    }
+
+    // How a world step projects on screen, from the map's middle and two points a probe's length from it.
+    constexpr float Probe = 1000.0f;
+    const MCVector3D topLeft = MCTerrain::MapTopLeft3d100;
+    const MCVector3D middle(topLeft.X + 0.5f * WorldUnitsMapSide, topLeft.Y - 0.5f * WorldUnitsMapSide, 0.0f);
+    Eye()->SetPosition(middle);
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCVector2D at = Eye()->Project(middle);
+    const MCVector2D alongX = Eye()->Project(MCVector3D(middle.X + Probe, middle.Y, 0.0f)) - at;
+    const MCVector2D alongY = Eye()->Project(MCVector3D(middle.X, middle.Y + Probe, 0.0f)) - at;
+    const float determinant = alongX.X * alongY.Y - alongY.X * alongX.Y;
+    REQUIRE(determinant != 0.0f);
+
+    // The world point a screen offset from the middle shows.
+    const auto worldAt = [&](float screenX, float screenY)
+    {
+        const float x = (alongY.Y * screenX - alongY.X * screenY) / determinant * Probe;
+        const float y = (alongX.X * screenY - alongX.Y * screenX) / determinant * Probe;
+        return MCVector3D(middle.X + x, middle.Y + y, 0.0f);
+    };
+
+    // The map's diamond on screen, in half views.
+    const float stepX = static_cast<float>(view->WorldWidth()) * 0.5f;
+    const float stepY = static_cast<float>(view->WorldHeight()) * 0.5f;
+    float left = 0.0f;
+    float right = 0.0f;
+    float top = 0.0f;
+    float bottom = 0.0f;
+
+    for (const float down : {0.0f, 1.0f})
+    {
+        for (const float across : {0.0f, 1.0f})
+        {
+            const MCVector2D corner = Eye()->Project(MCVector3D(topLeft.X + across * WorldUnitsMapSide,
+                                                                topLeft.Y - down * WorldUnitsMapSide, 0.0f)) -
+                                      at;
+            left = std::min(left, corner.X);
+            right = std::max(right, corner.X);
+            top = std::min(top, corner.Y);
+            bottom = std::max(bottom, corner.Y);
+        }
+    }
+
+    const auto firstRow = static_cast<int32_t>(std::floor(top / stepY));
+    const auto lastRow = static_cast<int32_t>(std::ceil(bottom / stepY));
+    const auto firstColumn = static_cast<int32_t>(std::floor(left / stepX));
+    const auto lastColumn = static_cast<int32_t>(std::ceil(right / stepX));
+    std::cout << std::format(
+        "  mosaic: rows {}..{}, columns {}..{}, a step {:.0f} x {:.0f} window pixels, zoom {:.0f}\n", firstRow, lastRow,
+        firstColumn, lastColumn, stepX * view->WorldScaleX(), stepY * view->WorldScaleY(), view->ZoomHeight);
+
+    for (int32_t row = firstRow; row <= lastRow; ++row)
+    {
+        for (int32_t column = firstColumn; column <= lastColumn; ++column)
+        {
+            const MCVector3D point = worldAt(static_cast<float>(column) * stepX, static_cast<float>(row) * stepY);
+            Eye()->SetPosition(point);
+            MCTestGame::RunFrame(FrameSeconds);
+            MCTestGame::RunFrame(FrameSeconds);
+            const std::string name = std::format("tile_{}_{}", row - firstRow, column - firstColumn);
+            std::cout << std::format("  {}: world {:.0f}, {:.0f}\n", name, point.X, point.Y);
+            Shoot(folder, name, original);
         }
     }
 }

@@ -54,7 +54,7 @@
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "object/MCSensorSystem.h"
-#include "object/MCSmoke.h"
+#include "object/MCMiscTerrainObject.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
@@ -7689,8 +7689,8 @@ namespace
 /// the target every n frames or at those, <c>--showcase-dfa</c> one mech at the enemy mech nearest it;
 /// <c>--showcase-strike &lt;frame&gt;,...</c> drops a large artillery strike on the target, and
 /// <c>--showcase-incoming &lt;frame&gt;[:mech],...</c> the other side's beside that mech (the first), marked;
-/// <c>--showcase-mines</c> sets a mine off under a mech, <c>--showcase-smoke</c> has smoke stream from it (its
-/// object type in hex as the what, a damaged mech's if none);
+/// <c>--showcase-mines</c> sets a mine off under a mech, <c>--showcase-smoke</c> sets the forests nearest it alight
+/// (their smoke all around it);
 /// <c>--showcase-alpha</c> sends the enemy mech nearest a mech running in to its reach five seconds before (held
 /// standing until then; set down within reach the frame before if still further) and has the mech fire every weapon at
 /// it, the camera between them if on it; <c>--showcase-destroy
@@ -7705,8 +7705,10 @@ namespace
 /// on a hit: whatever reaches the mech fires at it just before, the nearest three readied (<c>hit</c>: only that, for a
 /// call of enemy fire); once the force is gone, no one fires. Staged fire (for losses, kills, alpha strikes and the
 /// volley) hits, and no unit's cells block its line, so what it is staged for lands on cue. With losses staged, the
-/// force holds (armor, structure, vital parts and pilots) until then, so none falls before its time. The player's mechs
-/// are printed first, and each second's mix level and state.
+/// force holds (structure, vital parts, pilots and the last of its armor) until then, so none falls before its time;
+/// the game's hits wear the rest of its armor, so its bars fall as it is hit (<c>--showcase-wear</c> sends the enemy
+/// mechs nearest a mech at it from a frame on, to wear it down). The player's mechs are printed first, and
+/// each second's mix level, state and the force's health bars.
 /// A run plays out the same every time, so the two runs differ only in how they look and sound.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sound, for a before/after video")
@@ -7762,17 +7764,31 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     // ends, half a second on, a slug's or missile's when it arrives), and the first hit from HitWindowFrames before
     // takes the part (with none by HitGraceFrames after, it goes anyway).
     constexpr int32_t FireLeadFrames = 24;
+    // A death's fire starts DieLeadFrames before it is due instead (from those not held for it until FireLeadFrames),
+    // so its hits wear the mech's bar down first.
+    constexpr int32_t DieLeadFrames = 90;
     constexpr int32_t LossVolleyFrames = 8;
     constexpr int32_t HitWindowFrames = 8;
     constexpr int32_t HitGraceFrames = 30;
     constexpr int32_t LossGapFrames = 10;
     // A held mech of the force has its full armor raised to the most a location takes, so no one frame's fire (a
     // volley's missiles bursting all around it) goes through to its structure and breaks its engine, ammunition or head
-    // before its staged end; and its armor held at a share of that, from all of it until the fight to EndArmorShare at
-    // its end (slowly at first), so its bar (the share of its armor its locations have) goes green, yellow, red as its
-    // end comes.
+    // before its staged end. What the game's own hits take off it comes off the armor the mech really has, and the
+    // raised armor is held at the share of that left, so its bar (the share of its armor its locations have) falls as
+    // it is hit; no location's last WornFloor share goes before its staged end.
     constexpr uint8_t ArmorHeld = 255;
-    constexpr float EndArmorShare = 0.2f;
+    constexpr float WornFloor = 0.2f;
+    // A mech worn down (--showcase-wear frame:mech[:frames]) has WearShooters enemy mechs (the nearest, none sent at one
+    // worn sooner) kept at it for that many frames or until it falls, and while its bar is above one falling from full
+    // to WearEndBar over them: one of those further than all its weapons reach (by WearSlack) set down where they do
+    // once neither is on screen, and from WearLeadFrames on, what reaches it fired at it as for a staged loss (the
+    // WearReadied units nearest readied), a volley every LossVolleyFrames. The game's own shots wear its armor.
+    constexpr size_t WearShooters = 3;
+    constexpr int32_t WearFrames = 30;
+    constexpr int32_t WearLeadFrames = 30;
+    constexpr float WearSlack = 1.25f;
+    constexpr float WearEndBar = 0.3f;
+    constexpr int32_t WearReadied = 8;
     constexpr int32_t ApproachFrames = 90;
     constexpr size_t ApproachingMechs = 3;
     // Out of turn, only the weapons of this many units nearest a target are readied, a unit no more often than this.
@@ -7831,8 +7847,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     // An enemy being finished near the mech followed is framed with it (AlphaShare between them) this long from the
     // fire on it.
     constexpr int32_t KillFrames = 90;
-    // Smoke streams from a mech this long, from up to MaxSmokes of its hot spots (the type of a damaged mech's).
-    constexpr int32_t DamageSmoke = 0x1c2;
+    // A mech in smoke has the SmokeTrees forests nearest it within SmokeTreeMeters burning this long.
+    constexpr size_t SmokeTrees = 12;
+    constexpr float SmokeTreeMeters = 90.0f;
     constexpr float SmokeSeconds = 15.0f;
     // Those closing in run to a ring this far around the mech, ordered again every two seconds; the four nearest are
     // set down twice as far first.
@@ -7863,18 +7880,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const std::vector<MCShowcaseEvent> closes = ShowcaseEvents("close");
     const std::vector<MCShowcaseEvent> volleys = ShowcaseEvents("volley");
     const std::vector<MCShowcaseEvent> losses = ShowcaseEvents("loss");
-    // When each of the force's mechs (by place) is staged to go: its last loss that takes it out of the fight.
-    std::map<int32_t, int32_t> ends;
-
-    for (const MCShowcaseEvent& loss : losses)
-    {
-        if (loss.What == "die" || loss.What == "eject")
-        {
-            ends[loss.Mech] = std::max(ends[loss.Mech], loss.Frame);
-        }
-    }
-
     const std::vector<MCShowcaseEvent> smokes = ShowcaseEvents("smoke");
+    const std::vector<MCShowcaseEvent> wears = ShowcaseEvents("wear");
     const bool video = ShowcaseOption("video", 0) != 0;
     const std::optional<std::string_view> converge = MCTest::Option("showcase-converge");
     const std::optional<std::string_view> closeNames = MCTest::Option("showcase-close-names");
@@ -7976,6 +7983,12 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     MCReadiedAt readiedAt;
     // The health the force's vital parts started with (by part id and inventory index), held with its armor.
     std::map<std::pair<int32_t, size_t>, uint8_t> vitals;
+    // The armor the force's mechs really have (by part id, each location's points left and full), worn by the game's
+    // hits.
+    std::map<int32_t, std::vector<std::pair<float, float>>> worn;
+    // The enemy units last sent to wear a mech down (part ids; by wear, its index): staged losses leave their fire be.
+    std::set<int32_t> wearing;
+    std::map<size_t, std::vector<std::shared_ptr<MCMover>>> wearSent;
     // The units holding their fire for each staged loss (due, mech, kind).
     std::map<std::tuple<int32_t, int32_t, char>, std::vector<std::shared_ptr<MCMover>>> holding;
     int32_t fallen = 0;
@@ -8173,20 +8186,55 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         return holding;
     };
 
-    // The share of its armor a mech of the force (by place) is held at this frame (see ArmorHeld).
-    const auto ArmorShare = [&](int32_t frame, int32_t place)
+    // When a wear (--showcase-wear) stops: its frames on, if given.
+    const auto WearUntil = [](const MCShowcaseEvent& wear)
     {
-        const auto end = ends.find(place);
+        int32_t frames = std::numeric_limits<int32_t>::max() - wear.Frame;
+        std::from_chars(wear.What.data(), wear.What.data() + wear.What.size(), frames);
+        return wear.Frame + frames;
+    };
 
-        if (end == ends.end() || frame <= walkFrame)
+    // The bar a worn mech is to be down to by a frame (see WearShooters): full at the wear's start, WearEndBar at its
+    // end (an endless wear's stays full).
+    const auto WearBar = [&](const MCShowcaseEvent& wear, int32_t frame)
+    {
+        const int64_t span = std::max<int64_t>(static_cast<int64_t>(WearUntil(wear)) - wear.Frame, 1);
+        const float progress =
+            std::clamp(static_cast<float>(frame - wear.Frame) / static_cast<float>(span), 0.0f, 1.0f);
+        return 1.0f - (1.0f - WearEndBar) * progress;
+    };
+
+    // A mech of the force held this frame (see ArmorHeld): what the game's hits took off its raised armor since the
+    // last frame comes off the armor it really has, down to WornFloor of a location's (all of it once the location is
+    // gone), and its raised armor is held at the share left.
+    const auto HoldWorn = [&](MCMover& mover)
+    {
+        const auto [entry, first] = worn.try_emplace(mover.PartId);
+        std::vector<std::pair<float, float>>& armor = entry->second;
+
+        for (size_t i = 0; first && i < mover.Armor.size(); ++i)
         {
-            return 1.0f;
+            armor.emplace_back(mover.Armor[i].CurArmor, static_cast<float>(mover.Armor[i].MaxArmor));
         }
 
-        const float progress =
-            std::clamp(static_cast<float>(frame - walkFrame) / static_cast<float>(std::max(end->second - walkFrame, 1)),
-                       0.0f, 1.0f);
-        return 1.0f - (1.0f - EndArmorShare) * progress * progress;
+        const auto Share = [](const std::pair<float, float>& location)
+        { return location.second > 0.0f ? location.first / location.second : 1.0f; };
+
+        for (size_t i = 0; !first && i < armor.size(); ++i)
+        {
+            const float held = static_cast<float>(ArmorHeld) * Share(armor[i]);
+            const float now = mover.Armor[i].CurArmor;
+            armor[i].first = now <= 0.0f ? 0.0f
+                                         : std::max(armor[i].first - std::max(held - now, 0.0f),
+                                                    std::min(armor[i].first, armor[i].second * WornFloor));
+        }
+
+        Hold(mover, ArmorHeld);
+
+        for (size_t i = 0; i < armor.size(); ++i)
+        {
+            mover.Armor[i].CurArmor = static_cast<float>(ArmorHeld) * Share(armor[i]);
+        }
     };
 
     // Whether staged damage of a kind due at a frame lands on its mech this frame: on a hit from HitWindowFrames
@@ -8216,11 +8264,36 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         return true;
     };
 
-    // Its mech fired at for staged damage, from FireLeadFrames before it is due until it lands, the nearly recycled
+    // How long before staged damage of a kind is due its fire starts, and its shooters are sent at its mech (FireFor).
+    const auto LeadFor = [](char kind) { return kind == 'd' ? DieLeadFrames : FireLeadFrames; };
+    const auto ApproachFor = [&](char kind) { return LeadFor(kind) + ApproachFrames - FireLeadFrames; };
+
+    // The units held for staged damage still to land (part ids; see FireFor): wearing fire leaves them be, so they have
+    // their weapons for it.
+    const auto HeldForLosses = [&](int32_t frame)
+    {
+        std::set<int32_t> held;
+
+        for (const auto& [loss, shooters] : holding)
+        {
+            if (const int32_t due = std::get<0>(loss);
+                frame > due - ApproachFor(std::get<2>(loss)) && frame <= due + HitGraceFrames && !landed.contains(loss))
+            {
+                for (const std::shared_ptr<MCMover>& shooter : shooters)
+                {
+                    held.insert(shooter->PartId);
+                }
+            }
+        }
+
+        return held;
+    };
+
+    // Its mech fired at for staged damage, from its lead (LeadFor) before it is due until it lands, the nearly recycled
     // weapons that reach it of the units nearest it readied every LossVolleyFrames: the ApproachingMechs enemy mechs
-    // nearest it are sent at it ApproachFrames before (the nearest set down within its reach if it is further and
+    // nearest it are sent at it before that (ApproachFor; the nearest set down within its reach if it is further and
     // neither is on screen), and the ReadiedShooters units nearest it hold their fire from then until the fire starts,
-    // so they have weapons recycled for it.
+    // so they have weapons recycled for it (but those wearing a mech down: their fire lands hits anyway).
     const auto FireFor =
         [&](const std::shared_ptr<MCMover>& victim, int32_t frame, int32_t due, int32_t mech, char kind)
     {
@@ -8229,7 +8302,10 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             return;
         }
 
-        if (frame == due - ApproachFrames)
+        const int32_t lead = LeadFor(kind);
+        const int32_t approach = ApproachFor(kind);
+
+        if (frame == due - approach)
         {
             const std::vector<std::shared_ptr<MCMover>> nearest = EnemyMechsByDistance(*victim);
 
@@ -8257,21 +8333,32 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                               std::back_inserter(holding[{due, mech, kind}]));
         }
 
+        // Those held hold their fire until the last FireLeadFrames (a death's earlier fire is the others').
         for (const std::shared_ptr<MCMover>& shooter : holding[{due, mech, kind}])
         {
-            if (frame > due - ApproachFrames && frame < due - FireLeadFrames && shooter->IsDisabled() == 0)
+            if (frame > due - approach && frame < due - FireLeadFrames && shooter->IsDisabled() == 0 &&
+                !wearing.contains(shooter->PartId))
             {
                 HoldFire(*shooter);
             }
         }
 
-        if (frame < due - FireLeadFrames || frame > due + HitGraceFrames)
+        if (frame < due - lead || frame > due + HitGraceFrames)
         {
             return;
         }
 
-        const bool volley = (frame - (due - FireLeadFrames)) % LossVolleyFrames == 0;
-        const std::set<int32_t> skip = Holding(frame);
+        const bool volley = (frame - (due - lead)) % LossVolleyFrames == 0;
+        std::set<int32_t> skip = Holding(frame);
+
+        if (frame < due - FireLeadFrames)
+        {
+            for (const std::shared_ptr<MCMover>& shooter : holding[{due, mech, kind}])
+            {
+                skip.insert(shooter->PartId);
+            }
+        }
+
         std::vector<std::string> names;
         int32_t fired =
             FireAt(victim, volley ? ReadiedShooters : 0, readiedAt, ShooterRestSeconds, skip, std::nullopt, &names);
@@ -8367,7 +8454,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             auto& mech = static_cast<MCBattleMech&>(*mover);
             const char kind = loss.What.empty() ? 'd' : loss.What.front();
 
-            if (hit.contains(mech.PartId) && frame >= loss.Frame - FireLeadFrames &&
+            if (hit.contains(mech.PartId) && frame >= loss.Frame - LeadFor(kind) &&
                 frame <= loss.Frame + HitGraceFrames && !landed.contains({loss.Frame, loss.Mech, kind}) &&
                 hitShown.insert(mech.PartId).second)
             {
@@ -8396,6 +8483,103 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             else if (loss.What == "hit")
             {
                 Lands(mech, frame, loss.Frame, loss.Mech, kind, "under fire");
+            }
+        }
+
+        // Those being worn down: each one's enemy mechs kept on it, the nearest not on another filling its empty places
+        // (the one to stop first first), every WearFrames.
+        if (frame % WearFrames == 0)
+        {
+            std::set<int32_t> sent = Runners(frame);
+            std::vector<std::pair<int32_t, size_t>> worns;
+
+            for (size_t i = 0; i < wears.size(); ++i)
+            {
+                const std::shared_ptr<MCMover> mech = PlayerMech(wears[i].Mech);
+                std::vector<std::shared_ptr<MCMover>>& shooters = wearSent[i];
+
+                if (mech == nullptr || mech->IsDisabled() != 0 || frame < wears[i].Frame ||
+                    frame >= WearUntil(wears[i]))
+                {
+                    shooters.clear();
+                    continue;
+                }
+
+                std::erase_if(shooters, [](const std::shared_ptr<MCMover>& enemy) { return enemy->IsDisabled() != 0; });
+                worns.emplace_back(WearUntil(wears[i]), i);
+
+                for (const std::shared_ptr<MCMover>& enemy : shooters)
+                {
+                    sent.insert(enemy->PartId);
+                }
+            }
+
+            std::ranges::sort(worns);
+            wearing.clear();
+
+            for (const auto& [until, i] : worns)
+            {
+                const std::shared_ptr<MCMover> mech = PlayerMech(wears[i].Mech);
+                std::vector<std::shared_ptr<MCMover>>& shooters = wearSent[i];
+
+                for (const std::shared_ptr<MCMover>& enemy : EnemyMechsByDistance(*mech))
+                {
+                    if (shooters.size() < WearShooters && sent.insert(enemy->PartId).second)
+                    {
+                        shooters.push_back(enemy);
+                    }
+                }
+
+                for (const std::shared_ptr<MCMover>& enemy : shooters)
+                {
+                    OrderAttack(*enemy, mech, MCOrderOrigin::Commander);
+                    wearing.insert(enemy->PartId);
+                }
+
+                if (frame < wears[i].Frame + WearFrames)
+                {
+                    std::cout << std::format("  frame {}: {} worn down by {} enemy mechs\n", frame,
+                                             mech->GetIfaceName(), shooters.size());
+                }
+            }
+        }
+
+        // While a worn mech's bar is above its wear's (WearBar): its enemy mechs set down within reach once neither is
+        // on screen, and what reaches it firing at it.
+        for (size_t i = 0; i < wears.size(); ++i)
+        {
+            const MCShowcaseEvent& wear = wears[i];
+            const std::shared_ptr<MCMover> mech = PlayerMech(wear.Mech);
+
+            if (mech == nullptr || mech->IsDisabled() != 0 || frame < wear.Frame || frame >= WearUntil(wear) ||
+                mech->GetTotalEffectiveness() <= WearBar(wear, frame))
+            {
+                continue;
+            }
+
+            const MCVector3D at = mech->GetPosition();
+
+            for (const std::shared_ptr<MCMover>& enemy : wearSent[i])
+            {
+                const MCVector3D from = enemy->GetPosition();
+
+                if (std::hypot(at.X - from.X, at.Y - from.Y) > WeaponsReach(*enemy) * WorldUnitsPerMeter * WearSlack &&
+                    !EitherOnScreen(*enemy, *mech))
+                {
+                    std::cout << std::format("  frame {}: {} brought {:.0f} m from {}\n", frame, enemy->GetIfaceName(),
+                                             BringWithinReach(*enemy, *mech, true), mech->GetIfaceName());
+                }
+            }
+
+            if (frame >= wear.Frame + WearLeadFrames && (frame - wear.Frame) % LossVolleyFrames == 0)
+            {
+                if (const int32_t fired =
+                        FireAt(mech, WearReadied, readiedAt, ShooterRestSeconds, HeldForLosses(frame));
+                    fired > 0)
+                {
+                    std::cout << std::format("  frame {}: {} weapons wear {} down\n", frame, fired,
+                                             mech->GetIfaceName());
+                }
             }
         }
 
@@ -8443,8 +8627,11 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         if (closing && (frame - close->Frame) % CloseFrames == 0)
         {
+            // Those wearing a mech down stay on it.
+            std::set<int32_t> busy = Runners(frame);
+            busy.insert(wearing.begin(), wearing.end());
             const int32_t closed =
-                CloseIn(*closeNames, closeOn, CloseRadius, frame == close->Frame ? Brought : 0, Runners(frame));
+                CloseIn(*closeNames, closeOn, CloseRadius, frame == close->Frame ? Brought : 0, busy);
 
             if (frame == close->Frame)
             {
@@ -8478,7 +8665,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                 break;
             }
 
-            Hold(*mover, ArmorHeld, ArmorShare(frame, mover->PartId - PlayerMechPartId));
+            HoldWorn(*mover);
         }
 
         const bool retarget = frame % RetargetFrames == 0 || (walkFrame > 0 && frame == walkFrame);
@@ -8813,33 +9000,50 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
-        // Smoke streaming from the mech as from damaged equipment (its armor holds, so none is).
+        // The forests nearest the mech set alight: the game's own fire, and its smoke all around the mech.
         for (const MCShowcaseEvent& smoke : smokes)
         {
             const std::shared_ptr<MCMover> mover = PlayerMech(smoke.Mech);
 
-            if (frame != smoke.Frame || mover == nullptr || mover->IsDisabled() != 0 ||
-                mover->ObjectClass != MCObjectClass::BattleMech)
+            if (frame != smoke.Frame || mover == nullptr || mover->IsDisabled() != 0)
             {
                 continue;
             }
 
-            auto& mech = static_cast<MCBattleMech&>(*mover);
-            // The smoke's object type (hex) if given, else a damaged mech's.
-            int32_t type = DamageSmoke;
-            std::from_chars(smoke.What.data(), smoke.What.data() + smoke.What.size(), type, 16);
+            const MCVector3D at = mover->GetPosition();
+            std::vector<std::pair<float, std::shared_ptr<MCMiscTerrainObject>>> forests;
 
-            for (int32_t i = 0; i < MCBattleMech::MaxSmokes; ++i)
+            for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
             {
-                if (mech.Smoke[i] == nullptr)
+                for (const std::shared_ptr<MCBaseObject> object : *list)
                 {
-                    mech.Smoke[i] = CreateObjectAs<MCSmoke>(type);
-                    mech.SmokeHotSpot[i] = i % std::max<int32_t>(mech.NumWeapons, 1);
-                    mech.SmokeTime[i] = SmokeSeconds;
+                    if (object->ObjectClass != MCObjectClass::MiscTerrainObject)
+                    {
+                        continue;
+                    }
+
+                    const auto forest = std::static_pointer_cast<MCMiscTerrainObject>(object);
+                    const MCVector3D where = forest->GetPosition();
+
+                    if (const float meters = std::hypot(where.X - at.X, where.Y - at.Y) / WorldUnitsPerMeter;
+                        forest->Kind == MCMiscTerrainKind::Forest && meters <= SmokeTreeMeters)
+                    {
+                        forests.emplace_back(meters, forest);
+                    }
                 }
             }
 
-            std::cout << std::format("  frame {}: {} smokes ({:#x})\n", frame, mech.GetIfaceName(), type);
+            std::ranges::sort(forests, {}, &std::pair<float, std::shared_ptr<MCMiscTerrainObject>>::first);
+            size_t alight = 0;
+
+            for (const auto& [meters, forest] : forests | std::views::take(SmokeTrees))
+            {
+                forest->LightOnFire(SmokeSeconds);
+                alight += forest->FireObject != nullptr ? 1 : 0;
+            }
+
+            std::cout << std::format("  frame {}: {} smokes ({} forests alight, the nearest {:.0f} m off)\n", frame,
+                                     mover->GetIfaceName(), alight, forests.empty() ? 0.0f : forests.front().first);
         }
 
         // A mine under the mech, a step ahead of it in turn left and right of where it stands.
@@ -9242,6 +9446,16 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                                      10.0 * std::log10(meanSquare + SilenceFloor), MCTestGame::StateHash(),
                                      down ? ", target down" : "");
             secondEnergy = 0.0;
+            // The force's health bars, as the game measures them.
+            std::string bars;
+
+            for (const std::shared_ptr<MCMover>& mover : LiveLance())
+            {
+                bars += std::format("{}{} {:.2f}", bars.empty() ? "" : ", ", mover->GetIfaceName(),
+                                    mover->GetTotalEffectiveness());
+            }
+
+            std::cout << std::format("  second {} bars: {}\n", (frame + 1) / FramesPerSecond, bars);
         }
 
         // A scout's look every --showcase-peek <n> frames, to choose where the recording starts.

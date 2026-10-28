@@ -7674,6 +7674,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     constexpr int32_t FireLeadFrames = 12;
     constexpr int32_t HitWindowFrames = 8;
     constexpr int32_t HitGraceFrames = 30;
+    constexpr int32_t LossGapFrames = 10;
     // A held mech of the force has its full armor raised to the most a location takes, so no one frame's fire (a
     // volley's missiles bursting all around it) goes through to its structure and breaks its engine, ammunition or head
     // before its staged end; and its armor held at a share of that, from all of it until the fight to EndArmorShare at
@@ -7736,6 +7737,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     constexpr int32_t AlphaApproachFrames = 150;
     constexpr int32_t AlphaRunFrames = 15;
     constexpr float AlphaShare = 0.5f;
+    // An enemy being finished near the mech followed is framed with it (AlphaShare between them) this long from the
+    // fire on it.
+    constexpr int32_t KillFrames = 90;
     // Smoke streams from a mech this long, from up to MaxSmokes of its hot spots (the type of a damaged mech's).
     constexpr int32_t DamageSmoke = 0x1c2;
     constexpr float SmokeSeconds = 15.0f;
@@ -7867,10 +7871,15 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     std::optional<MCVector3D> watchAt;
     int32_t contactType = 0;
     std::shared_ptr<MCMover> killing;
+    // The mech the enemy being finished is near, and when the fire on it started.
+    std::shared_ptr<MCMover> killNear;
+    int32_t killFrom = -1;
     // Every unit's toughness as the frame starts running, those it hit, and the staged damage landed (due, mech, kind).
     std::map<int32_t, float> toughness;
     std::set<int32_t> hit;
     std::set<std::tuple<int32_t, int32_t, char>> landed;
+    // When each mech (by part id) last took a staged loss.
+    std::map<int32_t, int32_t> lastLanded;
     std::map<int32_t, bool> wasJumping;
     std::set<int32_t> fell;
     MCReadiedAt readiedAt;
@@ -8056,7 +8065,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     };
 
     // Whether staged damage of a kind due at a frame lands on its mech this frame: on a hit from HitWindowFrames
-    // before, else HitGraceFrames after regardless; once.
+    // before (but not within LossGapFrames of the mech's last loss: two in one blast read as one), else HitGraceFrames
+    // after regardless; once.
     const auto Lands = [&](MCMover& victim, int32_t frame, int32_t due, int32_t mech, char kind, std::string_view what)
     {
         if (due < 0 || frame < due - HitWindowFrames || frame > due + HitGraceFrames ||
@@ -8065,14 +8075,17 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             return false;
         }
 
+        const auto last = lastLanded.find(victim.PartId);
+        const bool apart = last == lastLanded.end() || frame >= last->second + LossGapFrames;
         const bool struck = hit.contains(victim.PartId);
 
-        if (!struck && frame < due + HitGraceFrames)
+        if ((!struck || !apart) && frame < due + HitGraceFrames)
         {
             return false;
         }
 
         landed.insert({due, mech, kind});
+        lastLanded[victim.PartId] = kind == 'h' ? lastLanded[victim.PartId] : frame;
         std::cout << std::format("  frame {}: {} (part {:#x}) {} ({})\n", frame, victim.GetIfaceName(), victim.PartId,
                                  what, struck ? "on a hit" : "no hit came");
         return true;
@@ -8889,6 +8902,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
             if (frame == destroy.Frame - FireLeadFrames && near != nullptr)
             {
+                killNear = near;
+                killFrom = frame;
                 killing = alphaTarget != nullptr && alphaTarget->IsDisabled() == 0 &&
                                   (named == nullptr || named == alphaShooter)
                               ? alphaTarget
@@ -9013,6 +9028,17 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             const MCVector3D from = followed->GetPosition();
             const MCVector3D to = alphaTarget->GetPosition();
+            Eye()->ChangeTarget(nullptr, true);
+            Eye()->SetPosition(
+                MCVector3D(from.X + (to.X - from.X) * AlphaShare, from.Y + (to.Y - from.Y) * AlphaShare, from.Z));
+        }
+
+        // An enemy being finished near the mech followed: between them (or the wreck).
+        else if (followed != nullptr && followed == killNear && killing != nullptr && frame >= killFrom &&
+                 frame < killFrom + KillFrames)
+        {
+            const MCVector3D from = followed->GetPosition();
+            const MCVector3D to = killing->GetPosition();
             Eye()->ChangeTarget(nullptr, true);
             Eye()->SetPosition(
                 MCVector3D(from.X + (to.X - from.X) * AlphaShare, from.Y + (to.Y - from.Y) * AlphaShare, from.Z));

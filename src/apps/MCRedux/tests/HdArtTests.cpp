@@ -51,6 +51,7 @@
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCPotentialContact.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "object/MCSensorSystem.h"
@@ -7409,6 +7410,47 @@ namespace
                y <= camera->ViewHeight + SpriteReach;
     }
 
+    /// <summary>Whether a mech could stand at <paramref name="spot"/>: open ground, within LevelMeters of the elevation
+    /// <paramref name="level"/> (a terrace's, not the slope below it).</summary>
+    bool OpenAndLevel(const MCVector3D& spot, float level)
+    {
+        constexpr float LevelMeters = 5.0f;
+        return GameMap().CellPassable(spot) &&
+               std::abs(GameMap().GetTerrainElevation(spot) - level) <= LevelMeters * WorldUnitsPerMeter;
+    }
+
+    /// <summary>
+    /// The spot nearest <paramref name="point"/> (itself first, then rings RingMeters apart out to
+    /// <paramref name="meters"/>) that is open ground level with <paramref name="level"/>; the point itself if none.
+    /// </summary>
+    MCVector3D NearestOpenAndLevel(const MCVector3D& point, float level, float meters)
+    {
+        constexpr float RingMeters = 5.0f;
+        constexpr int32_t RingSpots = 24;
+
+        if (OpenAndLevel(point, level))
+        {
+            return point;
+        }
+
+        for (float ring = RingMeters; ring <= meters; ring += RingMeters)
+        {
+            for (int32_t i = 0; i < RingSpots; ++i)
+            {
+                const float turn = static_cast<float>(i) * 2.0f * std::numbers::pi_v<float> / RingSpots;
+                const MCVector3D spot(point.X + std::cos(turn) * ring * WorldUnitsPerMeter,
+                                      point.Y + std::sin(turn) * ring * WorldUnitsPerMeter, point.Z);
+
+                if (OpenAndLevel(spot, level))
+                {
+                    return spot;
+                }
+            }
+        }
+
+        return point;
+    }
+
     /// <summary>
     /// Up to <paramref name="count"/> spots <paramref name="meters"/> behind <paramref name="at"/> (along the unit
     /// vector (<paramref name="backX"/>, <paramref name="backY"/>)), abreast AbreastMeters apart, each where a mech can
@@ -7421,7 +7463,6 @@ namespace
                                         bool cut)
     {
         constexpr float AbreastMeters = 20.0f;
-        constexpr float LevelMeters = 5.0f;
         constexpr float FanDegrees = 75.0f;
         constexpr float FanStepDegrees = 5.0f;
         constexpr float FanDepthMeters = 60.0f;
@@ -7429,11 +7470,7 @@ namespace
         const float level = GameMap().GetTerrainElevation(at);
         const float apart = AbreastMeters * WorldUnitsPerMeter;
         const auto open = [&](const MCVector3D& spot)
-        {
-            return GameMap().CellPassable(spot) &&
-                   std::abs(GameMap().GetTerrainElevation(spot) - level) <= LevelMeters * WorldUnitsPerMeter &&
-                   (cut || !PointOnScreen(spot));
-        };
+        { return OpenAndLevel(spot, level) && (cut || !PointOnScreen(spot)); };
 
         std::vector<MCVector3D> fan;
 
@@ -7623,14 +7660,35 @@ namespace
     }
 
     /// <summary>
+    /// Whether the player sees <paramref name="unit"/>: one of the home team's, or in its sight. The game draws another
+    /// side's unit only then (on the sensors alone, or unseen, it isn't drawn).
+    /// </summary>
+    bool PlayerSees(MCMover& unit)
+    {
+        const std::shared_ptr<MCTeam> home = HomeTeam();
+        return home == nullptr || unit.Team.lock() == home ||
+               static_cast<MCContactStatus>(unit.GetContactType(home->Id)) == MCContactStatus::Visual;
+    }
+
+    /// <summary>
     /// <paramref name="shooter"/>'s weapon <paramref name="weaponIndex"/> fired at <paramref name="target"/> as the AI
     /// fires it (FireWeapon's answer: 0 fired), but staged to land: the dice are rolled, each dropped, until the next
     /// d100 (FireWeapon's first roll, its hit roll) comes up 0, so it hits at any chance; and nothing on the tiles under
     /// its line (units, trees, buildings: their cells' blocks-fire bits) blocks it. The dice are as they were if it
-    /// didn't fire, the tiles as they were after.
+    /// didn't fire, the tiles as they were after. Not fired (-1) where the shooter or the target is a unit the player
+    /// doesn't see, on screen.
     /// </summary>
     int32_t StagedShot(MCMover& shooter, const std::shared_ptr<MCMover>& target, int32_t weaponIndex)
     {
+        // Never out of, or into, empty ground the camera shows: a unit the game doesn't draw (PlayerSees), on screen.
+        constexpr int32_t NotStaged = -1;
+
+        if (const auto hidden = [](MCMover& unit) { return !PlayerSees(unit) && PointOnScreen(unit.GetPosition()); };
+            hidden(shooter) || hidden(*target))
+        {
+            return NotStaged;
+        }
+
         constexpr int32_t HitRollRange = 100;
         const uint32_t unloaded = MCPort::RandState();
         uint32_t loaded = unloaded;
@@ -7912,8 +7970,9 @@ namespace
 /// <c>--showcase-jump &lt;n&gt;</c> and <c>--showcase-jump-at &lt;frame&gt;,...</c> have the first three mechs jump at
 /// the target every n frames or at those, <c>--showcase-dfa</c> one mech at the enemy mech nearest it;
 /// <c>--showcase-strike &lt;frame&gt;,...</c> drops a large artillery strike on the target, and
-/// <c>--showcase-incoming &lt;frame&gt;[:mech],...</c> the other side's beside that mech (the first), marked;
-/// <c>--showcase-mines</c> sets a mine off under a mech, <c>--showcase-smoke</c> sets the forests nearest it alight
+/// <c>--showcase-incoming &lt;frame&gt;[:mech],...</c> the other side's on that mech (the first) and its nearest mate,
+/// marked; <c>--showcase-mines</c> sets a mine off under a mech as it steps out toward its enemy onto ground the force
+/// hasn't crossed (the other side's minefield), <c>--showcase-smoke</c> sets the forests nearest it alight
 /// (their smoke all around it);
 /// <c>--showcase-alpha</c> sends the enemy mech nearest a mech running in to its reach five seconds before (held
 /// standing until then; set down within reach the frame before if still further) and has the mech fire every weapon at
@@ -8045,17 +8104,12 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     constexpr float WatchShare = 0.45f;
     // Once the fight starts it looks this share of the way from the force's nearest mech to the contact.
     constexpr float FightShare = 0.7f;
-    // The other side's strikes land this far from their mech, toward its nearest enemy, this long after they are
-    // called (their marks show from 4 seconds out; under 3 the strike's own time is used).
+    // The other side's strikes are called this far from their mech, toward its nearest enemy, to land this long after
+    // (their marks show from 4 seconds out; under 3 the strike's own time is used).
     constexpr float IncomingOffset = 120.0f;
     constexpr int32_t IncomingSeconds = 3;
-    // It lands this much further than its reach from every mech of the force (they move meanwhile): tried this much
-    // further out at a time, no further than the camera sees (300), turned up to a half circle either side in
-    // IncomingTurns steps.
-    constexpr float IncomingMargin = 80.0f;
-    constexpr float IncomingStep = 20.0f;
-    constexpr float IncomingFarthest = 300.0f;
-    constexpr int32_t IncomingTurns = 8;
+    // It is then moved onto the force, on open ground level with the mech, looked for this far around (meters).
+    constexpr float IncomingSearchMeters = 40.0f;
     // A volley: the weapons of this many enemy units nearest the mech readied at once, and fired as they reach it, for a
     // second.
     constexpr int32_t VolleyFrames = 30;
@@ -8298,14 +8352,142 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         return fighting;
     };
 
+    // A minefield is the other side's, laid before its line: before its first mine (MineWalkFrames, or its what's
+    // frames) its mech steps out toward its enemy as far as it walks by then at MineWalkPace and MineBeyondMeters more
+    // (its own way round what's between; the first of MineWalkShares of that with such ground) to where the way from
+    // MineSlackMeters short of the first mine's place (at most MineSlackShare of the way there) on is open ground level with it that the force has not crossed
+    // (none of it within FreshMeters; the force's places are kept every TrailFrames), turned as little from the line to
+    // its enemy as there is such ground (up to MineTurnDegrees either side, MineTurnStepDegrees apart). Each mine goes
+    // off MineAheadMeters ahead of it, MineSideMeters left and right in turn; MineSettleFrames after the last it backs
+    // out the way it came, and keeps out of the force's orders until it is back.
+    constexpr int32_t MineWalkFrames = 60;
+    constexpr float MineWalkPace = 10.0f;
+    constexpr float MineBeyondMeters = 15.0f;
+    constexpr float MineSlackMeters = 15.0f;
+    constexpr float MineSlackShare = 0.5f;
+    constexpr std::array MineWalkShares = {1.0f, 0.85f, 1.15f, 0.7f};
+    constexpr float FreshMeters = 10.0f;
+    constexpr float WayStep = 0.05f;
+    constexpr int32_t TrailFrames = 15;
+    constexpr float MineTurnDegrees = 90.0f;
+    constexpr float MineTurnStepDegrees = 10.0f;
+    constexpr float MineAheadMeters = 4.0f;
+    constexpr float MineSideMeters = 3.0f;
+    constexpr int32_t MineSettleFrames = 45;
+    // Where the force has been, and each mech walking onto its minefield (part id): where from, where to, the way's
+    // heading, when it backs out and when it is back.
+    std::vector<MCVector3D> trail;
+    struct MCMineWalk
+    {
+        MCVector3D From;
+        MCVector3D To;
+        float Heading = 0.0f;
+        int32_t Back = 0;
+        int32_t Until = 0;
+    };
+
+    std::map<int32_t, MCMineWalk> mineWalks;
+    // Each minefield's first mine (its place in mines) and its last mine's frame: a mech's mines each within
+    // MineWalkFrames of the one before.
+    std::map<size_t, int32_t> minefields;
+
+    for (size_t index = 0; index < mines.size(); ++index)
+    {
+        const auto field = std::ranges::find_if(minefields,
+                                                [&](const std::pair<const size_t, int32_t>& known)
+                                                {
+                                                    return mines[known.first].Mech == mines[index].Mech &&
+                                                           mines[index].Frame - known.second <= MineWalkFrames;
+                                                });
+
+        if (field != minefields.end())
+        {
+            field->second = mines[index].Frame;
+        }
+        else
+        {
+            minefields[index] = mines[index].Frame;
+        }
+    }
+
+    // The mechs walking onto their minefields now.
+    const auto MineWalking = [&](int32_t frame)
+    {
+        std::set<int32_t> walking;
+
+        for (const auto& [partId, walk] : mineWalks)
+        {
+            if (frame <= walk.Until)
+            {
+                walking.insert(partId);
+            }
+        }
+
+        return walking;
+    };
+
+    // Where <mech> walks for its minefield, <lead> frames before the first mine (and how far it turns from its enemy,
+    // degrees): the way open, level and fresh from MineSlackMeters short of the first mine on, at the first walk with
+    // any such way, turned least. None if there is no such way.
+    const auto FreshGround = [&](MCMover& mech, int32_t lead) -> std::optional<std::pair<MCVector3D, float>>
+    {
+        const float first = MineWalkPace * static_cast<float>(lead) / FramesPerSecond;
+        const MCVector3D at = mech.GetPosition();
+        const std::shared_ptr<MCMover> enemy = NearestEnemyMech(mech);
+        const float toward =
+            enemy != nullptr ? std::atan2(enemy->GetPosition().Y - at.Y, enemy->GetPosition().X - at.X) : 0.0f;
+        const float level = GameMap().GetTerrainElevation(at);
+        const float fresh = FreshMeters * WorldUnitsPerMeter;
+        const auto Fresh = [&](const MCVector3D& point)
+        {
+            return std::ranges::none_of(trail, [&](const MCVector3D& been)
+                                        { return std::hypot(been.X - point.X, been.Y - point.Y) < fresh; });
+        };
+
+        std::optional<std::pair<MCVector3D, float>> best;
+
+        for (const float share : MineWalkShares)
+        {
+            const float meters = (first + MineBeyondMeters) * share;
+            const float freshFrom = std::max(first - MineSlackMeters, first * MineSlackShare) / meters;
+
+            for (float degrees = -MineTurnDegrees; degrees <= MineTurnDegrees; degrees += MineTurnStepDegrees)
+            {
+                const float turn = toward + degrees * std::numbers::pi_v<float> / 180.0f;
+                const MCVector3D to(at.X + std::cos(turn) * meters * WorldUnitsPerMeter,
+                                    at.Y + std::sin(turn) * meters * WorldUnitsPerMeter, at.Z);
+                bool clear = true;
+
+                for (float along = freshFrom; along <= 1.0f + WayStep * 0.5f && clear; along += WayStep)
+                {
+                    const MCVector3D point(at.X + (to.X - at.X) * along, at.Y + (to.Y - at.Y) * along, at.Z);
+                    clear = OpenAndLevel(point, level) && Fresh(point);
+                }
+
+                if (clear && (!best.has_value() || std::abs(degrees) < std::abs(best->second)))
+                {
+                    best = std::pair(to, degrees);
+                }
+            }
+
+            if (best.has_value())
+            {
+                break;
+            }
+        }
+
+        return best;
+    };
+
     // The lance (the first three) as SendLanceAt sends it (selected, as a player would), then each of the player's mechs
     // at its own enemy mech of those in the fight, to LineMeters from it (Engage; SpreadTargets: the force's fire spread
     // along their line); at the fight's start (spread false), or with none in the fight, all at the one given. Those
-    // running run on.
+    // running run on; those walking onto a minefield walk on.
     const auto SendAllAt = [&](const std::shared_ptr<MCMover>& at, int32_t frame, bool spread)
     {
         SendLanceAt(at);
         const std::set<int32_t> running = Running(frame);
+        const std::set<int32_t> mining = MineWalking(frame);
         std::vector<std::shared_ptr<MCMover>> attackers;
 
         for (const std::shared_ptr<MCMover>& mover : LiveLance())
@@ -8314,7 +8496,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             {
                 RetreatFrom(*mover, RetreatDistance);
             }
-            else
+            else if (!mining.contains(mover->PartId))
             {
                 attackers.push_back(mover);
             }
@@ -9247,7 +9429,8 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             const bool jumping = Jumping(*mover);
 
-            if (wasJumping[mover->PartId] && !jumping && target != nullptr && !running.contains(mover->PartId))
+            if (wasJumping[mover->PartId] && !jumping && target != nullptr && !running.contains(mover->PartId) &&
+                !MineWalking(frame).contains(mover->PartId))
             {
                 Engage(*mover, target, LineMeters, MCOrderOrigin::Player);
             }
@@ -9304,7 +9487,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         }
 
         // The other side's strike, called by the commander of the nearest enemy of the mech named (else the first),
-        // landing beside it.
+        // landing on it and the mech nearest it.
         std::shared_ptr<MCMover> under;
 
         if (const auto called = std::ranges::find(incoming, frame, &MCShowcaseEvent::Frame);
@@ -9327,19 +9510,14 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                 const float length = std::max(std::sqrt(dx * dx + dy * dy), 1.0f);
                 const std::shared_ptr<MCCommander> commander = CommanderById(enemy->GetCommanderId());
                 commander->SetNumLargeStrikes(commander->NumLargeStrikes + 1);
-                // A spot this far from the mech, turned this far from the line to its enemy.
-                const float toward = std::atan2(dy, dx);
-                const auto Spot = [&](float offset, float turn)
-                {
-                    return MCVector3D(at.X + std::cos(toward + turn) * offset, at.Y + std::sin(toward + turn) * offset,
-                                      at.Z);
-                };
-
-                CallArtillery(commander->Id, LargeStrike, Spot(IncomingOffset, 0.0f), IncomingSeconds, 0);
+                CallArtillery(
+                    commander->Id, LargeStrike,
+                    MCVector3D(at.X + dx / length * IncomingOffset, at.Y + dy / length * IncomingOffset, at.Z),
+                    IncomingSeconds, 0);
 
                 // A strike's one frame of collisions as it lands is its damage: the strike just called (the newest
-                // in the world) is moved to the spot nearest the mech, toward its enemy first and then turned
-                // further away either side, that lies clear of the whole force; it stays in the camera's sight.
+                // in the world) is moved onto the force, between the mech and its nearest mate (aimed at both), on
+                // open ground level with them (else the nearest that is). The force is held, so it wears their bars.
                 std::shared_ptr<MCGameObject> strike;
 
                 for (const std::shared_ptr<MCBaseObject>& object : ObjectList()->DefaultList())
@@ -9349,43 +9527,31 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                                  : strike;
                 }
 
-                float offset = IncomingOffset;
-                float turn = 0.0f;
-                bool clearSpot = false;
+                std::shared_ptr<MCMover> mate;
+
+                for (const std::shared_ptr<MCMover>& mover : lance)
+                {
+                    const MCVector3D other = mover->GetPosition();
+                    mate = mover != under && (mate == nullptr || std::hypot(other.X - at.X, other.Y - at.Y) <
+                                                                     std::hypot(mate->GetPosition().X - at.X,
+                                                                                mate->GetPosition().Y - at.Y))
+                               ? mover
+                               : mate;
+                }
+
+                const MCVector3D with = mate != nullptr ? mate->GetPosition() : at;
+                MCVector3D place = NearestOpenAndLevel(MCVector3D((at.X + with.X) * 0.5f, (at.Y + with.Y) * 0.5f, at.Z),
+                                                       GameMap().GetTerrainElevation(at), IncomingSearchMeters);
 
                 if (strike != nullptr)
                 {
-                    const float clear = strike->GetExtentRadius() + IncomingMargin;
-                    const auto Clear = [&](const MCVector3D& spot)
-                    {
-                        return std::ranges::all_of(lance,
-                                                   [&](const std::shared_ptr<MCMover>& mover)
-                                                   {
-                                                       const MCVector3D mech = mover->GetPosition();
-                                                       return std::hypot(mech.X - spot.X, mech.Y - spot.Y) >= clear;
-                                                   });
-                    };
-
-                    for (float tried = IncomingOffset; tried <= IncomingFarthest && !clearSpot; tried += IncomingStep)
-                    {
-                        for (int32_t step = 0; step <= IncomingTurns && !clearSpot; ++step)
-                        {
-                            // 0, then +1, -1, +2, -2... turns.
-                            const float tryTurn = static_cast<float>((step + 1) / 2 * (step % 2 == 0 ? -1 : 1)) *
-                                                  std::numbers::pi_v<float> / static_cast<float>(IncomingTurns);
-                            clearSpot = Clear(Spot(tried, tryTurn));
-                            offset = tried;
-                            turn = tryTurn;
-                        }
-                    }
-
-                    MCVector3D place = clearSpot ? Spot(offset, turn) : Spot(IncomingFarthest, 0.0f);
                     strike->SetPosition(place);
                 }
 
-                std::cout << std::format("  frame {}: {}'s side strikes {:.0f} from {}, turned {:.0f} degrees{}\n",
-                                         frame, enemy->GetIfaceName(), offset, beside.GetIfaceName(),
-                                         turn * 180.0f / std::numbers::pi_v<float>, clearSpot ? "" : " (none clear)");
+                std::cout << std::format("  frame {}: {}'s side strikes {:.0f} m from {}, by {}\n", frame,
+                                         enemy->GetIfaceName(),
+                                         std::hypot(place.X - at.X, place.Y - at.Y) / WorldUnitsPerMeter,
+                                         beside.GetIfaceName(), mate != nullptr ? mate->GetIfaceName() : "itself");
             }
         }
 
@@ -9445,16 +9611,62 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                                      frame, mover->GetIfaceName(), alight, nearest);
         }
 
-        // A mine under the mech, a step ahead of it in turn left and right of where it stands.
+        // Where the force is, kept.
+        if (frame % TrailFrames == 0)
+        {
+            for (const std::shared_ptr<MCMover>& mover : lance)
+            {
+                trail.push_back(mover->GetPosition());
+            }
+        }
+
+        // A minefield's mech walks onto fresh ground, and later backs out of it.
+        for (const auto& [first, last] : minefields)
+        {
+            const int32_t lead = mines[first].What.empty() ? MineWalkFrames : std::stoi(mines[first].What);
+
+            if (const std::shared_ptr<MCMover> mech = PlayerMech(mines[first].Mech);
+                frame == mines[first].Frame - lead && mech != nullptr && mech->IsDisabled() == 0)
+            {
+                MCVector3D at = mech->GetPosition();
+                const std::optional<std::pair<MCVector3D, float>> ground = FreshGround(*mech, lead);
+                MCVector3D to = ground.has_value() ? ground->first : at;
+                WalkTo(*mech, to);
+                const float meters = std::hypot(to.X - at.X, to.Y - at.Y) / WorldUnitsPerMeter;
+                const int32_t back = last + MineSettleFrames;
+                mineWalks[mech->PartId] = {at, to, std::atan2(to.Y - at.Y, to.X - at.X), back,
+                                           back + static_cast<int32_t>(meters / MineWalkPace * FramesPerSecond)};
+                std::cout << std::format(
+                    "  frame {}: {} walks {:.0f} m onto {}, turned {:.0f} degrees from its enemy\n", frame,
+                    mech->GetIfaceName(), std::hypot(to.X - at.X, to.Y - at.Y) / WorldUnitsPerMeter,
+                    ground.has_value() ? "fresh ground" : "no fresh ground (none near)",
+                    ground.has_value() ? ground->second : 0.0f);
+            }
+        }
+
+        for (auto& [partId, walk] : mineWalks)
+        {
+            if (const std::shared_ptr<MCMover> mech = GetMoverFromPartId(partId);
+                frame == walk.Back && mech != nullptr && mech->IsDisabled() == 0)
+            {
+                WalkTo(*mech, walk.From);
+                std::cout << std::format("  frame {}: {} backs out of the minefield\n", frame, mech->GetIfaceName());
+            }
+        }
+
+        // A mine under the mech as it steps onto that ground: a step ahead of it, left and right in turn.
         for (size_t index = 0; index < mines.size(); ++index)
         {
-            constexpr float MineStep = 20.0f;
-
             if (const std::shared_ptr<MCMover> mech = PlayerMech(mines[index].Mech);
                 frame == mines[index].Frame && mech != nullptr && mech->IsDisabled() == 0)
             {
+                const auto walk = mineWalks.find(mech->PartId);
+                const float heading = walk != mineWalks.end() ? walk->second.Heading : 0.0f;
+                const float side = (index % 2 == 0 ? 1.0f : -1.0f) * MineSideMeters * WorldUnitsPerMeter;
+                const float ahead = MineAheadMeters * WorldUnitsPerMeter;
                 MCVector3D at = mech->GetPosition();
-                at.X += index % 2 == 0 ? MineStep : -MineStep;
+                at.X += std::cos(heading) * ahead - std::sin(heading) * side;
+                at.Y += std::sin(heading) * ahead + std::cos(heading) * side;
                 CreateExplosion(MineExplosion, at, MineSplashDamage, WorldUnitsPerMeter * MineSplashRange);
                 std::cout << std::format("  frame {}: a mine under {}\n", frame, mech->GetIfaceName());
             }

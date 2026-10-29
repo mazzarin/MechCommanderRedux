@@ -7535,8 +7535,9 @@ namespace
     /// <paramref name="mover"/>, each sent to <see cref="NooseMeters"/> from it (Engage: the noose tightens); the <paramref name="bring"/>
     /// of them furthest from it first set down <paramref name="behind"/> meters behind it (on the side away from the
     /// rest of them, abreast, SpotsBehind), each where neither it nor its spot is on screen (on a camera
-    /// <paramref name="cut"/>, anywhere: the view they were in ends, and the next finds them there): a second line that
-    /// walks in on it from behind, the force caught between, added to <paramref name="brought"/>. Those of
+    /// <paramref name="cut"/>, anywhere: the view they were in ends, and the next finds them there), facing it, and
+    /// only those that can walk: a second line that walks in on it from behind, the force caught between, added to
+    /// <paramref name="brought"/>. Those of
     /// <paramref name="busy"/> (part ids) are left be. Returns how many close in.
     /// </summary>
     int32_t CloseIn(std::string_view names, const std::shared_ptr<MCMover>& mover, int32_t bring = 0,
@@ -7599,8 +7600,31 @@ namespace
                 continue;
             }
 
+            // A part the mission's script hasn't brought into play yet (its Exists 0), asleep or powered down stands
+            // where it is set down, unseen or still.
+            constexpr int32_t PoweredUp = 0;
+
+            if (enemy->GetExistsAndAwake() == 0 || enemy->Status != PoweredUp)
+            {
+                std::cout << std::format("  {} (part {:#x}) left be: it can't walk (exists {}, awake {}, status {})\n",
+                                         enemy->GetIfaceName(), enemy->PartId, enemy->GetExists(), enemy->GetAwake(),
+                                         enemy->Status);
+                continue;
+            }
+
             MCVector3D& place = spots[placed++];
             enemy->SetPosition(place);
+
+            // Facing it, torso and arms with the legs: a line walking in on it, not one with its back to it.
+            if (enemy->ObjectClass == MCObjectClass::BattleMech)
+            {
+                auto& mech = static_cast<MCBattleMech&>(*enemy);
+                FaceMechTo(mech, at);
+                mech.TorsoRotation = 0.0f;
+                mech.LeftArmRotation = 0.0f;
+                mech.RightArmRotation = 0.0f;
+            }
+
             Engage(*enemy, mover, NooseMeters, SecondOrders);
 
             if (brought != nullptr)

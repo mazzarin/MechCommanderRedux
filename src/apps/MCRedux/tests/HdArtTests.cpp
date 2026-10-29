@@ -7218,6 +7218,8 @@ namespace
     constexpr float LineMeters = 45.0f;
     /// <summary>How near those closing in on a mech come (meters): the noose tightened, not a pile.</summary>
     constexpr float NooseMeters = 30.0f;
+    /// <summary>How far behind a mech a second line is set down to walk in on it (meters), unless a close says.</summary>
+    constexpr float BehindMeters = 110.0f;
 
     /// <summary><paramref name="mover"/> ordered by <paramref name="origin"/> to walk (or <paramref name="run"/>) to
     /// <paramref name="point"/>.</summary>
@@ -7408,17 +7410,107 @@ namespace
     }
 
     /// <summary>
+    /// Up to <paramref name="count"/> spots <paramref name="meters"/> behind <paramref name="at"/> (along the unit
+    /// vector (<paramref name="backX"/>, <paramref name="backY"/>)), abreast AbreastMeters apart, each where a mech can
+    /// stand and walk in from: open ground, level with <paramref name="at"/> (a terrace, not the slope below it), off
+    /// screen. Where an abreast spot is not, the nearest that is of those fanned out behind (FanDegrees to either side,
+    /// up to FanDepthMeters further back), AbreastMeters from those already chosen. In abreast order. On a camera
+    /// <paramref name="cut"/> what the camera showed doesn't matter: that view ends.
+    /// </summary>
+    std::vector<MCVector3D> SpotsBehind(const MCVector3D& at, float backX, float backY, float meters, int32_t count,
+                                        bool cut)
+    {
+        constexpr float AbreastMeters = 20.0f;
+        constexpr float LevelMeters = 5.0f;
+        constexpr float FanDegrees = 75.0f;
+        constexpr float FanStepDegrees = 5.0f;
+        constexpr float FanDepthMeters = 60.0f;
+        constexpr float FanStepMeters = 10.0f;
+        const float level = GameMap().GetTerrainElevation(at);
+        const float apart = AbreastMeters * WorldUnitsPerMeter;
+        const auto open = [&](const MCVector3D& spot)
+        {
+            return GameMap().CellPassable(spot) &&
+                   std::abs(GameMap().GetTerrainElevation(spot) - level) <= LevelMeters * WorldUnitsPerMeter &&
+                   (cut || !PointOnScreen(spot));
+        };
+
+        std::vector<MCVector3D> fan;
+
+        for (float depth = meters; depth <= meters + FanDepthMeters; depth += FanStepMeters)
+        {
+            for (float degrees = -FanDegrees; degrees <= FanDegrees; degrees += FanStepDegrees)
+            {
+                const float turn = degrees * std::numbers::pi_v<float> / 180.0f;
+                const float x = backX * std::cos(turn) - backY * std::sin(turn);
+                const float y = backX * std::sin(turn) + backY * std::cos(turn);
+                const MCVector3D spot(at.X + x * depth * WorldUnitsPerMeter, at.Y + y * depth * WorldUnitsPerMeter,
+                                      at.Z);
+
+                if (open(spot))
+                {
+                    fan.push_back(spot);
+                }
+            }
+        }
+
+        std::vector<MCVector3D> spots;
+
+        for (int32_t place = 0; place < count; ++place)
+        {
+            const float side = (static_cast<float>(place) - static_cast<float>(count - 1) * 0.5f) * apart;
+            const float back = meters * WorldUnitsPerMeter;
+            MCVector3D ideal(at.X + backX * back - backY * side, at.Y + backY * back + backX * side, at.Z);
+            const auto clear = [&](const MCVector3D& spot)
+            {
+                return std::ranges::all_of(spots, [&](const MCVector3D& other)
+                                           { return std::hypot(other.X - spot.X, other.Y - spot.Y) >= apart; });
+            };
+
+            if (open(ideal) && clear(ideal))
+            {
+                spots.push_back(ideal);
+                continue;
+            }
+
+            const MCVector3D* nearest = nullptr;
+
+            for (const MCVector3D& spot : fan)
+            {
+                if (clear(spot) && (nearest == nullptr || std::hypot(spot.X - ideal.X, spot.Y - ideal.Y) <
+                                                              std::hypot(nearest->X - ideal.X, nearest->Y - ideal.Y)))
+                {
+                    nearest = &spot;
+                }
+            }
+
+            if (nearest != nullptr)
+            {
+                spots.push_back(*nearest);
+            }
+        }
+
+        return spots;
+    }
+
+    /// <summary>
     /// The other sides' units named in <paramref name="names"/> (comma-separated parts of names) closing in on
     /// <paramref name="mover"/>, each sent to <see cref="NooseMeters"/> from it (Engage: the noose tightens); the <paramref name="bring"/>
-    /// of them furthest from it first set down behind it (on the side away from the rest of them, BehindMeters back,
-    /// abreast), each where neither it nor its spot is on screen: a second line that walks in on it from behind, the
-    /// force caught between. Those of <paramref name="busy"/> (part ids) are left be. Returns how many.
+    /// of them furthest from it first set down <paramref name="behind"/> meters behind it (on the side away from the
+    /// rest of them, abreast, SpotsBehind), each where neither it nor its spot is on screen (on a camera
+    /// <paramref name="cut"/>, anywhere: the view they were in ends, and the next finds them there): a second line that
+    /// walks in on it from behind, the force caught between, added to <paramref name="brought"/>. Those of
+    /// <paramref name="busy"/> (part ids) are left be. Returns how many close in.
     /// </summary>
     int32_t CloseIn(std::string_view names, const std::shared_ptr<MCMover>& mover, int32_t bring = 0,
-                    const std::set<int32_t>& busy = {})
+                    const std::set<int32_t>& busy = {}, float behind = BehindMeters,
+                    std::vector<std::shared_ptr<MCMover>>* brought = nullptr, bool cut = false)
     {
-        constexpr float BehindMeters = 110.0f;
-        constexpr float AbreastMeters = 20.0f;
+        // The second line walks in on a player's orders: under fire a pilot keeps to his alarm's over his
+        // commander's, and would stand where he was set down.
+        constexpr MCOrderOrigin SecondOrders = MCOrderOrigin::Player;
+        const auto Second = [&](const std::shared_ptr<MCMover>& enemy)
+        { return brought != nullptr && std::ranges::find(*brought, enemy) != brought->end(); };
         const std::shared_ptr<MCTeam> team = mover->Team.lock();
         const MCVector3D at = mover->GetPosition();
         std::vector<std::pair<float, std::shared_ptr<MCMover>>> named;
@@ -7439,7 +7531,7 @@ namespace
             named.emplace_back(std::hypot(from.X - at.X, from.Y - at.Y), enemy);
             sumX += from.X;
             sumY += from.Y;
-            Engage(*enemy, mover, NooseMeters, MCOrderOrigin::Commander);
+            Engage(*enemy, mover, NooseMeters, Second(enemy) ? SecondOrders : MCOrderOrigin::Commander);
         }
 
         if (named.empty() || bring <= 0)
@@ -7455,30 +7547,35 @@ namespace
         const float backX = awayX / length;
         const float backY = awayY / length;
         std::ranges::stable_sort(named, std::ranges::greater{}, &std::pair<float, std::shared_ptr<MCMover>>::first);
-        int32_t placed = 0;
+        std::vector<MCVector3D> spots = SpotsBehind(at, backX, backY, behind, bring, cut);
+        size_t placed = 0;
 
         for (const auto& [distance, enemy] : named)
         {
-            if (placed == bring)
+            if (placed == spots.size())
             {
                 break;
             }
 
-            const float back = BehindMeters * WorldUnitsPerMeter;
-            const float side = (static_cast<float>(placed) - static_cast<float>(bring - 1) * 0.5f) * AbreastMeters *
-                               WorldUnitsPerMeter;
-            MCVector3D place(at.X + backX * back - backY * side, at.Y + backY * back + backX * side, at.Z);
-
-            if (PointOnScreen(enemy->GetPosition()) || PointOnScreen(place))
+            if (!cut && PointOnScreen(enemy->GetPosition()))
             {
                 continue;
             }
 
+            MCVector3D& place = spots[placed++];
             enemy->SetPosition(place);
-            Engage(*enemy, mover, NooseMeters, MCOrderOrigin::Commander);
-            ++placed;
-            std::cout << std::format("  {} (part {:#x}) set down {:.0f} m behind {}\n", enemy->GetIfaceName(),
-                                     enemy->PartId, BehindMeters, mover->GetIfaceName());
+            Engage(*enemy, mover, NooseMeters, SecondOrders);
+
+            if (brought != nullptr)
+            {
+                brought->push_back(enemy);
+            }
+
+            std::cout << std::format(
+                "  {} (part {:#x}) set down {:.0f} m behind {} at {:.0f} {:.0f} ({:+.1f} m up)\n",
+                enemy->GetIfaceName(), enemy->PartId, std::hypot(place.X - at.X, place.Y - at.Y) / WorldUnitsPerMeter,
+                mover->GetIfaceName(), place.X, place.Y,
+                (GameMap().GetTerrainElevation(place) - GameMap().GetTerrainElevation(at)) / WorldUnitsPerMeter);
         }
 
         return static_cast<int32_t>(named.size());
@@ -7825,9 +7922,12 @@ namespace
 /// mech (the camera's) the force reaches;
 /// <c>--showcase-kill &lt;frame&gt;,...</c> weakens the enemy mech nearest the force and sends the force at it.
 /// The force's end: <c>--showcase-run</c> has a mech run from the nearest enemy mech for three seconds (or until it
-/// loses a leg); <c>--showcase-close &lt;frame&gt;:mech[:n]</c> has those named by <c>--showcase-close-names</c> close
-/// in to NooseMeters of a mech (the camera's once it falls), the n furthest (default four) first set down behind it
-/// where neither they nor their spot are on screen, to walk in on it; <c>--showcase-volley</c> readies every
+/// loses a leg); <c>--showcase-close &lt;frame&gt;:mech[:n[@meters]]</c> has those named by
+/// <c>--showcase-close-names</c> close in to NooseMeters of a mech (the camera's once it falls), the n furthest
+/// (default four) first set down behind it (BehindMeters, or meters) on open ground level with it, where neither they
+/// nor their spot are on screen (on a camera cut, anywhere: the new view finds them there), to walk in on it (the
+/// camera on it framing it with them for a while);
+/// <c>--showcase-volley</c> readies every
 /// enemy weapon and has those in range (missiles and all) fire at a mech for a second; <c>--showcase-loss</c> takes a
 /// mech's leg, an arm (the left, then the right), its life (<c>die</c>: blown apart) or its pilot (<c>eject</c>), each
 /// on a hit: whatever reaches the mech fires at it just before, the nearest three readied (<c>hit</c>: only that, for a
@@ -7980,9 +8080,11 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     constexpr float SmokeTreeMeters = 90.0f;
     constexpr float SmokeSeconds = 15.0f;
     // Those closing in are ordered again every two seconds; at the close's frame its what (default Brought) of them are
-    // set down behind the mech first (CloseIn).
+    // set down behind the mech first (CloseIn). The camera on the mech they close on frames it with them (AlphaShare
+    // between it and their middle) this long from then, so they are seen coming.
     constexpr int32_t CloseFrames = 60;
     constexpr int32_t Brought = 4;
+    constexpr int32_t BroughtFrames = 75;
     // A strike's or a kill's target is the most worn of this many nearest.
     constexpr size_t WornChoices = 3;
     // The enemy mechs in the fight: those this near one of the force (the medium band).
@@ -8114,6 +8216,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     // The mech the enemy being finished is near, and when the fire on it started.
     std::shared_ptr<MCMover> killNear;
     int32_t killFrom = -1;
+    // The second line the last close brought in behind its mech (CloseIn), and when.
+    std::vector<std::shared_ptr<MCMover>> brought;
+    int32_t broughtFrame = -1;
     // Every unit's toughness as the frame starts running, those it hit, and the staged damage landed (due, mech, kind).
     std::map<int32_t, float> toughness;
     std::set<int32_t> hit;
@@ -8865,8 +8970,20 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             std::set<int32_t> busy = Runners(frame);
             busy.merge(Finishing(frame));
             busy.insert(wearing.begin(), wearing.end());
-            const int32_t bring = close->What.empty() ? Brought : std::stoi(close->What);
-            const int32_t closed = CloseIn(*closeNames, closeOn, frame == close->Frame ? bring : 0, busy);
+            // Its what: how many to bring and, after an @, how far behind (meters): n or n@meters.
+            const size_t split = close->What.find('@');
+            const int32_t bring = close->What.empty() ? Brought : std::stoi(close->What.substr(0, split));
+            const float behind =
+                split == std::string::npos ? BehindMeters : std::strtof(close->What.c_str() + split + 1, nullptr);
+
+            if (frame == close->Frame && bring > 0)
+            {
+                brought.clear();
+                broughtFrame = frame;
+            }
+
+            const int32_t closed = CloseIn(*closeNames, closeOn, frame == close->Frame ? bring : 0, busy, behind,
+                                           &brought, CameraSince(frame) == frame);
 
             if (frame == close->Frame)
             {
@@ -9677,6 +9794,19 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         // The camera on the contact being watched, else on the mech followed (or its wreck).
         const bool watching = watch.size() == 2 && frame >= watch[0] && frame < watch[1] && !lance.empty();
+        // The second line brought in, those still standing, while they are framed coming.
+        std::vector<MCVector3D> coming;
+
+        if (broughtFrame >= 0 && frame < broughtFrame + BroughtFrames)
+        {
+            for (const std::shared_ptr<MCMover>& enemy : brought)
+            {
+                if (enemy->IsDisabled() == 0)
+                {
+                    coming.push_back(enemy->GetPosition());
+                }
+            }
+        }
 
         // The watch's zoom, then the recording's again.
         if (watchZoom > 0 && watch.size() == 2 && (frame == watch[0] || frame == watch[1]))
@@ -9718,6 +9848,23 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             const MCVector3D from = followed->GetPosition();
             const MCVector3D to = killing->GetPosition();
+            Eye()->ChangeTarget(nullptr, true);
+            Eye()->SetPosition(
+                MCVector3D(from.X + (to.X - from.X) * AlphaShare, from.Y + (to.Y - from.Y) * AlphaShare, from.Z));
+        }
+
+        // A second line brought in on the mech followed (or its wreck), walking in: between it and their middle.
+        else if (followed != nullptr && followed == closeOn && !coming.empty())
+        {
+            const MCVector3D from = followed->GetPosition();
+            MCVector3D to(0.0f, 0.0f, from.Z);
+
+            for (const MCVector3D& at : coming)
+            {
+                to.X += at.X / static_cast<float>(coming.size());
+                to.Y += at.Y / static_cast<float>(coming.size());
+            }
+
             Eye()->ChangeTarget(nullptr, true);
             Eye()->SetPosition(
                 MCVector3D(from.X + (to.X - from.X) * AlphaShare, from.Y + (to.Y - from.Y) * AlphaShare, from.Z));

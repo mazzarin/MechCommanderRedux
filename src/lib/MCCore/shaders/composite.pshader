@@ -115,6 +115,12 @@ float3 LightAt(float2 texel, float2 slope)
     return sum;
 }
 
+// How much a colour is a light's own (a glow, a fireball): 0 below lightTone.w's brightness, 1 at white.
+float SelfLit(float3 color)
+{
+    return smoothstep(lightTone.w, 1.0, max(color.r, max(color.g, color.b)));
+}
+
 // The world's colour at a texel (sloped as SlopeAt finds) in the world's own light and the lights' (lightTone): lit as a
 // surface of that colour, the light's scatter added, and what rises above the knee eased toward white. A light's own
 // bright pixels keep their brightness: the world's dimming and the lights pass them by.
@@ -125,7 +131,7 @@ float3 Lit(float3 world, float2 texel, float2 slope)
         return world;
     }
 
-    const float selfLit = smoothstep(lightTone.w, 1.0, max(world.r, max(world.g, world.b)));
+    const float selfLit = SelfLit(world);
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y / most));
@@ -178,6 +184,17 @@ float3 WorldAt(float2 texel)
     return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
 }
 
+// The brightness the relief takes for height.
+static const float3 Luma = float3(0.299, 0.587, 0.114);
+
+// The relief's height at a world texel: its brightness, but a light's own pixels stand at centre's height (the texel the
+// slope is for), or the ground by every glow would slope up to it and face away from its light.
+float HeightAt(float2 texel, float centre)
+{
+    const float3 color = WorldAt(texel);
+    return lerp(dot(color, Luma), centre, SelfLit(color));
+}
+
 // The slope of the world's relief at a world texel, its own shading taken for height (lightFacing): its brightness's
 // rise a texel along the ground. None when nothing is lit or the lights take no relief.
 float2 SlopeAt(float2 texel)
@@ -187,10 +204,10 @@ float2 SlopeAt(float2 texel)
         return float2(0.0, 0.0);
     }
 
-    const float3 luma = float3(0.299, 0.587, 0.114);
+    const float centre = dot(WorldAt(texel), Luma);
     const float step = lightFacing.y;
-    const float across = dot(WorldAt(texel + float2(step, 0.0)) - WorldAt(texel - float2(step, 0.0)), luma);
-    const float down = dot(WorldAt(texel + float2(0.0, step)) - WorldAt(texel - float2(0.0, step)), luma);
+    const float across = HeightAt(texel + float2(step, 0.0), centre) - HeightAt(texel - float2(step, 0.0), centre);
+    const float down = HeightAt(texel + float2(0.0, step), centre) - HeightAt(texel - float2(0.0, step), centre);
     // A texel down the screen is lighting.w texels along the ground.
     return float2(across, down / lighting.w) / (2.0 * step);
 }

@@ -43,6 +43,12 @@ namespace
     };
 
     /// <summary>
+    /// The window pixels to each side the relief's slope is taken across (HD lighting's facing): wide enough to follow a
+    /// boulder's shading rather than its texture's grain.
+    /// </summary>
+    constexpr float FacingSpan = 2.0f;
+
+    /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
     /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
     /// <paramref name="height"/>), and distances in the texture's pixels across.
@@ -62,9 +68,9 @@ namespace
         uniforms.LightTone[1] = lighting.Knee;
         uniforms.LightTone[2] = lighting.Most;
         uniforms.LightTone[3] = lighting.SelfLit;
-        // The relief in the texture's pixels, its slope across one of the window's.
+        // The relief in the texture's pixels, its slope across FacingSpan of the window's each side.
         uniforms.LightFacing[0] = lighting.Facing * across;
-        uniforms.LightFacing[1] = std::max(across, 1.0f);
+        uniforms.LightFacing[1] = std::max(across * FacingSpan, 1.0f);
 
         for (size_t i = 0; i < count; ++i)
         {

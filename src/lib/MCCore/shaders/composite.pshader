@@ -382,18 +382,33 @@ static const uint WaterColors = 8;
 // brightens it this many times at most.
 static const float WaterFlowFloor = 0.02;
 static const float WaterFlowMost = 4.0;
-// The waves: two trains of crests rolling before the wind (east of north by its direction) and a little across it
-// (CrossAngle's cosine and sine), this long and this fast (meters, meters a second), their crests bent by drifting noise
-// (WarpSize meters big, up to WarpCycles of a wave) and sharpened, weighing this much; the water's brightness swings
-// this much either way with them.
-static const float2 WindDirection = float2(0.9285, 0.3714);
-static const float2 CrossAngle = float2(0.9063, 0.4226);
-static const float2 WaveLengths = float2(26.0, 11.0);
-static const float2 WaveSpeeds = float2(9.0, 6.0);
-static const float2 WaveWeights = float2(0.6, 0.4);
-static const float WarpSize = 30.0;
-static const float WarpCycles = 1.2;
-static const float WaveContrast = 0.3;
+// The waves: three trains of crests, each rolling its own way (a unit direction, the first the wind's, east of north)
+// this long and this fast (meters, meters a second), weighing this much. Each comes in sets: its crests swell and fade
+// as slow noise drifting with it (WaveGroups times its length big) rises and falls. Their crests are bent by two
+// layers of drifting noise (WarpSize meters big, up to WarpCycles of a wave) and narrowed (raised to CrestSharpness),
+// leaving calm troughs between. Gusts (GustSize meters big, drifting with the wind at GustSpeed) leave patches calmer
+// (CalmShare of the waves). The water darkens WaveTrough in a trough and brightens up to WaveCrest on a crest.
+static const float2 WaveDirections[3] = {float2(0.9285, 0.3714), float2(0.6846, 0.7290), float2(0.9943, -0.1068)};
+static const float3 WaveLengths = float3(30.0, 13.0, 7.0);
+static const float3 WaveSpeeds = float3(9.0, 6.0, 4.0);
+static const float3 WaveWeights = float3(0.5, 0.35, 0.25);
+static const float WaveGroups = 3.0;
+// A set moves at half its waves' speed (as a group of real waves does), between these levels of its noise from calm to
+// full; each train's sets come from their own part of the noise, this far apart.
+static const float SetSpeed = 0.5;
+static const float2 SetLevels = float2(0.2, 0.8);
+static const float TrainApart = 17.0;
+static const float WarpSize = 34.0;
+static const float WarpCycles = 1.6;
+// The warp's finer layer: this many times finer, weighing this much.
+static const float2 WarpFine = float2(2.5, 0.5);
+static const float CrestSharpness = 3.0;
+static const float GustSize = 90.0;
+static const float GustSpeed = 3.0;
+static const float CalmShare = 0.45;
+static const float2 GustLevels = float2(0.3, 0.7);
+static const float WaveTrough = 0.1;
+static const float WaveCrest = 1.0;
 // The art's sparkles: a water pixel this much brighter than its blues (in Luma) is one, fully from this much more. They
 // twinkle as fine moving noise (this big, drifting this fast) passes: dimmed to SparkleLow off its peaks, glinting from
 // TwinkleFrom up; the sun's glint at its brightest adds this much white (in the world's own light).
@@ -509,17 +524,30 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
     }
 
     // The ground point (meters), the game's time, and the waves: each train's crests where its phase (along its
-    // direction, rolling on, bent by the warp) comes round, sharpened toward them.
+    // direction, rolling on, bent by the warp) comes round, in its sets, under the gusts.
     const float2 offset = texel - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
     const float time = haze.z;
-    const float warp = WarpCycles * TwoPi * Noise((at + time * WindDirection * WaveSpeeds.y) / WarpSize);
-    const float2 across = float2(WindDirection.x * CrossAngle.x - WindDirection.y * CrossAngle.y,
-                                 WindDirection.y * CrossAngle.x + WindDirection.x * CrossAngle.y);
-    const float first = 0.5 + 0.5 * sin(TwoPi * (dot(at, WindDirection) - time * WaveSpeeds.x) / WaveLengths.x + warp);
-    const float second = 0.5 + 0.5 * sin(TwoPi * (dot(at, across) - time * WaveSpeeds.y) / WaveLengths.y - warp);
-    const float waves = WaveWeights.x * first * first + WaveWeights.y * second * second;
-    float3 shown = flowing * (1.0 + WaveContrast * (2.0 * waves - 1.0));
+    const float2 drift = time * WaveDirections[0] * WaveSpeeds.z;
+    const float warp =
+        WarpCycles * TwoPi * (Noise((at - drift) / WarpSize) + WarpFine.y * Noise((at + drift) * WarpFine.x / WarpSize));
+    const float gust = lerp(CalmShare, 1.0, smoothstep(GustLevels.x, GustLevels.y,
+                                                       Noise((at - time * WaveDirections[0] * GustSpeed) / GustSize)));
+    float waves = 0.0;
+
+    for (uint i = 0; i < 3; ++i)
+    {
+        // The second train bends the other way.
+        const float along = dot(at, WaveDirections[i]) - time * WaveSpeeds[i];
+        const float crest = pow(0.5 + 0.5 * sin(TwoPi * along / WaveLengths[i] + warp * (i == 1 ? -1.0 : 1.0)),
+                                CrestSharpness);
+        const float2 setAt = (at - SetSpeed * time * WaveSpeeds[i] * WaveDirections[i]) / (WaveGroups * WaveLengths[i]);
+        const float set = smoothstep(SetLevels.x, SetLevels.y, Noise(setAt + float(i) * TrainApart));
+        waves += WaveWeights[i] * set * crest;
+    }
+
+    waves *= gust;
+    float3 shown = flowing * (1.0 - WaveTrough + WaveCrest * waves);
 
     // The art's sparkles twinkle, glinting at the twinkle's peaks on the waves' crests.
     const float sparkle = saturate((dot(color, Luma) - dot(Shown(CommonWaterBlue), Luma) - SparkleFrom) / SparkleSpan);

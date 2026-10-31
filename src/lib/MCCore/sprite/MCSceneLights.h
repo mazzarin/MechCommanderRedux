@@ -91,6 +91,11 @@ namespace MCSceneLights
         float BloomFrom = 0.8f;
         /// <summary>The most the air over a fire shimmers, in the window's pixels (0: no heat haze).</summary>
         float Haze = 1.0f;
+        /// <summary>
+        /// How strong a light's own glow (MCLight's sprite: the original's white oval, its stand-in for the light) shows,
+        /// 0 to 1 as drawn: the light it stands for already lights the world around it.
+        /// </summary>
+        float GlowOvals = 0.5f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

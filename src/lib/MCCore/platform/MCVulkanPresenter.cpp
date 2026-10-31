@@ -62,6 +62,8 @@ namespace
     /// the first's texels, which are two of the world's.
     /// </summary>
     constexpr uint32_t BloomLevels = 6;
+    /// <summary>The bloom's first level has a texel for this many of the world's pixels each way (composite.pshader's).</summary>
+    constexpr uint32_t BloomScale = 2;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t5).</summary>
@@ -730,8 +732,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         if (world.Bloom != nullptr)
         {
             const Texture& bloom = _Blooms[i];
-            uniforms.BloomSize[0] = std::ceil(world.Size[0] * 0.5f);
-            uniforms.BloomSize[1] = std::ceil(world.Size[1] * 0.5f);
+            uniforms.BloomSize[0] = std::ceil(world.Size[0] / static_cast<float>(BloomScale));
+            uniforms.BloomSize[1] = std::ceil(world.Size[1] / static_cast<float>(BloomScale));
             uniforms.BloomSize[2] = static_cast<float>(bloom.Width);
             uniforms.BloomSize[3] = static_cast<float>(bloom.Height);
         }
@@ -752,9 +754,9 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
                                          uint32_t width, uint32_t height)
 {
     const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
-    // Half the world's size, which must hold the bloom's levels.
-    const uint32_t bloomWidth = (width + 1) / 2;
-    const uint32_t bloomHeight = (height + 1) / 2;
+    // A texel for BloomScale x BloomScale of the world's pixels, which must hold the bloom's levels.
+    const uint32_t bloomWidth = (width + BloomScale - 1) / BloomScale;
+    const uint32_t bloomHeight = (height + BloomScale - 1) / BloomScale;
 
     if (GHdLighting == HdLightingOff || lighting.Bloom <= 0.0f ||
         std::max(bloomWidth, bloomHeight) < (1u << (BloomLevels - 1)))

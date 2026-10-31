@@ -73,6 +73,8 @@ cbuffer Frame : register(b0, space3)
     // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7].
     int4 cycle;
     uint4 cycleSources[2];
+    // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it.
+    float4 look;
 };
 
 struct Input
@@ -127,6 +129,8 @@ static const uint TableBefore = 1u << 7;
 static const uint SkipKeyAfterTable = 1u << 8;
 static const uint ColorKey = 1u << 9;
 static const uint UseColor = 1u << 10;
+// Port-only (HD lighting): a light's glow, blended as strong as look.x.
+static const uint Glow = 1u << 11;
 static const uint AlphaBlend = 1u << 12;
 static const uint TableAfter = 1u << 13;
 // The alpha colour is op.w, not the pixel's value.
@@ -1072,7 +1076,8 @@ Output ShadowPixel(Input input, int2 target)
     return Blended(float4(0.0, 0.0, 0.0, strength));
 }
 
-Output main(Input input)
+// The draw's pixel, as main shows it but for a glow's strength.
+Output DrawnOutput(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
     const int2 target = int2(floor(input.position.xy));
@@ -1279,4 +1284,17 @@ Output main(Input input)
     }
 
     return Blended(blend * coverage);
+}
+
+Output main(Input input)
+{
+    Output output = DrawnOutput(input);
+
+    // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.
+    if ((input.op.x & Glow) != 0)
+    {
+        output.color *= look.x;
+    }
+
+    return output;
 }

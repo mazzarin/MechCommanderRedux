@@ -568,6 +568,9 @@ namespace
     /// <summary>How many <see cref="MCRenderer::ExpectUnregistered"/> scopes are alive.</summary>
     int32_t UnregisteredExpected = 0;
 
+    /// <summary>Whether a <see cref="MCRenderer::GlowScope"/> is drawing a glow.</summary>
+    bool GlowDrawn = false;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -744,6 +747,21 @@ MCRenderer::ExpectUnregistered::ExpectUnregistered()
 MCRenderer::ExpectUnregistered::~ExpectUnregistered()
 {
     --UnregisteredExpected;
+}
+
+MCRenderer::GlowScope::GlowScope(bool glow) : _Was(GlowDrawn)
+{
+    GlowDrawn = _Was || glow;
+}
+
+MCRenderer::GlowScope::~GlowScope()
+{
+    GlowDrawn = _Was;
+}
+
+bool MCRenderer::DrawingGlow()
+{
+    return GlowDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

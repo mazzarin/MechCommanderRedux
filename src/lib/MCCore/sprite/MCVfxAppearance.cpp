@@ -192,17 +192,21 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
         if (drawing == MCFrameDrawing::Delta && shape != nullptr && !shape->FrameList().empty())
         {
             ElementList().OpenGroup(depth, true);
-            ElementList().Add(ElementList().Make<MCDeltaElement>(shape->FrameList(), static_cast<int32_t>(ScreenPos.X),
-                                                                 static_cast<int32_t>(ScreenPos.Y), CurrentFrame,
-                                                                 hazeTable));
+            MCDeltaElement& element =
+                ElementList().Make<MCDeltaElement>(shape->FrameList(), static_cast<int32_t>(ScreenPos.X),
+                                                   static_cast<int32_t>(ScreenPos.Y), CurrentFrame, hazeTable);
+            element.Glow = Glow;
+            ElementList().Add(element);
         }
     }
     else if (shape != nullptr && !shape->FrameList().empty())
     {
         ElementList().OpenGroup(depth, true);
         // Scaled types have their own zoomed out shapes, so they draw unscaled.
-        ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame,
-                                                           0, hazeTable, type.Scaled ? 1 : 0));
+        MCVfxElement& element = ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                                 CurrentFrame, 0, hazeTable, type.Scaled ? 1 : 0);
+        element.Glow = Glow;
+        ElementList().Add(element);
     }
 
     if (obj->Selected == 1 || obj->GetNumAttackers() > 0)

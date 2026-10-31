@@ -643,6 +643,30 @@ public:
         ExpectUnregistered& operator=(const ExpectUnregistered&) = delete;
     };
 
+    /// <summary>
+    /// Port-only (HD lighting): while one made with <c>true</c> is alive, the draws are a light's glow (MCLight's,
+    /// <see cref="MCElement::Glow"/>): the hardware renderer shows them as strong as the lighting's GlowOvals, since the
+    /// light they stand for lights the world around them. One made with <c>false</c> changes nothing.
+    /// </summary>
+    class GlowScope
+    {
+    public:
+        /// <summary>Starts drawing a glow when <paramref name="glow"/>.</summary>
+        explicit GlowScope(bool glow);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~GlowScope();
+
+        GlowScope(const GlowScope&) = delete;
+        GlowScope& operator=(const GlowScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether the draws now are a light's glow (<see cref="GlowScope"/>).</summary>
+    static bool DrawingGlow();
+
     // Frame surfaces ----------------------------------------------------------------------------------------------
 
     /// <summary>

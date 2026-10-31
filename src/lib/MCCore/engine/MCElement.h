@@ -22,4 +22,8 @@ public:
 
     /// <summary>The sort key.</summary>
     float Depth = 0.0f;
+    /// <summary>
+    /// Port-only (HD lighting): the element is a light's glow (MCLight's), drawn in a <see cref="MCRenderer::GlowScope"/>.
+    /// </summary>
+    bool Glow = false;
 };

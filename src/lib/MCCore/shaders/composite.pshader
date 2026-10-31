@@ -37,6 +37,11 @@ SamplerState paletteSampler : register(s4, space2);
 Texture2D<float4> bloomTex : register(t5, space2);
 SamplerState bloomSampler : register(s5, space2);
 
+// The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
+static const uint MaxLights = 64;
+// The most fires in heat (MCSceneLights::MaxHeat).
+static const uint MaxHeat = 16;
+
 cbuffer Composite : register(b0, space3)
 {
     // The screen's size in pixels (xy); the screen texture's allocated size (zw).
@@ -82,16 +87,12 @@ cbuffer Composite : register(b0, space3)
     float4 haze;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
-    float4 heat[16];
+    float4 heat[MaxHeat];
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
-    float4 lights[192];
+    float4 lights[MaxLights * 3];
 };
 
-// The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
-static const uint MaxLights = 64;
-// The most fires in heat (MCSceneLights::MaxHeat).
-static const uint MaxHeat = 16;
 // mode.x for the bloom's bright pass.
 static const float BrightPass = 2.0;
 // The brightness the relief takes for height, and the grey a light's hue is taken from.
@@ -243,20 +244,23 @@ float4 WorldBetween(float2 texel)
     return lerp(top, bottom, t.y);
 }
 
-// The bloom's bright pass: a texel of the bloom's texture (half the world's size) holds the light of the GPU world's
-// 2 x 2 pixels under it brighter than lightLook.z, the more the brighter they are.
+// The bloom's first level has a texel for BloomScale x BloomScale of the world's pixels (MCVulkanPresenter's).
+static const uint BloomScale = 2;
+
+// The bloom's bright pass: a texel of the bloom's texture holds the light of the GPU world's BloomScale x BloomScale
+// pixels under it brighter than lightLook.z, the more the brighter they are.
 float4 Bright(float2 texel)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
 
-    for (uint i = 0; i < 4; ++i)
+    for (uint i = 0; i < BloomScale * BloomScale; ++i)
     {
-        const float2 at = min(texel * 2.0 + float2(i & 1u, i >> 1), worldSize.xy - 1.0);
+        const float2 at = min(texel * BloomScale + float2(i % BloomScale, i / BloomScale), worldSize.xy - 1.0);
         const float3 color = TexelAt(worldTex, worldSampler, at, worldSize.zw).rgb;
         sum += color * smoothstep(lightLook.z, 1.0, max(color.r, max(color.g, color.b)));
     }
 
-    return float4(sum * 0.25, 1.0);
+    return float4(sum / (BloomScale * BloomScale), 1.0);
 }
 
 // The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
@@ -265,7 +269,9 @@ float4 Bright(float2 texel)
 static const uint BloomFirst = 1;
 static const uint BloomLevels = 6;
 static const float BloomFalloff = 0.6;
-static const float2 BloomTaps[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5), float2(0.5, 0.5)};
+static const uint BloomTapCount = 4;
+static const float2 BloomTaps[BloomTapCount] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
+                                                float2(0.5, 0.5)};
 
 float3 BloomAt(float2 texel)
 {
@@ -275,7 +281,7 @@ float3 BloomAt(float2 texel)
     }
 
     // The texel's centre in the bloom's first level's texels.
-    const float2 at = (texel + 0.5) * 0.5;
+    const float2 at = (texel + 0.5) / BloomScale;
     float3 sum = float3(0.0, 0.0, 0.0);
     float weight = 1.0;
     float weights = 0.0;
@@ -284,7 +290,7 @@ float3 BloomAt(float2 texel)
     {
         const float size = (float)(1u << level);
 
-        for (uint tap = 0; tap < 4; ++tap)
+        for (uint tap = 0; tap < BloomTapCount; ++tap)
         {
             sum += weight * bloomTex.SampleLevel(bloomSampler, (at + BloomTaps[tap] * size) / bloomSize.zw, level).rgb;
         }
@@ -293,7 +299,7 @@ float3 BloomAt(float2 texel)
         weight *= BloomFalloff;
     }
 
-    return sum * (lightLook.y / (4.0 * weights));
+    return sum * (lightLook.y / (BloomTapCount * weights));
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)

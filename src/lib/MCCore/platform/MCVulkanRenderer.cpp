@@ -8,6 +8,7 @@
 #include "lib/MCFatal.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
@@ -66,6 +67,11 @@ namespace
     constexpr uint32_t SkipKeyAfterTable = 1u << 8;
     constexpr uint32_t ColorKey = 1u << 9;
     constexpr uint32_t UseColor = 1u << 10;
+    /// <summary>
+    /// Port-only (HD lighting): a light's glow (MCRenderer::GlowScope), blended as strong as the frame's look.x
+    /// (shaders/draw.pshader).
+    /// </summary>
+    constexpr uint32_t Glow = 1u << 11;
     constexpr uint32_t AlphaBlend = 1u << 12;
     constexpr uint32_t TableAfter = 1u << 13;
     /// <summary>The alpha colour is the draw's op.w, not the pixel's value.</summary>
@@ -161,6 +167,8 @@ namespace
         int32_t SourceScale[4];
         int32_t Cycle[4];
         uint32_t CycleSources[8];
+        /// <summary>Port-only (HD lighting): x how strong a light's glow (Glow) shows; 1 as the original drew it.</summary>
+        float Look[4];
     };
 
     /// <summary>shaders/draw.pshader's alpha colour kinds.</summary>
@@ -922,14 +930,20 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                            kind == KindSmoothEllipse || kind == KindSmoothBar || (op & SmoothEdges) != 0 || recolours;
     }
 
+    const MCRect written{draw[0], draw[1], draw[2], draw[3]};
+    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
+                       (op & KindMask) == KindSmoothEllipse || (op & KindMask) == KindSmoothPolygon;
+
+    // Only a blended draw can show fainter: an opaque one replaces what lies under it.
+    if (blend && MCRenderer::DrawingGlow())
+    {
+        op |= Glow;
+    }
+
     draw[8] = static_cast<int32_t>(op);
     draw[9] = static_cast<int32_t>(color);
     draw[10] = static_cast<int32_t>(before);
     draw[11] = static_cast<int32_t>(after);
-
-    const MCRect written{draw[0], draw[1], draw[2], draw[3]};
-    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
-                       (op & KindMask) == KindSmoothEllipse || (op & KindMask) == KindSmoothPolygon;
     const bool indexOnly = (op & IndexOnly) != 0;
     const bool shadow = (op & KindMask) == KindShadow;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
@@ -4569,6 +4583,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {
                 passFrame.CycleSources[i] = _Cycle.Sources[i];
             }
+
+            passFrame.Look[0] =
+                GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
         }
 
         if (record.TerrainDraw >= 0)

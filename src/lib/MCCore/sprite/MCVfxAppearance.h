@@ -83,6 +83,8 @@ public:
     bool DamageSet = false;
     /// <summary>Set by <see cref="SetTypeId"/> and init.</summary>
     bool TypeChanged = true;
+    /// <summary>Port-only (HD lighting): its frames are a light's glow (MCLight's), drawn as MCElement::Glow.</summary>
+    bool Glow = false;
     /// <summary>The shape's top-left offset from its hotspot (from VFX_shape_minxy; -15 before a shape).</summary>
     float ShapeMinX = -15.0f;
     float ShapeMinY = -15.0f;

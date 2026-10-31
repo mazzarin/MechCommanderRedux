@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "sprite/MCSceneLights.h"
+#include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
 #include "lib/MCVector3D.h"
+#include "object/MCObjectDrawing.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
@@ -33,6 +35,12 @@ namespace
     /// <summary>DUSK's world light (the world dimmed to it) and its lights' strength.</summary>
     constexpr float DuskAmbient = 0.6f;
     constexpr float DuskStrength = 1.0f;
+    /// <summary>A muzzle flash's reach, its colour (a propellant's) and how much it lights the ground under it.</summary>
+    constexpr float MuzzleFlashReach = 36.0f;
+    constexpr std::array<float, 3> MuzzleFlashColor{1.0f, 0.72f, 0.38f};
+    constexpr float MuzzleFlashGain = 1.2f;
+    /// <summary>Flashes closer than this (in pixels each way) are one muzzle's.</summary>
+    constexpr float SameMuzzle = 2.0f;
     /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
     constexpr float BrightPixel = 0.7f;
 
@@ -42,6 +50,8 @@ namespace
         /// <summary>The window whose world is being drawn.</summary>
         std::weak_ptr<MCWindow> Drawing;
         std::vector<MCSceneLight> Adding;
+        /// <summary>The frame's muzzle flashes, one a muzzle, added to its lights as it finishes.</summary>
+        std::vector<MCSceneLight> Flashes;
         /// <summary>The window the last finished lights are for, and those lights.</summary>
         std::weak_ptr<MCWindow> ShownWindow;
         std::vector<MCSceneLight> Shown;
@@ -166,6 +176,12 @@ namespace
         return saturated;
     }
 
+    /// <summary>How high <paramref name="position"/> is above the ground under it (0 without a terrain).</summary>
+    float AltitudeOf(const MCVector3D& position)
+    {
+        return Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
+    }
+
     /// <summary>What sorts the brightest lights first: their light over the ground they reach.</summary>
     float Brightness(const MCSceneLight& light)
     {
@@ -214,6 +230,7 @@ auto MCSceneLights::Begin(const MCPane& pane) -> void
     State& state = TheState();
     state.Drawing = pane.Window;
     state.Adding.clear();
+    state.Flashes.clear();
 }
 
 auto MCSceneLights::Add(MCSceneLight light) -> void
@@ -271,9 +288,7 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
     const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
                               ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
                               : appearance.CurrentFrame;
-    const float altitude =
-        Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
-    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, altitude, pixels);
+    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position), pixels);
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -300,6 +315,42 @@ auto MCSceneLights::AddShapeBeam(float x0, float y0, float x1, float y1, float w
     }
 }
 
+auto MCSceneLights::AddMuzzleFlash(const MCVector3D& muzzle, float left) -> void
+{
+    State& state = TheState();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired() || left <= 0.0f || camera == nullptr)
+    {
+        return;
+    }
+
+    const MCVector2D at = ProjectToScreen(muzzle, *camera);
+    const float altitude = AltitudeOf(muzzle);
+    const float fade = std::min(left / MuzzleFlashSeconds, 1.0f);
+    MCSceneLight light;
+    // The ground under the muzzle is its altitude lower on the screen.
+    light.X0 = light.X1 = at.X;
+    light.Y0 = light.Y1 = at.Y + altitude;
+    light.Height = altitude;
+    light.Reach = MuzzleFlashReach;
+    light.Red = MuzzleFlashColor[0] * MuzzleFlashGain * fade;
+    light.Green = MuzzleFlashColor[1] * MuzzleFlashGain * fade;
+    light.Blue = MuzzleFlashColor[2] * MuzzleFlashGain * fade;
+    const auto sameMuzzle = [&](const MCSceneLight& flash)
+    { return std::abs(flash.X0 - light.X0) < SameMuzzle && std::abs(flash.Y0 - light.Y0) < SameMuzzle; };
+
+    if (const auto flash = std::ranges::find_if(state.Flashes, sameMuzzle); flash != state.Flashes.end())
+    {
+        flash->Red = std::max(flash->Red, light.Red);
+        flash->Green = std::max(flash->Green, light.Green);
+        flash->Blue = std::max(flash->Blue, light.Blue);
+        return;
+    }
+
+    state.Flashes.push_back(light);
+}
+
 auto MCSceneLights::Finish() -> void
 {
     State& state = TheState();
@@ -308,6 +359,9 @@ auto MCSceneLights::Finish() -> void
     {
         return;
     }
+
+    state.Adding.insert(state.Adding.end(), state.Flashes.begin(), state.Flashes.end());
+    state.Flashes.clear();
 
     if (state.Adding.size() > MaxLights)
     {

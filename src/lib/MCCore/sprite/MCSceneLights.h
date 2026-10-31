@@ -106,6 +106,16 @@ namespace MCSceneLights
     void AddShapeBeam(float x0, float y0, float x1, float y1, float width, std::span<const uint8_t> shapeTable,
                       int32_t frame);
 
+    /// <summary>How long a gun's muzzle flash lasts, in seconds of the game's time.</summary>
+    inline constexpr float MuzzleFlashSeconds = 0.15f;
+
+    /// <summary>
+    /// The flash of a gun fired from <paramref name="muzzle"/> (in the world), <paramref name="left"/> of its
+    /// <see cref="MuzzleFlashSeconds"/> still to go: a short warm light, fading, on the shooter and the ground by it.
+    /// Flashes from one muzzle at once (a salvo's) light as one.
+    /// </summary>
+    void AddMuzzleFlash(const MCVector3D& muzzle, float left);
+
     /// <summary>Ends the frame's lights (MCCamera::Render, once the world is drawn): they are what the window shows.</summary>
     void Finish();
 

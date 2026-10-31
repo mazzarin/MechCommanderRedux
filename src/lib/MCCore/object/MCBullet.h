@@ -62,6 +62,8 @@ public:
     MCVector3D BulletPosition;
     /// <summary>The light that travels with the bullet.</summary>
     std::shared_ptr<MCGameObject> Light;
+    /// <summary>Port-only (HD lighting): how much of its muzzle flash is still to go, in seconds.</summary>
+    float MuzzleFlashLeft = 0.0f;
     /// <summary>The draw rotation of the appearance: -150, or 150 when a mech owner faces the other way.</summary>
     int32_t DrawRotation = 0;
 };

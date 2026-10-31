@@ -87,7 +87,7 @@ cbuffer Composite : register(b0, space3)
     // (seconds); w, the fires in heat.
     float4 haze;
     // The living water (MCLighting::Water): x, its strength (0 as the original drew it); y, how far its colour cycle has
-    // gone toward its next step (0 to 1); z, the world's texels per window pixel.
+    // gone toward its next step (0 to 1).
     float4 water;
     // The ground's map: the world texel of the map's middle (xy); then the meters east (xy) and north (zw) a texel off
     // it lies, as east = dot(groundAxes.xy, offset), north = dot(groundAxes.zw, offset).
@@ -382,45 +382,47 @@ static const uint WaterColors = 8;
 // brightens it this many times at most.
 static const float WaterFlowFloor = 0.02;
 static const float WaterFlowMost = 4.0;
-// The waves: long crests across the wind (east of north by its direction), two layers of noise this long along the wind
-// and WaveStretch times that across it, rolling at these speeds (meters a second), weighing this much, and a finer chop;
-// the water's brightness swings this much either way with them.
+// The waves: two trains of crests rolling before the wind (east of north by its direction) and a little across it
+// (CrossAngle's cosine and sine), this long and this fast (meters, meters a second), their crests bent by drifting noise
+// (WarpSize meters big, up to WarpCycles of a wave) and sharpened, weighing this much; the water's brightness swings
+// this much either way with them.
 static const float2 WindDirection = float2(0.9285, 0.3714);
-static const float2 WaveLengths = float2(36.0, 15.0);
-static const float WaveStretch = 3.0;
-static const float2 WaveSpeeds = float2(5.0, 8.0);
-static const float2 WaveWeights = float2(0.45, 0.3);
-static const float ChopSize = 6.0;
-static const float2 ChopDrift = float2(-2.0, 3.0);
-static const float ChopWeight = 0.25;
-static const float WaveContrast = 0.12;
+static const float2 CrossAngle = float2(0.9063, 0.4226);
+static const float2 WaveLengths = float2(26.0, 11.0);
+static const float2 WaveSpeeds = float2(9.0, 6.0);
+static const float2 WaveWeights = float2(0.6, 0.4);
+static const float WarpSize = 30.0;
+static const float WarpCycles = 1.2;
+static const float WaveContrast = 0.3;
 // The art's sparkles: a water pixel this much brighter than its blues (in Luma) is one, fully from this much more. They
 // twinkle as fine moving noise (this big, drifting this fast) passes: dimmed to SparkleLow off its peaks, glinting from
 // TwinkleFrom up; the sun's glint at its brightest adds this much white (in the world's own light).
 static const float SparkleFrom = 0.06;
 static const float SparkleSpan = 0.25;
-static const float SparkleLow = 0.6;
+static const float SparkleLow = 0.3;
 static const float TwinkleSize = 5.0;
 static const float2 TwinkleDrift = float2(4.0, -3.0);
-static const float TwinkleFrom = 0.55;
-static const float SunGlint = 0.6;
+static const float TwinkleFrom = 0.5;
+static const float SunGlint = 1.0;
 // The shore: the land around a water pixel is looked for in this many directions, this near (foam), and this near and
-// far (the shallows, paler by this much at the shore).
+// far (the shallows, paler by this much at the shore), in meters.
 static const uint ShoreDirections = 8;
 static const float2 ShoreSteps[ShoreDirections] = {float2(1.0, 0.0), float2(0.7071, 0.7071), float2(0.0, 1.0),
                                                    float2(-0.7071, 0.7071), float2(-1.0, 0.0), float2(-0.7071, -0.7071),
                                                    float2(0.0, -1.0), float2(0.7071, -0.7071)};
+// The least square meters a texel is taken to cover (the presenter sends no water for a view showing less).
+static const float MinGroundArea = 1e-6;
 static const float ShoreNear = 3.0;
 static const float ShallowNear = 12.0;
 static const float ShallowFar = 36.0;
-static const float3 ShallowTint = float3(1.12, 1.22, 1.12);
+static const float3 ShallowTint = float3(1.2, 1.4, 1.25);
 // The foam: drifting noise this big (meters) and fast, from this much up, as pale as this, at most this much of the
 // colour.
 static const float FoamSize = 8.0;
 static const float2 FoamDrift = float2(1.5, 2.0);
 static const float FoamFrom = 0.45;
 static const float3 FoamColour = float3(0.5, 0.53, 0.55);
-static const float FoamMost = 0.6;
+static const float FoamMost = 0.8;
 
 // The world's palette index at a world texel: the GPU world's (its index target, bound as opTex) or the software
 // renderer's pixel.
@@ -466,14 +468,17 @@ float Noise(float2 p)
     return lerp(top, bottom, u.y);
 }
 
-// How much land lies around a world texel, this many window pixels away (the share of ShoreDirections).
+// How much land lies around a world texel, this many meters away (the share of ShoreDirections): the ground's map
+// (groundAxes) takes a square texel to its determinant's square meters.
 float LandAround(float2 texel, float distance)
 {
+    const float area = abs(groundAxes.x * groundAxes.w - groundAxes.y * groundAxes.z);
+    const float texels = distance * rsqrt(max(area, MinGroundArea));
     float land = 0.0;
 
     for (uint i = 0; i < ShoreDirections; ++i)
     {
-        land += IsWater(WorldIndexAt(texel + ShoreSteps[i] * (distance * water.z))) ? 0.0 : 1.0;
+        land += IsWater(WorldIndexAt(texel + ShoreSteps[i] * texels)) ? 0.0 : 1.0;
     }
 
     return land / ShoreDirections;
@@ -503,15 +508,17 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
         flowing = color * min(lerp(now, next, water.y) / max(now, WaterFlowFloor), WaterFlowMost);
     }
 
-    // The ground point (meters), along the wind and across it, and the game's time.
+    // The ground point (meters), the game's time, and the waves: each train's crests where its phase (along its
+    // direction, rolling on, bent by the warp) comes round, sharpened toward them.
     const float2 offset = texel - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
-    const float2 wind = float2(dot(at, WindDirection), dot(at, float2(-WindDirection.y, WindDirection.x)));
     const float time = haze.z;
-    const float waves =
-        WaveWeights.x * Noise(float2((wind.x - time * WaveSpeeds.x) / WaveLengths.x, wind.y / (WaveLengths.x * WaveStretch))) +
-        WaveWeights.y * Noise(float2((wind.x - time * WaveSpeeds.y) / WaveLengths.y, wind.y / (WaveLengths.y * WaveStretch))) +
-        ChopWeight * Noise((at + time * ChopDrift) / ChopSize);
+    const float warp = WarpCycles * TwoPi * Noise((at + time * WindDirection * WaveSpeeds.y) / WarpSize);
+    const float2 across = float2(WindDirection.x * CrossAngle.x - WindDirection.y * CrossAngle.y,
+                                 WindDirection.y * CrossAngle.x + WindDirection.x * CrossAngle.y);
+    const float first = 0.5 + 0.5 * sin(TwoPi * (dot(at, WindDirection) - time * WaveSpeeds.x) / WaveLengths.x + warp);
+    const float second = 0.5 + 0.5 * sin(TwoPi * (dot(at, across) - time * WaveSpeeds.y) / WaveLengths.y - warp);
+    const float waves = WaveWeights.x * first * first + WaveWeights.y * second * second;
     float3 shown = flowing * (1.0 + WaveContrast * (2.0 * waves - 1.0));
 
     // The art's sparkles twinkle, glinting at the twinkle's peaks on the waves' crests.

@@ -44,7 +44,7 @@ namespace
         float BloomSize[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         /// <summary>The heat haze: its most shimmer and its waves' length (texels), the game's time, the fires in Heat.</summary>
         float Haze[4] = {};
-        /// <summary>The living water: its strength (0 none), its colour cycle's phase, the texels per window pixel.</summary>
+        /// <summary>The living water: its strength (0 none) and its colour cycle's phase.</summary>
         float Water[4] = {};
         /// <summary>The ground's map: the texel of the map's middle, then the meters east and north per texel off it.</summary>
         float Ground[4] = {};
@@ -135,7 +135,6 @@ namespace
         const bool flat = std::abs(determinant) < MinGroundDeterminant;
         uniforms.Water[0] = !flat ? lighting.Water : 0.0f;
         uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
-        uniforms.Water[2] = across;
         uniforms.Ground[0] = ground.OriginX * across;
         uniforms.Ground[1] = ground.OriginY * down;
 

@@ -4159,8 +4159,11 @@ namespace
         return std::nullopt;
     }
 
-    /// <summary>The name of object type <paramref name="type"/> (its packet in the object PAK), empty when it has none.</summary>
-    std::string ObjectTypeName(uint32_t type)
+    /// <summary>
+    /// Object type <paramref name="type"/> (its packet in the object PAK) as its name and appearance ("name (appearance
+    /// 0x...)"), empty when it has none.
+    /// </summary>
+    std::string ObjectTypeLabel(uint32_t type)
     {
         MCPacketFile pak;
         REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
@@ -4173,7 +4176,8 @@ namespace
             return {};
         }
 
-        return fit.Read<std::string>("Name").value_or("");
+        return std::format("{} (appearance {:#x})", fit.Read<std::string>("Name").value_or(""),
+                           fit.Read<int32_t>("Appearance").value_or(0));
     }
 }
 
@@ -4250,8 +4254,8 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         const auto mech = std::dynamic_pointer_cast<MCBattleMech>(player);
         REQUIRE(mech != nullptr);
         const auto& type = static_cast<const MCBattleMechType&>(*mech->GetObjectType());
-        std::cout << std::format("  arms: {} and {}\n", ObjectTypeName(type.LeftArmDebrisId),
-                                 ObjectTypeName(type.RightArmDebrisId));
+        std::cout << std::format("  arms: {} and {}\n", ObjectTypeLabel(type.LeftArmDebrisId),
+                                 ObjectTypeLabel(type.RightArmDebrisId));
         mech->LeftArmBlownThisFrame = true;
         mech->RightArmBlownThisFrame = true;
         play("arms");

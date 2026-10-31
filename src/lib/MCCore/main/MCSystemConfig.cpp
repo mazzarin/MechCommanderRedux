@@ -17,6 +17,7 @@
 #include "platform/MCPresenter.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
 
@@ -195,6 +196,8 @@ void ReadPreferences(MCFitIniFile& file)
     GShowFps = showFps ? 1 : GShowFps;
     // Port-only: HDArt draws the HD art pack's frames where it has them (sprite/MCHdArt.h).
     GHdArt = file.Read<bool>("HDArt").value_or(false) ? 1 : 0;
+    // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
+    GHdLighting = file.Read<bool>("HDLighting").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

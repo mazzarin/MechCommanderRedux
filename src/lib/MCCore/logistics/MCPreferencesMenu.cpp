@@ -17,6 +17,7 @@
 #include "platform/MCRenderer.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
@@ -400,6 +401,7 @@ void WritePrefs()
     prefs.WriteIdLong("UIResolution", GUiResolution);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
+    prefs.WriteIdBoolean("HDLighting", GHdLighting != 0);
     Cancel();
 }
 

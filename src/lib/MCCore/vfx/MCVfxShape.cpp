@@ -575,3 +575,66 @@ int32_t VfxShapeCount(std::span<const uint8_t> shapeTable)
 {
     return MCVfxRead32(shapeTable, 4);
 }
+
+void VfxShapeVisit(std::span<const uint8_t> shapeTable, int32_t shapeNum,
+                   const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel)
+{
+    // The first row's first token, after the header.
+    constexpr size_t FirstToken = 0x18;
+
+    if (!VfxIsShapeTable(shapeTable) || shapeNum < 0 || shapeNum >= VfxShapeCount(shapeTable))
+    {
+        return;
+    }
+
+    const MCShapeInfo shape = ReadShape(shapeTable, shapeNum);
+    const std::span<const uint8_t> header = shape.Header;
+    size_t at = FirstToken;
+
+    for (int32_t y = shape.YMin; y <= shape.YMax; ++y)
+    {
+        int32_t x = shape.XMin;
+
+        for (;;)
+        {
+            if (at >= header.size())
+            {
+                return;
+            }
+
+            const uint8_t token = header[at++];
+            const int32_t count = token >> 1;
+
+            if (count == 0)
+            {
+                if ((token & 1) == 0)
+                {
+                    break;
+                }
+
+                if (at >= header.size())
+                {
+                    return;
+                }
+
+                x += header[at++];
+                continue;
+            }
+
+            const bool literal = (token & 1) != 0;
+
+            if (at + (literal ? static_cast<size_t>(count) : 1) > header.size())
+            {
+                return;
+            }
+
+            for (int32_t i = 0; i < count; ++i)
+            {
+                pixel(x + i, y, header[at + (literal ? static_cast<size_t>(i) : 0)]);
+            }
+
+            at += literal ? static_cast<size_t>(count) : 1;
+            x += count;
+        }
+    }
+}

@@ -413,6 +413,7 @@
     <ClCompile Include="sprite\MCMechActor.cpp" />
     <ClCompile Include="sprite\MCPUAppearance.cpp" />
     <ClCompile Include="sprite\MCPUAppearanceType.cpp" />
+    <ClCompile Include="sprite\MCSceneLights.cpp" />
     <ClCompile Include="sprite\MCShape.cpp" />
     <ClCompile Include="sprite\MCSpriteManager.cpp" />
     <ClCompile Include="sprite\MCSpriteMath.cpp" />
@@ -806,6 +807,7 @@
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />
+    <ClInclude Include="sprite\MCSceneLights.h" />
     <ClInclude Include="sprite\MCShape.h" />
     <ClInclude Include="sprite\MCSpriteManager.h" />
     <ClInclude Include="sprite\MCSpriteMath.h" />

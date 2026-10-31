@@ -152,6 +152,15 @@ int32_t VfxShapeMinxy(std::span<const uint8_t> shapeTable, int32_t shapeNum);
 /// <summary>The number of shapes in a table.</summary>
 int32_t VfxShapeCount(std::span<const uint8_t> shapeTable);
 
+/// <summary>
+/// Port-only: calls <paramref name="pixel"/> with the offset from the hot spot and the colour of every pixel shape
+/// <paramref name="shapeNum"/> of <paramref name="shapeTable"/> draws (VfxShapeDraw's pixels, unclipped; skipped ones
+/// left out). Nothing for a table that isn't a shape table or a shape it hasn't; a row running past the table's end
+/// stops the walk.
+/// </summary>
+void VfxShapeVisit(std::span<const uint8_t> shapeTable, int32_t shapeNum,
+                   const std::function<void(int32_t x, int32_t y, uint8_t color)>& pixel);
+
 /// <summary>Whether <paramref name="shapeTable"/> starts with the shape table version "1.10".</summary>
 inline bool VfxIsShapeTable(std::span<const uint8_t> shapeTable)
 {

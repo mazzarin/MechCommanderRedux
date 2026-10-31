@@ -2,6 +2,8 @@
 #include "platform/MCVulkanPresenter.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
+#include "sprite/MCSceneLights.h"
+#include "vfx/MCVfx.h"
 
 namespace
 {
@@ -30,7 +32,45 @@ namespace
         uint32_t CycleSources[8];
         /// <summary>The screen fade: x, the amount taken off every component (0 none, 1 black).</summary>
         float Fade[4];
+        /// <summary>Port-only (HD lighting): the lights, their strength, the world's own light and 1 / the tilt.</summary>
+        float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+        /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
+        float Lights[MCSceneLights::MaxLights * 3][4] = {};
     };
+
+    /// <summary>
+    /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
+    /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
+    /// <paramref name="height"/>), and distances in the texture's pixels across.
+    /// </summary>
+    void SetLighting(CompositeUniforms& uniforms, const MCWindow& world, float width, float height)
+    {
+        const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
+        const MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+        const float across = width / static_cast<float>(world.XMax + 1);
+        const float down = height / static_cast<float>(world.YMax + 1);
+        const size_t count = std::min(lights.size(), MCSceneLights::MaxLights);
+        uniforms.Lighting[0] = static_cast<float>(count);
+        uniforms.Lighting[1] = lighting.Strength;
+        uniforms.Lighting[2] = GHdLighting != 0 ? lighting.Ambient : 1.0f;
+        uniforms.Lighting[3] = across / (down * MCSceneLights::GroundAspect());
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            // A light's point is a pixel's: its centre.
+            const MCSceneLight& light = lights[i];
+            const std::span<float, 4> ends = uniforms.Lights[i * 3];
+            ends[0] = (light.X0 + 0.5f) * across;
+            ends[1] = (light.Y0 + 0.5f) * down;
+            ends[2] = (light.X1 + 0.5f) * across;
+            ends[3] = (light.Y1 + 0.5f) * down;
+            uniforms.Lights[i * 3 + 1][0] = light.Height * across;
+            uniforms.Lights[i * 3 + 1][1] = light.Reach * across;
+            uniforms.Lights[i * 3 + 2][0] = light.Red;
+            uniforms.Lights[i * 3 + 2][1] = light.Green;
+            uniforms.Lights[i * 3 + 2][2] = light.Blue;
+        }
+    }
 
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
     constexpr uint32_t UploadAlignment = 512;
@@ -590,7 +630,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         }
 
         // The rectangle and its part on the screen, in target pixels.
-        const CompositeUniforms uniforms{
+        CompositeUniforms uniforms{
             {screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
             {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
             {(static_cast<float>(underlay.Rect.X0) - originX) / mapX,
@@ -600,6 +640,11 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {worldSize[0], worldSize[1], worldSize[2], worldSize[3]},
             {1.0f, source, drawnX, drawnY},
         };
+
+        if (const std::shared_ptr<const MCWindow> lit = underlay.Source.lock(); lit != nullptr)
+        {
+            SetLighting(uniforms, *lit, worldSize[0], worldSize[1]);
+        }
 
         draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
              static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world, uniforms);

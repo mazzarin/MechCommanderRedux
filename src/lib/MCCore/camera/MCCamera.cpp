@@ -23,6 +23,7 @@
 #include "object/MCObjectType.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
@@ -693,6 +694,8 @@ auto MCCamera::Render() -> void
     }
 
     ElementList().Reset();
+    // Port-only (HD lighting): the shots, fires and explosions drawn now light the world they're drawn into.
+    MCSceneLights::Begin(*GlobalPane);
     terrainWindow->Render(HazeLevel);
 
     if (DrawTerrainGrid != 0)
@@ -704,6 +707,7 @@ auto MCCamera::Render() -> void
     ObjectList()->Render();
     ElementList().Sort();
     ElementList().Draw();
+    MCSceneLights::Finish();
 
     // Port: the pause and asked shapes are drawn on the screen over the view, at its scale (centred as the original
     // centred them in the view).

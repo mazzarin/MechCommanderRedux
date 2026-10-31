@@ -90,7 +90,7 @@ namespace MCSceneLights
         /// <summary>The brightness (of a pixel's brightest component) a pixel blooms above.</summary>
         float BloomFrom = 0.8f;
         /// <summary>The most the air over a fire shimmers, in the window's pixels (0: no heat haze).</summary>
-        float Haze = 1.5f;
+        float Haze = 1.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -162,8 +162,9 @@ namespace MCSceneLights
     void AddShadows();
 
     /// <summary>
-    /// The air over the fire of the frame <paramref name="appearance"/> last drew (its Render): it shimmers above the
-    /// frame's bright pixels, as wide and as high as they are big.
+    /// The air over the fire of the frame <paramref name="appearance"/> last drew (its Render; a burning fire's flame,
+    /// not an explosion's fireball, which is gone before the air heats): it shimmers above the frame's bright pixels,
+    /// as wide and as high as they are big.
     /// </summary>
     void AddHeat(const MCVfxAppearance& appearance);
 

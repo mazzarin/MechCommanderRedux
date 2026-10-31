@@ -139,6 +139,21 @@ auto MCVfxAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     return result;
 }
 
+auto MCVfxAppearance::FrameDrawing() const -> MCFrameDrawing
+{
+    const MCVfxAppearanceType& type = *AppearType;
+    const uint32_t numFrames = CurrentSubState != NoSubState ? type.SubStates[CurrentSubState].NumFrames
+                                                             : type.StateData(CurrentState).NumFrames;
+
+    if (!type.Delta || numFrames < 2)
+    {
+        return MCFrameDrawing::Plain;
+    }
+
+    // Delta-compressed animations draw unscaled (only when the type is scaled).
+    return type.Scaled ? MCFrameDrawing::Delta : MCFrameDrawing::Nothing;
+}
+
 auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();
@@ -167,21 +182,14 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
     }
 
     const MCVfxAppearanceType& type = *AppearType;
-    uint32_t numFrames = type.StateData(CurrentState).NumFrames;
-
-    if (subState != NoSubState)
-    {
-        numFrames = type.SubStates[subState].NumFrames;
-    }
-
     const int32_t depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
 
     const std::optional<MCColorTable> hazeTable = GamePalette().GetHazePalette(HazeLevel);
+    const MCFrameDrawing drawing = FrameDrawing();
 
-    if (type.Delta && static_cast<int32_t>(numFrames) >= 2)
+    if (drawing != MCFrameDrawing::Plain)
     {
-        // Delta-compressed animations draw unscaled (only when the type is scaled).
-        if (shape != nullptr && !shape->FrameList().empty() && type.Scaled)
+        if (drawing == MCFrameDrawing::Delta && shape != nullptr && !shape->FrameList().empty())
         {
             ElementList().OpenGroup(depth, true);
             ElementList().Add(ElementList().Make<MCDeltaElement>(shape->FrameList(), static_cast<int32_t>(ScreenPos.X),

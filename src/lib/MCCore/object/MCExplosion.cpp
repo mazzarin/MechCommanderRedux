@@ -115,9 +115,8 @@ auto MCExplosion::Render() -> void
         Appearance->Render(-150);
 
         // Port-only (HD lighting): an explosion's fire lights what's around it, as long as it burns (its light's glow,
-        // where it has one, is a flash that ends sooner), and the air over it shimmers.
+        // where it has one, is a flash that ends sooner).
         MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
-        MCSceneLights::AddHeat(*Appearance);
     }
 
     if (Light != nullptr)

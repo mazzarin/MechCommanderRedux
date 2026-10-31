@@ -41,6 +41,20 @@ public:
     /// <summary>The number of frames of <paramref name="state"/> (0 when the type hasn't it).</summary>
     int32_t StateExists(MCActorState state) const;
 
+    /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
+    enum class MCFrameDrawing
+    {
+        /// <summary>The current frame.</summary>
+        Plain,
+        /// <summary>A delta animation: its first shape, and over it the frame's change (the next shape).</summary>
+        Delta,
+        /// <summary>Nothing: a delta animation of a type that isn't scaled.</summary>
+        Nothing,
+    };
+
+    /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
+    MCFrameDrawing FrameDrawing() const;
+
     /// <summary>The type.</summary>
     std::shared_ptr<MCVfxAppearanceType> AppearType;
     /// <summary>The shape drawn (expired once the cache drops it).</summary>

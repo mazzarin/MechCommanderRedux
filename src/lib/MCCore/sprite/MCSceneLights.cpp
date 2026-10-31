@@ -105,6 +105,9 @@ namespace
         return state;
     }
 
+    /// <summary>The art's key colour (magenta, in VFX's 6-bit components): its pixels are holes, never shown.</summary>
+    constexpr MCVfxRgb KeyColor{63, 0, 63};
+
     /// <summary>A pixel's light: its colour, and how much of it shows.</summary>
     struct PixelLight
     {
@@ -114,7 +117,8 @@ namespace
 
     /// <summary>
     /// The light pixel <paramref name="color"/> sends out: a translucent colour's own colour and coverage (a colour
-    /// dodge's added light whole), else its palette colour.
+    /// dodge's added light whole), else its palette colour; none from the key colour (a hit's light ends on a frame of
+    /// it).
     /// </summary>
     PixelLight LightOf(uint8_t color, bool translucent)
     {
@@ -134,6 +138,12 @@ namespace
         }
 
         const MCVfxRgb rgb = GamePalette().Colors()[color];
+
+        if (rgb.R == KeyColor.R && rgb.G == KeyColor.G && rgb.B == KeyColor.B)
+        {
+            return {{}, 0.0f};
+        }
+
         return {{static_cast<float>(rgb.R) / PaletteFull, static_cast<float>(rgb.G) / PaletteFull,
                  static_cast<float>(rgb.B) / PaletteFull},
                 1.0f};
@@ -227,23 +237,25 @@ namespace
     };
 
     /// <summary>
-    /// The frame <paramref name="appearance"/> last drew (its Render), when it is of a VFX shape table (not a delta
-    /// animation's): a delta animation draws its first shape and, over it, the frame's change (MCDeltaElement), which
-    /// is its fire.
+    /// The frame <paramref name="appearance"/> last drew (its Render), when it drew one of a VFX shape table: as
+    /// MCVfxElement and MCDeltaElement draw it, a delta animation's change over its first shape (its fire).
     /// </summary>
     std::optional<DrawnFrame> FrameDrawn(const MCVfxAppearance& appearance)
     {
         std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
+        const MCVfxAppearance::MCFrameDrawing drawing = appearance.FrameDrawing();
 
-        if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()))
+        if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()) ||
+            drawing == MCVfxAppearance::MCFrameDrawing::Nothing)
         {
             return std::nullopt;
         }
 
         const std::span<const uint8_t> table = shape->FrameList();
-        const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
-                                  ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
-                                  : appearance.CurrentFrame;
+        const int32_t last = VfxShapeCount(table) - 1;
+        const int32_t frame = drawing == MCVfxAppearance::MCFrameDrawing::Delta
+                                  ? std::min(appearance.CurrentFrame + 1, last)
+                                  : std::min(appearance.CurrentFrame, last);
         return DrawnFrame{std::move(shape), table, frame};
     }
 

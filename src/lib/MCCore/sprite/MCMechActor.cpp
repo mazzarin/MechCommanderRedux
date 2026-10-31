@@ -696,8 +696,12 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     }
 
     // The shadow, one of 32 facings. Port-only (sun shadows): with HD art drawn by the GPU, the mech casts its parts'
-    // own shadow instead, the way the objects' baked shadows fall (added once the parts' frames are known, below).
-    const bool sunShadow = GHdSunShadows != 0 && MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+    // own shadow instead, the way the objects' baked shadows fall (added once the parts' frames are known, below), when
+    // the pack has every part (a mech it lacks, a mod's, keeps the blob).
+    const bool sunShadow =
+        GHdSunShadows != 0 && MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On &&
+        std::ranges::all_of(shapes, [](const auto& shape)
+                            { return shape == nullptr || MCHdArt::Attached(shape->FrameList().data()); });
     const auto shadowDepth = static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(-y))));
     ElementList().OpenGroup(shadowDepth, true);
 

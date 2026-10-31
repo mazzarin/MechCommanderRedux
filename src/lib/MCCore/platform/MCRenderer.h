@@ -457,6 +457,11 @@ struct MCAlphaBlitCommand
     int32_t Rows;
     bool Mirror;
     bool FullSize;
+    /// <summary>
+    /// Port-only (sun shadows): the window rectangle the blit was clipped to (inclusive; X1 below X0 when unknown),
+    /// which a unit's shadow, cast beyond its bitmap, keeps to.
+    /// </summary>
+    MCRect Clip{0, 0, -1, -1};
 };
 
 /// <summary>

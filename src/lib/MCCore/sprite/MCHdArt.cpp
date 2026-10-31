@@ -206,6 +206,14 @@ namespace
         return state;
     }
 
+    /// <summary>The pack sequence the shape table starting at <paramref name="table"/> is tied to, if its owner lives.</summary>
+    const Sequence* AttachedSequence(const uint8_t* table)
+    {
+        const State& state = TheState();
+        const auto found = state.Sequences.find(table);
+        return found == state.Sequences.end() || found->second.Owner.expired() ? nullptr : &found->second;
+    }
+
     /// <summary>Logs <paramref name="problem"/> with frames from <paramref name="folder"/>, once per folder.</summary>
     void LogOnce(const std::filesystem::path& folder, const std::string& problem)
     {
@@ -1351,17 +1359,21 @@ bool MCHdArt::KeepsFrameEdges(const uint8_t* table)
     return found != state.Sequences.end() && found->second.KeepsEdges;
 }
 
+bool MCHdArt::Attached(const uint8_t* table)
+{
+    return AttachedSequence(table) != nullptr;
+}
+
 std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)
 {
-    const State& state = TheState();
-    const auto found = state.Sequences.find(table);
+    const Sequence* sequence = AttachedSequence(table);
 
-    if (found == state.Sequences.end() || found->second.Owner.expired())
+    if (sequence == nullptr)
     {
         return std::nullopt;
     }
 
-    return state.Folders[found->second.Folder].Path;
+    return TheState().Folders[sequence->Folder].Path;
 }
 
 uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)

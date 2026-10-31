@@ -3469,16 +3469,28 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
     lighting.SunShadowUp = 1.0f;
     GamePaused = true;
 
-    // The ground, then the shape drawn on it (as a sun shadow inside the scope).
-    const auto drawn = [&](int32_t sunShadows, bool cast)
+    // The ground, then the shape drawn on it (as a sun shadow inside the scope): as it is (a shape draw) or mirrored
+    // about its hot spot (a transform's blit), into the pane or a copy of it ending at window column paneRight.
+    const auto drawn =
+        [&](int32_t sunShadows, bool cast, bool mirrored = false, std::optional<int32_t> paneRight = std::nullopt)
     {
         GHdSunShadows = sunShadows;
         MCTestGame::RunFrame(FrameSeconds);
         auto under = display->ReadFrame();
         REQUIRE(under.has_value());
         {
+            MCPane cut = pane;
+            cut.X1 = paneRight.value_or(pane.X1);
             const MCRenderer::SunShadowScope scope(cast);
-            AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+
+            if (mirrored)
+            {
+                AGShapeTransform(cut, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(cut, shape->FrameList(), 0, x, y);
+            }
         }
 
         auto over = display->ReadFrame();
@@ -3521,20 +3533,35 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
         }
     }
 
-    // Cast: a row h above the foot lands h pixels right of where it stands; its own place keeps the ground.
-    const auto [castUnder, cast] = drawn(1, true);
-
-    for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+    // Cast: a row h above the foot lands h pixels right of where it stands (column c of a mirrored frame stands at -c);
+    // its own place keeps the ground. In a pane ending at the frame's last column (the cast lands wholly beyond it), the
+    // ground beyond is untouched.
+    for (const bool mirrored : {false, true})
     {
-        for (const int32_t column : {1, 2, 5, 6})
+        const int32_t lastColumn = mirrored ? 0 : Width - 1;
+
+        for (const bool cut : {false, true})
         {
-            const int32_t right = column - row;
-            const SDL_Color under = at(castUnder, right, row);
-            MCTest::Scope scope(std::format("column {}, row {}: cast to column {}", column, row, right));
-            CHECK(sameAs(at(cast, right, row), under.r * (1.0f - Darkness), under.g * (1.0f - Darkness),
-                         under.b * (1.0f - Darkness)));
-            const SDL_Color own = at(castUnder, column, row);
-            CHECK(sameAs(at(cast, column, row), own.r, own.g, own.b));
+            const auto [castUnder, cast] =
+                drawn(1, true, mirrored, cut ? std::optional(pane.X0 + x + lastColumn) : std::nullopt);
+
+            for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+            {
+                for (const int32_t column : {1, 2, 5, 6})
+                {
+                    const int32_t stands = mirrored ? -column : column;
+                    const int32_t right = stands - row;
+                    REQUIRE(right > lastColumn);
+                    const SDL_Color under = at(castUnder, right, row);
+                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: cast to column {}",
+                                                    mirrored ? "mirrored" : "as is", cut ? ", cut" : "", column, row,
+                                                    right));
+                    const float kept = cut ? 1.0f : 1.0f - Darkness;
+                    CHECK(sameAs(at(cast, right, row), under.r * kept, under.g * kept, under.b * kept));
+                    const SDL_Color own = at(castUnder, stands, row);
+                    CHECK(sameAs(at(cast, stands, row), own.r, own.g, own.b));
+                }
+            }
         }
     }
 

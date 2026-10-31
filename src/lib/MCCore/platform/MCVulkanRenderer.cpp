@@ -2067,18 +2067,21 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
     const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
 
     // Port-only: a unit's sun shadow, from the blit's place (a whole frame at full size: mirrored, its first column
-    // drawn is its last).
+    // drawn is its last), clipped as the blit was.
     if (MCRenderer::DrawingSunShadow())
     {
+        const MCAlphaBlitCommand& blit = command.Blit;
         const std::optional<std::pair<Quad, Quad>> place =
-            BlitPlace(command.Blit, command.Width, command.Height, "a sun shadow's blit reading outside its shape");
+            BlitPlace(blit, command.Width, command.Height, "a sun shadow's blit reading outside its shape");
 
-        if (place.has_value() && command.Blit.FullSize && place->second[3] == 1)
+        if (place.has_value() && blit.FullSize)
         {
             const auto& [at, from] = *place;
-            const bool mirrored = from[2] < 0;
-            const int32_t left = mirrored ? at[0] + from[0] - command.Width + 1 : at[0] - from[0];
-            AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], mirrored, std::nullopt);
+            const int32_t left = blit.Mirror ? at[0] + from[0] - command.Width + 1 : at[0] - from[0];
+            const bool clipKnown = blit.Clip.X1 >= blit.Clip.X0 && blit.Clip.Y1 >= blit.Clip.Y0;
+            AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], blit.Mirror,
+                         clipKnown ? std::optional(Quad{blit.Clip.X0, blit.Clip.Y0, blit.Clip.X1, blit.Clip.Y1})
+                                   : std::nullopt);
         }
 
         return;
@@ -3150,15 +3153,21 @@ bool MCVulkanRenderer::AddMapped(uint16_t surface, SourceKind source, uint32_t s
 void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left,
                                     int32_t top, bool mirrored, const std::optional<Quad>& clip)
 {
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+    const float up = lighting.SunShadowUp;
+
+    if (GHdSunShadows == 0 || up <= 0.0f)
+    {
+        return;
+    }
+
     const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
     const int32_t yMin = MCRead32(header, ShapeYMinAt);
     const int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
     const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
     const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
-    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
-    const float up = lighting.SunShadowUp;
 
-    if (frame == nullptr || up <= 0.0f || GHdSunShadows == 0)
+    if (frame == nullptr)
     {
         return;
     }

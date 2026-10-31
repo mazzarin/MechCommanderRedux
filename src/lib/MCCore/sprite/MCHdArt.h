@@ -246,6 +246,12 @@ namespace MCHdArt
     bool KeepsFrameEdges(const uint8_t* table);
 
     /// <summary>
+    /// Whether the shape table starting at <paramref name="table"/> is tied to the pack (and its owner lives): its frames
+    /// are looked for there.
+    /// </summary>
+    bool Attached(const uint8_t* table);
+
+    /// <summary>
     /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
     /// none when it isn't attached (or its owner is gone).
     /// </summary>

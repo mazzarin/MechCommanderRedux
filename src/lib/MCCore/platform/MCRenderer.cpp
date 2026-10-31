@@ -187,17 +187,13 @@ namespace
 
         void AlphaBlit(MCWindow&, const MCAlphaBlitCommand& command) override
         {
-            MCAlphaBlitCommand moved = command;
-            moved.Left += _X;
-            moved.Top += _Y;
-            Target().AlphaBlit(Window(), moved);
+            Target().AlphaBlit(Window(), Move(command));
         }
 
         void ShapeBlit(MCWindow&, const MCShapeBlitCommand& command) override
         {
             MCShapeBlitCommand moved = command;
-            moved.Blit.Left += _X;
-            moved.Blit.Top += _Y;
+            moved.Blit = Move(command.Blit);
             Target().ShapeBlit(Window(), moved);
         }
 
@@ -372,6 +368,16 @@ namespace
         MCRenderer& Target() const { return MCRenderer::For(Window()); }
 
         MCRect Move(const MCRect& rect) const { return MCRect{rect.X0 + _X, rect.Y0 + _Y, rect.X1 + _X, rect.Y1 + _Y}; }
+
+        /// <summary><paramref name="blit"/> moved by the view's origin: where it writes and the rectangle it keeps to.</summary>
+        MCAlphaBlitCommand Move(const MCAlphaBlitCommand& blit) const
+        {
+            MCAlphaBlitCommand moved = blit;
+            moved.Left += _X;
+            moved.Top += _Y;
+            moved.Clip = Move(blit.Clip);
+            return moved;
+        }
 
         /// <summary>Whether a write of <paramref name="color"/> draws nothing (0xff in a colour-keyed view).</summary>
         bool Drops(uint8_t color) const { return _KeyTransparent && color == 0xff; }

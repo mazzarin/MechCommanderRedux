@@ -52,18 +52,38 @@ namespace
         return state;
     }
 
-    /// <summary>The light a pixel sends out: a translucent colour's blend (the light it adds), else its palette colour.</summary>
-    std::array<float, 3> PixelLight(uint8_t color, bool translucent)
+    /// <summary>A pixel's light: its colour, and how much of it shows.</summary>
+    struct PixelLight
+    {
+        std::array<float, 3> Color{};
+        float Coverage = 1.0f;
+    };
+
+    /// <summary>
+    /// The light pixel <paramref name="color"/> sends out: a translucent colour's own colour and coverage (a colour
+    /// dodge's added light whole), else its palette colour.
+    /// </summary>
+    PixelLight LightOf(uint8_t color, bool translucent)
     {
         if (translucent && SpecialColor[color] != 0)
         {
             const MCAlphaBlend blend = AlphaColorBlend(MCAlphaColors[color]);
-            return {blend.R, blend.G, blend.B};
+
+            // A blend's colour is premultiplied by its coverage.
+            if (blend.Coverage <= 0.0f)
+            {
+                return {{blend.R, blend.G, blend.B}, 1.0f};
+            }
+
+            return {{std::min(blend.R / blend.Coverage, 1.0f), std::min(blend.G / blend.Coverage, 1.0f),
+                     std::min(blend.B / blend.Coverage, 1.0f)},
+                    blend.Coverage};
         }
 
         const MCVfxRgb rgb = GamePalette().Colors()[color];
-        return {static_cast<float>(rgb.R) / PaletteFull, static_cast<float>(rgb.G) / PaletteFull,
-                static_cast<float>(rgb.B) / PaletteFull};
+        return {{static_cast<float>(rgb.R) / PaletteFull, static_cast<float>(rgb.G) / PaletteFull,
+                 static_cast<float>(rgb.B) / PaletteFull},
+                1.0f};
     }
 
     /// <summary>A glow's lit pixels: their centre (from the hot spot, weighted by their light), mean light and count.</summary>
@@ -92,18 +112,19 @@ namespace
         VfxShapeVisit(shapeTable, frame,
                       [&](int32_t x, int32_t y, uint8_t color)
                       {
-                          const std::array<float, 3> light = PixelLight(color, translucent);
-                          const double w = static_cast<double>(light[0]) + light[1] + light[2];
+                          const PixelLight light = LightOf(color, translucent);
+                          const double w =
+                              (static_cast<double>(light.Color[0]) + light.Color[1] + light.Color[2]) * light.Coverage;
 
-                          if (w <= 0.0 ||
-                              (shining == MCSceneLights::MCGlowPixels::Bright && std::ranges::max(light) < BrightPixel))
+                          if (w <= 0.0 || (shining == MCSceneLights::MCGlowPixels::Bright &&
+                                           std::ranges::max(light.Color) < BrightPixel))
                           {
                               return;
                           }
 
                           for (size_t i = 0; i < sum.size(); ++i)
                           {
-                              sum[i] += light[i];
+                              sum[i] += light.Color[i] * light.Coverage;
                           }
 
                           sumX += x * w;
@@ -224,13 +245,21 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
         return;
     }
 
-    if (const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock(); shape != nullptr)
+    const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
+
+    if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()))
     {
-        const float altitude =
-            Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
-        AddGlow(shape->FrameList(), appearance.CurrentFrame, appearance.ScreenPos.X, appearance.ScreenPos.Y, altitude,
-                pixels);
+        return;
     }
+
+    // A delta animation draws its first shape and, over it, the frame's change (MCDeltaElement): the change is its fire.
+    const std::span<const uint8_t> table = shape->FrameList();
+    const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
+                              ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
+                              : appearance.CurrentFrame;
+    const float altitude =
+        Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
+    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, altitude, pixels);
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -240,7 +269,7 @@ auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width,
         return;
     }
 
-    AddBeamLight(x0, y0, x1, y1, width, PixelLight(color, false));
+    AddBeamLight(x0, y0, x1, y1, width, LightOf(color, false).Color);
 }
 
 auto MCSceneLights::AddShapeBeam(float x0, float y0, float x1, float y1, float width,

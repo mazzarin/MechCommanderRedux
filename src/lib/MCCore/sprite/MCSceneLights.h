@@ -35,7 +35,7 @@ struct MCSceneLight
 namespace MCSceneLights
 {
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
-    inline constexpr size_t MaxLights = 32;
+    inline constexpr size_t MaxLights = 64;
 
     /// <summary>Which of a glow's pixels shine: all of a light's glow, only the fire of an explosion (not its dust).</summary>
     enum class MCGlowPixels

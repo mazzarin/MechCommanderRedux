@@ -61,11 +61,11 @@ cbuffer Composite : register(b0, space3)
     float4 lighting;
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
-    float4 lights[96];
+    float4 lights[192];
 };
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
-static const uint MaxLights = 32;
+static const uint MaxLights = 64;
 // A light's pool falls off as 1 / (1 + LightFalloff * (d / reach)^2), faded out to nothing at its reach.
 static const float LightFalloff = 16.0;
 // Of the light, what the air scatters back even off black ground.

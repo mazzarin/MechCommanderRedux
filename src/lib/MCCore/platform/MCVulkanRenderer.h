@@ -463,6 +463,17 @@ private:
     bool AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command);
 
     /// <summary>
+    /// Port-only (sun shadows): adds the shadow the sun casts of frame <paramref name="shapeNum"/> of
+    /// <paramref name="table"/> (its HD art pack frame; none without one), the frame's first column and row at window
+    /// (<paramref name="left"/>, <paramref name="top"/>), <paramref name="mirrored"/> its first column drawn its last: each
+    /// point cast MCLighting::SunShadowRight and SunShadowUp per pixel it stands above the hot spot's row, black at
+    /// the frame's coverage as dark as MCLighting::SunShadow, over what lies under it (no indices), within
+    /// <paramref name="clip"/> (window pixels, inclusive; the window's when none).
+    /// </summary>
+    void AddSunShadow(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left, int32_t top,
+                      bool mirrored, const std::optional<Quad>& clip);
+
+    /// <summary>
     /// Port-only: adds the smooth colour pass of a game-drawn picture mapped with its key transparent (the fog of war,
     /// KindSmoothMap): its drawn texels' edges rounded at the output's resolution, as a smooth-edged shape's are, from
     /// <paramref name="source"/> (the picture's surface). False when the polygon's vertices lie in a line.

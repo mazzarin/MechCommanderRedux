@@ -17,6 +17,7 @@
 #include "vfx/MCVfxFunctions.h"
 
 int GHdLighting = 0;
+int GHdSunShadows = 0;
 
 namespace
 {
@@ -49,11 +50,6 @@ namespace
     constexpr float SameMuzzle = 2.0f;
     /// <summary>A light's pool is as soft as one this much of its reach high, at least (composite.pshader's LightSoftness).</summary>
     constexpr float LightSoftness = 0.3f;
-    /// <summary>
-    /// The shadows' group in the draw list: after the terrain's (50,000,000), the craters' (30,000,000) and the
-    /// terrain's overlays' (10,000,000), before every object's (their screen heights, or less).
-    /// </summary>
-    constexpr int32_t ShadowDepth = 5000000;
     /// <summary>The most shadows a frame draws (the strongest).</summary>
     constexpr size_t MaxShadows = 96;
     /// <summary>Of a unit's sprite, the share of its width its body is: its shadow's width at its feet.</summary>
@@ -320,7 +316,7 @@ namespace
     {
     public:
         MCShadowElement(std::vector<MCShadowCommand> shadows, std::weak_ptr<MCWindow> window)
-            : MCElement(ShadowDepth), _Shadows(std::move(shadows)), _Window(std::move(window))
+            : MCElement(MCSceneLights::ShadowDepth), _Shadows(std::move(shadows)), _Window(std::move(window))
         {
         }
 

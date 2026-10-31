@@ -33,4 +33,9 @@ public:
     /// <see cref="MCRenderer::InBetweenScope"/> (the HD art pack's in-between, where it has one).
     /// </summary>
     std::optional<MCInBetween> InBetween;
+    /// <summary>
+    /// Port-only (sun shadows): the element is a unit's part drawn as the shadow the sun casts of it, in a
+    /// <see cref="MCRenderer::SunShadowScope"/>.
+    /// </summary>
+    bool SunShadow = false;
 };

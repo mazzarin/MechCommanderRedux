@@ -21,6 +21,8 @@
 #include "object/MCMechWarrior.h"
 #include "object/MCMoverGameSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
@@ -693,16 +695,23 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         PartShape[part] = shapes[part];
     }
 
-    // The shadow, one of 32 facings.
-    ElementList().OpenGroup(static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(-y)))), true);
-    auto& shadow = ElementList().Make<MCVfxElement>(SpriteManager()->MechShadow(0), x, y, CalcRotation(facing, 0x20), 0,
-                                                    std::nullopt, 0);
+    // The shadow, one of 32 facings. Port-only (sun shadows): with HD art drawn by the GPU, the mech casts its parts'
+    // own shadow instead, the way the objects' baked shadows fall (added once the parts' frames are known, below).
+    const bool sunShadow = GHdSunShadows != 0 && MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+    const auto shadowDepth = static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(-y))));
+    ElementList().OpenGroup(shadowDepth, true);
 
-    ElementList().Add(shadow);
+    if (!sunShadow)
+    {
+        auto& shadow = ElementList().Make<MCVfxElement>(SpriteManager()->MechShadow(0), x, y,
+                                                        CalcRotation(facing, 0x20), 0, std::nullopt, 0);
 
-    ElementList().OpenGroup(static_cast<int16_t>(static_cast<int32_t>(
-                                std::floor(static_cast<double>(static_cast<float>(depthFixup) - ScreenPos.Y)))),
-                            true);
+        ElementList().Add(shadow);
+    }
+
+    const auto partsDepth = static_cast<int16_t>(
+        static_cast<int32_t>(std::floor(static_cast<double>(static_cast<float>(depthFixup) - ScreenPos.Y))));
+    ElementList().OpenGroup(partsDepth, true);
 
     for (int32_t i = 0; i < MechPartCount; i++)
     {
@@ -810,6 +819,30 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
                                                          CurrentFrame[part], Reverse[part], fadeTable, 1);
 
         ElementList().Add(element);
+    }
+
+    // Port-only (sun shadows): the parts' shadow, on the ground before any unit or object is drawn; then on with the
+    // parts' group.
+    if (sunShadow)
+    {
+        ElementList().OpenGroup(MCSceneLights::ShadowDepth, false);
+
+        for (int32_t i = 0; i < MechPartCount; i++)
+        {
+            const MCMechPart part = PartOrder[i];
+
+            if (shapes[part] == nullptr)
+            {
+                continue;
+            }
+
+            auto& element = ElementList().Make<MCVfxElement>(shapes[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                             CurrentFrame[part], Reverse[part], std::nullopt, 1);
+            element.SunShadow = true;
+            ElementList().Add(element);
+        }
+
+        ElementList().OpenGroup(partsDepth, true);
     }
 
     // Selection: -1 and 1 draw the bars; 3 white brackets; anything else the alignment's brackets.

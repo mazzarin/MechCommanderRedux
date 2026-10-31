@@ -117,6 +117,8 @@ namespace
         std::filesystem::path Path;
         Naming Names = Naming::Number;
         std::optional<bool> Loose;
+        /// <summary>Whether its frames are objects', whose baked shadows are marked (MCHdArt::MarkBakedShadows).</summary>
+        bool BakedShadows = false;
     };
 
     /// <summary>
@@ -494,10 +496,26 @@ namespace
 
         if (fresh)
         {
-            state.Folders.push_back(FrameFolder{path, names, std::nullopt});
+            const std::filesystem::path inPack = path.lexically_relative(MCHdArt::PackFolder());
+            const bool objects = !inPack.empty() && *inPack.begin() == ObjectFolder;
+            state.Folders.push_back(FrameFolder{path, names, std::nullopt, objects});
         }
 
         return found->second;
+    }
+
+    /// <summary>A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's.</summary>
+    std::shared_ptr<const MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, const FrameFolder& folder)
+    {
+        auto made = std::make_shared<MCHdArt::Frame>(std::move(frame));
+        made->Id = MCHdArt::NewFrameId();
+
+        if (folder.BakedShadows)
+        {
+            MCHdArt::MarkBakedShadows(*made);
+        }
+
+        return made;
     }
 
     /// <summary>
@@ -552,9 +570,7 @@ namespace
                     return nullptr;
                 }
 
-                auto made = std::make_shared<MCHdArt::Frame>(std::move(**archived));
-                made->Id = MCHdArt::NewFrameId();
-                return made;
+                return Finished(std::move(**archived), folder);
             }
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
@@ -585,9 +601,7 @@ namespace
             return std::unexpected(std::format("frame {}: {}", frame, read.error()));
         }
 
-        auto made = std::make_shared<MCHdArt::Frame>(std::move(*read));
-        made->Id = MCHdArt::NewFrameId();
-        return made;
+        return Finished(std::move(*read), folder);
     }
 
     /// <summary>
@@ -772,6 +786,169 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
                         bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes));
     frame.Indices.assign(bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes), bytes.end());
     return frame;
+}
+
+void MCHdArt::MarkBakedShadows(Frame& frame)
+{
+    const int32_t width = frame.OriginalWidth();
+    const int32_t height = frame.OriginalHeight();
+
+    if (frame.Blended || width <= 0 || height <= 0 ||
+        frame.Indices.size() != static_cast<size_t>(width) * height * IndexBytes)
+    {
+        return;
+    }
+
+    // Per original pixel, with a one-pixel empty border so every walk below stays inside: what the art draws there.
+    enum class Drawn : uint8_t
+    {
+        Empty,
+        Black,
+        Body,
+    };
+
+    const int32_t paddedWidth = width + 2;
+    const int32_t paddedHeight = height + 2;
+    const auto at = [paddedWidth](int32_t x, int32_t y) { return static_cast<size_t>(y) * paddedWidth + x; };
+    std::vector<Drawn> drawn(static_cast<size_t>(paddedWidth) * paddedHeight, Drawn::Empty);
+
+    for (int32_t y = 0; y < height; ++y)
+    {
+        for (int32_t x = 0; x < width; ++x)
+        {
+            const size_t from = (static_cast<size_t>(y) * width + x) * IndexBytes;
+
+            if (frame.Indices[from + 1] == HasIndex)
+            {
+                drawn[at(x + 1, y + 1)] = frame.Indices[from] == BakedShadowIndex ? Drawn::Black : Drawn::Body;
+            }
+        }
+    }
+
+    // The body's outline, closed over one-pixel gaps (dilated, then eroded, by a 3 x 3 square).
+    constexpr int32_t Reach = 1;
+    const auto anyAround = [&](const std::vector<uint8_t>& mask, int32_t x, int32_t y, bool all)
+    {
+        for (int32_t dy = -Reach; dy <= Reach; ++dy)
+        {
+            for (int32_t dx = -Reach; dx <= Reach; ++dx)
+            {
+                const int32_t nx = x + dx;
+                const int32_t ny = y + dy;
+                const bool set = nx >= 0 && ny >= 0 && nx < paddedWidth && ny < paddedHeight && mask[at(nx, ny)] != 0;
+
+                if (set != all)
+                {
+                    return !all;
+                }
+            }
+        }
+
+        return all;
+    };
+
+    std::vector<uint8_t> body(drawn.size());
+    std::ranges::transform(drawn, body.begin(), [](Drawn pixel) { return pixel == Drawn::Body ? 1 : 0; });
+    std::vector<uint8_t> grown(drawn.size());
+    std::vector<uint8_t> closed(drawn.size());
+
+    for (int32_t y = 0; y < paddedHeight; ++y)
+    {
+        for (int32_t x = 0; x < paddedWidth; ++x)
+        {
+            grown[at(x, y)] = anyAround(body, x, y, false) ? 1 : 0;
+        }
+    }
+
+    for (int32_t y = 0; y < paddedHeight; ++y)
+    {
+        for (int32_t x = 0; x < paddedWidth; ++x)
+        {
+            closed[at(x, y)] = anyAround(grown, x, y, true) ? 1 : 0;
+        }
+    }
+
+    // Holes filled: what the outside can't reach (4-connected) past the closed outline is inside it.
+    constexpr std::array<std::pair<int32_t, int32_t>, 4> Sides = {{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
+    std::vector<uint8_t> outside(drawn.size());
+    std::vector<std::pair<int32_t, int32_t>> todo = {{0, 0}};
+    outside[at(0, 0)] = 1;
+
+    while (!todo.empty())
+    {
+        const auto [x, y] = todo.back();
+        todo.pop_back();
+
+        for (const auto [dx, dy] : Sides)
+        {
+            const int32_t nx = x + dx;
+            const int32_t ny = y + dy;
+
+            if (nx >= 0 && ny >= 0 && nx < paddedWidth && ny < paddedHeight && outside[at(nx, ny)] == 0 &&
+                closed[at(nx, ny)] == 0)
+            {
+                outside[at(nx, ny)] = 1;
+                todo.emplace_back(nx, ny);
+            }
+        }
+    }
+
+    // The black outside the outline, in groups (8-connected): a group touching at least as many empty pixels as drawn
+    // ones (the black inside the outline counts as drawn) is shadow.
+    std::vector<uint8_t> seen(drawn.size());
+    std::vector<std::pair<int32_t, int32_t>> group;
+    const auto shadowBlack = [&](int32_t x, int32_t y)
+    { return drawn[at(x, y)] == Drawn::Black && outside[at(x, y)] != 0; };
+
+    for (int32_t y = 1; y <= height; ++y)
+    {
+        for (int32_t x = 1; x <= width; ++x)
+        {
+            if (seen[at(x, y)] != 0 || !shadowBlack(x, y))
+            {
+                continue;
+            }
+
+            group.assign({{x, y}});
+            seen[at(x, y)] = 1;
+            int32_t empty = 0;
+            int32_t art = 0;
+
+            for (size_t next = 0; next < group.size(); ++next)
+            {
+                const auto [gx, gy] = group[next];
+
+                for (const auto [dx, dy] : Sides)
+                {
+                    const Drawn side = drawn[at(gx + dx, gy + dy)];
+                    empty += side == Drawn::Empty ? 1 : 0;
+                    art += side != Drawn::Empty && !shadowBlack(gx + dx, gy + dy) ? 1 : 0;
+                }
+
+                for (int32_t dy = -1; dy <= 1; ++dy)
+                {
+                    for (int32_t dx = -1; dx <= 1; ++dx)
+                    {
+                        if (seen[at(gx + dx, gy + dy)] == 0 && shadowBlack(gx + dx, gy + dy))
+                        {
+                            seen[at(gx + dx, gy + dy)] = 1;
+                            group.emplace_back(gx + dx, gy + dy);
+                        }
+                    }
+                }
+            }
+
+            if (empty == 0 || empty < art)
+            {
+                continue;
+            }
+
+            for (const auto [gx, gy] : group)
+            {
+                frame.Indices[(static_cast<size_t>(gy - 1) * width + (gx - 1)) * IndexBytes + 1] = BakedShadow;
+            }
+        }
+    }
 }
 
 std::filesystem::path MCHdArt::PackFolder()

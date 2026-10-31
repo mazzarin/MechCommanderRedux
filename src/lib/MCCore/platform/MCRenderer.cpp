@@ -574,6 +574,9 @@ namespace
     /// <summary>The in-between a <see cref="MCRenderer::InBetweenScope"/> is drawing, none outside one.</summary>
     std::optional<MCInBetween> InBetweenDrawn;
 
+    /// <summary>Whether a <see cref="MCRenderer::SunShadowScope"/> is drawing a unit's sun shadow.</summary>
+    bool SunShadowDrawn = false;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -780,6 +783,21 @@ MCRenderer::InBetweenScope::~InBetweenScope()
 const std::optional<MCInBetween>& MCRenderer::DrawingInBetween()
 {
     return InBetweenDrawn;
+}
+
+MCRenderer::SunShadowScope::SunShadowScope(bool shadow) : _Was(SunShadowDrawn)
+{
+    SunShadowDrawn = _Was || shadow;
+}
+
+MCRenderer::SunShadowScope::~SunShadowScope()
+{
+    SunShadowDrawn = _Was;
+}
+
+bool MCRenderer::DrawingSunShadow()
+{
+    return SunShadowDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

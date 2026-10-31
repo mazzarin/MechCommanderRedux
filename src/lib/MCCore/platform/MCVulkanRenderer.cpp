@@ -100,6 +100,8 @@ namespace
     constexpr uint32_t HdAsMade = 1u << 20;
     /// <summary>Port-only: an HD art frame holding its blended pixels, some of which may add light (MCHdArt::Frame).</summary>
     constexpr uint32_t HdLight = 1u << 21;
+    /// <summary>Port-only (sun shadows): an HD art frame drawn as a unit's shadow (AddSunShadow).</summary>
+    constexpr uint32_t SunShadowDraw = 1u << 22;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -174,7 +176,10 @@ namespace
         int32_t SourceScale[4];
         int32_t Cycle[4];
         uint32_t CycleSources[8];
-        /// <summary>Port-only (HD lighting): x how strong a light's glow (Glow) shows; 1 as the original drew it.</summary>
+        /// <summary>
+        /// Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun
+        /// shadows on, how much of the light under it an object's baked shadow takes away (0: off, solid black).
+        /// </summary>
         float Look[4];
     };
 
@@ -2060,6 +2065,25 @@ void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& com
 void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command)
 {
     const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
+
+    // Port-only: a unit's sun shadow, from the blit's place (a whole frame at full size: mirrored, its first column
+    // drawn is its last).
+    if (MCRenderer::DrawingSunShadow())
+    {
+        const std::optional<std::pair<Quad, Quad>> place =
+            BlitPlace(command.Blit, command.Width, command.Height, "a sun shadow's blit reading outside its shape");
+
+        if (place.has_value() && command.Blit.FullSize && place->second[3] == 1)
+        {
+            const auto& [at, from] = *place;
+            const bool mirrored = from[2] < 0;
+            const int32_t left = mirrored ? at[0] + from[0] - command.Width + 1 : at[0] - from[0];
+            AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], mirrored, std::nullopt);
+        }
+
+        return;
+    }
+
     const std::span<const uint8_t> data =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
@@ -2505,6 +2529,17 @@ void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t col
 void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
     const AuditScope audit(*this, "Shape", target, command.ShapeTable, command.ShapeNum);
+
+    // Port-only: a unit's sun shadow, clipped as the shape is.
+    if (MCRenderer::DrawingSunShadow())
+    {
+        const bool rowsKnown = command.ClipBottom >= command.ClipTop;
+        AddSunShadow(target, command.ShapeTable, command.ShapeNum, command.Left, command.Top - command.SkipRows, false,
+                     rowsKnown ? std::optional(Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom})
+                               : std::nullopt);
+        return;
+    }
+
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> header =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum));
@@ -3110,6 +3145,81 @@ bool MCVulkanRenderer::AddMapped(uint16_t surface, SourceKind source, uint32_t s
     draw[18] = texture.XMax + 1;
     draw[19] = texture.YMax + 1;
     return true;
+}
+
+void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left,
+                                    int32_t top, bool mirrored, const std::optional<Quad>& clip)
+{
+    const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
+    const int32_t yMin = MCRead32(header, ShapeYMinAt);
+    const int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
+    const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
+    const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+    const float up = lighting.SunShadowUp;
+
+    if (frame == nullptr || up <= 0.0f || GHdSunShadows == 0)
+    {
+        return;
+    }
+
+    const std::optional<uint32_t> picture = HdPictureOf(*frame);
+
+    if (!picture)
+    {
+        return;
+    }
+
+    // A point h window pixels above the foot (the hot spot's row) casts its shadow right * h right and up * h up of
+    // it; the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
+    const float right = lighting.SunShadowRight;
+    const auto foot = static_cast<float>(top - yMin);
+    const float x0 = static_cast<float>(left);
+    const float y0 = static_cast<float>(top);
+    const float step = mirrored ? -1.0f : 1.0f;
+    const float firstColumn = mirrored ? x0 + static_cast<float>(width) : -x0;
+    const std::array<float, 6> mapping = {step, step * right / up, firstColumn - step * right * foot / up,
+                                          0.0f, 1.0f / up,         foot - foot / up - y0};
+
+    // The shadow's bounds: the frame's corners cast.
+    float minX = std::numeric_limits<float>::max();
+    float minY = minX;
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = maxX;
+
+    for (const float x : {x0, x0 + static_cast<float>(width)})
+    {
+        for (const float y : {y0, y0 + static_cast<float>(height)})
+        {
+            const float above = foot - y;
+            minX = std::min(minX, x + right * above);
+            maxX = std::max(maxX, x + right * above);
+            minY = std::min(minY, foot - up * above);
+            maxY = std::max(maxY, foot - up * above);
+        }
+    }
+
+    const Quad bounds = clip.value_or(Quad{0, 0, target.XMax, target.YMax});
+    const Quad at = {std::max(static_cast<int32_t>(std::floor(minX)), bounds[0]),
+                     std::max(static_cast<int32_t>(std::floor(minY)), bounds[1]),
+                     std::min(static_cast<int32_t>(std::ceil(maxX)) - 1, bounds[2]),
+                     std::min(static_cast<int32_t>(std::ceil(maxY)) - 1, bounds[3])};
+
+    if (at[2] < at[0] || at[3] < at[1])
+    {
+        return;
+    }
+
+    if (Add(SurfaceFor(target), SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1},
+            KindHdMap | AlphaBlend | SunShadowDraw, static_cast<uint32_t>(frame->Scale), 0, 0))
+    {
+        // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
+        std::array<int32_t, 20>& draw = _Draws.back();
+        std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+        draw[18] = frame->OriginalWidth();
+        draw[19] = frame->OriginalHeight();
+        ++_HdDrawn;
+    }
 }
 
 bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)
@@ -4685,6 +4795,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             passFrame.Look[0] =
                 GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
+            passFrame.Look[1] =
+                GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
         }
 
         if (record.TerrainDraw >= 0)

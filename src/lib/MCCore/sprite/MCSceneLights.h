@@ -66,6 +66,12 @@ namespace MCSceneLights
     inline constexpr size_t MaxLights = 64;
     /// <summary>The most fires whose air shimmers in a frame (the biggest; composite.pshader's MaxHeat).</summary>
     inline constexpr size_t MaxHeat = 16;
+    /// <summary>
+    /// The shadows' group in the draw list (the lights' and the sun's): after the terrain's (50,000,000), the craters'
+    /// (30,000,000) and the terrain's overlays' (10,000,000), before every object's (their screen heights, or less), so
+    /// a shadow lies on the ground under every unit and object.
+    /// </summary>
+    inline constexpr int32_t ShadowDepth = 5000000;
 
     /// <summary>Which of a glow's pixels shine: all of a light's glow, only the fire of an explosion (not its dust).</summary>
     enum class MCGlowPixels
@@ -118,6 +124,17 @@ namespace MCSceneLights
         /// 0 to 1 (0: the original's cycle).
         /// </summary>
         float Water = 1.0f;
+        /// <summary>
+        /// With sun shadows on (<see cref="GHdSunShadows"/>): how much of the light under it an object's shadow takes
+        /// away, 0 to 1 (1: the original's solid black).
+        /// </summary>
+        float SunShadow = 0.55f;
+        /// <summary>
+        /// With sun shadows on: where a unit's shadow falls (the original's objects' baked shadows' way, measured on its
+        /// trees), per window pixel a point of it stands above its foot: this many pixels right, and this many up.
+        /// </summary>
+        float SunShadowRight = 0.6f;
+        float SunShadowUp = 0.25f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -234,6 +251,12 @@ namespace MCSceneLights
 /// 2 the same at dusk, the world dimmed and the lights stronger. Off by default.
 /// </summary>
 extern int GHdLighting;
+
+/// <summary>
+/// Port-only: PREFS "HDSunShadows": 0 draws objects' shadows as the original did, solid black; 1 as shadows, darkening
+/// what lies under them (MCLighting::SunShadow; HD art's frames only: MCHdArt::MarkBakedShadows). Off by default.
+/// </summary>
+extern int GHdSunShadows;
 
 /// <summary>GHdLighting's values.</summary>
 enum MCHdLightingSetting : int

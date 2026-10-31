@@ -3305,6 +3305,247 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
 }
 
 /// <summary>
+/// An object's baked shadow (MCHdArt::MarkBakedShadows) is its black outside its art's outline, in groups more against
+/// empty pixels than drawn ones: a block of black beside the body is marked, a black pixel inside the body is not, and
+/// a frame holding its blended pixels (an effect's) keeps no marks.
+/// </summary>
+TEST_CASE("hd art: an object's baked shadow is its black outside its outline, not the black inside it")
+{
+    // 10 x 6: the body in columns 0-4 (black at 2, 2 inside it), its shadow in columns 5-8 of rows 3-5.
+    constexpr int32_t Width = 10;
+    constexpr int32_t Height = 6;
+    constexpr uint8_t BodyIndex = 50;
+    constexpr int32_t BodyColumns = 5;
+    constexpr std::pair<int32_t, int32_t> Inside = {2, 2};
+    const auto shadowAt = [](int32_t x, int32_t y) { return x >= BodyColumns && x < Width - 1 && y >= 3; };
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, 0);
+
+    for (int32_t y = 0; y < Height; ++y)
+    {
+        for (int32_t x = 0; x < Width; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * Width + x) * MCHdArt::IndexBytes;
+            const bool body = x < BodyColumns;
+
+            if (body || shadowAt(x, y))
+            {
+                frame.Indices[at] = body && std::pair{x, y} != Inside ? BodyIndex : MCHdArt::BakedShadowIndex;
+                frame.Indices[at + 1] = HasIndex;
+            }
+        }
+    }
+
+    MCHdArt::Frame blended = frame;
+    blended.Blended = true;
+    MCHdArt::MarkBakedShadows(frame);
+    MCHdArt::MarkBakedShadows(blended);
+    const auto green = [](const MCHdArt::Frame& marked, int32_t x, int32_t y)
+    { return marked.Indices[(static_cast<size_t>(y) * Width + x) * MCHdArt::IndexBytes + 1]; };
+
+    for (int32_t y = 0; y < Height; ++y)
+    {
+        for (int32_t x = 0; x < Width; ++x)
+        {
+            MCTest::Scope scope(std::format("pixel {}, {}", x, y));
+            const uint8_t expected = shadowAt(x, y) ? MCHdArt::BakedShadow : x < BodyColumns ? HasIndex : uint8_t{0};
+            CHECK_EQ(green(frame, x, y), expected);
+            CHECK_EQ(green(blended, x, y), x < BodyColumns || shadowAt(x, y) ? HasIndex : uint8_t{0});
+        }
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// Writes an object's frame (not holding its blended pixels) as a PNG pair, <paramref name="stem"/>.png and _idx.png:
+    /// <paramref name="width"/> x <paramref name="height"/> original pixels, <paramref name="scale"/> HD pixels each,
+    /// opaque where <paramref name="indexAt"/> gives an index, in that index's colour of <paramref name="colors"/>.
+    /// </summary>
+    void WriteObjectFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
+                          std::span<const SDL_Color, 256> colors,
+                          const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt)
+    {
+        std::vector<uint8_t> pixels(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
+        std::vector<uint8_t> index(pixels.size());
+
+        for (int32_t y = 0; y < height * scale; ++y)
+        {
+            for (int32_t x = 0; x < width * scale; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
+                const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
+                const SDL_Color c = colors[original.value_or(0)];
+                const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
+                std::ranges::copy(std::array{c.r, c.g, c.b, alpha}, pixels.begin() + static_cast<ptrdiff_t>(at));
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), alpha, 0, HasIndex},
+                                  index.begin() + static_cast<ptrdiff_t>(at));
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width * scale, height * scale, pixels);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width * scale, height * scale, index);
+    }
+}
+
+/// <summary>
+/// Sun shadows (GHdSunShadows), on the screen drawn by the GPU over mission 1, paused: an object's frame from the pack
+/// (its body, its baked shadow in black beside it) shows its shadow solid black with them off, and with them on as
+/// what lies under it at half its light; its body is the same either way. A part drawn as a unit's sun shadow
+/// (MCRenderer::SunShadowScope), with the shadow cast a pixel right and up for every pixel above its foot, darkens the
+/// ground where its rows land and leaves its own place as it was.
+/// </summary>
+TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked shadow, and cast a unit's own")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t body = FullColorIndex(colors);
+
+    // 8 x 4, standing 12 to 9 rows above its foot: the body in columns 0-3, its baked shadow in columns 4-7.
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    constexpr int32_t BodyColumns = 4;
+    constexpr int32_t Top = -12;
+    constexpr uint8_t EightPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.push_back(EightPixels);
+
+        for (int32_t column = 0; column < Width; ++column)
+        {
+            rows.push_back(column < BodyColumns ? body : MCHdArt::BakedShadowIndex);
+        }
+
+        rows.push_back(RowEnd);
+    }
+
+    const std::vector<uint8_t> table = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(!shape->FrameList().empty());
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_sun_shadows";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+    std::filesystem::create_directories(pack / MCHdArt::FolderOf(key));
+    constexpr int32_t Scale = 2;
+    WriteObjectFrame(pack / MCHdArt::FolderOf(key) / "0", Width, Height, Scale, colors,
+                     [&](int32_t column, int32_t) { return column < BodyColumns ? body : MCHdArt::BakedShadowIndex; });
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    lighting.SunShadow = Darkness;
+    lighting.SunShadowRight = 1.0f;
+    lighting.SunShadowUp = 1.0f;
+    GamePaused = true;
+
+    // The ground, then the shape drawn on it (as a sun shadow inside the scope).
+    const auto drawn = [&](int32_t sunShadows, bool cast)
+    {
+        GHdSunShadows = sunShadows;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto under = display->ReadFrame();
+        REQUIRE(under.has_value());
+        {
+            const MCRenderer::SunShadowScope scope(cast);
+            AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+        }
+
+        auto over = display->ReadFrame();
+        REQUIRE(over.has_value());
+        return std::pair{std::move(*under), std::move(*over)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 3; };
+    const auto sameAs = [&](SDL_Color actual, float r, float g, float b)
+    {
+        return near(actual.r, static_cast<int32_t>(std::lround(r))) &&
+               near(actual.g, static_cast<int32_t>(std::lround(g))) &&
+               near(actual.b, static_cast<int32_t>(std::lround(b)));
+    };
+
+    // The inner pixels of the body (columns 1-2) and of its shadow (5-6), rows 1-2 of the frame.
+    const auto [offUnder, off] = drawn(0, false);
+    const auto [onUnder, on] = drawn(1, false);
+
+    for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+    {
+        for (const int32_t column : {1, 2, 5, 6})
+        {
+            const SDL_Color under = at(onUnder, column, row);
+            MCTest::Scope scope(std::format("column {}, row {}", column, row));
+
+            if (column < BodyColumns)
+            {
+                CHECK(sameAs(at(off, column, row), colors[body].r, colors[body].g, colors[body].b));
+                CHECK(sameAs(at(on, column, row), colors[body].r, colors[body].g, colors[body].b));
+            }
+            else
+            {
+                CHECK(sameAs(at(off, column, row), 0.0f, 0.0f, 0.0f));
+                CHECK(sameAs(at(on, column, row), under.r * (1.0f - Darkness), under.g * (1.0f - Darkness),
+                             under.b * (1.0f - Darkness)));
+            }
+        }
+    }
+
+    // Cast: a row h above the foot lands h pixels right of where it stands; its own place keeps the ground.
+    const auto [castUnder, cast] = drawn(1, true);
+
+    for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+    {
+        for (const int32_t column : {1, 2, 5, 6})
+        {
+            const int32_t right = column - row;
+            const SDL_Color under = at(castUnder, right, row);
+            MCTest::Scope scope(std::format("column {}, row {}: cast to column {}", column, row, right));
+            CHECK(sameAs(at(cast, right, row), under.r * (1.0f - Darkness), under.g * (1.0f - Darkness),
+                         under.b * (1.0f - Darkness)));
+            const SDL_Color own = at(castUnder, column, row);
+            CHECK(sameAs(at(cast, column, row), own.r, own.g, own.b));
+        }
+    }
+
+    GamePaused = false;
+    GHdSunShadows = 0;
+    lighting = kept;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
 /// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
 /// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where the
@@ -3931,6 +4172,26 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sun-shadows &lt;darkness&gt;</c>, turns sun shadows on (GHdSunShadows): objects' shadows take that
+    /// much of the light under them (MCLighting::SunShadow, 0 to 1).
+    /// </summary>
+    void SunShadowsFromOptions()
+    {
+        const std::optional<std::string_view> darkness = MCTest::Option("hd-sun-shadows");
+
+        if (!darkness.has_value())
+        {
+            return;
+        }
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCSceneLights::Lighting().SunShadow = std::strtof(std::string(*darkness).c_str(), nullptr);
+        GHdSunShadows = 1;
+        std::cout << std::format("  sun shadows: {:.2f} of the light under them taken\n",
+                                 MCSceneLights::Lighting().SunShadow);
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
@@ -3975,6 +4236,7 @@ namespace
         }
 
         LightingFromOptions();
+        SunShadowsFromOptions();
         return original;
     }
 

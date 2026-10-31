@@ -480,6 +480,12 @@ namespace
 
 void MCSoftwareRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
+    // Port-only: sun shadows are drawn by the hardware renderer alone.
+    if (DrawingSunShadow())
+    {
+        return;
+    }
+
     std::span<const uint8_t> data =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
 

@@ -87,6 +87,13 @@ namespace MCHdArt
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>
     inline constexpr size_t IndexBytes = 2;
     inline constexpr uint8_t HasIndex = 255;
+    /// <summary>
+    /// Port-only: an index picture's green for a pixel with an index that is part of an object's baked shadow
+    /// (<see cref="MarkBakedShadows"/>); otherwise it is as HasIndex's.
+    /// </summary>
+    inline constexpr uint8_t BakedShadow = 254;
+    /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
+    inline constexpr uint8_t BakedShadowIndex = 0x10;
     /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>
     inline constexpr uint8_t HoldsBlended = 255;
 
@@ -112,6 +119,15 @@ namespace MCHdArt
     /// <paramref name="width"/> x <paramref name="height"/> (0 x 0: any), or what is wrong with it.
     /// </summary>
     std::expected<Frame, std::string> DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only: marks <paramref name="frame"/>'s baked shadow in its index picture (<see cref="BakedShadow"/>). The
+    /// original's object art (trees, buildings, rocks, turrets) casts its shadow down and right in solid
+    /// <see cref="BakedShadowIndex"/>; the same black also draws detail inside an object (a tank's hull). Its shadow is
+    /// that black outside the rest of the art's outline (closed over one-pixel gaps, holes filled), in groups that touch
+    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none.
+    /// </summary>
+    void MarkBakedShadows(Frame& frame);
 
     /// <summary>Where a mech part's shape comes from.</summary>
     struct MechShapeKey

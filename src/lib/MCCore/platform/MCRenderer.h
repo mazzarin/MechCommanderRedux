@@ -691,6 +691,30 @@ public:
     /// <summary>The in-between the draws now show (<see cref="InBetweenScope"/>), none outside one.</summary>
     static const std::optional<MCInBetween>& DrawingInBetween();
 
+    /// <summary>
+    /// Port-only (sun shadows): while one made with <c>true</c> lives, the shape draws (a unit's parts) draw the shadow
+    /// the sun casts of their HD art pack frames instead (the hardware renderer's; nothing without a frame, and nothing
+    /// in software). One made with <c>false</c> changes nothing.
+    /// </summary>
+    class SunShadowScope
+    {
+    public:
+        /// <summary>Starts drawing shadows when <paramref name="shadow"/>.</summary>
+        explicit SunShadowScope(bool shadow);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~SunShadowScope();
+
+        SunShadowScope(const SunShadowScope&) = delete;
+        SunShadowScope& operator=(const SunShadowScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether the shape draws now are a unit's sun shadow (<see cref="SunShadowScope"/>).</summary>
+    static bool DrawingSunShadow();
+
     // Frame surfaces ----------------------------------------------------------------------------------------------
 
     /// <summary>

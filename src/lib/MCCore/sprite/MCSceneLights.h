@@ -48,17 +48,17 @@ namespace MCSceneLights
     struct MCLighting
     {
         /// <summary>Every light's brightness is scaled by this.</summary>
-        float Strength = 0.7f;
+        float Strength = 0.6f;
         /// <summary>The world's own light, 1 as the original drew it; below 1 the scene is dusk and the lights show more.</summary>
         float Ambient = 1.0f;
         /// <summary>Of the light, what the air scatters back even off black ground.</summary>
-        float Scatter = 0.02f;
+        float Scatter = 0.01f;
         /// <summary>Lit colours brighter than this (or than the world's own) are eased toward white instead of clipped.</summary>
-        float Knee = 0.75f;
+        float Knee = 0.72f;
         /// <summary>The most light a surface takes: light piling up from many lights eases toward it.</summary>
-        float Most = 0.9f;
+        float Most = 0.8f;
         /// <summary>A pixel brighter than this is taken for a light itself and keeps its own brightness.</summary>
-        float SelfLit = 0.6f;
+        float SelfLit = 0.55f;
     };
 
     /// <summary>The settings the next frames are shown with.</summary>

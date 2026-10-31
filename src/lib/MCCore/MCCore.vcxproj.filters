@@ -615,6 +615,9 @@
     <ClCompile Include="main\MCAblDebuggerConsole.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCArtModes.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="main\MCErrorReport.cpp">
       <Filter>main</Filter>
     </ClCompile>
@@ -1811,6 +1814,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="main\MCAblDebuggerConsole.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCArtModes.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCDropSlot.h">

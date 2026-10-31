@@ -30,6 +30,7 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
+#include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
@@ -2137,22 +2138,9 @@ namespace
             if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager(); sprites != nullptr)
             {
                 sprites->DumpAll();
-                sprites->AttachHdArt();
             }
 
-            if (MCGameContext::Current().HasCraterManager())
-            {
-                CraterManager().AttachHdArt();
-            }
-
-            if (const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
-                iface != nullptr && iface->MechBar != nullptr)
-            {
-                for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
-                {
-                    button->AttachHdArt();
-                }
-            }
+            AttachHdArtToLoaded();
         }
 
         ~MCHdArtOn()
@@ -3991,6 +3979,52 @@ namespace
     }
 
     /// <summary>
+    /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
+    /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
+    /// command names them (main/MCArtModes.h: original, hd, lit, dusk). Without <c>--hd-original 1</c>, so the pack is
+    /// there for the modes that draw HD art.
+    /// </summary>
+    std::map<int32_t, MCArtMode> ArtModesFromOptions()
+    {
+        std::map<int32_t, MCArtMode> modes;
+
+        for (const std::string& entry : ListOption("hd-art-modes"))
+        {
+            MCTest::Scope scope(std::format("--hd-art-modes {}", entry));
+            const size_t colon = entry.find(':');
+            REQUIRE(colon != std::string::npos);
+            int32_t frame = 0;
+            const auto [end, error] = std::from_chars(entry.data(), entry.data() + colon, frame);
+            REQUIRE((error == std::errc() && end == entry.data() + colon));
+            const std::optional<MCArtMode> mode = ArtModeNamed(std::string_view(entry).substr(colon + 1));
+            REQUIRE(mode.has_value());
+            modes.insert_or_assign(frame, *mode);
+        }
+
+        REQUIRE((modes.empty() || !MCTest::Option("hd-original").has_value()));
+        return modes;
+    }
+
+    /// <summary>
+    /// Shows the art mode <paramref name="modes"/> (<see cref="ArtModesFromOptions"/>) asks for at
+    /// <paramref name="frame"/>, if any.
+    /// </summary>
+    void SwitchArtMode(const std::map<int32_t, MCArtMode>& modes, int32_t frame)
+    {
+        if (const auto found = modes.find(frame); found != modes.end())
+        {
+            MCTest::Scope scope(std::format("--hd-art-modes {}:{}", frame, found->second.Name));
+
+            if (const std::expected<void, std::string> shown = ShowArtMode(found->second); !shown.has_value())
+            {
+                FAIL(shown.error());
+            }
+
+            std::cout << std::format("  frame {}: {}\n", frame, found->second.Name);
+        }
+    }
+
+    /// <summary>
     /// Saves the shown frame as <paramref name="folder"/>/&lt;name&gt;_hd.png (or _original.png), and prints how many HD
     /// frames have been read so far.
     /// </summary>
@@ -4189,7 +4223,8 @@ namespace
 /// --hd-pack's. With <c>--hd-effects-video &lt;n&gt;</c>, each plays n frames at 60 a second, every one shot
 /// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
 /// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
-/// tumbling at 7 frames a second as it flies.
+/// tumbling at 7 frames a second as it flies. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
+/// each plays (original, hd, lit, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
 {
@@ -4230,12 +4265,14 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
     }
 
     const bool video = videoFrames > 0;
+    const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
 
     // Plays the effect just set off, shooting its frames as <name>_<frame>.
     const auto play = [&](std::string_view name)
     {
         for (int32_t frame = 1; frame <= (video ? videoFrames : Frames); ++frame)
         {
+            SwitchArtMode(artModes, frame);
             MCTestGame::RunFrame(video ? VideoFrameSeconds : FrameSeconds);
 
             if (video)
@@ -9902,7 +9939,8 @@ namespace
 /// living water) as --hd-pack does: mission <c>--mission</c>'s map revealed, the camera over the shore with the most of
 /// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
 /// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
-/// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks.
+/// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
+/// switches the art as it plays (original, hd, lit, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
 {
@@ -9974,8 +10012,11 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
                              bestColumn, best);
     Eye()->SetPosition(MCVector3D(TileColToWorld(bestColumn), TileRowToWorld(bestRow), 0.0f));
 
+    const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
+
     for (int32_t frame = 0; frame < frames; ++frame)
     {
+        SwitchArtMode(artModes, frame);
         MCTestGame::RunFrame(WaterFrameSeconds);
         Shoot(folder, std::format("water_{:04}", frame), original);
     }

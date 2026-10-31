@@ -38,6 +38,14 @@ namespace
         float LightTone[4] = {};
         /// <summary>How the lights take the world's relief: its height from black to white and the texels its slope spans.</summary>
         float LightFacing[4] = {};
+        /// <summary>How much more of their hue the lights give, the bloom's strength and the brightness it starts at.</summary>
+        float LightLook[4] = {};
+        /// <summary>The bloom texture's size in use and allocated.</summary>
+        float BloomSize[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        /// <summary>The heat haze: its most shimmer and its waves' length (texels), the game's time, the fires in Heat.</summary>
+        float Haze[4] = {};
+        /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
+        float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
         float Lights[MCSceneLights::MaxLights * 3][4] = {};
     };
@@ -47,6 +55,31 @@ namespace
     /// boulder's shading rather than its texture's grain.
     /// </summary>
     constexpr float FacingSpan = 2.0f;
+    /// <summary>The length of the heat haze's waves, in the window's pixels.</summary>
+    constexpr float HazeWaveLength = 9.0f;
+    /// <summary>
+    /// The bloom texture's mip levels (composite.pshader's BloomLevels): its last spreads a bright pixel over 2^5 of
+    /// the first's texels, which are two of the world's.
+    /// </summary>
+    constexpr uint32_t BloomLevels = 6;
+    /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
+    constexpr float BrightPassMode = 2.0f;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t5).</summary>
+    constexpr size_t CompositeSamplers = 6;
+    /// <summary>A quad's vertices (quad.vshader's two triangles).</summary>
+    constexpr uint32_t QuadVertices = 6;
+
+    using CompositeBindings = std::array<SDL_GPUTextureSamplerBinding, CompositeSamplers>;
+
+    /// <summary>Draws a quad (<paramref name="quad"/>) of the composite in <paramref name="pass"/>.</summary>
+    void DrawComposite(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const CompositeBindings& bindings,
+                       const QuadUniforms& quad, const CompositeUniforms& uniforms)
+    {
+        SDL_BindGPUFragmentSamplers(&pass, 0, bindings.data(), static_cast<uint32_t>(bindings.size()));
+        SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+        SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+        SDL_DrawGPUPrimitives(&pass, QuadVertices, 1, 0, 0);
+    }
 
     /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
@@ -71,6 +104,24 @@ namespace
         // The relief in the texture's pixels, its slope across FacingSpan of the window's each side.
         uniforms.LightFacing[0] = lighting.Facing * across;
         uniforms.LightFacing[1] = std::max(across * FacingSpan, 1.0f);
+        uniforms.LightLook[0] = lighting.Tint;
+        uniforms.LightLook[1] = GHdLighting != HdLightingOff ? lighting.Bloom : 0.0f;
+        uniforms.LightLook[2] = lighting.BloomFrom;
+        // The fires' air, its shimmer and its waves in the texture's pixels.
+        const std::span<const MCSceneHeat> heat = MCSceneLights::ShownHeat(world);
+        const size_t fires = lighting.Haze > 0.0f ? std::min(heat.size(), MCSceneLights::MaxHeat) : 0;
+        uniforms.Haze[0] = lighting.Haze * across;
+        uniforms.Haze[1] = HazeWaveLength * across;
+        uniforms.Haze[2] = MCSceneLights::ShownTime();
+        uniforms.Haze[3] = static_cast<float>(fires);
+
+        for (size_t i = 0; i < fires; ++i)
+        {
+            uniforms.Heat[i][0] = (heat[i].X + 0.5f) * across;
+            uniforms.Heat[i][1] = (heat[i].Y + 0.5f) * down;
+            uniforms.Heat[i][2] = std::max(heat[i].HalfWidth * across, 1.0f);
+            uniforms.Heat[i][3] = std::max(heat[i].Rise * down, 1.0f);
+        }
 
         for (size_t i = 0; i < count; ++i)
         {
@@ -171,6 +222,17 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         return std::unexpected(SdlError("SDL_CreateGPUSampler"));
     }
 
+    sampler.min_filter = SDL_GPU_FILTER_LINEAR;
+    sampler.mag_filter = SDL_GPU_FILTER_LINEAR;
+    sampler.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    presenter->_Linear =
+        MCGpuHandle<SDL_GPUSampler>(SDL_CreateGPUSampler(device, &sampler), MCGpuRelease{presenter->_Device});
+
+    if (presenter->_Linear == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateGPUSampler(linear)"));
+    }
+
     // The renderer of the frame surfaces, drawing when asked to.
     const MCGpuDrawing drawing = MCRenderer::RequestedGpuDrawing();
 
@@ -230,13 +292,17 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (Texture& texture : _Underlays)
+    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms})
     {
-        Release(texture);
+        for (Texture& texture : *textures)
+        {
+            Release(texture);
+        }
     }
 
     _Upload.reset();
     _Nearest.reset();
+    _Linear.reset();
     _CompositePipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
@@ -284,10 +350,11 @@ void MCVulkanPresenter::Release(Texture& texture)
 
 std::expected<void, std::string> MCVulkanPresenter::Ensure(Texture& texture, SDL_GPUTextureFormat format,
                                                            SDL_GPUTextureUsageFlags usage, uint32_t width,
-                                                           uint32_t height, bool exact)
+                                                           uint32_t height, bool exact, uint32_t levels)
 {
-    if (texture.Handle != nullptr && (exact ? texture.Width == width && texture.Height == height
-                                            : texture.Width >= width && texture.Height >= height))
+    if (texture.Handle != nullptr && texture.Levels == levels &&
+        (exact ? texture.Width == width && texture.Height == height
+               : texture.Width >= width && texture.Height >= height))
     {
         return {};
     }
@@ -307,7 +374,7 @@ std::expected<void, std::string> MCVulkanPresenter::Ensure(Texture& texture, SDL
     info.width = width;
     info.height = height;
     info.layer_count_or_depth = 1;
-    info.num_levels = 1;
+    info.num_levels = levels;
     texture.Handle = MCGpuHandle<SDL_GPUTexture>(SDL_CreateGPUTexture(_Device.get(), &info), MCGpuRelease{_Device});
 
     if (texture.Handle == nullptr)
@@ -317,6 +384,7 @@ std::expected<void, std::string> MCVulkanPresenter::Ensure(Texture& texture, SDL
 
     texture.Width = width;
     texture.Height = height;
+    texture.Levels = levels;
     return {};
 }
 
@@ -546,6 +614,48 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         gpuSurfaces ? _Renderer->SurfaceScale(frame.Screen.get()) : std::pair<float, float>{1.0f, 1.0f};
     const float screenSize[4] = {static_cast<float>(frame.Width), static_cast<float>(frame.Height),
                                  static_cast<float>(screenWidth), static_cast<float>(screenHeight)};
+    // Each underlay's world: its texture, its size in use and allocated (the GPU's surface is exactly its size, as its
+    // draws saw it), its window, and its bloom (made before the composite's pass: none, null, without one).
+    struct World
+    {
+        SDL_GPUTexture* Texture = nullptr;
+        std::array<float, 4> Size{};
+        std::shared_ptr<const MCWindow> Source;
+        SDL_GPUTexture* Bloom = nullptr;
+    };
+
+    std::vector<World> worlds(frame.Underlays.size());
+
+    for (size_t i = 0; i < frame.Underlays.size(); ++i)
+    {
+        World& world = worlds[i];
+        world.Source = frame.Underlays[i].Source.lock();
+
+        if (world.Source == nullptr)
+        {
+            continue;
+        }
+
+        if (!gpuSurfaces)
+        {
+            world.Texture = _Underlays[i].Handle.get();
+            world.Size = {static_cast<float>(world.Source->XMax + 1), static_cast<float>(world.Source->YMax + 1),
+                          static_cast<float>(_Underlays[i].Width), static_cast<float>(_Underlays[i].Height)};
+            continue;
+        }
+
+        uint32_t worldWidth = 0;
+        uint32_t worldHeight = 0;
+        world.Texture = held.emplace_back(_Renderer->SurfaceTexture(*world.Source, worldWidth, worldHeight)).get();
+
+        if (world.Texture != nullptr)
+        {
+            world.Size = {static_cast<float>(worldWidth), static_cast<float>(worldHeight),
+                          static_cast<float>(worldWidth), static_cast<float>(worldHeight)};
+            world.Bloom = Bloom(commands, i, *world.Texture, worldWidth, worldHeight);
+        }
+    }
+
     SDL_GPUColorTargetInfo target{};
     target.texture = _Frame.Handle.get();
     // The first quad covers every pixel.
@@ -556,7 +666,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     const SDL_GPUViewport viewport{0.0f, 0.0f, width, height, 0.0f, 1.0f};
     SDL_SetGPUViewport(pass, &viewport);
 
-    auto draw = [&](float x, float y, float w, float h, SDL_GPUTexture& world, CompositeUniforms uniforms)
+    auto draw = [&](float x, float y, float w, float h, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
+                    CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = frame.Cycle.First;
         uniforms.Cycle[1] = frame.Cycle.Step;
@@ -568,23 +679,20 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         uniforms.Fade[0] = static_cast<float>(frame.Fade) / 255.0f;
 
-        const SDL_GPUTextureSamplerBinding bindings[5] = {
+        const CompositeBindings bindings{{
             {screen, _Nearest.get()},
             {ops, _Nearest.get()},
             {&world, _Nearest.get()},
             {tables, _Nearest.get()},
             {_Palette.Handle.get(), _Nearest.get()},
-        };
+            {&bloom, _Linear.get()},
+        }};
 
-        const QuadUniforms quad{{x, y, w, h}, {width, height, 0.0f, 0.0f}};
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
-        SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
-        SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
-        SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+        DrawComposite(commands, *pass, bindings, {{x, y, w, h}, {width, height, 0.0f, 0.0f}}, uniforms);
     };
 
-    // The screen alone, then each underlay's rectangle with its surface.
-    draw(0.0f, 0.0f, width, height, *screen,
+    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
+    draw(0.0f, 0.0f, width, height, *screen, *screen,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -594,56 +702,15 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     for (size_t i = 0; i < frame.Underlays.size(); ++i)
     {
         const MCUnderlay& underlay = frame.Underlays[i];
+        const World& world = worlds[i];
         const int x0 = std::max(underlay.Rect.X0, 0);
         const int y0 = std::max(underlay.Rect.Y0, 0);
         const int x1 = std::min(underlay.Rect.X1, frame.Width - 1);
         const int y1 = std::min(underlay.Rect.Y1, frame.Height - 1);
 
-        if (x1 < x0 || y1 < y0)
+        if (x1 < x0 || y1 < y0 || world.Texture == nullptr)
         {
             continue;
-        }
-
-        // The world's texture: its size in use and allocated (the GPU's surface is exactly its size, as its draws
-        // saw it).
-        SDL_GPUTexture* world = nullptr;
-        float worldSize[4] = {};
-
-        if (!gpuSurfaces)
-        {
-            const std::shared_ptr<const MCWindow> source = underlay.Source.lock();
-
-            if (source == nullptr)
-            {
-                continue;
-            }
-
-            world = _Underlays[i].Handle.get();
-            worldSize[0] = static_cast<float>(source->XMax + 1);
-            worldSize[1] = static_cast<float>(source->YMax + 1);
-            worldSize[2] = static_cast<float>(_Underlays[i].Width);
-            worldSize[3] = static_cast<float>(_Underlays[i].Height);
-        }
-        else
-        {
-            uint32_t worldWidth = 0;
-            uint32_t worldHeight = 0;
-            const std::shared_ptr<const MCWindow> source = underlay.Source.lock();
-
-            if (source == nullptr)
-            {
-                continue;
-            }
-
-            world = held.emplace_back(_Renderer->SurfaceTexture(*source, worldWidth, worldHeight)).get();
-
-            if (world == nullptr)
-            {
-                continue;
-            }
-
-            worldSize[0] = worldSize[2] = static_cast<float>(worldWidth);
-            worldSize[1] = worldSize[3] = static_cast<float>(worldHeight);
         }
 
         // The rectangle and its part on the screen, in target pixels.
@@ -654,20 +721,98 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
              (static_cast<float>(underlay.Rect.Y0) - originY) / mapY,
              static_cast<float>(underlay.Rect.X1 - underlay.Rect.X0 + 1) / mapX,
              static_cast<float>(underlay.Rect.Y1 - underlay.Rect.Y0 + 1) / mapY},
-            {worldSize[0], worldSize[1], worldSize[2], worldSize[3]},
+            {world.Size[0], world.Size[1], world.Size[2], world.Size[3]},
             {1.0f, source, drawnX, drawnY},
         };
 
-        if (const std::shared_ptr<const MCWindow> lit = underlay.Source.lock(); lit != nullptr)
+        SetLighting(uniforms, *world.Source, world.Size[0], world.Size[1]);
+
+        if (world.Bloom != nullptr)
         {
-            SetLighting(uniforms, *lit, worldSize[0], worldSize[1]);
+            const Texture& bloom = _Blooms[i];
+            uniforms.BloomSize[0] = std::ceil(world.Size[0] * 0.5f);
+            uniforms.BloomSize[1] = std::ceil(world.Size[1] * 0.5f);
+            uniforms.BloomSize[2] = static_cast<float>(bloom.Width);
+            uniforms.BloomSize[3] = static_cast<float>(bloom.Height);
+        }
+        else
+        {
+            uniforms.LightLook[1] = 0.0f;
         }
 
         draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
-             static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world, uniforms);
+             static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world.Texture,
+             world.Bloom != nullptr ? *world.Bloom : *screen, uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
+}
+
+SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world,
+                                         uint32_t width, uint32_t height)
+{
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+    // Half the world's size, which must hold the bloom's levels.
+    const uint32_t bloomWidth = (width + 1) / 2;
+    const uint32_t bloomHeight = (height + 1) / 2;
+
+    if (GHdLighting == HdLightingOff || lighting.Bloom <= 0.0f ||
+        std::max(bloomWidth, bloomHeight) < (1u << (BloomLevels - 1)))
+    {
+        return nullptr;
+    }
+
+    if (_Blooms.size() <= index)
+    {
+        _Blooms.resize(index + 1);
+    }
+
+    Texture& bloom = _Blooms[index];
+
+    if (auto made = Ensure(bloom, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                           SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, bloomWidth, bloomHeight,
+                           false, BloomLevels);
+        !made)
+    {
+        SDL_Log("MCVulkanPresenter: underlay %zu shown without its bloom: %s", index, made.error().c_str());
+        return nullptr;
+    }
+
+    SDL_GPUColorTargetInfo target{};
+    target.texture = bloom.Handle.get();
+    // Cleared: the part not in use adds nothing to the mips by the edge of the part that is.
+    target.load_op = SDL_GPU_LOADOP_CLEAR;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, _CompositePipeline.get());
+    const float allocatedWidth = static_cast<float>(bloom.Width);
+    const float allocatedHeight = static_cast<float>(bloom.Height);
+    const SDL_GPUViewport viewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
+    SDL_SetGPUViewport(pass, &viewport);
+    CompositeUniforms uniforms{};
+    const float worldWidth = static_cast<float>(width);
+    const float worldHeight = static_cast<float>(height);
+    std::ranges::copy(std::array{worldWidth, worldHeight, worldWidth, worldHeight}, uniforms.WorldSize);
+    uniforms.Mode[0] = BrightPassMode;
+    uniforms.Mode[1] = 1.0f;
+    uniforms.LightLook[2] = lighting.BloomFrom;
+    // The pass reads the world alone: it is bound for every texture.
+    const CompositeBindings bindings{{
+        {&world, _Nearest.get()},
+        {&world, _Nearest.get()},
+        {&world, _Nearest.get()},
+        {&world, _Nearest.get()},
+        {&world, _Nearest.get()},
+        {&world, _Linear.get()},
+    }};
+
+    DrawComposite(commands, *pass, bindings,
+                  {{0.0f, 0.0f, static_cast<float>(bloomWidth), static_cast<float>(bloomHeight)},
+                   {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
+                  uniforms);
+    SDL_EndGPURenderPass(pass);
+    SDL_GenerateMipmapsForGPUTexture(&commands, bloom.Handle.get());
+    return bloom.Handle.get();
 }
 
 std::expected<void, std::string> MCVulkanPresenter::Present(const MCFrame& frame)

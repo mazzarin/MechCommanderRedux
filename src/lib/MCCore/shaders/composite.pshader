@@ -32,6 +32,10 @@ SamplerState tableSampler : register(s3, space2);
 // The palette, 256 x 1, as shown (gamma applied).
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
+// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear; unused
+// without a bloom).
+Texture2D<float4> bloomTex : register(t5, space2);
+SamplerState bloomSampler : register(s5, space2);
 
 cbuffer Composite : register(b0, space3)
 {
@@ -44,8 +48,8 @@ cbuffer Composite : register(b0, space3)
     float4 shown;
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
-    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone. y: 1 when the textures are the GPU
-    // renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
+    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone, 2 for the bloom's bright pass of the GPU
+    // world (BrightPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
     // drawn at the size it's shown; 0 or 1 otherwise).
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
@@ -68,6 +72,17 @@ cbuffer Composite : register(b0, space3)
     // shading stands for, so a surface brighter toward a light faces it (0: lit as flat); y, the texels between the
     // pixels its slope is taken across.
     float4 lightFacing;
+    // How the lights colour the world, x: how much more of their hue it takes, its brightness kept. The bloom of the
+    // GPU world: y, its strength (0 none); z, the brightness (a pixel's brightest component's) a pixel blooms above.
+    float4 lightLook;
+    // The bloom's texture: its size in use (xy, half the world's) and allocated (zw).
+    float4 bloomSize;
+    // The heat haze: x, the most a world sample shimmers, and y, the length of its waves (texels); z, the game's time
+    // (seconds); w, the fires in heat.
+    float4 haze;
+    // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
+    // the air shimmers.
+    float4 heat[16];
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
     float4 lights[192];
@@ -75,6 +90,12 @@ cbuffer Composite : register(b0, space3)
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
+// The most fires in heat (MCSceneLights::MaxHeat).
+static const uint MaxHeat = 16;
+// mode.x for the bloom's bright pass.
+static const float BrightPass = 2.0;
+// The brightness the relief takes for height, and the grey a light's hue is taken from.
+static const float3 Luma = float3(0.299, 0.587, 0.114);
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
@@ -121,6 +142,53 @@ float SelfLit(float3 color)
     return smoothstep(lightTone.w, 1.0, max(color.r, max(color.g, color.b)));
 }
 
+// The air over a fire starts to shimmer this much of its rise below the flames' centre, and fades out from this much of
+// it above.
+static const float HazeBelow = 0.4;
+static const float HazeFadeFrom = 0.4;
+// The haze's waves rise this fast (radians a second); they bend as they go, along waves across the screen this many
+// times as long, swinging this many radians this fast. A sample shimmers up and down this much of how far it does
+// across.
+static const float HazeSpeed = 7.0;
+static const float HazeBendLength = 1.7;
+static const float HazeBend = 1.2;
+static const float HazeBendSpeed = 2.3;
+static const float HazeUpDown = 0.35;
+static const float TwoPi = 6.2831853;
+
+// How far the air over the fires (haze) moves the world's sample at a world texel: rising waves, bent as they go,
+// strongest just above the flames.
+float2 HazeAt(float2 texel)
+{
+    const uint count = min((uint)haze.w, MaxHeat);
+    float weight = 0.0;
+
+    for (uint i = 0; i < count; ++i)
+    {
+        const float4 fire = heat[i];
+        const float side = (texel.x - fire.x) / fire.z;
+        const float up = (fire.y - texel.y) / fire.w;
+
+        if (abs(side) < 1.0 && up > -HazeBelow && up < 1.0)
+        {
+            const float across = 1.0 - side * side;
+            weight = max(weight, across * across * smoothstep(-HazeBelow, 0.0, up) *
+                                     (1.0 - smoothstep(HazeFadeFrom, 1.0, up)));
+        }
+    }
+
+    if (weight <= 0.0)
+    {
+        return float2(0.0, 0.0);
+    }
+
+    const float2 wave = texel * (TwoPi / haze.y);
+    const float bend = HazeBend * sin(wave.x / HazeBendLength + haze.z * HazeBendSpeed);
+    // A phase growing up the screen as time goes: the waves rise.
+    const float phase = wave.y + haze.z * HazeSpeed + bend;
+    return haze.x * weight * float2(sin(phase), HazeUpDown * cos(phase + wave.x));
+}
+
 // The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
 // a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
 // light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
@@ -136,7 +204,9 @@ float3 Lit(float3 world, float2 texel, float2 slope, float shade)
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
-    const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
+    // The light's hue, its colour less its grey: more of it shifts what it lights toward its colour, brightening nothing.
+    const float3 hue = light - dot(light, Luma);
+    const float3 lit = base + world * (light + hue * lightLook.x) * (1.0 - selfLit) + light * lightTone.x;
     const float3 knee = min(max(base, lightTone.y), 0.999);
     const float3 over = max(lit - knee, 0.0);
     return min(lit, knee) + (1.0 - knee) * (1.0 - exp(-over / (1.0 - knee)));
@@ -156,6 +226,68 @@ uint Byte(float value)
 float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
     return tex.Sample(samp, (texel + 0.5) / size);
+}
+
+// The GPU world between its texels (from its four nearest, blended), clamped to the surface.
+float4 WorldBetween(float2 texel)
+{
+    const float2 last = worldSize.xy - 1.0;
+    const float2 at = clamp(texel, 0.0, last);
+    const float2 corner = floor(at);
+    const float2 next = min(corner + 1.0, last);
+    const float2 t = at - corner;
+    const float4 top = lerp(TexelAt(worldTex, worldSampler, corner, worldSize.zw),
+                            TexelAt(worldTex, worldSampler, float2(next.x, corner.y), worldSize.zw), t.x);
+    const float4 bottom = lerp(TexelAt(worldTex, worldSampler, float2(corner.x, next.y), worldSize.zw),
+                               TexelAt(worldTex, worldSampler, next, worldSize.zw), t.x);
+    return lerp(top, bottom, t.y);
+}
+
+// The bloom's bright pass: a texel of the bloom's texture (half the world's size) holds the light of the GPU world's
+// 2 x 2 pixels under it brighter than lightLook.z, the more the brighter they are.
+float4 Bright(float2 texel)
+{
+    float3 sum = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < 4; ++i)
+    {
+        const float2 at = min(texel * 2.0 + float2(i & 1u, i >> 1), worldSize.xy - 1.0);
+        const float3 color = TexelAt(worldTex, worldSampler, at, worldSize.zw).rgb;
+        sum += color * smoothstep(lightLook.z, 1.0, max(color.r, max(color.g, color.b)));
+    }
+
+    return float4(sum * 0.25, 1.0);
+}
+
+// The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
+// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before. Each is taken from four taps half its
+// texel diagonally each way, which smooths its blocks.
+static const uint BloomFirst = 1;
+static const uint BloomLevels = 6;
+static const float2 BloomTaps[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5), float2(0.5, 0.5)};
+
+float3 BloomAt(float2 texel)
+{
+    if (lightLook.y <= 0.0)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    // The texel's centre in the bloom's first level's texels.
+    const float2 at = (texel + 0.5) * 0.5;
+    float3 sum = float3(0.0, 0.0, 0.0);
+
+    for (uint level = BloomFirst; level < BloomLevels; ++level)
+    {
+        const float size = (float)(1u << level);
+
+        for (uint tap = 0; tap < 4; ++tap)
+        {
+            sum += bloomTex.SampleLevel(bloomSampler, (at + BloomTaps[tap] * size) / bloomSize.zw, level).rgb;
+        }
+    }
+
+    return sum * (lightLook.y / (4.0 * (BloomLevels - BloomFirst)));
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
@@ -185,9 +317,6 @@ float3 WorldAt(float2 texel)
     return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
 }
 
-// The brightness the relief takes for height.
-static const float3 Luma = float3(0.299, 0.587, 0.114);
-
 // The relief's height at a world texel: its brightness, but a light's own pixels stand at centre's height (the texel the
 // slope is for), or the ground by every glow would slope up to it and face away from its light.
 float HeightAt(float2 texel, float centre)
@@ -216,6 +345,12 @@ float2 SlopeAt(float2 texel)
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
+
+    if (mode.x == BrightPass)
+    {
+        return Bright(pixel);
+    }
+
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
     // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
     const float2 drawn = max(mode.zw, float2(1.0, 1.0));
@@ -228,9 +363,19 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     if (mode.y != 0.0)
     {
-        // The GPU's colours: the screen over the world, or over the key's colour where there's no world.
-        const float4 lit = TexelAt(worldTex, worldSampler, world, worldSize.zw);
-        const float3 under = mode.x != 0.0 ? Lit(lit.rgb, world + 0.5, SlopeAt(world), lit.a) : Shown(255);
+        // The GPU's colours: the screen over the world (where the air over a fire shimmers, as it moves it, and with
+        // its bloom laid over it as a screen blend), or over the key's colour where there's no world.
+        float3 under = Shown(255);
+
+        if (mode.x != 0.0)
+        {
+            const float2 hazy = world + HazeAt(world + 0.5);
+            const float4 lit =
+                any(hazy != world) ? WorldBetween(hazy) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            const float3 bloom = BloomAt(hazy);
+            under = 1.0 - (1.0 - Lit(lit.rgb, hazy + 0.5, SlopeAt(hazy), lit.a)) * (1.0 - bloom);
+        }
+
         return Faded(saturate(screen.rgb + under * (1.0 - screen.a)));
     }
 
@@ -238,10 +383,12 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     if (mode.x != 0.0 && index == 255)
     {
-        index = Byte(TexelAt(worldTex, worldSampler, world, worldSize.zw).r);
+        // The world pixel the air over a fire shimmers to (palette indices don't blend).
+        const float2 hazy = clamp(round(world + HazeAt(world + 0.5)), 0.0, worldSize.xy - 1.0);
+        index = Byte(TexelAt(worldTex, worldSampler, hazy, worldSize.zw).r);
         const uint op = IndexAt(opTex, opSampler, screenPixel, screenSize.zw);
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
-        return Faded(Lit(Shown(index), world + 0.5, SlopeAt(world), 1.0));
+        return Faded(Lit(Shown(index), hazy + 0.5, SlopeAt(hazy), 1.0));
     }
 
     return Faded(Shown(index));

@@ -54,13 +54,16 @@ private:
         /// <summary>The allocated size.</summary>
         uint32_t Width = 0;
         uint32_t Height = 0;
+        /// <summary>Its mip levels.</summary>
+        uint32_t Levels = 1;
     };
 
     /// <summary>Makes sure <paramref name="texture"/> holds at least <paramref name="width"/> x
-    /// <paramref name="height"/> (exactly that with <paramref name="exact"/>).</summary>
+    /// <paramref name="height"/> (exactly that with <paramref name="exact"/>), in <paramref name="levels"/> mip
+    /// levels.</summary>
     std::expected<void, std::string> Ensure(Texture& texture, SDL_GPUTextureFormat format,
-                                            SDL_GPUTextureUsageFlags usage, uint32_t width, uint32_t height,
-                                            bool exact);
+                                            SDL_GPUTextureUsageFlags usage, uint32_t width, uint32_t height, bool exact,
+                                            uint32_t levels = 1);
     /// <summary>Whether the frame surfaces' GPU textures are composited (the renderer draws them and the screen has
     /// one).</summary>
     bool ShowsGpuSurfaces(const MCFrame& frame) const;
@@ -85,6 +88,14 @@ private:
     std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
     /// <summary>Composites the frame into the frame texture, from the uploaded textures or the GPU's surfaces.</summary>
     void Composite(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
+    /// <summary>
+    /// Port-only (HD lighting): the bloom of underlay <paramref name="index"/>'s GPU world <paramref name="world"/>
+    /// (<paramref name="width"/> x <paramref name="height"/>): its bright pass into the underlay's bloom texture
+    /// (_Blooms), at half its size, and that texture's mips, recorded on <paramref name="commands"/> outside any pass.
+    /// None (null) without a bloom.
+    /// </summary>
+    SDL_GPUTexture* Bloom(SDL_GPUCommandBuffer& commands, size_t index, SDL_GPUTexture& world, uint32_t width,
+                          uint32_t height);
     static void Release(Texture& texture);
 
     /// <summary>The window shown in (the display's).</summary>
@@ -98,6 +109,8 @@ private:
     MCGpuHandle<SDL_GPUShader> _CompositeShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _CompositePipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
+    /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
+    MCGpuHandle<SDL_GPUSampler> _Linear;
     Texture _Screen;
     Texture _Ops;
     Texture _Tables;
@@ -106,6 +119,8 @@ private:
     Texture _Frame;
     /// <summary>The underlays' surfaces, in the order of the frame's underlays.</summary>
     std::vector<Texture> _Underlays;
+    /// <summary>Port-only (HD lighting): the underlays' blooms (Bloom), in the same order.</summary>
+    std::vector<Texture> _Blooms;
     /// <summary>The upload buffer, and its size.</summary>
     MCGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;

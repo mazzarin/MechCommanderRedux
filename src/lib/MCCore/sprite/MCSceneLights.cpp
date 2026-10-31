@@ -6,6 +6,7 @@
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
 #include "lib/MCVector3D.h"
+#include "main/MCMissionGlobals.h"
 #include "object/MCObjectDrawing.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCShape.h"
@@ -64,6 +65,12 @@ namespace
     constexpr float FaintestShadow = 0.04f;
     /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
     constexpr float BrightPixel = 0.7f;
+    /// <summary>
+    /// The air over a fire shimmers this many times the side of a square of its bright pixels to each side of their
+    /// centre, and this many times above it.
+    /// </summary>
+    constexpr float HeatWidthPerSide = 0.9f;
+    constexpr float HeatRisePerSide = 2.5f;
 
     struct State
     {
@@ -83,9 +90,13 @@ namespace
         };
 
         std::vector<Caster> Casters;
-        /// <summary>The window the last finished lights are for, and those lights.</summary>
+        /// <summary>The frame's fires whose air shimmers.</summary>
+        std::vector<MCSceneHeat> Heat;
+        /// <summary>The window the last finished lights are for, those lights, its fires and the game's time then.</summary>
         std::weak_ptr<MCWindow> ShownWindow;
         std::vector<MCSceneLight> Shown;
+        std::vector<MCSceneHeat> ShownHeat;
+        float ShownTime = 0.0f;
     };
 
     State& TheState()
@@ -205,6 +216,35 @@ namespace
         }
 
         return saturated;
+    }
+
+    /// <summary>The frame of a shape table an appearance drew, and the shape that holds the table.</summary>
+    struct DrawnFrame
+    {
+        std::shared_ptr<MCShape> Shape;
+        std::span<const uint8_t> Table;
+        int32_t Frame = 0;
+    };
+
+    /// <summary>
+    /// The frame <paramref name="appearance"/> last drew (its Render), when it is of a VFX shape table (not a delta
+    /// animation's): a delta animation draws its first shape and, over it, the frame's change (MCDeltaElement), which
+    /// is its fire.
+    /// </summary>
+    std::optional<DrawnFrame> FrameDrawn(const MCVfxAppearance& appearance)
+    {
+        std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
+
+        if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()))
+        {
+            return std::nullopt;
+        }
+
+        const std::span<const uint8_t> table = shape->FrameList();
+        const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
+                                  ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
+                                  : appearance.CurrentFrame;
+        return DrawnFrame{std::move(shape), table, frame};
     }
 
     /// <summary>How high <paramref name="position"/> is above the ground under it (0 without a terrain).</summary>
@@ -335,6 +375,7 @@ auto MCSceneLights::Begin(const MCPane& pane) -> void
     state.Adding.clear();
     state.Flashes.clear();
     state.Casters.clear();
+    state.Heat.clear();
 }
 
 auto MCSceneLights::Add(MCSceneLight light) -> void
@@ -380,19 +421,11 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
         return;
     }
 
-    const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
-
-    if (shape == nullptr || !VfxIsShapeTable(shape->FrameList()))
+    if (const std::optional<DrawnFrame> drawn = FrameDrawn(appearance); drawn.has_value())
     {
-        return;
+        AddGlow(drawn->Table, drawn->Frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position),
+                pixels);
     }
-
-    // A delta animation draws its first shape and, over it, the frame's change (MCDeltaElement): the change is its fire.
-    const std::span<const uint8_t> table = shape->FrameList();
-    const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
-                              ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
-                              : appearance.CurrentFrame;
-    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position), pixels);
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -554,6 +587,29 @@ auto MCSceneLights::AddShadows() -> void
     ElementList().Add(ElementList().Make<MCShadowElement>(std::move(shadows), state.Drawing));
 }
 
+auto MCSceneLights::AddHeat(const MCVfxAppearance& appearance) -> void
+{
+    State& state = TheState();
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired())
+    {
+        return;
+    }
+
+    const std::optional<DrawnFrame> drawn = FrameDrawn(appearance);
+    const std::optional<Glow> fire =
+        drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, MCGlowPixels::Bright) : std::nullopt;
+
+    if (!fire.has_value())
+    {
+        return;
+    }
+
+    const float side = std::sqrt(static_cast<float>(fire->Pixels));
+    state.Heat.push_back({appearance.ScreenPos.X + fire->X, appearance.ScreenPos.Y + fire->Y, side * HeatWidthPerSide,
+                          side * HeatRisePerSide});
+}
+
 auto MCSceneLights::Finish() -> void
 {
     State& state = TheState();
@@ -576,6 +632,18 @@ auto MCSceneLights::Finish() -> void
 
     state.Shown = std::move(state.Adding);
     state.Adding.clear();
+
+    if (state.Heat.size() > MaxHeat)
+    {
+        std::ranges::partial_sort(state.Heat, state.Heat.begin() + MaxHeat,
+                                  [](const MCSceneHeat& a, const MCSceneHeat& b)
+                                  { return a.HalfWidth * a.Rise > b.HalfWidth * b.Rise; });
+        state.Heat.resize(MaxHeat);
+    }
+
+    state.ShownHeat = std::move(state.Heat);
+    state.Heat.clear();
+    state.ShownTime = ScenarioTime;
     state.ShownWindow = std::exchange(state.Drawing, {});
 }
 
@@ -589,6 +657,23 @@ auto MCSceneLights::Shown(const MCWindow& view) -> std::span<const MCSceneLight>
     }
 
     return state.Shown;
+}
+
+auto MCSceneLights::ShownHeat(const MCWindow& view) -> std::span<const MCSceneHeat>
+{
+    const State& state = TheState();
+
+    if (GHdLighting == HdLightingOff || state.ShownWindow.lock().get() != &view)
+    {
+        return {};
+    }
+
+    return state.ShownHeat;
+}
+
+auto MCSceneLights::ShownTime() -> float
+{
+    return TheState().ShownTime;
 }
 
 auto MCSceneLights::GroundAspect() -> float

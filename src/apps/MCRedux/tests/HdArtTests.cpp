@@ -3677,9 +3677,9 @@ namespace
 {
     /// <summary>
     /// With
-    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;]]]]</c>,
+    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;[,&lt;tint&gt;,&lt;bloom&gt;,&lt;bloom-from&gt;,&lt;haze&gt;]]]]]</c>,
     /// turns HD lighting on (sprite/MCSceneLights.h), its lights that strong and the world's own light that bright (1 as
-    /// drawn, below 1 dusk), and the tone as given (MCSceneLights::MCLighting's).
+    /// drawn, below 1 dusk), and the tone and the looks as given (MCSceneLights::MCLighting's).
     /// </summary>
     void LightingFromOptions()
     {
@@ -3692,15 +3692,17 @@ namespace
 
         MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
         const std::string given(*lighting);
-        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength, &settings.Ambient,
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength, &settings.Ambient,
                             &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit, &settings.Facing,
-                            &settings.Shadow) >= 1);
+                            &settings.Shadow, &settings.Tint, &settings.Bloom, &settings.BloomFrom,
+                            &settings.Haze) >= 1);
         GHdLighting = 1;
         std::cout << std::format(
             "  HD lighting: strength {:.2f}, the world's own light {:.2f}, scatter {:.2f}, knee {:.2f}, "
-            "most {:.2f}, self-lit above {:.2f}, facing {:.1f}, shadow {:.2f}\n",
+            "most {:.2f}, self-lit above {:.2f}, facing {:.1f}, shadow {:.2f}, tint {:.2f}, bloom {:.2f} above {:.2f}, "
+            "haze {:.1f}\n",
             settings.Strength, settings.Ambient, settings.Scatter, settings.Knee, settings.Most, settings.SelfLit,
-            settings.Facing, settings.Shadow);
+            settings.Facing, settings.Shadow, settings.Tint, settings.Bloom, settings.BloomFrom, settings.Haze);
     }
 
     /// <summary>

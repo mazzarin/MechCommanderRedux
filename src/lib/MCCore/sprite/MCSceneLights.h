@@ -33,10 +33,23 @@ struct MCSceneLight
     float Blue = 0.0f;
 };
 
+/// <summary>Port-only (HD lighting): the air over a fire, which shimmers (composite.pshader's heat haze).</summary>
+struct MCSceneHeat
+{
+    /// <summary>The flames' centre, in the world window's pixels.</summary>
+    float X = 0.0f;
+    float Y = 0.0f;
+    /// <summary>How far to each side of it the air shimmers, and how far above it.</summary>
+    float HalfWidth = 0.0f;
+    float Rise = 0.0f;
+};
+
 namespace MCSceneLights
 {
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
     inline constexpr size_t MaxLights = 64;
+    /// <summary>The most fires whose air shimmers in a frame (the biggest; composite.pshader's MaxHeat).</summary>
+    inline constexpr size_t MaxHeat = 16;
 
     /// <summary>Which of a glow's pixels shine: all of a light's glow, only the fire of an explosion (not its dust).</summary>
     enum class MCGlowPixels
@@ -67,6 +80,17 @@ namespace MCSceneLights
         float Facing = 24.0f;
         /// <summary>How much of a light a unit's shadow keeps off the ground behind it (0: no shadows).</summary>
         float Shadow = 0.9f;
+        /// <summary>
+        /// How much more of its hue a light gives what it lights, its brightness kept (0: only its colour as it adds
+        /// up): a daylit world, near white already, shows the light's colour where the light alone mostly whitens it.
+        /// </summary>
+        float Tint = 1.5f;
+        /// <summary>The bloom: how much of the world's brightest pixels' light spreads around them (0: none).</summary>
+        float Bloom = 0.5f;
+        /// <summary>The brightness (of a pixel's brightest component) a pixel blooms above.</summary>
+        float BloomFrom = 0.8f;
+        /// <summary>The most the air over a fire shimmers, in the window's pixels (0: no heat haze).</summary>
+        float Haze = 1.5f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -137,6 +161,12 @@ namespace MCSceneLights
     /// </summary>
     void AddShadows();
 
+    /// <summary>
+    /// The air over the fire of the frame <paramref name="appearance"/> last drew (its Render): it shimmers above the
+    /// frame's bright pixels, as wide and as high as they are big.
+    /// </summary>
+    void AddHeat(const MCVfxAppearance& appearance);
+
     /// <summary>Ends the frame's lights (MCCamera::Render, once the world is drawn): they are what the window shows.</summary>
     void Finish();
 
@@ -145,6 +175,15 @@ namespace MCSceneLights
     /// <see cref="MaxLights"/>); none when HD lighting is off or nothing lit it.
     /// </summary>
     std::span<const MCSceneLight> Shown(const MCWindow& view);
+
+    /// <summary>
+    /// The fires whose air shimmers in the world window <paramref name="view"/> (as <see cref="Shown"/>, the biggest
+    /// <see cref="MaxHeat"/>).
+    /// </summary>
+    std::span<const MCSceneHeat> ShownHeat(const MCWindow& view);
+
+    /// <summary>The game's time (ScenarioTime) the last finished frame was drawn at: the haze's, still while paused.</summary>
+    float ShownTime();
 
     /// <summary>
     /// The view's tilt: the screen height a ground distance takes across the screen per screen width it takes along it

@@ -62,8 +62,38 @@ namespace MCTestGame
     /// frames until the main menu is up. Same rules as <see cref="StartMission"/>: a TEST_CASE_ISOLATED test only, and
     /// one boot per process (StartMission after it fails, and the reverse).
     /// </summary>
+    /// <param name="afterBoot">Run once the game has booted (its paths read from SYSTEM.CFG), before the main menu
+    /// shows: where a test sets up what the menu reads (<see cref="PinnedSaves"/>).</param>
     /// <returns>Whether the main menu is up.</returns>
-    bool StartLogistics();
+    bool StartLogistics(const std::function<void()>& afterBoot = {});
+
+    /// <summary>The tests' user folder (under the temporary folder): the game writes its saves and settings there.</summary>
+    std::filesystem::path UserFolder();
+
+    /// <summary>The main menu's LOAD MISSION button (its element 3, which MCGenericScreen::ShowGuiWindow enables).</summary>
+    inline constexpr int32_t MainMenuLoadButton = 3;
+
+    /// <summary>
+    /// While it lives, the game's save folder (SavePath, and the folder logistics' file panes list) is a folder of the
+    /// tests' user folder holding copies of what the game ships in its own (campaign starts, solo missions, multiplayer
+    /// maps) and, of saves, just those it names (empty files: the load screen lists each by name, without an operation,
+    /// mission or points). What the main menu and the load screen show then doesn't depend on the install's saves or
+    /// those earlier tests left. Made once the game has read its paths and before the main menu shows
+    /// (StartLogistics' afterBoot).
+    /// </summary>
+    class PinnedSaves
+    {
+    public:
+        explicit PinnedSaves(std::span<const std::string_view> names = {});
+        ~PinnedSaves();
+
+        PinnedSaves(const PinnedSaves&) = delete;
+        PinnedSaves& operator=(const PinnedSaves&) = delete;
+
+    private:
+        /// <summary>The save folder it replaced.</summary>
+        std::string _Kept;
+    };
 
     /// <summary>
     /// Runs one pass of aSystem::run's frame loop (the per-frame callbacks and the display update), with the frame

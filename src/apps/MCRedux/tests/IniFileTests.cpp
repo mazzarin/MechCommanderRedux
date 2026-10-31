@@ -347,16 +347,18 @@ TEST_CASE("game: SYSTEM.CFG and PREFS.CFG read as the game reads them")
 
     OpenFit system("system.cfg");
     REQUIRE_EQ(system.Result, 0);
+    // The heaps' sizes are each install's own (the CD installer writes a system heap of 4095999, a tuned SYSTEM.CFG
+    // bigger ones): each reads, and is set.
     REQUIRE_EQ(system.File.SeekBlock("systemHeap"), 0);
     uint32_t size = 0;
     CHECK_EQ(system.File.ReadIdULong("systemHeapSize", size), 0);
-    CHECK_EQ(size, 16383999u);
+    CHECK(size > 0);
     CHECK_EQ(system.File.ReadIdULong("logisticsHeapSize", size), 0);
-    CHECK_EQ(size, 33554430u);
+    CHECK(size > 0);
 
     REQUIRE_EQ(system.File.SeekBlock("ABL"), 0);
     CHECK_EQ(system.File.ReadIdULong("SymbolTableHeapSize", size), 0);
-    CHECK_EQ(size, 4095999u);
+    CHECK(size > 0);
     int32_t watches = 0;
     CHECK_EQ(system.File.ReadIdLong("MaxWatchesPerModule", watches), 0);
     CHECK_EQ(watches, 20);
@@ -376,20 +378,31 @@ TEST_CASE("game: SYSTEM.CFG and PREFS.CFG read as the game reads them")
     CHECK(std::strcmp(name, "data\\missions\\") == 0);
     CHECK_EQ(system.File.SeekBlock("UseSound"), 0);
 
+    // Every PREFS.CFG has DirectDraw; the rest are there once the game has saved its preferences (the installer's has
+    // four lines). Each that is there reads, in range.
     OpenFit prefs("prefs.cfg");
     REQUIRE_EQ(prefs.Result, 0);
     REQUIRE_EQ(prefs.File.SeekBlock("MechCommander"), 0);
+    const auto there = [](int32_t result)
+    {
+        CHECK((result == 0 || result == std::to_underlying(MCFitError::VariableNotFound)));
+        return result == 0;
+    };
+
     int flag = 0;
     CHECK_EQ(prefs.File.ReadIdBoolean("DirectDraw", flag), 0);
     CHECK_EQ(flag, 1);
-    CHECK_EQ(prefs.File.ReadIdBoolean("Force16Mb", flag), 0);
-    CHECK_EQ(flag, 0);
-    int32_t difficulty = -1;
-    CHECK_EQ(prefs.File.ReadIdLong("Difficulty", difficulty), 0);
-    CHECK(difficulty >= 0 && difficulty <= 3);
-    int32_t volume = -1;
-    CHECK_EQ(prefs.File.ReadIdLong("SFXVolume", volume), 0);
-    CHECK(volume >= 0);
+    there(prefs.File.ReadIdBoolean("Force16Mb", flag));
+
+    if (int32_t difficulty = -1; there(prefs.File.ReadIdLong("Difficulty", difficulty)))
+    {
+        CHECK((difficulty >= 0 && difficulty <= 3));
+    }
+
+    if (int32_t volume = -1; there(prefs.File.ReadIdLong("SFXVolume", volume)))
+    {
+        CHECK(volume >= 0);
+    }
 }
 
 TEST_CASE("game: FIT files from the FastFiles read")

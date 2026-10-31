@@ -4596,8 +4596,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
                 next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
-                next.IndexOnly != record.IndexOnly || next.ReadsCopy || record.ReadsCopy ||
-                next.First != previous.First + previous.Count)
+                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.ReadsCopy ||
+                record.ReadsCopy || next.First != previous.First + previous.Count)
             {
                 break;
             }

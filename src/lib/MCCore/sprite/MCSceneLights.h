@@ -63,7 +63,7 @@ namespace MCSceneLights
         /// The world's relief: its own shading taken for height, this many of the window's pixels from black to white,
         /// so a surface brighter toward a light faces it and takes more of it (0: every surface lit as flat ground).
         /// </summary>
-        float Facing = 0.0f;
+        float Facing = 24.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

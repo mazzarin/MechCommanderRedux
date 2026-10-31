@@ -114,11 +114,9 @@ auto MCExplosion::Render() -> void
     {
         Appearance->Render(-150);
 
-        // Port-only (HD lighting): the fire of an explosion that has no light of its own lights what's around it.
-        if (Light == nullptr)
-        {
-            MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
-        }
+        // Port-only (HD lighting): an explosion's fire lights what's around it, as long as it burns (its light's glow,
+        // where it has one, is a flash that ends sooner).
+        MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
     }
 
     if (Light != nullptr)

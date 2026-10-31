@@ -4,6 +4,7 @@
 #include <memory>
 #include <span>
 
+class MCAppearance;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCPane;
@@ -64,6 +65,8 @@ namespace MCSceneLights
         /// so a surface brighter toward a light faces it and takes more of it (0: every surface lit as flat ground).
         /// </summary>
         float Facing = 24.0f;
+        /// <summary>How much of a light a unit's shadow keeps off the ground behind it (0: no shadows).</summary>
+        float Shadow = 0.8f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -120,6 +123,19 @@ namespace MCSceneLights
     /// Flashes from one muzzle at once (a salvo's) light as one.
     /// </summary>
     void AddMuzzleFlash(const MCVector3D& muzzle, float left);
+
+    /// <summary>
+    /// A unit that casts shadows from the lights by it (a mech, a vehicle): <paramref name="appearance"/> as it last
+    /// placed itself on the screen (its bounds, its owner's place), its owner at <paramref name="position"/>.
+    /// </summary>
+    void AddCaster(const MCAppearance& appearance, const MCVector3D& position);
+
+    /// <summary>
+    /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added
+    /// their lights and units, before the list is sorted): drawn after the ground and its craters and before every
+    /// object, so a unit covers its shadow on the ground behind it, and one standing in another's shadow takes it.
+    /// </summary>
+    void AddShadows();
 
     /// <summary>Ends the frame's lights (MCCamera::Render, once the world is drawn): they are what the window shows.</summary>
     void Finish();

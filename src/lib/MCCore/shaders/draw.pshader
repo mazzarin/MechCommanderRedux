@@ -111,6 +111,8 @@ static const uint KindSmoothPolygon = 11;
 // Port-only: a status bar's part (a health bar's) at the output's resolution, its fill ending where the game measured it
 // (SmoothBarPixel).
 static const uint KindSmoothBar = 12;
+// Port-only (HD lighting): a unit's shadow, into the colours' alpha alone (the shadow pipeline).
+static const uint KindShadow = 13;
 // Port-only: an HD art frame drawn as KindHd is, its coverage the original's pixels smoothed (HdMaskCoverage) instead
 // of its alpha (their mask scaled up, which keeps the pixels' steps). Kind 13 is left for other branches.
 static const uint KindHdSmooth = 14;
@@ -152,6 +154,8 @@ static const float SpriteEdgeLow = 0.2;
 static const float SpriteEdgeHigh = 0.6;
 // An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
 static const float HdMaskAlpha = 0.5;
+// A shadow is full across this much of its width, softening to nothing at its edge (KindShadow).
+static const float ShadowCore = 0.35;
 // An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
 // past its mask, the frame keeps no colour).
 static const float HdOwnColourAlpha = 0.5;
@@ -1037,6 +1041,37 @@ Output SmoothBarPixel(Input input, int2 target)
     return Blended(Fetch(alphaTex, alphaSampler, int2((int)input.op.w, 1)) * coverage);
 }
 
+// Port-only (HD lighting): a unit's shadow (KindShadow, MCShadowCommand): a soft band on the ground from window
+// asfloat(span.xy), the unit's feet, to asfloat(span.zw), asfloat(walk.x) and asfloat(walk.y) ground pixels to each
+// side at those ends, asfloat(walk.z) strong at the feet and fading to nothing at the tip; a ground distance down the
+// screen asfloat(walk.w) of one across. Through the shadow pipeline its alpha takes the colours' alpha down: the
+// composite lights the world that much less.
+Output ShadowPixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 ground = float2(1.0, 1.0 / max(asfloat(input.walk.w), 1e-3));
+    const float2 a = asfloat(input.span.xy) * ground;
+    const float2 ab = asfloat(input.span.zw) * ground - a;
+    const float2 at = window * ground;
+    const float length2 = max(dot(ab, ab), 1e-4);
+    // How far along the band from the feet, and the band's width there.
+    const float along = dot(at - a, ab) * rsqrt(length2);
+    const float t = saturate(along * rsqrt(length2));
+    const float feetWidth = max(asfloat(input.walk.x), 1.0);
+    const float width = lerp(feetWidth, asfloat(input.walk.y), t);
+    const float off = length(at - (a + ab * t));
+    // Full across its core, soft to its edge; from nothing toward the light to full a width past the feet.
+    const float strength = asfloat(input.walk.z) * (1.0 - smoothstep(width * ShadowCore, width, off)) * (1.0 - t) *
+                           saturate(along / feetWidth);
+
+    if (strength <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(float4(0.0, 0.0, 0.0, strength));
+}
+
 Output main(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
@@ -1095,6 +1130,11 @@ Output main(Input input)
     if (kind == KindSmoothBar)
     {
         return SmoothBarPixel(input, target);
+    }
+
+    if (kind == KindShadow)
+    {
+        return ShadowPixel(input, target);
     }
 
     const uint color = input.op.y & 255u;

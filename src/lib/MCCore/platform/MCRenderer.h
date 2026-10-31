@@ -337,6 +337,24 @@ struct MCStatusBarCommand
 };
 
 /// <summary>
+/// Port-only (HD lighting, sprite/MCSceneLights.h): a unit's shadow from one light, a soft band on the ground from
+/// window (X0, Y0), the unit's feet, to (X1, Y1), its tip, Width0 and Width1 ground pixels to each side at those ends.
+/// The lights' light is taken down by Strength under the feet, fading to nothing at the tip; what is drawn later (the
+/// units) covers it. A ground distance down the screen is Aspect times shorter than across it.
+/// </summary>
+struct MCShadowCommand
+{
+    float X0;
+    float Y0;
+    float X1;
+    float Y1;
+    float Width0;
+    float Width1;
+    float Strength;
+    float Aspect;
+};
+
+/// <summary>
 /// A map's ground as a hardware renderer keeps it: the tile of every cell (the quad whose top-left corner is that map
 /// vertex) and the elevations of its corners, over the map and a ring of the off-map cells around it. Made once per map
 /// (see terrain.cpp); a renderer uploads it again only when <c>Version</c> changes.
@@ -740,6 +758,12 @@ public:
 
     /// <summary>A font character.</summary>
     virtual void Glyph(MCWindow& target, const MCGlyphCommand& command) = 0;
+
+    /// <summary>
+    /// Port-only: a shadow in the target's light (the composite's HD lighting); nothing from a renderer that keeps no
+    /// light (the software renderer).
+    /// </summary>
+    virtual void Shadow(MCWindow& target, const MCShadowCommand& command);
 
     /// <summary>
     /// Draws a frame's terrain tiles from the map's mesh. A hardware renderer always does (the terrain pass asks it

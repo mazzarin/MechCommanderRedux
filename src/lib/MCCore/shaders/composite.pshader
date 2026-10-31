@@ -121,10 +121,11 @@ float SelfLit(float3 color)
     return smoothstep(lightTone.w, 1.0, max(color.r, max(color.g, color.b)));
 }
 
-// The world's colour at a texel (sloped as SlopeAt finds) in the world's own light and the lights' (lightTone): lit as a
-// surface of that colour, the light's scatter added, and what rises above the knee eased toward white. A light's own
-// bright pixels keep their brightness: the world's dimming and the lights pass them by.
-float3 Lit(float3 world, float2 texel, float2 slope)
+// The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
+// a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
+// light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
+// brightness: the world's dimming and the lights pass them by.
+float3 Lit(float3 world, float2 texel, float2 slope, float shade)
 {
     if (lighting.x <= 0.0 && lighting.z == 1.0)
     {
@@ -134,7 +135,7 @@ float3 Lit(float3 world, float2 texel, float2 slope)
     const float selfLit = SelfLit(world);
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
     const float most = max(lightTone.z, 0.001);
-    const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y / most));
+    const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
     const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
     const float3 knee = min(max(base, lightTone.y), 0.999);
     const float3 over = max(lit - knee, 0.0);
@@ -228,9 +229,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     if (mode.y != 0.0)
     {
         // The GPU's colours: the screen over the world, or over the key's colour where there's no world.
-        const float3 under =
-            mode.x != 0.0 ? Lit(TexelAt(worldTex, worldSampler, world, worldSize.zw).rgb, world + 0.5, SlopeAt(world))
-                          : Shown(255);
+        const float4 lit = TexelAt(worldTex, worldSampler, world, worldSize.zw);
+        const float3 under = mode.x != 0.0 ? Lit(lit.rgb, world + 0.5, SlopeAt(world), lit.a) : Shown(255);
         return Faded(saturate(screen.rgb + under * (1.0 - screen.a)));
     }
 
@@ -241,7 +241,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         index = Byte(TexelAt(worldTex, worldSampler, world, worldSize.zw).r);
         const uint op = IndexAt(opTex, opSampler, screenPixel, screenSize.zw);
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
-        return Faded(Lit(Shown(index), world + 0.5, SlopeAt(world)));
+        return Faded(Lit(Shown(index), world + 0.5, SlopeAt(world), 1.0));
     }
 
     return Faded(Shown(index));

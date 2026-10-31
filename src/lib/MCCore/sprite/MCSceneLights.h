@@ -4,6 +4,8 @@
 #include <memory>
 #include <span>
 
+class MCVector3D;
+class MCVfxAppearance;
 struct MCPane;
 struct MCWindow;
 
@@ -35,6 +37,13 @@ namespace MCSceneLights
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
     inline constexpr size_t MaxLights = 32;
 
+    /// <summary>Which of a glow's pixels shine: all of a light's glow, only the fire of an explosion (not its dust).</summary>
+    enum class MCGlowPixels
+    {
+        All,
+        Bright,
+    };
+
     /// <summary>How the lights are shown (the tools' --hd-lighting sets them).</summary>
     struct MCLighting
     {
@@ -60,10 +69,17 @@ namespace MCSceneLights
     /// <summary>
     /// The light of a glow: frame <paramref name="frame"/> of <paramref name="shapeTable"/> drawn with its hot spot at
     /// (<paramref name="x"/>, <paramref name="y"/>), <paramref name="altitude"/> pixels above the ground under
-    /// it. It shines from its pixels' centre, in their mean colour, as far as its size: a glow that grows or fades lights
-    /// more or less. Nothing for a table that isn't a VFX shape table (a delta animation's).
+    /// it. It shines from its <paramref name="pixels"/>' centre, in their mean colour, as far as their size: a glow that
+    /// grows or fades lights more or less. Nothing for a table that isn't a VFX shape table (a delta animation's).
     /// </summary>
-    void AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, float x, float y, float altitude);
+    void AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, float x, float y, float altitude,
+                 MCGlowPixels pixels);
+
+    /// <summary>
+    /// The light of the frame <paramref name="appearance"/> last drew (its Render), as <see cref="AddGlow"/>'s: its owner
+    /// at <paramref name="position"/>, as high above the ground there.
+    /// </summary>
+    void AddGlow(const MCVfxAppearance& appearance, const MCVector3D& position, MCGlowPixels pixels);
 
     /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,

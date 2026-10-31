@@ -8,9 +8,7 @@
 #include "object/MCLightType.h"
 #include "object/MCObjectDrawing.h"
 #include "sprite/MCSceneLights.h"
-#include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
-#include "terrain/MCTerrain.h"
 
 MCLight::MCLight() = default;
 
@@ -77,14 +75,7 @@ auto MCLight::Render() -> void
         Appearance->Render(-500);
 
         // Port-only (HD lighting): the glow lights the ground and the units around it, from as high as it is.
-        if (const std::shared_ptr<MCShape> shape = GHdLighting != 0 ? Appearance->CurrentShape.lock() : nullptr;
-            shape != nullptr)
-        {
-            const float altitude =
-                Terrain() != nullptr ? std::max(Position.Z - MCTerrain::GetTerrainElevation(Position), 0.0f) : 0.0f;
-            MCSceneLights::AddGlow(shape->FrameList(), Appearance->CurrentFrame, Appearance->ScreenPos.X,
-                                   Appearance->ScreenPos.Y, altitude);
-        }
+        MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::All);
     }
 }
 

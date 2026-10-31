@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "sprite/MCSceneLights.h"
 #include "color/MCPalette.h"
+#include "lib/MCVector3D.h"
+#include "sprite/MCShape.h"
+#include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
@@ -29,6 +32,8 @@ namespace
     constexpr float BeamHeight = 10.0f;
     /// <summary>The lowest a light sits above the ground: one on it would light a sharp ring around itself.</summary>
     constexpr float MinHeight = 4.0f;
+    /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
+    constexpr float BrightPixel = 0.7f;
 
     struct State
     {
@@ -70,7 +75,8 @@ namespace
         int32_t Pixels = 0;
     };
 
-    std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame)
+    std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
+                                    MCSceneLights::MCGlowPixels shining)
     {
         if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
         {
@@ -89,7 +95,8 @@ namespace
                           const std::array<float, 3> light = PixelLight(color, translucent);
                           const double w = static_cast<double>(light[0]) + light[1] + light[2];
 
-                          if (w <= 0.0)
+                          if (w <= 0.0 ||
+                              (shining == MCSceneLights::MCGlowPixels::Bright && std::ranges::max(light) < BrightPixel))
                           {
                               return;
                           }
@@ -182,15 +189,15 @@ auto MCSceneLights::Add(MCSceneLight light) -> void
     }
 }
 
-auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, float x, float y, float altitude)
-    -> void
+auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, float x, float y, float altitude,
+                            MCGlowPixels pixels) -> void
 {
     if (GHdLighting == 0 || TheState().Drawing.expired())
     {
         return;
     }
 
-    const std::optional<Glow> glow = MeasureGlow(shapeTable, frame);
+    const std::optional<Glow> glow = MeasureGlow(shapeTable, frame, pixels);
 
     if (!glow.has_value())
     {
@@ -208,6 +215,22 @@ auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, 
     light.Green = color[1] * GlowGain;
     light.Blue = color[2] * GlowGain;
     Add(light);
+}
+
+auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D& position, MCGlowPixels pixels) -> void
+{
+    if (GHdLighting == 0 || TheState().Drawing.expired())
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock(); shape != nullptr)
+    {
+        const float altitude =
+            Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
+        AddGlow(shape->FrameList(), appearance.CurrentFrame, appearance.ScreenPos.X, appearance.ScreenPos.Y, altitude,
+                pixels);
+    }
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -228,7 +251,7 @@ auto MCSceneLights::AddShapeBeam(float x0, float y0, float x1, float y1, float w
         return;
     }
 
-    if (const std::optional<Glow> glow = MeasureGlow(shapeTable, frame); glow.has_value())
+    if (const std::optional<Glow> glow = MeasureGlow(shapeTable, frame, MCGlowPixels::All); glow.has_value())
     {
         AddBeamLight(x0, y0, x1, y1, width, glow->Color);
     }

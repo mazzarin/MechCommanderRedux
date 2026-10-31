@@ -84,9 +84,9 @@ namespace MCSceneLights
         /// How much more of its hue a light gives what it lights, its brightness kept (0: only its colour as it adds
         /// up): a daylit world, near white already, shows the light's colour where the light alone mostly whitens it.
         /// </summary>
-        float Tint = 1.5f;
+        float Tint = 2.0f;
         /// <summary>The bloom: how much of the world's brightest pixels' light spreads around them (0: none).</summary>
-        float Bloom = 0.5f;
+        float Bloom = 1.0f;
         /// <summary>The brightness (of a pixel's brightest component) a pixel blooms above.</summary>
         float BloomFrom = 0.8f;
         /// <summary>The most the air over a fire shimmers, in the window's pixels (0: no heat haze).</summary>

@@ -810,6 +810,7 @@
     <ClInclude Include="sprite\MCGVAppearanceType.h" />
     <ClInclude Include="sprite\MCHdArt.h" />
     <ClInclude Include="sprite\MCHdMovie.h" />
+    <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />

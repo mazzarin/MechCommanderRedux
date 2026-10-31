@@ -31,6 +31,7 @@ auto MCArmAppearance::Init(std::shared_ptr<MCAppearanceType> tree, std::weak_ptr
     Visible = false;
     CurrentTime = 0.0f;
     LastFrame = 0;
+    FrameShare = 0.0f;
     Reverse = false;
     InView = false;
     Rotation = 0.0f;
@@ -109,9 +110,24 @@ auto MCArmAppearance::Render(int32_t depthFixup) -> int32_t
         return 0;
     }
 
-    ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame,
-                                                       Reverse ? 1 : 0, fadeTable, 0));
+    MCVfxElement& element = ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame,
+                                                             Reverse ? 1 : 0, fadeTable, 0);
+    element.InBetween = InBetween();
+    ElementList().Add(element);
     return 0;
+}
+
+auto MCArmAppearance::InBetween() const -> std::optional<MCInBetween>
+{
+    // The animation stops at its last frame (Update), which has no in-between.
+    const int32_t next = CurrentFrame + 1;
+
+    if (CurrentFrame < 0 || AppearType->ActorData.NumFrames <= static_cast<uint32_t>(next))
+    {
+        return std::nullopt;
+    }
+
+    return InBetweenOf(CurrentFrame, next, FrameShare, AppearType->ActorData.FrameRate);
 }
 
 auto MCArmAppearance::Update() -> int32_t
@@ -126,6 +142,8 @@ auto MCArmAppearance::Update() -> int32_t
     FrameRate = data.FrameRate;
     CurrentTime = FrameLength + CurrentTime;
     const auto wholeFrames = static_cast<int32_t>(std::floor(static_cast<double>(CurrentTime * FrameRate)));
+    // Port-only (HD art's in-betweens): how far the animation is through the frame shown.
+    FrameShare = CurrentTime * FrameRate - static_cast<float>(wholeFrames);
 
     if (played < wholeFrames)
     {

@@ -35,6 +35,7 @@
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
+#include "object/MCBattleMechType.h"
 #include "object/MCBullet.h"
 #include "object/MCExplosion.h"
 #include "object/MCGroundVehicleGameSystem.h"
@@ -283,6 +284,8 @@ namespace
         bool Reverse = false;
         /// <summary>Whether its translucent frames hold their blended pixels (an effect's, MCHdArt::Frame::Blended).</summary>
         bool Blended = false;
+        /// <summary>The frames a second the game plays it at (a VFX state's), 0 when not known.</summary>
+        float FrameRate = 0.0f;
         std::vector<DecodedFrame> Frames;
     };
 
@@ -1566,6 +1569,60 @@ namespace
     };
 
     /// <summary>
+    /// The frames a second a VFX type plays <paramref name="packet"/> at: its state's, which the game keeps in a
+    /// sub-state too (MCVfxAppearance::Update); 0 when no state draws the packet.
+    /// </summary>
+    float VfxPacketFrameRate(const MCVfxAppearanceType& vfx, uint32_t packet)
+    {
+        // A state's facings are its packets from its base (every other one when Scaled: the zoomed-out views between).
+        const uint32_t step = vfx.Scaled ? 2u : 1u;
+        const auto draws = [&](const MCActorData& state, const MCActorData& frames)
+        {
+            const uint32_t facings = std::max<uint32_t>(state.NumRotations, 1u);
+            return frames.NumFrames > 0 && packet >= frames.BasePacketNumber &&
+                   packet < frames.BasePacketNumber + facings * step;
+        };
+
+        for (const MCActorData& state : vfx.States)
+        {
+            if (draws(state, state))
+            {
+                return state.FrameRate;
+            }
+        }
+
+        // The sub-states are the normal state's (MCVfxAppearanceType::GetShape).
+        const MCActorData& normal = vfx.StateData(MCActorState::Normal);
+
+        for (const MCActorData& sub : vfx.SubStates)
+        {
+            if (draws(normal, sub))
+            {
+                return normal.FrameRate;
+            }
+        }
+
+        return 0.0f;
+    }
+
+    /// <summary>
+    /// The frames a second <paramref name="type"/> plays <paramref name="packet"/> at: a VFX state's, a weapon effect's
+    /// (its one state's); 0 for the other classes.
+    /// </summary>
+    float PacketFrameRate(const MCAppearanceType& type, uint32_t packet)
+    {
+        switch (static_cast<MCAppearanceClass>(type.AppearanceNum >> AppearanceClassShift))
+        {
+            case MCAppearanceClass::Vfx:
+                return VfxPacketFrameRate(static_cast<const MCVfxAppearanceType&>(type), packet);
+            case MCAppearanceClass::Arm:
+                return static_cast<const MCArmAppearanceType&>(type).ActorData.FrameRate;
+            default:
+                return 0.0f;
+        }
+    }
+
+    /// <summary>
     /// <paramref name="type"/>'s sequences (one a packet <paramref name="packets"/> picks), their translucent frames
     /// holding their blended pixels when <paramref name="keepBlended"/> (an effect's).
     /// </summary>
@@ -1593,6 +1650,7 @@ namespace
             Sequence& sequence = made.Sequences.emplace_back();
             sequence.Folder = MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, appearance, packet});
             sequence.Blended = keepBlended;
+            sequence.FrameRate = PacketFrameRate(*type, packet);
             const std::span<const uint8_t> table = shape->FrameList();
             sequence.Table = std::hash<std::string_view>{}(
                 std::string_view(reinterpret_cast<const char*>(table.data()), table.size()));
@@ -1971,8 +2029,10 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
             const std::string sameAs = repeating[i].has_value()
                                            ? std::format(", \"same_as\": \"{}\"", repeating[i]->generic_string())
                                            : std::string();
-            json += std::format("{}\n  {{\"folder\": \"{}\"{}, \"frames\": [{}]}}", i == 0 ? "" : ",",
-                                sequence.Folder.generic_string(), sameAs, FramesJson(sequence));
+            const std::string frameRate =
+                sequence.FrameRate > 0.0f ? std::format(", \"frame_rate\": {}", sequence.FrameRate) : std::string();
+            json += std::format("{}\n  {{\"folder\": \"{}\"{}{}, \"frames\": [{}]}}", i == 0 ? "" : ",",
+                                sequence.Folder.generic_string(), sameAs, frameRate, FramesJson(sequence));
         }
 
         json += "]}";
@@ -3003,8 +3063,18 @@ TEST_CASE_ISOLATED("game: HD art keeps the craters' palette indices")
 
 namespace
 {
-    /// <summary>A shape's VFX table, one frame, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
-    std::vector<uint8_t> OneFrameTable(int32_t width, int32_t height, std::span<const uint8_t> rows)
+    /// <summary>A frame of a VFX shape table: its bounds' top left from the hot spot, its size, and its encoded rows.</summary>
+    struct TableFrame
+    {
+        int32_t XMin = 0;
+        int32_t YMin = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+        std::span<const uint8_t> Rows;
+    };
+
+    /// <summary>A shape's VFX table of <paramref name="frames"/>, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
+    std::vector<uint8_t> FramesTable(std::span<const TableFrame> frames)
     {
         std::vector<uint8_t> table = {'1', '.', '1', '0'};
         const auto put = [&table](int32_t value)
@@ -3015,19 +3085,40 @@ namespace
             }
         };
 
-        constexpr int32_t FirstFrame = 16;
+        // The directory (each frame's offset, then 0) after the count, then each frame's header and rows.
+        constexpr int32_t DirectoryAt = 8;
+        constexpr int32_t EntryBytes = 8;
+        constexpr int32_t HeaderBytes = 0x18;
         constexpr int BoundsShift = 16;
-        put(1);
-        put(FirstFrame);
-        put(0);
-        put(width << BoundsShift | height);
-        put(0);
-        put(0);
-        put(0);
-        put(width - 1);
-        put(height - 1);
-        table.insert(table.end(), rows.begin(), rows.end());
+        const auto count = static_cast<int32_t>(frames.size());
+        put(count);
+        int32_t offset = DirectoryAt + EntryBytes * count;
+
+        for (const TableFrame& frame : frames)
+        {
+            put(offset);
+            put(0);
+            offset += HeaderBytes + static_cast<int32_t>(frame.Rows.size());
+        }
+
+        for (const TableFrame& frame : frames)
+        {
+            put(frame.Width << BoundsShift | frame.Height);
+            put(0);
+            put(frame.XMin);
+            put(frame.YMin);
+            put(frame.XMin + frame.Width - 1);
+            put(frame.YMin + frame.Height - 1);
+            table.insert(table.end(), frame.Rows.begin(), frame.Rows.end());
+        }
+
         return table;
+    }
+
+    /// <summary>A shape's VFX table, one frame, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
+    std::vector<uint8_t> OneFrameTable(int32_t width, int32_t height, std::span<const uint8_t> rows)
+    {
+        return FramesTable(std::array{TableFrame{0, 0, width, height, rows}});
     }
 }
 
@@ -3222,6 +3313,149 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
         }
     }
 
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
+/// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
+/// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where the
+/// two frames' are, drawn as it is and mirrored about the hot spot (as the frame is).
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
+    constexpr int32_t Side = 4;
+    constexpr int32_t Shift = 2;
+    constexpr int32_t Together = Side + Shift;
+    constexpr uint8_t FourPixels = 9;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Side; ++row)
+    {
+        rows.insert(rows.end(), {FourPixels, opaque, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table =
+        FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}, TableFrame{Shift, 0, Side, Side, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
+
+    // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
+    // the rest, so a mirrored one shows which way it lies.
+    constexpr int32_t Scale = 2;
+    constexpr int32_t FirstYellow = 3;
+    constexpr SDL_Color Red = {200, 0, 0, 255};
+    constexpr SDL_Color Green = {0, 200, 0, 255};
+    constexpr SDL_Color Blue = {0, 0, 200, 255};
+    constexpr SDL_Color Yellow = {200, 200, 0, 255};
+    const auto none = [](int32_t) { return std::optional<uint8_t>(); };
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_in_between";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+    std::filesystem::create_directories(folder);
+    WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
+    WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
+    WriteBlendedFrame(
+        folder / "0_1", Together, Side, Scale, [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; },
+        none);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+
+    // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
+    // in-between (none: none), and before.
+    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto before = display->ReadFrame();
+        REQUIRE(before.has_value());
+        {
+            const MCRenderer::InBetweenScope scope(inBetween);
+
+            if (mirrored)
+            {
+                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto after = display->ReadFrame();
+        REQUIRE(after.has_value());
+        return std::pair{std::move(*before), std::move(*after)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+    const auto same = [&](SDL_Color actual, SDL_Color expected)
+    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+
+    // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
+    // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c).
+    for (const bool mirrored : {false, true})
+    {
+        for (const bool between : {false, true})
+        {
+            const auto [before, after] = drawn(mirrored, between ? std::optional(MCInBetween{0, 1, 1}) : std::nullopt);
+
+            for (int32_t row = 0; row < Side; ++row)
+            {
+                for (int32_t column = 0; column < Together; ++column)
+                {
+                    const int32_t shown = mirrored ? -column : column;
+                    const SDL_Color pixel = at(after, shown, row);
+                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
+                                                    mirrored ? "mirrored" : "as is", between ? ", in-between" : "",
+                                                    column, row, pixel.r, pixel.g, pixel.b));
+
+                    if (between)
+                    {
+                        CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
+                    }
+                    else
+                    {
+                        CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                    }
+                }
+            }
+        }
+    }
+
+    hdArt.reset();
     std::filesystem::remove_all(scratch);
 }
 
@@ -3924,6 +4158,23 @@ namespace
 
         return std::nullopt;
     }
+
+    /// <summary>The name of object type <paramref name="type"/> (its packet in the object PAK), empty when it has none.</summary>
+    std::string ObjectTypeName(uint32_t type)
+    {
+        MCPacketFile pak;
+        REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
+        MCFitIniFile fit;
+
+        if (static_cast<int32_t>(type) >= pak.GetNumPackets() || pak.SeekPacket(static_cast<int32_t>(type)) != 0 ||
+            pak.GetPacketSize() <= 0 || fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) != 0 ||
+            fit.SeekBlock("ObjectType") != 0)
+        {
+            return {};
+        }
+
+        return fit.Read<std::string>("Name").value_or("");
+    }
 }
 
 /// <summary>
@@ -3931,7 +4182,10 @@ namespace
 /// <c>--explosion &lt;name,...&gt;</c> (object types; default minedet, mdst and gasexpl) goes off beside the player's mech,
 /// shot as it plays (<c>&lt;name&gt;_&lt;frame&gt;_hd.png</c>), or with <c>--hd-original 1</c> without HD art. A run plays
 /// out the same every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as
-/// --hd-pack's.
+/// --hd-pack's. With <c>--hd-effects-video &lt;n&gt;</c>, each plays n frames at 60 a second, every one shot
+/// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
+/// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
+/// tumbling at 7 frames a second as it flies.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
 {
@@ -3958,10 +4212,51 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         names = {"minedet", "mdst", "gasexpl"};
     }
 
-    // Beside the mech (world units), the frames shot after it goes off, and the frames it is given to finish.
+    // Beside the mech (world units), the frames shot after it goes off, and the frames it is given to finish; a video's
+    // frames are shorter.
     constexpr float Beside = 60.0f;
     constexpr std::array<int32_t, 5> ShotFrames = {2, 5, 9, 14, 20};
     constexpr int32_t Frames = 45;
+    constexpr float VideoFrameSeconds = 1.0f / 60.0f;
+    int32_t videoFrames = 0;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-effects-video"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), videoFrames);
+    }
+
+    const bool video = videoFrames > 0;
+
+    // Plays the effect just set off, shooting its frames as <name>_<frame>.
+    const auto play = [&](std::string_view name)
+    {
+        for (int32_t frame = 1; frame <= (video ? videoFrames : Frames); ++frame)
+        {
+            MCTestGame::RunFrame(video ? VideoFrameSeconds : FrameSeconds);
+
+            if (video)
+            {
+                Shoot(folder, std::format("{}_{:04}", name, frame), original);
+            }
+            else if (std::ranges::contains(ShotFrames, frame))
+            {
+                Shoot(folder, std::format("{}_{:02}", name, frame), original);
+            }
+        }
+    };
+
+    if (MCTest::Option("hd-effects-arms").has_value())
+    {
+        const auto mech = std::dynamic_pointer_cast<MCBattleMech>(player);
+        REQUIRE(mech != nullptr);
+        const auto& type = static_cast<const MCBattleMechType&>(*mech->GetObjectType());
+        std::cout << std::format("  arms: {} and {}\n", ObjectTypeName(type.LeftArmDebrisId),
+                                 ObjectTypeName(type.RightArmDebrisId));
+        mech->LeftArmBlownThisFrame = true;
+        mech->RightArmBlownThisFrame = true;
+        play("arms");
+        return;
+    }
 
     for (const std::string& name : names)
     {
@@ -3971,16 +4266,7 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         MCVector3D at = player->GetPosition();
         at.X += Beside;
         CreateExplosion(*type, at, 0.0f, 0.0f);
-
-        for (int32_t frame = 1; frame <= Frames; ++frame)
-        {
-            MCTestGame::RunFrame(FrameSeconds);
-
-            if (std::ranges::contains(ShotFrames, frame))
-            {
-                Shoot(folder, std::format("{}_{:02}", name, frame), original);
-            }
-        }
+        play(name);
     }
 }
 

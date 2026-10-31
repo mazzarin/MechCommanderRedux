@@ -571,6 +571,9 @@ namespace
     /// <summary>Whether a <see cref="MCRenderer::GlowScope"/> is drawing a glow.</summary>
     bool GlowDrawn = false;
 
+    /// <summary>The in-between a <see cref="MCRenderer::InBetweenScope"/> is drawing, none outside one.</summary>
+    std::optional<MCInBetween> InBetweenDrawn;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -762,6 +765,21 @@ MCRenderer::GlowScope::~GlowScope()
 bool MCRenderer::DrawingGlow()
 {
     return GlowDrawn;
+}
+
+MCRenderer::InBetweenScope::InBetweenScope(const std::optional<MCInBetween>& inBetween) : _Was(InBetweenDrawn)
+{
+    InBetweenDrawn = inBetween;
+}
+
+MCRenderer::InBetweenScope::~InBetweenScope()
+{
+    InBetweenDrawn = _Was;
+}
+
+const std::optional<MCInBetween>& MCRenderer::DrawingInBetween()
+{
+    return InBetweenDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

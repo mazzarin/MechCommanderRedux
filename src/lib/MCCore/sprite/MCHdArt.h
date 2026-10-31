@@ -215,9 +215,12 @@ namespace MCHdArt
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table starting at <paramref name="table"/> (whose
     /// bounds are <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when
-    /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds.
+    /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds. A
+    /// <paramref name="step"/> asks for the frame's in-between of that step toward the next instead (MCInBetween,
+    /// <c>&lt;frame&gt;_&lt;step&gt;</c>), whose bounds are the two frames' together.
     /// </summary>
-    std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
+    std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
+                                      int32_t step = 0);
 
     /// <summary>
     /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
@@ -286,9 +289,11 @@ namespace MCHdArt
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table whose bytes hash to <paramref name="hash"/>
     /// (<see cref="ShapeTableHash"/>; the frame's bounds <paramref name="width"/> x <paramref name="height"/>), read from
-    /// the pack the first time; null when HD art is off or the pack has none.
+    /// the pack the first time; null when HD art is off or the pack has none. A <paramref name="step"/> asks for an
+    /// in-between, as <see cref="Find"/>'s does.
     /// </summary>
-    std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height);
+    std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
+                                           int32_t step = 0);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's

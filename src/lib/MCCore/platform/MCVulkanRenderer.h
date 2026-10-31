@@ -525,7 +525,27 @@ private:
     /// bytes' hash (<see cref="MCHdArt::FindShape"/>); null when there is none.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> HdShape(std::span<const uint8_t> table, int32_t frame, int32_t width,
-                                                  int32_t height);
+                                                  int32_t height, int32_t step = 0);
+
+    /// <summary>
+    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together: where the frame's
+    /// bounds start in the in-between's, and the in-between's size (original pixels).
+    /// </summary>
+    struct HdInBetweenFrame
+    {
+        std::shared_ptr<const MCHdArt::Frame> Frame;
+        int32_t FrameX = 0;
+        int32_t FrameY = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the HD art pack's in-between a draw of frame <paramref name="shapeNum"/> of <paramref name="table"/>
+    /// shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>); none when the draw isn't of the
+    /// in-between's frame or the pack hasn't the in-between.
+    /// </summary>
+    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>

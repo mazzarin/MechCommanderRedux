@@ -26,6 +26,13 @@ namespace
         return std::format("{}: {}", what, SDL_GetError());
     }
 
+    /// <summary>A VFX shape's header: where its bounds (from its hot spot) lie, and its size (its rows follow).</summary>
+    constexpr size_t ShapeXMinAt = 0x08;
+    constexpr size_t ShapeYMinAt = 0x0c;
+    constexpr size_t ShapeXMaxAt = 0x10;
+    constexpr size_t ShapeYMaxAt = 0x14;
+    constexpr size_t ShapeHeaderBytes = 0x18;
+
     // shaders/draw.pshader's kinds and flags.
     constexpr uint32_t KindFill = 0;
     constexpr uint32_t KindHash = 1;
@@ -1889,7 +1896,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const uint8_t> table, int32_t frame,
-                                                                int32_t width, int32_t height)
+                                                                int32_t width, int32_t height, int32_t step)
 {
     if (!MCHdArt::Active())
     {
@@ -1898,7 +1905,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
 
     if (MCHdArt::AttachedFolder(table.data()).has_value())
     {
-        return MCHdArt::Find(table.data(), frame, width, height);
+        return MCHdArt::Find(table.data(), frame, width, height, step);
     }
 
     // The table's bytes to the end of its block: the whole file or packet its loader read.
@@ -1914,7 +1921,51 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
         }
     }
 
-    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height) : nullptr;
+    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height, step) : nullptr;
+}
+
+auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum) -> std::optional<HdInBetweenFrame>
+{
+    const std::optional<MCInBetween>& inBetween = MCRenderer::DrawingInBetween();
+    const int32_t count = VfxShapeCount(table);
+
+    if (!inBetween.has_value() || inBetween->Frame != shapeNum || shapeNum < 0 || shapeNum >= count ||
+        inBetween->Next < 0 || inBetween->Next >= count)
+    {
+        return std::nullopt;
+    }
+
+    const size_t frameAt = MCShapeOffset(table, shapeNum);
+    const size_t nextAt = MCShapeOffset(table, inBetween->Next);
+
+    if (table.size() < frameAt + ShapeHeaderBytes || table.size() < nextAt + ShapeHeaderBytes)
+    {
+        return std::nullopt;
+    }
+
+    // The bounds of the frame and of the next, together.
+    const std::span<const uint8_t> frame = table.subspan(frameAt);
+    const std::span<const uint8_t> next = table.subspan(nextAt);
+    const int32_t xMin = std::min(MCRead32(frame, ShapeXMinAt), MCRead32(next, ShapeXMinAt));
+    const int32_t yMin = std::min(MCRead32(frame, ShapeYMinAt), MCRead32(next, ShapeYMinAt));
+    const int32_t xMax = std::max(MCRead32(frame, ShapeXMaxAt), MCRead32(next, ShapeXMaxAt));
+    const int32_t yMax = std::max(MCRead32(frame, ShapeYMaxAt), MCRead32(next, ShapeYMaxAt));
+
+    if (xMax < xMin || yMax < yMin)
+    {
+        return std::nullopt;
+    }
+
+    HdInBetweenFrame found{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
+                           MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin, xMax - xMin + 1,
+                           yMax - yMin + 1};
+
+    if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
+    {
+        return std::nullopt;
+    }
+
+    return found;
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -2081,8 +2132,32 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
 
-        AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table, std::nullopt, HdColours::Corrected,
-              edges);
+        // An effect's frame part of the way to its next shows the pack's in-between instead, over the two frames'
+        // bounds, when the transform draws its whole frame at full size (no clipping to follow): mirrored, the
+        // in-between's last column comes first.
+        const auto& [at, from] = *place;
+        const bool whole = command.Blit.FullSize && command.Blit.Columns == width && command.Blit.Rows == height &&
+                           from[1] == 0 && from[3] == 1 && (from[2] == 1 ? from[0] == 0 : from[0] == width - 1);
+        const std::optional<HdInBetweenFrame> inBetween =
+            hd->Blended && whole ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+        bool drawn = false;
+
+        if (inBetween.has_value())
+        {
+            const bool mirrored = from[2] < 0;
+            const int32_t left =
+                mirrored ? at[0] + width - inBetween->Width + inBetween->FrameX : at[0] - inBetween->FrameX;
+            const int32_t top = at[1] - inBetween->FrameY;
+            const Quad betweenAt = {left, top, left + inBetween->Width - 1, top + inBetween->Height - 1};
+            const Quad betweenFrom = {mirrored ? inBetween->Width - 1 : 0, 0, from[2], 1};
+            drawn = AddHd(SurfaceFor(target), *inBetween->Frame, betweenAt, betweenFrom, command.Table, std::nullopt,
+                          HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+        }
+
+        if (!drawn)
+        {
+            AddHd(SurfaceFor(target), *hd, at, from, command.Table, std::nullopt, HdColours::Corrected, edges);
+        }
 
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
@@ -2592,7 +2667,31 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
-            AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+            // An effect's frame part of the way to its next shows the pack's in-between there instead (over the two
+            // frames' bounds, clipped as the command's rows and columns), over the frame's own indices.
+            const std::optional<HdInBetweenFrame> inBetween =
+                hd->Blended ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            bool drawn = false;
+
+            if (inBetween.has_value())
+            {
+                const int32_t betweenX = command.Left - inBetween->FrameX;
+                const int32_t betweenY = command.Top - command.SkipRows - inBetween->FrameY;
+                const int32_t left = std::max(betweenX, command.Lo);
+                const int32_t top = std::max(betweenY, command.ClipTop);
+                const int32_t right = std::min(betweenX + inBetween->Width - 1, command.Hi);
+                const int32_t bottom = std::min(betweenY + inBetween->Height - 1, command.ClipBottom);
+                drawn = left <= right && top <= bottom &&
+                        AddHd(surface, *inBetween->Frame, Quad{left, top, right, bottom},
+                              Quad{left - betweenX, top - betweenY, 1, 1}, command.Table, std::nullopt,
+                              HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+            }
+
+            if (!drawn)
+            {
+                AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+            }
+
             Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
                 before, after);
 

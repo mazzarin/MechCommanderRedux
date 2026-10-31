@@ -77,6 +77,7 @@ auto MCElementBuffer::Draw() -> void
         {
             MCElement& element = _Elements[i];
             const MCRenderer::GlowScope glow(element.Glow);
+            const MCRenderer::InBetweenScope inBetween(element.InBetween);
 
             // Port: a unit overlay (health bar, selection mark, strike timer) draws on the screen over the view, at
             // the screen's scale (its position was mapped there when it was made); the rest into the world surface.

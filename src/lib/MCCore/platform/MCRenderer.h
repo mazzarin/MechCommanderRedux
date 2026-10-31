@@ -16,6 +16,7 @@
 
 #include "lib/MCOptionalRef.h"
 #include "platform/MCAddressKey.h"
+#include "sprite/MCInBetween.h"
 #include "vfx/MCVfx.h"
 
 namespace MCHdArt
@@ -666,6 +667,29 @@ public:
 
     /// <summary>Whether the draws now are a light's glow (<see cref="GlowScope"/>).</summary>
     static bool DrawingGlow();
+
+    /// <summary>
+    /// Port-only (HD art): while one lives, the shape draws of its frame (an effect's) show the HD art pack's in-between
+    /// toward the next frame instead, where the pack has it. One made with none draws frames as they are.
+    /// </summary>
+    class InBetweenScope
+    {
+    public:
+        /// <summary>Starts drawing <paramref name="inBetween"/> (none: the frames as they are).</summary>
+        explicit InBetweenScope(const std::optional<MCInBetween>& inBetween);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~InBetweenScope();
+
+        InBetweenScope(const InBetweenScope&) = delete;
+        InBetweenScope& operator=(const InBetweenScope&) = delete;
+
+    private:
+        std::optional<MCInBetween> _Was;
+    };
+
+    /// <summary>The in-between the draws now show (<see cref="InBetweenScope"/>), none outside one.</summary>
+    static const std::optional<MCInBetween>& DrawingInBetween();
 
     // Frame surfaces ----------------------------------------------------------------------------------------------
 

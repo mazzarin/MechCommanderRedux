@@ -69,8 +69,16 @@ namespace
     /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName, MCHdArt::PictureHash).</summary>
     constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
     constexpr uint64_t FnvPrime = 0x100000001b3ull;
-    /// <summary>Where a frame key's folder goes in its hash: above any frame number.</summary>
+    /// <summary>Where a frame key's folder goes in its hash: above any frame number and in-between step.</summary>
     constexpr int FolderHashShift = 40;
+    /// <summary>
+    /// Where a numbered frame's key holds the step of its in-between (MCInBetween; 0: the frame itself), above the
+    /// frame's number (the bits below).
+    /// </summary>
+    constexpr int InBetweenNameShift = 32;
+    constexpr uint64_t FrameNumberMask = (uint64_t{1} << InBetweenNameShift) - 1;
+    /// <summary>What separates an in-between's step from its frame's number in its name (<c>&lt;frame&gt;_&lt;step&gt;</c>).</summary>
+    constexpr std::string_view InBetweenSeparator = "_";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -455,6 +463,23 @@ namespace
         return false;
     }
 
+    /// <summary>The key of frame <paramref name="frame"/> of a numbered folder, or of its in-between <paramref name="step"/>.</summary>
+    uint64_t NumberedKey(int32_t frame, int32_t step)
+    {
+        return static_cast<uint64_t>(static_cast<uint32_t>(frame)) | static_cast<uint64_t>(step) << InBetweenNameShift;
+    }
+
+    /// <summary>
+    /// The name of a numbered folder's frame <paramref name="key"/> (<see cref="NumberedKey"/>): its number, and an
+    /// in-between's step after <see cref="InBetweenSeparator"/>.
+    /// </summary>
+    std::string NumberedName(uint64_t key)
+    {
+        const uint64_t step = key >> InBetweenNameShift;
+        const std::string frame = std::to_string(key & FrameNumberMask);
+        return step == 0 ? frame : std::format("{}{}{}", frame, InBetweenSeparator, step);
+    }
+
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
     std::string HashName(uint64_t hash)
     {
@@ -492,7 +517,7 @@ namespace
             folder.Loose = std::filesystem::is_directory(folder.Path, error);
         }
 
-        const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : std::to_string(key.Name);
+        const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : NumberedName(key.Name);
         const std::filesystem::path path = folder.Path / frame;
         const bool loose = *folder.Loose;
         std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
@@ -1104,7 +1129,8 @@ void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const
     AttachTo(table, owner, FolderOf(key), true);
 }
 
-std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
+                                                    int32_t step)
 {
     if (!Active())
     {
@@ -1126,7 +1152,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
+    return Cache(FrameKey{found->second.Folder, NumberedKey(frame, step)}, width, height);
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesystem::path& folder, int32_t frame,
@@ -1262,16 +1288,16 @@ std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
     return std::filesystem::path(ShapeFolder) / HashName(hash);
 }
 
-std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height)
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
+                                                         int32_t step)
 {
     if (!Active())
     {
         return nullptr;
     }
 
-    return Cache(
-        FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), static_cast<uint64_t>(frame)},
-        width, height);
+    return Cache(FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), NumberedKey(frame, step)},
+                 width, height);
 }
 
 uint64_t MCHdArt::NewFrameId()

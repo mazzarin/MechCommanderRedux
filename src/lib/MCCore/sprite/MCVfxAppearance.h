@@ -1,6 +1,7 @@
 #pragma once
 
 #include "appear/MCAppearance.h"
+#include "sprite/MCInBetween.h"
 #include "sprite/MCVfxAppearanceType.h"
 
 /// <summary>An object drawn from its type's shapes, animated through its states and facings.</summary>
@@ -55,6 +56,12 @@ public:
     /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
     MCFrameDrawing FrameDrawing() const;
 
+    /// <summary>
+    /// Port-only (HD art): the in-between of the current frame toward the next that its share of the frame shown calls
+    /// for (none in the frame's first step, at an end the animation stops at, or before it has started).
+    /// </summary>
+    std::optional<MCInBetween> InBetween() const;
+
     /// <summary>The type.</summary>
     std::shared_ptr<MCVfxAppearanceType> AppearType;
     /// <summary>The shape drawn (expired once the cache drops it).</summary>
@@ -67,6 +74,10 @@ public:
     float FramesAdvanced = 0.0f;
     /// <summary>Frames played so far in the current state.</summary>
     int32_t LastFrame = 0;
+    /// <summary>Port-only (HD art's in-betweens): how far the animation is through the frame shown, 0 to 1.</summary>
+    float FrameShare = 0.0f;
+    /// <summary>Port-only (HD art's in-betweens): whether the current state's animation has gone back to its start.</summary>
+    bool Looped = false;
     /// <summary>The frame the animation loops back to at <see cref="LoopEnd"/>.</summary>
     int32_t LoopStart = -1;
     /// <summary>The frame at which the animation goes back to <see cref="LoopStart"/> (-1: loop the whole state).</summary>

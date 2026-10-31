@@ -2343,6 +2343,9 @@
     <ClInclude Include="sprite\MCHdMovie.h">
       <Filter>sprite</Filter>
     </ClInclude>
+    <ClInclude Include="sprite\MCInBetween.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
     <ClInclude Include="sprite\MCMechActor.h">
       <Filter>sprite</Filter>
     </ClInclude>

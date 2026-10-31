@@ -22,7 +22,7 @@ struct MCSceneLight
     float Y0 = 0.0f;
     float X1 = 0.0f;
     float Y1 = 0.0f;
-    /// <summary>How far above that ground the light is, in the window's pixels.</summary>
+    /// <summary>How far above that ground the light is, in the window's pixels: the higher, the softer its pool.</summary>
     float Height = 0.0f;
     /// <summary>The ground distance (in the window's pixels across the screen) at which it has faded out.</summary>
     float Reach = 0.0f;

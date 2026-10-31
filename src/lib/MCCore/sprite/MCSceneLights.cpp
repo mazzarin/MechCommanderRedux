@@ -30,8 +30,6 @@ namespace
     constexpr float BeamGain = 0.9f;
     /// <summary>A beam's height above the ground (the arms and torsos it runs between), in pixels.</summary>
     constexpr float BeamHeight = 10.0f;
-    /// <summary>The lowest a light sits above the ground: one on it would light a sharp ring around itself.</summary>
-    constexpr float MinHeight = 4.0f;
     /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
     constexpr float BrightPixel = 0.7f;
 
@@ -229,7 +227,7 @@ auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, 
     // It shines from its pixels' centre; the ground under that is its hot spot's, altitude lower on the screen.
     light.X0 = light.X1 = x + glow->X;
     light.Y0 = light.Y1 = y + altitude;
-    light.Height = std::max(altitude - glow->Y, MinHeight);
+    light.Height = std::max(altitude - glow->Y, 0.0f);
     light.Reach = GlowReachPerSide * std::sqrt(static_cast<float>(glow->Pixels));
     const std::array<float, 3> color = Saturated(glow->Color);
     light.Red = color[0] * GlowGain;

@@ -508,8 +508,8 @@ auto MCSceneLights::AddShadows() -> void
 
         for (const auto& [light, reaches] : reaching)
         {
-            // None from a faint light, or one inside the unit.
-            if (reaches.Light < FaintestShadow || reaches.Distance <= width)
+            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes).
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
             {
                 continue;
             }

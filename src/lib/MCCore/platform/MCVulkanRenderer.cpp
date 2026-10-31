@@ -766,18 +766,32 @@ void MCVulkanRenderer::BeginRecording()
     _ReleasedRows.clear();
 }
 
+auto MCVulkanRenderer::DropPicture(std::unordered_map<uint64_t, Picture>& pictures,
+                                   std::unordered_map<uint64_t, Picture>::iterator it, size_t& bytes,
+                                   size_t bytesPerPixel) -> std::unordered_map<uint64_t, Picture>::iterator
+{
+    bytes -= it->second.Bytes != 0
+                 ? it->second.Bytes
+                 : static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
+    Release(it->second.Texture);
+    Release(it->second.HdColors);
+    return pictures.erase(it);
+}
+
+void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
+{
+    _HdRefused.erase(id);
+
+    if (const auto found = _HdPictures.find(id); found != _HdPictures.end())
+    {
+        DropPicture(_HdPictures, found, _HdPictureBytes, HdRgbaBytes);
+    }
+}
+
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                                     size_t bytesPerPixel)
 {
-    const auto drop = [&](auto it)
-    {
-        bytes -= it->second.Bytes != 0
-                     ? it->second.Bytes
-                     : static_cast<size_t>(it->second.Texture.Width) * it->second.Texture.Height * bytesPerPixel;
-        Release(it->second.Texture);
-        Release(it->second.HdColors);
-        return pictures.erase(it);
-    };
+    const auto drop = [&](auto it) { return DropPicture(pictures, it, bytes, bytesPerPixel); };
 
     for (auto it = pictures.begin(); it != pictures.end();)
     {
@@ -1746,6 +1760,16 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
         return;
     }
 
+    // Port-only: on a sharp screen, a frame shown over the source's pixels (a movie's HD frame) is drawn over the part
+    // of the copy it covers, blended after the pixels themselves, which keep their indices.
+    if (const std::optional<ShownHdPart> shown = ShownHdPartOf(surface, command))
+    {
+        Add(surface, source->Kind, source->Index, at, from, op, color, 0, 0);
+        AddHd(surface, *shown->Frame, shown->At, shown->From, std::nullopt,
+              command.ColorKey ? std::optional(command.Key) : std::nullopt, HdColours::AsMade);
+        return;
+    }
+
     // Port-only: on a sharp screen, a picture the HD art pack has is shown from the pack; the copy keeps the indices.
     if (const std::shared_ptr<const MCHdArt::Frame> hd = HdPictureFor(surface, command.Source.get());
         hd != nullptr && AddHd(surface, *hd, at, from, std::nullopt,
@@ -1761,6 +1785,40 @@ void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPictureFor(uint16_t target, const MCWindow& window)
 {
     return SharpScreenSurface(target) ? HdPicture(window) : nullptr;
+}
+
+auto MCVulkanRenderer::ShownHdPartOf(uint16_t surface, const MCCopyCommand& command) -> std::optional<ShownHdPart>
+{
+    const std::shared_ptr<MCTexture> texture = command.Source.get().Texture.lock();
+
+    if (!SharpScreenSurface(surface) || texture == nullptr || texture->Hardware == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const TextureState& state = StateOf(*texture);
+
+    if (state.ShownHd == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    // The copied rectangle within the frame's, in the source's pixels (rectangles inclusive).
+    const MCRect& rect = command.SourceRect;
+    const int32_t left = std::max(rect.X0, state.ShownHdX);
+    const int32_t top = std::max(rect.Y0, state.ShownHdY);
+    const int32_t right = std::min(rect.X1, state.ShownHdX + state.ShownHd->OriginalWidth() - 1);
+    const int32_t bottom = std::min(rect.Y1, state.ShownHdY + state.ShownHd->OriginalHeight() - 1);
+
+    if (left > right || top > bottom)
+    {
+        return std::nullopt;
+    }
+
+    return ShownHdPart{state.ShownHd,
+                       {command.X + left - rect.X0, command.Y + top - rect.Y0, command.X + right - rect.X0,
+                        command.Y + bottom - rect.Y0},
+                       {left - state.ShownHdX, top - state.ShownHdY, 1, 1}};
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow& window)
@@ -4660,6 +4718,22 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     return {};
 }
 
+void MCVulkanRenderer::OnShowHdPicture(MCTexture& texture, std::shared_ptr<const MCHdArt::Frame> frame, int32_t x,
+                                       int32_t y)
+{
+    TextureState& state = StateOf(texture);
+
+    // A movie shows each frame once: the one shown before leaves the GPU now rather than when unused for a while.
+    if (state.ShownHd != nullptr && state.ShownHd != frame)
+    {
+        ForgetHdPicture(state.ShownHd->Id);
+    }
+
+    state.ShownHd = std::move(frame);
+    state.ShownHdX = x;
+    state.ShownHdY = y;
+}
+
 void MCVulkanRenderer::OnTextureReleased(MCTexture& texture)
 {
     if (texture.Hardware == nullptr)
@@ -4668,6 +4742,11 @@ void MCVulkanRenderer::OnTextureReleased(MCTexture& texture)
     }
 
     auto& state = static_cast<TextureState&>(*texture.Hardware);
+
+    if (state.ShownHd != nullptr)
+    {
+        ForgetHdPicture(state.ShownHd->Id);
+    }
 
     if (state.Copy.Handle != nullptr)
     {

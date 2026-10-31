@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCHdMovieFixture.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -12,6 +13,7 @@
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
+#include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCHardwareCursor.h"
 #include "iface/MCMechBar.h"
@@ -52,6 +54,7 @@
 #include "sprite/MCElementalTree.h"
 #include "sprite/MCGVAppearanceType.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCPUAppearanceType.h"
 #include "sprite/MCSceneLights.h"
@@ -68,6 +71,7 @@
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
 #include "gui/MCGuiPort.h"
+#include "gui/MCGuiSmackerWindow.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "main/MCLogistics.h"
 #include "lib/MCFile.h"
@@ -7921,6 +7925,258 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 
     CHECK_EQ(kept, Side * Side);
     MCRenderer::DestroyTexture(*picture);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// A frame shown over a texture's pixels (<see cref="MCRenderer::ShowHdPicture"/>: a movie's HD frame over the window
+/// it decodes into) is drawn where a copy of the texture onto a sharp screen covers it, in its own colours (the test
+/// movie's red), and only there: the copy's other pixels show as they did, the screen's indices are the texture's
+/// throughout, and once taken away the copy shows the pixels alone again.
+/// </summary>
+TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part of its window a copy covers")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // The window is larger than the movie's frame, which lies in from its corner, as a movie's pane does.
+    constexpr int32_t Width = 24;
+    constexpr int32_t Height = 16;
+    constexpr int32_t FrameX = 4;
+    constexpr int32_t FrameY = 2;
+    constexpr int32_t FrameWidth = MCHdMovieFixture::Width / 2;
+    constexpr int32_t FrameHeight = MCHdMovieFixture::Height / 2;
+    constexpr uint8_t Color = 0x30;
+    constexpr int RedTolerance = 24;
+    const std::shared_ptr<MCWindow> window = MCWindow::Make(Width, Height);
+    std::ranges::fill(window->Bytes(), Color);
+    MCRenderer::CreateTexture(*window, MCTextureUse::Static);
+    const std::shared_ptr<MCTexture> texture = window->Texture.lock();
+    REQUIRE(texture != nullptr);
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_movie_copy";
+    std::filesystem::remove_all(scratch);
+    MCHdMovieFixture::Write(scratch / "MOVIE.ivf", MCHdMovieFixture::Bytes());
+    // HD art on (a pack of nothing else) makes the screen sharp, as when the game finds a movie's HD frames.
+    std::filesystem::create_directories(scratch / "pack");
+    const MCHdArtOn on(scratch / "pack");
+    auto movie = MCHdMovie::Open(scratch / "MOVIE.ivf");
+    REQUIRE(movie.has_value());
+    const auto frame = (*movie)->Next(window->Bytes().subspan(static_cast<size_t>(FrameY) * Width + FrameX), FrameWidth,
+                                      FrameHeight, Width);
+    REQUIRE(frame.has_value());
+
+    MCPane& screen = ScreenPort()->Frame();
+    const int32_t left = (screen.X1 - screen.X0) / 2;
+    const int32_t top = (screen.Y1 - screen.Y0) / 2;
+
+    struct Copied
+    {
+        int64_t HdDrawn = 0;
+        Shown Seen;
+        std::vector<uint8_t> Indices;
+    };
+
+    const auto copy = [&]()
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        Copied copied;
+        const int64_t before = renderer->HdDrawn();
+        VfxPaneCopy(MCPane::Over(window), 0, 0, screen, left, top, VfxNoColor);
+        copied.HdDrawn = renderer->HdDrawn() - before;
+        copied.Seen = ReadShown(scratch);
+        copied.Indices = MCInput::Display()->ComposeScreen();
+        return copied;
+    };
+
+    GamePaused = true;
+    const Copied plain = copy();
+    MCRenderer::ShowHdPicture(*texture, *frame, FrameX, FrameY);
+    const Copied shown = copy();
+    MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
+    const Copied after = copy();
+    GamePaused = false;
+
+    CHECK_EQ(plain.HdDrawn, 0);
+    CHECK_EQ(shown.HdDrawn, 1);
+    CHECK_EQ(after.HdDrawn, 0);
+
+    // Places in the shown frame (the screen shown larger), a pixel in from their edges.
+    const int32_t displayWidth = MCInput::Display()->Width();
+    REQUIRE(displayWidth > 0);
+    const float scale = static_cast<float>(shown.Seen.Width) / static_cast<float>(displayWidth);
+    const auto place = [&](int32_t x, int32_t y, int32_t width, int32_t height)
+    {
+        return MCRect{static_cast<int32_t>(std::ceil(static_cast<float>(screen.X0 + left + x) * scale)) + 1,
+                      static_cast<int32_t>(std::ceil(static_cast<float>(screen.Y0 + top + y) * scale)) + 1,
+                      static_cast<int32_t>(static_cast<float>(screen.X0 + left + x + width) * scale) - 2,
+                      static_cast<int32_t>(static_cast<float>(screen.Y0 + top + y + height) * scale) - 2};
+    };
+
+    const MCRect inside = place(FrameX, FrameY, FrameWidth, FrameHeight);
+    int32_t red = 0;
+
+    for (int32_t y = inside.Y0; y <= inside.Y1; ++y)
+    {
+        for (int32_t x = inside.X0; x <= inside.X1; ++x)
+        {
+            const uint8_t* pixel = &shown.Seen.Pixels[(static_cast<size_t>(y) * shown.Seen.Width + x) * BytesPerPixel];
+            const std::array<uint8_t, 3>& wanted = MCHdMovieFixture::Colors[0];
+            red += std::abs(pixel[0] - wanted[0]) <= RedTolerance && std::abs(pixel[1] - wanted[1]) <= RedTolerance &&
+                           std::abs(pixel[2] - wanted[2]) <= RedTolerance
+                       ? 1
+                       : 0;
+        }
+    }
+
+    const int32_t area = (inside.X1 - inside.X0 + 1) * (inside.Y1 - inside.Y0 + 1);
+    std::cout << std::format("  {} of the frame's {} shown pixels in its colour\n", red, area);
+    CHECK_EQ(red, area);
+
+    // Beside the frame (the window's left columns, and its rows below the frame) the copy shows the pixels as it did.
+    CHECK_EQ(Compare(plain.Seen, shown.Seen, place(0, 0, FrameX, Height)).Count, 0);
+    CHECK_EQ(
+        Compare(plain.Seen, shown.Seen, place(0, FrameY + FrameHeight, Width, Height - FrameY - FrameHeight)).Count, 0);
+    CHECK_EQ(Compare(plain.Seen, after.Seen, place(0, 0, Width, Height)).Count, 0);
+
+    // The indices under the window are its pixels, every time.
+    int32_t kept = 0;
+
+    for (int32_t y = 0; y < Height; ++y)
+    {
+        for (int32_t x = 0; x < Width; ++x)
+        {
+            const size_t at = static_cast<size_t>(screen.Y0 + top + y) * displayWidth + screen.X0 + left + x;
+            kept += plain.Indices[at] == Color && shown.Indices[at] == Color && after.Indices[at] == Color ? 1 : 0;
+        }
+    }
+
+    CHECK_EQ(kept, Width * Height);
+    MCRenderer::DestroyTexture(*window);
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Tool: with <c>--hd-movie-pack &lt;pack folder&gt;</c>, a pilot movie played in a window on a sharp screen (mission
+/// 1, shown larger) shows the pack's HD frames: every frame the movie decodes is drawn from its own HD frame, to the
+/// movie's end and after it while its window is up; with HD art on and no HD frames, none is. With
+/// <c>--shots &lt;folder&gt;</c>, the screen at the movie's frame 20 is written both ways (<c>pilot-original.png</c>,
+/// <c>pilot-hd.png</c>).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-movie-pack plays a pilot movie from the pack's HD frames on a sharp screen")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-movie-pack");
+
+    if (!pack.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    constexpr std::string_view Name = "PILOT00A";
+    constexpr uint32_t ShotFrame = 20;
+    constexpr int32_t MaxDisplays = 600;
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_movie_play";
+    std::filesystem::remove_all(scratch);
+    // Packs of the one movie's HD frames and of nothing, so HD draws are the movie's.
+    const std::filesystem::path movies = scratch / "movies-pack" / "movies";
+    std::filesystem::create_directories(movies);
+    std::filesystem::create_directories(scratch / "empty-pack");
+    std::filesystem::copy_file(std::filesystem::path(*pack) / "movies" / std::format("{}.ivf", Name),
+                               movies / std::format("{}.ivf", Name));
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    struct Played
+    {
+        uint32_t Frames = 0;
+        uint32_t HdFrames = 0;
+        bool HdThroughout = true;
+        /// <summary>Displays after the movie's end, before its window goes, with its last frame from HD.</summary>
+        int32_t HdAfterEnd = 0;
+    };
+
+    constexpr int32_t DisplaysAfterEnd = 8;
+
+    const auto play = [&](const std::filesystem::path& folder, std::string_view shot)
+    {
+        const MCHdArtOn on(folder);
+        std::unique_ptr<MCSmackTag> movie = SmackOpen(std::format("data\\movies\\{}.smk", Name), 0xfe000, -1);
+        REQUIRE(movie != nullptr);
+        // A window of its own on the screen, as the briefing's movie has (remapped to the game's palette), which stays
+        // up after the movie's end until its owner takes it down.
+        const MCPane& screen = ScreenPort()->Frame();
+        const RECT area{(screen.X1 - screen.X0) / 2, (screen.Y1 - screen.Y0) / 2, movie->Player->Width(),
+                        movie->Player->Height()};
+        const std::shared_ptr<MCGuiSmackerWindow> window = MCMakeGui<MCGuiSmackerWindow>();
+        window->Init(area, {});
+        ScreenWindow()->AddChild(window);
+        REQUIRE_EQ(window->StartSmackerMovie(std::move(movie), false), 0);
+        Played played;
+
+        for (int32_t display = 0; display < MaxDisplays && MovieOver == 0; ++display)
+        {
+            const uint32_t before = window->Movie->Player->FrameNum();
+            const int64_t drawn = renderer->HdDrawn();
+            MCTestGame::RunFrame(FrameSeconds);
+
+            if (window->Movie->Player->FrameNum() == before)
+            {
+                continue;
+            }
+
+            ++played.Frames;
+            played.HdFrames += renderer->HdDrawn() > drawn ? 1 : 0;
+            played.HdThroughout = played.HdThroughout && window->HdMovie != nullptr;
+
+            if (played.Frames == ShotFrame && shots.has_value())
+            {
+                ReadShown(scratch);
+                std::filesystem::create_directories(*shots);
+                std::filesystem::copy_file(scratch / "shown.png", std::filesystem::path(*shots) / shot,
+                                           std::filesystem::copy_options::overwrite_existing);
+            }
+        }
+
+        // After the end, the window shows the last frame, decoded again as each frame falls due.
+        for (int32_t display = 0; display < DisplaysAfterEnd; ++display)
+        {
+            const int64_t drawn = renderer->HdDrawn();
+            MCTestGame::RunFrame(FrameSeconds);
+            played.HdAfterEnd += window->HdMovie != nullptr && renderer->HdDrawn() > drawn ? 1 : 0;
+        }
+
+        window->EndSmackerMovie();
+        return played;
+    };
+
+    GamePaused = true;
+    const Played original = play(scratch / "empty-pack", "pilot-original.png");
+    const Played hd = play(scratch / "movies-pack", "pilot-hd.png");
+    GamePaused = false;
+    std::cout << std::format("  {}: {} frames, {} from HD frames; without them {} frames, {} from HD frames\n", Name,
+                             hd.Frames, hd.HdFrames, original.Frames, original.HdFrames);
+
+    CHECK(hd.Frames > ShotFrame);
+    CHECK_EQ(hd.HdFrames, hd.Frames);
+    CHECK(hd.HdThroughout);
+    CHECK_EQ(hd.HdAfterEnd, DisplaysAfterEnd);
+    CHECK(original.Frames > ShotFrame);
+    CHECK_EQ(original.HdFrames, 0u);
     std::filesystem::remove_all(scratch);
 }
 

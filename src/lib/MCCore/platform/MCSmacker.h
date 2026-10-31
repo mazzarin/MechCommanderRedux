@@ -336,6 +336,8 @@ struct MCSmackTag
 {
     /// <summary>The open movie.</summary>
     std::unique_ptr<MCSmackerPlayer> Player;
+    /// <summary>Port-only: the game path it was opened by (the HD art pack's frames are found by its name).</summary>
+    std::string FileName;
 };
 
 /// <summary>Opens a movie of the game's data (<c>SmackOpen</c>); its sound goes where

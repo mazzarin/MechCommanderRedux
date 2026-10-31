@@ -108,6 +108,12 @@
     <ClCompile Include="tests\HdArtTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\HdAudioTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\HdMovieTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\HdPackTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -262,6 +268,9 @@
     </ClInclude>
     <ClInclude Include="tests\fixtures\MCTinyMap.h">
       <Filter>tests\fixtures</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCHdMovieFixture.h">
+      <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCMock.h">
       <Filter>tests</Filter>

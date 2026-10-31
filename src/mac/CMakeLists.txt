@@ -112,6 +112,24 @@ target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME 
 target_compile_options(mc_miniz PRIVATE -w)
 target_include_directories(mc_miniz PUBLIC ${MC_SRC}/lib/miniz-3.0.2)
 target_link_libraries(MCCore PUBLIC mc_miniz)
+# dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
+add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
+target_compile_options(mc_flac PRIVATE -w)
+target_include_directories(mc_flac PUBLIC ${MC_SRC}/lib/dr_flac)
+target_link_libraries(MCCore PUBLIC mc_flac)
+# dav1d (the HD art pack's movies' AV1 decoder): its C code alone, as on Windows, the files MCCore.vcxproj lists; the
+# template files are built for 8 bits a sample (src/lib/dav1d-1.5.4/README.md).
+set(MC_DAV1D_DIR ${MC_SRC}/lib/dav1d-1.5.4)
+mc_vcxproj_items(MC_DAV1D_ITEMS ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile
+                 "\\$\\(MCLibDir\\)dav1d-1\\.5\\.4[^\"]+\\.c")
+list(TRANSFORM MC_DAV1D_ITEMS REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
+add_library(mc_dav1d STATIC ${MC_DAV1D_ITEMS})
+list(FILTER MC_DAV1D_ITEMS INCLUDE REGEX "_tmpl\\.c$")
+set_source_files_properties(${MC_DAV1D_ITEMS} PROPERTIES COMPILE_DEFINITIONS BITDEPTH=8)
+set_target_properties(mc_dav1d PROPERTIES C_STANDARD 11)
+target_compile_options(mc_dav1d PRIVATE -w)
+target_include_directories(mc_dav1d PRIVATE ${MC_DAV1D_DIR} PUBLIC ${MC_DAV1D_DIR}/include)
+target_link_libraries(MCCore PUBLIC mc_dav1d)
 target_precompile_headers(MCCore PRIVATE ${MC_SRC}/lib/MCCore/stdafx.h)
 target_link_libraries(MCCore PUBLIC SDL3::SDL3-static mimalloc-static)
 # Apple's clang fuses a*b+c into one rounding where MSVC rounds twice; off, the game computes what it does on Windows

@@ -94,6 +94,8 @@
     <ClCompile Include="tests\GuiObjectTests.cpp" />
     <ClCompile Include="tests\GuiTests.cpp" />
     <ClCompile Include="tests\HdArtTests.cpp" />
+    <ClCompile Include="tests\HdAudioTests.cpp" />
+    <ClCompile Include="tests\HdMovieTests.cpp" />
     <ClCompile Include="tests\HdPackTests.cpp" />
     <ClCompile Include="tests\IniFileTests.cpp" />
     <ClCompile Include="tests\InputTests.cpp" />
@@ -149,6 +151,7 @@
     <ClInclude Include="tests\fixtures\MCRetailData.h" />
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />
     <ClInclude Include="tests\fixtures\MCTinyMap.h" />
+    <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCMock.h" />
     <ClInclude Include="tests\MCTest.h" />
     <ClInclude Include="tests\ScreenInput.h" />

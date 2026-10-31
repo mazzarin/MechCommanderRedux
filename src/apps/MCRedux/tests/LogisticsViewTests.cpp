@@ -24,6 +24,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
 #include "sound/MCSoundSystem.h"
+#include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -141,7 +142,8 @@ namespace
     /// <summary>
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 76 wide and 11 tall at
     /// (left, top), its list's rows 10 tall from top + 11. DIFFICULTY's field is at (512, 176) (EASY, REGULAR, HARD),
-    /// RENDERER's at (512, 243) (VULKAN, SOFTWARE), HD ART's at (390, 347) (OFF, ON).
+    /// RENDERER's at (512, 243) (VULKAN, SOFTWARE), HD ART's at (390, 347) (OFF, ON), HD AUDIO's at (390, 401) (OFF, ON,
+    /// ORCHESTRAL).
     /// </summary>
     struct PrefsDropDown
     {
@@ -156,6 +158,7 @@ namespace
     constexpr PrefsDropDown DifficultyDropDown{176};
     constexpr PrefsDropDown RendererDropDown{243};
     constexpr PrefsDropDown HdArtDropDown{347, 390};
+    constexpr PrefsDropDown HdAudioDropDown{401, 390};
 
     /// <summary>Runs five frames: a click lands and the screen settles.</summary>
     void RunFrames()
@@ -385,6 +388,78 @@ TEST_CASE_ISOLATED("game: the preferences screen turns HD art on and saves it in
 }
 
 /// <summary>
+/// The preferences screen's HD AUDIO drop-down: without a pack it offers OFF and ON (ORCHESTRAL only with a pack's
+/// orchestral music), ON says where the pack goes, OFF says nothing, CANCEL puts OFF back (and the field shows it),
+/// ACCEPT writes PREFS "HDAudio".
+/// </summary>
+TEST_CASE_ISOLATED("game: the preferences screen turns HD audio on and saves it in PREFS")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    // The tests' user folder overlays the install, so a PREFS written here would be every later test's.
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::filesystem::remove(prefsPath);
+    REQUIRE_EQ(GHdAudio, static_cast<int>(HdAudioOff));
+    REQUIRE(!MCHdAudio::PackReadable());
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+
+    ShowPreferences();
+    RunFrames();
+    REQUIRE(FindDropDown(HdAudioDropDown) != nullptr);
+    CHECK_EQ(FindDropDown(HdAudioDropDown)->Items().size(), size_t{2});
+    const uint32_t offShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs hd audio off", offShown);
+    ChooseIn(HdAudioDropDown, 1);
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOn));
+    CloseMenuMessage("prefs hd audio needs a pack");
+    const uint32_t onShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("prefs hd audio on", onShown);
+    CHECK(onShown != offShown);
+
+    // OFF says nothing.
+    ChooseIn(HdAudioDropDown, 0);
+    CHECK(dialog.ShowWindow == 0);
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOff));
+    CHECK_EQ(MCScreenInput::ScreenHash(), offShown);
+
+    // CANCEL puts the choice back, and the field shows it when the screen opens again.
+    ChooseIn(HdAudioDropDown, 1);
+    CloseMenuMessage("prefs hd audio needs a pack again");
+    CancelPrefs();
+    RunFrames();
+    CHECK_EQ(GHdAudio, static_cast<int>(HdAudioOff));
+    ShowPreferences();
+    RunFrames();
+    CHECK_EQ(MCScreenInput::ScreenHash(), offShown);
+
+    ChooseIn(HdAudioDropDown, 1);
+    CloseMenuMessage("prefs hd audio needs a pack before accept");
+    WritePrefs();
+    RunFrames();
+    std::optional<int32_t> saved;
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        const MCFitResult<int32_t> hdAudio = prefs.Read<int32_t>("HDAudio");
+        CHECK(hdAudio.has_value());
+
+        if (hdAudio.has_value())
+        {
+            saved = *hdAudio;
+        }
+    }
+
+    std::filesystem::remove(prefsPath);
+    GHdAudio = HdAudioOff;
+    CHECK(saved == std::optional<int32_t>(HdAudioOn));
+}
+
+/// <summary>
 /// The preferences screen's drop-downs with a player's mouse and keys (SDL events through CheckMouse and the key
 /// messages): a click on the field opens the list in front of the screen and takes the mouse, a click on a row chooses
 /// it and closes, a press outside closes without a change and goes no further, a drag from the field to a row chooses
@@ -460,7 +535,7 @@ TEST_CASE_ISOLATED("game: the preferences drop-downs work with a player's mouse 
 
     // A press outside closes it with no change, and doesn't reach what's there (ACCEPT would leave the screen).
     constexpr int32_t AcceptX = 499;
-    constexpr int32_t AcceptY = 401;
+    constexpr int32_t AcceptY = 455;
     CHECK(std::dynamic_pointer_cast<MCLogButton>(screen.FindObject(AcceptX, AcceptY)) != nullptr);
     MCScreenInput::RealClick(AcceptX, AcceptY);
     CHECK(!renderer->IsOpen());

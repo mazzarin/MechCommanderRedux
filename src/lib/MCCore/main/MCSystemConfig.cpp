@@ -15,6 +15,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
+#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
@@ -196,6 +197,9 @@ void ReadPreferences(MCFitIniFile& file)
     GShowFps = showFps ? 1 : GShowFps;
     // Port-only: HDArt draws the HD art pack's frames where it has them (sprite/MCHdArt.h).
     GHdArt = file.Read<bool>("HDArt").value_or(false) ? 1 : 0;
+    // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
+    GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(HdAudioOff), static_cast<int32_t>(HdAudioOff),
+                          static_cast<int32_t>(HdAudioOrchestral));
     // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
     GHdLighting = file.Read<bool>("HDLighting").value_or(false) ? 1 : 0;
 

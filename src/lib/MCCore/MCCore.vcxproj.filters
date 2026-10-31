@@ -1063,6 +1063,9 @@
     <ClCompile Include="platform\MCFileSystem.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCFlac.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCFrameLog.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1120,6 +1123,9 @@
     <ClCompile Include="platform\MCVulkanShaders.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="sound\MCHdAudio.cpp">
+      <Filter>sound</Filter>
+    </ClCompile>
     <ClCompile Include="sound\MCRadio.cpp">
       <Filter>sound</Filter>
     </ClCompile>
@@ -1151,6 +1157,9 @@
       <Filter>sprite</Filter>
     </ClCompile>
     <ClCompile Include="sprite\MCHdArt.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
+    <ClCompile Include="sprite\MCHdMovie.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
     <ClCompile Include="sprite\MCMechActor.cpp">
@@ -2232,6 +2241,9 @@
     <ClInclude Include="platform\MCFileSystem.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCFlac.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCFrameLog.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2292,6 +2304,9 @@
     <ClInclude Include="platform\MCWin32Defs.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="sound\MCHdAudio.h">
+      <Filter>sound</Filter>
+    </ClInclude>
     <ClInclude Include="sound\MCRadio.h">
       <Filter>sound</Filter>
     </ClInclude>
@@ -2323,6 +2338,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCHdArt.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCHdMovie.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechActor.h">

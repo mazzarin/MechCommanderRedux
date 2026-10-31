@@ -681,6 +681,20 @@ void MCRenderer::UnlockTexture(MCTexture& texture)
     texture.Dirty = true;
 }
 
+void MCRenderer::ShowHdPicture(MCTexture& texture, std::shared_ptr<const MCHdArt::Frame> frame, int32_t x, int32_t y)
+{
+    if (const std::shared_ptr<MCRenderer> hardware = HardwareRenderer.lock())
+    {
+        hardware->OnShowHdPicture(texture, std::move(frame), x, y);
+    }
+}
+
+bool MCRenderer::ShowsHdPictures()
+{
+    const std::shared_ptr<MCRenderer> hardware = HardwareRenderer.lock();
+    return hardware != nullptr && Drawing == MCGpuDrawing::On && hardware->OnShowsHdPictures();
+}
+
 std::span<const std::shared_ptr<MCTexture>> MCRenderer::Textures()
 {
     return TextureList();

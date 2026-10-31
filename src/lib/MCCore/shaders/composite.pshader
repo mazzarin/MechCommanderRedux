@@ -67,7 +67,7 @@ cbuffer Composite : register(b0, space3)
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 32;
 // A light's pool falls off as 1 / (1 + LightFalloff * (d / reach)^2), faded out to nothing at its reach.
-static const float LightFalloff = 12.0;
+static const float LightFalloff = 16.0;
 // Of the light, what the air scatters back even off black ground.
 static const float LightScatter = 0.05;
 // Lit colours brighter than this (or than the world's own) are eased toward white instead of clipped.
@@ -106,8 +106,9 @@ float3 LightAt(float2 texel)
     return sum;
 }
 
-// The world's colour at a texel in the world's own light and the lights': lit as a surface of that colour (less so a
-// light's own bright pixels), the light's scatter added, and what rises above the knee eased toward white.
+// The world's colour at a texel in the world's own light and the lights': lit as a surface of that colour, the light's
+// scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their brightness:
+// the world's dimming and the lights pass them by.
 float3 Lit(float3 world, float2 texel)
 {
     if (lighting.x <= 0.0 && lighting.z == 1.0)
@@ -115,9 +116,9 @@ float3 Lit(float3 world, float2 texel)
         return world;
     }
 
-    const float3 base = world * lighting.z;
-    const float3 light = LightAt(texel) * lighting.y;
     const float selfLit = smoothstep(LightSelfLit, 1.0, max(world.r, max(world.g, world.b)));
+    const float3 base = world * lerp(lighting.z, 1.0, selfLit);
+    const float3 light = LightAt(texel) * lighting.y;
     const float3 lit = base + world * light * (1.0 - selfLit) + light * LightScatter;
     const float3 knee = min(max(base, LightKnee), 0.999);
     const float3 over = max(lit - knee, 0.0);

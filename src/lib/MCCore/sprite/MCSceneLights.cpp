@@ -14,7 +14,12 @@ namespace
     /// <summary>A glow lights the ground this many times the side of a square of its pixels away.</summary>
     constexpr float GlowReachPerSide = 2.5f;
     /// <summary>How much a glow of white pixels lights the ground under it (1 doubles it).</summary>
-    constexpr float GlowGain = 1.5f;
+    constexpr float GlowGain = 1.0f;
+    /// <summary>
+    /// A light's colour is this much further from grey than its pixels' mean: the mean of a glow's white core and tinted
+    /// rim is paler than the light it stands for.
+    /// </summary>
+    constexpr float LightSaturation = 1.6f;
     /// <summary>A beam lights this many times its width to each side, and at least BeamMinReach.</summary>
     constexpr float BeamReachPerWidth = 10.0f;
     constexpr float BeamMinReach = 28.0f;
@@ -118,6 +123,20 @@ namespace
         return glow;
     }
 
+    /// <summary>A colour <see cref="LightSaturation"/> times further from the grey of its mean.</summary>
+    std::array<float, 3> Saturated(const std::array<float, 3>& color)
+    {
+        const float grey = (color[0] + color[1] + color[2]) / 3.0f;
+        std::array<float, 3> saturated{};
+
+        for (size_t i = 0; i < color.size(); ++i)
+        {
+            saturated[i] = std::max(grey + (color[i] - grey) * LightSaturation, 0.0f);
+        }
+
+        return saturated;
+    }
+
     /// <summary>What sorts the brightest lights first: their light over the ground they reach.</summary>
     float Brightness(const MCSceneLight& light)
     {
@@ -125,8 +144,9 @@ namespace
     }
 
     /// <summary>A beam's light.</summary>
-    void AddBeamLight(float x0, float y0, float x1, float y1, float width, const std::array<float, 3>& color)
+    void AddBeamLight(float x0, float y0, float x1, float y1, float width, const std::array<float, 3>& pixels)
     {
+        const std::array<float, 3> color = Saturated(pixels);
         MCSceneLight light;
         // The ground under a beam is its height lower on the screen.
         light.X0 = x0;
@@ -183,9 +203,10 @@ auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, 
     light.Y0 = light.Y1 = y + altitude;
     light.Height = std::max(altitude - glow->Y, MinHeight);
     light.Reach = GlowReachPerSide * std::sqrt(static_cast<float>(glow->Pixels));
-    light.Red = glow->Color[0] * GlowGain;
-    light.Green = glow->Color[1] * GlowGain;
-    light.Blue = glow->Color[2] * GlowGain;
+    const std::array<float, 3> color = Saturated(glow->Color);
+    light.Red = color[0] * GlowGain;
+    light.Green = color[1] * GlowGain;
+    light.Blue = color[2] * GlowGain;
     Add(light);
 }
 

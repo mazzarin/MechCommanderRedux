@@ -30,6 +30,9 @@ namespace
     constexpr float BeamGain = 0.9f;
     /// <summary>A beam's height above the ground (the arms and torsos it runs between), in pixels.</summary>
     constexpr float BeamHeight = 10.0f;
+    /// <summary>DUSK's world light (the world dimmed to it) and its lights' strength.</summary>
+    constexpr float DuskAmbient = 0.6f;
+    constexpr float DuskStrength = 1.0f;
     /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
     constexpr float BrightPixel = 0.7f;
 
@@ -193,6 +196,19 @@ auto MCSceneLights::Lighting() -> MCLighting&
     return TheState().Lighting;
 }
 
+auto MCSceneLights::ShownLighting() -> MCLighting
+{
+    MCLighting shown = TheState().Lighting;
+
+    if (GHdLighting == HdLightingDusk)
+    {
+        shown.Ambient = DuskAmbient;
+        shown.Strength = DuskStrength;
+    }
+
+    return shown;
+}
+
 auto MCSceneLights::Begin(const MCPane& pane) -> void
 {
     State& state = TheState();
@@ -202,7 +218,7 @@ auto MCSceneLights::Begin(const MCPane& pane) -> void
 
 auto MCSceneLights::Add(MCSceneLight light) -> void
 {
-    if (GHdLighting != 0 && !TheState().Drawing.expired())
+    if (GHdLighting != HdLightingOff && !TheState().Drawing.expired())
     {
         TheState().Adding.push_back(light);
     }
@@ -211,7 +227,7 @@ auto MCSceneLights::Add(MCSceneLight light) -> void
 auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, float x, float y, float altitude,
                             MCGlowPixels pixels) -> void
 {
-    if (GHdLighting == 0 || TheState().Drawing.expired())
+    if (GHdLighting == HdLightingOff || TheState().Drawing.expired())
     {
         return;
     }
@@ -238,7 +254,7 @@ auto MCSceneLights::AddGlow(std::span<const uint8_t> shapeTable, int32_t frame, 
 
 auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D& position, MCGlowPixels pixels) -> void
 {
-    if (GHdLighting == 0 || TheState().Drawing.expired())
+    if (GHdLighting == HdLightingOff || TheState().Drawing.expired())
     {
         return;
     }
@@ -262,7 +278,7 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
 {
-    if (GHdLighting == 0 || TheState().Drawing.expired())
+    if (GHdLighting == HdLightingOff || TheState().Drawing.expired())
     {
         return;
     }
@@ -273,7 +289,7 @@ auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width,
 auto MCSceneLights::AddShapeBeam(float x0, float y0, float x1, float y1, float width,
                                  std::span<const uint8_t> shapeTable, int32_t frame) -> void
 {
-    if (GHdLighting == 0 || TheState().Drawing.expired())
+    if (GHdLighting == HdLightingOff || TheState().Drawing.expired())
     {
         return;
     }
@@ -310,7 +326,7 @@ auto MCSceneLights::Shown(const MCWindow& view) -> std::span<const MCSceneLight>
 {
     const State& state = TheState();
 
-    if (GHdLighting == 0 || state.ShownWindow.lock().get() != &view)
+    if (GHdLighting == HdLightingOff || state.ShownWindow.lock().get() != &view)
     {
         return {};
     }

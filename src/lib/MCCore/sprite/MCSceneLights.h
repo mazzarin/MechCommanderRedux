@@ -61,8 +61,11 @@ namespace MCSceneLights
         float SelfLit = 0.55f;
     };
 
-    /// <summary>The settings the next frames are shown with.</summary>
+    /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
     MCLighting& Lighting();
+
+    /// <summary>The settings the frames are shown with: <see cref="Lighting"/>'s, at DUSK its strength and dimming.</summary>
+    MCLighting ShownLighting();
 
     /// <summary>
     /// Starts the lights of the world drawn into <paramref name="pane"/> (MCCamera::Render, as its draw list starts).
@@ -119,5 +122,16 @@ namespace MCSceneLights
     float GroundAspect();
 }
 
-/// <summary>Port-only: light the world around shots, fires and explosions (PREFS "HDLighting"; off by default).</summary>
+/// <summary>
+/// Port-only: PREFS "HDLighting": 0 draws the world as the original did; 1 lights it around shots, fires and explosions;
+/// 2 the same at dusk, the world dimmed and the lights stronger. Off by default.
+/// </summary>
 extern int GHdLighting;
+
+/// <summary>GHdLighting's values.</summary>
+enum MCHdLightingSetting : int
+{
+    HdLightingOff = 0,
+    HdLightingOn = 1,
+    HdLightingDusk = 2,
+};

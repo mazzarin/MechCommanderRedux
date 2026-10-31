@@ -66,14 +66,15 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 329};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER and UI RESOLUTION under DIFFICULTY, and
-    /// HD ART and HD AUDIO under SOUND.
+    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and HD LIGHTING under
+    /// DIFFICULTY, and HD ART and HD AUDIO under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
     constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
     constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 63};
     constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
+    constexpr MCPrefsPlace HdLightingBoxPlace{132, 186, 120, 50};
     constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
     constexpr MCPrefsPlace HdAudioBoxPlace{10, 236, 112, 50};
 
@@ -133,6 +134,7 @@ namespace
     int32_t SavedInterfaceLevel = 0;
     int32_t SavedHdArt = 0;
     int32_t SavedHdAudio = 0;
+    int32_t SavedHdLighting = 0;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -324,6 +326,13 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
+    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h); DUSK dims the world
+    // and lights it more. From the next frame on.
+    MCLogGroupBox& hdLighting = AddBox(screen, panel, HdLightingBoxPlace, BoxOutlineColor);
+    AddLabel(screen, hdLighting, "HD LIGHTING", BoxTitleLeft, BoxTitleTop);
+    AddDropDown(screen, hdLighting, GHdLighting,
+                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}}, nullptr);
+
     // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
     MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);
     AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
@@ -369,6 +378,7 @@ void ShowPreferences()
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
     SavedHdArt = GHdArt;
     SavedHdAudio = GHdAudio;
+    SavedHdLighting = GHdLighting;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -405,6 +415,7 @@ void CancelPrefs()
     GUiResolution = SavedUiResolution;
     GHdArt = SavedHdArt;
     GHdAudio = SavedHdAudio;
+    GHdLighting = SavedHdLighting;
     Cancel();
 }
 
@@ -433,7 +444,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     prefs.WriteIdLong("HDAudio", GHdAudio);
-    prefs.WriteIdBoolean("HDLighting", GHdLighting != 0);
+    prefs.WriteIdLong("HDLighting", GHdLighting);
     Cancel();
 }
 

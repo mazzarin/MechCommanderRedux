@@ -48,13 +48,13 @@ namespace
     void SetLighting(CompositeUniforms& uniforms, const MCWindow& world, float width, float height)
     {
         const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
-        const MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+        const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
         const float across = width / static_cast<float>(world.XMax + 1);
         const float down = height / static_cast<float>(world.YMax + 1);
         const size_t count = std::min(lights.size(), MCSceneLights::MaxLights);
         uniforms.Lighting[0] = static_cast<float>(count);
         uniforms.Lighting[1] = lighting.Strength;
-        uniforms.Lighting[2] = GHdLighting != 0 ? lighting.Ambient : 1.0f;
+        uniforms.Lighting[2] = GHdLighting != HdLightingOff ? lighting.Ambient : 1.0f;
         uniforms.Lighting[3] = across / (down * MCSceneLights::GroundAspect());
         uniforms.LightTone[0] = lighting.Scatter;
         uniforms.LightTone[1] = lighting.Knee;

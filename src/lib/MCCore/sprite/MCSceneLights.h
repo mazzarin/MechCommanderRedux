@@ -95,7 +95,7 @@ namespace MCSceneLights
         /// How strong a light's own glow (MCLight's sprite: the original's white oval, its stand-in for the light) shows,
         /// 0 to 1 as drawn: the light it stands for already lights the world around it.
         /// </summary>
-        float GlowOvals = 0.5f;
+        float GlowOvals = 0.75f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

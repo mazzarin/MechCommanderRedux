@@ -10,6 +10,7 @@
 #include "object/MCObjectDrawing.h"
 #include "object/MCObjectSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
 
@@ -112,6 +113,10 @@ auto MCExplosion::Render() -> void
     if (!JustCreated && WindowsVisible == Turn)
     {
         Appearance->Render(-150);
+
+        // Port-only (HD lighting): an explosion's fire lights what's around it, as long as it burns (its light's glow,
+        // where it has one, is a flash that ends sooner).
+        MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
     }
 
     if (Light != nullptr)

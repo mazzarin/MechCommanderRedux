@@ -9,6 +9,7 @@
 #include "object/MCLaserType.h"
 #include "object/MCObjectSystem.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCSceneLights.h"
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfx.h"
@@ -371,6 +372,8 @@ auto MCLaser::Render() -> void
         const MCFixed16 color = static_cast<MCFixed16>(CoolColor << 16);
         ElementList().Add(
             ElementList().Make<MCPolygonElement>(BeamQuad(startX, startY, endX, endY, crossX, crossY, color), depth));
+        // Port-only (HD lighting): the beam lights the ground and units along it.
+        MCSceneLights::AddBeam(startX, startY, endX, endY, width, static_cast<uint8_t>(CoolColor));
 
         if (HotColor == CoolColor)
         {
@@ -392,6 +395,9 @@ auto MCLaser::Render() -> void
     const std::shared_ptr<MCTexture> texture = canvas.Texture.lock();
     MCRenderer::UnlockTexture(*texture);
     const float width = static_cast<float>(type.PixelWidth);
+    // Port-only (HD lighting): the bolt lights the ground and units along it, in its frame's colour.
+    MCSceneLights::AddShapeBeam(startX, startY - width * 0.5f, endX, endY - width * 0.5f, width,
+                                type.LaserEffectShape.Bytes(), PpcFrame);
     const auto top = static_cast<int32_t>(startY);
     ElementList().OpenGroup(top, true);
     const auto left = static_cast<int32_t>(startX);

@@ -20,6 +20,7 @@
 #include "object/MCSmoke.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCArmAppearance.h"
+#include "sprite/MCSceneLights.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -420,6 +421,14 @@ auto MCProjectileLaser::Render() -> void
     ElementList().OpenGroup(depth, true);
     ElementList().Add(ElementList().Make<MCPolygonElement>(side1, depth));
     ElementList().Add(ElementList().Make<MCPolygonElement>(side2, depth));
+
+    // Port-only (HD lighting): the bolt lights the ground and units along it, in its head's colour, as wide as its bulge.
+    const MCScreenVertex& head = side1.Vertices[0];
+    const MCScreenVertex& tail = side1.Vertices[2];
+    const float bulge = std::hypot(static_cast<float>(side1.Vertices[1].X - side2.Vertices[1].X),
+                                   static_cast<float>(side1.Vertices[1].Y - side2.Vertices[1].Y));
+    MCSceneLights::AddBeam(static_cast<float>(head.X), static_cast<float>(head.Y), static_cast<float>(tail.X),
+                           static_cast<float>(tail.Y), bulge * 0.5f, headColor);
 
     if (Smoke != nullptr)
     {

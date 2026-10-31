@@ -55,7 +55,78 @@ cbuffer Composite : register(b0, space3)
     // The screen fade (MCDisplay::SetFade): x, the amount taken off every component of the finished colour (0 none,
     // 1 black). The scene fades between screens (aSystem::fadeDownCurrentPalette) are done here, not in the palette.
     float4 fade;
+    // Port-only (HD lighting, sprite/MCSceneLights.h): x, the lights in lights (0 none); y, their strength; z, the
+    // world's own light (1 as drawn); w, the screen width a ground distance takes per screen height it takes (1 / the
+    // view's tilt).
+    float4 lighting;
+    // The lights' tone: x, what the air scatters back even off black ground; y, the knee above which lit colours (or
+    // the world's own, when brighter) are eased toward white instead of clipped; z, the most light a surface takes
+    // (light piling up from many lights eases toward it); w, the brightness above which a pixel is taken for a light
+    // itself (a glow, a fireball) and keeps its own brightness, taking none of the light at white.
+    float4 lightTone;
+    // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
+    // and reach (xy); its colour times its strength (rgb).
+    float4 lights[192];
 };
+
+// The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
+static const uint MaxLights = 64;
+// A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
+// this much of its reach, that much of its reach; faded out to nothing at its reach.
+static const float LightSoftness = 0.3;
+
+// The light at a world texel: every light's pool on the ground under it, softer the higher it is.
+float3 LightAt(float2 texel)
+{
+    float3 sum = float3(0.0, 0.0, 0.0);
+    const uint count = min((uint)lighting.x, MaxLights);
+    // Screen heights stretched to the ground distances they show.
+    const float2 ground = float2(1.0, lighting.w);
+    const float2 at = texel * ground;
+
+    for (uint i = 0; i < count; ++i)
+    {
+        const float4 ends = lights[i * 3];
+        const float2 shape = lights[i * 3 + 1].xy;
+        const float2 a = ends.xy * ground;
+        const float2 ab = ends.zw * ground - a;
+        const float length2 = dot(ab, ab);
+        const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
+        const float2 off = at - (a + ab * t);
+        const float d2 = dot(off, off);
+        const float reach2 = max(shape.y * shape.y, 1.0);
+
+        if (d2 < reach2)
+        {
+            const float soft = max(shape.x, shape.y * LightSoftness);
+            const float x2 = d2 / reach2;
+            const float fade = 1.0 - x2 * x2;
+            sum += lights[i * 3 + 2].rgb * (fade * fade * soft * soft / (d2 + soft * soft));
+        }
+    }
+
+    return sum;
+}
+
+// The world's colour at a texel in the world's own light and the lights' (lightTone): lit as a surface of that colour,
+// the light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
+// brightness: the world's dimming and the lights pass them by.
+float3 Lit(float3 world, float2 texel)
+{
+    if (lighting.x <= 0.0 && lighting.z == 1.0)
+    {
+        return world;
+    }
+
+    const float selfLit = smoothstep(lightTone.w, 1.0, max(world.r, max(world.g, world.b)));
+    const float3 base = world * lerp(lighting.z, 1.0, selfLit);
+    const float most = max(lightTone.z, 0.001);
+    const float3 light = most * (1.0 - exp(-LightAt(texel) * lighting.y / most));
+    const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
+    const float3 knee = min(max(base, lightTone.y), 0.999);
+    const float3 over = max(lit - knee, 0.0);
+    return min(lit, knee) + (1.0 - knee) * (1.0 - exp(-over / (1.0 - knee)));
+}
 
 // The finished colour through the screen fade.
 float4 Faded(float3 color)
@@ -109,7 +180,7 @@ float4 main(float4 position : SV_Position) : SV_Target
     {
         // The GPU's colours: the screen over the world, or over the key's colour where there's no world.
         const float3 under =
-            mode.x != 0.0 ? TexelAt(worldTex, worldSampler, world, worldSize.zw).rgb : Shown(255);
+            mode.x != 0.0 ? Lit(TexelAt(worldTex, worldSampler, world, worldSize.zw).rgb, world + 0.5) : Shown(255);
         return Faded(saturate(screen.rgb + under * (1.0 - screen.a)));
     }
 
@@ -120,6 +191,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         index = Byte(TexelAt(worldTex, worldSampler, world, worldSize.zw).r);
         const uint op = IndexAt(opTex, opSampler, screenPixel, screenSize.zw);
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
+        return Faded(Lit(Shown(index), world + 0.5));
     }
 
     return Faded(Shown(index));

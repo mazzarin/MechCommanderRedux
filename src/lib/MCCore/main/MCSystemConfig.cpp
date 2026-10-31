@@ -19,6 +19,7 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
 
@@ -200,6 +201,9 @@ void ReadPreferences(MCFitIniFile& file)
     // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
     GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(HdAudioOff), static_cast<int32_t>(HdAudioOff),
                           static_cast<int32_t>(HdAudioOrchestral));
+    // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
+    GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(HdLightingOff),
+                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingDusk));
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

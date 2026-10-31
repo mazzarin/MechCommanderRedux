@@ -7,6 +7,7 @@
 #include "main/MCMissionGlobals.h"
 #include "object/MCLightType.h"
 #include "object/MCObjectDrawing.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
 
 MCLight::MCLight() = default;
@@ -72,6 +73,9 @@ auto MCLight::Render() -> void
     if (!JustCreated && WindowsVisible == Turn && !Finished)
     {
         Appearance->Render(-500);
+
+        // Port-only (HD lighting): the glow lights the ground and the units around it, from as high as it is.
+        MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::All);
     }
 }
 

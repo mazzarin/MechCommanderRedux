@@ -57,6 +57,7 @@
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCPUAppearanceType.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
@@ -3675,11 +3676,36 @@ TEST_CASE_ISOLATED("game: HD art draws a translucent sprite's shadow with smooth
 namespace
 {
     /// <summary>
+    /// With <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;]]</c>,
+    /// turns HD lighting on (sprite/MCSceneLights.h), its lights that strong and the world's own light that bright (1 as
+    /// drawn, below 1 dusk), and the tone as given (MCSceneLights::MCLighting's).
+    /// </summary>
+    void LightingFromOptions()
+    {
+        const std::optional<std::string_view> lighting = MCTest::Option("hd-lighting");
+
+        if (!lighting.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*lighting);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f", &settings.Strength, &settings.Ambient,
+                            &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit) >= 1);
+        GHdLighting = 1;
+        std::cout << std::format(
+            "  HD lighting: strength {:.2f}, the world's own light {:.2f}, scatter {:.2f}, knee {:.2f}, "
+            "most {:.2f}, self-lit above {:.2f}\n",
+            settings.Strength, settings.Ambient, settings.Scatter, settings.Knee, settings.Most, settings.SelfLit);
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
-    /// unless <c>--hd-original 1</c>.
+    /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>).
     /// </summary>
     /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
     bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
@@ -3718,6 +3744,7 @@ namespace
             MCTerrainReadHdTiles();
         }
 
+        LightingFromOptions();
         return original;
     }
 

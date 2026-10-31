@@ -21,6 +21,7 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
@@ -68,7 +69,7 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 329};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and SCROLL SPEED under
+    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION, SCROLL SPEED and HD LIGHTING under
     /// DIFFICULTY, and HD ART and HD AUDIO under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
@@ -78,6 +79,7 @@ namespace
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
     constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
     constexpr MCPrefsPlace ScrollSpeedBoxPlace{132, 186, 120, 50};
+    constexpr MCPrefsPlace HdLightingBoxPlace{132, 240, 120, 50};
     constexpr MCPrefsPlace HdAudioBoxPlace{10, 236, 112, 50};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
@@ -147,6 +149,7 @@ namespace
     int32_t SavedHdArt = 0;
     int32_t SavedScrollSpeed = AutoScrollSpeed;
     int32_t SavedHdAudio = 0;
+    int32_t SavedHdLighting = 0;
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -339,6 +342,13 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
+    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h); DUSK dims the world
+    // and lights it more. From the next frame on.
+    MCLogGroupBox& hdLighting = AddBox(screen, panel, HdLightingBoxPlace, BoxOutlineColor);
+    AddLabel(screen, hdLighting, "HD LIGHTING", BoxTitleLeft, BoxTitleTop);
+    AddDropDown(screen, hdLighting, GHdLighting,
+                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}}, nullptr);
+
     // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
     MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);
     AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
@@ -402,6 +412,7 @@ void ShowPreferences()
     SavedHdArt = GHdArt;
     SavedScrollSpeed = GScrollSpeed;
     SavedHdAudio = GHdAudio;
+    SavedHdLighting = GHdLighting;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -441,6 +452,7 @@ void CancelPrefs()
     GHdArt = SavedHdArt;
     GScrollSpeed = SavedScrollSpeed;
     GHdAudio = SavedHdAudio;
+    GHdLighting = SavedHdLighting;
     Cancel();
 }
 
@@ -485,6 +497,7 @@ void SavePrefs()
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     prefs.WriteIdLong("HDAudio", GHdAudio);
+    prefs.WriteIdLong("HDLighting", GHdLighting);
     MCKeyBindings::WritePrefs(prefs);
 }
 

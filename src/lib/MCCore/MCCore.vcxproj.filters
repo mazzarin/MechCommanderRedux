@@ -1183,6 +1183,9 @@
     <ClCompile Include="sprite\MCPUAppearanceType.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCSceneLights.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCShape.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2371,6 +2374,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCPUAppearanceType.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCSceneLights.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCShape.h">

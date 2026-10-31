@@ -57,7 +57,7 @@ namespace
     /// <summary>Of a unit's sprite, the share of its width its body is: its shadow's width at its feet.</summary>
     constexpr float CasterBody = 0.6f;
     /// <summary>A shadow is at most this many times as long as its unit is tall.</summary>
-    constexpr float ShadowLengthPerHeight = 1.5f;
+    constexpr float ShadowLengthPerHeight = 2.5f;
     /// <summary>A shadow's width at its tip per its width at the feet: it spreads as it goes.</summary>
     constexpr float ShadowSpread = 1.5f;
     /// <summary>A light that lights a unit's feet less than this (1 doubles them) casts no shadow from it.</summary>

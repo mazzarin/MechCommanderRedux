@@ -66,7 +66,7 @@ namespace MCSceneLights
         /// </summary>
         float Facing = 24.0f;
         /// <summary>How much of a light a unit's shadow keeps off the ground behind it (0: no shadows).</summary>
-        float Shadow = 0.8f;
+        float Shadow = 0.9f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

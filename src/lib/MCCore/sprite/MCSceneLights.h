@@ -59,6 +59,11 @@ namespace MCSceneLights
         float Most = 0.8f;
         /// <summary>A pixel brighter than this is taken for a light itself and keeps its own brightness.</summary>
         float SelfLit = 0.55f;
+        /// <summary>
+        /// The world's relief: its own shading taken for height, this many of the window's pixels from black to white,
+        /// so a surface brighter toward a light faces it and takes more of it (0: every surface lit as flat ground).
+        /// </summary>
+        float Facing = 0.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

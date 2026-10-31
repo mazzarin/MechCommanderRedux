@@ -64,6 +64,10 @@ cbuffer Composite : register(b0, space3)
     // (light piling up from many lights eases toward it); w, the brightness above which a pixel is taken for a light
     // itself (a glow, a fireball) and keeps its own brightness, taking none of the light at white.
     float4 lightTone;
+    // How the lights take the world's relief: x, the height (in the world's texels) a step from black to white in its own
+    // shading stands for, so a surface brighter toward a light faces it (0: lit as flat); y, the texels between the
+    // pixels its slope is taken across.
+    float4 lightFacing;
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
     float4 lights[192];
@@ -75,8 +79,9 @@ static const uint MaxLights = 64;
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
 
-// The light at a world texel: every light's pool on the ground under it, softer the higher it is.
-float3 LightAt(float2 texel)
+// The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
+// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away.
+float3 LightAt(float2 texel, float2 slope)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
     const uint count = min((uint)lighting.x, MaxLights);
@@ -101,17 +106,19 @@ float3 LightAt(float2 texel)
             const float soft = max(shape.x, shape.y * LightSoftness);
             const float x2 = d2 / reach2;
             const float fade = 1.0 - x2 * x2;
-            sum += lights[i * 3 + 2].rgb * (fade * fade * soft * soft / (d2 + soft * soft));
+            // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
+            const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
+            sum += lights[i * 3 + 2].rgb * (fade * fade * soft * soft / (d2 + soft * soft) * facing);
         }
     }
 
     return sum;
 }
 
-// The world's colour at a texel in the world's own light and the lights' (lightTone): lit as a surface of that colour,
-// the light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
-// brightness: the world's dimming and the lights pass them by.
-float3 Lit(float3 world, float2 texel)
+// The world's colour at a texel (sloped as SlopeAt finds) in the world's own light and the lights' (lightTone): lit as a
+// surface of that colour, the light's scatter added, and what rises above the knee eased toward white. A light's own
+// bright pixels keep their brightness: the world's dimming and the lights pass them by.
+float3 Lit(float3 world, float2 texel, float2 slope)
 {
     if (lighting.x <= 0.0 && lighting.z == 1.0)
     {
@@ -121,7 +128,7 @@ float3 Lit(float3 world, float2 texel)
     const float selfLit = smoothstep(lightTone.w, 1.0, max(world.r, max(world.g, world.b)));
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
     const float most = max(lightTone.z, 0.001);
-    const float3 light = most * (1.0 - exp(-LightAt(texel) * lighting.y / most));
+    const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y / most));
     const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
     const float3 knee = min(max(base, lightTone.y), 0.999);
     const float3 over = max(lit - knee, 0.0);
@@ -163,6 +170,31 @@ float3 Shown(uint index)
     return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
 }
 
+// The world's colour at a world texel (clamped to the surface), through the palette for the software renderer's.
+float3 WorldAt(float2 texel)
+{
+    const float2 at = clamp(texel, 0.0, worldSize.xy - 1.0);
+    const float4 world = worldTex.Sample(worldSampler, (at + 0.5) / worldSize.zw);
+    return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
+}
+
+// The slope of the world's relief at a world texel, its own shading taken for height (lightFacing): its brightness's
+// rise a texel along the ground. None when nothing is lit or the lights take no relief.
+float2 SlopeAt(float2 texel)
+{
+    if (lighting.x <= 0.0 || lightFacing.x == 0.0)
+    {
+        return float2(0.0, 0.0);
+    }
+
+    const float3 luma = float3(0.299, 0.587, 0.114);
+    const float step = lightFacing.y;
+    const float across = dot(WorldAt(texel + float2(step, 0.0)) - WorldAt(texel - float2(step, 0.0)), luma);
+    const float down = dot(WorldAt(texel + float2(0.0, step)) - WorldAt(texel - float2(0.0, step)), luma);
+    // A texel down the screen is lighting.w texels along the ground.
+    return float2(across, down / lighting.w) / (2.0 * step);
+}
+
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
@@ -180,7 +212,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     {
         // The GPU's colours: the screen over the world, or over the key's colour where there's no world.
         const float3 under =
-            mode.x != 0.0 ? Lit(TexelAt(worldTex, worldSampler, world, worldSize.zw).rgb, world + 0.5) : Shown(255);
+            mode.x != 0.0 ? Lit(TexelAt(worldTex, worldSampler, world, worldSize.zw).rgb, world + 0.5, SlopeAt(world))
+                          : Shown(255);
         return Faded(saturate(screen.rgb + under * (1.0 - screen.a)));
     }
 
@@ -191,7 +224,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         index = Byte(TexelAt(worldTex, worldSampler, world, worldSize.zw).r);
         const uint op = IndexAt(opTex, opSampler, screenPixel, screenSize.zw);
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
-        return Faded(Lit(Shown(index), world + 0.5));
+        return Faded(Lit(Shown(index), world + 0.5, SlopeAt(world)));
     }
 
     return Faded(Shown(index));

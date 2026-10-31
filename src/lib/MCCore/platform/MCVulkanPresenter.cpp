@@ -36,6 +36,8 @@ namespace
         float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
         /// <summary>The lights' tone: their scatter, the knee, the most light and the brightness of a light's own pixels.</summary>
         float LightTone[4] = {};
+        /// <summary>How the lights take the world's relief: its height from black to white and the texels its slope spans.</summary>
+        float LightFacing[4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
         float Lights[MCSceneLights::MaxLights * 3][4] = {};
     };
@@ -60,6 +62,9 @@ namespace
         uniforms.LightTone[1] = lighting.Knee;
         uniforms.LightTone[2] = lighting.Most;
         uniforms.LightTone[3] = lighting.SelfLit;
+        // The relief in the texture's pixels, its slope across one of the window's.
+        uniforms.LightFacing[0] = lighting.Facing * across;
+        uniforms.LightFacing[1] = std::max(across, 1.0f);
 
         for (size_t i = 0; i < count; ++i)
         {

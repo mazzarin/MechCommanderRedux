@@ -260,10 +260,11 @@ float4 Bright(float2 texel)
 }
 
 // The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
-// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before. Each is taken from four taps half its
-// texel diagonally each way, which smooths its blocks.
+// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before and weighing BloomFalloff of it (a
+// glow mostly close by). Each is taken from four taps half its texel diagonally each way, which smooths its blocks.
 static const uint BloomFirst = 1;
 static const uint BloomLevels = 6;
+static const float BloomFalloff = 0.6;
 static const float2 BloomTaps[4] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5), float2(0.5, 0.5)};
 
 float3 BloomAt(float2 texel)
@@ -276,6 +277,8 @@ float3 BloomAt(float2 texel)
     // The texel's centre in the bloom's first level's texels.
     const float2 at = (texel + 0.5) * 0.5;
     float3 sum = float3(0.0, 0.0, 0.0);
+    float weight = 1.0;
+    float weights = 0.0;
 
     for (uint level = BloomFirst; level < BloomLevels; ++level)
     {
@@ -283,11 +286,14 @@ float3 BloomAt(float2 texel)
 
         for (uint tap = 0; tap < 4; ++tap)
         {
-            sum += bloomTex.SampleLevel(bloomSampler, (at + BloomTaps[tap] * size) / bloomSize.zw, level).rgb;
+            sum += weight * bloomTex.SampleLevel(bloomSampler, (at + BloomTaps[tap] * size) / bloomSize.zw, level).rgb;
         }
+
+        weights += weight;
+        weight *= BloomFalloff;
     }
 
-    return sum * (lightLook.y / (4.0 * (BloomLevels - BloomFirst)));
+    return sum * (lightLook.y / (4.0 * weights));
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
@@ -364,7 +370,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     if (mode.y != 0.0)
     {
         // The GPU's colours: the screen over the world (where the air over a fire shimmers, as it moves it, and with
-        // its bloom laid over it as a screen blend), or over the key's colour where there's no world.
+        // its bloom laid over it as a screen blend, but for a light's own pixels, which keep their colour rather than
+        // whiten), or over the key's colour where there's no world.
         float3 under = Shown(255);
 
         if (mode.x != 0.0)
@@ -372,7 +379,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float2 hazy = world + HazeAt(world + 0.5);
             const float4 lit =
                 any(hazy != world) ? WorldBetween(hazy) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
-            const float3 bloom = BloomAt(hazy);
+            const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(lit.rgb));
             under = 1.0 - (1.0 - Lit(lit.rgb, hazy + 0.5, SlopeAt(hazy), lit.a)) * (1.0 - bloom);
         }
 

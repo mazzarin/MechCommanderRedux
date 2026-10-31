@@ -44,13 +44,21 @@ namespace MCSceneLights
         Bright,
     };
 
-    /// <summary>How the lights are shown (the tools' --hd-lighting sets them).</summary>
+    /// <summary>How the lights are shown (composite.pshader's lighting and lightTone; the tools' --hd-lighting sets them).</summary>
     struct MCLighting
     {
         /// <summary>Every light's brightness is scaled by this.</summary>
-        float Strength = 1.0f;
+        float Strength = 0.7f;
         /// <summary>The world's own light, 1 as the original drew it; below 1 the scene is dusk and the lights show more.</summary>
         float Ambient = 1.0f;
+        /// <summary>Of the light, what the air scatters back even off black ground.</summary>
+        float Scatter = 0.02f;
+        /// <summary>Lit colours brighter than this (or than the world's own) are eased toward white instead of clipped.</summary>
+        float Knee = 0.75f;
+        /// <summary>The most light a surface takes: light piling up from many lights eases toward it.</summary>
+        float Most = 0.9f;
+        /// <summary>A pixel brighter than this is taken for a light itself and keeps its own brightness.</summary>
+        float SelfLit = 0.6f;
     };
 
     /// <summary>The settings the next frames are shown with.</summary>

@@ -34,6 +34,8 @@ namespace
         float Fade[4];
         /// <summary>Port-only (HD lighting): the lights, their strength, the world's own light and 1 / the tilt.</summary>
         float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+        /// <summary>The lights' tone: their scatter, the knee, the most light and the brightness of a light's own pixels.</summary>
+        float LightTone[4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
         float Lights[MCSceneLights::MaxLights * 3][4] = {};
     };
@@ -54,6 +56,10 @@ namespace
         uniforms.Lighting[1] = lighting.Strength;
         uniforms.Lighting[2] = GHdLighting != 0 ? lighting.Ambient : 1.0f;
         uniforms.Lighting[3] = across / (down * MCSceneLights::GroundAspect());
+        uniforms.LightTone[0] = lighting.Scatter;
+        uniforms.LightTone[1] = lighting.Knee;
+        uniforms.LightTone[2] = lighting.Most;
+        uniforms.LightTone[3] = lighting.SelfLit;
 
         for (size_t i = 0; i < count; ++i)
         {

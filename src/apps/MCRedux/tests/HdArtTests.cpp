@@ -3672,8 +3672,9 @@ TEST_CASE_ISOLATED("game: HD art draws a translucent sprite's shadow with smooth
 namespace
 {
     /// <summary>
-    /// With <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;]</c>, turns HD lighting on (sprite/MCSceneLights.h), its
-    /// lights that strong and the world's own light that bright (1 as drawn, below 1 dusk).
+    /// With <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;]]</c>,
+    /// turns HD lighting on (sprite/MCSceneLights.h), its lights that strong and the world's own light that bright (1 as
+    /// drawn, below 1 dusk), and the tone as given (MCSceneLights::MCLighting's).
     /// </summary>
     void LightingFromOptions()
     {
@@ -3686,10 +3687,13 @@ namespace
 
         MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
         const std::string given(*lighting);
-        REQUIRE(std::sscanf(given.c_str(), "%f,%f", &settings.Strength, &settings.Ambient) >= 1);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f", &settings.Strength, &settings.Ambient,
+                            &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit) >= 1);
         GHdLighting = 1;
-        std::cout << std::format("  HD lighting: strength {:.2f}, the world's own light {:.2f}\n", settings.Strength,
-                                 settings.Ambient);
+        std::cout << std::format(
+            "  HD lighting: strength {:.2f}, the world's own light {:.2f}, scatter {:.2f}, knee {:.2f}, "
+            "most {:.2f}, self-lit above {:.2f}\n",
+            settings.Strength, settings.Ambient, settings.Scatter, settings.Knee, settings.Most, settings.SelfLit);
     }
 
     /// <summary>

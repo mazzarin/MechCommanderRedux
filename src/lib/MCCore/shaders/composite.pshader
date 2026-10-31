@@ -59,6 +59,11 @@ cbuffer Composite : register(b0, space3)
     // world's own light (1 as drawn); w, the screen width a ground distance takes per screen height it takes (1 / the
     // view's tilt).
     float4 lighting;
+    // The lights' tone: x, what the air scatters back even off black ground; y, the knee above which lit colours (or
+    // the world's own, when brighter) are eased toward white instead of clipped; z, the most light a surface takes
+    // (light piling up from many lights eases toward it); w, the brightness above which a pixel is taken for a light
+    // itself (a glow, a fireball) and keeps its own brightness, taking none of the light at white.
+    float4 lightTone;
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
     float4 lights[192];
@@ -69,13 +74,6 @@ static const uint MaxLights = 64;
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
-// Of the light, what the air scatters back even off black ground.
-static const float LightScatter = 0.05;
-// Lit colours brighter than this (or than the world's own) are eased toward white instead of clipped.
-static const float LightKnee = 0.8;
-// Pixels brighter than this are taken for lights themselves (a glow, a fireball), and take less of the light: none at
-// white.
-static const float LightSelfLit = 0.7;
 
 // The light at a world texel: every light's pool on the ground under it, softer the higher it is.
 float3 LightAt(float2 texel)
@@ -110,9 +108,9 @@ float3 LightAt(float2 texel)
     return sum;
 }
 
-// The world's colour at a texel in the world's own light and the lights': lit as a surface of that colour, the light's
-// scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their brightness:
-// the world's dimming and the lights pass them by.
+// The world's colour at a texel in the world's own light and the lights' (lightTone): lit as a surface of that colour,
+// the light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
+// brightness: the world's dimming and the lights pass them by.
 float3 Lit(float3 world, float2 texel)
 {
     if (lighting.x <= 0.0 && lighting.z == 1.0)
@@ -120,11 +118,12 @@ float3 Lit(float3 world, float2 texel)
         return world;
     }
 
-    const float selfLit = smoothstep(LightSelfLit, 1.0, max(world.r, max(world.g, world.b)));
+    const float selfLit = smoothstep(lightTone.w, 1.0, max(world.r, max(world.g, world.b)));
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
-    const float3 light = LightAt(texel) * lighting.y;
-    const float3 lit = base + world * light * (1.0 - selfLit) + light * LightScatter;
-    const float3 knee = min(max(base, LightKnee), 0.999);
+    const float most = max(lightTone.z, 0.001);
+    const float3 light = most * (1.0 - exp(-LightAt(texel) * lighting.y / most));
+    const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
+    const float3 knee = min(max(base, lightTone.y), 0.999);
     const float3 over = max(lit - knee, 0.0);
     return min(lit, knee) + (1.0 - knee) * (1.0 - exp(-over / (1.0 - knee)));
 }

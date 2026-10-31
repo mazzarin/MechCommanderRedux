@@ -708,9 +708,16 @@ auto MCSceneLights::ShownTime() -> float
     return TheState().ShownTime;
 }
 
-auto MCSceneLights::ShownGround() -> MCSceneGround
+auto MCSceneLights::ShownGround(const MCWindow& view) -> std::optional<MCSceneGround>
 {
-    return TheState().ShownGround;
+    const State& state = TheState();
+
+    if (GHdLighting == HdLightingOff || state.ShownWindow.lock().get() != &view)
+    {
+        return std::nullopt;
+    }
+
+    return state.ShownGround;
 }
 
 auto MCSceneLights::ShownWaterPhase() -> float

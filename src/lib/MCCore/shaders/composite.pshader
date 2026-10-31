@@ -378,8 +378,10 @@ static const uint WaterBlues = 6;
 static const uint CommonWaterBlue = 0x59;
 static const uint FirstWaterColor = 0xd8;
 static const uint WaterColors = 8;
-// A water colour's component is taken as at least this when the flow scales the drawn colour by its change.
+// A water colour's component is taken as at least this when the flow scales the drawn colour by its change, which
+// brightens it this many times at most.
 static const float WaterFlowFloor = 0.02;
+static const float WaterFlowMost = 4.0;
 // The waves: long crests across the wind (east of north by its direction), two layers of noise this long along the wind
 // and WaveStretch times that across it, rolling at these speeds (meters a second), weighing this much, and a finer chop;
 // the water's brightness swings this much either way with them.
@@ -498,7 +500,7 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
         const uint entry = index - (uint)cycle.x;
         const float3 now = WaterCycleColour(entry, (uint)cycle.y);
         const float3 next = WaterCycleColour(entry, (uint)cycle.y + 1u);
-        flowing = color * lerp(now, next, water.y) / max(now, WaterFlowFloor);
+        flowing = color * min(lerp(now, next, water.y) / max(now, WaterFlowFloor), WaterFlowMost);
     }
 
     // The ground point (meters), along the wind and across it, and the game's time.

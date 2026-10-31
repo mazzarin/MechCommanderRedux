@@ -9688,14 +9688,6 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
     {
         MCTestGame::RunFrame(WaterFrameSeconds);
         Shoot(folder, std::format("water_{:04}", frame), original);
-
-        if (frame == 0)
-        {
-            const MCSceneGround ground = MCSceneLights::ShownGround();
-            std::cout << std::format(
-                "  the ground: a meter east is ({:.2f}, {:.2f}) window pixels, north ({:.2f}, {:.2f})\n", ground.EastX,
-                ground.EastY, ground.NorthX, ground.NorthY);
-        }
     }
 
     MCFixedZoomHeight = 0.0f;

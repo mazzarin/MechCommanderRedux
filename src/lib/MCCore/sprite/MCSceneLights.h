@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 class MCAppearance;
@@ -212,8 +213,11 @@ namespace MCSceneLights
     /// <summary>The game's time (ScenarioTime) the last finished frame was drawn at: the haze's, still while paused.</summary>
     float ShownTime();
 
-    /// <summary>Where the ground lay in the world window the last finished frame was drawn in.</summary>
-    MCSceneGround ShownGround();
+    /// <summary>
+    /// Where the ground lies in the world window <paramref name="view"/> (as <see cref="Shown"/>, its last finished
+    /// frame's); none when HD lighting is off or another window was drawn.
+    /// </summary>
+    std::optional<MCSceneGround> ShownGround(const MCWindow& view);
 
     /// <summary>How far the water's colour cycle had gone toward its next step then (WaterCyclePhase).</summary>
     float ShownWaterPhase();

@@ -125,15 +125,15 @@ namespace
         uniforms.Haze[3] = static_cast<float>(fires);
 
         // The living water, its ripples laid on the ground: the ground's map inverted, from the texture's pixels to
-        // meters (none for a view that shows no ground).
-        const MCSceneGround ground = MCSceneLights::ShownGround();
+        // meters (none for a window whose ground isn't known, or a view that shows no ground).
+        const MCSceneGround ground = MCSceneLights::ShownGround(world).value_or(MCSceneGround{});
         const float eastX = ground.EastX * across;
         const float eastY = ground.EastY * down;
         const float northX = ground.NorthX * across;
         const float northY = ground.NorthY * down;
         const float determinant = eastX * northY - northX * eastY;
         const bool flat = std::abs(determinant) < MinGroundDeterminant;
-        uniforms.Water[0] = GHdLighting != HdLightingOff && !flat ? lighting.Water : 0.0f;
+        uniforms.Water[0] = !flat ? lighting.Water : 0.0f;
         uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
         uniforms.Water[2] = across;
         uniforms.Ground[0] = ground.OriginX * across;

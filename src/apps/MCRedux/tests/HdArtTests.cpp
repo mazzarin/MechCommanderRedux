@@ -3,6 +3,8 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "ai/MCMoveGeometry.h"
+#include "ai/MCScenarioMap.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -3677,7 +3679,7 @@ namespace
 {
     /// <summary>
     /// With
-    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;[,&lt;tint&gt;,&lt;bloom&gt;,&lt;bloom-from&gt;,&lt;haze&gt;[,&lt;glow-ovals&gt;]]]]]]</c>,
+    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;[,&lt;tint&gt;,&lt;bloom&gt;,&lt;bloom-from&gt;,&lt;haze&gt;[,&lt;glow-ovals&gt;[,&lt;water&gt;]]]]]]]</c>,
     /// turns HD lighting on (sprite/MCSceneLights.h), its lights that strong and the world's own light that bright (1 as
     /// drawn, below 1 dusk), and the tone and the looks as given (MCSceneLights::MCLighting's).
     /// </summary>
@@ -3692,18 +3694,18 @@ namespace
 
         MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
         const std::string given(*lighting);
-        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength,
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength,
                             &settings.Ambient, &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit,
                             &settings.Facing, &settings.Shadow, &settings.Tint, &settings.Bloom, &settings.BloomFrom,
-                            &settings.Haze, &settings.GlowOvals) >= 1);
+                            &settings.Haze, &settings.GlowOvals, &settings.Water) >= 1);
         GHdLighting = 1;
         std::cout << std::format(
             "  HD lighting: strength {:.2f}, the world's own light {:.2f}, scatter {:.2f}, knee {:.2f}, "
             "most {:.2f}, self-lit above {:.2f}, facing {:.1f}, shadow {:.2f}, tint {:.2f}, bloom {:.2f} above {:.2f}, "
-            "haze {:.1f}, glow ovals {:.2f}\n",
+            "haze {:.1f}, glow ovals {:.2f}, water {:.2f}\n",
             settings.Strength, settings.Ambient, settings.Scatter, settings.Knee, settings.Most, settings.SelfLit,
             settings.Facing, settings.Shadow, settings.Tint, settings.Bloom, settings.BloomFrom, settings.Haze,
-            settings.GlowOvals);
+            settings.GlowOvals, settings.Water);
     }
 
     /// <summary>
@@ -9591,4 +9593,110 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
             Shoot(folder, std::format("ground_{}", shot++), original);
         }
     }
+}
+
+namespace
+{
+    /// <summary>--hd-water's frames by default: five seconds.</summary>
+    constexpr int32_t WaterFrames = 150;
+    /// <summary>--hd-water's frames' length: 30 a second, a video's.</summary>
+    constexpr float WaterFrameSeconds = 1.0f / 30.0f;
+    /// <summary>--hd-water's shore is the tile with the most of both water and land within this many tiles each way.</summary>
+    constexpr int32_t ShoreReach = 6;
+    /// <summary>The terrain type of the tiles off the map (the corners outside its diamond).</summary>
+    constexpr uint32_t OffMapTerrain = 0;
+}
+
+/// <summary>
+/// Tool: <c>--hd-water &lt;pack&gt; --shots &lt;folder&gt;</c> pictures the water moving (port-only: HD lighting's
+/// living water) as --hd-pack does: mission <c>--mission</c>'s map revealed, the camera over the shore with the most of
+/// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
+/// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
+/// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-water");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-water-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCFixedZoomHeight = std::strtof(std::string(*zoom).c_str(), nullptr);
+    }
+
+    int32_t frames = WaterFrames;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-water-frames"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), frames);
+    }
+
+    // The shore: the tile with the most of the fewer of water and land around it, all of it on the map (terrain type 0
+    // is off it, the corners outside its diamond).
+    const int32_t width = GameMap().Width;
+    const int32_t height = GameMap().Height;
+    const auto typeAt = [&](int32_t row, int32_t column)
+    { return GameMap().Map[static_cast<size_t>(row) * width + column].TerrainType(); };
+    int32_t best = -1;
+    int32_t bestRow = height / 2;
+    int32_t bestColumn = width / 2;
+
+    for (int32_t row = ShoreReach; row < height - ShoreReach; ++row)
+    {
+        for (int32_t column = ShoreReach; column < width - ShoreReach; ++column)
+        {
+            int32_t water = 0;
+            int32_t land = 0;
+            bool onMap = true;
+
+            for (int32_t r = row - ShoreReach; r <= row + ShoreReach; ++r)
+            {
+                for (int32_t c = column - ShoreReach; c <= column + ShoreReach; ++c)
+                {
+                    const uint32_t type = typeAt(r, c);
+                    onMap = onMap && type != OffMapTerrain;
+                    ++(type >= FirstWaterTerrain ? water : land);
+                }
+            }
+
+            if (onMap && std::min(water, land) > best)
+            {
+                best = std::min(water, land);
+                bestRow = row;
+                bestColumn = column;
+            }
+        }
+    }
+
+    std::cout << std::format("  the shore: tile ({}, {}), {} of the fewer of water and land around it\n", bestRow,
+                             bestColumn, best);
+    Eye()->SetPosition(MCVector3D(TileColToWorld(bestColumn), TileRowToWorld(bestRow), 0.0f));
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        MCTestGame::RunFrame(WaterFrameSeconds);
+        Shoot(folder, std::format("water_{:04}", frame), original);
+
+        if (frame == 0)
+        {
+            const MCSceneGround ground = MCSceneLights::ShownGround();
+            std::cout << std::format(
+                "  the ground: a meter east is ({:.2f}, {:.2f}) window pixels, north ({:.2f}, {:.2f})\n", ground.EastX,
+                ground.EastY, ground.NorthX, ground.NorthY);
+        }
+    }
+
+    MCFixedZoomHeight = 0.0f;
 }

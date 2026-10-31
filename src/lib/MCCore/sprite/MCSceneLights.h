@@ -44,6 +44,21 @@ struct MCSceneHeat
     float Rise = 0.0f;
 };
 
+/// <summary>
+/// Port-only (HD lighting): where the ground lies in the world window: the ground point <c>x</c> meters east and
+/// <c>y</c> north of the map's middle shows at window pixel <c>Origin + East * x + North * y</c> (the ground's height
+/// left out), so what moves over the ground (the water's ripples) moves with it as the view scrolls and zooms.
+/// </summary>
+struct MCSceneGround
+{
+    float OriginX = 0.0f;
+    float OriginY = 0.0f;
+    float EastX = 0.0f;
+    float EastY = 0.0f;
+    float NorthX = 0.0f;
+    float NorthY = 0.0f;
+};
+
 namespace MCSceneLights
 {
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
@@ -96,6 +111,12 @@ namespace MCSceneLights
         /// 0 to 1 as drawn: the light it stands for already lights the world around it.
         /// </summary>
         float GlowOvals = 0.75f;
+        /// <summary>
+        /// How much the water lives (its colours flowing from one of the original's cycle's steps to the next instead
+        /// of ticking, ripples and the sun's glints moving over it, the lights glinting off it, foam along its shores),
+        /// 0 to 1 (0: the original's cycle).
+        /// </summary>
+        float Water = 1.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -190,6 +211,12 @@ namespace MCSceneLights
 
     /// <summary>The game's time (ScenarioTime) the last finished frame was drawn at: the haze's, still while paused.</summary>
     float ShownTime();
+
+    /// <summary>Where the ground lay in the world window the last finished frame was drawn in.</summary>
+    MCSceneGround ShownGround();
+
+    /// <summary>How far the water's colour cycle had gone toward its next step then (WaterCyclePhase).</summary>
+    float ShownWaterPhase();
 
     /// <summary>
     /// The view's tilt: the screen height a ground distance takes across the screen per screen width it takes along it

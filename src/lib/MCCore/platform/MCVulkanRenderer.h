@@ -120,6 +120,12 @@ public:
     std::shared_ptr<SDL_GPUTexture> SurfaceTexture(const MCWindow& window, uint32_t& width, uint32_t& height) const;
 
     /// <summary>
+    /// Port-only (HD lighting's living water): the palette indices of <paramref name="window"/>'s surface (R8, the size
+    /// of its colour texture), as <see cref="Execute"/> left them; null when the window has no surface yet.
+    /// </summary>
+    std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
+
+    /// <summary>
     /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
     /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
     /// </summary>

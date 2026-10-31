@@ -44,6 +44,11 @@ namespace
         float BloomSize[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         /// <summary>The heat haze: its most shimmer and its waves' length (texels), the game's time, the fires in Heat.</summary>
         float Haze[4] = {};
+        /// <summary>The living water: its strength (0 none), its colour cycle's phase, the texels per window pixel.</summary>
+        float Water[4] = {};
+        /// <summary>The ground's map: the texel of the map's middle, then the meters east and north per texel off it.</summary>
+        float Ground[4] = {};
+        float GroundAxes[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -64,6 +69,8 @@ namespace
     constexpr uint32_t BloomLevels = 6;
     /// <summary>The bloom's first level has a texel for this many of the world's pixels each way (composite.pshader's).</summary>
     constexpr uint32_t BloomScale = 2;
+    /// <summary>A ground map whose axes span less (texels squared per square meter) shows no ground to lay water on.</summary>
+    constexpr float MinGroundDeterminant = 1e-6f;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t5).</summary>
@@ -116,6 +123,29 @@ namespace
         uniforms.Haze[1] = HazeWaveLength * across;
         uniforms.Haze[2] = MCSceneLights::ShownTime();
         uniforms.Haze[3] = static_cast<float>(fires);
+
+        // The living water, its ripples laid on the ground: the ground's map inverted, from the texture's pixels to
+        // meters (none for a view that shows no ground).
+        const MCSceneGround ground = MCSceneLights::ShownGround();
+        const float eastX = ground.EastX * across;
+        const float eastY = ground.EastY * down;
+        const float northX = ground.NorthX * across;
+        const float northY = ground.NorthY * down;
+        const float determinant = eastX * northY - northX * eastY;
+        const bool flat = std::abs(determinant) < MinGroundDeterminant;
+        uniforms.Water[0] = GHdLighting != HdLightingOff && !flat ? lighting.Water : 0.0f;
+        uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
+        uniforms.Water[2] = across;
+        uniforms.Ground[0] = ground.OriginX * across;
+        uniforms.Ground[1] = ground.OriginY * down;
+
+        if (!flat)
+        {
+            uniforms.GroundAxes[0] = northY / determinant;
+            uniforms.GroundAxes[1] = -northX / determinant;
+            uniforms.GroundAxes[2] = -eastY / determinant;
+            uniforms.GroundAxes[3] = eastX / determinant;
+        }
 
         for (size_t i = 0; i < fires; ++i)
         {
@@ -624,6 +654,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         std::array<float, 4> Size{};
         std::shared_ptr<const MCWindow> Source;
         SDL_GPUTexture* Bloom = nullptr;
+        /// <summary>The GPU world's palette indices (the living water's), else the op plane as the screen's draw binds it.</summary>
+        SDL_GPUTexture* Indices = nullptr;
     };
 
     std::vector<World> worlds(frame.Underlays.size());
@@ -632,6 +664,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     {
         World& world = worlds[i];
         world.Source = frame.Underlays[i].Source.lock();
+        world.Indices = ops;
 
         if (world.Source == nullptr)
         {
@@ -655,6 +688,12 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             world.Size = {static_cast<float>(worldWidth), static_cast<float>(worldHeight),
                           static_cast<float>(worldWidth), static_cast<float>(worldHeight)};
             world.Bloom = Bloom(commands, i, *world.Texture, worldWidth, worldHeight);
+
+            if (SDL_GPUTexture* const indices = held.emplace_back(_Renderer->SurfaceIndexTexture(*world.Source)).get();
+                indices != nullptr)
+            {
+                world.Indices = indices;
+            }
         }
     }
 
@@ -669,7 +708,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     SDL_SetGPUViewport(pass, &viewport);
 
     auto draw = [&](float x, float y, float w, float h, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
-                    CompositeUniforms uniforms)
+                    SDL_GPUTexture& indices, CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = frame.Cycle.First;
         uniforms.Cycle[1] = frame.Cycle.Step;
@@ -683,7 +722,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         const CompositeBindings bindings{{
             {screen, _Nearest.get()},
-            {ops, _Nearest.get()},
+            {&indices, _Nearest.get()},
             {&world, _Nearest.get()},
             {tables, _Nearest.get()},
             {_Palette.Handle.get(), _Nearest.get()},
@@ -694,7 +733,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     };
 
     // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
-    draw(0.0f, 0.0f, width, height, *screen, *screen,
+    draw(0.0f, 0.0f, width, height, *screen, *screen, *ops,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -744,7 +783,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
              static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world.Texture,
-             world.Bloom != nullptr ? *world.Bloom : *screen, uniforms);
+             world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, uniforms);
     }
 
     SDL_EndGPURenderPass(pass);

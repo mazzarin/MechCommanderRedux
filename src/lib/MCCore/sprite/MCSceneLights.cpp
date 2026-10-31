@@ -3,6 +3,7 @@
 #include "appear/MCAppearance.h"
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
+#include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
 #include "lib/MCVector3D.h"
@@ -71,6 +72,8 @@ namespace
     /// </summary>
     constexpr float HeatWidthPerSide = 0.9f;
     constexpr float HeatRisePerSide = 2.5f;
+    /// <summary>The ground's map (MCSceneGround) is measured over this many meters each way.</summary>
+    constexpr float GroundSpan = 100.0f;
 
     struct State
     {
@@ -97,6 +100,8 @@ namespace
         std::vector<MCSceneLight> Shown;
         std::vector<MCSceneHeat> ShownHeat;
         float ShownTime = 0.0f;
+        MCSceneGround ShownGround;
+        float ShownWaterPhase = 0.0f;
     };
 
     State& TheState()
@@ -656,6 +661,21 @@ auto MCSceneLights::Finish() -> void
     state.ShownHeat = std::move(state.Heat);
     state.Heat.clear();
     state.ShownTime = ScenarioTime;
+    state.ShownWaterPhase = WaterCyclePhase();
+
+    if (const std::shared_ptr<MCCamera> camera = ActiveMainCamera(); camera != nullptr)
+    {
+        const MCVector2D origin = ProjectToScreen(MCVector3D(0.0f, 0.0f, 0.0f), *camera);
+        const MCVector2D east = ProjectToScreen(MCVector3D(GroundSpan, 0.0f, 0.0f), *camera);
+        const MCVector2D north = ProjectToScreen(MCVector3D(0.0f, GroundSpan, 0.0f), *camera);
+        state.ShownGround = {origin.X,
+                             origin.Y,
+                             (east.X - origin.X) / GroundSpan,
+                             (east.Y - origin.Y) / GroundSpan,
+                             (north.X - origin.X) / GroundSpan,
+                             (north.Y - origin.Y) / GroundSpan};
+    }
+
     state.ShownWindow = std::exchange(state.Drawing, {});
 }
 
@@ -686,6 +706,16 @@ auto MCSceneLights::ShownHeat(const MCWindow& view) -> std::span<const MCSceneHe
 auto MCSceneLights::ShownTime() -> float
 {
     return TheState().ShownTime;
+}
+
+auto MCSceneLights::ShownGround() -> MCSceneGround
+{
+    return TheState().ShownGround;
+}
+
+auto MCSceneLights::ShownWaterPhase() -> float
+{
+    return TheState().ShownWaterPhase;
 }
 
 auto MCSceneLights::GroundAspect() -> float

@@ -29,3 +29,9 @@ void StepWaterColors(MCPalette& palette, std::shared_ptr<MCDisplay> display);
 /// </summary>
 /// <remarks>Original source: <c>color\color.cpp</c> (<c>cycleColors</c>).</remarks>
 void CycleColors();
+
+/// <summary>
+/// Port-only (HD lighting's living water): how far the water's colour cycle has gone from its last step toward its next,
+/// 0 to 1; 0 while palette cycling is off or without a scenario.
+/// </summary>
+float WaterCyclePhase();

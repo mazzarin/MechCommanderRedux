@@ -4864,6 +4864,14 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceTexture(const MCWindow&
     return nullptr;
 }
 
+std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceIndexTexture(const MCWindow& window) const
+{
+    const MCAddressKey canonical = SurfaceKeyOf(window);
+    const auto found = std::ranges::find_if(_Surfaces, [&](const Surface& surface)
+                                            { return surface.Key == canonical && surface.Index.Handle != nullptr; });
+    return found != _Surfaces.end() ? found->Index.Handle : nullptr;
+}
+
 std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const
 {
     const MCAddressKey canonical = SurfaceKeyOf(window);

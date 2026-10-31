@@ -337,6 +337,16 @@ namespace
             Target().StatusBar(Window(), moved);
         }
 
+        void Shadow(MCWindow&, const MCShadowCommand& command) override
+        {
+            MCShadowCommand moved = command;
+            moved.X0 += static_cast<float>(_X);
+            moved.Y0 += static_cast<float>(_Y);
+            moved.X1 += static_cast<float>(_X);
+            moved.Y1 += static_cast<float>(_Y);
+            Target().Shadow(Window(), moved);
+        }
+
         void Glyph(MCWindow&, const MCGlyphCommand& command) override
         {
             MCGlyphCommand moved = command;
@@ -474,6 +484,9 @@ namespace
             Cpu().Glyph(target, command);
         }
 
+        // Only the GPU keeps the light a shadow falls in.
+        void Shadow(MCWindow& target, const MCShadowCommand& command) override { Gpu().Shadow(target, command); }
+
         // The GPU draws the layer from its mesh; the software renderer draws the pass's tiles, which still come.
         std::expected<void, std::string> TerrainLayer(MCWindow& target, const MCTerrainFrame& frame) override
         {
@@ -498,6 +511,10 @@ std::expected<void, std::string> MCRenderer::TerrainLayer(MCWindow& /*target*/, 
 }
 
 void MCRenderer::EndTerrainLayer(MCWindow& /*target*/)
+{
+}
+
+void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/)
 {
 }
 

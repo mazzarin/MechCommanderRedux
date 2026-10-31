@@ -1,7 +1,13 @@
 #include "stdafx.h"
 #include "sprite/MCSceneLights.h"
+#include "appear/MCAppearance.h"
+#include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
+#include "engine/MCElement.h"
+#include "engine/MCElementBuffer.h"
 #include "lib/MCVector3D.h"
+#include "object/MCObjectDrawing.h"
+#include "platform/MCRenderer.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
@@ -33,6 +39,29 @@ namespace
     /// <summary>DUSK's world light (the world dimmed to it) and its lights' strength.</summary>
     constexpr float DuskAmbient = 0.6f;
     constexpr float DuskStrength = 1.0f;
+    /// <summary>A muzzle flash's reach, its colour (a propellant's) and how much it lights the ground under it.</summary>
+    constexpr float MuzzleFlashReach = 36.0f;
+    constexpr std::array<float, 3> MuzzleFlashColor{1.0f, 0.72f, 0.38f};
+    constexpr float MuzzleFlashGain = 1.2f;
+    /// <summary>Flashes closer than this (in pixels each way) are one muzzle's.</summary>
+    constexpr float SameMuzzle = 2.0f;
+    /// <summary>A light's pool is as soft as one this much of its reach high, at least (composite.pshader's LightSoftness).</summary>
+    constexpr float LightSoftness = 0.3f;
+    /// <summary>
+    /// The shadows' group in the draw list: after the terrain's (50,000,000), the craters' (30,000,000) and the
+    /// terrain's overlays' (10,000,000), before every object's (their screen heights, or less).
+    /// </summary>
+    constexpr int32_t ShadowDepth = 5000000;
+    /// <summary>The most shadows a frame draws (the strongest).</summary>
+    constexpr size_t MaxShadows = 96;
+    /// <summary>Of a unit's sprite, the share of its width its body is: its shadow's width at its feet.</summary>
+    constexpr float CasterBody = 0.6f;
+    /// <summary>A shadow is at most this many times as long as its unit is tall.</summary>
+    constexpr float ShadowLengthPerHeight = 2.5f;
+    /// <summary>A shadow's width at its tip per its width at the feet: it spreads as it goes.</summary>
+    constexpr float ShadowSpread = 1.5f;
+    /// <summary>A light that lights a unit's feet less than this (1 doubles them) casts no shadow from it.</summary>
+    constexpr float FaintestShadow = 0.04f;
     /// <summary>A bright pixel (MCGlowPixels::Bright): one with a component at least this (fire, not dust or smoke).</summary>
     constexpr float BrightPixel = 0.7f;
 
@@ -42,6 +71,18 @@ namespace
         /// <summary>The window whose world is being drawn.</summary>
         std::weak_ptr<MCWindow> Drawing;
         std::vector<MCSceneLight> Adding;
+        /// <summary>The frame's muzzle flashes, one a muzzle, added to its lights as it finishes.</summary>
+        std::vector<MCSceneLight> Flashes;
+        /// <summary>The units casting shadows: their feet, half their width and their height, in the window's pixels.</summary>
+        struct Caster
+        {
+            float X = 0.0f;
+            float Y = 0.0f;
+            float HalfWidth = 0.0f;
+            float Height = 0.0f;
+        };
+
+        std::vector<Caster> Casters;
         /// <summary>The window the last finished lights are for, and those lights.</summary>
         std::weak_ptr<MCWindow> ShownWindow;
         std::vector<MCSceneLight> Shown;
@@ -166,6 +207,84 @@ namespace
         return saturated;
     }
 
+    /// <summary>How high <paramref name="position"/> is above the ground under it (0 without a terrain).</summary>
+    float AltitudeOf(const MCVector3D& position)
+    {
+        return Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
+    }
+
+    /// <summary>Where a light shines on a point of the ground from (its point, or a beam's nearest), and how much.</summary>
+    struct Reaching
+    {
+        /// <summary>The ground under the light, in the window's pixels across and the ground's down (see LightReaching).</summary>
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Distance = 0.0f;
+        /// <summary>Its light there (its components' mean), as the composite pools it without the relief.</summary>
+        float Light = 0.0f;
+    };
+
+    /// <summary>
+    /// How <paramref name="light"/> reaches the ground at window (<paramref name="x"/>, <paramref name="y"/>), as the
+    /// composite's LightAt pools it; distances along the ground, a screen height <paramref name="aspect"/> of one.
+    /// </summary>
+    Reaching LightReaching(const MCSceneLight& light, float x, float y, float aspect)
+    {
+        const float ax = light.X0;
+        const float ay = light.Y0 / aspect;
+        const float abx = light.X1 - light.X0;
+        const float aby = (light.Y1 - light.Y0) / aspect;
+        const float length2 = abx * abx + aby * aby;
+        const float t =
+            length2 > 0.0f ? std::clamp(((x - ax) * abx + (y / aspect - ay) * aby) / length2, 0.0f, 1.0f) : 0.0f;
+        Reaching reaching;
+        reaching.X = ax + abx * t;
+        reaching.Y = ay + aby * t;
+        const float dx = x - reaching.X;
+        const float dy = y / aspect - reaching.Y;
+        const float d2 = dx * dx + dy * dy;
+        const float reach2 = std::max(light.Reach * light.Reach, 1.0f);
+        reaching.Distance = std::sqrt(d2);
+
+        if (d2 < reach2)
+        {
+            const float soft = std::max(light.Height, light.Reach * LightSoftness);
+            const float x2 = d2 / reach2;
+            const float fade = 1.0f - x2 * x2;
+            reaching.Light =
+                (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * soft * soft / (d2 + soft * soft);
+        }
+
+        return reaching;
+    }
+
+    /// <summary>The frame's shadows, drawn into the world's light (MCRenderer::Shadow) when the draw list comes to them.</summary>
+    class MCShadowElement final : public MCElement
+    {
+    public:
+        MCShadowElement(std::vector<MCShadowCommand> shadows, std::weak_ptr<MCWindow> window)
+            : MCElement(ShadowDepth), _Shadows(std::move(shadows)), _Window(std::move(window))
+        {
+        }
+
+        void Draw() override
+        {
+            if (const std::shared_ptr<MCWindow> window = _Window.lock(); window != nullptr)
+            {
+                MCRenderer& renderer = MCRenderer::For(*window);
+
+                for (const MCShadowCommand& shadow : _Shadows)
+                {
+                    renderer.Shadow(*window, shadow);
+                }
+            }
+        }
+
+    private:
+        std::vector<MCShadowCommand> _Shadows;
+        std::weak_ptr<MCWindow> _Window;
+    };
+
     /// <summary>What sorts the brightest lights first: their light over the ground they reach.</summary>
     float Brightness(const MCSceneLight& light)
     {
@@ -214,6 +333,8 @@ auto MCSceneLights::Begin(const MCPane& pane) -> void
     State& state = TheState();
     state.Drawing = pane.Window;
     state.Adding.clear();
+    state.Flashes.clear();
+    state.Casters.clear();
 }
 
 auto MCSceneLights::Add(MCSceneLight light) -> void
@@ -271,9 +392,7 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
     const int32_t frame = appearance.AppearType != nullptr && appearance.AppearType->Delta
                               ? std::min(appearance.CurrentFrame + 1, VfxShapeCount(table) - 1)
                               : appearance.CurrentFrame;
-    const float altitude =
-        Terrain() != nullptr ? std::max(position.Z - MCTerrain::GetTerrainElevation(position), 0.0f) : 0.0f;
-    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, altitude, pixels);
+    AddGlow(table, frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position), pixels);
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -300,6 +419,141 @@ auto MCSceneLights::AddShapeBeam(float x0, float y0, float x1, float y1, float w
     }
 }
 
+auto MCSceneLights::AddMuzzleFlash(const MCVector3D& muzzle, float left) -> void
+{
+    State& state = TheState();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired() || left <= 0.0f || camera == nullptr)
+    {
+        return;
+    }
+
+    const MCVector2D at = ProjectToScreen(muzzle, *camera);
+    const float altitude = AltitudeOf(muzzle);
+    const float fade = std::min(left / MuzzleFlashSeconds, 1.0f);
+    MCSceneLight light;
+    // The ground under the muzzle is its altitude lower on the screen.
+    light.X0 = light.X1 = at.X;
+    light.Y0 = light.Y1 = at.Y + altitude;
+    light.Height = altitude;
+    light.Reach = MuzzleFlashReach;
+    light.Red = MuzzleFlashColor[0] * MuzzleFlashGain * fade;
+    light.Green = MuzzleFlashColor[1] * MuzzleFlashGain * fade;
+    light.Blue = MuzzleFlashColor[2] * MuzzleFlashGain * fade;
+    const auto sameMuzzle = [&](const MCSceneLight& flash)
+    { return std::abs(flash.X0 - light.X0) < SameMuzzle && std::abs(flash.Y0 - light.Y0) < SameMuzzle; };
+
+    if (const auto flash = std::ranges::find_if(state.Flashes, sameMuzzle); flash != state.Flashes.end())
+    {
+        flash->Red = std::max(flash->Red, light.Red);
+        flash->Green = std::max(flash->Green, light.Green);
+        flash->Blue = std::max(flash->Blue, light.Blue);
+        return;
+    }
+
+    state.Flashes.push_back(light);
+}
+
+auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& position) -> void
+{
+    State& state = TheState();
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired())
+    {
+        return;
+    }
+
+    // Its feet on the ground: a jumping unit's are its altitude lower on the screen.
+    const float feet = appearance.ScreenPos.Y + AltitudeOf(position);
+    const float halfWidth = (appearance.LowerRight.X - appearance.UpperLeft.X) * 0.5f;
+    const float height = feet - appearance.UpperLeft.Y;
+
+    if (halfWidth > 0.0f && height > 0.0f)
+    {
+        state.Casters.push_back({appearance.ScreenPos.X, feet, halfWidth, height});
+    }
+}
+
+auto MCSceneLights::AddShadows() -> void
+{
+    State& state = TheState();
+    const float darkness = ShownLighting().Shadow;
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired() || darkness <= 0.0f || state.Casters.empty())
+    {
+        return;
+    }
+
+    const float aspect = GroundAspect();
+    std::vector<MCShadowCommand> shadows;
+    std::vector<std::pair<const MCSceneLight*, Reaching>> reaching;
+
+    for (const State::Caster& caster : state.Casters)
+    {
+        reaching.clear();
+        float total = 0.0f;
+
+        for (const std::vector<MCSceneLight>* lights : {&state.Adding, &state.Flashes})
+        {
+            for (const MCSceneLight& light : *lights)
+            {
+                const Reaching reaches = LightReaching(light, caster.X, caster.Y, aspect);
+                total += reaches.Light;
+                reaching.emplace_back(&light, reaches);
+            }
+        }
+
+        const float width = caster.HalfWidth * CasterBody;
+
+        for (const auto& [light, reaches] : reaching)
+        {
+            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes).
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
+            {
+                continue;
+            }
+
+            // Away from the light, as far as the unit hides it from the ground: a light above the unit's top casts it
+            // the unit's height over the light's above that times the light's distance; a lower one, the longest.
+            const float longest = ShadowLengthPerHeight * caster.Height;
+            const float length =
+                light->Height > caster.Height
+                    ? std::min(reaches.Distance * caster.Height / (light->Height - caster.Height), longest)
+                    : longest;
+            const float awayX = (caster.X - reaches.X) / reaches.Distance;
+            const float awayY = (caster.Y / aspect - reaches.Y) / reaches.Distance;
+            MCShadowCommand shadow;
+            shadow.X0 = caster.X;
+            shadow.Y0 = caster.Y;
+            shadow.X1 = caster.X + awayX * length;
+            shadow.Y1 = caster.Y + awayY * length * aspect;
+            shadow.Width0 = width;
+            shadow.Width1 = width * ShadowSpread;
+            // It takes away this light's share of the light at the unit's feet.
+            shadow.Strength = darkness * reaches.Light / total;
+            shadow.Aspect = aspect;
+            shadows.push_back(shadow);
+        }
+    }
+
+    if (shadows.empty())
+    {
+        return;
+    }
+
+    if (shadows.size() > MaxShadows)
+    {
+        std::ranges::partial_sort(shadows, shadows.begin() + MaxShadows,
+                                  [](const MCShadowCommand& a, const MCShadowCommand& b)
+                                  { return a.Strength > b.Strength; });
+        shadows.resize(MaxShadows);
+    }
+
+    ElementList().OpenGroup(ShadowDepth, false);
+    ElementList().Add(ElementList().Make<MCShadowElement>(std::move(shadows), state.Drawing));
+}
+
 auto MCSceneLights::Finish() -> void
 {
     State& state = TheState();
@@ -308,6 +562,9 @@ auto MCSceneLights::Finish() -> void
     {
         return;
     }
+
+    state.Adding.insert(state.Adding.end(), state.Flashes.begin(), state.Flashes.end());
+    state.Flashes.clear();
 
     if (state.Adding.size() > MaxLights)
     {

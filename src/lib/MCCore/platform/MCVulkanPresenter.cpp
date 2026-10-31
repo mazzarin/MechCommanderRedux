@@ -36,9 +36,17 @@ namespace
         float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
         /// <summary>The lights' tone: their scatter, the knee, the most light and the brightness of a light's own pixels.</summary>
         float LightTone[4] = {};
+        /// <summary>How the lights take the world's relief: its height from black to white and the texels its slope spans.</summary>
+        float LightFacing[4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
         float Lights[MCSceneLights::MaxLights * 3][4] = {};
     };
+
+    /// <summary>
+    /// The window pixels to each side the relief's slope is taken across (HD lighting's facing): wide enough to follow a
+    /// boulder's shading rather than its texture's grain.
+    /// </summary>
+    constexpr float FacingSpan = 2.0f;
 
     /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
@@ -60,6 +68,9 @@ namespace
         uniforms.LightTone[1] = lighting.Knee;
         uniforms.LightTone[2] = lighting.Most;
         uniforms.LightTone[3] = lighting.SelfLit;
+        // The relief in the texture's pixels, its slope across FacingSpan of the window's each side.
+        uniforms.LightFacing[0] = lighting.Facing * across;
+        uniforms.LightFacing[1] = std::max(across * FacingSpan, 1.0f);
 
         for (size_t i = 0; i < count; ++i)
         {

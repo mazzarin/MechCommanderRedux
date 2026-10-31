@@ -46,8 +46,13 @@ namespace
     /// <summary>Port-only: a status bar's part at the output's resolution, its fill ending where the game measured it.</summary>
     constexpr uint32_t KindSmoothBar = 12;
     /// <summary>
+    /// Port-only (HD lighting): a unit's shadow (MCShadowCommand), drawn into the colours' alpha alone (the shadow
+    /// pipeline): the composite lights the world that much less there.
+    /// </summary>
+    constexpr uint32_t KindShadow = 13;
+    /// <summary>
     /// Port-only: an HD art frame drawn as KindHd is, its edges from the original's pixels it draws, smoothed
-    /// (draw.pshader). Kind 13 is left for other branches.
+    /// (draw.pshader).
     /// </summary>
     constexpr uint32_t KindHdSmooth = 14;
     /// <summary>Port-only: a terrain tile's seam pass (shaders/terrain.vshader; drawn only there).</summary>
@@ -501,8 +506,9 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_TerrainShader = std::move(*terrain);
 
     // A surface's two targets: its colours and its indices. Opaque draws write both; blended draws blend their
-    // premultiplied colour over the colours (ONE, ONE_MINUS_SRC_ALPHA) and leave the indices.
-    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false)
+    // premultiplied colour over the colours (ONE, ONE_MINUS_SRC_ALPHA) and leave the indices. A shadow (HD lighting)
+    // takes the colours' alpha down by its own (ZERO, ONE_MINUS_SRC_ALPHA) and leaves the rest.
+    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false)
     {
         SDL_GPUColorTargetDescription targets[2]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -528,6 +534,22 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             targets[1].blend_state.color_write_mask = 0;
         }
 
+        if (shadow)
+        {
+            SDL_GPUColorTargetBlendState& light = targets[0].blend_state;
+            light.enable_blend = true;
+            light.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+            light.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            light.color_blend_op = SDL_GPU_BLENDOP_ADD;
+            light.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+            light.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            light.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            light.enable_color_write_mask = true;
+            light.color_write_mask = SDL_GPU_COLORCOMPONENT_A;
+            targets[1].blend_state.enable_color_write_mask = true;
+            targets[1].blend_state.color_write_mask = 0;
+        }
+
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = &vertexShader;
         pipeline.fragment_shader = renderer->_FragmentShader.get();
@@ -543,11 +565,13 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_Opaque = makePipeline(*renderer->_VertexShader, false);
     renderer->_Blend = makePipeline(*renderer->_VertexShader, true);
     renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
+    renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
     renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
     renderer->_TerrainSeamPipeline = makePipeline(*renderer->_TerrainShader, true);
 
     if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
-        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
+        renderer->_ShadowPipeline == nullptr || renderer->_TerrainPipeline == nullptr ||
+        renderer->_TerrainSeamPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -650,6 +674,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _Opaque.reset();
     _Blend.reset();
     _IndexOnly.reset();
+    _ShadowPipeline.reset();
     _TerrainPipeline.reset();
     _TerrainSeamPipeline.reset();
     _VertexShader.reset();
@@ -906,13 +931,14 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
                        (op & KindMask) == KindSmoothEllipse || (op & KindMask) == KindSmoothPolygon;
     const bool indexOnly = (op & IndexOnly) != 0;
+    const bool shadow = (op & KindMask) == KindShadow;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
     const auto continues = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
                last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
-               (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
+               last.Shadow == shadow && (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
                last.First + last.Count == _Draws.size();
     };
 
@@ -926,6 +952,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.SourceIndex = sourceIndex;
         fresh.Blend = blend;
         fresh.IndexOnly = indexOnly;
+        fresh.Shadow = shadow;
         fresh.First = static_cast<uint32_t>(_Draws.size());
         _Records.push_back(fresh);
     }
@@ -3408,6 +3435,27 @@ void MCVulkanRenderer::Ellipse(MCWindow& target, const MCEllipseCommand& command
     }
 }
 
+void MCVulkanRenderer::Shadow(MCWindow& target, const MCShadowCommand& command)
+{
+    const AuditScope audit(*this, "Shadow", target);
+    const uint16_t surface = SurfaceFor(target);
+    // The band's box: its ends and their widths (a ground width down the screen Aspect of one across).
+    const float across = std::max(command.Width0, command.Width1);
+    const float down = across * command.Aspect;
+    const Quad at = {static_cast<int32_t>(std::floor(std::min(command.X0, command.X1) - across)),
+                     static_cast<int32_t>(std::floor(std::min(command.Y0, command.Y1) - down)),
+                     static_cast<int32_t>(std::ceil(std::max(command.X0, command.X1) + across)),
+                     static_cast<int32_t>(std::ceil(std::max(command.Y0, command.Y1) + down))};
+
+    if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindShadow, 0, 0, 0))
+    {
+        std::array<int32_t, 20>& draw = _Draws.back();
+        std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Width0,
+                                          command.Width1, command.Strength, command.Aspect},
+                               draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    }
+}
+
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)
 {
     const AuditScope audit(*this, "StatusBar", target);
@@ -4548,8 +4596,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
                 next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
-                next.IndexOnly != record.IndexOnly || next.ReadsCopy || record.ReadsCopy ||
-                next.First != previous.First + previous.Count)
+                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.ReadsCopy ||
+                record.ReadsCopy || next.First != previous.First + previous.Count)
             {
                 break;
             }
@@ -4614,9 +4662,10 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {hdColors, _Nearest.get()},
         };
 
-        SDL_BindGPUGraphicsPipeline(pass, record.IndexOnly ? _IndexOnly.get()
-                                          : record.Blend   ? _Blend.get()
-                                                           : _Opaque.get());
+        SDL_BindGPUGraphicsPipeline(pass, record.Shadow      ? _ShadowPipeline.get()
+                                          : record.IndexOnly ? _IndexOnly.get()
+                                          : record.Blend     ? _Blend.get()
+                                                             : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},

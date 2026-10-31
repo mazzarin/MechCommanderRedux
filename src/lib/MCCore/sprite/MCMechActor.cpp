@@ -21,6 +21,7 @@
 #include "object/MCMechWarrior.h"
 #include "object/MCMoverGameSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -850,6 +851,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         RecalcBounds(EyeRef());
         DrawBars();
     }
+
+    // Port-only (HD lighting): the mech casts shadows from the lights by it.
+    MCSceneLights::AddCaster(*this, mech->Position);
 
     if (Highlighting)
     {

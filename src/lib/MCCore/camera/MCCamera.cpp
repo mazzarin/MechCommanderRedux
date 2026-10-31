@@ -705,6 +705,7 @@ auto MCCamera::Render() -> void
 
     CraterManager().Render();
     ObjectList()->Render();
+    MCSceneLights::AddShadows();
     ElementList().Sort();
     ElementList().Draw();
     MCSceneLights::Finish();

@@ -18,6 +18,7 @@
 #include "object/MCSmoke.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCArmAppearance.h"
+#include "sprite/MCSceneLights.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -71,6 +72,11 @@ auto MCBullet::Update() -> int32_t
 
         BulletPosition = Position;
         ClosestDistanceSq = 1.0e8f;
+        MuzzleFlashLeft = MCSceneLights::MuzzleFlashSeconds;
+    }
+    else
+    {
+        MuzzleFlashLeft = std::max(MuzzleFlashLeft - FrameLength, 0.0f);
     }
 
     std::shared_ptr<MCGameObject> shooter = LockObject(Owner);
@@ -276,6 +282,12 @@ auto MCBullet::Render() -> void
     if (Light != nullptr)
     {
         Light->Render();
+    }
+
+    // Port-only (HD lighting): the gun's flash, at its hot spot (Position follows it).
+    if (!firstFrame)
+    {
+        MCSceneLights::AddMuzzleFlash(Position, MuzzleFlashLeft);
     }
 }
 

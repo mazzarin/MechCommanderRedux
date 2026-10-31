@@ -22,6 +22,7 @@
 #include "object/MCTrainManager.h"
 #include "object/MCTurret.h"
 #include "object/MCTurretType.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -263,6 +264,12 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     {
         RecalcBounds(EyeRef());
         DrawSelectBox(0xfd);
+    }
+
+    // Port-only (HD lighting): a vehicle casts shadows from the lights by it.
+    if (objectClass == MCObjectClass::GroundVehicle)
+    {
+        MCSceneLights::AddCaster(*this, obj->Position);
     }
 
     if (Highlighting)

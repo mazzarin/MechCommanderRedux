@@ -228,6 +228,8 @@ void ReadPreferences(MCFitIniFile& file)
     GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
     // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).
     GHdTurns = file.Read<bool>("HDTurns").value_or(false) ? 1 : 0;
+    // Port-only: HDStops has a mech stopped mid-stride with its move held up hold its stride (sprite/MCMechActor.h).
+    GHdStops = file.Read<bool>("HDStops").value_or(false) ? 1 : 0;
     // Port-only (gameplay): MechBraking has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
     GMechBraking = file.Read<bool>("MechBraking").value_or(false) ? 1 : 0;
 

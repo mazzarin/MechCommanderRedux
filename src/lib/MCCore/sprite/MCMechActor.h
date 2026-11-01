@@ -7,7 +7,24 @@
 
 #include <bit>
 
+class MCBattleMech;
 class MCMovePath;
+
+/// <summary>
+/// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
+/// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped.
+/// </summary>
+struct MCDrawnStride
+{
+    /// <summary>The stride's gesture: the walk or the run.</summary>
+    int32_t Gesture = 0;
+    /// <summary>Each part's frame, and how far into it.</summary>
+    MCMechParts<float> Frame{};
+    /// <summary>Whether the upper body was last in the gun pose (drawn as it plays; the stride's again once lowered).</summary>
+    bool UpperInCombat = false;
+    /// <summary>The seconds the mech has stood still, held.</summary>
+    float StillSeconds = 0.0f;
+};
 
 /// <summary>The value of the mech actor's fields the original left uninitialised (0 with the port's fix).</summary>
 inline constexpr int32_t ActorUnset = FixUninitializedMechActor ? 0 : -1;
@@ -105,15 +122,38 @@ public:
     /// </summary>
     bool CancelPlannedStop();
 
+    /// <summary>
+    /// Port-only (HDStops): as the mech stands from a stride (<see cref="CheckStop"/>) with its move held up
+    /// (MCBattleMech::MoveHeldUp), holds the stride as drawn (<see cref="DrawnStride"/>); drops it as the mech stands at
+    /// its move's end, drawn standing as the original.
+    /// </summary>
+    void HoldStride(const MCBattleMech& mech);
+
+    /// <summary>
+    /// Port-only (HDStops): moves the stride drawn on by the ground the mech covered since the last update while the mech
+    /// stands or sets off again; once its stride plays again, draws the stride closing on it (within
+    /// <see cref="MinStrideRate"/> and <see cref="MaxStrideRate"/> of its rate), then on it (render hands back to it).
+    /// Drops it on any other gesture, once the mech has stood still <see cref="HoldMostSeconds"/>, or stands with
+    /// nowhere to go after all.
+    /// </summary>
+    void StepDrawnStride(const MCBattleMech& mech);
+
+    /// <summary>Port-only (HDStops): the gesture the legs are drawn in (the stride drawn on, else the playing one).</summary>
+    int32_t DrawnGesture() const;
+
+    /// <summary>Port-only (HDStops): the legs' frame as drawn.</summary>
+    int32_t DrawnLegsFrame() const;
+
     /// <summary>Draws the jump's arc and landing point.</summary>
     void RenderJump();
 
     /// <summary>
-    /// Port-only (HDTurns): notes how the legs (shape <paramref name="legs"/>) are drawn at <paramref name="facing"/>
-    /// (<see cref="DrawnLegs"/>), and with HDTurns, the turn middle to draw them as (MCSpriteTree::TurnMiddle) when the
-    /// HD art pack has it, where it lies round their frame (its bounds and the frame's neighbour's together).
+    /// Port-only (HDTurns): notes how the legs (shape <paramref name="legs"/>, in gesture <paramref name="gesture"/> at
+    /// frame <paramref name="frame"/>) are drawn at <paramref name="facing"/> (<see cref="DrawnLegs"/>), and with
+    /// HDTurns, the turn middle to draw them as (MCSpriteTree::TurnMiddle) when the HD art pack has it, where it lies
+    /// round their frame (its bounds and the frame's neighbour's together).
     /// </summary>
-    std::optional<MCInBetween> LegsTurnMiddle(float facing, const MCShape& legs);
+    std::optional<MCInBetween> LegsTurnMiddle(int32_t gesture, int32_t frame, float facing, const MCShape& legs);
 
     /// <summary>
     /// The jump's or fall's height per frame of the legs: the mech type's gesture outline of
@@ -264,7 +304,27 @@ public:
     /// original).
     /// </summary>
     float StrideRate = 1.0f;
+    /// <summary>
+    /// Port-only (HDStops): the stride drawn on while the mech stands with its move held up, and until its stride is in
+    /// step with it again (<see cref="StepDrawnStride"/>); none while the mech is drawn as it plays.
+    /// </summary>
+    std::optional<MCDrawnStride> DrawnStride;
+    /// <summary>Port-only (HDStops): where the mech was at the last update.</summary>
+    std::optional<MCVector3D> LastPosition;
 };
+
+/// <summary>
+/// Port-only: PREFS "HDStops": 1 has a mech that stops dead mid-stride with its move held up (yielding to a unit in its
+/// way, or waiting on its next path) hold its stride as drawn, and walk on from it, its legs following the ground it
+/// covers, rather than drop to standing and start a stride afresh; 0 as the original. Off by default.
+/// </summary>
+extern int GHdStops;
+
+/// <summary>
+/// Port-only (HDStops): the longest a mech stands still with its stride held, seconds (a mech yields to a unit in its way
+/// for its CrashYieldTime, 2): then it is drawn standing.
+/// </summary>
+inline constexpr float HoldMostSeconds = 3.0f;
 
 /// <summary>
 /// Port-only: PREFS "HDTurns": 1 eases a mech's turns as drawn (<see cref="TurnEaseRate"/>; it turns as the original

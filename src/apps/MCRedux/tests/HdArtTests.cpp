@@ -67,6 +67,7 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCPUAppearanceType.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
@@ -5195,6 +5196,26 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-stops 1</c>, turns HDStops on (GHdStops): a mech stopped mid-stride with its move held up holds its
+    /// stride and walks on from it; with <c>--mech-braking 1</c>, MechBraking (GMechBraking): mechs brake to a halt
+    /// through their stopping art where their moves end.
+    /// </summary>
+    void StopsFromOptions()
+    {
+        if (MCTest::Option("hd-stops").has_value())
+        {
+            GHdStops = 1;
+            std::cout << "  stops: strides held while held up\n";
+        }
+
+        if (MCTest::Option("mech-braking").has_value())
+        {
+            GMechBraking = 1;
+            std::cout << "  mech braking: halts through the stopping art\n";
+        }
+    }
+
+    /// <summary>
     /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
     /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
     /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks).
@@ -5357,6 +5378,7 @@ namespace
         ParticlesFromOptions();
         FootprintsFromOptions();
         TurnsFromOptions();
+        StopsFromOptions();
         return original;
     }
 

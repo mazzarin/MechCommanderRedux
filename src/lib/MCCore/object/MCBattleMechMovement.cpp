@@ -1001,12 +1001,39 @@ auto MCBattleMech::SetNextMovePath(char& newThrottleSetting, int32_t& newGesture
 
 namespace
 {
+    /// <summary>Port-only: whether this is a multiplayer client, whose paths are the server's latest steps.</summary>
+    auto MultiPlayerClient() -> bool
+    {
+        return MultiPlayer() != nullptr && MultiPlayer()->IsServer == 0;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking, HDStops): whether <paramref name="warrior"/>'s move goes on past <paramref name="path"/>'s
+    /// end: a next leg of a global path, a next path, or a queued way point to go on to.
+    /// </summary>
+    auto MoveGoesOn(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
+    {
+        const MCMoveOrders& orders = warrior.MoveOrders;
+
+        if (orders.PathType == 2 && path.GlobalStep < orders.NumGlobalSteps - 1)
+        {
+            return true;
+        }
+
+        if (orders.Path[1] != nullptr && orders.Path[1]->NumStepsWhenNotPaused > 0)
+        {
+            return true;
+        }
+
+        MCVector3D nextPoint;
+        return warrior.GetNextWayPoint(nextPoint, 0) != 0;
+    }
+
     /// <summary>
     /// Port-only (MechBraking): whether <paramref name="warrior"/>'s move ends where its path does: no jump left on the
-    /// way, and (but on a multiplayer client, whose path is the server's latest steps) no next leg of a global path, nor
-    /// a next path or queued way point to go on to.
+    /// way, and (but on a multiplayer client) it goes on no further (<see cref="MoveGoesOn"/>).
     /// </summary>
-    auto MoveEndsHere(MCMechWarrior& warrior, const MCMovePath& path) -> bool
+    auto MoveEndsHere(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
     {
         for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
         {
@@ -1016,25 +1043,7 @@ namespace
             }
         }
 
-        if (MultiPlayer() != nullptr && MultiPlayer()->IsServer == 0)
-        {
-            return true;
-        }
-
-        const MCMoveOrders& orders = warrior.MoveOrders;
-
-        if (orders.PathType == 2 && path.GlobalStep < orders.NumGlobalSteps - 1)
-        {
-            return false;
-        }
-
-        if (orders.Path[1] != nullptr && orders.Path[1]->NumStepsWhenNotPaused > 0)
-        {
-            return false;
-        }
-
-        MCVector3D nextPoint;
-        return warrior.GetNextWayPoint(nextPoint, 0) == 0;
+        return MultiPlayerClient() || !MoveGoesOn(warrior, path);
     }
 
     /// <summary>
@@ -1090,6 +1099,31 @@ auto MCBattleMech::LastStepMargin() const -> float
     }
 
     return MoveMarginOfError[1];
+}
+
+auto MCBattleMech::MoveHeldUp() const -> bool
+{
+    const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
+
+    if (warrior == nullptr)
+    {
+        return false;
+    }
+
+    // Read as it stands: GetMovePath would swap in the next leg.
+    const MCMovePath* path = warrior->MoveOrders.Path[0].get();
+
+    if (path != nullptr && path->CurStep < path->NumStepsWhenNotPaused)
+    {
+        return true;
+    }
+
+    if (warrior->MovePathRequest.lock() != nullptr)
+    {
+        return true;
+    }
+
+    return !MultiPlayerClient() && path != nullptr && MoveGoesOn(*warrior, *path);
 }
 
 auto MCBattleMech::UpdateTorso(float newRotatePerSec) -> void

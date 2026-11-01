@@ -94,6 +94,62 @@ namespace
         return type.GestureOutline(static_cast<uint32_t>(HotSpotFinderArray[gesture]));
     }
 
+    /// <summary>
+    /// Render's stride rule, for part <paramref name="part"/> of <paramref name="frames"/> in stride gesture
+    /// <paramref name="gesture"/> (played <paramref name="backwards"/>): a mirrored part runs half a cycle off the part it
+    /// follows, so the stride alternates; an unmirrored one keeps in step with it.
+    /// </summary>
+    auto FollowStride(const MCSpriteTree& tree, MCMechParts<int32_t>& frames, MCMechPart part, int32_t gesture,
+                      bool mirrored, bool backwards) -> void
+    {
+        const MCGestureData& data = tree.Gestures[gesture];
+
+        if (data.ArmSymmetrical != 0 && data.Symmetrical != 0)
+        {
+            return;
+        }
+
+        const int32_t reference = frames[data.ArmSymmetrical == 0 ? MCMechPart::LeftArm : MCMechPart::Torso];
+
+        if (!mirrored)
+        {
+            frames[part] = reference;
+            return;
+        }
+
+        if (frames[part] != reference)
+        {
+            return;
+        }
+
+        const int32_t frame = frames[part];
+        const uint32_t numFrames = data.NumFrames;
+
+        if (!backwards)
+        {
+            const uint32_t shifted = (numFrames >> 1) + static_cast<uint32_t>(frame);
+            frames[part] = static_cast<int32_t>(numFrames - 1 < shifted ? shifted % numFrames : shifted);
+            return;
+        }
+
+        int32_t shifted = frame - static_cast<int32_t>(numFrames >> 1);
+        frames[part] = shifted;
+
+        if (shifted < 0)
+        {
+            shifted = -shifted;
+            const uint32_t wrapped = static_cast<uint32_t>(shifted) % numFrames;
+            frames[part] = static_cast<int32_t>(numFrames - wrapped);
+        }
+    }
+
+    /// <summary>Port-only (HDStops): the gesture a mech sets off walking in, from standing.</summary>
+    constexpr int32_t GestureStandToWalk = 3;
+    /// <summary>Port-only (HDStops): a move shorter than this, metres, leaves a mech standing still.</summary>
+    constexpr float StillMetres = 0.001f;
+    /// <summary>Port-only (HDStops): the frames within which a stride drawn on is put on the stride played.</summary>
+    constexpr float InStepFrames = 0.5f;
+
 }
 
 auto MCMechActor::HitMech(int32_t) -> int
@@ -546,6 +602,113 @@ auto MCMechActor::CancelPlannedStop() -> bool
     return true;
 }
 
+int GHdStops = 0;
+
+auto MCMechActor::HoldStride(const MCBattleMech& mech) -> void
+{
+    if (GHdStops == 0 || !mech.MoveHeldUp())
+    {
+        DrawnStride.reset();
+        return;
+    }
+
+    // Held as last drawn (render keeps a stride's parts' frames in step), unless it is drawn on already (stopped again
+    // before back in step with it).
+    const bool stride =
+        (CurrentGesture == MCStopGesture::Walk || CurrentGesture == MCStopGesture::Run) && !PlayBackwards;
+
+    if (stride && (!DrawnStride.has_value() || DrawnStride->Gesture != CurrentGesture))
+    {
+        MCDrawnStride drawn{CurrentGesture, {}, InCombatMode || CombatModeRaising || CombatModeLowering, 0.0f};
+
+        for (int32_t part = 0; part < MechPartCount; ++part)
+        {
+            drawn.Frame[part] = static_cast<float>(std::max(CurrentFrame[part], 0));
+        }
+
+        DrawnStride = drawn;
+    }
+}
+
+auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
+{
+    const MCVector3D position = mech.Position;
+    const float moved =
+        LastPosition.has_value()
+            ? static_cast<float>(std::hypot(position.X - LastPosition->X, position.Y - LastPosition->Y) *
+                                 MetersPerWorldUnit)
+            : 0.0f;
+    LastPosition = position;
+
+    if (!DrawnStride.has_value())
+    {
+        return;
+    }
+
+    MCDrawnStride& drawn = *DrawnStride;
+    const MCGestureData& data = MechTree->Gestures[static_cast<size_t>(drawn.Gesture)];
+    const auto frames = static_cast<float>(data.NumFrames);
+    const float rate = std::fabs(data.FrameRate);
+    const int32_t state = drawn.Gesture == MCStopGesture::Run ? MCStopState::Run : MCStopState::Walk;
+    // Standing, setting off, or on the way back to the stride held.
+    const bool holding = CurrentGesture == MCStopGesture::Stand || CurrentGesture == GestureStandToWalk ||
+                         (InTransition && GestureGoal == state && CurrentGesture != drawn.Gesture);
+    drawn.StillSeconds = holding && moved < StillMetres ? drawn.StillSeconds + FrameLength : 0.0f;
+
+    // Standing with nowhere to go after all (its orders given up): standing as the original.
+    const bool goesOn = CurrentGesture != MCStopGesture::Stand || mech.MoveHeldUp();
+
+    if (GHdStops == 0 || !(frames > 0.0f) || !(rate > 0.0f) || !(data.StartVelocity > 0.0f) ||
+        (!holding && CurrentGesture != drawn.Gesture) || drawn.StillSeconds > HoldMostSeconds || !goesOn)
+    {
+        DrawnStride.reset();
+        return;
+    }
+
+    // The stride's frames the ground covered takes.
+    float step = moved * rate / data.StartVelocity;
+    bool onStride = false;
+
+    if (!holding)
+    {
+        // Its stride plays again: close on it, the short way round; within a part of a frame, put on it (render hands
+        // back to it once their frames are the same).
+        const float gap =
+            std::remainder(static_cast<float>(CurrentFrame[MCMechPart::Legs]) - drawn.Frame[MCMechPart::Legs], frames);
+        onStride = std::fabs(gap) < InStepFrames;
+        step = onStride ? gap : step * (gap > 0.0f ? MaxStrideRate : MinStrideRate);
+    }
+
+    const bool combat = InCombatMode || CombatModeRaising || CombatModeLowering;
+    const float legs = drawn.Frame[MCMechPart::Legs];
+
+    for (int32_t part = 0; part < MechPartCount; ++part)
+    {
+        // The gun lowered, the upper body takes the legs' frame (as update has it do).
+        const bool synced = part != static_cast<int32_t>(MCMechPart::Legs) && drawn.UpperInCombat && !combat;
+        const float frame = std::fmod((synced ? legs : drawn.Frame[part]) + step, frames);
+        drawn.Frame[part] = frame < 0.0f ? frame + frames : frame;
+    }
+
+    if (onStride)
+    {
+        drawn.Frame[MCMechPart::Legs] = static_cast<float>(CurrentFrame[MCMechPart::Legs]);
+    }
+
+    drawn.UpperInCombat = combat;
+}
+
+auto MCMechActor::DrawnGesture() const -> int32_t
+{
+    return DrawnStride.has_value() ? DrawnStride->Gesture : CurrentGesture;
+}
+
+auto MCMechActor::DrawnLegsFrame() const -> int32_t
+{
+    return DrawnStride.has_value() ? static_cast<int32_t>(std::floor(DrawnStride->Frame[MCMechPart::Legs]))
+                                   : CurrentFrame[MCMechPart::Legs];
+}
+
 auto MCMechActor::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
 {
     if (!view.has_value())
@@ -780,12 +943,13 @@ auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> fl
     return wrap(facing - std::clamp(gap - turned, -lagMost, lagMost));
 }
 
-auto MCMechActor::LegsTurnMiddle(float facing, const MCShape& legs) -> std::optional<MCInBetween>
+auto MCMechActor::LegsTurnMiddle(int32_t gesture, int32_t frameNow, float facing, const MCShape& legs)
+    -> std::optional<MCInBetween>
 {
-    DrawnLegs = MechTree->DrawnFacing(CurrentGesture, 0, facing);
-    DrawnLegsGesture = CurrentGesture;
+    DrawnLegs = MechTree->DrawnFacing(gesture, 0, facing);
+    DrawnLegsGesture = gesture;
     const std::optional<MCTurnMiddle> middle =
-        GHdTurns != 0 && MCHdArt::Active() ? MechTree->TurnMiddle(CurrentGesture, facing) : std::nullopt;
+        GHdTurns != 0 && MCHdArt::Active() ? MechTree->TurnMiddle(gesture, facing) : std::nullopt;
 
     if (!middle.has_value() || !DrawnLegs.has_value())
     {
@@ -795,7 +959,7 @@ auto MCMechActor::LegsTurnMiddle(float facing, const MCShape& legs) -> std::opti
     int32_t reverse = 0;
     float frameRate = 0.0f;
     const std::shared_ptr<MCShape> toward =
-        MechTree->GetGesture(CurrentGesture, 0, middle->TowardRotation, reverse, frameRate, true);
+        MechTree->GetGesture(gesture, 0, middle->TowardRotation, reverse, frameRate, true);
 
     if (toward == nullptr)
     {
@@ -803,11 +967,11 @@ auto MCMechActor::LegsTurnMiddle(float facing, const MCShape& legs) -> std::opti
     }
 
     const std::span<const uint8_t> table = legs.FrameList();
-    const int32_t frame = MCClampShapeFrame(table, CurrentFrame[MCMechPart::Legs]);
-    const auto frames = static_cast<int32_t>(MechTree->Gestures[CurrentGesture].NumFrames);
+    const int32_t frame = MCClampShapeFrame(table, frameNow);
+    const auto frames = static_cast<int32_t>(MechTree->Gestures[gesture].NumFrames);
     // A mirrored neighbour leads with the other leg: in a stride, its frame half a cycle on leads with this one's (as
     // tools/upscale/make_turn_middles.py pairs them).
-    const bool halfOn = middle->TowardMirrored && MCStrideGesture(CurrentGesture) && frames > 0;
+    const bool halfOn = middle->TowardMirrored && MCStrideGesture(gesture) && frames > 0;
     const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (frame + frames / 2) % frames : frame);
     const MCFrameBounds own = MCShapeFrameBounds(table, frame);
     const MCFrameBounds other = MCShapeFrameBounds(toward->FrameList(), towardFrame);
@@ -853,59 +1017,96 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     const float leftArm = mech->LeftArmRotation;
 
     // The torso and arms play the combat gestures while the gun is up or moving.
+    const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
     const int32_t upperGesture = InCombatMode                                ? GestureCombat
                                  : (CombatModeRaising || CombatModeLowering) ? GestureCombatChange
                                                                              : CurrentGesture;
-    MCMechParts<std::shared_ptr<MCShape>> shapes;
-    shapes[MCMechPart::Legs] = MechTree->GetGesture(CurrentGesture, 0, facing, Reverse[MCMechPart::Legs],
-                                                    FrameRate[MCMechPart::Legs], largeSprites);
-    shapes[MCMechPart::Torso] = MechTree->GetGesture(upperGesture, 1, facing + torso, Reverse[MCMechPart::Torso],
-                                                     FrameRate[MCMechPart::Torso], largeSprites);
-
     const float rotation2 = facing + leftArm + torso;
     const float rotation3 = facing + rightArm + torso;
-    const bool armSymmetrical = MechTree->Gestures[CurrentGesture].ArmSymmetrical != 0;
 
-    // A mirrored arm is drawn from the other arm's sprites. OB-179 fixed: the original swapped on the sign of the
-    // angle alone, also facing straight ahead or back, where the sprite isn't mirrored, so a lone arm jumped sides.
-    const auto mirrored = [&](int32_t part, float rotation)
+    // Each part's shape, the legs in gesture legsGesture and the upper body in upper, its mirroring and rate set in
+    // reverse and rate.
+    const auto partShapes =
+        [&](int32_t legsGesture, int32_t upper, MCMechParts<int32_t>& reverse, MCMechParts<float>& rate)
     {
-        const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upperGesture, part, rotation);
-        return armSymmetrical && packet.has_value() && packet->Reverse;
+        MCMechParts<std::shared_ptr<MCShape>> found;
+        found[MCMechPart::Legs] = MechTree->GetGesture(legsGesture, 0, facing, reverse[MCMechPart::Legs],
+                                                       rate[MCMechPart::Legs], largeSprites);
+        found[MCMechPart::Torso] = MechTree->GetGesture(upper, 1, facing + torso, reverse[MCMechPart::Torso],
+                                                        rate[MCMechPart::Torso], largeSprites);
+        const bool armSymmetrical = MechTree->Gestures[legsGesture].ArmSymmetrical != 0;
+
+        // A mirrored arm is drawn from the other arm's sprites. OB-179 fixed: the original swapped on the sign of the
+        // angle alone, also facing straight ahead or back, where the sprite isn't mirrored, so a lone arm jumped sides.
+        const auto mirrored = [&](int32_t part, float rotation)
+        {
+            const std::optional<MCGesturePacket> packet = MechTree->GesturePacket(upper, part, rotation);
+            return armSymmetrical && packet.has_value() && packet->Reverse;
+        };
+
+        const bool swapRightArm = mirrored(3, rotation2);
+        const bool swapLeftArm = mirrored(2, rotation3);
+
+        if (!RightArmGone)
+        {
+            found[MCMechPart::RightArm] =
+                MechTree->GetGesture(upper, swapRightArm ? 3 : 2, rotation2, reverse[MCMechPart::RightArm],
+                                     rate[MCMechPart::RightArm], largeSprites);
+        }
+
+        if (!LeftArmGone && swapLeftArm)
+        {
+            found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 2, rotation3, reverse[MCMechPart::LeftArm],
+                                                              rate[MCMechPart::LeftArm], largeSprites);
+        }
+        else if (!LeftArmGone)
+        {
+            // Faithful: asked for twice, first with the legs' gesture.
+            found[MCMechPart::LeftArm] = MechTree->GetGesture(legsGesture, 3, rotation3, reverse[MCMechPart::LeftArm],
+                                                              rate[MCMechPart::LeftArm], largeSprites);
+            found[MCMechPart::LeftArm] = MechTree->GetGesture(upper, 3, rotation3, reverse[MCMechPart::LeftArm],
+                                                              rate[MCMechPart::LeftArm], largeSprites);
+        }
+
+        if (Wrecked)
+        {
+            found[MCMechPart::Torso].reset();
+        }
+
+        return found;
     };
 
-    const bool swapRightArm = mirrored(3, rotation2);
-    const bool swapLeftArm = mirrored(2, rotation3);
-
-    if (!RightArmGone)
-    {
-        shapes[MCMechPart::RightArm] =
-            MechTree->GetGesture(upperGesture, swapRightArm ? 3 : 2, rotation2, Reverse[MCMechPart::RightArm],
-                                 FrameRate[MCMechPart::RightArm], largeSprites);
-    }
-
-    if (!LeftArmGone && swapLeftArm)
-    {
-        shapes[MCMechPart::LeftArm] = MechTree->GetGesture(upperGesture, 2, rotation3, Reverse[MCMechPart::LeftArm],
-                                                           FrameRate[MCMechPart::LeftArm], largeSprites);
-    }
-    else if (!LeftArmGone)
-    {
-        // Faithful: asked for twice, first with the legs' gesture.
-        shapes[MCMechPart::LeftArm] = MechTree->GetGesture(CurrentGesture, 3, rotation3, Reverse[MCMechPart::LeftArm],
-                                                           FrameRate[MCMechPart::LeftArm], largeSprites);
-        shapes[MCMechPart::LeftArm] = MechTree->GetGesture(upperGesture, 3, rotation3, Reverse[MCMechPart::LeftArm],
-                                                           FrameRate[MCMechPart::LeftArm], largeSprites);
-    }
-
-    if (Wrecked)
-    {
-        shapes[MCMechPart::Torso].reset();
-    }
+    const MCMechParts<std::shared_ptr<MCShape>> shapes = partShapes(CurrentGesture, upperGesture, Reverse, FrameRate);
 
     for (int32_t part = 0; part < MechPartCount; part++)
     {
         PartShape[part] = shapes[part];
+    }
+
+    // Port-only (HDStops): the stride drawn on, by the legs and (but in the gun pose) the upper body; each part as drawn
+    // in drawnShape, drawnFrame and drawnReverse.
+    MCMechParts<std::shared_ptr<MCShape>> drawnShape = shapes;
+    MCMechParts<int32_t> drawnFrame{};
+    MCMechParts<int32_t> drawnReverse = Reverse;
+    MCMechParts<int32_t> heldFrame{};
+    const auto held = [&](MCMechPart part)
+    { return DrawnStride.has_value() && (part == MCMechPart::Legs || !combatAnim); };
+
+    if (DrawnStride.has_value())
+    {
+        MCMechParts<float> rate = FrameRate;
+        const MCMechParts<std::shared_ptr<MCShape>> stride =
+            partShapes(DrawnStride->Gesture, combatAnim ? upperGesture : DrawnStride->Gesture, drawnReverse, rate);
+
+        for (int32_t part = 0; part < MechPartCount; part++)
+        {
+            heldFrame[part] = static_cast<int32_t>(std::floor(DrawnStride->Frame[part]));
+
+            if (held(static_cast<MCMechPart>(part)))
+            {
+                drawnShape[part] = stride[part];
+            }
+        }
     }
 
     // The shadow, one of 32 facings. Port-only (sun shadows): with HD art drawn by the GPU, the mech casts its parts'
@@ -913,7 +1114,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     // mech it lacks, a mod's, keeps the blob) and the sun casts any (at night, the blob).
     const bool sunShadow =
         MCSceneLights::SunCasts() && MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On &&
-        std::ranges::all_of(shapes, [](const auto& shape)
+        std::ranges::all_of(drawnShape, [](const auto& shape)
                             { return shape == nullptr || MCHdArt::Attached(shape->FrameList().data()); });
     const auto shadowDepth = static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(-y))));
     ElementList().OpenGroup(shadowDepth, true);
@@ -948,82 +1149,11 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
         // Walking and running: a mirrored part runs half a cycle off the part it follows, so the stride
         // alternates; an unmirrored one keeps in step with it.
-        const int32_t gesture = CurrentGesture;
-        const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
-        StrideGesture = MCStrideGesture(gesture) ? 1 : 0;
-
-        if (StrideGesture != 0 && Reverse[part] != 0)
-        {
-            const MCGestureData& data = MechTree->Gestures[gesture];
-            int32_t reference = -1;
-            bool follows = false;
-
-            if (data.ArmSymmetrical == 0)
-            {
-                reference = CurrentFrame[MCMechPart::LeftArm];
-                follows = true;
-            }
-            else if (data.Symmetrical == 0)
-            {
-                reference = CurrentFrame[MCMechPart::Torso];
-                follows = true;
-            }
-
-            if (follows && CurrentFrame[part] == reference && !combatAnim)
-            {
-                const int32_t frame = CurrentFrame[part];
-                const uint32_t numFrames = data.NumFrames;
-
-                if (!PlayBackwards)
-                {
-                    const uint32_t shifted = (numFrames >> 1) + static_cast<uint32_t>(frame);
-                    CurrentFrame[part] = static_cast<int32_t>(shifted);
-                    const uint32_t count = MechTree->Gestures[CurrentGesture].NumFrames;
-
-                    if (count - 1 < shifted)
-                    {
-                        CurrentFrame[part] = static_cast<int32_t>(shifted % count);
-                    }
-                }
-                else
-                {
-                    int32_t shifted = frame - static_cast<int32_t>(numFrames >> 1);
-                    CurrentFrame[part] = shifted;
-
-                    if (shifted < 0)
-                    {
-                        shifted = shifted < 0 ? -shifted : shifted;
-                        const uint32_t count = MechTree->Gestures[CurrentGesture].NumFrames;
-                        const uint32_t wrapped = static_cast<uint32_t>(shifted) % count;
-                        CurrentFrame[part] = static_cast<int32_t>(count - wrapped);
-                    }
-                }
-            }
-        }
-
         StrideGesture = MCStrideGesture(CurrentGesture) ? 1 : 0;
 
-        if (StrideGesture != 0 && Reverse[part] == 0)
+        if (StrideGesture != 0 && !combatAnim)
         {
-            const MCGestureData& data = MechTree->Gestures[CurrentGesture];
-            int32_t reference = 0;
-            bool follows = false;
-
-            if (data.ArmSymmetrical == 0)
-            {
-                reference = CurrentFrame[MCMechPart::LeftArm];
-                follows = true;
-            }
-            else if (data.Symmetrical == 0)
-            {
-                reference = CurrentFrame[MCMechPart::Torso];
-                follows = true;
-            }
-
-            if (follows && CurrentFrame[part] != reference && !combatAnim)
-            {
-                CurrentFrame[part] = reference;
-            }
+            FollowStride(*MechTree, CurrentFrame, part, CurrentGesture, Reverse[part] != 0, PlayBackwards);
         }
 
         if (CurrentFrame[part] < 0)
@@ -1031,12 +1161,43 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             CurrentFrame[part] = 0;
         }
 
-        auto& element = ElementList().Make<MCVfxElement>(shapes[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
-                                                         CurrentFrame[part], Reverse[part], fadeTable, 1);
+        drawnFrame[part] = CurrentFrame[part];
+
+        // Port-only (HDStops): the stride drawn on keeps its parts' steps by the same rule.
+        if (held(part))
+        {
+            if (!combatAnim)
+            {
+                FollowStride(*MechTree, heldFrame, part, DrawnStride->Gesture, drawnReverse[part] != 0, false);
+            }
+
+            DrawnStride->Frame[part] += static_cast<float>(heldFrame[part]) - std::floor(DrawnStride->Frame[part]);
+            drawnFrame[part] = heldFrame[part];
+
+            // Its stride plays again, in step with it: hand back to it.
+            if (part == MCMechPart::Legs && CurrentGesture == DrawnStride->Gesture &&
+                drawnFrame[part] == CurrentFrame[part])
+            {
+                DrawnStride.reset();
+            }
+        }
+        else
+        {
+            drawnShape[part] = shapes[part];
+            drawnReverse[part] = Reverse[part];
+        }
+
+        if (drawnShape[part] == nullptr)
+        {
+            continue;
+        }
+
+        auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                         drawnFrame[part], drawnReverse[part], fadeTable, 1);
 
         if (part == MCMechPart::Legs)
         {
-            element.InBetween = LegsTurnMiddle(facing, *shapes[part]);
+            element.InBetween = LegsTurnMiddle(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part]);
         }
 
         ElementList().Add(element);
@@ -1052,13 +1213,13 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         {
             const MCMechPart part = PartOrder[i];
 
-            if (shapes[part] == nullptr)
+            if (shapes[part] == nullptr || drawnShape[part] == nullptr)
             {
                 continue;
             }
 
-            auto& element = ElementList().Make<MCVfxElement>(shapes[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
-                                                             CurrentFrame[part], Reverse[part], std::nullopt, 1);
+            auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                             drawnFrame[part], drawnReverse[part], std::nullopt, 1);
             element.SunShadow = true;
             ElementList().Add(element);
         }
@@ -1145,9 +1306,10 @@ auto MCMechActor::Update() -> int32_t
                        ? MCEaseFacing(*TurnedFacing, ownFacing, TurnEaseRate * FrameLength, TurnLagMost)
                        : ownFacing;
 
-    // Moving with nowhere to go: stand.
+    // Moving with nowhere to go: stand. Port-only (HDStops): drawn holding its stride while its move is held up.
     if (CheckStop())
     {
+        HoldStride(*mech);
         CurrentGesture = GestureStand;
         CurrentStateGesture = 1;
 
@@ -1817,6 +1979,7 @@ auto MCMechActor::Update() -> int32_t
         HighlightTime = 3.0f;
     }
 
+    StepDrawnStride(*mech);
     return 1;
 }
 

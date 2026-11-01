@@ -1357,12 +1357,12 @@ auto MCBattleMech::Update() -> int32_t
         }
 
         // Footprints: each foot prints once when its hot spot packet's frame comes round (within two frames), and
-        // is re-armed by the walking gestures once past it.
+        // is re-armed by the walking gestures once past it. Port-only (HDStops): as the legs are drawn.
         if (visibleNow != 0 && FootPrints != 0 && gesture != 20 && IsRevealed() != 0)
         {
-            const int32_t gestureNow = actor.CurrentGesture;
+            const int32_t gestureNow = actor.DrawnGesture();
             const uint32_t packetIndex = MCMechActor::GetHotSpotIndex(static_cast<uint32_t>(gestureNow));
-            const int32_t frameNow = actor.CurrentFrame[0];
+            const int32_t frameNow = actor.DrawnLegsFrame();
 
             // The original's test let the index equal the packet count, reading the 32 bytes past the data.
             if (packetIndex < mechType.NumHotSpotPackets)

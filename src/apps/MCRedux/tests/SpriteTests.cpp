@@ -1207,3 +1207,167 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
 
     GMechBraking = 0;
 }
+
+namespace
+{
+    /// <summary>A frame of a held up mech: its gesture, legs frame, and its legs as drawn (HDStops).</summary>
+    struct HeldFrame
+    {
+        int32_t Gesture = 0;
+        int32_t Frame = 0;
+        int32_t DrawnGesture = 0;
+        int32_t DrawnFrame = 0;
+        bool Held = false;
+        bool Still = false;
+    };
+} // namespace
+
+/// <summary>
+/// With HDStops a mech whose move is held up mid-stride (its path paused, as a unit in its way pauses it) holds its
+/// stride as drawn while it stands, then walks on from it: mission 1's mech walks 120 metres, paused a second in the
+/// middle of a stride. Held, its legs stay in its walk at the frame they stopped on while it stands still, move on with
+/// it, never jump more than a frame or two, and hand back to its own walk once in step; at its move's end it stands as
+/// the original. Without, it drops to standing as the original.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its stride, then walks on from it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    REQUIRE(mech != nullptr);
+    const auto actor = std::static_pointer_cast<MCMechActor>(mech->Appearance);
+    const std::shared_ptr<MCMechWarrior> pilot = mech->GetPilot();
+    Eye()->ChangeTarget(mech, true);
+    constexpr float FrameSeconds = 1.0f / 15.0f;
+    constexpr int32_t SettleFrames = 15;
+    constexpr int32_t WalkedFrames = 45;
+    constexpr int32_t PausedFrames = 15;
+    constexpr int32_t MostFrames = 1200;
+    constexpr int32_t StillFrames = 15;
+    constexpr float Metres = 120.0f;
+    // MCMoveOrders::WaitForPointTime waiting for the point mech, and not.
+    constexpr float WaitingForPoint = 999999.0f;
+    constexpr float NotWaiting = -1.0f;
+    // A frame's step and the steps a stride drawn on closes in by.
+    constexpr int32_t MostJump = 2;
+    float way = 10.0f;
+
+    for (const int stops : {1, 0})
+    {
+        MCTest::Scope scope(std::format("HDStops {}", stops));
+        GHdStops = stops;
+
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        way += 180.0f;
+        const MCVector3D from = mech->GetPosition();
+        const float units = Metres * WorldUnitsPerMeter;
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                MCVector3D(from.X + static_cast<float>(std::cos(radians)) * units,
+                                           from.Y + static_cast<float>(std::sin(radians)) * units, from.Z),
+                                -1, 0);
+        const int32_t strideFrames = static_cast<int32_t>(actor->MechTree->Gestures[MCStopGesture::Walk].NumFrames);
+        std::vector<HeldFrame> frames;
+        int32_t walked = 0;
+        int32_t paused = -1;
+        int32_t still = 0;
+        MCVector3D last = mech->GetPosition();
+
+        for (int32_t frame = 0; frame < MostFrames && still < StillFrames; ++frame)
+        {
+            // Walked a while, paused mid-stride, as waiting on its lance's point mech pauses it (MCBattleMech's
+            // UpdateMovePath), a unit in its way much the same (CrashAvoidanceSystem).
+            const bool midStride = actor->CurrentGesture == MCStopGesture::Walk &&
+                                   std::abs(actor->CurrentFrame[MCMechPart::Legs] - strideFrames / 2) <= 1;
+            walked += actor->CurrentGesture == MCStopGesture::Walk ? 1 : 0;
+
+            if (paused < 0 && walked > WalkedFrames && midStride)
+            {
+                paused = static_cast<int32_t>(frames.size());
+            }
+
+            // Kept waiting: a mech with no point mech is let go at once.
+            if (paused >= 0 && static_cast<int32_t>(frames.size()) < paused + PausedFrames)
+            {
+                pilot->PausePath();
+                pilot->MoveOrders.WaitForPointTime = WaitingForPoint;
+            }
+            else if (paused >= 0 && static_cast<int32_t>(frames.size()) == paused + PausedFrames)
+            {
+                pilot->MoveOrders.WaitForPointTime = NotWaiting;
+                pilot->ResumePath();
+            }
+
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCVector3D now = mech->GetPosition();
+            frames.push_back({actor->CurrentGesture, actor->CurrentFrame[MCMechPart::Legs], actor->DrawnGesture(),
+                              actor->DrawnLegsFrame(), actor->DrawnStride.has_value(),
+                              now.X == last.X && now.Y == last.Y});
+            last = now;
+            still = paused >= 0 && actor->CurrentGesture == MCStopGesture::Stand && !actor->InTransition &&
+                            static_cast<int32_t>(frames.size()) > paused + PausedFrames + StillFrames
+                        ? still + 1
+                        : 0;
+        }
+
+        REQUIRE(paused >= 0);
+        REQUIRE(still == StillFrames);
+        const auto pause = frames.begin() + paused;
+        const auto heldFrames = std::ranges::count_if(frames, &HeldFrame::Held);
+        std::cout << std::format("  HDStops {}: paused at frame {}, its legs drawn at walk frame {}, held {} frames\n",
+                                 stops, paused, pause->DrawnFrame, heldFrames);
+        // Stopped dead, as the original stops it.
+        const auto stood =
+            std::find_if(pause, frames.end(), [](const HeldFrame& f) { return f.Gesture == MCStopGesture::Stand; });
+        REQUIRE(stood != frames.end());
+        CHECK(std::distance(pause, stood) <= MostJump);
+
+        if (stops == 0)
+        {
+            CHECK(heldFrames == 0);
+            continue;
+        }
+
+        // Held from the stop until it hands back to its walk, in step, and at its move's end stands as the original.
+        const auto handedBack = std::find_if(stood, frames.end(), [](const HeldFrame& f) { return !f.Held; });
+        REQUIRE(handedBack != frames.end());
+        CHECK(handedBack->Gesture == MCStopGesture::Walk);
+        CHECK(handedBack->DrawnFrame == handedBack->Frame);
+        CHECK(!frames.back().Held);
+        CHECK(frames.back().DrawnGesture == MCStopGesture::Stand);
+
+        // Held at the frame its legs stopped on.
+        const int32_t stoppedOn = (pause - 1)->DrawnFrame;
+        CHECK((stood->DrawnFrame - stoppedOn + strideFrames) % strideFrames <= MostJump);
+
+        for (auto f = stood; f != handedBack; ++f)
+        {
+            CHECK(f->Held);
+            CHECK(f->DrawnGesture == MCStopGesture::Walk);
+            CHECK((f->Gesture != MCStopGesture::Stand || f->DrawnFrame == stood->DrawnFrame));
+        }
+
+        for (auto f = pause + 1; f != handedBack + 1; ++f)
+        {
+            const auto prev = f - 1;
+            const int32_t jump = (f->DrawnFrame - prev->DrawnFrame + strideFrames) % strideFrames;
+            MCTest::Scope at(std::format("frame {}", std::distance(frames.begin(), f)));
+            CHECK(jump <= MostJump);
+
+            if (f->Still && prev->Held)
+            {
+                CHECK(jump == 0);
+            }
+        }
+    }
+
+    GHdStops = 0;
+}

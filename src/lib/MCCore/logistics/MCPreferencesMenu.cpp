@@ -476,6 +476,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
     prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
     prefs.WriteIdBoolean("HDTurns", GHdTurns != 0);
+    prefs.WriteIdBoolean("HDStops", GHdStops != 0);
     prefs.WriteIdBoolean("MechBraking", GMechBraking != 0);
     MCKeyBindings::WritePrefs(prefs);
     Cancel();

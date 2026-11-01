@@ -339,14 +339,15 @@ namespace MCSceneLights
 
     /// <summary>
     /// At night (<see cref="TimeOfDay"/>), a unit's headlight (a mech's, a vehicle's): a warm spotlight on the ground
-    /// ahead of it, widening as it goes, and its lamp, a small glow <paramref name="lampDown"/> of the way down its sprite
-    /// (0 its top, 1 its feet) toward its facing, drawn just over the unit (its parts' draw list group,
-    /// <paramref name="depthFixup"/> less its screen height) and fading as it faces away. <paramref name="appearance"/>
-    /// as it last placed itself on the screen, its owner at <paramref name="position"/>, facing as
-    /// <paramref name="frame"/> does (MCMover::Frame).
+    /// ahead of it, widening as it goes. <paramref name="appearance"/> as it last placed itself on the screen, its owner
+    /// at <paramref name="position"/>, facing as <paramref name="frame"/> does (MCMover::Frame) turned
+    /// <paramref name="turn"/> degrees counterclockwise (a mech's torso's, MCBattleMech::TorsoRotation). Its lamp at
+    /// <paramref name="lamp"/> in the world (a mech's cockpit), a small light drawn just over the unit (its parts' draw
+    /// list group, <paramref name="depthFixup"/> less its screen height) and hidden as it faces away, the beam starting
+    /// on the ground under it; with none (a vehicle's: the art has no point for it), the beam starts at its feet.
     /// </summary>
-    void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
-                      int32_t depthFixup, float lampDown);
+    void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame, float turn,
+                      const std::optional<MCVector3D>& lamp, int32_t depthFixup);
 
     /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added

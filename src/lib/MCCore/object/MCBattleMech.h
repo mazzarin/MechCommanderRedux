@@ -33,6 +33,15 @@ public:
     int32_t Update() override;
     void Render() override;
     MCVector3D GetPositionFromHS(uint32_t hotSpot) override;
+    /// <summary>
+    /// Port-only (HD lighting's headlights): where the cockpit is (the hot spot after the weapons' second, the one the
+    /// original ejects the pilot from, HandleEjection), as GetPositionFromHS places it, turned with the torso. Where the
+    /// current gesture's packet doesn't hold it (the Commando's, cm.hsp's gestures 0-14), its offset in the first
+    /// gesture's that does, at that gesture's first frame; none where no gesture's does.
+    /// </summary>
+    std::optional<MCVector3D> CockpitPosition();
+    /// <summary>The cockpit's hot spot: this many after the weapons'.</summary>
+    static constexpr uint32_t CockpitHotSpot = 1;
     void HandleStaticCollision() override;
     /// <summary>
     /// Reads the mech profile ("MechProfile"): name, battle rating, tonnage, names, pilot, icon, engine, movement
@@ -227,4 +236,12 @@ public:
     int32_t NameIndex = 0;
     /// <summary>"NameVariant".</summary>
     int32_t NameVariant = 0;
+
+private:
+    /// <summary>
+    /// A hot spot's place in the world: its offset (<paramref name="offsetX"/>, <paramref name="offsetY"/>,
+    /// <paramref name="offsetZ"/>, the packet's units) from the mech's position, turned to <paramref name="turned"/>
+    /// degrees snapped to the art's facings (GetPositionFromHS's).
+    /// </summary>
+    MCVector3D PlaceHotSpot(float offsetX, float offsetY, float offsetZ, double turned) const;
 };

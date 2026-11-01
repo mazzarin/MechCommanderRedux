@@ -72,15 +72,21 @@ namespace
     /// pixels doesn't bend its way.
     /// </summary>
     constexpr float FacingStep = 1000.0f;
+    /// <summary>A headlight's lamp's mark: its size (the window's pixels), softness and colour (premultiplied, added).</summary>
+    struct LampMark
+    {
+        float Radius = 0.0f;
+        float Softness = 0.0f;
+        std::array<uint8_t, 3> Color{};
+    };
+
     /// <summary>
-    /// A headlight's lamp: this share of its unit's half width toward its facing; its glow's size (the window's pixels)
-    /// and softness, and its colour (premultiplied, added). It shows fully facing the camera or sideways, fading out as
-    /// the unit faces away (its facing's share up the screen, from LampHideFrom to LampHidden).
+    /// A headlight's lamp: a small hard-edged core, as the art draws a light, in a faint halo; shown fully facing the
+    /// camera or sideways, fading out as the unit faces away (its facing's share up the screen, from LampHideFrom to
+    /// LampHidden).
     /// </summary>
-    constexpr float LampOut = 0.4f;
-    constexpr float LampRadius = 2.5f;
-    constexpr float LampSoftness = 0.8f;
-    constexpr std::array<uint8_t, 3> LampColor{255, 240, 205};
+    constexpr LampMark LampCore{1.4f, 0.35f, {255, 246, 225}};
+    constexpr LampMark LampHalo{4.5f, 1.0f, {110, 95, 70}};
     constexpr float LampHideFrom = 0.2f;
     constexpr float LampHidden = 0.7f;
     /// <summary>A spotlight's beam is full within this share of the way from its edge to its middle (composite.pshader's).</summary>
@@ -776,7 +782,7 @@ auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& 
 }
 
 auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
-                                 int32_t depthFixup, float lampDown) -> void
+                                 float turn, const std::optional<MCVector3D>& lamp, int32_t depthFixup) -> void
 {
     State& state = TheState();
     const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
@@ -786,17 +792,23 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
         return;
     }
 
-    // Its facing on the ground (the frame turned an eighth of a turn, the facing its art is drawn at, as MCMover's), and
-    // that way on the screen, along the ground (a screen height GroundAspect of one).
+    // Its facing on the ground (the frame turned an eighth of a turn, the facing its art is drawn at, as MCMover's),
+    // turned as far again (counterclockwise, a mech's torso's), and that way on the screen along the ground (a screen
+    // height GroundAspect of one).
     const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
-    const float facingX = (frame.I.X - frame.J.X) * eighth;
-    const float facingY = (frame.I.Y - frame.J.Y) * eighth;
+    const float bodyX = (frame.I.X - frame.J.X) * eighth;
+    const float bodyY = (frame.I.Y - frame.J.Y) * eighth;
+    const float radians = turn * std::numbers::pi_v<float> / 180.0f;
+    const float facingX = bodyX * std::cos(radians) - bodyY * std::sin(radians);
+    const float facingY = bodyX * std::sin(radians) + bodyY * std::cos(radians);
     const MCVector2D at = ProjectToScreen(position, *camera);
     const MCVector2D ahead = ProjectToScreen(
         MCVector3D(position.X + facingX * FacingStep, position.Y + facingY * FacingStep, position.Z), *camera);
     const float aspect = GroundAspect();
-    const float wayX = ahead.X - at.X;
-    const float wayY = (ahead.Y - at.Y) / aspect;
+    const float screenX = ahead.X - at.X;
+    const float screenY = ahead.Y - at.Y;
+    const float wayX = screenX;
+    const float wayY = screenY / aspect;
     const float way = std::hypot(wayX, wayY);
 
     if (way <= 0.0f)
@@ -804,12 +816,18 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
         return;
     }
 
-    // From its feet (a jumping unit's are its altitude lower on the screen) to the pool's middle.
+    // The beam's tip: the ground under the lamp, or the unit's feet (a jumping unit's are its altitude lower on the
+    // screen); from there to the pool's middle.
+    const std::optional<MCVector2D> lampAt =
+        lamp.has_value() ? std::optional(ProjectToScreen(*lamp, *camera)) : std::nullopt;
+    const float tipX = lampAt.has_value() ? lampAt->X : appearance.ScreenPos.X;
+    const float tipY =
+        lampAt.has_value() ? lampAt->Y + AltitudeOf(*lamp) : appearance.ScreenPos.Y + AltitudeOf(position);
     MCSceneLight light;
     light.SpotX = wayX / way * HeadlightAhead;
     light.SpotY = wayY / way * HeadlightAhead * aspect;
-    light.X0 = light.X1 = appearance.ScreenPos.X + light.SpotX;
-    light.Y0 = light.Y1 = appearance.ScreenPos.Y + AltitudeOf(position) + light.SpotY;
+    light.X0 = light.X1 = tipX + light.SpotX;
+    light.Y0 = light.Y1 = tipY + light.SpotY;
     light.SpotCos = std::cos(HeadlightDegrees * std::numbers::pi_v<float> / 180.0f);
     light.Height = HeadlightHeight;
     light.Reach = HeadlightReach;
@@ -818,30 +836,30 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
     light.Blue = HeadlightColor[2] * HeadlightGain;
     Add(light);
 
-    // The lamp, on the side of the unit it faces on the screen; hidden by the unit as it faces away (up the screen).
-    const float screenX = ahead.X - at.X;
-    const float screenY = ahead.Y - at.Y;
-    const float screen = std::hypot(screenX, screenY);
-    const float up = screen > 0.0f ? -screenY / screen : 0.0f;
+    // The lamp: hidden by the unit as it faces away (up the screen).
+    const float up = -screenY / std::hypot(screenX, screenY);
     const float shows = 1.0f - std::clamp((up - LampHideFrom) / (LampHidden - LampHideFrom), 0.0f, 1.0f);
 
-    if (shows <= 0.0f || screen <= 0.0f)
+    if (!lampAt.has_value() || shows <= 0.0f)
     {
         return;
     }
 
-    const float halfWidth = (appearance.LowerRight.X - appearance.UpperLeft.X) * 0.5f;
-    MCParticleCommand lamp;
-    lamp.X0 = lamp.X1 = appearance.ScreenPos.X + screenX / screen * halfWidth * LampOut;
-    lamp.Y0 = lamp.Y1 = appearance.UpperLeft.Y + (appearance.ScreenPos.Y - appearance.UpperLeft.Y) * lampDown;
-    lamp.Radius = LampRadius;
-    lamp.Softness = LampSoftness;
-    lamp.Red = static_cast<uint8_t>(std::lround(LampColor[0] * shows));
-    lamp.Green = static_cast<uint8_t>(std::lround(LampColor[1] * shows));
-    lamp.Blue = static_cast<uint8_t>(std::lround(LampColor[2] * shows));
-    // Just over the unit's parts.
-    MCParticles::AddMark(lamp,
-                         static_cast<int32_t>(std::floor(static_cast<float>(depthFixup) - appearance.ScreenPos.Y)) - 1);
+    // Its halo, then its core over it, just over the unit's parts (drawn after them).
+    const int32_t depth = static_cast<int32_t>(std::floor(static_cast<float>(depthFixup) - appearance.ScreenPos.Y)) - 1;
+
+    for (const auto& [look, order] : {std::pair{LampHalo, 0}, std::pair{LampCore, 1}})
+    {
+        MCParticleCommand mark;
+        mark.X0 = mark.X1 = lampAt->X;
+        mark.Y0 = mark.Y1 = lampAt->Y;
+        mark.Radius = look.Radius;
+        mark.Softness = look.Softness;
+        mark.Red = static_cast<uint8_t>(std::lround(look.Color[0] * shows));
+        mark.Green = static_cast<uint8_t>(std::lround(look.Color[1] * shows));
+        mark.Blue = static_cast<uint8_t>(std::lround(look.Color[2] * shows));
+        MCParticles::AddMark(mark, depth - order);
+    }
 }
 
 auto MCSceneLights::AddShadows() -> void

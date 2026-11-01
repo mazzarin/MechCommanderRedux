@@ -832,6 +832,11 @@ auto MCBattleMech::GetPositionFromHS(uint32_t hotSpot) -> MCVector3D
         turned = static_cast<double>(facing) + TorsoRotation;
     }
 
+    return PlaceHotSpot(offsetX, offsetY, offsetZ, turned);
+}
+
+auto MCBattleMech::PlaceHotSpot(float offsetX, float offsetY, float offsetZ, double turned) const -> MCVector3D
+{
     double s;
     double c;
     MCMoverMath::SnappedFacing(turned, s, c);
@@ -840,6 +845,44 @@ auto MCBattleMech::GetPositionFromHS(uint32_t hotSpot) -> MCVector3D
     result.Z = offsetZ * 20.0f + Position.Z;
     result.Y = static_cast<float>((c * offsetY - s * offsetX) * 20.0f + Position.Y);
     return result;
+}
+
+auto MCBattleMech::CockpitPosition() -> std::optional<MCVector3D>
+{
+    const auto& mechType = TypeAs<MCBattleMechType>();
+    const uint32_t cockpit = mechType.NumWeapons + CockpitHotSpot;
+    // Whether gesture's packet holds the cockpit's offsets.
+    const auto holds = [&](uint32_t gesture)
+    {
+        const uint32_t frames = mechType.NumFramesPerHotSpot[gesture];
+        return frames > 0 && gesture < mechType.HotSpotPacketShippedFloats.size() &&
+               mechType.HotSpotPacketShippedFloats[gesture] / (frames * 3) > cockpit;
+    };
+
+    if (mechType.NumOthers + mechType.NumWeapons <= cockpit)
+    {
+        return std::nullopt;
+    }
+
+    const auto& actor = static_cast<MCMechActor&>(*Appearance);
+
+    if (holds(MCMechActor::GetHotSpotIndex(static_cast<uint32_t>(actor.CurrentGesture))))
+    {
+        return GetPositionFromHS(cockpit);
+    }
+
+    for (uint32_t gesture = 0; gesture < mechType.NumHotSpotPackets; ++gesture)
+    {
+        if (holds(gesture))
+        {
+            const std::span<const float> offsets = mechType.GestureHotSpots(gesture);
+            const size_t index = static_cast<size_t>(mechType.NumFramesPerHotSpot[gesture]) * cockpit * 3;
+            const double turned = MCMoverMath::ExactFrameFacing(Frame) + TorsoRotation;
+            return PlaceHotSpot(offsets[index], offsets[index + 1], offsets[index + 2], turned);
+        }
+    }
+
+    return std::nullopt;
 }
 
 auto MCBattleMech::OnScreen() -> int

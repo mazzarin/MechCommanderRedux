@@ -29,12 +29,6 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
-namespace
-{
-    /// <summary>Port-only (HD lighting): a vehicle's headlight's lamp is this share of the way down its sprite.</summary>
-    constexpr float VehicleLampDown = 0.5f;
-}
-
 MCGVAppearance::~MCGVAppearance()
 {
     if (AppearType != nullptr)
@@ -281,7 +275,7 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
 
         if (!obj->IsDisabled())
         {
-            MCSceneLights::AddHeadlight(*this, obj->Position, obj->GetFrame(), depthFixup, VehicleLampDown);
+            MCSceneLights::AddHeadlight(*this, obj->Position, obj->GetFrame(), 0.0f, std::nullopt, depthFixup);
         }
 
         MCParticles::AddMover(this, obj->Position, ShapeMaxX * 0.5f);

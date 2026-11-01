@@ -31,6 +31,17 @@ bool GNoSound = false;
 
 namespace
 {
+    /// <summary>What PREFS.CFG's HD keys read as when it lacks them (<see cref="UseHdByDefault"/>).</summary>
+    struct HdDefaults
+    {
+        bool Art = false;
+        int32_t Audio = HdAudioOff;
+        int32_t Lighting = HdLightingOff;
+        bool SunShadows = false;
+    };
+
+    HdDefaults Defaults;
+
     /// <summary>Reads a SYSTEM.CFG path; a missing one is fatal.</summary>
     void ReadPath(MCFitIniFile& file, std::string_view varName, std::string& path, std::string_view errMessage)
     {
@@ -164,6 +175,11 @@ void ReadSystemConfig(MCFitIniFile& file)
     ReadPath(file, "CDmoviePath", CDmoviePath, " Could not find CD movie path ");
 }
 
+void UseHdByDefault()
+{
+    Defaults = {.Art = true, .Audio = HdAudioOn, .Lighting = HdLightingOn, .SunShadows = true};
+}
+
 void ReadPreferences(MCFitIniFile& file)
 {
     if (const int32_t result = file.SeekBlock("MechCommander"); result != 0)
@@ -197,15 +213,15 @@ void ReadPreferences(MCFitIniFile& file)
     GShowFpsPreference = showFps ? 1 : 0;
     GShowFps = showFps ? 1 : GShowFps;
     // Port-only: HDArt draws the HD art pack's frames where it has them (sprite/MCHdArt.h).
-    GHdArt = file.Read<bool>("HDArt").value_or(false) ? 1 : 0;
+    GHdArt = file.Read<bool>("HDArt").value_or(Defaults.Art) ? 1 : 0;
     // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
-    GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(HdAudioOff), static_cast<int32_t>(HdAudioOff),
+    GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(Defaults.Audio), static_cast<int32_t>(HdAudioOff),
                           static_cast<int32_t>(HdAudioOrchestral));
     // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
-    GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(HdLightingOff),
+    GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(Defaults.Lighting),
                              static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingDusk));
     // Port-only: HDSunShadows draws objects' shadows darkening the ground instead of solid black (sprite/MCSceneLights.h).
-    GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
+    GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(Defaults.SunShadows) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

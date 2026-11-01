@@ -20,6 +20,13 @@ extern bool DebugGameSystem;
 extern bool GNoSound;
 
 /// <summary>
+/// Personal build: PREFS.CFG's HD keys ("HDArt", "HDAudio", "HDLighting" and "HDSunShadows") read as on, lit by day,
+/// when it lacks them, instead of off (the original's game). The app calls it before the game starts; the tests don't,
+/// so they keep the original's defaults.
+/// </summary>
+void UseHdByDefault();
+
+/// <summary>
 /// Reads SYSTEM.CFG and opens every FastFile, then reads PREFS.CFG. A SYSTEM.CFG that can't be opened ends the game.
 /// </summary>
 void SystemInit();

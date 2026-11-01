@@ -2,6 +2,7 @@
 #include "main/MCSystemConfig.h"
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
@@ -218,6 +219,8 @@ void ReadPreferences(MCFitIniFile& file)
                    static_cast<int32_t>(MCParticles::MCFleckStyle::Edge),
                    static_cast<int32_t>(MCParticles::MCFleckStyle::Falling));
     GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
+    // Port-only: HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
+    GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

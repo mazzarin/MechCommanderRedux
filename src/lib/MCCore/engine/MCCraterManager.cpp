@@ -28,6 +28,8 @@ namespace
     constexpr int32_t CraterDepth = 30000000;
 }
 
+int GHdFootprints = 0;
+
 MCCraterManager::MCCraterManager(int32_t numCraters, std::vector<std::vector<uint8_t>> shapes, std::string fileName)
     : _Shapes(std::move(shapes)), _ShapeCount(static_cast<int32_t>(_Shapes.size())), _FileName(std::move(fileName))
 {
@@ -94,7 +96,8 @@ auto MCCraterManager::Create(int32_t numCraters, std::string_view craterFileName
 
     std::string lower(craterFileName);
     std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    auto manager = std::make_unique<MCCraterManager>(numCraters, std::move(shapes), std::move(lower));
+    const int32_t slots = GHdFootprints != 0 ? numCraters * HdFootprintsScale : numCraters;
+    auto manager = std::make_unique<MCCraterManager>(slots, std::move(shapes), std::move(lower));
     manager->AttachHdArt();
     return manager;
 }

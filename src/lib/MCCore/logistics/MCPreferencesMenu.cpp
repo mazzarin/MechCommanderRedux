@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
@@ -470,6 +471,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
     prefs.WriteIdLong("HDFlecks", GHdFlecks);
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
+    prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
     MCKeyBindings::WritePrefs(prefs);
     Cancel();
 }

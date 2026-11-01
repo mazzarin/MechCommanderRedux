@@ -316,6 +316,13 @@ TEST_CASE("craters: the shapes come from the crater PAK, full size first, zoomed
     CHECK_EQ((*craters)->ShapeCount(), 4);
     CHECK_EQ((*craters)->Craters().size(), 5u);
 
+    // Port: HDFootprints makes the ring longer.
+    GHdFootprints = 1;
+    const std::expected<std::unique_ptr<MCCraterManager>, std::string> longer = MCCraterManager::Create(5, "testcrtr");
+    GHdFootprints = 0;
+    REQUIRE(longer.has_value());
+    CHECK_EQ((*longer)->Craters().size(), static_cast<size_t>(5 * HdFootprintsScale));
+
     CHECK(!MCCraterManager::Create(5, "nocrater").has_value());
 }
 

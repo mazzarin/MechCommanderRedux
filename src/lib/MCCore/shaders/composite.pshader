@@ -93,6 +93,9 @@ cbuffer Composite : register(b0, space3)
     // it lies, as east = dot(groundAxes.xy, offset), north = dot(groundAxes.zw, offset).
     float4 ground;
     float4 groundAxes;
+    // The clouds' shadows (CloudsAt): x, how much of the world's own light one takes away (0 none); y, the share of the
+    // ground under them; z, how big they are (meters); w, how fast they drift (meters a second).
+    float4 clouds;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -200,20 +203,26 @@ float2 HazeAt(float2 texel)
     return haze.x * weight * float2(sin(phase), HazeUpDown * cos(phase + wave.x));
 }
 
+// A colour brighter than this (its brightest component) is a light's own to the clouds' shadows, fully at white: they
+// darken the ground's brightest colours (sand, snow) as they do the rest.
+static const float CloudSpareFrom = 0.9;
+
 // The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
 // a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
 // light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
 // brightness: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of
-// the light, times WaterLightGlint.
-float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint)
+// the light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
+// unchanged.
+float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, float3 cloudLight)
 {
-    if (lighting.x <= 0.0 && lighting.z == 1.0)
+    if (lighting.x <= 0.0 && lighting.z == 1.0 && all(cloudLight == 1.0))
     {
         return world;
     }
 
     const float selfLit = SelfLit(world);
-    const float3 base = world * lerp(lighting.z, 1.0, selfLit);
+    const float3 base = world * lerp(lighting.z, 1.0, selfLit) *
+                        lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
     // The light's hue, its colour less its grey: more of it shifts what it lights toward its colour, brightening nothing.
@@ -388,7 +397,9 @@ static const float WaterFlowMost = 4.0;
 // layers of drifting noise (WarpSize meters big, up to WarpCycles of a wave) and narrowed (raised to CrestSharpness),
 // leaving calm troughs between. Gusts (GustSize meters big, drifting with the wind at GustSpeed) leave patches calmer
 // (CalmShare of the waves). The water darkens WaveTrough in a trough and brightens up to WaveCrest on a crest.
-static const float2 WaveDirections[3] = {float2(0.9285, 0.3714), float2(0.6846, 0.7290), float2(0.9943, -0.1068)};
+// The wind (MCSceneLights::WindEast and WindNorth), which the clouds drift before too.
+static const float2 Wind = float2(0.9285, 0.3714);
+static const float2 WaveDirections[3] = {Wind, float2(0.6846, 0.7290), float2(0.9943, -0.1068)};
 static const float3 WaveLengths = float3(30.0, 13.0, 7.0);
 static const float3 WaveSpeeds = float3(9.0, 6.0, 4.0);
 static const float3 WaveWeights = float3(0.5, 0.35, 0.25);
@@ -565,6 +576,58 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
     return lerp(color, shown, water.x);
 }
 
+// Port-only (HD lighting): the clouds' shadows (GHdClouds, MCLighting::Clouds), drifting over the ground (laid on it in
+// meters, as the water's waves) before the wind. They are fractal noise: CloudLayers layers, each twice as fine and half
+// as strong as the one before and turned CloudTurn radians from it (hiding the noise's grid). Each finer one also slides
+// across the wind at CloudShear of its speed, one way then the other, so the clouds' edges change as they go while the
+// clouds keep the wind's speed. A ground point is under a cloud where the noise
+// rises above the level that leaves clouds.y of the ground under them (CloudSpread: the noise's spread about its middle
+// for a share of it, measured), fully at CloudEdge above it. Its shade is lit by the sky, bluer than the sun: it takes
+// CloudShadeTint of clouds.x from each component.
+static const uint CloudLayers = 5;
+static const float CloudTurn = 0.6;
+static const float CloudShear = 0.15;
+static const float CloudSpread = 0.39;
+static const float CloudEdge = 0.06;
+// Each layer's own place in the noise, off the one before.
+static const float2 CloudLayerApart = float2(17.3, -9.1);
+static const float3 CloudShadeTint = float3(1.0, 0.97, 0.8);
+
+// The world's own light the clouds leave at a world texel (1 where none lies).
+float3 CloudsAt(float2 texel)
+{
+    if (clouds.x <= 0.0)
+    {
+        return float3(1.0, 1.0, 1.0);
+    }
+
+    const float2 offset = texel - ground.xy;
+    const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
+    const float drift = haze.z * clouds.w;
+    const float2 crosswind = float2(-Wind.y, Wind.x);
+    const float2 turn = float2(cos(CloudTurn), sin(CloudTurn));
+    float sum = 0.0;
+    float weight = 0.5;
+    float weights = 0.0;
+    float scale = 1.0 / clouds.z;
+    float2 axis = float2(1.0, 0.0);
+
+    for (uint i = 0; i < CloudLayers; ++i)
+    {
+        const float slide = i == 0 ? 0.0 : ((i & 1u) != 0 ? CloudShear : -CloudShear);
+        const float2 p = (at - drift * (Wind + crosswind * slide)) * scale;
+        sum += weight * Noise(float2(dot(p, axis), dot(p, float2(-axis.y, axis.x))) + CloudLayerApart * float(i));
+        weights += weight;
+        weight *= 0.5;
+        scale *= 2.0;
+        axis = float2(axis.x * turn.x - axis.y * turn.y, axis.x * turn.y + axis.y * turn.x);
+    }
+
+    const float level = 0.5 + CloudSpread * (0.5 - clouds.y);
+    const float cloud = smoothstep(level - 0.5 * CloudEdge, level + 0.5 * CloudEdge, sum / weights);
+    return 1.0 - clouds.x * cloud * CloudShadeTint;
+}
+
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
@@ -599,7 +662,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             float glint;
             const float3 seen = LivingWater(lit.rgb, hazy, glint);
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
-            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint) + glint * SunGlint * lighting.z;
+            const float3 cloudLight = CloudsAt(hazy + 0.5);
+            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint, cloudLight) +
+                                 glint * SunGlint * lighting.z * cloudLight;
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -617,7 +682,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
         float glint;
         const float3 seen = LivingWater(Shown(index), hazy, glint);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint) + glint * SunGlint * lighting.z);
+        const float3 cloudLight = CloudsAt(hazy + 0.5);
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight) +
+                     glint * SunGlint * lighting.z * cloudLight);
     }
 
     return Faded(Shown(index));

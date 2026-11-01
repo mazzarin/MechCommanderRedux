@@ -9,6 +9,7 @@
 #include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
+#include "camera/MCCameraList.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
@@ -45,6 +46,7 @@
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCObjectDrawing.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "platform/MCDisplay.h"
@@ -3572,6 +3574,237 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
     std::filesystem::remove_all(scratch);
 }
 
+namespace
+{
+    /// <summary>The share of each component a picture's pixels show of another's (1 where they are the same).</summary>
+    struct ShownShare
+    {
+        float Red = 1.0f;
+        float Green = 1.0f;
+        float Blue = 1.0f;
+        float Luma = 1.0f;
+    };
+
+    /// <summary>A pixel's brightness (Rec. 601), 0 to 255.</summary>
+    float LumaOf(SDL_Color color)
+    {
+        return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b;
+    }
+}
+
+/// <summary>
+/// Cloud shadows (GHdClouds), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface (right of its panels, below the paused message): with them on, part of the world darkens by their darkness
+/// (its blue less, the sky's light) and the rest shows as drawn, none of it darker or brighter; the same game time shows
+/// the same clouds. As the game's time goes on they drift with the wind at their speed: the darkening a while later is
+/// the earlier one moved that far along the wind's way on the ground.
+/// </summary>
+TEST_CASE_ISOLATED("game: cloud shadows darken part of the world, drifting with the wind as the game's time goes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    constexpr float Speed = 5.0f;
+    // A while: the clouds drift Speed * Later meters, about as many pixels.
+    constexpr float Later = 6.0f;
+    lighting.Clouds = Darkness;
+    lighting.CloudCover = 0.5f;
+    lighting.CloudSize = 150.0f;
+    lighting.CloudSpeed = Speed;
+    const float now = ScenarioTime;
+    GamePaused = true;
+
+    const auto shown = [&](int32_t clouds, float time)
+    {
+        GHdClouds = clouds;
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const std::vector<SDL_Color> clear = shown(0, now);
+    const std::vector<SDL_Color> clouded = shown(1, now);
+    const std::vector<SDL_Color> again = shown(1, now);
+    const std::vector<SDL_Color> drifted = shown(1, now + Later);
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    const float distance = Speed * Later;
+    const MCVector2D from = ProjectToScreen(MCVector3D(0.0f, 0.0f, 0.0f), *camera);
+    const MCVector2D to = ProjectToScreen(
+        MCVector3D(MCSceneLights::WindEast * distance, MCSceneLights::WindNorth * distance, 0.0f), *camera);
+    GamePaused = false;
+    GHdClouds = 0;
+    ScenarioTime = now;
+    lighting = kept;
+
+    // The world clear of the interface: the panels take the screen's left third (the minimap's blips blink), the paused
+    // message its top quarter's middle.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    const auto inWorld = [&](size_t i)
+    { return static_cast<int32_t>(i % width) >= left && static_cast<int32_t>(i / width) >= top; };
+    // A pixel's share of the clear one's components, where it isn't too dark to measure (none otherwise).
+    constexpr uint8_t MinComponent = 24;
+    const auto share = [&](const std::vector<SDL_Color>& frame, size_t i) -> std::optional<ShownShare>
+    {
+        const SDL_Color under = clear[i];
+        const SDL_Color over = frame[i];
+
+        if (!inWorld(i) || std::min({under.r, under.g, under.b}) < MinComponent)
+        {
+            return std::nullopt;
+        }
+
+        return ShownShare{static_cast<float>(over.r) / under.r, static_cast<float>(over.g) / under.g,
+                          static_cast<float>(over.b) / under.b, LumaOf(over) / LumaOf(under)};
+    };
+
+    // Every pixel between as drawn and its darkness (a component's rounding either way); the darkest have taken it
+    // all, the blue less.
+    constexpr int32_t Rounding = 2;
+    constexpr float BlueKept = 0.2f;
+    const auto atLeast = [](int32_t actual, float expected) { return actual >= std::lround(expected) - Rounding; };
+    size_t measured = 0;
+    size_t covered = 0;
+    size_t open = 0;
+    double redCovered = 0.0;
+    double blueCovered = 0.0;
+    size_t outside = 0;
+    size_t changed = 0;
+
+    for (size_t i = 0; i < clear.size(); ++i)
+    {
+        if (!inWorld(i))
+        {
+            continue;
+        }
+
+        const SDL_Color under = clear[i];
+        const SDL_Color over = clouded[i];
+        const bool between = over.r <= under.r + Rounding && over.g <= under.g + Rounding &&
+                             over.b <= under.b + Rounding && atLeast(over.r, under.r * (1.0f - Darkness)) &&
+                             atLeast(over.g, under.g * (1.0f - Darkness)) &&
+                             atLeast(over.b, under.b * (1.0f - Darkness * (1.0f - BlueKept)));
+        outside += between ? 0 : 1;
+        changed += SameColor(over, again[i]) ? 0 : 1;
+
+        if (const std::optional<ShownShare> part = share(clouded, i); part.has_value())
+        {
+            ++measured;
+
+            if (part->Luma < 1.0f - 0.9f * Darkness)
+            {
+                ++covered;
+                redCovered += part->Red;
+                blueCovered += part->Blue;
+            }
+            else if (part->Luma > 0.98f)
+            {
+                ++open;
+            }
+        }
+    }
+
+    REQUIRE(measured > static_cast<size_t>(width - left) * (height - top) / 4);
+    const double coveredShare = static_cast<double>(covered) / measured;
+    const double openShare = static_cast<double>(open) / measured;
+    std::cout << std::format("  under the clouds: {:.0f}% of the world, {:.0f}% in the open, {} pixels out of bounds\n",
+                             100.0 * coveredShare, 100.0 * openShare, outside);
+    CHECK(changed == 0);
+    CHECK(outside == 0);
+    CHECK(coveredShare > 0.1);
+    CHECK(openShare > 0.1);
+    REQUIRE(covered > 0);
+    CHECK(blueCovered / covered - redCovered / covered > 0.5 * Darkness * BlueKept);
+
+    // The drift: the shift of the later darkening that matches the earlier best, searched within twice the expected
+    // one's reach (on every Sample-th pixel), lies near it.
+    const float expectedX = to.X - from.X;
+    const float expectedY = to.Y - from.Y;
+    const int32_t reach =
+        static_cast<int32_t>(std::ceil(2.0f * std::max(std::abs(expectedX), std::abs(expectedY)))) + 8;
+    REQUIRE(2 * reach < std::min(width - left, height - top));
+    constexpr int32_t Sample = 5;
+    constexpr float Unmeasured = -1.0f;
+    std::vector<float> earlier(clear.size(), Unmeasured);
+    std::vector<float> later(clear.size(), Unmeasured);
+
+    for (size_t i = 0; i < clear.size(); ++i)
+    {
+        const auto luma = [](const ShownShare& part) { return part.Luma; };
+        earlier[i] = share(clouded, i).transform(luma).value_or(Unmeasured);
+        later[i] = share(drifted, i).transform(luma).value_or(Unmeasured);
+    }
+
+    const auto mismatch = [&](int32_t dx, int32_t dy)
+    {
+        double sum = 0.0;
+        size_t count = 0;
+
+        for (int32_t y = top + reach; y < height - reach; y += Sample)
+        {
+            for (int32_t x = left + reach; x < width - reach; x += Sample)
+            {
+                const float a = earlier[static_cast<size_t>(y) * width + x];
+                const float b = later[static_cast<size_t>(y + dy) * width + x + dx];
+
+                if (a != Unmeasured && b != Unmeasured)
+                {
+                    sum += std::abs(a - b);
+                    ++count;
+                }
+            }
+        }
+
+        return count > 0 ? sum / count : std::numeric_limits<double>::max();
+    };
+
+    double best = std::numeric_limits<double>::max();
+    int32_t bestX = 0;
+    int32_t bestY = 0;
+
+    for (int32_t dy = -reach; dy <= reach; ++dy)
+    {
+        for (int32_t dx = -reach; dx <= reach; ++dx)
+        {
+            if (const double off = mismatch(dx, dy); off < best)
+            {
+                best = off;
+                bestX = dx;
+                bestY = dy;
+            }
+        }
+    }
+
+    const double still = mismatch(0, 0);
+    std::cout << std::format("  drifted ({}, {}) pixels in {:.0f} s, expected ({:.1f}, {:.1f}); mismatch {:.3f} there, "
+                             "{:.3f} unmoved\n",
+                             bestX, bestY, Later, expectedX, expectedY, best, still);
+    CHECK(std::hypot(expectedX, expectedY) > 10.0f);
+    CHECK(std::hypot(bestX - expectedX, bestY - expectedY) < 0.2f * std::hypot(expectedX, expectedY) + 3.0f);
+    CHECK(best < 0.5 * still);
+}
+
 /// <summary>
 /// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
 /// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
@@ -4219,6 +4452,30 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-clouds &lt;darkness&gt;[,&lt;cover&gt;[,&lt;size&gt;[,&lt;speed&gt;]]]</c>, turns cloud shadows on
+    /// (GHdClouds): they take that much of the world's own light, over that share of the ground, that big (meters) and
+    /// drifting that fast (meters a second); each left out keeps MCSceneLights::MCLighting's.
+    /// </summary>
+    void CloudsFromOptions()
+    {
+        const std::optional<std::string_view> clouds = MCTest::Option("hd-clouds");
+
+        if (!clouds.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*clouds);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f", &settings.Clouds, &settings.CloudCover, &settings.CloudSize,
+                            &settings.CloudSpeed) >= 1);
+        GHdClouds = 1;
+        std::cout << std::format(
+            "  cloud shadows: {:.2f} of the light taken, {:.2f} of the ground, {:.0f} m, {:.1f} m/s\n", settings.Clouds,
+            settings.CloudCover, settings.CloudSize, settings.CloudSpeed);
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
@@ -4264,6 +4521,7 @@ namespace
 
         LightingFromOptions();
         SunShadowsFromOptions();
+        CloudsFromOptions();
         return original;
     }
 

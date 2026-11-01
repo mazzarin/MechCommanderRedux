@@ -446,6 +446,7 @@ void WritePrefs()
     prefs.WriteIdLong("HDAudio", GHdAudio);
     prefs.WriteIdLong("HDLighting", GHdLighting);
     prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
+    prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
     Cancel();
 }
 

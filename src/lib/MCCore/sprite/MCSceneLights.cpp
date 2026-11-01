@@ -18,6 +18,7 @@
 
 int GHdLighting = 0;
 int GHdSunShadows = 0;
+int GHdClouds = 0;
 
 namespace
 {
@@ -708,7 +709,7 @@ auto MCSceneLights::ShownGround(const MCWindow& view) -> std::optional<MCSceneGr
 {
     const State& state = TheState();
 
-    if (GHdLighting == HdLightingOff || state.ShownWindow.lock().get() != &view)
+    if ((GHdLighting == HdLightingOff && GHdClouds == 0) || state.ShownWindow.lock().get() != &view)
     {
         return std::nullopt;
     }

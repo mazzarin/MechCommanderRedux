@@ -135,6 +135,17 @@ namespace MCSceneLights
         /// </summary>
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
+        /// <summary>
+        /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
+        /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).
+        /// </summary>
+        float Clouds = 0.3f;
+        /// <summary>With cloud shadows on: the share of the ground under the clouds, 0 to 1.</summary>
+        float CloudCover = 0.4f;
+        /// <summary>With cloud shadows on: how big the clouds are (a cloud and the gap beside it, about), in meters.</summary>
+        float CloudSize = 300.0f;
+        /// <summary>With cloud shadows on: how fast they drift before the wind, in meters a second of the game's time.</summary>
+        float CloudSpeed = 6.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -181,6 +192,13 @@ namespace MCSceneLights
     /// </summary>
     void AddShapeBeam(float x0, float y0, float x1, float y1, float width, std::span<const uint8_t> shapeTable,
                       int32_t frame);
+
+    /// <summary>
+    /// The way the wind blows, a unit direction east (and north) on the ground: the water's waves roll and the clouds
+    /// drift before it (composite.pshader's Wind).
+    /// </summary>
+    inline constexpr float WindEast = 0.9285f;
+    inline constexpr float WindNorth = 0.3714f;
 
     /// <summary>How long a gun's muzzle flash lasts, in seconds of the game's time.</summary>
     inline constexpr float MuzzleFlashSeconds = 0.15f;
@@ -232,7 +250,7 @@ namespace MCSceneLights
 
     /// <summary>
     /// Where the ground lies in the world window <paramref name="view"/> (as <see cref="Shown"/>, its last finished
-    /// frame's); none when HD lighting is off or another window was drawn.
+    /// frame's); none when HD lighting and cloud shadows are off or another window was drawn.
     /// </summary>
     std::optional<MCSceneGround> ShownGround(const MCWindow& view);
 
@@ -257,6 +275,12 @@ extern int GHdLighting;
 /// what lies under them (MCLighting::SunShadow; HD art's frames only: MCHdArt::MarkBakedShadows). Off by default.
 /// </summary>
 extern int GHdSunShadows;
+
+/// <summary>
+/// Port-only: PREFS "HDClouds": 1 lets the shadows of clouds drift over the world before the wind (MCLighting::Clouds;
+/// the presenter's composite, composite.pshader's CloudsAt); 0 shows none, as the original. Off by default.
+/// </summary>
+extern int GHdClouds;
 
 /// <summary>GHdLighting's values.</summary>
 enum MCHdLightingSetting : int

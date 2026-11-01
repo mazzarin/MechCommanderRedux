@@ -49,6 +49,8 @@ namespace
         /// <summary>The ground's map: the texel of the map's middle, then the meters east and north per texel off it.</summary>
         float Ground[4] = {};
         float GroundAxes[4] = {};
+        /// <summary>The clouds' shadows: how much light they take (0 none), their cover, their size and their speed.</summary>
+        float Clouds[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -71,6 +73,8 @@ namespace
     constexpr uint32_t BloomScale = 2;
     /// <summary>A ground map whose axes span less (texels squared per square meter) shows no ground to lay water on.</summary>
     constexpr float MinGroundDeterminant = 1e-6f;
+    /// <summary>The smallest clouds, in meters (their size divides the ground's meters).</summary>
+    constexpr float MinCloudSize = 1.0f;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t5).</summary>
@@ -124,8 +128,8 @@ namespace
         uniforms.Haze[2] = MCSceneLights::ShownTime();
         uniforms.Haze[3] = static_cast<float>(fires);
 
-        // The living water, its ripples laid on the ground: the ground's map inverted, from the texture's pixels to
-        // meters (none for a window whose ground isn't known, or a view that shows no ground).
+        // The living water and the clouds' shadows, laid on the ground: the ground's map inverted, from the texture's
+        // pixels to meters (none for a window whose ground isn't known, or a view that shows no ground).
         const MCSceneGround ground = MCSceneLights::ShownGround(world).value_or(MCSceneGround{});
         const float eastX = ground.EastX * across;
         const float eastY = ground.EastY * down;
@@ -133,10 +137,18 @@ namespace
         const float northY = ground.NorthY * down;
         const float determinant = eastX * northY - northX * eastY;
         const bool flat = std::abs(determinant) < MinGroundDeterminant;
-        uniforms.Water[0] = !flat ? lighting.Water : 0.0f;
+        uniforms.Water[0] = !flat && GHdLighting != HdLightingOff ? lighting.Water : 0.0f;
         uniforms.Water[1] = MCSceneLights::ShownWaterPhase();
         uniforms.Ground[0] = ground.OriginX * across;
         uniforms.Ground[1] = ground.OriginY * down;
+
+        if (!flat && GHdClouds != 0)
+        {
+            uniforms.Clouds[0] = std::clamp(lighting.Clouds, 0.0f, 1.0f);
+            uniforms.Clouds[1] = std::clamp(lighting.CloudCover, 0.0f, 1.0f);
+            uniforms.Clouds[2] = std::max(lighting.CloudSize, MinCloudSize);
+            uniforms.Clouds[3] = lighting.CloudSpeed;
+        }
 
         if (!flat)
         {

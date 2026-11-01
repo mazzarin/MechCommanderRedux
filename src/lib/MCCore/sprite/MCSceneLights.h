@@ -163,18 +163,19 @@ namespace MCSceneLights
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
         /// <summary>
-        /// How much the sun shows the world's relief (its own shading taken for height, as <see cref="Facing"/>'s): a
-        /// surface facing the sun takes more of the world's own light and one facing away less, the more the lower the
-        /// sun (its shadows' way and length, <see cref="SunShadowRight"/> and Up; none at night), 0 to 1 (0: lit as
-        /// flat ground, as drawn; 1: as much as that sun would).
+        /// With relief on (<see cref="GHdRelief"/>): how much the sun shows the world's relief (its own shading taken
+        /// for height, as <see cref="Facing"/>'s, or the HD ground's relief maps): a surface facing the sun takes more
+        /// of the world's own light and one facing away less, the more the lower the sun (its shadows' way and length,
+        /// <see cref="SunShadowRight"/> and Up; none at night), 0 to 1 (0: lit as flat ground, as drawn; 1: as much as
+        /// that sun would).
         /// </summary>
-        float SunRelief = 0.0f;
+        float SunRelief = 0.75f;
         /// <summary>
-        /// How steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's bumps for the
-        /// lights and the sun, where it has them: its slopes times this (0: the ground is lit by its brightness, as the
-        /// rest; 3 about matches the brightness relief's strength).
+        /// With relief on: how steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's
+        /// bumps for the lights and the sun, where it has them: its slopes times this (0: the ground is lit by its
+        /// brightness, as the rest; 3 about matches the brightness relief's strength).
         /// </summary>
-        float ReliefMaps = 0.0f;
+        float ReliefMaps = 3.0f;
         /// <summary>
         /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
         /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).
@@ -204,8 +205,8 @@ namespace MCSceneLights
     MCLighting& Lighting();
 
     /// <summary>
-    /// Whether the HD ground takes the HD art pack's relief maps: HD art and HD lighting on, MCLighting::ReliefMaps
-    /// above 0.
+    /// Whether the HD ground takes the HD art pack's relief maps: HD art, HD lighting and relief (GHdRelief) on,
+    /// MCLighting::ReliefMaps above 0.
     /// </summary>
     bool ReliefMapsOn();
 
@@ -482,6 +483,13 @@ extern int GHdSunShadows;
 /// the presenter's composite, composite.pshader's CloudsAt); 0 shows none, as the original. Off by default.
 /// </summary>
 extern int GHdClouds;
+
+/// <summary>
+/// Port-only: PREFS "HDRelief": with HD lighting on, 1 lets the sun show the world's relief (MCLighting::SunRelief)
+/// and lights the HD ground by the HD art pack's relief maps where it has them (MCLighting::ReliefMaps); 0 lights the
+/// world by day as flat ground and the HD ground's bumps by its brightness. Off by default.
+/// </summary>
+extern int GHdRelief;
 
 /// <summary>GHdLighting's values.</summary>
 enum MCHdLightingSetting : int

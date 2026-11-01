@@ -26,6 +26,7 @@
 int GHdLighting = 0;
 int GHdSunShadows = 0;
 int GHdClouds = 0;
+int GHdRelief = 0;
 
 namespace
 {
@@ -488,7 +489,7 @@ auto MCSceneLights::Lighting() -> MCLighting&
 
 auto MCSceneLights::ReliefMapsOn() -> bool
 {
-    return MCHdArt::Active() && GHdLighting != HdLightingOff && TheState().Lighting.ReliefMaps > 0.0f;
+    return MCHdArt::Active() && GHdLighting != HdLightingOff && GHdRelief != 0 && TheState().Lighting.ReliefMaps > 0.0f;
 }
 
 auto MCSceneLights::ShownLighting() -> MCLighting

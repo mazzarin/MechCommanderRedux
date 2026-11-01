@@ -785,7 +785,9 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
 
     const size_t blocks = static_cast<size_t>(MCBc7::Padded(frame.Width) / MCBc7::BlockSide) *
                           static_cast<size_t>(MCBc7::Padded(frame.Height) / MCBc7::BlockSide);
-    const size_t indexBytes = static_cast<size_t>(originalWidth) * originalHeight * IndexBytes;
+    // A relief map (BC5) carries no indices: its tile's colour frame has them.
+    const bool relief = ReadLittle(bytes, 6, 1) == HdfBc5;
+    const size_t indexBytes = relief ? 0 : static_cast<size_t>(originalWidth) * originalHeight * IndexBytes;
 
     if (!FitsShape(frame.Width, frame.Height, frame.Scale, originalWidth, originalHeight) ||
         colorBytes != blocks * MCBc7::BlockBytes || bytes.size() != HdfHeaderBytes + colorBytes + indexBytes)
@@ -794,7 +796,7 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
                                            originalHeight, frame.Scale, colorBytes, bytes.size()));
     }
 
-    frame.Format = ReadLittle(bytes, 6, 1) == HdfBc5 ? ColorFormat::Bc5 : ColorFormat::Bc7;
+    frame.Format = relief ? ColorFormat::Bc5 : ColorFormat::Bc7;
     frame.Colors.assign(bytes.begin() + HdfHeaderBytes,
                         bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes));
     frame.Indices.assign(bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes), bytes.end());

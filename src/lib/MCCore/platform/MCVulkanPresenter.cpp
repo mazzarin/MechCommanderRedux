@@ -139,7 +139,7 @@ namespace
         uniforms.LightFacing[0] = lighting.Facing * across;
         uniforms.LightFacing[1] = std::max(across * FacingSpan, 1.0f);
 
-        if (GHdLighting != HdLightingOff)
+        if (GHdLighting != HdLightingOff && GHdRelief != 0)
         {
             // The sun's relief: the way away from the sun along the ground, as long as the shadow a pixel of the
             // relief's height casts (the sun shadows' window pixels right and up per pixel of height, a screen height

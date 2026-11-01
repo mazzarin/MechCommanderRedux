@@ -5217,8 +5217,8 @@ namespace
     }
 
     /// <summary>
-    /// With <c>--hd-sun-relief &lt;strength&gt;</c>, the sun shows the world's relief that much (MCLighting::SunRelief,
-    /// 0 to 1).
+    /// With <c>--hd-sun-relief &lt;strength&gt;</c>, turns relief on (GHdRelief), the sun showing the world's relief
+    /// that much (MCLighting::SunRelief, 0 to 1); the relief maps keep their steepness unless --hd-relief-maps says.
     /// </summary>
     void SunReliefFromOptions()
     {
@@ -5230,12 +5230,14 @@ namespace
         }
 
         MCSceneLights::Lighting().SunRelief = std::strtof(std::string(*strength).c_str(), nullptr);
+        GHdRelief = 1;
         std::cout << std::format("  sun relief: {:.2f}\n", MCSceneLights::Lighting().SunRelief);
     }
 
     /// <summary>
-    /// With <c>--hd-relief-maps &lt;steepness&gt;</c>, the HD ground takes the pack's relief maps that steep
-    /// (MCLighting::ReliefMaps; 3 about matches the brightness relief).
+    /// With <c>--hd-relief-maps &lt;steepness&gt;</c>, turns relief on (GHdRelief), the HD ground taking the pack's
+    /// relief maps that steep (MCLighting::ReliefMaps; 3 about matches the brightness relief, 0 leaves them out); the
+    /// sun's relief keeps its strength unless --hd-sun-relief says.
     /// </summary>
     void ReliefMapsFromOptions()
     {
@@ -5247,6 +5249,7 @@ namespace
         }
 
         MCSceneLights::Lighting().ReliefMaps = std::strtof(std::string(*steepness).c_str(), nullptr);
+        GHdRelief = 1;
         std::cout << std::format("  relief maps: {:.2f}\n", MCSceneLights::Lighting().ReliefMaps);
     }
 
@@ -5992,10 +5995,12 @@ namespace
 
     /// <summary>
     /// Writes the HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder: each pixel's shown
-    /// colour inverted, at <see cref="TerrainScale"/> (nearest), opaque, with the index picture beside it.
+    /// colour as <paramref name="paint"/> makes it (inverted), at <see cref="TerrainScale"/> (nearest), opaque, with the
+    /// index picture beside it.
     /// </summary>
     size_t WriteTerrainPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh,
-                            std::span<const SDL_Color, 256> colors)
+                            std::span<const SDL_Color, 256> colors,
+                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted)
     {
         const std::filesystem::path folder = pack / "terrain";
         std::filesystem::create_directories(folder);
@@ -6021,10 +6026,10 @@ namespace
                 {
                     const size_t from = static_cast<size_t>(y / TerrainScale) * decoded.Width + x / TerrainScale;
                     const size_t to = (static_cast<size_t>(y) * width + x) * BytesPerPixel;
-                    const SDL_Color shown = colors[decoded.Index[from]];
-                    color[to] = static_cast<uint8_t>(255 - shown.r);
-                    color[to + 1] = static_cast<uint8_t>(255 - shown.g);
-                    color[to + 2] = static_cast<uint8_t>(255 - shown.b);
+                    const SDL_Color painted = paint(colors[decoded.Index[from]]);
+                    color[to] = painted.r;
+                    color[to + 1] = painted.g;
+                    color[to + 2] = painted.b;
                     color[to + 3] = HasIndex;
                     index[to] = decoded.Index[from];
                     index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
@@ -6167,6 +6172,195 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
         std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
     }
 
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// A colour pressed into the middle (MutedFloor and MutedShare of it): ground bright enough to measure, and dim
+    /// enough that none of it counts as a light's own pixels (composite.pshader's SelfLit, above 55%).
+    /// </summary>
+    constexpr int32_t MutedFloor = 60;
+    constexpr int32_t MutedShare = 3;
+    constexpr int32_t MutedOf = 10;
+
+    SDL_Color Muted(SDL_Color color)
+    {
+        const auto mute = [](uint8_t value) { return static_cast<uint8_t>(MutedFloor + value * MutedShare / MutedOf); };
+        return SDL_Color{mute(color.r), mute(color.g), mute(color.b), 255};
+    }
+
+    /// <summary>
+    /// Writes a relief map of each of the ground mesh's tiles into <paramref name="pack"/>'s relief folder: BC5 at
+    /// <see cref="TerrainScale"/>, the ground rising <paramref name="rise"/> steps (MCHdArt::ReliefFlat) a pixel right
+    /// everywhere, and flat down the picture.
+    /// </summary>
+    size_t WriteReliefPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh, int32_t rise)
+    {
+        const std::filesystem::path folder = pack / "relief";
+        std::filesystem::create_directories(folder);
+        // A block of two BC4 blocks (R, then G), each with both ends its value: every pixel decodes to it.
+        constexpr size_t Bc4Bytes = MCBc7::BlockBytes / 2;
+        std::array<uint8_t, MCBc7::BlockBytes> block{};
+        block[0] = static_cast<uint8_t>(MCHdArt::ReliefFlat + rise);
+        block[1] = block[0];
+        block[Bc4Bytes] = static_cast<uint8_t>(MCHdArt::ReliefFlat);
+        block[Bc4Bytes + 1] = block[Bc4Bytes];
+        size_t written = 0;
+
+        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        {
+            const DecodedTile decoded = DecodeTile(tile);
+
+            if (decoded.Width == 0)
+            {
+                continue;
+            }
+
+            MCHdArt::Frame relief;
+            relief.Scale = TerrainScale;
+            relief.Width = decoded.Width * TerrainScale;
+            relief.Height = decoded.Height * TerrainScale;
+            relief.Format = MCHdArt::ColorFormat::Bc5;
+            const size_t blocks = static_cast<size_t>(MCBc7::Padded(relief.Width) / MCBc7::BlockSide) *
+                                  static_cast<size_t>(MCBc7::Padded(relief.Height) / MCBc7::BlockSide);
+
+            for (size_t i = 0; i < blocks; ++i)
+            {
+                relief.Colors.insert(relief.Colors.end(), block.begin(), block.end());
+            }
+
+            const std::vector<uint8_t> file = MCHdArt::EncodeHdf(relief);
+            std::ofstream(folder / (MCHdArt::TerrainTileName(tile) + ".hdf"), std::ios::binary)
+                .write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+            ++written;
+        }
+
+        return written;
+    }
+
+    /// <summary>composite.pshader's ReliefSteps (a relief map's steps for a rise of a texel) and SunFacingMost.</summary>
+    constexpr float ShaderReliefSteps = 127.0f;
+    constexpr float ShaderSunFacingMost = 0.3f;
+}
+
+/// <summary>
+/// Relief (GHdRelief) with HD lighting by day, on the screen drawn by the GPU over mission 1, paused, with a pack of the
+/// map's tiles (muted) whose relief maps rise evenly to the right: on, the HD ground facing the sun takes more of the
+/// world's own light, as much as its maps' slope, their steepness and the sun's way make it (composite.pshader's
+/// SunFacing), and with the sun on its other side as much less; off, the sun's way changes nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: relief lights the HD ground by the pack's relief maps, brighter facing the sun")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // A pack of the ground alone.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    constexpr int32_t Rise = 20;
+    REQUIRE(WriteTerrainPack(pack, *mesh, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(pack, *mesh, Rise) > 0);
+    const MCHdArtOn hdArt(pack);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const int lightingWas = GHdLighting;
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    GHdLighting = HdLightingOn;
+    GamePaused = true;
+
+    // Two frames each: the first may build the ground again with its relief maps or without them.
+    const auto shown = [&](int relief, float sunRight)
+    {
+        GHdRelief = relief;
+        lighting.SunShadowRight = sunRight;
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const float right = kept.SunShadowRight;
+    const std::vector<SDL_Color> flat = shown(0, right);
+    const std::vector<SDL_Color> flatOtherSun = shown(0, -right);
+    const std::vector<SDL_Color> facing = shown(1, right);
+    const std::vector<SDL_Color> away = shown(1, -right);
+    GHdRelief = 0;
+    GamePaused = false;
+    GHdLighting = lightingWas;
+    lighting = kept;
+
+    // The maps' slope a pixel along the ground against the sun's way (SlopeAt's and the presenter's; their scale by the
+    // brightness relief's span cancels).
+    const float toward = static_cast<float>(Rise) / ShaderReliefSteps * kept.ReliefMaps * kept.SunRelief * right;
+    const float more = ShaderSunFacingMost * std::tanh(toward / ShaderSunFacingMost);
+
+    // The world clear of the interface (the panels at the left, whose minimap blinks, the paused message at the top,
+    // the mech bar at the bottom), where it isn't too dark to measure.
+    constexpr float MinLuma = 40.0f;
+    constexpr float Tolerance = 0.03f;
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    const int32_t bottom = height - height / 8;
+    size_t measured = 0;
+    size_t brighter = 0;
+    size_t darker = 0;
+    size_t sunChanged = 0;
+    std::vector<float> facingShares;
+    std::vector<float> awayShares;
+
+    for (int32_t y = top; y < bottom; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            const float under = LumaOf(flat[i]);
+            sunChanged += SameColor(flatOtherSun[i], flat[i]) ? 0 : 1;
+
+            if (under < MinLuma)
+            {
+                continue;
+            }
+
+            ++measured;
+            facingShares.push_back(LumaOf(facing[i]) / under);
+            awayShares.push_back(LumaOf(away[i]) / under);
+            brighter += std::fabs(facingShares.back() - (1.0f + more)) <= Tolerance ? 1 : 0;
+            darker += std::fabs(awayShares.back() - (1.0f - more)) <= Tolerance ? 1 : 0;
+        }
+    }
+
+    REQUIRE(measured > static_cast<size_t>(width - left) * (bottom - top) / 2);
+    const auto median = [](std::vector<float>& shares)
+    {
+        std::ranges::nth_element(shares, shares.begin() + static_cast<ptrdiff_t>(shares.size() / 2));
+        return shares[shares.size() / 2];
+    };
+
+    const float facingMedian = median(facingShares);
+    const float awayMedian = median(awayShares);
+    std::cout << std::format("  expected x{:.3f} facing the sun, x{:.3f} away; median x{:.3f} and x{:.3f}; "
+                             "{:.0f}% and {:.0f}% of {} pixels within {:.2f}\n",
+                             1.0f + more, 1.0f - more, facingMedian, awayMedian, 100.0 * brighter / measured,
+                             100.0 * darker / measured, measured, Tolerance);
+    CHECK_EQ(sunChanged, 0u);
+    CHECK(std::fabs(facingMedian - (1.0f + more)) <= Tolerance / 3.0f);
+    CHECK(std::fabs(awayMedian - (1.0f - more)) <= Tolerance / 3.0f);
+    CHECK(brighter * 2 > measured);
+    CHECK(darker * 2 > measured);
     std::filesystem::remove_all(scene->Scratch);
 }
 

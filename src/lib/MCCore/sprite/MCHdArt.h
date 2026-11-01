@@ -34,9 +34,9 @@ class MCShape;
 /// original tile's pixels; their alpha is unused. A terrain overlay's (a fast shape over the ground: roads, rivers'
 /// banks, rubble, mines) are <c>overlays/&lt;key&gt;.hdf</c> (named as tiles are), with their alpha; a translucent
 /// one's hold its blended pixels.</para>
-/// <para>A terrain tile's relief map is <c>relief/&lt;key&gt;.hdf</c> (named as its tile), BC5 at its own scale: each
-/// pixel's slope, its height's rise a pixel right (R) and a pixel down the picture (G), 128 flat and 255 a rise of 127
-/// / 128 of a pixel (<see cref="ReliefFlat"/>).</para>
+/// <para>A terrain tile's relief map is <c>relief/&lt;key&gt;.hdf</c> (named as its tile), BC5 at its own scale and
+/// without indices: each pixel's slope, its height's rise a pixel right (R) and a pixel down the picture (G), 128 flat
+/// and each step above or below it a 127th of a pixel's rise or fall (<see cref="ReliefFlat"/>).</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
 /// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -116,9 +116,10 @@ namespace MCHdArt
 
     /// <summary>
     /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7, 2 = BC7 holding a
-    /// translucent shape's blended pixels too, which older builds leave to the original), scale (u8), the
-    /// original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when the frame
-    /// holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size). Little-endian.
+    /// translucent shape's blended pixels too, which older builds leave to the original, 3 = BC5, a relief map), scale
+    /// (u8), the original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when
+    /// the frame holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size; none
+    /// in a relief map). Little-endian.
     /// </summary>
     std::vector<uint8_t> EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options = {});
 

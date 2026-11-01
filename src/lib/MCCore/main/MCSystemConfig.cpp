@@ -211,6 +211,9 @@ void ReadPreferences(MCFitIniFile& file)
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
     // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
     GHdClouds = file.Read<bool>("HDClouds").value_or(false) ? 1 : 0;
+    // Port-only: HDRelief lets the sun show the world's relief, the HD ground's from the pack's relief maps
+    // (sprite/MCSceneLights.h).
+    GHdRelief = file.Read<bool>("HDRelief").value_or(false) ? 1 : 0;
     // Port-only: HDParticles draws flecks, debris, smoke, embers, splashes and wakes, its flecks flying as HDFlecks says;
     // HDShake lets large artillery strikes and buildings' ends shake the picture (sprite/MCParticles.h).
     GHdParticles = file.Read<bool>("HDParticles").value_or(false) ? 1 : 0;

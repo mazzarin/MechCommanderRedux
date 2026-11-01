@@ -140,6 +140,13 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Drop Zones--Team 1", ID_MISSION_DROP_ZONES_TEAM_1
         MENUITEM "Drop &Zones--Team 2", ID_MISSION_DROP_ZONES_TEAM_2
+        MENUITEM SEPARATOR
+        POPUP "Time of Da&y"
+        BEGIN
+            MENUITEM "&Day", ID_MISSION_TIME_OF_DAY_DAY
+            MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
+            MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
+        END
     END
     POPUP "&Tools"
     BEGIN
@@ -240,6 +247,13 @@ BEGIN
     MENUITEM "&Objectives", ID_MISSION_OBJECTIVES_TEAM_1
     MENUITEM "&Settings", ID_MISSION_SETTINGS_TEAM_1
     MENUITEM "&Drop Zones", ID_MISSION_DROP_ZONES_TEAM_1
+    MENUITEM SEPARATOR
+    POPUP "Time of Da&y"
+    BEGIN
+        MENUITEM "&Day", ID_MISSION_TIME_OF_DAY_DAY
+        MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
+        MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
+    END
 END
 
 IDR_MULTIPLAYER_MISSION_MENU MENU
@@ -254,6 +268,13 @@ BEGIN
     MENUITEM SEPARATOR
     MENUITEM "&Drop Zones--Team 1", ID_MISSION_DROP_ZONES_TEAM_1
     MENUITEM "Drop &Zones--Team 2", ID_MISSION_DROP_ZONES_TEAM_2
+    MENUITEM SEPARATOR
+    POPUP "Time of Da&y"
+    BEGIN
+        MENUITEM "&Day", ID_MISSION_TIME_OF_DAY_DAY
+        MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
+        MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
+    END
 END
 
 
@@ -862,6 +883,9 @@ END
 STRINGTABLE
 BEGIN
     ID_VIEW_GRIDLINES                        "Display the tile outlines.\nDisplay Grid"
+    ID_MISSION_TIME_OF_DAY_DAY               "Set the mission by day.\nDay"
+    ID_MISSION_TIME_OF_DAY_DUSK              "Set the mission at dusk: MCRedux shows it darker with HD lighting on, and units see less.\nDusk"
+    ID_MISSION_TIME_OF_DAY_NIGHT             "Set the mission at night: MCRedux shows it dark with HD lighting on, and units see much less.\nNight"
     ID_UNDO                                  "Undo the last operation.\nUndo"
     ID_REDO                                  "Redo the previously undone action.\nRedo"
     IDS_ASSIGN_A_SPECIFIC_HEIGHT             "Assign a specific height to all selected vertices.\nSet Height"

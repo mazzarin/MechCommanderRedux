@@ -83,11 +83,6 @@ namespace
     const double METRES_PER_ELEVATION = std::bit_cast<double>(0x3fe9249249249249ull);
     /// <summary>The click's map position's scale to the game's units (0x004fc140).</summary>
     const double MEASURE_SCALE = std::bit_cast<double>(0x3fe9ec8e951033d9ull);
-    /// <summary>The visual range at each elevation level (0x00502918, 256 entries: 40 from level 24 on).</summary>
-    inline constexpr int32_t RANGE_BY_LEVEL[] = {4,  4,  4,  4,  4,  4,  4,  4,  8,  8,  10, 10,
-                                                 13, 13, 17, 17, 22, 22, 26, 31, 32, 34, 36, 38};
-    inline constexpr int32_t RANGE_LEVELS = 0x100;
-    inline constexpr int32_t TOP_RANGE = 40;
     /// <summary>The status bar's panes.</summary>
     inline constexpr int PANE_X = 1;
     inline constexpr int PANE_Y = 2;
@@ -178,11 +173,16 @@ namespace
         return buffer;
     }
 
-    /// <summary>The visual range at elevation level <paramref name="level"/>.</summary>
-    int32_t rangeAtLevel(int32_t level)
+    // Port-only: Mission > Time of Day's commands follow MissionTimeOfDay's order.
+    static_assert(ID_MISSION_TIME_OF_DAY_DUSK - ID_MISSION_TIME_OF_DAY_DAY ==
+                      static_cast<long>(MissionTimeOfDay::Dusk) &&
+                  ID_MISSION_TIME_OF_DAY_NIGHT - ID_MISSION_TIME_OF_DAY_DAY ==
+                      static_cast<long>(MissionTimeOfDay::Night));
+
+    /// <summary>Port-only: the time of day a Mission > Time of Day command, <paramref name="id"/>, sets.</summary>
+    MissionTimeOfDay timeOfDayCommanded(UINT id)
     {
-        level = std::clamp(level, 0, RANGE_LEVELS - 1);
-        return level < static_cast<int32_t>(std::size(RANGE_BY_LEVEL)) ? RANGE_BY_LEVEL[level] : TOP_RANGE;
+        return MissionTimeOfDayOf(static_cast<long>(id - ID_MISSION_TIME_OF_DAY_DAY));
     }
 
     /// <summary>The click the views play for some commands (0x0041b8b0): the data path's Data\Sound\button7.wav.</summary>
@@ -932,6 +932,9 @@ ON_UPDATE_COMMAND_UI(ID_TOOLS_ROTATE, &DreditorView::OnUpdateToolsRotate)
 ON_MESSAGE(WM_EDITOR_PICK, &DreditorView::OnPickOnMap)
 ON_COMMAND(ID_ROTATE_BUILDING, &DreditorView::OnRotateBuilding)
 ON_UPDATE_COMMAND_UI(ID_ROTATE_BUILDING, &DreditorView::OnUpdateRotateBuilding)
+ON_COMMAND_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT, &DreditorView::OnMissionTimeOfDay)
+ON_UPDATE_COMMAND_UI_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT,
+                           &DreditorView::OnUpdateMissionTimeOfDay)
 END_MESSAGE_MAP()
 
 void DreditorView::OnLButtonDown(UINT nFlags, CPoint point)
@@ -1067,7 +1070,9 @@ void DreditorView::OnMouseMove(UINT nFlags, CPoint point)
             statusBar->SetPaneText(PANE_VERTEX, "");
         }
 
-        text.Format(statusFormat(IDS_INDICATOR_RANGE_FORMAT), rangeAtLevel(gameZ / elevationScale));
+        // Port-only: the sight in the mission's time of day (the original's is the day's).
+        text.Format(statusFormat(IDS_INDICATOR_RANGE_FORMAT),
+                    MissionVisualRange(gameZ / elevationScale, map()->timeOfDay));
         statusBar->SetPaneText(PANE_RANGE, text);
     }
 
@@ -2837,4 +2842,20 @@ void DreditorView::OnRotateBuilding()
 void DreditorView::OnUpdateRotateBuilding(CCmdUI* pCmdUI)
 {
     pCmdUI->Enable(clickedObject != nullptr && clickedObject->hasOtherFrame() ? TRUE : FALSE);
+}
+
+void DreditorView::OnMissionTimeOfDay(UINT nID)
+{
+    EditorMap& editorMap = *map();
+
+    if (const MissionTimeOfDay timeOfDay = timeOfDayCommanded(nID); editorMap.timeOfDay != timeOfDay)
+    {
+        editorMap.timeOfDay = timeOfDay;
+        m_pDocument->SetModifiedFlag(TRUE);
+    }
+}
+
+void DreditorView::OnUpdateMissionTimeOfDay(CCmdUI* pCmdUI)
+{
+    pCmdUI->SetRadio(map()->timeOfDay == timeOfDayCommanded(pCmdUI->m_nID) ? TRUE : FALSE);
 }

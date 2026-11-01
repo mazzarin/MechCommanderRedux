@@ -29,7 +29,8 @@ MissionRecordSet::MissionRecordSet(DaoDatabase* pDatabase) : DaoRecordset(pDatab
     m_ClanArtilleryCamera = 0;
     m_Planet = _T("");
     m_ClanArtillerySensor = 0;
-    m_nFields = 26;
+    m_TimeOfDay = 0;
+    m_nFields = 27;
     m_nDefaultType = dbOpenDynaset;
 }
 
@@ -72,4 +73,5 @@ void MissionRecordSet::DoFieldExchange(DaoFieldExchange* pFX)
     DFX_Long(pFX, _T("[ClanArtilleryCamera]"), m_ClanArtilleryCamera);
     DFX_Text(pFX, _T("[Planet]"), m_Planet, 255);
     DFX_Long(pFX, _T("[ClanArtillerySensor]"), m_ClanArtillerySensor);
+    DFX_Long(pFX, _T("[TimeOfDay]"), m_TimeOfDay);
 }

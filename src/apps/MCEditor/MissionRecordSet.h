@@ -62,6 +62,8 @@ public:
     CString m_Planet;
     /// <summary>The ClanArtillerySensor column.</summary>
     long m_ClanArtillerySensor;
+    /// <summary>Port-only: the TimeOfDay column (MissionTimeOfDay.h).</summary>
+    long m_TimeOfDay;
 
     /// <summary>The class wizard's database path (unused: the editor gives every recordset its database).</summary>
     CString GetDefaultDBName() override;

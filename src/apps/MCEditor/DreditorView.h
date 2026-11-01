@@ -561,5 +561,17 @@ protected:
     /// <summary>Handles ON_UPDATE_COMMAND_UI(ID_ROTATE_BUILDING).</summary>
     afx_msg void OnUpdateRotateBuilding(CCmdUI* pCmdUI);
 
+    /// <summary>
+    /// Port-only: handles ON_COMMAND_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT), Mission > Time of
+    /// Day: sets the mission's time of day, and marks the document changed if it was another.
+    /// </summary>
+    afx_msg void OnMissionTimeOfDay(UINT nID);
+
+    /// <summary>
+    /// Port-only: handles ON_UPDATE_COMMAND_UI_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT): the
+    /// mission's time of day is marked.
+    /// </summary>
+    afx_msg void OnUpdateMissionTimeOfDay(CCmdUI* pCmdUI);
+
     DECLARE_MESSAGE_MAP()
 };

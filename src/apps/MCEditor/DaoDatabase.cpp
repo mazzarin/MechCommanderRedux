@@ -66,6 +66,54 @@ namespace
         return CString(quoted.c_str());
     }
 
+    /// <summary>Whether <paramref name="db"/>'s table <paramref name="table"/> has the column <paramref name="column"/>.</summary>
+    bool hasColumn(sqlite3* db, const char* table, const char* column)
+    {
+        // PRAGMA table_info lists a table's columns, a row each, its name the second value.
+        const CString sql = "PRAGMA table_info(" + quoteIdentifier(table) + ")";
+        sqlite3_stmt* columns = nullptr;
+        bool found = false;
+
+        if (sqlite3_prepare_v2(db, ToUtf8(sql).c_str(), -1, &columns, nullptr) == SQLITE_OK)
+        {
+            while (!found && sqlite3_step(columns) == SQLITE_ROW)
+            {
+                const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(columns, 1));
+                found = name != nullptr && _stricmp(name, column) == 0;
+            }
+        }
+
+        sqlite3_finalize(columns);
+        return found;
+    }
+
+    /// <summary>
+    /// Port-only: adds the port's own columns (FITABL_PORT_COLUMNS) that <paramref name="db"/> lacks, a database made
+    /// before them, with their defaults.
+    /// </summary>
+    /// <returns>False, with <paramref name="error"/>, when one can't be added.</returns>
+    bool addPortColumns(sqlite3* db, CString& error)
+    {
+        for (const FitAblPortColumn& column : FITABL_PORT_COLUMNS)
+        {
+            if (hasColumn(db, column.table, column.column))
+            {
+                continue;
+            }
+
+            const CString sql = "ALTER TABLE " + quoteIdentifier(column.table) + " ADD COLUMN " +
+                                quoteIdentifier(column.column) + " " + column.definition + ";";
+
+            if (!execute(db, ToUtf8(sql).c_str(), error))
+            {
+                error = CString("Adding ") + column.table + "." + column.column + ": " + error;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Copies the rows of the Jet table <paramref name="name"/> into the SQLite table of that name.</summary>
     bool importTable(const JetDatabase& jet, sqlite3* db, const char* name, CString& error)
     {
@@ -330,6 +378,15 @@ void DaoDatabase::Open(LPCTSTR lpszName, BOOL bExclusive, BOOL bReadOnly, LPCTST
 
     // Jet enforced the relationships; SQLite does when asked, on each connection.
     sqlite3_exec(m_pConnection, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
+
+    if (CString error; !bReadOnly && !addPortColumns(m_pConnection, error))
+    {
+        const int code = sqlite3_errcode(m_pConnection);
+        sqlite3_close_v2(m_pConnection);
+        m_pConnection = nullptr;
+        ThrowDaoException(path + ": " + error, code);
+    }
+
     m_strName = lpszName;
     m_bOpen = TRUE;
 }

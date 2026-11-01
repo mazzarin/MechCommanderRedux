@@ -138,6 +138,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - On its first run, the editor copies its own files (the `Teditor` folder and its six sounds) from the CD, a mounted
   CD image or an old editor folder. Nothing on the CD is run, and nothing is written to the registry.
 - The editor finds the game in its own folder, or in the folder given with `--data`.
+- New: **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
+  lighting on the game shows the mission darker. See the [README](README.md#a-missions-time-of-day).
 - A crash writes a stack trace and `MCEditor.dmp` beside the exe instead of showing a dialog.
 
 ---

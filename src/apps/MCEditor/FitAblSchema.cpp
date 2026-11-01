@@ -470,6 +470,10 @@ const char FITABL_SCHEMA[] =
     "CREATE INDEX [Vehicles_TypeID] ON [Vehicles] ([TypeID]);\n"
     "CREATE INDEX [Vehicles_VehicleID] ON [Vehicles] ([VehicleID]);\n";
 
+const std::array<FitAblPortColumn, FITABL_PORT_COLUMN_COUNT> FITABL_PORT_COLUMNS = {{
+    {"NewMissions", "TimeOfDay", "INTEGER NOT NULL DEFAULT 0"},
+}};
+
 const std::array<FitAblTable, FITABL_TABLE_COUNT> FITABL_TABLES = {{
     {"NewMissions"},
     {"MissionStructures"},

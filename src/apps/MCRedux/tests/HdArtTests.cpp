@@ -50,6 +50,7 @@
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCMoverMath.h"
 #include "object/MCObjectDrawing.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
@@ -5460,6 +5461,296 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         MCTestGame::RunFrame(FrameSeconds);
         shoot(std::format("paint_{}", scheme));
     }
+}
+
+namespace
+{
+    /// <summary>A footprint as it was made, and what the mech that made it was doing.</summary>
+    struct MadePrint
+    {
+        int32_t Leg = 0;
+        MCVector3D Print;
+        MCVector3D Mech;
+        float Facing = 0.0f;
+        int32_t Gesture = 0;
+        int32_t LegsFrame = 0;
+        bool Mirrored = false;
+    };
+
+    /// <summary>The player's mech as the mission gave it, with its own tree (its hot spots are its type's).</summary>
+    PlayerMech OwnPlayerMech()
+    {
+        PlayerMech player;
+        player.Mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId));
+        REQUIRE(player.Mech != nullptr);
+        player.Actor = std::static_pointer_cast<MCMechActor>(player.Mech->Appearance);
+        REQUIRE(player.Actor != nullptr);
+        player.Tree = player.Actor->MechTree;
+        Eye()->ChangeTarget(player.Mech, true);
+        return player;
+    }
+
+    /// <summary>
+    /// Walks <paramref name="player"/>'s mech a leg in each of <paramref name="legs"/> ways (evenly round, from 10
+    /// degrees), the camera on it, and hands each of a leg's first <paramref name="perLeg"/> prints made once it walks
+    /// to <paramref name="made"/>, as it is made. <paramref name="step"/> runs a frame (made may run more).
+    /// </summary>
+    void WalkPrinting(const PlayerMech& player, int32_t legs, int32_t perLeg, const std::function<void()>& step,
+                      const std::function<void(const MadePrint&)>& made)
+    {
+        const std::shared_ptr<MCMechWarrior> pilot = player.Mech->GetPilot();
+        REQUIRE(pilot != nullptr);
+        MCCraterManager& craters = CraterManager();
+        const auto slots = static_cast<int32_t>(craters.Craters().size());
+        constexpr float FirstWay = 10.0f;
+        constexpr float LegDistance = 250.0f;
+        constexpr int32_t LegFrames = 150;
+        // Prints while the mech still turns onto its way are left out.
+        constexpr int32_t SettleFrames = 30;
+
+        for (int32_t leg = 0; leg < legs; ++leg)
+        {
+            const double way = (FirstWay + 360.0f * static_cast<float>(leg) / static_cast<float>(legs)) *
+                               MCMoverMath::DegreesToRadians;
+            const MCVector3D from = player.Mech->GetPosition();
+            pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                    MCVector3D(from.X + static_cast<float>(std::cos(way)) * LegDistance,
+                                               from.Y + static_cast<float>(std::sin(way)) * LegDistance, from.Z),
+                                    -1, 0);
+            int32_t slot = craters.NextSlot();
+            int32_t printed = 0;
+
+            for (int32_t frame = 0; frame < LegFrames && printed < perLeg; ++frame)
+            {
+                step();
+
+                if (craters.NextSlot() == slot)
+                {
+                    continue;
+                }
+
+                slot = craters.NextSlot();
+
+                if (frame < SettleFrames)
+                {
+                    continue;
+                }
+
+                const MCFrameOfRef facing = player.Mech->GetFrame();
+                made(MadePrint{leg, craters.Craters()[static_cast<size_t>((slot + slots - 1) % slots)].Position,
+                               player.Mech->GetPosition(),
+                               static_cast<float>(std::atan2(facing.I.Y, facing.I.X) / MCMoverMath::DegreesToRadians),
+                               player.Actor->CurrentGesture, player.Actor->CurrentFrame[0],
+                               player.Actor->Reverse[0] != 0});
+                slot = craters.NextSlot();
+                ++printed;
+            }
+        }
+    }
+
+    /// <summary>A mech type's hot spot packet for <paramref name="gesture"/> (32 bytes: the feet's frames and offsets).</summary>
+    std::span<const uint8_t> FootPacket(const MCBattleMechType& type, int32_t gesture)
+    {
+        constexpr size_t PacketBytes = 32;
+        const uint32_t packet = MCMechActor::GetHotSpotIndex(static_cast<uint32_t>(gesture));
+        REQUIRE(packet < type.NumHotSpotPackets);
+        return std::span<const uint8_t>(type.HotSpotData).subspan(packet * PacketBytes, PacketBytes);
+    }
+
+    /// <summary>The 4-byte value in slot <paramref name="slot"/> of a foot hot spot packet.</summary>
+    template <typename T> T FootValue(std::span<const uint8_t> packet, size_t slot)
+    {
+        T value{};
+        std::memcpy(&value, packet.data() + slot * sizeof(T), sizeof(T));
+        return value;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-footprints &lt;pack&gt; --shots &lt;folder&gt;</c> pictures where a walking mech's footprints land:
+/// mission 1's mech (its own tree, or <c>--mech</c>'s) walks a leg in each of 16 ways, the camera on it, zoomed in; at
+/// each of a leg's first prints once it walks, <c>print_&lt;leg&gt;_&lt;n&gt;_&lt;step&gt;.png</c> (the view's middle as
+/// the print is made, then every other frame), and a line in the log: the mech's facing, the print's offset from it,
+/// the legs' frame and the foot frames of their hot spot packet, and where the mech and the print are on screen.
+/// <c>--hd-original 1</c>, <c>--window</c> and the lighting flags as --hd-pack's; <c>--hd-footprints-on 1</c> turns
+/// HDFootprints on.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-footprints pictures where a walking mech's footprints land")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-footprints");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    GHdFootprints = MCTest::Option("hd-footprints-on").has_value() ? 1 : 0;
+    const std::optional<std::string_view> tree = MCTest::Option("mech");
+    const PlayerMech player = tree.has_value() ? GivePlayerMech(*tree) : OwnPlayerMech();
+    std::cout << std::format("  the mech: {}\n", player.Mech->TypeAs<MCBattleMechType>().Name);
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    constexpr float ZoomedLines = 150.0f;
+    MCFixedZoomHeight = ZoomedLines;
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    constexpr int32_t CropWidth = 640;
+    constexpr int32_t CropHeight = 520;
+    const auto shoot = [&](const std::string& name)
+    {
+        const auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        std::vector<uint8_t> crop;
+        crop.reserve(static_cast<size_t>(CropWidth) * CropHeight * BytesPerPixel);
+
+        for (int32_t y = (height - CropHeight) / 2; y < (height + CropHeight) / 2; ++y)
+        {
+            for (int32_t x = (width - CropWidth) / 2; x < (width + CropWidth) / 2; ++x)
+            {
+                const SDL_Color c = (*frame)[static_cast<size_t>(y) * width + x];
+                crop.insert(crop.end(), {c.r, c.g, c.b, 255});
+            }
+        }
+
+        SavePng(folder / std::format("{}_{}.png", name, original ? "original" : "hd"), CropWidth, CropHeight, crop);
+    };
+
+    const auto step = [&]()
+    {
+        Eye()->SetPosition(player.Mech->GetPosition());
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    const auto& type = player.Mech->TypeAs<MCBattleMechType>();
+    constexpr int32_t Legs = 16;
+    constexpr int32_t PrintsShot = 2;
+    constexpr int32_t ShotSteps = 4;
+    constexpr int32_t FramesBetweenShots = 2;
+    std::map<int32_t, int32_t> printsOfLeg;
+
+    WalkPrinting(player, Legs, PrintsShot, step,
+                 [&](const MadePrint& made)
+                 {
+                     const std::span<const uint8_t> packet = FootPacket(type, made.Gesture);
+                     const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+                     REQUIRE(camera != nullptr);
+                     const MCVector2D mechOnScreen = ProjectToScreen(made.Mech, *camera);
+                     const MCVector2D printOnScreen = ProjectToScreen(made.Print, *camera);
+                     const int32_t number = printsOfLeg[made.Leg]++;
+                     std::cout << std::format(
+                         "  leg {:2} print {}: facing {:+7.1f}, print {:+6.1f} {:+6.1f} m from the mech, legs' frame "
+                         "{} (gesture {}, mirrored {}), feet at frames {} and {}; on screen mech {:.1f} {:.1f}, print "
+                         "{:.1f} {:.1f}, view {:.1f} x {:.1f}, window {} x {}\n",
+                         made.Leg, number, made.Facing, made.Print.X - made.Mech.X, made.Print.Y - made.Mech.Y,
+                         made.LegsFrame, made.Gesture, made.Mirrored ? 1 : 0, FootValue<int32_t>(packet, 0),
+                         FootValue<int32_t>(packet, 4), mechOnScreen.X, mechOnScreen.Y, printOnScreen.X,
+                         printOnScreen.Y, camera->HalfWidth * 2.0f, camera->HalfHeight * 2.0f, width, height);
+
+                     for (int32_t shot = 0; shot < ShotSteps; ++shot)
+                     {
+                         shoot(std::format("print_{:02}_{}_{}", made.Leg, number, shot));
+
+                         for (int32_t i = 0; i < FramesBetweenShots; ++i)
+                         {
+                             step();
+                         }
+                     }
+                 });
+}
+
+/// <summary>
+/// Footprints, mission 1's mech walking eight ways: as the original made them, each foot's print two frames before its
+/// frame (its hot spot packet's), its offset turned by the facing floored to 40 degrees; with HDFootprints (OB-185), at
+/// its frame, turned as the legs are drawn (MCSpriteTree::DrawnFacing, within one of their 17 facings of the mech's
+/// way). A mirrored mech's feet swap offsets: the original took the legs as mirrored by the frame's mirroring
+/// (SetGesture's), which mirrors left of straight ahead and back though they're drawn unmirrored; HDFootprints as
+/// drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDFootprints a walking mech's footprints land under its feet as its legs are drawn")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const PlayerMech player = OwnPlayerMech();
+    const auto& type = player.Mech->TypeAs<MCBattleMechType>();
+    constexpr int32_t Legs = 8;
+    constexpr int32_t PerLeg = 2;
+    constexpr int32_t EarlyFrames = 2;
+    constexpr float FootScale = 20.0f;
+    constexpr float OriginalStep = 40.0f;
+    constexpr float LegFacing = 360.0f / 17.0f;
+    constexpr float Tolerance = 0.05f;
+    // A foot packet's slots: the first foot's frame, x, y, then (from slot 4) the second's.
+    constexpr size_t FirstFoot = 0;
+    constexpr size_t SecondFoot = 4;
+
+    const auto step = [&]()
+    {
+        Eye()->SetPosition(player.Mech->GetPosition());
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    for (const int hd : {0, 1})
+    {
+        MCTest::Scope scope(std::format("HDFootprints {}", hd));
+        GHdFootprints = hd;
+        size_t checked = 0;
+        // Prints where the frame's mirroring isn't the drawn one, so the original swapped the feet.
+        size_t swapped = 0;
+
+        WalkPrinting(player, Legs, PerLeg, step,
+                     [&](const MadePrint& made)
+                     {
+                         MCTest::Scope printScope(std::format("leg {}, facing {:.1f}", made.Leg, made.Facing));
+                         const std::span<const uint8_t> packet = FootPacket(type, made.Gesture);
+                         const int32_t early = hd != 0 ? 0 : EarlyFrames;
+                         const bool first = made.LegsFrame == FootValue<int32_t>(packet, FirstFoot) - early;
+                         const bool second = made.LegsFrame == FootValue<int32_t>(packet, SecondFoot) - early;
+                         REQUIRE(first != second);
+                         const std::optional<MCDrawnFacing> drawn =
+                             player.Tree->DrawnFacing(made.Gesture, 0, made.Facing);
+                         REQUIRE(drawn.has_value());
+                         // The actor's mirroring once the frame is drawn is the drawn one.
+                         CHECK_EQ(drawn->Mirrored, made.Mirrored);
+                         int32_t reverse = 0;
+                         float frameRate = 0.0f;
+                         player.Tree->SetGesture(made.Gesture, 0, made.Facing, reverse, frameRate);
+                         swapped += (reverse != 0) != drawn->Mirrored ? 1 : 0;
+                         const bool mirrored = hd != 0 ? drawn->Mirrored : reverse != 0;
+                         // A foot's offset: its own, or (mirrored) the other foot's.
+                         const size_t offset = (first != mirrored ? FirstFoot : SecondFoot) + 1;
+                         const float x = FootValue<float>(packet, offset);
+                         const float y = FootValue<float>(packet, offset + 1);
+                         float degrees = std::floor(made.Facing / OriginalStep) * OriginalStep;
+
+                         if (hd != 0)
+                         {
+                             const float off = std::remainder(made.Facing - drawn->Degrees, 360.0f);
+                             CHECK(std::fabs(off) < LegFacing);
+                             degrees = drawn->Degrees;
+                         }
+
+                         const double turn = degrees * MCMoverMath::DegreesToRadians;
+                         const auto c = static_cast<float>(std::cos(turn));
+                         const auto s = static_cast<float>(std::sin(turn));
+                         CHECK(std::fabs(made.Print.X - made.Mech.X - (c * x - s * y) * FootScale) < Tolerance);
+                         CHECK(std::fabs(made.Print.Y - made.Mech.Y - (s * x + c * y) * FootScale) < Tolerance);
+                         ++checked;
+                     });
+
+        CHECK(checked >= static_cast<size_t>(Legs));
+        CHECK(swapped > 0);
+    }
+
+    GHdFootprints = 0;
 }
 
 /// <summary>

@@ -505,10 +505,27 @@ TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrore
     CHECK_EQ(where->Packet, 12u * 32 + 24);
     CHECK(!where->Reverse);
 
-    // A gesture without frames has no shapes; the frame rate is made positive.
-    CHECK(!tree->GesturePacket(3, 0, 0.0f).has_value());
+    // The way the drawn facing points: its first angle, mirrored with the sprite.
     int32_t reverse = 0;
     float frameRate = 0.0f;
+    std::optional<MCDrawnFacing> drawn = tree->DrawnFacing(2, 0, 90.0f);
+    REQUIRE(drawn.has_value());
+    CHECK_EQ(drawn->Degrees, 80.0f);
+    CHECK(!drawn->Mirrored);
+    drawn = tree->DrawnFacing(2, 0, -90.0f);
+    CHECK_EQ(drawn->Degrees, -80.0f);
+    CHECK(drawn->Mirrored);
+    // Just left of straight ahead: drawn as straight ahead, though the frame's mirroring (SetGesture's) mirrors it.
+    drawn = tree->DrawnFacing(2, 0, -1.0f);
+    CHECK_EQ(drawn->Degrees, 0.0f);
+    CHECK(!drawn->Mirrored);
+    tree->SetGesture(2, 0, -1.0f, reverse, frameRate);
+    CHECK_EQ(reverse, 1);
+    CHECK_EQ(tree->DrawnFacing(14, 1, 100.0f)->Degrees, 8 * 360.0f / 33.0f);
+
+    // A gesture without frames has no shapes; the frame rate is made positive.
+    CHECK(!tree->GesturePacket(3, 0, 0.0f).has_value());
+    CHECK(!tree->DrawnFacing(3, 0, 0.0f).has_value());
     tree->SetGesture(14, 1, 10.0f, reverse, frameRate);
     CHECK_EQ(frameRate, 15.0f);
 

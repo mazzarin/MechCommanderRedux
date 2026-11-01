@@ -91,8 +91,9 @@ private:
 
 /// <summary>
 /// Port-only: PREFS "HDFootprints": 1 keeps <see cref="HdFootprintsScale"/> times as many footprints and craters on the
-/// ground as the mission's ring holds (its CraterSystem NumCraters) before the oldest give way; 0 as the original. Off
-/// by default; a mission takes it as it loads.
+/// ground as the mission's ring holds (its CraterSystem NumCraters) before the oldest give way, and prints a walking
+/// mech's feet where its legs are drawn stepping (OB-185, MCBattleMech::Update); 0 as the original. Off by default; a
+/// mission takes the ring's length as it loads.
 /// </summary>
 extern int GHdFootprints;
 

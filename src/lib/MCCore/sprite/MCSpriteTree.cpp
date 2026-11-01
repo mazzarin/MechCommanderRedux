@@ -87,6 +87,82 @@ namespace
     {
         return data.FrameRate < 0.0 ? -data.FrameRate : data.FrameRate;
     }
+
+    /// <summary>Which of a part's facings a rotation shows (its index among the gesture's), and whether mirrored.</summary>
+    struct ShownFacing
+    {
+        int32_t Index = 0;
+        bool Reverse = false;
+    };
+
+    /// <summary>
+    /// The facing part <paramref name="part"/> (the tree's numbering) of gesture <paramref name="gesture"/> (its data
+    /// <paramref name="data"/>) shows at <paramref name="rotation"/> degrees.
+    /// </summary>
+    auto ShowsFacing(const MCGestureData& data, int32_t gesture, int32_t part, float rotation) -> ShownFacing
+    {
+        const bool symmetrical = PartSymmetrical(data, part);
+        bool reverse = Facing(symmetrical, rotation);
+        const uint32_t numRotations = data.NumRotations[part];
+        int32_t rotationIndex = static_cast<int16_t>(static_cast<int32_t>(
+            std::floor(static_cast<double>(static_cast<int32_t>(numRotations + 1)) * rotation * (1.0 / 360.0))));
+
+        if (rotationIndex >= 0x20 && rotation > 180.0 && !symmetrical)
+        {
+            rotationIndex = 0x1f;
+
+            if (rotationIndex == static_cast<int32_t>(numRotations >> 1))
+            {
+                reverse = false;
+            }
+        }
+        else if (rotationIndex == 0 || rotationIndex == static_cast<int32_t>(numRotations >> 1))
+        {
+            // Straight ahead or straight back: no mirroring.
+            reverse = false;
+        }
+
+        // Gestures 14..19 and 21..24 only have every fourth facing.
+        int32_t index = rotationIndex;
+
+        if ((gesture > 0xd && gesture < 0x14) || (gesture > 0x14 && gesture < 0x19))
+        {
+            if (rotationIndex < 2)
+            {
+                index = 0;
+            }
+            else if (rotationIndex < 6)
+            {
+                index = 4;
+            }
+            else if (rotationIndex < 10)
+            {
+                index = 8;
+            }
+            else if (rotationIndex < 0xe)
+            {
+                index = 0xc;
+            }
+            else if (rotationIndex < 0x12)
+            {
+                index = 0x10;
+            }
+            else if (rotationIndex < 0x16)
+            {
+                index = 0x14;
+            }
+            else if (rotationIndex > 0x19)
+            {
+                index = 0x1c;
+            }
+            else
+            {
+                index = 0x18;
+            }
+        }
+
+        return ShownFacing{index, reverse};
+    }
 }
 
 MCSpriteTree::MCSpriteTree() : ShapeList(TreeShapeCount)
@@ -271,64 +347,9 @@ auto MCSpriteTree::GesturePacket(int32_t gesture, int32_t part, float rotation) 
     }
 
     const bool symmetrical = PartSymmetrical(data, part);
-    bool reverse = Facing(symmetrical, rotation);
-    const uint32_t numRotations = data.NumRotations[part];
-    int32_t rotationIndex = static_cast<int16_t>(static_cast<int32_t>(
-        std::floor(static_cast<double>(static_cast<int32_t>(numRotations + 1)) * rotation * (1.0 / 360.0))));
-
-    if (rotationIndex >= 0x20 && rotation > 180.0 && !symmetrical)
-    {
-        rotationIndex = 0x1f;
-
-        if (rotationIndex == static_cast<int32_t>(numRotations >> 1))
-        {
-            reverse = false;
-        }
-    }
-    else if (rotationIndex == 0 || rotationIndex == static_cast<int32_t>(numRotations >> 1))
-    {
-        // Straight ahead or straight back: no mirroring.
-        reverse = false;
-    }
-
-    // Gestures 14..19 and 21..24 only have every fourth facing.
-    int32_t index = rotationIndex;
-
-    if ((gesture > 0xd && gesture < 0x14) || (gesture > 0x14 && gesture < 0x19))
-    {
-        if (rotationIndex < 2)
-        {
-            index = 0;
-        }
-        else if (rotationIndex < 6)
-        {
-            index = 4;
-        }
-        else if (rotationIndex < 10)
-        {
-            index = 8;
-        }
-        else if (rotationIndex < 0xe)
-        {
-            index = 0xc;
-        }
-        else if (rotationIndex < 0x12)
-        {
-            index = 0x10;
-        }
-        else if (rotationIndex < 0x16)
-        {
-            index = 0x14;
-        }
-        else if (rotationIndex > 0x19)
-        {
-            index = 0x1c;
-        }
-        else
-        {
-            index = 0x18;
-        }
-    }
+    const ShownFacing shown = ShowsFacing(data, gesture, part, rotation);
+    const int32_t index = shown.Index;
+    const bool reverse = shown.Reverse;
 
     // The tree's parts 2 and 3 are the left and the right arm's sprites.
     constexpr std::array<MCMechPart, MechPartCount> filePart = {MCMechPart::Legs, MCMechPart::Torso,
@@ -345,6 +366,21 @@ auto MCSpriteTree::GesturePacket(int32_t gesture, int32_t part, float rotation) 
     const auto packet = static_cast<uint32_t>(finder * rotationsStored + index);
     const MCMechPart file = filePart[part];
     return MCGesturePacket{file, packet, PartShapeStart[file] + packet, reverse};
+}
+
+auto MCSpriteTree::DrawnFacing(int32_t gesture, int32_t part, float rotation) const -> std::optional<MCDrawnFacing>
+{
+    if (gesture < 0 || static_cast<size_t>(gesture) >= Gestures.size() || part < 0 || part >= MechPartCount ||
+        Gestures[gesture].NumFrames == 0)
+    {
+        return std::nullopt;
+    }
+
+    const MCGestureData& data = Gestures[gesture];
+    const ShownFacing shown = ShowsFacing(data, gesture, part, rotation);
+    const float degrees = static_cast<float>(shown.Index) * 360.0f /
+                          static_cast<float>(static_cast<int32_t>(data.NumRotations[part]) + 1);
+    return MCDrawnFacing{shown.Reverse ? -degrees : degrees, shown.Reverse};
 }
 
 auto MCSpriteTree::GetGesture(int32_t gesture, int32_t part, float rotation, int32_t& reverse, float& frameRate,

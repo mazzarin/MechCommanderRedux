@@ -1036,6 +1036,9 @@ namespace
         SoundSystem()->PlayDigitalSample(0xd, 1, mech, false, false);
     }
 
+    /// <summary>The frames either side of a foot's frame (its hot spot packet's) its print may be made in.</summary>
+    constexpr int32_t FootFrameSlack = 2;
+
     /// <summary>A footprint's rotation (of 16) for <paramref name="degrees"/>.</summary>
     int32_t FootprintDirection(float degrees)
     {
@@ -1369,14 +1372,29 @@ auto MCBattleMech::Update() -> int32_t
                 const std::span<const uint8_t> packet =
                     std::span<const uint8_t>(mechType.HotSpotData).subspan(packetIndex * 0x20, 0x20);
                 const int walking = gestureNow == 4 || gestureNow == 7 || gestureNow == 11;
+                const float stepFacing = FrameFacing(Frame);
+                const auto snapped = static_cast<int32_t>(std::floor(static_cast<double>(stepFacing * 0.025f)));
+                // OB-185 (fixed with HDFootprints): the original printed a foot as its legs came within two frames of
+                // its frame, so two early, behind the foot by that much walking; turned the foot's offset by the
+                // facing floored to 40 degrees (its legs' 9 stored facings taken for the whole circle; they're
+                // mirrored to 17), as much as 40 degrees off the legs as drawn; and took the legs as mirrored left of
+                // straight ahead and straight back, which are drawn unmirrored, printing each foot at the other's
+                // place there. A print could land between the feet. With HDFootprints a foot prints at its frame (or
+                // up to two after, should frames be skipped), turned and mirrored as its legs are drawn.
+                const std::optional<MCDrawnFacing> drawn =
+                    GHdFootprints != 0 ? actor.MechTree->DrawnFacing(gestureNow, 0, stepFacing) : std::nullopt;
                 // A mirrored actor swaps the feet's offsets. (The original also checks, dead, for a half turn.)
-                const int mirrored = actor.Reverse[0] != 0;
+                const int mirrored = drawn.has_value() ? drawn->Mirrored : actor.Reverse[0] != 0;
                 const size_t firstOffset = mirrored ? 1 : 5;
                 const size_t secondOffset = mirrored ? 5 : 1;
                 const int32_t firstFrame = HotSpotValue<int32_t>(packet, 0);
                 const int32_t secondFrame = HotSpotValue<int32_t>(packet, 4);
+                const float angle = drawn.has_value() ? drawn->Degrees : static_cast<float>(snapped) * 40.0f;
+                const int32_t earliest = drawn.has_value() ? 0 : FootFrameSlack;
+                const auto atStep = [&](int32_t footFrame)
+                { return footFrame - earliest <= frameNow && frameNow <= footFrame + FootFrameSlack; };
 
-                if (secondFrame + 2 < frameNow || frameNow < secondFrame - 2)
+                if (!atStep(secondFrame))
                 {
                     if (walking)
                     {
@@ -1386,14 +1404,11 @@ auto MCBattleMech::Update() -> int32_t
                 else if (SecondStepPrinted == 0)
                 {
                     SecondStepPrinted = true;
-                    const float stepFacing = FrameFacing(Frame);
-                    const auto snapped = static_cast<int32_t>(std::floor(static_cast<double>(stepFacing * 0.025f)));
-                    const float angle = static_cast<float>(snapped) * 40.0f;
                     MakeFootprint(*this, HotSpotValue<float>(packet, firstOffset),
                                   HotSpotValue<float>(packet, firstOffset + 1), angle, FootprintDirection(angle));
                 }
 
-                if (firstFrame + 2 < frameNow || frameNow < firstFrame - 2)
+                if (!atStep(firstFrame))
                 {
                     if (walking)
                     {
@@ -1403,12 +1418,10 @@ auto MCBattleMech::Update() -> int32_t
                 else if (FirstStepPrinted == 0)
                 {
                     FirstStepPrinted = true;
-                    const float stepFacing = FrameFacing(Frame);
-                    const int32_t direction = FootprintDirection(stepFacing);
-                    const auto snapped = static_cast<int32_t>(std::floor(static_cast<double>(stepFacing * 0.025f)));
+                    // The original turned this print's shape by the exact facing.
+                    const int32_t direction = FootprintDirection(drawn.has_value() ? drawn->Degrees : stepFacing);
                     MakeFootprint(*this, HotSpotValue<float>(packet, secondOffset),
-                                  HotSpotValue<float>(packet, secondOffset + 1), static_cast<float>(snapped) * 40.0f,
-                                  direction);
+                                  HotSpotValue<float>(packet, secondOffset + 1), angle, direction);
                 }
             }
         }

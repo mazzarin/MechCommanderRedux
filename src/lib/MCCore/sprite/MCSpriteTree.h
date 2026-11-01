@@ -88,6 +88,15 @@ struct MCGesturePacket
     bool Reverse = false;
 };
 
+/// <summary>Port-only (HDFootprints): which way a mech part is drawn facing (<see cref="MCSpriteTree::DrawnFacing"/>).</summary>
+struct MCDrawnFacing
+{
+    /// <summary>The way, in degrees: the start of the rotations that show the facing, the other way when mirrored.</summary>
+    float Degrees = 0.0f;
+    /// <summary>Whether the shape is drawn mirrored (straight ahead and straight back never are).</summary>
+    bool Mirrored = false;
+};
+
 /// <summary>
 /// The type of a <see cref="MCMechActor"/>: a mech's gestures, its special animation data, the transition table and
 /// the files of its four parts in the part PAKs.
@@ -121,6 +130,13 @@ public:
     /// at <paramref name="rotation"/> degrees is; nothing when the gesture has no frames.
     /// </summary>
     std::optional<MCGesturePacket> GesturePacket(int32_t gesture, int32_t part, float rotation) const;
+
+    /// <summary>
+    /// Port-only (HDFootprints): the way part <paramref name="part"/> (the tree's numbering) of gesture
+    /// <paramref name="gesture"/> is drawn facing at <paramref name="rotation"/> degrees, as <see cref="GetGesture"/>
+    /// draws it. Nothing when the gesture has no frames.
+    /// </summary>
+    std::optional<MCDrawnFacing> DrawnFacing(int32_t gesture, int32_t part, float rotation) const;
 
     /// <summary>
     /// The shape of part <paramref name="part"/> (the tree's numbering) in gesture <paramref name="gesture"/> at

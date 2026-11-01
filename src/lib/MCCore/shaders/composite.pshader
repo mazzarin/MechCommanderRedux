@@ -106,9 +106,9 @@ cbuffer Composite : register(b0, space3)
     // the air shimmers.
     float4 heat[MaxHeat];
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
-    // and reach (xy), and a spotlight's way from its beam's tip to its pool's middle, the point (zw: 0 for a light that
-    // shines every way); its colour times its strength (rgb), and the cosine of the angle off that way at which a
-    // spotlight's beam has faded out (w).
+    // and reach (xy), and a spotlight's aim, from the ground under it to where its beam's middle meets the ground (zw: 0
+    // for a light that shines every way); its colour times its strength (rgb, a spotlight's where its beam's middle
+    // meets the ground), and the cosine of the angle off its beam's middle at which a spotlight has faded out (w).
     float4 lights[MaxLights * 3];
 };
 
@@ -120,28 +120,33 @@ static const float3 Luma = float3(0.299, 0.587, 0.114);
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
 
-// A spotlight's beam is full within this share of the way from its edge to its middle (MCSceneLights' SpotFull).
+// A spotlight's beam is full within this share of the way from its edge to its middle (MCSceneLights' SpotFull); the
+// ground nearer it than where its beam's middle meets the ground takes at most SpotMost times the light there.
 static const float SpotFull = 0.5;
+static const float SpotMost = 1.5;
 
-// The share of its light a light gives the ground off (along the ground) from its pool's middle: a spotlight's (spot,
-// the way from its beam's tip to the middle; edge, the cosine at which its beam has faded out), 1 within its beam and
-// none outside it; 1 for a light that shines every way.
-float SpotShare(float2 off, float2 spot, float edge)
+// A spotlight's light on the ground off (along the ground) from the ground under it, as a share of its light where its
+// beam's middle meets the ground: the lamp height above the ground, its beam aimed at spot (from the ground under it),
+// fading out at edge (the cosine off its middle). Within the beam, falling off as the square of the distance from the
+// lamp: the ground it lights starts ahead of the lamp and widens as it goes.
+float SpotPool(float2 off, float height, float2 spot, float edge)
 {
-    if (edge <= 0.0 || all(spot == 0.0))
+    const float3 ray = float3(off, -height);
+    const float3 aim = float3(spot, -height);
+    const float lengths = sqrt(dot(ray, ray) * dot(aim, aim));
+
+    if (lengths <= 0.0)
     {
-        return 1.0;
+        return 0.0;
     }
 
-    // The ground's way from the beam's tip.
-    const float2 from = off + spot;
-    const float lengths = sqrt(dot(from, from) * dot(spot, spot));
-    return lengths > 0.0 ? smoothstep(edge, lerp(edge, 1.0, SpotFull), dot(from, spot) / lengths) : 0.0;
+    const float beam = smoothstep(edge, lerp(edge, 1.0, SpotFull), dot(ray, aim) / lengths);
+    return beam * min(dot(aim, aim) / dot(ray, ray), SpotMost);
 }
 
 // The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
-// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away, a spotlight's
-// only within its beam.
+// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away; a spotlight's
+// where its beam meets the ground (SpotPool).
 float3 LightAt(float2 texel, float2 slope)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -170,8 +175,10 @@ float3 LightAt(float2 texel, float2 slope)
             // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
             const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
             const float4 color = lights[i * 3 + 2];
-            sum += color.rgb * (fade * fade * soft * soft / (d2 + soft * soft) * facing *
-                                SpotShare(off, shape.zw * ground, color.w));
+            const float2 spot = shape.zw * ground;
+            const float pool = color.w > 0.0 && any(spot != 0.0) ? SpotPool(off, shape.x, spot, color.w)
+                                                                 : soft * soft / (d2 + soft * soft);
+            sum += color.rgb * (fade * fade * pool * facing);
         }
     }
 

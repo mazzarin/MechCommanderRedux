@@ -38,13 +38,14 @@ struct MCSceneLight
     float Green = 0.0f;
     float Blue = 0.0f;
     /// <summary>
-    /// A spotlight (a unit's headlight): from the tip of its beam to the middle of its pool, (X0, Y0), in the window's
-    /// pixels; it lights only the ground within <see cref="SpotCos"/> of that way from the tip. (0, 0): a light that
-    /// shines every way.
+    /// A spotlight (a unit's headlight), its lamp <see cref="Height"/> above (X0, Y0): its aim, from there to where its
+    /// beam's middle meets the ground, in the window's pixels. It lights the ground where its beam meets it, falling off
+    /// as the square of the distance from the lamp; its colour is its light where its beam's middle meets the ground.
+    /// (0, 0): a light that shines every way.
     /// </summary>
     float SpotX = 0.0f;
     float SpotY = 0.0f;
-    /// <summary>A spotlight's beam: the cosine of the angle off its way at which it has faded out (half its width).</summary>
+    /// <summary>A spotlight's beam: the cosine of the angle off its middle at which it has faded out (half its width).</summary>
     float SpotCos = 0.0f;
 };
 
@@ -343,8 +344,9 @@ namespace MCSceneLights
     /// at <paramref name="position"/>, facing as <paramref name="frame"/> does (MCMover::Frame) turned
     /// <paramref name="turn"/> degrees counterclockwise (a mech's torso's, MCBattleMech::TorsoRotation). Its lamp at
     /// <paramref name="lamp"/> in the world (a mech's cockpit), a small light drawn just over the unit (its parts' draw
-    /// list group, <paramref name="depthFixup"/> less its screen height) and hidden as it faces away, the beam starting
-    /// on the ground under it; with none (a vehicle's: the art has no point for it), the beam starts at its feet.
+    /// list group, <paramref name="depthFixup"/> less its screen height) and hidden as it faces away, its beam tipped
+    /// down from its height to meet the ground ahead; with none (a vehicle's: the art has no point for it), a low lamp
+    /// at its feet, not drawn.
     /// </summary>
     void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame, float turn,
                       const std::optional<MCVector3D>& lamp, int32_t depthFixup);

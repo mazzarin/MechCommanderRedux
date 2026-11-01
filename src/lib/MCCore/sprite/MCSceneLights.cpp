@@ -57,14 +57,17 @@ namespace
     constexpr float NightGrey = 0.5f;
     constexpr float NightStrength = 1.5f;
     /// <summary>
-    /// A unit's headlight at night: the middle of its pool this far ahead of it, fading out this far beyond, its lamp this
-    /// high (its pool's softness; the window's pixels, along the ground), its beam fading out this many degrees off its
-    /// way and full within SpotFull of that; its colour (a lamp's warm white) and how much it lights the ground under it.
+    /// A unit's headlight at night, a spotlight from its lamp (the window's pixels, along the ground): its beam's middle
+    /// meets the ground this far ahead of the ground under the lamp, whatever the lamp's height (a higher lamp tips its
+    /// beam down more), and it has faded out this far from there; a unit with no lamp in its art (a vehicle) has one this
+    /// low at its feet, and a lamp at least this high; its beam fades out this many degrees off its middle, full within
+    /// SpotFull of that; its colour (a lamp's warm white) and its light where its beam's middle meets the ground.
     /// </summary>
-    constexpr float HeadlightAhead = 55.0f;
-    constexpr float HeadlightReach = 80.0f;
-    constexpr float HeadlightHeight = 30.0f;
-    constexpr float HeadlightDegrees = 28.0f;
+    constexpr float HeadlightAhead = 70.0f;
+    constexpr float HeadlightReach = 180.0f;
+    constexpr float HeadlightLowLamp = 12.0f;
+    constexpr float HeadlightLowest = 6.0f;
+    constexpr float HeadlightDegrees = 22.0f;
     constexpr std::array<float, 3> HeadlightColor{1.0f, 0.93f, 0.8f};
     constexpr float HeadlightGain = 0.8f;
     /// <summary>
@@ -89,8 +92,12 @@ namespace
     constexpr LampMark LampHalo{4.5f, 1.0f, {110, 95, 70}};
     constexpr float LampHideFrom = 0.2f;
     constexpr float LampHidden = 0.7f;
-    /// <summary>A spotlight's beam is full within this share of the way from its edge to its middle (composite.pshader's).</summary>
+    /// <summary>
+    /// A spotlight's beam is full within this share of the way from its edge to its middle; the ground nearer it than
+    /// where its beam's middle meets the ground takes at most SpotMost times the light there (composite.pshader's).
+    /// </summary>
     constexpr float SpotFull = 0.5f;
+    constexpr float SpotMost = 1.5f;
     /// <summary>The times of day by name (a scenario file's TimeOfDay, the tools' --hd-time-of-day).</summary>
     constexpr std::array<std::pair<std::string_view, MCTimeOfDay>, 3> TimesOfDay{{
         {"Day", MCTimeOfDay::Day},
@@ -353,34 +360,32 @@ namespace
     };
 
     /// <summary>
-    /// The share of its light a spotlight (<paramref name="light"/>) gives the ground (<paramref name="dx"/>,
-    /// <paramref name="dy"/>) off its pool's middle (along the ground, a screen height <paramref name="aspect"/> of one),
-    /// as the composite's SpotShare: 1 within its beam, none outside it or at its tip; 1 for a light that shines every
-    /// way.
+    /// A spotlight's (<paramref name="light"/>'s) light on the ground (<paramref name="dx"/>, <paramref name="dy"/>) off
+    /// the ground under it (along the ground, a screen height <paramref name="aspect"/> of one), as a share of its light
+    /// where its beam's middle meets the ground: as the composite's SpotPool.
     /// </summary>
-    float SpotShare(const MCSceneLight& light, float dx, float dy, float aspect)
+    float SpotPool(const MCSceneLight& light, float dx, float dy, float aspect)
     {
-        if (light.SpotCos <= 0.0f || (light.SpotX == 0.0f && light.SpotY == 0.0f))
-        {
-            return 1.0f;
-        }
-
-        const float spotX = light.SpotX;
-        const float spotY = light.SpotY / aspect;
-        // The ground's way from the beam's tip.
-        const float fromX = dx + spotX;
-        const float fromY = dy + spotY;
-        const float lengths = std::sqrt((fromX * fromX + fromY * fromY) * (spotX * spotX + spotY * spotY));
+        const std::array<float, 3> ray{dx, dy, -light.Height};
+        const std::array<float, 3> aim{light.SpotX, light.SpotY / aspect, -light.Height};
+        const auto dot = [](const std::array<float, 3>& a, const std::array<float, 3>& b)
+        { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+        const float lengths = std::sqrt(dot(ray, ray) * dot(aim, aim));
 
         if (lengths <= 0.0f)
         {
             return 0.0f;
         }
 
-        const float cosine = (fromX * spotX + fromY * spotY) / lengths;
         const float full = light.SpotCos + (1.0f - light.SpotCos) * SpotFull;
-        const float t = std::clamp((cosine - light.SpotCos) / (full - light.SpotCos), 0.0f, 1.0f);
-        return t * t * (3.0f - 2.0f * t);
+        const float t = std::clamp((dot(ray, aim) / lengths - light.SpotCos) / (full - light.SpotCos), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t) * std::min(dot(aim, aim) / dot(ray, ray), SpotMost);
+    }
+
+    /// <summary>Whether <paramref name="light"/> is a spotlight (see MCSceneLight::SpotX).</summary>
+    bool IsSpot(const MCSceneLight& light)
+    {
+        return light.SpotCos > 0.0f && (light.SpotX != 0.0f || light.SpotY != 0.0f);
     }
 
     /// <summary>
@@ -410,8 +415,8 @@ namespace
             const float soft = std::max(light.Height, light.Reach * LightSoftness);
             const float x2 = d2 / reach2;
             const float fade = 1.0f - x2 * x2;
-            reaching.Light = (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * soft * soft /
-                             (d2 + soft * soft) * SpotShare(light, dx, dy, aspect);
+            const float pool = IsSpot(light) ? SpotPool(light, dx, dy, aspect) : soft * soft / (d2 + soft * soft);
+            reaching.Light = (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * pool;
         }
 
         return reaching;
@@ -816,20 +821,19 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
         return;
     }
 
-    // The beam's tip: the ground under the lamp, or the unit's feet (a jumping unit's are its altitude lower on the
-    // screen); from there to the pool's middle.
+    // The lamp, and the ground under it (its altitude lower on the screen); with none, a low one at the unit's feet (a
+    // jumping unit's are its altitude lower on the screen).
     const std::optional<MCVector2D> lampAt =
         lamp.has_value() ? std::optional(ProjectToScreen(*lamp, *camera)) : std::nullopt;
-    const float tipX = lampAt.has_value() ? lampAt->X : appearance.ScreenPos.X;
-    const float tipY =
-        lampAt.has_value() ? lampAt->Y + AltitudeOf(*lamp) : appearance.ScreenPos.Y + AltitudeOf(position);
+    const float height = lamp.has_value() ? std::max(AltitudeOf(*lamp), HeadlightLowest) : HeadlightLowLamp;
     MCSceneLight light;
+    light.X0 = light.X1 = lampAt.has_value() ? lampAt->X : appearance.ScreenPos.X;
+    light.Y0 = light.Y1 =
+        lampAt.has_value() ? lampAt->Y + AltitudeOf(*lamp) : appearance.ScreenPos.Y + AltitudeOf(position);
+    light.Height = height;
     light.SpotX = wayX / way * HeadlightAhead;
     light.SpotY = wayY / way * HeadlightAhead * aspect;
-    light.X0 = light.X1 = tipX + light.SpotX;
-    light.Y0 = light.Y1 = tipY + light.SpotY;
     light.SpotCos = std::cos(HeadlightDegrees * std::numbers::pi_v<float> / 180.0f);
-    light.Height = HeadlightHeight;
     light.Reach = HeadlightReach;
     light.Red = HeadlightColor[0] * HeadlightGain;
     light.Green = HeadlightColor[1] * HeadlightGain;
@@ -896,11 +900,7 @@ auto MCSceneLights::AddShadows() -> void
         for (const auto& [light, reaches] : reaching)
         {
             // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes, its headlight).
-            const float tipX = caster.X - (light->X0 - light->SpotX);
-            const float tipY = (caster.Y - (light->Y0 - light->SpotY)) / aspect;
-            const bool ownSpot = light->SpotCos > 0.0f && std::hypot(tipX, tipY) <= caster.HalfWidth;
-
-            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth || ownSpot)
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
             {
                 continue;
             }

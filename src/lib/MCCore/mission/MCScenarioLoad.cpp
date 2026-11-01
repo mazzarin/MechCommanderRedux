@@ -46,6 +46,7 @@
 #include "sprite/MCElementalActor.h"
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
@@ -244,6 +245,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     }
 
     ScenarioTime = 0.0f;
+    // Port-only (HD particles): none from the last mission, and their dice from the start.
+    MCParticles::Clear();
     MissionStartTime = 0;
     RunningTime = 0.0f;
     ActualTime = 0.0f;

@@ -65,6 +65,7 @@ public:
     void Ellipse(MCWindow& target, const MCEllipseCommand& command) override;
     void StatusBar(MCWindow& target, const MCStatusBarCommand& command) override;
     void Shadow(MCWindow& target, const MCShadowCommand& command) override;
+    void Particle(MCWindow& target, const MCParticleCommand& command) override;
     void Glyph(MCWindow& target, const MCGlyphCommand& command) override;
     /// <summary>
     /// Draws the frame's terrain tiles from the mesh in one draw (shaders/terrain.vshader), uploading the mesh and its

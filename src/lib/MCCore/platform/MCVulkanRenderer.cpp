@@ -102,6 +102,11 @@ namespace
     constexpr uint32_t HdLight = 1u << 21;
     /// <summary>Port-only (sun shadows): an HD art frame drawn as a unit's shadow (AddSunShadow).</summary>
     constexpr uint32_t SunShadowDraw = 1u << 22;
+    /// <summary>
+    /// Port-only (HD particles): a KindSmoothEllipse draw that is a particle (MCParticleCommand), not an ellipse's colour
+    /// pass (shaders/draw.pshader's ParticlePixel).
+    /// </summary>
+    constexpr uint32_t ParticleDraw = 1u << 23;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -3684,6 +3689,29 @@ void MCVulkanRenderer::Shadow(MCWindow& target, const MCShadowCommand& command)
         std::array<int32_t, 20>& draw = _Draws.back();
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Width0,
                                           command.Width1, command.Strength, command.Aspect},
+                               draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    }
+}
+
+void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& command)
+{
+    const AuditScope audit(*this, "Particle", target);
+    const uint16_t surface = SurfaceFor(target);
+    // Its box: its ends and its edge (a ring's outer one), and a pixel for the smooth edge.
+    const float across = command.Radius + std::max(command.Ring, 0.0f) + 1.0f;
+    const float down = across * command.Aspect + 1.0f;
+    const Quad at = {static_cast<int32_t>(std::floor(std::min(command.X0, command.X1) - across)),
+                     static_cast<int32_t>(std::floor(std::min(command.Y0, command.Y1) - down)),
+                     static_cast<int32_t>(std::ceil(std::max(command.X0, command.X1) + across)),
+                     static_cast<int32_t>(std::ceil(std::max(command.Y0, command.Y1) + down))};
+    const uint32_t color = static_cast<uint32_t>(command.Red) | static_cast<uint32_t>(command.Green) << 8 |
+                           static_cast<uint32_t>(command.Blue) << 16 | static_cast<uint32_t>(command.Alpha) << 24;
+
+    if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse | ParticleDraw, color, 0, 0))
+    {
+        std::array<int32_t, 20>& draw = _Draws.back();
+        std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
+                                          command.Aspect, command.Softness, command.Ring},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
     }
 }

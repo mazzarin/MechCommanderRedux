@@ -153,6 +153,8 @@ static const uint HdLight = 1u << 21;
 // Port-only (sun shadows): an HD art frame drawn as a unit's shadow (KindHdMap, its map the sun's shear): black at its
 // coverage, as dark as look.y.
 static const uint SunShadowDraw = 1u << 22;
+// Port-only (HD particles): a KindSmoothEllipse draw that is a particle (MCParticleCommand: ParticlePixel).
+static const uint Particle = 1u << 23;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -965,6 +967,43 @@ Output SmoothShapePixel(Input input, int2 target, uint kind)
     return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
 }
 
+// Port-only (HD particles): a particle's colour at drawn pixel `target` (MCParticleCommand): a streak from window
+// asfloat(span.xy) to asfloat(span.zw), asfloat(walk.x) pixels to each side, a distance down the screen asfloat(walk.y)
+// of one across, its edge softened over asfloat(walk.z) of that; or, with asfloat(walk.w) above 0, a ring that many
+// pixels to each side of that edge. op.y holds its premultiplied colour, a byte a component from red up. Its edge is
+// smooth over a drawn pixel at least. Premultiplied, through the blend pipeline.
+Output ParticlePixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
+    // Distances down the screen as the ground's across.
+    const float2 squash = float2(1.0, 1.0 / max(asfloat(input.walk.y), 1e-3));
+    const float2 a = asfloat(input.span.xy) * squash;
+    const float2 ab = asfloat(input.span.zw) * squash - a;
+    const float2 at = window * squash;
+    const float length2 = dot(ab, ab);
+    const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
+    const float radius = asfloat(input.walk.x);
+    const float ring = asfloat(input.walk.w);
+    const float off = length(at - (a + t * ab));
+    const float distance = ring > 0.0 ? abs(off - radius) : off;
+    const float edge = ring > 0.0 ? ring : radius;
+    // Whole out to where its soft edge starts, nothing past its edge.
+    const float inner = edge * (1.0 - saturate(asfloat(input.walk.z)));
+    const float coverage = 1.0 - smoothstep(inner - 0.5 * ramp, edge + 0.5 * ramp, distance);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    const uint packed = input.op.y;
+    const float4 color =
+        float4(float(packed & 255u), float((packed >> 8) & 255u), float((packed >> 16) & 255u), float(packed >> 24)) /
+        255.0;
+    return Blended(color * coverage);
+}
+
 // A smooth polygon's corner `i` (window pixels; source holds x in the low 16 bits, y in the high, signed).
 float2 PolygonCorner(Input input, uint i)
 {
@@ -1168,6 +1207,11 @@ Output DrawnOutput(Input input)
     if (kind == KindSharpGlyph)
     {
         return SharpGlyphPixel(input, target);
+    }
+
+    if (kind == KindSmoothEllipse && (flags & Particle) != 0)
+    {
+        return ParticlePixel(input, target);
     }
 
     if (kind == KindSmoothLine || kind == KindSmoothEllipse)

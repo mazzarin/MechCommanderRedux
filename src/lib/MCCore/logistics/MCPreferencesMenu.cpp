@@ -18,6 +18,7 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
@@ -447,6 +448,8 @@ void WritePrefs()
     prefs.WriteIdLong("HDLighting", GHdLighting);
     prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
     prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
+    prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
+    prefs.WriteIdBoolean("HDShake", GHdShake != 0);
     Cancel();
 }
 

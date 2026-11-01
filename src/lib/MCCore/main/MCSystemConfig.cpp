@@ -18,6 +18,7 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
@@ -207,6 +208,10 @@ void ReadPreferences(MCFitIniFile& file)
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
     // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
     GHdClouds = file.Read<bool>("HDClouds").value_or(false) ? 1 : 0;
+    // Port-only: HDParticles draws sparks, debris, smoke, embers, splashes and wakes; HDShake lets big explosions shake
+    // the picture (sprite/MCParticles.h).
+    GHdParticles = file.Read<bool>("HDParticles").value_or(false) ? 1 : 0;
+    GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

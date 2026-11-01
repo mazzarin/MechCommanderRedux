@@ -96,6 +96,8 @@ cbuffer Composite : register(b0, space3)
     // The clouds' shadows (CloudsAt): x, how much of the world's own light one takes away (0 none); y, the share of the
     // ground under them; z, how big they are (meters); w, how fast they drift (meters a second).
     float4 clouds;
+    // Port-only (HD particles' shake, MCParticles::ShownShake): xy, the world's texels the world shown is moved by.
+    float4 shake;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -645,7 +647,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     const float4 screen = TexelAt(screenTex, screenSampler, screenTexel, screenSize.zw);
     // The world pixel under this pixel's centre: (2 * offset + 1) * surface / (2 * shown), as the CPU picks it.
     const float2 offset = pixel - shown.xy;
-    const float2 world = clamp(floor((2.0 * offset + 1.0) * worldSize.xy / (2.0 * shown.zw)), 0.0, worldSize.xy - 1.0);
+    const float2 world =
+        clamp(floor((2.0 * offset + 1.0) * worldSize.xy / (2.0 * shown.zw)) - shake.xy, 0.0, worldSize.xy - 1.0);
 
     if (mode.y != 0.0)
     {

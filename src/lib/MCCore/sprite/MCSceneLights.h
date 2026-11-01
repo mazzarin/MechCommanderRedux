@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -178,6 +179,21 @@ namespace MCSceneLights
     /// at <paramref name="position"/>, as high above the ground there.
     /// </summary>
     void AddGlow(const MCVfxAppearance& appearance, const MCVector3D& position, MCGlowPixels pixels);
+
+    /// <summary>A frame's lit pixels: their centre (from its hot spot, weighted by their light), mean light and count.</summary>
+    struct MCGlowMeasure
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        std::array<float, 3> Color{};
+        int32_t Pixels = 0;
+    };
+
+    /// <summary>
+    /// The <paramref name="pixels"/> of the frame <paramref name="appearance"/> last drew (its Render), as
+    /// <see cref="AddGlow"/> measures its light (with HD lighting on or off); none when it drew no such pixels.
+    /// </summary>
+    std::optional<MCGlowMeasure> MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels);
 
     /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,

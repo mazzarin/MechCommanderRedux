@@ -22,6 +22,7 @@
 #include "object/MCTrainManager.h"
 #include "object/MCTurret.h"
 #include "object/MCTurretType.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
@@ -266,10 +267,11 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
         DrawSelectBox(0xfd);
     }
 
-    // Port-only (HD lighting): a vehicle casts shadows from the lights by it.
+    // Port-only (HD lighting): a vehicle casts shadows from the lights by it. (HD particles): it wades through water.
     if (objectClass == MCObjectClass::GroundVehicle)
     {
         MCSceneLights::AddCaster(*this, obj->Position);
+        MCParticles::AddMover(*this, obj->Position);
     }
 
     if (Highlighting)

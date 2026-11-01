@@ -23,6 +23,7 @@
 #include "object/MCObjectType.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCMapBlockManager.h"
@@ -705,6 +706,8 @@ auto MCCamera::Render() -> void
 
     CraterManager().Render();
     ObjectList()->Render();
+    // Port-only (HD particles): what flies about the battle, moved on to the game's time.
+    MCParticles::Draw(*this);
     MCSceneLights::AddShadows();
     ElementList().Sort();
     ElementList().Draw();

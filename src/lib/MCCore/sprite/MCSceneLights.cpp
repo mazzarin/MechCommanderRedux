@@ -151,14 +151,7 @@ namespace
                 1.0f};
     }
 
-    /// <summary>A glow's lit pixels: their centre (from the hot spot, weighted by their light), mean light and count.</summary>
-    struct Glow
-    {
-        float X = 0.0f;
-        float Y = 0.0f;
-        std::array<float, 3> Color{};
-        int32_t Pixels = 0;
-    };
+    using Glow = MCSceneLights::MCGlowMeasure;
 
     std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
                                     MCSceneLights::MCGlowPixels shining)
@@ -440,6 +433,12 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
         AddGlow(drawn->Table, drawn->Frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position),
                 pixels);
     }
+}
+
+auto MCSceneLights::MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels) -> std::optional<MCGlowMeasure>
+{
+    const std::optional<DrawnFrame> drawn = FrameDrawn(appearance);
+    return drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, pixels) : std::nullopt;
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void

@@ -46,6 +46,8 @@ public:
     bool CollisionChecked = false;
     /// <summary>The light of the type's lightObjectId, kept at the explosion's position.</summary>
     std::shared_ptr<MCGameObject> Light;
+    /// <summary>Port-only (HD particles): set once its burst is made (the first frame it is drawn).</summary>
+    bool Burst = false;
 };
 
 /// <summary>

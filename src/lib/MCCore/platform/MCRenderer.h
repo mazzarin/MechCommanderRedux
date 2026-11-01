@@ -356,6 +356,29 @@ struct MCShadowCommand
 };
 
 /// <summary>
+/// Port-only (HD particles, sprite/MCParticles.h): a soft mark drawn over what lies under it, leaving the indices: a
+/// streak from window (X0, Y0) to (X1, Y1) (a dot where they meet), Radius pixels to each side, its edge softened over
+/// Softness of that (0 to 1); or, with Ring above 0, the outline Ring pixels to each side of that edge. A distance down
+/// the screen is Aspect times one across (1, or a ring lying on the ground). Its colour is premultiplied: Red, Green and
+/// Blue are what it adds where it is whole, Alpha how much of what lies under it it hides (0: light alone, a spark's).
+/// </summary>
+struct MCParticleCommand
+{
+    float X0 = 0.0f;
+    float Y0 = 0.0f;
+    float X1 = 0.0f;
+    float Y1 = 0.0f;
+    float Radius = 0.0f;
+    float Aspect = 1.0f;
+    float Softness = 0.0f;
+    float Ring = 0.0f;
+    uint8_t Red = 0;
+    uint8_t Green = 0;
+    uint8_t Blue = 0;
+    uint8_t Alpha = 0;
+};
+
+/// <summary>
 /// A map's ground as a hardware renderer keeps it: the tile of every cell (the quad whose top-left corner is that map
 /// vertex) and the elevations of its corners, over the map and a ring of the off-map cells around it. Made once per map
 /// (see terrain.cpp); a renderer uploads it again only when <c>Version</c> changes.
@@ -841,6 +864,11 @@ public:
     /// light (the software renderer).
     /// </summary>
     virtual void Shadow(MCWindow& target, const MCShadowCommand& command);
+
+    /// <summary>
+    /// Port-only: a particle (HD particles); nothing from a renderer that draws only the indices (the software renderer).
+    /// </summary>
+    virtual void Particle(MCWindow& target, const MCParticleCommand& command);
 
     /// <summary>
     /// Draws a frame's terrain tiles from the map's mesh. A hardware renderer always does (the terrain pass asks it

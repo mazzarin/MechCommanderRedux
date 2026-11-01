@@ -63,6 +63,7 @@
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCPUAppearanceType.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
@@ -3805,6 +3806,344 @@ TEST_CASE_ISOLATED("game: cloud shadows darken part of the world, drifting with 
     CHECK(best < 0.5 * still);
 }
 
+namespace
+{
+    /// <summary>Saves a frame <c>ReadFrame</c> read as <paramref name="name"/>.png in the <c>--shots</c> folder, if any.</summary>
+    void SaveShownFrame(const std::vector<SDL_Color>& frame, int32_t width, int32_t height, std::string_view name)
+    {
+        const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+        if (!shots.has_value())
+        {
+            return;
+        }
+
+        std::vector<uint8_t> rgba;
+        rgba.reserve(frame.size() * BytesPerPixel);
+
+        for (const SDL_Color& color : frame)
+        {
+            rgba.insert(rgba.end(), {color.r, color.g, color.b, 255});
+        }
+
+        std::filesystem::create_directories(std::filesystem::path(*shots));
+        SavePng(std::filesystem::path(*shots) / std::format("{}.png", name), width, height, rgba);
+    }
+}
+
+/// <summary>
+/// HD particles (GHdParticles), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface: with them off a burst makes nothing. On, a shot's hit on a unit and a big explosion on the ground in the
+/// view's middle show there as they're made and nowhere else; as the game's time goes on they fly out from it, and by the
+/// time they've all gone the world shows as drawn again. The same bursts at the same times show the same, the particles'
+/// dice starting again (MCParticles::Clear), and none of it throws the game's dice. A real explosion bursts as it's first
+/// drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game's time goes, and never touch the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    const float now = ScenarioTime;
+    GamePaused = true;
+    // A frame's time step the particles take (MCParticles' most), and a while they've all gone by.
+    constexpr float Step = 0.1f;
+    constexpr float AllGone = 9.0f;
+    // A hit on a unit (its height above the ground) and a big explosion on the ground, at the view's middle.
+    constexpr float HitHeight = 30.0f;
+    constexpr float HitSize = 24.0f;
+    constexpr float BigSize = 120.0f;
+    MCVector3D ground = camera->Position;
+    ground.Z = MCTerrain::GetTerrainElevation(ground);
+    MCVector3D hit = ground;
+    hit.Z += HitHeight;
+    const MCVector2D middle = ProjectToScreen(ground, *camera);
+
+    const auto shown = [&](float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    // The times the frames are drawn at: the bursts', then a step at a time until they've all gone.
+    std::vector<float> times{now};
+
+    while (times.back() < now + AllGone)
+    {
+        times.push_back(times.back() + Step);
+    }
+
+    constexpr float OutAfter = 0.5f;
+    const auto outFrame = static_cast<size_t>(std::lround(OutAfter / Step));
+
+    // The bursts and the frames after them: as they're made, a while on, and once they've all gone.
+    struct Run
+    {
+        std::vector<SDL_Color> Made;
+        std::vector<SDL_Color> Out;
+        std::vector<SDL_Color> Gone;
+        size_t Count = 0;
+        size_t Left = 0;
+    };
+
+    const auto run = [&](int32_t particles)
+    {
+        GHdParticles = particles;
+        MCParticles::Clear();
+        MCParticles::AddBurst(hit, HitSize);
+        MCParticles::AddBurst(ground, BigSize);
+        Run made;
+
+        for (size_t i = 0; i < times.size(); ++i)
+        {
+            std::vector<SDL_Color> frame = shown(times[i]);
+
+            if (i == 0)
+            {
+                made.Made = std::move(frame);
+                made.Count = MCParticles::Count();
+            }
+            else if (i == outFrame)
+            {
+                made.Out = std::move(frame);
+            }
+            else if (i + 1 == times.size())
+            {
+                made.Gone = std::move(frame);
+            }
+        }
+
+        made.Left = MCParticles::Count();
+        return made;
+    };
+
+    // Off, then on twice; the game paused, nothing else throws its dice.
+    const Run clear = run(0);
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    const Run first = run(1);
+    const Run second = run(1);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+
+    // A real explosion: it bursts once it has been updated and drawn.
+    MCParticles::Clear();
+    constexpr int32_t ExplosionType = 0x290;
+    MCVector3D at = ground;
+    ::CreateExplosion(ExplosionType, at, 0.0f, 0.0f);
+    GamePaused = false;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const size_t exploded = MCParticles::Count();
+    GHdParticles = 0;
+    ScenarioTime = now;
+    SaveShownFrame(clear.Made, width, height, "particles_clear");
+    SaveShownFrame(first.Made, width, height, "particles_made");
+    SaveShownFrame(first.Out, width, height, "particles_out");
+
+    // The world clear of the interface (as the cloud shadows' test): the panels take the screen's left third, the
+    // paused message its top quarter's middle.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    REQUIRE(middle.X > static_cast<float>(left));
+    REQUIRE(middle.Y > static_cast<float>(top));
+    // As they're made, they're all near where they burst (sparks a streak long, smoke and embers about as wide as a
+    // tenth of the explosion, over the ground and the hit above it); a while on they've flown further out.
+    constexpr float MadeReach = 60.0f;
+    constexpr float FlownOut = 10.0f;
+    size_t changed = 0;
+    float madeReach = 0.0f;
+    float outReach = 0.0f;
+    size_t leftOver = 0;
+    size_t unlike = 0;
+
+    for (int32_t y = top; y < height; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            const float off = std::hypot(static_cast<float>(x) - middle.X, static_cast<float>(y) - middle.Y);
+
+            if (!SameColor(first.Made[i], clear.Made[i]))
+            {
+                ++changed;
+                madeReach = std::max(madeReach, off);
+            }
+
+            if (!SameColor(first.Out[i], clear.Out[i]))
+            {
+                outReach = std::max(outReach, off);
+            }
+
+            leftOver += SameColor(first.Gone[i], clear.Gone[i]) ? 0 : 1;
+            unlike += SameColor(first.Made[i], second.Made[i]) && SameColor(first.Out[i], second.Out[i]) ? 0 : 1;
+        }
+    }
+
+    std::cout << std::format("  {} particles made: {} pixels changed, out to {:.0f}; {:.1f} s on out to {:.0f}; {} "
+                             "left once gone; {} unlike the second time; a real explosion made {}\n",
+                             first.Count, changed, madeReach, OutAfter, outReach, leftOver, unlike, exploded);
+    CHECK(clear.Count == 0);
+    CHECK(first.Count > 0);
+    CHECK(first.Left == 0);
+    CHECK(changed > 0);
+    CHECK(madeReach < MadeReach + HitHeight);
+    CHECK(outReach > madeReach + FlownOut);
+    CHECK(leftOver == 0);
+    CHECK(second.Count == first.Count);
+    CHECK(unlike == 0);
+    CHECK(exploded > 0);
+}
+
+/// <summary>
+/// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a big explosion in the
+/// view's middle moves the world shown, all of it the same whole pixels, the way the shake says; a small one (a shot's
+/// hit) doesn't, and once the shake has died away the world shows where it was.
+/// </summary>
+TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit doesn't, and the shake dies away")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    REQUIRE(camera->View() != nullptr);
+    const std::shared_ptr<MCWindow> world = camera->View()->SharedWorldFrame()->Window.lock();
+    REQUIRE(world != nullptr);
+    const float now = ScenarioTime;
+    GamePaused = true;
+    GHdShake = 1;
+    MCVector3D ground = camera->Position;
+    ground.Z = MCTerrain::GetTerrainElevation(ground);
+
+    const auto shown = [&](float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    // A frame with the shake off, then on, at the same time (the shake it began goes on).
+    const auto unshaken = [&](float time)
+    {
+        GHdShake = 0;
+        std::vector<SDL_Color> frame = shown(time);
+        GHdShake = 1;
+        return frame;
+    };
+
+    const std::vector<SDL_Color> still = unshaken(now);
+    MCParticles::AddBurst(ground, 24.0f);
+    const std::vector<SDL_Color> hit = shown(now);
+    const MCParticles::MCShake hitShake = MCParticles::ShownShake(*world);
+    MCParticles::AddBurst(ground, 160.0f);
+    shown(now);
+    // A moment on, where the shake moves the world a pixel or more; and a while on, once it has died away.
+    constexpr float Moment = 0.02f;
+    constexpr float Later = 2.0f;
+    const std::vector<SDL_Color> stillMoment = unshaken(now + Moment);
+    const std::vector<SDL_Color> shaken = shown(now + Moment);
+    const MCParticles::MCShake shake = MCParticles::ShownShake(*world);
+    const std::vector<SDL_Color> stillLater = unshaken(now + Later);
+    const std::vector<SDL_Color> settled = shown(now + Later);
+    const MCParticles::MCShake settledShake = MCParticles::ShownShake(*world);
+    GHdShake = 0;
+    ScenarioTime = now;
+    GamePaused = false;
+
+    // The world clear of the interface, and of the edges a shake shows smeared.
+    constexpr int32_t Most = 8;
+    const int32_t left = width / 3 + Most;
+    const int32_t top = height / 4 + Most;
+    const auto mismatch =
+        [&](const std::vector<SDL_Color>& frame, const std::vector<SDL_Color>& under, int32_t dx, int32_t dy)
+    {
+        size_t different = 0;
+
+        for (int32_t y = top; y < height - Most; ++y)
+        {
+            for (int32_t x = left; x < width - Most; ++x)
+            {
+                different += SameColor(frame[static_cast<size_t>(y) * width + x],
+                                       under[static_cast<size_t>(y - dy) * width + x - dx])
+                                 ? 0
+                                 : 1;
+            }
+        }
+
+        return different;
+    };
+
+    size_t best = std::numeric_limits<size_t>::max();
+    int32_t bestX = 0;
+    int32_t bestY = 0;
+
+    for (int32_t dy = -Most; dy <= Most; ++dy)
+    {
+        for (int32_t dx = -Most; dx <= Most; ++dx)
+        {
+            if (const size_t off = mismatch(shaken, stillMoment, dx, dy); off < best)
+            {
+                best = off;
+                bestX = dx;
+                bestY = dy;
+            }
+        }
+    }
+
+    // The window pixels' size on the screen.
+    const float scaleX = static_cast<float>(width) / static_cast<float>(world->XMax + 1);
+    const float scaleY = static_cast<float>(height) / static_cast<float>(world->YMax + 1);
+    std::cout << std::format("  shaken ({:.2f}, {:.2f}) window pixels: the world moved ({}, {}) screen pixels, {} "
+                             "pixels off\n",
+                             shake.X, shake.Y, bestX, bestY, best);
+    CHECK(hitShake.X == 0.0f);
+    CHECK(hitShake.Y == 0.0f);
+    CHECK(mismatch(hit, still, 0, 0) == 0);
+    CHECK(std::hypot(shake.X, shake.Y) >= 1.0f);
+    CHECK(best == 0);
+    CHECK(std::abs(static_cast<float>(bestX) - shake.X * scaleX) <= scaleX);
+    CHECK(std::abs(static_cast<float>(bestY) - shake.Y * scaleY) <= scaleY);
+    CHECK(settledShake.X == 0.0f);
+    CHECK(settledShake.Y == 0.0f);
+    CHECK(mismatch(settled, stillLater, 0, 0) == 0);
+}
+
 /// <summary>
 /// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
 /// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
@@ -4476,6 +4815,30 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
+    /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong.
+    /// </summary>
+    void ParticlesFromOptions()
+    {
+        MCParticles::MCParticleLook& look = MCParticles::Look();
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        if (const std::optional<std::string_view> amount = MCTest::Option("hd-particles"); amount.has_value())
+        {
+            look.Amount = std::strtof(std::string(*amount).c_str(), nullptr);
+            GHdParticles = 1;
+            std::cout << std::format("  particles: {:.2f} as many as made\n", look.Amount);
+        }
+
+        if (const std::optional<std::string_view> shake = MCTest::Option("hd-shake"); shake.has_value())
+        {
+            look.Shake = std::strtof(std::string(*shake).c_str(), nullptr);
+            GHdShake = 1;
+            std::cout << std::format("  shake: {:.2f} as strong as made\n", look.Shake);
+        }
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
@@ -4522,6 +4885,7 @@ namespace
         LightingFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
+        ParticlesFromOptions();
         return original;
     }
 

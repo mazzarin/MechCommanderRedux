@@ -23,6 +23,7 @@
 #include "sound/MCSoundSystem.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
@@ -889,8 +890,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         DrawBars();
     }
 
-    // Port-only (HD lighting): the mech casts shadows from the lights by it.
+    // Port-only (HD lighting): the mech casts shadows from the lights by it. (HD particles): it wades through water.
     MCSceneLights::AddCaster(*this, mech->Position);
+    MCParticles::AddMover(*this, mech->Position);
 
     if (Highlighting)
     {

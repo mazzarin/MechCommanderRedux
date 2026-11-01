@@ -2,6 +2,7 @@
 #include "platform/MCVulkanPresenter.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCVulkanShaders.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "vfx/MCVfx.h"
 
@@ -51,6 +52,8 @@ namespace
         float GroundAxes[4] = {};
         /// <summary>The clouds' shadows: how much light they take (0 none), their cover, their size and their speed.</summary>
         float Clouds[4] = {};
+        /// <summary>The shake: the world's texels the world shown is moved by.</summary>
+        float Shake[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -157,6 +160,11 @@ namespace
             uniforms.GroundAxes[2] = -eastY / determinant;
             uniforms.GroundAxes[3] = eastX / determinant;
         }
+
+        // The shake, in the texture's whole pixels.
+        const MCParticles::MCShake shake = MCParticles::ShownShake(world);
+        uniforms.Shake[0] = std::round(shake.X * across);
+        uniforms.Shake[1] = std::round(shake.Y * down);
 
         for (size_t i = 0; i < fires; ++i)
         {

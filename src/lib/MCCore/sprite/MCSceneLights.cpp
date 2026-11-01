@@ -6,12 +6,14 @@
 #include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
+#include "engine/MCVfxElement.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCFrameOfRef.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCObjectDrawing.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
@@ -48,6 +50,11 @@ namespace
     /// <summary>Dusk's world light (the world dimmed to it) and its lights' strength.</summary>
     constexpr float DuskAmbient = 0.6f;
     constexpr float DuskStrength = 1.0f;
+    /// <summary>
+    /// Port-only (sun shadows): dusk's sun, from the day's side (the art's lit one) but lower: its shadows this many
+    /// times as long as the day's.
+    /// </summary>
+    constexpr float DuskSunLength = 2.5f;
     /// <summary>
     /// Night's world light: dimmer than dusk's, the moon's blue (its tint about as bright as white), and the world's
     /// colours paler in it; the lights stronger.
@@ -491,6 +498,8 @@ auto MCSceneLights::ShownLighting() -> MCLighting
         {
             shown.Ambient = DuskAmbient;
             shown.Strength = DuskStrength;
+            shown.SunShadowRight *= DuskSunLength;
+            shown.SunShadowUp *= DuskSunLength;
             break;
         }
         case MCTimeOfDay::Night:
@@ -499,6 +508,9 @@ auto MCSceneLights::ShownLighting() -> MCLighting
             shown.AmbientTint = NightTint;
             shown.AmbientGrey = NightGrey;
             shown.Strength = NightStrength;
+            // No sun.
+            shown.SunShadowRight = 0.0f;
+            shown.SunShadowUp = 0.0f;
             break;
         }
     }
@@ -871,6 +883,42 @@ auto MCSceneLights::HeadlightOn(int32_t status) -> bool
     constexpr int32_t Running = 0;
     constexpr int32_t StartingUp = 3;
     return status == Running || status == StartingUp;
+}
+
+auto MCSceneLights::RecastsSunShadows() -> bool
+{
+    return GHdSunShadows != 0 && TimeOfDay() != MCTimeOfDay::Day && MCHdArt::Active() &&
+           MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+}
+
+auto MCSceneLights::SunCasts() -> bool
+{
+    return GHdSunShadows != 0 && ShownLighting().SunShadowUp > 0.0f;
+}
+
+auto MCSceneLights::AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements) -> void
+{
+    if (!RecastsSunShadows() || !SunCasts())
+    {
+        return;
+    }
+
+    ElementList().OpenGroup(ShadowDepth, false);
+
+    for (const MCSunShadowPart& part : parts)
+    {
+        if (part.Frames.empty())
+        {
+            continue;
+        }
+
+        auto& element = ElementList().Make<MCVfxElement>(part.Frames, part.X, part.Y, part.Frame, part.Reverse,
+                                                         std::nullopt, part.Scale);
+        element.SunShadow = true;
+        ElementList().Add(element);
+    }
+
+    ElementList().OpenGroup(depth, sortElements);
 }
 
 auto MCSceneLights::AddShadows() -> void

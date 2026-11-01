@@ -4835,6 +4835,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                 GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
             passFrame.Look[1] =
                 GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
+            passFrame.Look[2] = MCSceneLights::RecastsSunShadows() ? 1.0f : 0.0f;
         }
 
         if (record.TerrainDraw >= 0)

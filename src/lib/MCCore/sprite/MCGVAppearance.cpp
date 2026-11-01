@@ -192,7 +192,10 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     CurrentShape[0] = shapes[0];
     CurrentShape[1] = shapes[1];
 
-    ElementList().OpenGroup(static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y), false);
+    const auto depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
+    ElementList().OpenGroup(depth, false);
+    // Port-only (sun shadows): the parts cast as the vehicle's own shadow at dusk.
+    std::array<MCSceneLights::MCSunShadowPart, std::tuple_size_v<decltype(shapes)>> sunShadow{};
 
     for (int32_t part = 0; part < NumParts; part++)
     {
@@ -223,7 +226,11 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
 
         ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X - offsetX,
                                                            ScreenPos.Y - offsetY, CurrentFrame[part], 0, fadeTable, 0));
+        sunShadow[static_cast<size_t>(part)] = {
+            shape->FrameList(), ScreenPos.X - offsetX, ScreenPos.Y - offsetY, CurrentFrame[part], 0, 0};
     }
+
+    MCSceneLights::AddRecastShadows(sunShadow, depth, false);
 
     const int32_t selected = obj->Selected;
 

@@ -74,7 +74,8 @@ cbuffer Frame : register(b0, space3)
     int4 cycle;
     uint4 cycleSources[2];
     // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun shadows
-    // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black).
+    // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black); z 1
+    // when the objects' baked shadows are hidden, each casting its own (MCSceneLights::RecastsSunShadows).
     float4 look;
 };
 
@@ -762,15 +763,18 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    // A frame cast as a sun shadow casts its body, not the shadow baked beside it.
     if ((input.op.x & SunShadowDraw) != 0)
     {
-        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a));
+        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - BakedShadowAt(original, shape))));
     }
 
-    // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it.
+    // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it, or
+    // (look.z) is hidden, the object casting its own.
     if (look.y > 0.0 && (input.op.x & HdLight) == 0)
     {
-        color = lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), BakedShadowAt(original, shape));
+        const float baked = BakedShadowAt(original, shape);
+        color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
     }
 
     // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and

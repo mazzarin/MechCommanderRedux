@@ -156,8 +156,9 @@ namespace MCSceneLights
         /// </summary>
         float SunShadow = 0.55f;
         /// <summary>
-        /// With sun shadows on: where a unit's shadow falls (the original's objects' baked shadows' way, measured on its
-        /// trees), per window pixel a point of it stands above its foot: this many pixels right, and this many up.
+        /// With sun shadows on: where a unit's shadow falls by day (the original's objects' baked shadows' way, measured
+        /// on its trees), per window pixel a point of it stands above its foot: this many pixels right, and this many
+        /// up. At dusk the sun is lower, the shadows longer; at night there is none (<see cref="ShownLighting"/>).
         /// </summary>
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
@@ -361,6 +362,39 @@ namespace MCSceneLights
     /// or starting up (3); not disabled (1), destroyed (2), shutting down (4) or shut down (5).
     /// </summary>
     bool HeadlightOn(int32_t status);
+
+    /// <summary>
+    /// Port-only (sun shadows): a frame of an object or a unit cast as its sun shadow (<see cref="AddRecastShadows"/>):
+    /// frame <c>Frame</c> of shape table <c>Frames</c>, placed as its own draw (MCVfxElement's x, y, reverse and
+    /// scale).
+    /// </summary>
+    struct MCSunShadowPart
+    {
+        std::span<const uint8_t> Frames;
+        float X = 0.0f;
+        float Y = 0.0f;
+        int32_t Frame = 0;
+        int32_t Reverse = 0;
+        int32_t Scale = 1;
+    };
+
+    /// <summary>
+    /// Port-only: whether the objects' shadows baked into their art, which fall the way the day's sun does, are hidden,
+    /// every object and unit casting its own the sun's way instead (<see cref="AddRecastShadows"/>): with sun shadows on
+    /// (GHdSunShadows) and HD art drawn by the GPU, at dusk (the sun low, the shadows longer) and night (no sun).
+    /// </summary>
+    bool RecastsSunShadows();
+
+    /// <summary>Port-only: whether sun shadows are on and the sun casts any (not at night).</summary>
+    bool SunCasts();
+
+    /// <summary>
+    /// Port-only: while the objects re-cast their sun shadows and the sun casts any (<see cref="RecastsSunShadows"/>,
+    /// <see cref="SunCasts"/>), adds <paramref name="parts"/> as one object's or unit's sun shadow
+    /// (MCElement::SunShadow) in the shadows' group, then opens the caller's group again (<paramref name="depth"/> and
+    /// <paramref name="sortElements"/>, as MCElementBuffer::OpenGroup takes them). Nothing otherwise.
+    /// </summary>
+    void AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements);
 
     /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added

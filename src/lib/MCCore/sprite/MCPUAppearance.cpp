@@ -15,6 +15,7 @@
 #include "object/MCForces.h"
 #include "object/MCTurret.h"
 #include "object/MCTurretType.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -166,7 +167,8 @@ auto MCPUAppearance::Render(int32_t depthFixup) -> int32_t
     const std::shared_ptr<MCShape> shape = AppearType->GetShape(state, static_cast<int32_t>(Rotation), 0, FrameRate);
     CurrentShape = shape;
 
-    ElementList().OpenGroup(static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y), false);
+    const auto depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
+    ElementList().OpenGroup(depth, false);
 
     if (DrawTerrainGrid != 0)
     {
@@ -184,6 +186,9 @@ auto MCPUAppearance::Render(int32_t depthFixup) -> int32_t
 
         ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame,
                                                            0, fadeTable, 1));
+        // Port-only (sun shadows): its own shadow at dusk.
+        const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame};
+        MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, false);
     }
 
     const int32_t selected = obj->Selected;

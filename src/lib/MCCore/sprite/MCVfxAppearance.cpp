@@ -17,6 +17,7 @@
 #include "object/MCTerrainObjectType.h"
 #include "object/MCTree.h"
 #include "object/MCTreeType.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -176,8 +177,9 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 
     int32_t offsetX = 0;
     int32_t offsetY = 0;
+    const bool placed = PixelOffset(*obj, offsetX, offsetY);
 
-    if (PixelOffset(*obj, offsetX, offsetY))
+    if (placed)
     {
         ScreenPos.X = static_cast<float>(offsetX) + ScreenPos.X;
         ScreenPos.Y = static_cast<float>(offsetY) + ScreenPos.Y;
@@ -210,6 +212,14 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
         element.Glow = Glow;
         element.InBetween = InBetween();
         ElementList().Add(element);
+
+        // Port-only (sun shadows): a terrain-placed object (not an effect) casts its own shadow at dusk.
+        if (placed)
+        {
+            const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                      CurrentFrame,       0,           type.Scaled ? 1 : 0};
+            MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
+        }
     }
 
     if (obj->Selected == 1 || obj->GetNumAttackers() > 0)

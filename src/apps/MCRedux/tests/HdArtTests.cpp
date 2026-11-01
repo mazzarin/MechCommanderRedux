@@ -3402,7 +3402,9 @@ namespace
 /// (its body, its baked shadow in black beside it) shows its shadow solid black with them off, and with them on as
 /// what lies under it at half its light; its body is the same either way. A part drawn as a unit's sun shadow
 /// (MCRenderer::SunShadowScope), with the shadow cast a pixel right and up for every pixel above its foot, darkens the
-/// ground where its rows land and leaves its own place as it was.
+/// ground where its body's rows land (its baked shadow casts nothing) and leaves its own place as it was. At dusk and
+/// night (HD lighting showing them) the baked shadow is hidden, the ground showing through it, and the object casts its
+/// own: at dusk farther (MCSceneLights::ShownLighting), at night not at all (no sun).
 /// </summary>
 TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked shadow, and cast a unit's own")
 {
@@ -3563,7 +3565,7 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
                     MCTest::Scope scope(std::format("{}{}, column {}, row {}: cast to column {}",
                                                     mirrored ? "mirrored" : "as is", cut ? ", cut" : "", column, row,
                                                     right));
-                    const float kept = cut ? 1.0f : 1.0f - Darkness;
+                    const float kept = cut || column >= BodyColumns ? 1.0f : 1.0f - Darkness;
                     CHECK(sameAs(at(cast, right, row), under.r * kept, under.g * kept, under.b * kept));
                     const SDL_Color own = at(castUnder, stands, row);
                     CHECK(sameAs(at(cast, stands, row), own.r, own.g, own.b));
@@ -3572,6 +3574,66 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
         }
     }
 
+    // Dusk and night: where the frame's middle row casts the body's and the baked shadow's middles (the day's way when
+    // the sun is down), the window pixel holding the place.
+    const int lightingWas = GHdLighting;
+    constexpr float MiddleRow = Top + Height / 2;
+    const auto sameColor = [&](SDL_Color actual, SDL_Color expected)
+    { return sameAs(actual, expected.r, expected.g, expected.b); };
+    const auto luma = [](SDL_Color color) { return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b; };
+
+    for (const int shown : {HdLightingDusk, HdLightingNight})
+    {
+        GHdLighting = shown;
+        const MCSceneLights::MCLighting sun = MCSceneLights::ShownLighting();
+        const bool sunUp = sun.SunShadowUp > 0.0f;
+        const float right = sunUp ? sun.SunShadowRight : lighting.SunShadowRight;
+        const float up = sunUp ? sun.SunShadowUp : lighting.SunShadowUp;
+        MCTest::Scope timeScope(shown == HdLightingDusk ? "dusk" : "night");
+        CHECK(MCSceneLights::RecastsSunShadows());
+        CHECK_EQ(sunUp, shown == HdLightingDusk);
+
+        if (sunUp)
+        {
+            CHECK(right > lighting.SunShadowRight);
+            CHECK(up > lighting.SunShadowUp);
+        }
+
+        const auto [hiddenUnder, hidden] = drawn(1, false);
+
+        for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+        {
+            for (const int32_t column : {1, 2, 5, 6})
+            {
+                MCTest::Scope placeScope(std::format("column {}, row {}", column, row));
+                const bool same = sameColor(at(hidden, column, row), at(hiddenUnder, column, row));
+                CHECK(same == (column >= BodyColumns));
+            }
+        }
+
+        const auto [castUnder, cast] = drawn(1, true);
+
+        for (const float column : {BodyColumns / 2.0f, BodyColumns + BodyColumns / 2.0f})
+        {
+            const float above = -MiddleRow;
+            const auto landX = static_cast<int32_t>(std::floor(column + right * above));
+            const auto landY = static_cast<int32_t>(std::floor(-up * above));
+            const SDL_Color under = at(castUnder, landX, landY);
+            const SDL_Color landed = at(cast, landX, landY);
+            MCTest::Scope placeScope(std::format("column {} cast to {}, {}", column, landX, landY));
+
+            if (sunUp && column < BodyColumns)
+            {
+                CHECK(luma(landed) < luma(under) * (1.0f - Darkness / 2.0f));
+            }
+            else
+            {
+                CHECK(sameColor(landed, under));
+            }
+        }
+    }
+
+    GHdLighting = lightingWas;
     GamePaused = false;
     GHdSunShadows = 0;
     lighting = kept;

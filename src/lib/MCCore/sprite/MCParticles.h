@@ -9,15 +9,15 @@ struct MCWindow;
 
 /// <summary>
 /// Port-only (HD particles, PREFS "HDParticles"): what flies about a battle, drawn into the world as the GPU draws it
-/// (MCRenderer::Particle; the software renderer draws none): sparks off hits, dirt thrown up by shots into the ground,
-/// debris, smoke and embers from big explosions, embers and smoke rising from fires and drifting with the wind, splashes
-/// and ripples where shots land in water, and wakes behind units wading through it. They lie in the world, so the
+/// (MCRenderer::Particle; the software renderer draws none): flecks of an explosion's fire in its own colours, dirt thrown
+/// up by shots into the ground, debris, smoke and embers from big explosions, embers and smoke rising from fires and
+/// drifting with the wind, splashes and ripples where shots land in water, and wakes behind units wading through it. They lie in the world, so the
 /// lights light them and the view scrolls over them, and units nearer the eye cover them.
 /// They never touch the game: they throw their own dice (never the game's), take nothing from it but where things are and
 /// change nothing in it. They move with the game's time (ScenarioTime), so they hold still while it's paused.
-/// A big explosion near the view also shakes the picture (PREFS "HDShake", with or without the particles): the
-/// presenter's composite moves the world it shows (composite.pshader's shake), never the game's camera, so clicks land
-/// where they always did.
+/// What shakes the ground near the view (a large artillery strike's explosions, a building's end; MCBlastShake) also
+/// shakes the picture (PREFS "HDShake", with or without the particles): the presenter's composite moves the world it
+/// shows (composite.pshader's shake), never the game's camera, so clicks land where they always did.
 /// </summary>
 namespace MCParticles
 {
@@ -26,7 +26,7 @@ namespace MCParticles
     {
         /// <summary>How many particles fly, 1 as made (0.5: half as many).</summary>
         float Amount = 1.0f;
-        /// <summary>How far a big explosion shakes the picture, 1 as made (0: not at all).</summary>
+        /// <summary>How far a shaking explosion shakes the picture, 1 as made (0: not at all).</summary>
         float Shake = 1.0f;
     };
 
@@ -48,15 +48,17 @@ namespace MCParticles
 
     /// <summary>
     /// An explosion seen for the first time (MCExplosion::Render; a shot's hit or miss, a mine, a unit's or a building's
-    /// end): <paramref name="appearance"/> drawn at <paramref name="position"/>. It bursts as big as its frames are.
+    /// end): <paramref name="appearance"/> drawn at <paramref name="position"/>. It bursts as big as its frames are, its
+    /// flecks in its fire's colours; it shakes the picture when <paramref name="shakes"/> (MCExplosion::Shakes).
     /// </summary>
-    void AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position);
+    void AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position, bool shakes);
 
     /// <summary>
-    /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>: sparks off a unit hit, dirt and dust
-    /// off the ground, a splash in water; with a big fire, debris, smoke and embers too, and the shake.
+    /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>, its flecks in the game's fire's colours:
+    /// flecks off a unit hit, dirt, dust and flecks off the ground, a splash in water; with a big fire, debris, smoke
+    /// and embers too. It shakes the picture when <paramref name="shakes"/>.
     /// </summary>
-    void AddBurst(const MCVector3D& position, MCBurstSize size);
+    void AddBurst(const MCVector3D& position, MCBurstSize size, bool shakes);
 
     /// <summary>
     /// A fire's flame <paramref name="flame"/> burning at <paramref name="position"/> (MCFire::Render): embers and smoke
@@ -102,7 +104,7 @@ namespace MCParticles
 extern int GHdParticles;
 
 /// <summary>
-/// Port-only: PREFS "HDShake": 1 lets big explosions near the view shake the picture (MCParticles::ShownShake); 0 not, as
-/// the original. Off by default.
+/// Port-only: PREFS "HDShake": 1 lets a large artillery strike's explosions and a building's end near the view shake the
+/// picture (MCParticles::ShownShake); 0 not, as the original. Off by default.
 /// </summary>
 extern int GHdShake;

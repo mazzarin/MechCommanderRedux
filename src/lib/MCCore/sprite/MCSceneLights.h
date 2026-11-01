@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 class MCAppearance;
 class MCVector3D;
@@ -200,6 +201,19 @@ namespace MCSceneLights
     /// <see cref="MeasureDrawn"/>'s; none for a table that isn't a VFX shape table or a frame without such pixels.
     /// </summary>
     std::optional<MCGlowMeasure> MeasureFrame(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>A colour a frame's pixels are drawn in (its light, as a glow's), and how many of them are.</summary>
+    struct MCGlowColor
+    {
+        std::array<float, 3> Color{};
+        int32_t Pixels = 0;
+    };
+
+    /// <summary>
+    /// The colours of the <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/>
+    /// (those <see cref="MeasureFrame"/> measures), in palette order; none for a table that isn't a VFX shape table.
+    /// </summary>
+    std::vector<MCGlowColor> FrameColors(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
 
     /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,

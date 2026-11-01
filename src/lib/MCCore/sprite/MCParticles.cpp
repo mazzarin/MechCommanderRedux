@@ -31,14 +31,14 @@ namespace
     constexpr float MaxStep = 0.1f;
     /// <summary>Where the particles' dice start (each mission).</summary>
     constexpr uint32_t DiceSeed = 0x5eed2b0du;
-    /// <summary>The pull down on what falls (sparks, debris, droplets).</summary>
+    /// <summary>The pull down on what falls (flecks, debris, droplets).</summary>
     constexpr float Gravity = 520.0f;
     /// <summary>A burst this close above the ground hit the ground (or the water), not a unit.</summary>
     constexpr float GroundHitHeight = 6.0f;
     /// <summary>
-    /// A fire this big throws a few chunks and more sparks (a shell's); one this big or more is a unit's or a building's
-    /// end, which throws debris, smoke and embers and shakes the picture, the most at the last size. (The battles'
-    /// shots' fires measure 3 to 28; their units' ends, 77.)
+    /// A fire this big throws a few chunks and more flecks (a shell's); one this big or more is a unit's or a building's
+    /// end, which throws debris, smoke and embers; a burst that shakes the picture shakes it the most at the last size.
+    /// (The battles' shots' fires measure 3 to 28; their units' ends, 77.)
     /// </summary>
     constexpr float MediumFire = 24.0f;
     constexpr float BigFire = 40.0f;
@@ -63,28 +63,30 @@ namespace
     constexpr float SmokeDrift = 12.0f;
     constexpr float EmberDrift = 16.0f;
 
-    // Sparks: thin bright streaks that fly off a hit and fall, bouncing once, white hot cooling to orange and red.
-    constexpr float SparkMinUp = -0.3f;
-    constexpr float SparkSpeedLow = 70.0f;
-    constexpr float SparkSpeedHigh = 210.0f;
-    constexpr float SparkLift = 40.0f;
-    constexpr float SparkLifeLow = 0.25f;
-    constexpr float SparkLifeHigh = 0.6f;
-    constexpr float SparkRadiusLow = 0.55f;
-    constexpr float SparkRadiusHigh = 0.9f;
-    constexpr float SparkDrag = 1.5f;
-    /// <summary>A spark's streak: where it was this long ago.</summary>
-    constexpr float SparkStreak = 0.045f;
-    constexpr float SparkBounceSpeed = 30.0f;
-    constexpr float SparkBounce = 0.35f;
-    constexpr float SparkLight = 1.0f;
-    /// <summary>How fast its light fades with its heat (a power of what's left of its life).</summary>
-    constexpr float SparkFade = 0.6f;
-    /// <summary>Its green and blue as it cools: the coolest's, and what the heat adds (blue by its square).</summary>
-    constexpr float SparkGreenCool = 0.3f;
-    constexpr float SparkGreenHot = 0.65f;
-    constexpr float SparkBlueCool = 0.08f;
-    constexpr float SparkBlueHot = 0.6f;
+    // Flecks: bits of an explosion's fire flung out of it, drawn solid and hard edged in its own colours (its art's
+    // palette's). Each starts somewhere in the fire, a moment apart, flies its own way off the way the burst leans, fast
+    // and slowing fast, and steps down through the fire's colours as it cools; most go out before they land.
+    /// <summary>A burst's flecks start up to this much of its fire's side from its middle, up to this long apart.</summary>
+    constexpr float FleckSpread = 0.3f;
+    constexpr float FleckStagger = 0.12f;
+    /// <summary>The lowest a fleck flies off a unit (a share of its speed up; off the ground, none down).</summary>
+    constexpr float FleckMinUp = -0.3f;
+    /// <summary>A burst's lean (a way at random), for each fleck's own way: this much of it.</summary>
+    constexpr float FleckLean = 0.7f;
+    /// <summary>Its speed: most slow, few fast (the range's share is a throw's square); a fire this big throws as made.</summary>
+    constexpr float FleckSpeedLow = 30.0f;
+    constexpr float FleckSpeedHigh = 230.0f;
+    constexpr float FleckSpeedFire = 20.0f;
+    /// <summary>A bigger or smaller fire throws its flecks as much faster as its root, within these.</summary>
+    constexpr float FleckSpeedLeast = 0.7f;
+    constexpr float FleckSpeedMost = 1.6f;
+    constexpr float FleckDrag = 4.0f;
+    constexpr float FleckLifeLow = 0.2f;
+    constexpr float FleckLifeHigh = 0.75f;
+    constexpr float FleckRadiusLow = 0.5f;
+    constexpr float FleckRadiusHigh = 0.9f;
+    /// <summary>Of an explosion's fire's pixels, a colour fewer than this share of them have is left out of its flecks'.</summary>
+    constexpr float FleckColorLeast = 0.01f;
 
     // Embers: glowing motes that rise and drift with the wind, swaying and flickering.
     constexpr float EmberRiseLow = 18.0f;
@@ -171,18 +173,18 @@ namespace
     constexpr float SinkRippleAlpha = 0.4f;
 
     // What a burst throws: so many, and so many more for each pixel of its fire's or its extent's side.
-    constexpr float HitSparks = 6.0f;
-    constexpr float HitSparksPerFire = 0.8f;
+    constexpr float HitFlecks = 3.0f;
+    constexpr float HitFlecksPerFire = 0.5f;
     constexpr float DirtClods = 3.0f;
     constexpr float DirtClodsPerExtent = 0.15f;
     constexpr float DustPuffs = 1.0f;
     constexpr float DustPuffsPerExtent = 0.03f;
-    constexpr float GroundSparksPerFire = 0.3f;
+    constexpr float GroundFlecksPerFire = 0.25f;
     constexpr float MediumDebrisPerFire = 0.1f;
-    constexpr float MediumSparksPerFire = 0.3f;
+    constexpr float MediumFlecksPerFire = 0.2f;
     constexpr float MediumSmokePerFire = 0.05f;
     constexpr float BigDebrisPerFire = 0.35f;
-    constexpr float BigSparksPerFire = 0.5f;
+    constexpr float BigFlecksPerFire = 0.35f;
     constexpr float BigSmokePerFire = 0.1f;
     constexpr float BigEmbersPerFire = 0.25f;
     constexpr float SplashDroplets = 8.0f;
@@ -233,9 +235,16 @@ namespace
     constexpr float FireSmokeAbove = 0.4f;
     constexpr float FireSmokeSpread = 0.25f;
 
-    // The shake: a fast wobble, fading, as strong as the burst is big and as near the view's middle it is.
-    constexpr float ShakeLeast = 1.0f;
+    // The shake: a fast wobble, fading, from a burst big enough to shake the ground (a large artillery strike's, a
+    // building's end: MCBlastShake), as strong as its fire is big and as near the view's middle it is.
+    constexpr float ShakeLeast = 1.5f;
     constexpr float ShakeMost = 4.0f;
+    /// <summary>
+    /// A shaking burst's fire this big or less shakes the least, this big or more the most. (A large strike's shells'
+    /// fires measure 28, twelve of them over a second.)
+    /// </summary>
+    constexpr float ShakeFireLow = 20.0f;
+    constexpr float ShakeFireHigh = 90.0f;
     /// <summary>The most the shakes together move the picture (times MCParticleLook::Shake).</summary>
     constexpr float ShakeCap = 5.0f;
     constexpr float ShakeFade = 0.25f;
@@ -255,7 +264,7 @@ namespace
     /// <summary>What a particle is: how it moves and how it's drawn.</summary>
     enum class MCParticleKind : uint8_t
     {
-        Spark,
+        Fleck,
         Ember,
         Smoke,
         Debris,
@@ -266,7 +275,7 @@ namespace
     /// <summary>One particle: what it is, where it is and how it moves, and how it looks.</summary>
     struct Particle
     {
-        MCParticleKind Kind = MCParticleKind::Spark;
+        MCParticleKind Kind = MCParticleKind::Fleck;
         /// <summary>Where it is in the world (Z: its height, as a position's).</summary>
         float X = 0.0f;
         float Y = 0.0f;
@@ -297,6 +306,9 @@ namespace
         float Spin = 0.0f;
         /// <summary>A chunk trailing smoke: the time to its next puff (below 0: none).</summary>
         float Trail = -1.0f;
+        /// <summary>A fleck's fire's colours (State::Ramps; 0, FallbackFire), and the one it starts at.</summary>
+        uint16_t Ramp = 0;
+        uint8_t Shade = 0;
         uint8_t Bounces = 0;
         bool Hot = false;
         bool Resting = false;
@@ -323,13 +335,18 @@ namespace
         std::mt19937 _Engine{DiceSeed};
     };
 
-    /// <summary>A burst this frame's explosions began: where, and how big.</summary>
+    /// <summary>
+    /// A burst this frame's explosions began: where, how big, its fire's colours (State::Ramps) and whether it shakes the
+    /// picture.
+    /// </summary>
     struct PendingBurst
     {
         float X = 0.0f;
         float Y = 0.0f;
         float Z = 0.0f;
         MCParticles::MCBurstSize Size;
+        uint16_t Ramp = 0;
+        bool Shakes = false;
     };
 
     /// <summary>A flame burning this frame: its place, its bright pixels' centre (across and up from it) and size.</summary>
@@ -462,8 +479,34 @@ namespace
         return look;
     }
 
-    /// <summary>A shape table's bursts' size, measured once (by the table's place and length).</summary>
-    using SizeKey = std::pair<const uint8_t*, size_t>;
+    /// <summary>A colour of a fire's flecks, and how many of its pixels have it.</summary>
+    struct FleckColor
+    {
+        float Red = 1.0f;
+        float Green = 1.0f;
+        float Blue = 1.0f;
+        int32_t Pixels = 1;
+    };
+
+    /// <summary>
+    /// The flecks' colours of a burst with no explosion's art (MCParticles::AddBurst's): the game's fire's, white hot to
+    /// red, from its brightest down.
+    /// </summary>
+    constexpr std::array<FleckColor, 5> FallbackFire{{{1.0f, 0.97f, 0.75f, 1},
+                                                      {1.0f, 0.86f, 0.4f, 2},
+                                                      {1.0f, 0.68f, 0.2f, 2},
+                                                      {0.94f, 0.47f, 0.1f, 1},
+                                                      {0.78f, 0.27f, 0.06f, 1}}};
+
+    /// <summary>A shape table's bursts: their size and their fire's colours (State::Ramps), measured once.</summary>
+    struct BurstLook
+    {
+        MCParticles::MCBurstSize Size;
+        uint16_t Ramp = 0;
+    };
+
+    /// <summary>A shape table, by its place and length.</summary>
+    using TableKey = std::pair<const uint8_t*, size_t>;
 
     /// <summary>The particles, their dice, what this frame began and the shakes.</summary>
     struct State
@@ -481,7 +524,9 @@ namespace
         std::vector<PendingMover> Movers;
         std::unordered_map<const void*, Track> Tracks;
         std::vector<Shake> Shakes;
-        std::map<SizeKey, MCParticles::MCBurstSize> Sizes;
+        std::map<TableKey, BurstLook> Looks;
+        /// <summary>The fires' colours flecks are drawn in, brightest first (index 0 is FallbackFire, kept apart).</summary>
+        std::vector<std::vector<FleckColor>> Ramps;
         std::weak_ptr<MCWindow> ShownWindow;
         MCParticles::MCShake Shown;
     };
@@ -533,11 +578,18 @@ namespace
         return at < map.Map.size() && map.Map[at].TerrainType() >= FirstWaterTerrain;
     }
 
+    /// <summary>A fire's colour's brightness, to put its brightest first.</summary>
+    float Brightness(const FleckColor& color)
+    {
+        return color.Red + color.Green + color.Blue;
+    }
+
     /// <summary>
-    /// How big <paramref name="appearance"/>'s bursts are: its shape's frames' most bright pixels and most pixels, each
-    /// as a square's side (MCSceneLights' measure); measured once a shape table.
+    /// How <paramref name="appearance"/>'s bursts look: its shape's frames' most bright pixels and most pixels, each as a
+    /// square's side (MCSceneLights' measure), and its bright pixels' colours over all its frames, brightest first,
+    /// leaving out those few of them have; measured once a shape table.
     /// </summary>
-    MCParticles::MCBurstSize SizeOf(State& state, const MCVfxAppearance& appearance)
+    BurstLook LookOf(State& state, const MCVfxAppearance& appearance)
     {
         const std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
 
@@ -547,28 +599,67 @@ namespace
         }
 
         const std::span<const uint8_t> table = shape->FrameList();
-        const auto [found, isNew] = state.Sizes.try_emplace(SizeKey{table.data(), table.size()});
+        const auto [found, isNew] = state.Looks.try_emplace(TableKey{table.data(), table.size()});
 
-        if (isNew)
+        if (!isNew)
         {
-            int32_t fire = 0;
-            int32_t all = 0;
-
-            for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
-            {
-                using enum MCSceneLights::MCGlowPixels;
-                fire = std::max(
-                    fire,
-                    MCSceneLights::MeasureFrame(table, frame, Bright).value_or(MCSceneLights::MCGlowMeasure{}).Pixels);
-                all = std::max(
-                    all,
-                    MCSceneLights::MeasureFrame(table, frame, All).value_or(MCSceneLights::MCGlowMeasure{}).Pixels);
-            }
-
-            found->second = {std::sqrt(static_cast<float>(fire)), std::sqrt(static_cast<float>(all))};
+            return found->second;
         }
 
-        return found->second;
+        using enum MCSceneLights::MCGlowPixels;
+        int32_t fire = 0;
+        int32_t all = 0;
+        std::map<std::array<float, 3>, int32_t> colors;
+
+        for (int32_t frame = 0; frame < VfxShapeCount(table); ++frame)
+        {
+            fire = std::max(
+                fire,
+                MCSceneLights::MeasureFrame(table, frame, Bright).value_or(MCSceneLights::MCGlowMeasure{}).Pixels);
+            all = std::max(
+                all, MCSceneLights::MeasureFrame(table, frame, All).value_or(MCSceneLights::MCGlowMeasure{}).Pixels);
+
+            for (const MCSceneLights::MCGlowColor& color : MCSceneLights::FrameColors(table, frame, Bright))
+            {
+                colors[color.Color] += color.Pixels;
+            }
+        }
+
+        BurstLook& look = found->second;
+        look.Size = {std::sqrt(static_cast<float>(fire)), std::sqrt(static_cast<float>(all))};
+        int32_t pixels = 0;
+
+        for (const auto& [color, count] : colors)
+        {
+            pixels += count;
+        }
+
+        std::vector<FleckColor> ramp;
+
+        for (const auto& [color, count] : colors)
+        {
+            if (static_cast<float>(count) >= FleckColorLeast * static_cast<float>(pixels))
+            {
+                ramp.push_back({color[0], color[1], color[2], count});
+            }
+        }
+
+        std::ranges::stable_sort(ramp, std::ranges::greater{}, Brightness);
+
+        if (!ramp.empty() && state.Ramps.size() < std::numeric_limits<uint16_t>::max())
+        {
+            state.Ramps.push_back(std::move(ramp));
+            look.Ramp = static_cast<uint16_t>(state.Ramps.size());
+        }
+
+        return look;
+    }
+
+    /// <summary>The colours of fire <paramref name="ramp"/> (a burst's, a fleck's), brightest first.</summary>
+    std::span<const FleckColor> RampOf(const State& state, uint16_t ramp)
+    {
+        return ramp == 0 || ramp > state.Ramps.size() ? std::span<const FleckColor>(FallbackFire)
+                                                      : std::span<const FleckColor>(state.Ramps[ramp - 1]);
     }
 
     /// <summary>A particle at (x, y, z), made when there's room; null otherwise.</summary>
@@ -606,24 +697,63 @@ namespace
         particle.VZ = way.Z * speed + lift;
     }
 
-    /// <summary>Sparks flying off <paramref name="at"/>.</summary>
-    void Sparks(State& state, const PendingBurst& at, int32_t count)
+    /// <summary>
+    /// Flecks flung out of <paramref name="at"/>'s fire: up and out off the ground (<paramref name="offGround"/>), any
+    /// way but much down off a unit.
+    /// </summary>
+    void Flecks(State& state, const PendingBurst& at, int32_t count, bool offGround)
     {
         MCDice& dice = state.Dice;
+        const float perUnit = PixelsPerUnit();
+        const std::span<const FleckColor> ramp = RampOf(state, at.Ramp);
+        int32_t pixels = 0;
+
+        for (const FleckColor& color : ramp)
+        {
+            pixels += color.Pixels;
+        }
+
+        const float minUp = offGround ? 0.0f : FleckMinUp;
+        const MCVector3D lean = Upward(dice, minUp);
+        const float spread = at.Size.Fire * FleckSpread;
+        const float faster = std::clamp(std::sqrt(at.Size.Fire / FleckSpeedFire), FleckSpeedLeast, FleckSpeedMost);
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* spark = Make(state, MCParticleKind::Spark, at.X, at.Y, at.Z);
+            Particle* fleck = Make(state, MCParticleKind::Fleck, at.X + dice.Between(-spread, spread) / perUnit,
+                                   at.Y + dice.Between(-spread, spread) / perUnit,
+                                   at.Z + dice.Between(offGround ? 0.0f : -spread, spread));
 
-            if (spark == nullptr)
+            if (fleck == nullptr)
             {
                 return;
             }
 
-            Launch(*spark, Upward(dice, SparkMinUp), dice.Between(SparkSpeedLow, SparkSpeedHigh), SparkLift);
-            spark->Life = dice.Between(SparkLifeLow, SparkLifeHigh);
-            spark->Size = dice.Between(SparkRadiusLow, SparkRadiusHigh);
-            spark->Drag = SparkDrag;
+            const MCVector3D own = Upward(dice, minUp);
+            const float wayX = own.X + lean.X * FleckLean;
+            const float wayY = own.Y + lean.Y * FleckLean;
+            const float wayZ = own.Z + lean.Z * FleckLean;
+            const float length = std::max(std::hypot(wayX, wayY, wayZ), 1e-3f);
+            const float thrown = dice.Unit();
+            Launch(*fleck, MCVector3D(wayX / length, wayY / length, wayZ / length),
+                   (FleckSpeedLow + (FleckSpeedHigh - FleckSpeedLow) * thrown * thrown) * faster, 0.0f);
+            fleck->Age = -dice.Between(0.0f, FleckStagger);
+            fleck->Life = dice.Between(FleckLifeLow, FleckLifeHigh);
+            fleck->Size = dice.Between(FleckRadiusLow, FleckRadiusHigh);
+            fleck->Drag = FleckDrag;
+            fleck->Ramp = at.Ramp;
+
+            // Its first colour: one of the fire's, as often as its pixels have it.
+            auto pick = static_cast<int32_t>(dice.Unit() * static_cast<float>(pixels));
+            size_t shade = 0;
+
+            while (shade + 1 < ramp.size() && pick >= ramp[shade].Pixels)
+            {
+                pick -= ramp[shade].Pixels;
+                ++shade;
+            }
+
+            fleck->Shade = static_cast<uint8_t>(std::min<size_t>(shade, std::numeric_limits<uint8_t>::max()));
         }
     }
 
@@ -801,41 +931,41 @@ namespace
 
         if (onGround)
         {
-            // Dirt thrown up, its dust, and sparks off the stones as hot as its fire.
+            // Dirt thrown up, its dust, and flecks of its fire.
             Debris(state, at, count(DirtClods + extent * DirtClodsPerExtent), DirtLook);
             Smoke(state, at.X, at.Y, ground, spread, count(DustPuffs + extent * DustPuffsPerExtent),
                   Scaled(DustLook, extent));
-            Sparks(state, at, count(fire * GroundSparksPerFire));
+            Flecks(state, at, count(fire * GroundFlecksPerFire), true);
         }
         else
         {
-            Sparks(state, at, count(HitSparks + fire * HitSparksPerFire));
+            Flecks(state, at, count(HitFlecks + fire * HitFlecksPerFire), false);
         }
 
         if (big)
         {
             Debris(state, at, count(fire * BigDebrisPerFire), WreckLook);
-            Sparks(state, at, count(fire * BigSparksPerFire));
+            Flecks(state, at, count(fire * BigFlecksPerFire), onGround);
             Smoke(state, at.X, at.Y, at.Z, spread, count(fire * BigSmokePerFire), Scaled(BlackSmokeLook, extent));
             Embers(state, at.X, at.Y, at.Z, spread, count(fire * BigEmbersPerFire));
         }
         else if (fire >= MediumFire)
         {
             Debris(state, at, count(fire * MediumDebrisPerFire), WreckLook);
-            Sparks(state, at, count(fire * MediumSparksPerFire));
+            Flecks(state, at, count(fire * MediumFlecksPerFire), onGround);
             Smoke(state, at.X, at.Y, at.Z, spread, count(fire * MediumSmokePerFire), Scaled(ShellSmokeLook, extent));
         }
     }
 
-    /// <summary>A big burst's shake, as strong as its fire is big and as near the view's middle it is.</summary>
+    /// <summary>A shaking burst's shake, as strong as its fire is big and as near the view's middle it is.</summary>
     void AddShake(State& state, const PendingBurst& at, const MCCamera& camera, float now)
     {
-        if (at.Size.Fire < BigFire || state.Look.Shake <= 0.0f)
+        if (!at.Shakes || state.Look.Shake <= 0.0f)
         {
             return;
         }
 
-        const float strength = std::clamp((at.Size.Fire - BigFire) / (HugeFire - BigFire), 0.0f, 1.0f);
+        const float strength = std::clamp((at.Size.Fire - ShakeFireLow) / (ShakeFireHigh - ShakeFireLow), 0.0f, 1.0f);
         const MCVector2D seen = Project(at.X, at.Y, at.Z, camera);
         const float off = std::hypot(seen.X - camera.HalfWidth, seen.Y - camera.HalfHeight) /
                           std::max(camera.HalfWidth * ShakeReach, 1.0f);
@@ -935,17 +1065,8 @@ namespace
 
         switch (particle.Kind)
         {
-            case MCParticleKind::Spark:
+            case MCParticleKind::Fleck:
             {
-                if (particle.Bounces == 0 && -particle.VZ > SparkBounceSpeed)
-                {
-                    particle.VZ = -particle.VZ * SparkBounce;
-                    particle.VX *= SparkBounce;
-                    particle.VY *= SparkBounce;
-                    ++particle.Bounces;
-                    return;
-                }
-
                 particle.Age = particle.Life;
                 return;
             }
@@ -1010,7 +1131,7 @@ namespace
 
         switch (particle.Kind)
         {
-            case MCParticleKind::Spark:
+            case MCParticleKind::Fleck:
             case MCParticleKind::Debris:
             case MCParticleKind::Droplet:
             {
@@ -1096,7 +1217,7 @@ namespace
     }
 
     /// <summary>How <paramref name="particle"/> is drawn, at <paramref name="at"/> in the view.</summary>
-    MCParticleCommand Drawn(const Particle& particle, const MCVector2D& at, const MCCamera& camera)
+    MCParticleCommand Drawn(const State& state, const Particle& particle, const MCVector2D& at, const MCCamera& camera)
     {
         MCParticleCommand command;
         command.X0 = at.X;
@@ -1110,15 +1231,16 @@ namespace
 
         switch (particle.Kind)
         {
-            case MCParticleKind::Spark:
+            case MCParticleKind::Fleck:
             {
-                const MCVector2D tail = Behind(particle, SparkStreak, camera);
-                command.X0 = tail.X;
-                command.Y0 = tail.Y;
-                const float heat = 1.0f - age;
-                const float light = SparkLight * std::pow(heat, SparkFade);
-                SetColor(command, light, (SparkGreenCool + SparkGreenHot * heat) * light,
-                         (SparkBlueCool + SparkBlueHot * heat * heat) * light, 0.0f);
+                // Solid, a step at a time down its fire's colours from the one it started at to the dimmest.
+                const std::span<const FleckColor> ramp = RampOf(state, particle.Ramp);
+                const size_t from = std::min<size_t>(particle.Shade, ramp.size() - 1);
+                const size_t shade =
+                    std::min(from + static_cast<size_t>(static_cast<float>(ramp.size() - from) * age), ramp.size() - 1);
+                const FleckColor& color = ramp[shade];
+                command.Softness = 0.0f;
+                SetColor(command, color.Red, color.Green, color.Blue, 1.0f);
                 break;
             }
 
@@ -1238,7 +1360,7 @@ namespace
             }
 
             const MCParticleCommand command =
-                Drawn(particle, Project(particle.X, particle.Y, particle.Z, camera), camera);
+                Drawn(state, particle, Project(particle.X, particle.Y, particle.Z, camera), camera);
             const float across = command.Radius + command.Ring;
             const float down = across * command.Aspect;
 
@@ -1267,7 +1389,8 @@ namespace
         state.Movers.clear();
         state.Tracks.clear();
         state.Shakes.clear();
-        state.Sizes.clear();
+        state.Looks.clear();
+        state.Ramps.clear();
         state.Shown = {};
         state.Time.reset();
         state.Dice.Restart();
@@ -1285,19 +1408,21 @@ auto MCParticles::Look() -> MCParticleLook&
     return TheState().Look;
 }
 
-auto MCParticles::AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position) -> void
+auto MCParticles::AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position, bool shakes) -> void
 {
     if (Wanted())
     {
-        AddBurst(position, SizeOf(TheState(), appearance));
+        State& state = TheState();
+        const BurstLook look = LookOf(state, appearance);
+        state.Bursts.push_back({position.X, position.Y, position.Z, look.Size, look.Ramp, shakes});
     }
 }
 
-auto MCParticles::AddBurst(const MCVector3D& position, MCBurstSize size) -> void
+auto MCParticles::AddBurst(const MCVector3D& position, MCBurstSize size, bool shakes) -> void
 {
     if (Wanted())
     {
-        TheState().Bursts.push_back({position.X, position.Y, position.Z, size});
+        TheState().Bursts.push_back({position.X, position.Y, position.Z, size, 0, shakes});
     }
 }
 

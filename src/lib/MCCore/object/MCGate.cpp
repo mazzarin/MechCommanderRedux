@@ -591,6 +591,7 @@ auto MCGate::DestroyGate(bool fromNetwork) -> void
             StartFire(*this, true);
         }
 
-        ObjType->CreateExplosion(Position, ExplDamage, ExplRadius);
+        // Port-only (HD shake): its end shakes the picture.
+        ObjType->CreateExplosion(Position, ExplDamage, ExplRadius, MCBlastShake::Shakes);
     }
 }

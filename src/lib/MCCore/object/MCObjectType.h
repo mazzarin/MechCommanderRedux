@@ -20,6 +20,16 @@ extern uint32_t NextIdNumber;
 void ReadEffectId(MCFitIniFile& file, std::string_view name, uint32_t& value);
 
 /// <summary>
+/// Port-only (HD shake, PREFS "HDShake"): whether an explosion shakes the picture (MCParticles), by what set it off: a
+/// large artillery strike's explosions and a building's end do, nothing else.
+/// </summary>
+enum class MCBlastShake : uint8_t
+{
+    None,
+    Shakes,
+};
+
+/// <summary>
 /// The common part of every object type: what it looks like, what it leaves behind when destroyed or when it
 /// explodes, its size, icon and alignment. A type is loaded once from the object packet file (<c>OBJECT.PAK</c>) and
 /// shared, reference counted, by every object made from it.
@@ -61,8 +71,10 @@ public:
     /// <summary>
     /// Makes the type's explosion object at <paramref name="position"/>; with a nonzero <paramref name="radius"/>
     /// it also gets that radius and <paramref name="damage"/>. The explosion goes on the end of the first object list.
+    /// Port-only: it shakes the picture as <paramref name="shake"/> says (MCExplosion::Shakes).
     /// </summary>
-    void CreateExplosion(MCVector3D& position, float damage, float radius) const;
+    void CreateExplosion(MCVector3D& position, float damage, float radius,
+                         MCBlastShake shake = MCBlastShake::None) const;
 
     /// <summary>The type's number: its packet in the object file.</summary>
     int32_t ObjTypeNum = 0;

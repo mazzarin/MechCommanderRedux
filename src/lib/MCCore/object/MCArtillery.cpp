@@ -41,6 +41,9 @@ namespace
     constexpr uint32_t SampleIncoming = 0x3e;
     /// <summary>Object type of the camera drone a sensor probe launches.</summary>
     constexpr int32_t CameraDroneType = 0x205;
+    /// <summary>The large strikes' places in ArtilleryTypeTable (CallArtillery's strike types 1 and 5).</summary>
+    constexpr size_t LargeStrike = 1;
+    constexpr size_t LargeStrikeMultiplayer = 5;
 
     /// <summary>
     /// Sets off every entry of the strike's explosion pattern whose delay has passed since impact and that hasn't
@@ -50,6 +53,11 @@ namespace
     bool SetOffExplosions(MCArtillery& strike)
     {
         auto& type = strike.TypeAs<MCArtilleryType>();
+        // Port-only (HD shake): a large strike's explosions shake the picture.
+        const MCBlastShake shake = type.ObjTypeNum == ArtilleryTypeTable[LargeStrike] ||
+                                           type.ObjTypeNum == ArtilleryTypeTable[LargeStrikeMultiplayer]
+                                       ? MCBlastShake::Shakes
+                                       : MCBlastShake::None;
 
         for (size_t i = 0; i < type.Blasts.size(); i++)
         {
@@ -80,7 +88,7 @@ namespace
                 }
 
                 MCVector3D spot(offsetX + centerX, offsetY + centerY, centerZ);
-                type.CreateExplosion(spot, 0.0f, 0.0f);
+                type.CreateExplosion(spot, 0.0f, 0.0f, shake);
             }
 
             strike.ExplosionsDone[i] = true;

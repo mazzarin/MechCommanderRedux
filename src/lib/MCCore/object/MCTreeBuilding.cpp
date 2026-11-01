@@ -661,6 +661,7 @@ auto MCTreeBuilding::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultipla
         FireObject->AddTimeLeftToBurn(2.0f);
     }
 
-    type.CreateExplosion(Position, ExplDamage, ExplRadius);
+    // Port-only (HD shake): its end shakes the picture.
+    type.CreateExplosion(Position, ExplDamage, ExplRadius, MCBlastShake::Shakes);
     return 0;
 }

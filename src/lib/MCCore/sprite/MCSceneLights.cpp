@@ -153,6 +153,31 @@ namespace
 
     using Glow = MCSceneLights::MCGlowMeasure;
 
+    /// <summary>A pixel's light and its weight (its light times its coverage), when it's one of the pixels that shine.</summary>
+    struct ShiningPixel
+    {
+        PixelLight Light;
+        double Weight = 0.0;
+    };
+
+    /// <summary>
+    /// Pixel <paramref name="color"/>'s light, when it's one of <paramref name="shining"/> (it sends out light, and for
+    /// MCGlowPixels::Bright it's bright); none otherwise.
+    /// </summary>
+    std::optional<ShiningPixel> Shining(uint8_t color, bool translucent, MCSceneLights::MCGlowPixels shining)
+    {
+        const PixelLight light = LightOf(color, translucent);
+        const double weight = (static_cast<double>(light.Color[0]) + light.Color[1] + light.Color[2]) * light.Coverage;
+
+        if (weight <= 0.0 ||
+            (shining == MCSceneLights::MCGlowPixels::Bright && std::ranges::max(light.Color) < BrightPixel))
+        {
+            return std::nullopt;
+        }
+
+        return ShiningPixel{light, weight};
+    }
+
     std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
                                     MCSceneLights::MCGlowPixels shining)
     {
@@ -170,15 +195,15 @@ namespace
         VfxShapeVisit(shapeTable, frame,
                       [&](int32_t x, int32_t y, uint8_t color)
                       {
-                          const PixelLight light = LightOf(color, translucent);
-                          const double w =
-                              (static_cast<double>(light.Color[0]) + light.Color[1] + light.Color[2]) * light.Coverage;
+                          const std::optional<ShiningPixel> shone = Shining(color, translucent, shining);
 
-                          if (w <= 0.0 || (shining == MCSceneLights::MCGlowPixels::Bright &&
-                                           std::ranges::max(light.Color) < BrightPixel))
+                          if (!shone.has_value())
                           {
                               return;
                           }
+
+                          const PixelLight& light = shone->Light;
+                          const double w = shone->Weight;
 
                           for (size_t i = 0; i < sum.size(); ++i)
                           {
@@ -445,6 +470,37 @@ auto MCSceneLights::MeasureFrame(std::span<const uint8_t> shapeTable, int32_t fr
     -> std::optional<MCGlowMeasure>
 {
     return MeasureGlow(shapeTable, frame, pixels);
+}
+
+auto MCSceneLights::FrameColors(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::vector<MCGlowColor>
+{
+    if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+    {
+        return {};
+    }
+
+    const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    std::array<int32_t, MCPalette::ColorCount> counts{};
+    VfxShapeVisit(shapeTable, frame,
+                  [&](int32_t, int32_t, uint8_t color)
+                  {
+                      if (Shining(color, translucent, pixels).has_value())
+                      {
+                          ++counts[color];
+                      }
+                  });
+    std::vector<MCGlowColor> colors;
+
+    for (size_t color = 0; color < counts.size(); ++color)
+    {
+        if (counts[color] > 0)
+        {
+            colors.push_back({LightOf(static_cast<uint8_t>(color), translucent).Color, counts[color]});
+        }
+    }
+
+    return colors;
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void

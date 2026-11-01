@@ -36,10 +36,13 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCArtillery.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
 #include "object/MCBullet.h"
+#include "object/MCCommander.h"
 #include "object/MCExplosion.h"
+#include "object/MCForces.h"
 #include "object/MCGroundVehicleGameSystem.h"
 #include "object/MCLaser.h"
 #include "object/MCMasterComponent.h"
@@ -3911,8 +3914,8 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     {
         GHdParticles = particles;
         MCParticles::Clear();
-        MCParticles::AddBurst(hit, HitSize);
-        MCParticles::AddBurst(ground, BigSize);
+        MCParticles::AddBurst(hit, HitSize, false);
+        MCParticles::AddBurst(ground, BigSize, false);
         Run made;
 
         for (size_t i = 0; i < times.size(); ++i)
@@ -3966,8 +3969,9 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     const int32_t top = height / 4;
     REQUIRE(middle.X > static_cast<float>(left));
     REQUIRE(middle.Y > static_cast<float>(top));
-    // As they're made, they're all near where they burst (sparks a streak long, smoke and embers about as wide as a
-    // tenth of the explosion, over the ground and the hit above it); a while on they've flown further out.
+    // As they're made, they're all near where they burst (flecks a third of the fire's side from it, smoke and embers
+    // about as wide as a tenth of the explosion, over the ground and the hit above it); a while on they've flown
+    // further out.
     constexpr float MadeReach = 60.0f;
     constexpr float FlownOut = 10.0f;
     size_t changed = 0;
@@ -4015,11 +4019,15 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
 }
 
 /// <summary>
-/// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a big explosion in the
-/// view's middle moves the world shown, all of it the same whole pixels, the way the shake says; a small one (a shot's
-/// hit) doesn't, and once the shake has died away the world shows where it was.
+/// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a burst that shakes (a
+/// large artillery strike's, a building's end) in the view's middle moves the world shown, all of it the same whole
+/// pixels, the way the shake says; a big one that doesn't (a unit's end) leaves it be, and once the shake has died away
+/// the world shows where it was. Then, the game going on, a large artillery strike called there shakes it as its
+/// explosions go off, and a small one doesn't.
 /// </summary>
-TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit doesn't, and the shake dies away")
+TEST_CASE_ISOLATED(
+    "game: a large artillery strike or a building's end shakes the world shown, a unit's end doesn't, and "
+    "the shake dies away")
 {
     if (!MCTestGame::Available())
     {
@@ -4068,11 +4076,14 @@ TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit d
         return frame;
     };
 
+    // A unit's end and a strike's explosion, as big as the battles' (their fires' and their extents' sides).
+    constexpr MCParticles::MCBurstSize UnitEnd{77.0f, 100.0f};
+    constexpr MCParticles::MCBurstSize Strike{90.0f, 100.0f};
     const std::vector<SDL_Color> still = unshaken(now);
-    MCParticles::AddBurst(ground, {10.0f, 18.0f});
+    MCParticles::AddBurst(ground, UnitEnd, false);
     const std::vector<SDL_Color> hit = shown(now);
     const MCParticles::MCShake hitShake = MCParticles::ShownShake(*world);
-    MCParticles::AddBurst(ground, {90.0f, 100.0f});
+    MCParticles::AddBurst(ground, Strike, true);
     shown(now);
     // A moment on, where the shake moves the world a pixel or more; and a while on, once it has died away.
     constexpr float Moment = 0.02f;
@@ -4083,9 +4094,37 @@ TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit d
     const std::vector<SDL_Color> stillLater = unshaken(now + Later);
     const std::vector<SDL_Color> settled = shown(now + Later);
     const MCParticles::MCShake settledShake = MCParticles::ShownShake(*world);
-    GHdShake = 0;
     ScenarioTime = now;
     GamePaused = false;
+
+    // A strike called on the view's middle, landing as soon as one can (sooner is taken for the type's own time), and
+    // how far the world shook by the time its explosions have gone off.
+    constexpr int32_t SmallStrikeType = 0;
+    constexpr int32_t LargeStrikeType = 1;
+    constexpr int32_t LandsSoon = 3;
+    constexpr float StrikeLasts = 9.0f;
+    const auto strike = [&](int32_t strikeType)
+    {
+        MCParticles::Clear();
+        const std::shared_ptr<MCCommander> commander = HomeCommander();
+        commander->SetNumSmallStrikes(commander->NumSmallStrikes + 1);
+        commander->SetNumLargeStrikes(commander->NumLargeStrikes + 1);
+        CallArtillery(commander->Id, strikeType, ground, LandsSoon, 0);
+        float most = 0.0f;
+
+        for (float time = 0.0f; time < StrikeLasts; time += FrameSeconds)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCParticles::MCShake shook = MCParticles::ShownShake(*world);
+            most = std::max(most, std::hypot(shook.X, shook.Y));
+        }
+
+        return most;
+    };
+
+    const float largeShook = strike(LargeStrikeType);
+    const float smallShook = strike(SmallStrikeType);
+    GHdShake = 0;
 
     // The world clear of the interface, and of the edges a shake shows smeared.
     constexpr int32_t Most = 8;
@@ -4131,8 +4170,8 @@ TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit d
     const float scaleX = static_cast<float>(width) / static_cast<float>(world->XMax + 1);
     const float scaleY = static_cast<float>(height) / static_cast<float>(world->YMax + 1);
     std::cout << std::format("  shaken ({:.2f}, {:.2f}) window pixels: the world moved ({}, {}) screen pixels, {} "
-                             "pixels off\n",
-                             shake.X, shake.Y, bestX, bestY, best);
+                             "pixels off; a large strike shook it {:.2f}, a small one {:.2f}\n",
+                             shake.X, shake.Y, bestX, bestY, best, largeShook, smallShook);
     CHECK(hitShake.X == 0.0f);
     CHECK(hitShake.Y == 0.0f);
     CHECK(mismatch(hit, still, 0, 0) == 0);
@@ -4143,6 +4182,8 @@ TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit d
     CHECK(settledShake.X == 0.0f);
     CHECK(settledShake.Y == 0.0f);
     CHECK(mismatch(settled, stillLater, 0, 0) == 0);
+    CHECK(largeShook >= 1.0f);
+    CHECK(smallShook == 0.0f);
 }
 
 /// <summary>

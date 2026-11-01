@@ -123,7 +123,7 @@ auto MCExplosion::Render() -> void
         if (!Burst)
         {
             Burst = true;
-            MCParticles::AddExplosion(*Appearance, Position);
+            MCParticles::AddExplosion(*Appearance, Position, Shakes);
         }
     }
 

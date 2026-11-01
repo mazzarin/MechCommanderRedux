@@ -48,6 +48,11 @@ public:
     std::shared_ptr<MCGameObject> Light;
     /// <summary>Port-only (HD particles): set once its burst is made (the first frame it is drawn).</summary>
     bool Burst = false;
+    /// <summary>
+    /// Port-only (HD shake): whether its burst shakes the picture, set by what made it (MCObjectType::CreateExplosion's
+    /// MCBlastShake: a large artillery strike's explosions, a building's end).
+    /// </summary>
+    bool Shakes = false;
 };
 
 /// <summary>

@@ -1421,7 +1421,8 @@ auto MCTurret::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultiplayChunk
             }
         }
 
-        type.CreateExplosion(Position, ExplDamage, ExplRadius);
+        // Port-only (HD shake): its end shakes the picture.
+        type.CreateExplosion(Position, ExplDamage, ExplRadius, MCBlastShake::Shakes);
     }
 
     return 0;

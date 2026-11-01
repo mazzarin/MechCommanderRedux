@@ -466,6 +466,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
     prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
     prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
+    prefs.WriteIdLong("HDFlecks", GHdFlecks);
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
     MCKeyBindings::WritePrefs(prefs);
     Cancel();

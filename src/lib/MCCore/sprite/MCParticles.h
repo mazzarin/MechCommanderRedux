@@ -23,23 +23,20 @@ struct MCWindow;
 namespace MCParticles
 {
     /// <summary>
-    /// How an explosion's flecks fly (a prototype's choice, the tools' --hd-flecks): flung out of it at once, breaking off
-    /// its fire's edge as it burns, or fewer and heavier, falling.
+    /// How an explosion's flecks fly (GHdFlecks): breaking off its fire's edge as it burns, or fewer and heavier, thrown
+    /// up out of it once and falling back.
     /// </summary>
     enum class MCFleckStyle : uint8_t
     {
-        Burst,
         Edge,
         Falling,
     };
 
-    /// <summary>How the particles and the shake show (the tools' --hd-particles, --hd-shake and --hd-flecks set them).</summary>
+    /// <summary>How the particles and the shake show (the tools' --hd-particles and --hd-shake set them).</summary>
     struct MCParticleLook
     {
         /// <summary>How many particles fly, 1 as made (0.5: half as many).</summary>
         float Amount = 1.0f;
-        /// <summary>How explosions' flecks fly.</summary>
-        MCFleckStyle Flecks = MCFleckStyle::Burst;
         /// <summary>How far a shaking explosion shakes the picture, 1 as made (0: not at all).</summary>
         float Shake = 1.0f;
     };
@@ -75,9 +72,9 @@ namespace MCParticles
     void AddExplosionFrame(const MCVfxAppearance& appearance, const MCVector3D& position);
 
     /// <summary>
-    /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>, its flecks in the game's fire's colours:
-    /// flecks off a unit hit, dirt, dust and flecks off the ground, a splash in water; with a big fire, debris, smoke
-    /// and embers too. It shakes the picture when <paramref name="shakes"/>.
+    /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>: dirt and dust off the ground, a splash in
+    /// water; with a big fire, debris, smoke and embers too; falling flecks (MCFleckStyle::Falling) in the game's fire's
+    /// colours. It shakes the picture when <paramref name="shakes"/>.
     /// </summary>
     void AddBurst(const MCVector3D& position, MCBurstSize size, bool shakes);
 
@@ -107,6 +104,9 @@ namespace MCParticles
     /// <summary>How many particles there are.</summary>
     size_t Count();
 
+    /// <summary>How many of them are flecks.</summary>
+    size_t FleckCount();
+
     /// <summary>How far the shake moves the world shown, in its window's pixels.</summary>
     struct MCShake
     {
@@ -123,6 +123,12 @@ namespace MCParticles
 
 /// <summary>Port-only: PREFS "HDParticles": 1 draws the particles (MCParticles); 0 none, as the original. Off by default.</summary>
 extern int GHdParticles;
+
+/// <summary>
+/// Port-only: PREFS "HDFlecks": how explosions' flecks fly, an MCParticles::MCFleckStyle (0, the default: breaking off
+/// their fires' edges; 1: falling).
+/// </summary>
+extern int GHdFlecks;
 
 /// <summary>
 /// Port-only: PREFS "HDShake": 1 lets a large artillery strike's explosions and a building's end near the view shake the

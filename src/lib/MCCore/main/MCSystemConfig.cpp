@@ -209,9 +209,13 @@ void ReadPreferences(MCFitIniFile& file)
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
     // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
     GHdClouds = file.Read<bool>("HDClouds").value_or(false) ? 1 : 0;
-    // Port-only: HDParticles draws sparks, debris, smoke, embers, splashes and wakes; HDShake lets big explosions shake
-    // the picture (sprite/MCParticles.h).
+    // Port-only: HDParticles draws flecks, debris, smoke, embers, splashes and wakes, its flecks flying as HDFlecks says;
+    // HDShake lets large artillery strikes and buildings' ends shake the picture (sprite/MCParticles.h).
     GHdParticles = file.Read<bool>("HDParticles").value_or(false) ? 1 : 0;
+    GHdFlecks =
+        std::clamp(file.Read<int32_t>("HDFlecks").value_or(static_cast<int32_t>(MCParticles::MCFleckStyle::Edge)),
+                   static_cast<int32_t>(MCParticles::MCFleckStyle::Edge),
+                   static_cast<int32_t>(MCParticles::MCFleckStyle::Falling));
     GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.

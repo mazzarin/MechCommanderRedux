@@ -3839,8 +3839,9 @@ namespace
 /// interface: with them off a burst makes nothing. On, a shot's hit on a unit and a big explosion on the ground in the
 /// view's middle show there as they're made and nowhere else; as the game's time goes on they fly out from it, and by the
 /// time they've all gone the world shows as drawn again. The same bursts at the same times show the same, the particles'
-/// dice starting again (MCParticles::Clear), and none of it throws the game's dice. A real explosion bursts as it's first
-/// drawn.
+/// dice starting again (MCParticles::Clear), and none of it throws the game's dice. Flecks: breaking off fires' edges (the
+/// default), bursts with no explosion's art make none, and a real explosion's do as it burns, past the burst it makes as
+/// it's first drawn; falling, a burst throws them.
 /// </summary>
 TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game's time goes, and never touch the game")
 {
@@ -3907,6 +3908,7 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
         std::vector<SDL_Color> Out;
         std::vector<SDL_Color> Gone;
         size_t Count = 0;
+        size_t Flecks = 0;
         size_t Left = 0;
     };
 
@@ -3926,6 +3928,7 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
             {
                 made.Made = std::move(frame);
                 made.Count = MCParticles::Count();
+                made.Flecks = MCParticles::FleckCount();
             }
             else if (i == outFrame)
             {
@@ -3948,7 +3951,16 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     const Run second = run(1);
     CHECK(MCGameContext::Current().Random().State() == dice);
 
-    // A real explosion: it bursts once it has been updated and drawn.
+    // Falling flecks: a burst throws them.
+    GHdFlecks = static_cast<int>(MCParticles::MCFleckStyle::Falling);
+    MCParticles::Clear();
+    MCParticles::AddBurst(hit, HitSize, false);
+    shown(now);
+    const size_t falling = MCParticles::FleckCount();
+    GHdFlecks = static_cast<int>(MCParticles::MCFleckStyle::Edge);
+
+    // A real explosion: it bursts once it has been updated and drawn, and flecks break off its fire's edge as it burns.
+    constexpr int32_t Burning = 20;
     MCParticles::Clear();
     constexpr int32_t ExplosionType = 0x290;
     MCVector3D at = ground;
@@ -3957,6 +3969,14 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     MCTestGame::RunFrame(FrameSeconds);
     MCTestGame::RunFrame(FrameSeconds);
     const size_t exploded = MCParticles::Count();
+    size_t broken = 0;
+
+    for (int32_t frame = 0; frame < Burning; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        broken = std::max(broken, MCParticles::FleckCount());
+    }
+
     GHdParticles = 0;
     ScenarioTime = now;
     SaveShownFrame(clear.Made, width, height, "particles_clear");
@@ -4004,8 +4024,10 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     }
 
     std::cout << std::format("  {} particles made: {} pixels changed, out to {:.0f}; {:.1f} s on out to {:.0f}; {} "
-                             "left once gone; {} unlike the second time; a real explosion made {}\n",
-                             first.Count, changed, madeReach, OutAfter, outReach, leftOver, unlike, exploded);
+                             "left once gone; {} unlike the second time; a real explosion made {}, {} flecks broke off "
+                             "it at most at once; a falling burst threw {}\n",
+                             first.Count, changed, madeReach, OutAfter, outReach, leftOver, unlike, exploded, broken,
+                             falling);
     CHECK(clear.Count == 0);
     CHECK(first.Count > 0);
     CHECK(first.Left == 0);
@@ -4016,6 +4038,9 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     CHECK(second.Count == first.Count);
     CHECK(unlike == 0);
     CHECK(exploded > 0);
+    CHECK(first.Flecks == 0);
+    CHECK(broken > 0);
+    CHECK(falling > 0);
 }
 
 /// <summary>
@@ -4859,7 +4884,7 @@ namespace
     /// <summary>
     /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
     /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
-    /// <c>--hd-flecks burst|edge|falling</c> picks how explosions' flecks fly (MCParticles::MCFleckStyle).
+    /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks).
     /// </summary>
     void ParticlesFromOptions()
     {
@@ -4882,11 +4907,10 @@ namespace
 
         if (const std::optional<std::string_view> flecks = MCTest::Option("hd-flecks"); flecks.has_value())
         {
-            using enum MCParticles::MCFleckStyle;
-            look.Flecks = *flecks == "edge" ? Edge : *flecks == "falling" ? Falling : Burst;
-            std::cout << std::format("  flecks: {}\n", look.Flecks == Edge      ? "breaking off the fire's edge"
-                                                       : look.Flecks == Falling ? "falling"
-                                                                                : "flung out at once");
+            const bool falling = *flecks == "falling";
+            GHdFlecks =
+                static_cast<int>(falling ? MCParticles::MCFleckStyle::Falling : MCParticles::MCFleckStyle::Edge);
+            std::cout << std::format("  flecks: {}\n", falling ? "falling" : "breaking off the fire's edge");
         }
     }
 

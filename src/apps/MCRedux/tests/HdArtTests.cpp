@@ -3865,10 +3865,11 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
     // A frame's time step the particles take (MCParticles' most), and a while they've all gone by.
     constexpr float Step = 0.1f;
     constexpr float AllGone = 9.0f;
-    // A hit on a unit (its height above the ground) and a big explosion on the ground, at the view's middle.
+    // A hit on a unit (its height above the ground) and a big explosion on the ground (a unit's end), at the view's
+    // middle, as big as the battles' (their fires' and their extents' sides).
     constexpr float HitHeight = 30.0f;
-    constexpr float HitSize = 24.0f;
-    constexpr float BigSize = 120.0f;
+    constexpr MCParticles::MCBurstSize HitSize{10.0f, 18.0f};
+    constexpr MCParticles::MCBurstSize BigSize{77.0f, 100.0f};
     MCVector3D ground = camera->Position;
     ground.Z = MCTerrain::GetTerrainElevation(ground);
     MCVector3D hit = ground;
@@ -4068,10 +4069,10 @@ TEST_CASE_ISOLATED("game: a big explosion shakes the world shown, a shot's hit d
     };
 
     const std::vector<SDL_Color> still = unshaken(now);
-    MCParticles::AddBurst(ground, 24.0f);
+    MCParticles::AddBurst(ground, {10.0f, 18.0f});
     const std::vector<SDL_Color> hit = shown(now);
     const MCParticles::MCShake hitShake = MCParticles::ShownShake(*world);
-    MCParticles::AddBurst(ground, 160.0f);
+    MCParticles::AddBurst(ground, {90.0f, 100.0f});
     shown(now);
     // A moment on, where the shake moves the world a pixel or more; and a while on, once it has died away.
     constexpr float Moment = 0.02f;

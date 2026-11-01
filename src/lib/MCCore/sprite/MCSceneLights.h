@@ -196,6 +196,12 @@ namespace MCSceneLights
     std::optional<MCGlowMeasure> MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels);
 
     /// <summary>
+    /// The <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/>, as
+    /// <see cref="MeasureDrawn"/>'s; none for a table that isn't a VFX shape table or a frame without such pixels.
+    /// </summary>
+    std::optional<MCGlowMeasure> MeasureFrame(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,
     /// <paramref name="y1"/>), <paramref name="width"/> pixels to each side, in palette colour
     /// <paramref name="color"/>.

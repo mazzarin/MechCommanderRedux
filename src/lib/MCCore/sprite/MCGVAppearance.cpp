@@ -271,7 +271,7 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     if (objectClass == MCObjectClass::GroundVehicle)
     {
         MCSceneLights::AddCaster(*this, obj->Position);
-        MCParticles::AddMover(*this, obj->Position);
+        MCParticles::AddMover(this, obj->Position, ShapeMaxX * 0.5f);
     }
 
     if (Highlighting)

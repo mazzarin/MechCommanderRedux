@@ -892,7 +892,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
     // Port-only (HD lighting): the mech casts shadows from the lights by it. (HD particles): it wades through water.
     MCSceneLights::AddCaster(*this, mech->Position);
-    MCParticles::AddMover(*this, mech->Position);
+    MCParticles::AddMover(this, mech->Position, ShapeMaxX * 0.5f);
 
     if (Highlighting)
     {

@@ -441,6 +441,12 @@ auto MCSceneLights::MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels
     return drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, pixels) : std::nullopt;
 }
 
+auto MCSceneLights::MeasureFrame(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::optional<MCGlowMeasure>
+{
+    return MeasureGlow(shapeTable, frame, pixels);
+}
+
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
 {
     if (GHdLighting == HdLightingOff || TheState().Drawing.expired())

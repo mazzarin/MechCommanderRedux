@@ -2,7 +2,6 @@
 
 #include <cstddef>
 
-class MCAppearance;
 class MCCamera;
 class MCVector3D;
 class MCVfxAppearance;
@@ -38,17 +37,26 @@ namespace MCParticles
     inline constexpr size_t MaxParticles = 6000;
 
     /// <summary>
+    /// How big a burst is, from the biggest of its explosion's frames: the side of a square of its fire's pixels (its
+    /// bright ones), and of all of them (its fire, dust and smoke), in window pixels.
+    /// </summary>
+    struct MCBurstSize
+    {
+        float Fire = 0.0f;
+        float Extent = 0.0f;
+    };
+
+    /// <summary>
     /// An explosion seen for the first time (MCExplosion::Render; a shot's hit or miss, a mine, a unit's or a building's
     /// end): <paramref name="appearance"/> drawn at <paramref name="position"/>. It bursts as big as its frames are.
     /// </summary>
     void AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position);
 
     /// <summary>
-    /// A burst at <paramref name="position"/>, as an explosion whose frames are <paramref name="size"/> window pixels
-    /// across at most bursts: sparks off a unit hit, dirt off the ground, a splash in water; past a size, debris, smoke and
-    /// embers too, and the shake.
+    /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>: sparks off a unit hit, dirt and dust
+    /// off the ground, a splash in water; with a big fire, debris, smoke and embers too, and the shake.
     /// </summary>
-    void AddBurst(const MCVector3D& position, float size);
+    void AddBurst(const MCVector3D& position, MCBurstSize size);
 
     /// <summary>
     /// A fire's flame <paramref name="flame"/> burning at <paramref name="position"/> (MCFire::Render): embers and smoke
@@ -57,10 +65,11 @@ namespace MCParticles
     void AddFire(const MCVfxAppearance& flame, const MCVector3D& position);
 
     /// <summary>
-    /// A unit (a mech, a vehicle) drawn this frame as <paramref name="appearance"/>, standing at <paramref name="position"/>:
-    /// in water, it leaves ripples and foam, more as it goes faster.
+    /// A unit (a mech, a vehicle) drawn this frame, known by <paramref name="unit"/> (its appearance), standing at
+    /// <paramref name="position"/>, its sprite <paramref name="halfWidth"/> window pixels to each side: in water, it
+    /// leaves ripples and foam, more as it goes faster.
     /// </summary>
-    void AddMover(const MCAppearance& appearance, const MCVector3D& position);
+    void AddMover(const void* unit, const MCVector3D& position, float halfWidth);
 
     /// <summary>
     /// Moves the particles on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list
@@ -84,7 +93,7 @@ namespace MCParticles
 
     /// <summary>
     /// How far the shake moves the world window <paramref name="view"/> shows now (its last drawn frame's); none when the
-    /// shake is off, the game is paused or another window was drawn.
+    /// shake is off or another window was drawn. It moves with the game's time, so while the game is paused it holds.
     /// </summary>
     MCShake ShownShake(const MCWindow& view);
 }

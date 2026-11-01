@@ -194,9 +194,12 @@ namespace
             ends[3] = (light.Y1 + 0.5f) * down;
             uniforms.Lights[i * 3 + 1][0] = light.Height * across;
             uniforms.Lights[i * 3 + 1][1] = light.Reach * across;
+            uniforms.Lights[i * 3 + 1][2] = light.SpotX * across;
+            uniforms.Lights[i * 3 + 1][3] = light.SpotY * down;
             uniforms.Lights[i * 3 + 2][0] = light.Red;
             uniforms.Lights[i * 3 + 2][1] = light.Green;
             uniforms.Lights[i * 3 + 2][2] = light.Blue;
+            uniforms.Lights[i * 3 + 2][3] = light.SpotCos;
         }
     }
 

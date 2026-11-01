@@ -1622,6 +1622,12 @@ auto MCParticles::AddMover(const void* unit, const MCVector3D& position, float h
     }
 }
 
+auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> void
+{
+    ElementList().OpenGroup(depth, true);
+    ElementList().Add(ElementList().Make<MCParticleElement>(command, depth));
+}
+
 auto MCParticles::Draw(const MCCamera& camera) -> void
 {
     State& state = TheState();

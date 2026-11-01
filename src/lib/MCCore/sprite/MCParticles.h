@@ -6,6 +6,7 @@
 class MCCamera;
 class MCVector3D;
 class MCVfxAppearance;
+struct MCParticleCommand;
 struct MCWindow;
 
 /// <summary>
@@ -90,6 +91,13 @@ namespace MCParticles
     /// leaves ripples and foam, more as it goes faster.
     /// </summary>
     void AddMover(const void* unit, const MCVector3D& position, float halfWidth);
+
+    /// <summary>
+    /// Adds a soft mark (<paramref name="command"/>, in the world pane's pixels) to the frame's draw list at
+    /// <paramref name="depth"/>, drawn as a particle is, whatever HD particles' setting: a headlight's lamp
+    /// (MCSceneLights::AddHeadlight).
+    /// </summary>
+    void AddMark(const MCParticleCommand& command, int32_t depth);
 
     /// <summary>
     /// Moves the particles on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list

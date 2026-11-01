@@ -34,6 +34,9 @@ int SingleStepMode = 1;
 
 namespace
 {
+    /// <summary>Port-only (HD lighting): a mech's headlight's lamp is this share of the way down its sprite (its cockpit).</summary>
+    constexpr float MechLampDown = 0.3f;
+
     /// <summary>Per gesture, the gesture outline (jump and fall heights) and hot spot table it uses.</summary>
     constexpr std::array<uint8_t, 28> HotSpotFinderArray = {0,  0,  0,  1,  2,  3,  4,  5,  6,  2,  3,  7, 8,  9,
                                                             10, 11, 12, 13, 14, 15, 16, 17, 18, 11, 10, 0, 19, 19};
@@ -890,8 +893,15 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         DrawBars();
     }
 
-    // Port-only (HD lighting): the mech casts shadows from the lights by it. (HD particles): it wades through water.
+    // Port-only (HD lighting): the mech casts shadows from the lights by it, and at night shines its headlight. (HD
+    // particles): it wades through water.
     MCSceneLights::AddCaster(*this, mech->Position);
+
+    if (!mech->IsDisabled())
+    {
+        MCSceneLights::AddHeadlight(*this, mech->Position, mech->GetFrame(), depthFixup, MechLampDown);
+    }
+
     MCParticles::AddMover(this, mech->Position, ShapeMaxX * 0.5f);
 
     if (Highlighting)

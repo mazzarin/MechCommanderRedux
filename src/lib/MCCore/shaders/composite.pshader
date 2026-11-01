@@ -106,7 +106,9 @@ cbuffer Composite : register(b0, space3)
     // the air shimmers.
     float4 heat[MaxHeat];
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
-    // and reach (xy); its colour times its strength (rgb).
+    // and reach (xy), and a spotlight's way from its beam's tip to its pool's middle, the point (zw: 0 for a light that
+    // shines every way); its colour times its strength (rgb), and the cosine of the angle off that way at which a
+    // spotlight's beam has faded out (w).
     float4 lights[MaxLights * 3];
 };
 
@@ -118,8 +120,28 @@ static const float3 Luma = float3(0.299, 0.587, 0.114);
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
 
+// A spotlight's beam is full within this share of the way from its edge to its middle (MCSceneLights' SpotFull).
+static const float SpotFull = 0.5;
+
+// The share of its light a light gives the ground off (along the ground) from its pool's middle: a spotlight's (spot,
+// the way from its beam's tip to the middle; edge, the cosine at which its beam has faded out), 1 within its beam and
+// none outside it; 1 for a light that shines every way.
+float SpotShare(float2 off, float2 spot, float edge)
+{
+    if (edge <= 0.0 || all(spot == 0.0))
+    {
+        return 1.0;
+    }
+
+    // The ground's way from the beam's tip.
+    const float2 from = off + spot;
+    const float lengths = sqrt(dot(from, from) * dot(spot, spot));
+    return lengths > 0.0 ? smoothstep(edge, lerp(edge, 1.0, SpotFull), dot(from, spot) / lengths) : 0.0;
+}
+
 // The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
-// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away.
+// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away, a spotlight's
+// only within its beam.
 float3 LightAt(float2 texel, float2 slope)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -131,7 +153,7 @@ float3 LightAt(float2 texel, float2 slope)
     for (uint i = 0; i < count; ++i)
     {
         const float4 ends = lights[i * 3];
-        const float2 shape = lights[i * 3 + 1].xy;
+        const float4 shape = lights[i * 3 + 1];
         const float2 a = ends.xy * ground;
         const float2 ab = ends.zw * ground - a;
         const float length2 = dot(ab, ab);
@@ -147,7 +169,9 @@ float3 LightAt(float2 texel, float2 slope)
             const float fade = 1.0 - x2 * x2;
             // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
             const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
-            sum += lights[i * 3 + 2].rgb * (fade * fade * soft * soft / (d2 + soft * soft) * facing);
+            const float4 color = lights[i * 3 + 2];
+            sum += color.rgb * (fade * fade * soft * soft / (d2 + soft * soft) * facing *
+                                SpotShare(off, shape.zw * ground, color.w));
         }
     }
 

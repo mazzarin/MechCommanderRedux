@@ -7,10 +7,12 @@
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
 #include "lib/MCFitIniFile.h"
+#include "lib/MCFrameOfRef.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCObjectDrawing.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
@@ -54,6 +56,35 @@ namespace
     constexpr std::array<float, 3> NightTint{0.78f, 0.95f, 1.45f};
     constexpr float NightGrey = 0.5f;
     constexpr float NightStrength = 1.5f;
+    /// <summary>
+    /// A unit's headlight at night: the middle of its pool this far ahead of it, fading out this far beyond, its lamp this
+    /// high (its pool's softness; the window's pixels, along the ground), its beam fading out this many degrees off its
+    /// way and full within SpotFull of that; its colour (a lamp's warm white) and how much it lights the ground under it.
+    /// </summary>
+    constexpr float HeadlightAhead = 55.0f;
+    constexpr float HeadlightReach = 80.0f;
+    constexpr float HeadlightHeight = 30.0f;
+    constexpr float HeadlightDegrees = 28.0f;
+    constexpr std::array<float, 3> HeadlightColor{1.0f, 0.93f, 0.8f};
+    constexpr float HeadlightGain = 0.8f;
+    /// <summary>
+    /// A unit's facing is measured this many world units ahead of it: far enough that the projection's rounding to
+    /// pixels doesn't bend its way.
+    /// </summary>
+    constexpr float FacingStep = 1000.0f;
+    /// <summary>
+    /// A headlight's lamp: this share of its unit's half width toward its facing; its glow's size (the window's pixels)
+    /// and softness, and its colour (premultiplied, added). It shows fully facing the camera or sideways, fading out as
+    /// the unit faces away (its facing's share up the screen, from LampHideFrom to LampHidden).
+    /// </summary>
+    constexpr float LampOut = 0.4f;
+    constexpr float LampRadius = 2.5f;
+    constexpr float LampSoftness = 0.8f;
+    constexpr std::array<uint8_t, 3> LampColor{255, 240, 205};
+    constexpr float LampHideFrom = 0.2f;
+    constexpr float LampHidden = 0.7f;
+    /// <summary>A spotlight's beam is full within this share of the way from its edge to its middle (composite.pshader's).</summary>
+    constexpr float SpotFull = 0.5f;
     /// <summary>The times of day by name (a scenario file's TimeOfDay, the tools' --hd-time-of-day).</summary>
     constexpr std::array<std::pair<std::string_view, MCTimeOfDay>, 3> TimesOfDay{{
         {"Day", MCTimeOfDay::Day},
@@ -316,6 +347,37 @@ namespace
     };
 
     /// <summary>
+    /// The share of its light a spotlight (<paramref name="light"/>) gives the ground (<paramref name="dx"/>,
+    /// <paramref name="dy"/>) off its pool's middle (along the ground, a screen height <paramref name="aspect"/> of one),
+    /// as the composite's SpotShare: 1 within its beam, none outside it or at its tip; 1 for a light that shines every
+    /// way.
+    /// </summary>
+    float SpotShare(const MCSceneLight& light, float dx, float dy, float aspect)
+    {
+        if (light.SpotCos <= 0.0f || (light.SpotX == 0.0f && light.SpotY == 0.0f))
+        {
+            return 1.0f;
+        }
+
+        const float spotX = light.SpotX;
+        const float spotY = light.SpotY / aspect;
+        // The ground's way from the beam's tip.
+        const float fromX = dx + spotX;
+        const float fromY = dy + spotY;
+        const float lengths = std::sqrt((fromX * fromX + fromY * fromY) * (spotX * spotX + spotY * spotY));
+
+        if (lengths <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        const float cosine = (fromX * spotX + fromY * spotY) / lengths;
+        const float full = light.SpotCos + (1.0f - light.SpotCos) * SpotFull;
+        const float t = std::clamp((cosine - light.SpotCos) / (full - light.SpotCos), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /// <summary>
     /// How <paramref name="light"/> reaches the ground at window (<paramref name="x"/>, <paramref name="y"/>), as the
     /// composite's LightAt pools it; distances along the ground, a screen height <paramref name="aspect"/> of one.
     /// </summary>
@@ -342,8 +404,8 @@ namespace
             const float soft = std::max(light.Height, light.Reach * LightSoftness);
             const float x2 = d2 / reach2;
             const float fade = 1.0f - x2 * x2;
-            reaching.Light =
-                (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * soft * soft / (d2 + soft * soft);
+            reaching.Light = (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * soft * soft /
+                             (d2 + soft * soft) * SpotShare(light, dx, dy, aspect);
         }
 
         return reaching;
@@ -713,6 +775,75 @@ auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& 
     }
 }
 
+auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
+                                 int32_t depthFixup, float lampDown) -> void
+{
+    State& state = TheState();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+
+    if (TimeOfDay() != MCTimeOfDay::Night || state.Drawing.expired() || camera == nullptr)
+    {
+        return;
+    }
+
+    // Its facing on the ground (the frame turned an eighth of a turn, the facing its art is drawn at, as MCMover's), and
+    // that way on the screen, along the ground (a screen height GroundAspect of one).
+    const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
+    const float facingX = (frame.I.X - frame.J.X) * eighth;
+    const float facingY = (frame.I.Y - frame.J.Y) * eighth;
+    const MCVector2D at = ProjectToScreen(position, *camera);
+    const MCVector2D ahead = ProjectToScreen(
+        MCVector3D(position.X + facingX * FacingStep, position.Y + facingY * FacingStep, position.Z), *camera);
+    const float aspect = GroundAspect();
+    const float wayX = ahead.X - at.X;
+    const float wayY = (ahead.Y - at.Y) / aspect;
+    const float way = std::hypot(wayX, wayY);
+
+    if (way <= 0.0f)
+    {
+        return;
+    }
+
+    // From its feet (a jumping unit's are its altitude lower on the screen) to the pool's middle.
+    MCSceneLight light;
+    light.SpotX = wayX / way * HeadlightAhead;
+    light.SpotY = wayY / way * HeadlightAhead * aspect;
+    light.X0 = light.X1 = appearance.ScreenPos.X + light.SpotX;
+    light.Y0 = light.Y1 = appearance.ScreenPos.Y + AltitudeOf(position) + light.SpotY;
+    light.SpotCos = std::cos(HeadlightDegrees * std::numbers::pi_v<float> / 180.0f);
+    light.Height = HeadlightHeight;
+    light.Reach = HeadlightReach;
+    light.Red = HeadlightColor[0] * HeadlightGain;
+    light.Green = HeadlightColor[1] * HeadlightGain;
+    light.Blue = HeadlightColor[2] * HeadlightGain;
+    Add(light);
+
+    // The lamp, on the side of the unit it faces on the screen; hidden by the unit as it faces away (up the screen).
+    const float screenX = ahead.X - at.X;
+    const float screenY = ahead.Y - at.Y;
+    const float screen = std::hypot(screenX, screenY);
+    const float up = screen > 0.0f ? -screenY / screen : 0.0f;
+    const float shows = 1.0f - std::clamp((up - LampHideFrom) / (LampHidden - LampHideFrom), 0.0f, 1.0f);
+
+    if (shows <= 0.0f || screen <= 0.0f)
+    {
+        return;
+    }
+
+    const float halfWidth = (appearance.LowerRight.X - appearance.UpperLeft.X) * 0.5f;
+    MCParticleCommand lamp;
+    lamp.X0 = lamp.X1 = appearance.ScreenPos.X + screenX / screen * halfWidth * LampOut;
+    lamp.Y0 = lamp.Y1 = appearance.UpperLeft.Y + (appearance.ScreenPos.Y - appearance.UpperLeft.Y) * lampDown;
+    lamp.Radius = LampRadius;
+    lamp.Softness = LampSoftness;
+    lamp.Red = static_cast<uint8_t>(std::lround(LampColor[0] * shows));
+    lamp.Green = static_cast<uint8_t>(std::lround(LampColor[1] * shows));
+    lamp.Blue = static_cast<uint8_t>(std::lround(LampColor[2] * shows));
+    // Just over the unit's parts.
+    MCParticles::AddMark(lamp,
+                         static_cast<int32_t>(std::floor(static_cast<float>(depthFixup) - appearance.ScreenPos.Y)) - 1);
+}
+
 auto MCSceneLights::AddShadows() -> void
 {
     State& state = TheState();
@@ -746,8 +877,12 @@ auto MCSceneLights::AddShadows() -> void
 
         for (const auto& [light, reaches] : reaching)
         {
-            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes).
-            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
+            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes, its headlight).
+            const float tipX = caster.X - (light->X0 - light->SpotX);
+            const float tipY = (caster.Y - (light->Y0 - light->SpotY)) / aspect;
+            const bool ownSpot = light->SpotCos > 0.0f && std::hypot(tipX, tipY) <= caster.HalfWidth;
+
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth || ownSpot)
             {
                 continue;
             }

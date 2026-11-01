@@ -3898,10 +3898,12 @@ TEST_CASE("hd lighting: a mission's time of day is its scenario file's, shown as
 /// <summary>
 /// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
 /// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
-/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still and bluer, and HD
-/// LIGHTING's DUSK shows a night mission just as a dusk one.
+/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
+/// median) and bluer, and HD LIGHTING's DUSK shows a night mission just as a dusk one. At night, and only then, the
+/// units in view shine headlights: a spotlight each, which brighten the world.
 /// </summary>
-TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker, at night bluer")
+TEST_CASE_ISOLATED(
+    "game: a mission set at dusk or night shows its world darker, at night bluer, its units' headlights on")
 {
     if (!MCTestGame::Available())
     {
@@ -3924,6 +3926,8 @@ TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker,
     const int32_t height = display->Height();
     GamePaused = true;
 
+    // The spotlights among the lights the frame last showed.
+    size_t spots = 0;
     const auto shown = [&](int lighting, MCTimeOfDay time)
     {
         GHdLighting = lighting;
@@ -3932,14 +3936,23 @@ TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker,
         auto frame = display->ReadFrame();
         REQUIRE(frame.has_value());
         REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+        const std::shared_ptr<MCWindow> world = camera->View()->SharedWorldFrame()->Window.lock();
+        REQUIRE(world != nullptr);
+        spots = static_cast<size_t>(std::ranges::count_if(MCSceneLights::Shown(*world), [](const MCSceneLight& light)
+                                                          { return light.SpotCos > 0.0f; }));
         return std::move(*frame);
     };
 
     const std::vector<SDL_Color> drawn = shown(HdLightingOff, MCTimeOfDay::Day);
     const std::vector<SDL_Color> unlitNight = shown(HdLightingOff, MCTimeOfDay::Night);
     const std::vector<SDL_Color> day = shown(HdLightingOn, MCTimeOfDay::Day);
+    const size_t daySpots = spots;
     const std::vector<SDL_Color> dusk = shown(HdLightingOn, MCTimeOfDay::Dusk);
+    const size_t duskSpots = spots;
     const std::vector<SDL_Color> night = shown(HdLightingOn, MCTimeOfDay::Night);
+    const size_t nightSpots = spots;
     const std::vector<SDL_Color> duskChosen = shown(HdLightingDusk, MCTimeOfDay::Night);
     GamePaused = false;
     GHdLighting = HdLightingOff;
@@ -3954,6 +3967,7 @@ TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker,
     struct Measure
     {
         double Luma = 0.0;
+        double MedianLuma = 0.0;
         double Red = 0.0;
         double Blue = 0.0;
     };
@@ -3961,22 +3975,25 @@ TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker,
     const auto measure = [&](const std::vector<SDL_Color>& frame)
     {
         Measure sum;
-        size_t count = 0;
+        std::vector<float> lumas;
 
         for (int32_t y = top; y < height; ++y)
         {
             for (int32_t x = left; x < width; ++x)
             {
                 const SDL_Color color = frame[static_cast<size_t>(y) * width + x];
-                sum.Luma += LumaOf(color);
+                lumas.push_back(LumaOf(color));
+                sum.Luma += lumas.back();
                 sum.Red += color.r;
                 sum.Blue += color.b;
-                ++count;
             }
         }
 
-        REQUIRE(count > 0);
-        return Measure{sum.Luma / count, sum.Red / count, sum.Blue / count};
+        REQUIRE(!lumas.empty());
+        const auto middle = lumas.begin() + static_cast<std::ptrdiff_t>(lumas.size() / 2);
+        std::ranges::nth_element(lumas, middle);
+        const double count = static_cast<double>(lumas.size());
+        return Measure{sum.Luma / count, *middle, sum.Red / count, sum.Blue / count};
     };
 
     // Different pixels in that world (none where two frames show it the same).
@@ -3999,14 +4016,18 @@ TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker,
     const Measure byDay = measure(day);
     const Measure atDusk = measure(dusk);
     const Measure atNight = measure(night);
-    std::cout << std::format("  the world's brightness: {:.1f} by day, {:.1f} at dusk, {:.1f} at night; blue per red "
-                             "{:.2f} by day, {:.2f} at night\n",
-                             byDay.Luma, atDusk.Luma, atNight.Luma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red);
+    std::cout << std::format("  the world's brightness: {:.1f} by day, {:.1f} at dusk, {:.1f} at night (median {:.1f}, "
+                             "{:.1f}, {:.1f}); blue per red {:.2f} by day, {:.2f} at night; {} headlights at night\n",
+                             byDay.Luma, atDusk.Luma, atNight.Luma, byDay.MedianLuma, atDusk.MedianLuma,
+                             atNight.MedianLuma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red, nightSpots);
     CHECK_EQ(different(unlitNight, drawn), size_t{0});
     CHECK_EQ(different(duskChosen, dusk), size_t{0});
     CHECK(atDusk.Luma < 0.8 * byDay.Luma);
-    CHECK(atNight.Luma < 0.75 * atDusk.Luma);
+    CHECK(atNight.MedianLuma < 0.75 * atDusk.MedianLuma);
     CHECK(atNight.Blue / atNight.Red > 1.2 * (byDay.Blue / byDay.Red));
+    CHECK_EQ(daySpots, size_t{0});
+    CHECK_EQ(duskSpots, size_t{0});
+    CHECK(nightSpots >= 3);
 }
 
 /// <summary>

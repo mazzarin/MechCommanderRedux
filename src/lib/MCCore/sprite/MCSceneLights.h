@@ -10,6 +10,7 @@
 
 class MCAppearance;
 class MCFitIniFile;
+class MCFrameOfRef;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCPane;
@@ -36,6 +37,15 @@ struct MCSceneLight
     float Red = 0.0f;
     float Green = 0.0f;
     float Blue = 0.0f;
+    /// <summary>
+    /// A spotlight (a unit's headlight): from the tip of its beam to the middle of its pool, (X0, Y0), in the window's
+    /// pixels; it lights only the ground within <see cref="SpotCos"/> of that way from the tip. (0, 0): a light that
+    /// shines every way.
+    /// </summary>
+    float SpotX = 0.0f;
+    float SpotY = 0.0f;
+    /// <summary>A spotlight's beam: the cosine of the angle off its way at which it has faded out (half its width).</summary>
+    float SpotCos = 0.0f;
 };
 
 /// <summary>Port-only (HD lighting): the air over a fire, which shimmers (composite.pshader's heat haze).</summary>
@@ -326,6 +336,17 @@ namespace MCSceneLights
     /// placed itself on the screen (its bounds, its owner's place), its owner at <paramref name="position"/>.
     /// </summary>
     void AddCaster(const MCAppearance& appearance, const MCVector3D& position);
+
+    /// <summary>
+    /// At night (<see cref="TimeOfDay"/>), a unit's headlight (a mech's, a vehicle's): a warm spotlight on the ground
+    /// ahead of it, widening as it goes, and its lamp, a small glow <paramref name="lampDown"/> of the way down its sprite
+    /// (0 its top, 1 its feet) toward its facing, drawn just over the unit (its parts' draw list group,
+    /// <paramref name="depthFixup"/> less its screen height) and fading as it faces away. <paramref name="appearance"/>
+    /// as it last placed itself on the screen, its owner at <paramref name="position"/>, facing as
+    /// <paramref name="frame"/> does (MCMover::Frame).
+    /// </summary>
+    void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
+                      int32_t depthFixup, float lampDown);
 
     /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added

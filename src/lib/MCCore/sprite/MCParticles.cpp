@@ -70,11 +70,11 @@ namespace
     constexpr float SparkLift = 40.0f;
     constexpr float SparkLifeLow = 0.25f;
     constexpr float SparkLifeHigh = 0.6f;
-    constexpr float SparkRadiusLow = 0.35f;
-    constexpr float SparkRadiusHigh = 0.6f;
+    constexpr float SparkRadiusLow = 0.55f;
+    constexpr float SparkRadiusHigh = 0.9f;
     constexpr float SparkDrag = 1.5f;
     /// <summary>A spark's streak: where it was this long ago.</summary>
-    constexpr float SparkStreak = 0.03f;
+    constexpr float SparkStreak = 0.045f;
     constexpr float SparkBounceSpeed = 30.0f;
     constexpr float SparkBounce = 0.35f;
     constexpr float SparkLight = 1.0f;
@@ -91,8 +91,8 @@ namespace
     constexpr float EmberRiseHigh = 40.0f;
     constexpr float EmberLifeLow = 1.2f;
     constexpr float EmberLifeHigh = 2.8f;
-    constexpr float EmberRadiusLow = 0.45f;
-    constexpr float EmberRadiusHigh = 0.75f;
+    constexpr float EmberRadiusLow = 0.7f;
+    constexpr float EmberRadiusHigh = 1.1f;
     constexpr float EmberDrag = 1.5f;
     constexpr float EmberSway = 12.0f;
     constexpr float EmberSwayRate = 1.7f;
@@ -148,8 +148,8 @@ namespace
     constexpr float DropletOutLow = 10.0f;
     constexpr float DropletOutHigh = 45.0f;
     constexpr float DropletLife = 1.5f;
-    constexpr float DropletRadiusLow = 0.45f;
-    constexpr float DropletRadiusHigh = 0.8f;
+    constexpr float DropletRadiusLow = 0.6f;
+    constexpr float DropletRadiusHigh = 1.0f;
     constexpr float DropletAlpha = 0.8f;
     constexpr float DropletStreak = 0.02f;
     constexpr float DropletFades = 0.2f;
@@ -171,8 +171,8 @@ namespace
     constexpr float SinkRippleAlpha = 0.4f;
 
     // What a burst throws: so many, and so many more for each pixel of its fire's or its extent's side.
-    constexpr float HitSparks = 4.0f;
-    constexpr float HitSparksPerFire = 0.6f;
+    constexpr float HitSparks = 6.0f;
+    constexpr float HitSparksPerFire = 0.8f;
     constexpr float DirtClods = 3.0f;
     constexpr float DirtClodsPerExtent = 0.15f;
     constexpr float DustPuffs = 1.0f;
@@ -390,8 +390,8 @@ namespace
         float Red = 0.12f;
         float Green = 0.11f;
         float Blue = 0.1f;
-        float SizeLow = 0.8f;
-        float SizeHigh = 2.0f;
+        float SizeLow = 1.2f;
+        float SizeHigh = 2.8f;
         float SpeedLow = 60.0f;
         float SpeedHigh = 210.0f;
         float LifeLow = 3.0f;
@@ -439,8 +439,8 @@ namespace
     constexpr DebrisLook DirtLook{.Red = 0.22f,
                                   .Green = 0.17f,
                                   .Blue = 0.11f,
-                                  .SizeLow = 0.5f,
-                                  .SizeHigh = 1.1f,
+                                  .SizeLow = 0.8f,
+                                  .SizeHigh = 1.6f,
                                   .SpeedLow = 40.0f,
                                   .SpeedHigh = 110.0f,
                                   .LifeLow = 1.5f,

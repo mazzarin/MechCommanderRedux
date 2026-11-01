@@ -181,9 +181,9 @@ namespace MCSceneLights
         float AmbientGrey = 0.0f;
         /// <summary>
         /// How much a spotlight's beam shows in the air, from its lamp to where it meets the ground (headlights in a
-        /// haze), 0 to 1 of its light there (0: only the ground it lights shows).
+        /// haze, at night), 0 to 1 of its light there (0: only the ground it lights shows).
         /// </summary>
-        float AirBeams = 0.0f;
+        float AirBeams = 0.35f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; a time of day takes its own, see Shown).</summary>
@@ -355,6 +355,12 @@ namespace MCSceneLights
     /// </summary>
     void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame, float turn,
                       const std::optional<MCVector3D>& lamp, int32_t depthFixup);
+
+    /// <summary>
+    /// Whether a unit whose status (MCGameObject::Status) is <paramref name="status"/> has its headlight on: running (0)
+    /// or starting up (3); not disabled (1), destroyed (2), shutting down (4) or shut down (5).
+    /// </summary>
+    bool HeadlightOn(int32_t status);
 
     /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added

@@ -3900,11 +3900,14 @@ TEST_CASE("hd lighting: a mission's time of day is its scenario file's, shown as
 /// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
 /// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
 /// median) and bluer, and HD LIGHTING's DUSK shows a night mission just as a dusk one. At night, and only then, the
-/// units in view shine headlights: a spotlight each, which brighten the world.
+/// units in view shine headlights: a spotlight each, which brighten the world; shut down, they shine none.
 /// </summary>
 TEST_CASE_ISOLATED(
     "game: a mission set at dusk or night shows its world darker, at night bluer, its units' headlights on")
 {
+    // A mover's status shut down (MCMover::ShutDown).
+    constexpr int32_t MechShutDown = 4;
+
     if (!MCTestGame::Available())
     {
         return;
@@ -3953,6 +3956,28 @@ TEST_CASE_ISOLATED(
     const size_t duskSpots = spots;
     const std::vector<SDL_Color> night = shown(HdLightingOn, MCTimeOfDay::Night);
     const size_t nightSpots = spots;
+
+    // Every mech shut down (MCMover::ShutDown's status), then as it was.
+    std::vector<std::pair<std::shared_ptr<MCBaseObject>, int32_t>> statuses;
+
+    for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
+    {
+        for (const std::shared_ptr<MCBaseObject>& object : *list)
+        {
+            auto& mech = static_cast<MCBattleMech&>(*object);
+            statuses.emplace_back(object, mech.Status);
+            mech.Status = MechShutDown;
+        }
+    }
+
+    shown(HdLightingOn, MCTimeOfDay::Night);
+    const size_t shutDownSpots = spots;
+
+    for (const auto& [object, status] : statuses)
+    {
+        static_cast<MCBattleMech&>(*object).Status = status;
+    }
+
     const std::vector<SDL_Color> duskChosen = shown(HdLightingDusk, MCTimeOfDay::Night);
     GamePaused = false;
     GHdLighting = HdLightingOff;
@@ -4028,6 +4053,7 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(daySpots, size_t{0});
     CHECK_EQ(duskSpots, size_t{0});
     CHECK(nightSpots >= 3);
+    CHECK_EQ(shutDownSpots, size_t{0});
 }
 
 /// <summary>

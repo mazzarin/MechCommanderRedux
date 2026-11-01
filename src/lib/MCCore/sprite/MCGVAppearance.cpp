@@ -267,13 +267,13 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
         DrawSelectBox(0xfd);
     }
 
-    // Port-only (HD lighting): a vehicle casts shadows from the lights by it, and at night shines its headlight. (HD
-    // particles): it wades through water.
+    // Port-only (HD lighting): a vehicle casts shadows from the lights by it, and at night, while it runs, shines its
+    // headlight. (HD particles): it wades through water.
     if (objectClass == MCObjectClass::GroundVehicle)
     {
         MCSceneLights::AddCaster(*this, obj->Position);
 
-        if (!obj->IsDisabled())
+        if (MCSceneLights::HeadlightOn(obj->Status))
         {
             MCSceneLights::AddHeadlight(*this, obj->Position, obj->GetFrame(), 0.0f, std::nullopt, depthFixup);
         }

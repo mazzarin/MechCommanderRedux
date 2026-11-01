@@ -866,6 +866,13 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
     }
 }
 
+auto MCSceneLights::HeadlightOn(int32_t status) -> bool
+{
+    constexpr int32_t Running = 0;
+    constexpr int32_t StartingUp = 3;
+    return status == Running || status == StartingUp;
+}
+
 auto MCSceneLights::AddShadows() -> void
 {
     State& state = TheState();

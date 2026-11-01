@@ -890,11 +890,11 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         DrawBars();
     }
 
-    // Port-only (HD lighting): the mech casts shadows from the lights by it, and at night shines its headlight from its
-    // cockpit, turned with its torso. (HD particles): it wades through water.
+    // Port-only (HD lighting): the mech casts shadows from the lights by it, and at night, while it runs, shines its
+    // headlight from its cockpit, turned with its torso. (HD particles): it wades through water.
     MCSceneLights::AddCaster(*this, mech->Position);
 
-    if (!mech->IsDisabled())
+    if (MCSceneLights::HeadlightOn(mech->Status))
     {
         MCSceneLights::AddHeadlight(*this, mech->Position, mech->GetFrame(), mech->TorsoRotation,
                                     mech->CockpitPosition(), depthFixup);

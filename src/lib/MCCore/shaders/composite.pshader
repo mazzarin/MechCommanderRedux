@@ -148,10 +148,14 @@ float SpotPool(float2 off, float height, float2 spot, float edge)
 }
 
 // A spotlight's beam in the air fades out this far past where its middle meets the ground (a share of the way from its
-// lamp), widens from this many texels at its lamp, and is full within this share of its width.
+// lamp), widens from this many texels at its lamp, and is full within this share of its width. Aimed away from the eye
+// (its share up the screen from AirBeamHideFrom to AirBeamHidden), it fades out, behind its unit (as the lamp,
+// MCSceneLights' LampHideFrom and LampHidden).
 static const float AirBeamLength = 1.1;
 static const float AirBeamLampWidth = 1.0;
 static const float AirBeamFull = 0.4;
+static const float AirBeamHideFrom = 0.2;
+static const float AirBeamHidden = 0.7;
 
 // The light the spotlights' beams scatter from the air toward the eye at a world texel (airBeams.x of it): each beam on
 // the screen from its lamp (its height above the ground under it) to where its middle meets the ground, widening as its
@@ -192,7 +196,8 @@ float3 AirBeamsAt(float2 texel)
         const float width = AirBeamLampWidth + t * sqrt(length2) * spread;
         const float across = length(texel - (lamp + beam * t)) / width;
         const float along = 1.0 - t / AirBeamLength;
-        sum += color.rgb * (along * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
+        const float shows = 1.0 - smoothstep(AirBeamHideFrom, AirBeamHidden, -beam.y * rsqrt(length2));
+        sum += color.rgb * (along * shows * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
     }
 
     return sum * airBeams.x * lighting.y;

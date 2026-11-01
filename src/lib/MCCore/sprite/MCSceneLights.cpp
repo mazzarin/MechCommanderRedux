@@ -86,7 +86,7 @@ namespace
     /// <summary>
     /// A headlight's lamp: a small hard-edged core, as the art draws a light, in a faint halo; shown fully facing the
     /// camera or sideways, fading out as the unit faces away (its facing's share up the screen, from LampHideFrom to
-    /// LampHidden).
+    /// LampHidden; composite.pshader's AirBeamHideFrom and AirBeamHidden for its beam in the air).
     /// </summary>
     constexpr LampMark LampCore{1.4f, 0.35f, {255, 246, 225}};
     constexpr LampMark LampHalo{4.5f, 1.0f, {110, 95, 70}};

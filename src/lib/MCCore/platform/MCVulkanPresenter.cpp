@@ -56,6 +56,8 @@ namespace
         float Shake[4] = {};
         /// <summary>The world's own light's colour (times Lighting's), and how much of their colour its colours lose.</summary>
         float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+        /// <summary>How much the spotlights' beams show in the air (0 none).</summary>
+        float AirBeams[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -120,6 +122,7 @@ namespace
         {
             std::ranges::copy(lighting.AmbientTint, uniforms.AmbientLook);
             uniforms.AmbientLook[3] = lighting.AmbientGrey;
+            uniforms.AirBeams[0] = lighting.AirBeams;
         }
 
         uniforms.LightTone[0] = lighting.Scatter;

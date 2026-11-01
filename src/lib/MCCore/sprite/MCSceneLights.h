@@ -179,6 +179,11 @@ namespace MCSceneLights
         /// little colour but where a light shines.
         /// </summary>
         float AmbientGrey = 0.0f;
+        /// <summary>
+        /// How much a spotlight's beam shows in the air, from its lamp to where it meets the ground (headlights in a
+        /// haze), 0 to 1 of its light there (0: only the ground it lights shows).
+        /// </summary>
+        float AirBeams = 0.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; a time of day takes its own, see Shown).</summary>

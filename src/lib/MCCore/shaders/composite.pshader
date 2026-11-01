@@ -102,6 +102,9 @@ cbuffer Composite : register(b0, space3)
     // (rgb, times lighting.z; white by day, the moon's blue at night) and how much of their colour the world's own
     // colours lose in it (w: 0 by day).
     float4 ambientLook;
+    // Port-only (HD lighting's headlights, MCLighting::AirBeams): x, how much the spotlights' beams show in the air (0
+    // none).
+    float4 airBeams;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -142,6 +145,57 @@ float SpotPool(float2 off, float height, float2 spot, float edge)
 
     const float beam = smoothstep(edge, lerp(edge, 1.0, SpotFull), dot(ray, aim) / lengths);
     return beam * min(dot(aim, aim) / dot(ray, ray), SpotMost);
+}
+
+// A spotlight's beam in the air fades out this far past where its middle meets the ground (a share of the way from its
+// lamp), widens from this many texels at its lamp, and is full within this share of its width.
+static const float AirBeamLength = 1.1;
+static const float AirBeamLampWidth = 1.0;
+static const float AirBeamFull = 0.4;
+
+// The light the spotlights' beams scatter from the air toward the eye at a world texel (airBeams.x of it): each beam on
+// the screen from its lamp (its height above the ground under it) to where its middle meets the ground, widening as its
+// beam does and fading as it goes.
+float3 AirBeamsAt(float2 texel)
+{
+    if (airBeams.x <= 0.0)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    float3 sum = float3(0.0, 0.0, 0.0);
+    const uint count = min((uint)lighting.x, MaxLights);
+
+    for (uint i = 0; i < count; ++i)
+    {
+        const float4 shape = lights[i * 3 + 1];
+        const float4 color = lights[i * 3 + 2];
+
+        if (color.w <= 0.0 || all(shape.zw == 0.0))
+        {
+            continue;
+        }
+
+        const float2 ground = lights[i * 3].xy;
+        const float2 lamp = ground - float2(0.0, shape.x);
+        const float2 beam = ground + shape.zw - lamp;
+        const float length2 = dot(beam, beam);
+        const float t = dot(texel - lamp, beam) / length2;
+
+        if (t <= 0.0 || t >= AirBeamLength)
+        {
+            continue;
+        }
+
+        // Its half width there: the beam's angle (edge, its cosine) over the way from the lamp.
+        const float spread = sqrt(max(1.0 - color.w * color.w, 0.0)) / color.w;
+        const float width = AirBeamLampWidth + t * sqrt(length2) * spread;
+        const float across = length(texel - (lamp + beam * t)) / width;
+        const float along = 1.0 - t / AirBeamLength;
+        sum += color.rgb * (along * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
+    }
+
+    return sum * airBeams.x * lighting.y;
 }
 
 // The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
@@ -712,7 +766,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
             const float3 cloudLight = CloudsAt(hazy + 0.5);
             const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint, cloudLight) +
-                                 glint * SunGlint * AmbientLight() * cloudLight;
+                                 glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -732,7 +786,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
         return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight) +
-                     glint * SunGlint * AmbientLight() * cloudLight);
+                     glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5));
     }
 
     return Faded(Shown(index));

@@ -5111,6 +5111,24 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-air-beams &lt;strength&gt;</c>, the spotlights' beams show in the air that much
+    /// (MCLighting::AirBeams).
+    /// </summary>
+    void AirBeamsFromOptions()
+    {
+        const std::optional<std::string_view> strength = MCTest::Option("hd-air-beams");
+
+        if (!strength.has_value())
+        {
+            return;
+        }
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCSceneLights::Lighting().AirBeams = std::strtof(std::string(*strength).c_str(), nullptr);
+        std::cout << std::format("  beams in the air: {:.2f}\n", MCSceneLights::Lighting().AirBeams);
+    }
+
+    /// <summary>
     /// With <c>--hd-time-of-day day|dusk|night</c>, sets the mission at that time of day, as its scenario file's
     /// [Environment] TimeOfDay would (MCSceneLights::SetMissionTime): shown so with HD lighting on.
     /// </summary>
@@ -5176,6 +5194,7 @@ namespace
 
         LightingFromOptions();
         TimeOfDayFromOptions();
+        AirBeamsFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();

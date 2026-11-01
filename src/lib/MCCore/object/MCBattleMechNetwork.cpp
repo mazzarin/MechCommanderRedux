@@ -492,12 +492,12 @@ auto MCBattleMech::BuildStatusChunk() -> int32_t
 
                 switch (targetClass)
                 {
-                    case static_cast<MCObjectClass>(1):
+                    case MCObjectClass::Unused1:
                     case MCObjectClass::Building:
                     case MCObjectClass::Debris:
                     case MCObjectClass::Tree:
                     case MCObjectClass::TerrainObject:
-                    case static_cast<MCObjectClass>(0x17):
+                    case MCObjectClass::Unused17:
                     case MCObjectClass::MiscTerrainObject:
                     case MCObjectClass::Jet:
                     case MCObjectClass::TreeBuilding:

@@ -36,6 +36,11 @@ set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 # new and delete come from mimalloc-new-delete.h in MCAllocator.cpp, as on Windows.
 set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
 add_subdirectory(${MC_SRC}/lib/mimalloc-3.3.1 mimalloc EXCLUDE_FROM_ALL)
+# macOS's libSystem holds pthread, which SDL already links (-lpthread); mimalloc's own -lpthread after it only makes
+# Apple's linker warn of a duplicate library.
+get_target_property(MC_MIMALLOC_LINKS mimalloc-static INTERFACE_LINK_LIBRARIES)
+list(FILTER MC_MIMALLOC_LINKS EXCLUDE REGEX "pthread")
+set_target_properties(mimalloc-static PROPERTIES INTERFACE_LINK_LIBRARIES "${MC_MIMALLOC_LINKS}")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/sources.cmake)
 set(MC_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)

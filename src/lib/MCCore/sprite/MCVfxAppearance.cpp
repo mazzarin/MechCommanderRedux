@@ -40,7 +40,7 @@ namespace
                 return true;
             }
             case MCObjectClass::TerrainObject:
-            case static_cast<MCObjectClass>(0x17): // No class sets 0x17; the original reads the same offsets.
+            case MCObjectClass::Unused17: // No class sets it; the original reads the same offsets.
             {
                 offsetX = static_cast<MCTerrainObject&>(obj).PixelOffsetX;
                 offsetY = static_cast<MCTerrainObject&>(obj).PixelOffsetY;

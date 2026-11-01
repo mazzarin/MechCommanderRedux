@@ -600,6 +600,34 @@ bool MCMultiPlayer::IsMyTeammate(uint32_t playerID) const
     return players.has_value() && std::ranges::contains(*players, playerID);
 }
 
+uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said)
+{
+    uint32_t rules = wanted & MCMatchRule::Supported;
+
+    for (const uint32_t player : players)
+    {
+        const auto rulesSaid = said.find(player);
+        rules &= rulesSaid != said.end() ? rulesSaid->second : 0;
+    }
+
+    return rules;
+}
+
+uint32_t MCMultiPlayer::AgreedRules(uint32_t wanted) const
+{
+    std::vector<uint32_t> players;
+
+    for (const auto& player : SessionManager->GetPlayers(nullptr))
+    {
+        if (player->HasPlayerNumber)
+        {
+            players.push_back(player->Id);
+        }
+    }
+
+    return MCAgreedRules(wanted, players, PlayerRules);
+}
+
 bool MCMultiPlayer::AllPlayersCheckedIn()
 {
     return std::ranges::all_of(SessionManager->GetPlayers(nullptr),

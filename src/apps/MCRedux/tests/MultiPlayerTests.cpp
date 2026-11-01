@@ -14,6 +14,7 @@
 #include "object/MCTurretType.h"
 #include "object/MCWeaponFireChunk.h"
 #include "object/MCWeaponShotInfo.h"
+#include "sprite/MCMechStops.h"
 
 // The game's side of multiplayer: the packed world-state and weapon-hit chunks the server sends, the queues they wait
 // in, and the handlers that apply the server's updates on a client.
@@ -747,4 +748,53 @@ TEST_CASE("network: a check-in for another player is dropped")
     checkIn[8] = 0x7f;
     HandleAppPlayerCheckIn(5, checkIn);
     CHECK(std::ranges::all_of(game.PlayerCheckedIn, [](int32_t id) { return id == 0; }));
+}
+
+/// <summary>
+/// The match plays by the server's rules beyond the original (MechBraking) that every player's build plays by: a
+/// player's rules message is kept by its id; the match's is taken only from the server or host, keeping the rules this
+/// build plays by, and a short one is dropped; in a match mechs brake by its rules alone, whatever the player's own
+/// MechBraking. The rules agreed: those wanted that every player said it plays by, none with a player that said none
+/// (a build without them).
+/// </summary>
+TEST_CASE("network: a match plays by the server's rules that every player's build plays by")
+{
+    ClientGame client;
+    MCMultiPlayer& game = *client.Game;
+    game.ServerID = 7;
+    game.HostID = 8;
+    GMechBraking = 1;
+    const auto rulesMessage = [](MCMPMessageType type, uint32_t rules)
+    {
+        std::vector<uint8_t> message = Message(type, {0, 0, 0, 0, 0, 0});
+        PutWord(message, rules);
+        return message;
+    };
+
+    Deliver(9, rulesMessage(MCMPMessageType::PlayerRules, MCMatchRule::MechBraking));
+    CHECK_EQ(game.PlayerRules.at(9), MCMatchRule::MechBraking);
+    CHECK(!MCMechBrakingInForce());
+
+    const std::vector<uint8_t> every = rulesMessage(MCMPMessageType::MatchRules, 0xffffffff);
+    Deliver(9, every);
+    CHECK_EQ(game.MatchRules, 0u);
+    Deliver(7, every);
+    CHECK_EQ(game.MatchRules, MCMatchRule::Supported);
+    CHECK(MCMechBrakingInForce());
+    GMechBraking = 0;
+    CHECK(MCMechBrakingInForce());
+
+    std::vector<uint8_t> none = rulesMessage(MCMPMessageType::MatchRules, 0);
+    none.pop_back();
+    Deliver(8, none);
+    CHECK_EQ(game.MatchRules, MCMatchRule::Supported);
+    Deliver(8, rulesMessage(MCMPMessageType::MatchRules, 0));
+    CHECK(!MCMechBrakingInForce());
+
+    const std::map<uint32_t, uint32_t> said = {{1, MCMatchRule::MechBraking}, {2, MCMatchRule::MechBraking}};
+    const std::array<uint32_t, 2> both = {1, 2};
+    const std::array<uint32_t, 3> withOld = {1, 2, 3};
+    CHECK_EQ(MCAgreedRules(MCMatchRule::MechBraking, both, said), MCMatchRule::MechBraking);
+    CHECK_EQ(MCAgreedRules(0, both, said), 0u);
+    CHECK_EQ(MCAgreedRules(MCMatchRule::MechBraking, withOld, said), 0u);
 }

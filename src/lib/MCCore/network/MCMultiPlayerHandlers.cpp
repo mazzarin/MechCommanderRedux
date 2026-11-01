@@ -1371,6 +1371,7 @@ namespace
             case MCMPMessageType::RPUpdate:
             case MCMPMessageType::TechbaseChange:
             case MCMPMessageType::StartMatch:
+            case MCMPMessageType::MatchRules:
             {
                 const MCMultiPlayer& game = Game();
                 return fromID == game.ServerID || fromID == game.HostID ||
@@ -1621,6 +1622,30 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::StartMatch:
         {
             MPHandleStartMatch(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::PlayerRules:
+        case MCMPMessageType::MatchRules:
+        {
+            // Port: a short message is dropped; the bits this build doesn't know are left out.
+            if (bytes.size() < sizeof(MCMPLongMessage))
+            {
+                Dropped("a short rules message", fromID);
+                break;
+            }
+
+            const auto rules = static_cast<uint32_t>(ReadLinkupMessage<MCMPLongMessage>(bytes).Value);
+
+            if (type == MCMPMessageType::PlayerRules)
+            {
+                game.PlayerRules[fromID] = rules;
+            }
+            else
+            {
+                game.MatchRules = rules & MCMatchRule::Supported;
+            }
+
             break;
         }
 

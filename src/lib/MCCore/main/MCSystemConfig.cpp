@@ -22,6 +22,7 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
@@ -227,6 +228,8 @@ void ReadPreferences(MCFitIniFile& file)
     GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
     // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).
     GHdTurns = file.Read<bool>("HDTurns").value_or(false) ? 1 : 0;
+    // Port-only (gameplay): MechBraking has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
+    GMechBraking = file.Read<bool>("MechBraking").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

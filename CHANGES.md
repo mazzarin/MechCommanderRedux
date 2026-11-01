@@ -110,6 +110,11 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
   Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
   the map selector. See the [README](README.md#premade-matches).
+- With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
+  (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. They stop
+  where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
+  multiplayer the host's setting applies once every player's build has it; with an older build in the match, mechs stop
+  as the original's.
 
 ### Files and Saves
 

@@ -84,8 +84,26 @@ public:
     /// <summary>Starts the stop countdown when <paramref name="path"/> has steps left, else clears it.</summary>
     int32_t SetMovePath(const MCMovePath& path);
 
-    /// <summary>Whether the mech is walking or running with nowhere to go, and stands.</summary>
+    /// <summary>
+    /// Whether the mech is walking or running with nowhere to go, and stands. Port-only (MechBraking): not while it
+    /// brakes to a halt (<see cref="PlannedStop"/>).
+    /// </summary>
     bool CheckStop() const;
+
+    /// <summary>
+    /// Port-only (MechBraking): fits the stride and stop to end where the mech's move does, <paramref name="metresLeft"/>
+    /// on (none when the move doesn't end there, or has ended): the stride's frame rate (<see cref="StrideRate"/>) so
+    /// that a stride's end starts the stop at the spot the stop then ends on, and once the stop is under way each of its
+    /// gestures'. True when the stop should start now: the mover asks for the stand (<see cref="PlannedStop"/> set).
+    /// Gives a stop up while the stride still plays out when the move goes on further.
+    /// </summary>
+    bool FitStop(std::optional<float> metresLeft);
+
+    /// <summary>
+    /// Port-only (MechBraking): gives up the stop planned (<see cref="PlannedStop"/>) while the stride is still being
+    /// played out, back to walking or running on; true when it did.
+    /// </summary>
+    bool CancelPlannedStop();
 
     /// <summary>Draws the jump's arc and landing point.</summary>
     void RenderJump();
@@ -235,6 +253,17 @@ public:
     /// </summary>
     std::optional<MCDrawnFacing> DrawnLegs;
     int32_t DrawnLegsGesture = -1;
+    /// <summary>
+    /// Port-only (MechBraking): set by the mover (MCBattleMech::PlanStop) while the mech brakes to a halt where its move
+    /// ends: the transition to a stand plays out the stride, then the stopping art (MCStopTransition), and the move
+    /// ending doesn't stop it dead (<see cref="CheckStop"/>). Cleared once it stands.
+    /// </summary>
+    bool PlannedStop = false;
+    /// <summary>
+    /// Port-only (MechBraking): the scale on the legs' frame rate the mover fits the stride and stop with (1 as the
+    /// original).
+    /// </summary>
+    float StrideRate = 1.0f;
 };
 
 /// <summary>

@@ -138,6 +138,16 @@ public:
                        MCMoveState& newMoveState, int32_t& minThrottle, int32_t& maxThrottle);
     /// <summary>At the path's end: on to the next way point, or done moving.</summary>
     void SetNextMovePath(char& newThrottleSetting, int32_t& newGestureStateGoal);
+    /// <summary>
+    /// Port-only (MechBraking): fits the mech's stride and stop to end where its move does (MCMechActor::FitStop), and
+    /// asks for the stand through <paramref name="newGestureStateGoal"/> when the stop is to start.
+    /// </summary>
+    void PlanStop(int32_t& newGestureStateGoal);
+    /// <summary>
+    /// The margin of error the move path's last step is reached within (the original's MoveMarginOfError[1]); port-only
+    /// (MechBraking): wider while the mech brakes to a halt there.
+    /// </summary>
+    float LastStepMargin() const;
     /// <summary>Turns the torso toward the target (or back to straight) at the dynamics' rate.</summary>
     void UpdateTorso(float newRotatePerSec);
     /// <summary>Applies the frame's requests to the control data.</summary>

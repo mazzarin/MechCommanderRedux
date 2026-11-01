@@ -82,6 +82,7 @@ auto MCGuiSystem::OpenDisplay() -> void
     options.Height = 480;
     options.FollowWindow = true;
     options.MaxHeight = MaxScreenHeight();
+    options.FollowDisplayScale = GUiResolution == 0;
     options.Fullscreen = GFullScreen != 0;
     options.Stretch = GStretchToFit != 0;
     options.Hidden = GHiddenWindow;
@@ -164,6 +165,7 @@ auto MCGuiSystem::FollowWindowSize() -> bool
     int32_t width = 0;
     int32_t height = 0;
     _Display->SetMaxHeight(MaxScreenHeight());
+    _Display->SetFollowDisplayScale(GUiResolution == 0);
     _Display->WindowScreenSize(width, height);
 
     if (width == _Display->Width() && height == _Display->Height())

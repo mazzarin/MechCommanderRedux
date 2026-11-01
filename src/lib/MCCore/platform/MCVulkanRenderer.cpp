@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "platform/MCVulkanRenderer.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCSharpLines.h"
 #include "platform/MCSharpText.h"
@@ -5511,7 +5512,7 @@ auto MCVulkanRenderer::Compare(std::span<const MCUnderlay> /*underlays*/, std::s
 
                 const std::filesystem::path path =
                     dump / std::format("mirror{}_{}x{}_{}.png", _Mirror.Frames, width, height, name);
-                SDL_SavePNG(image, path.string().c_str());
+                SDL_SavePNG(image, MCFileSystem::ToUtf8(path).c_str());
                 SDL_DestroySurface(image);
             }
         }

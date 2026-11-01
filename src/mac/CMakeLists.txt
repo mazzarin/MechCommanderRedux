@@ -1,9 +1,9 @@
 # The macOS build of MechCommander Redux (Windows builds with src/MCRedux.slnx): SDL3 and mimalloc from src/lib,
-# MCCore as a static library, the game (MCRedux) and the test suite (mc_tests), with the sources the Visual Studio
-# projects list. The GPU renderer runs on SDL GPU's Metal driver, with the HLSL shaders compiled to MSL.
+# MCCore as a static library, the game (MechCommander Redux.app) and the test suite (mc_tests), with the sources the
+# Visual Studio projects list. The GPU renderer runs on SDL GPU's Metal driver, with the HLSL shaders compiled to MSL.
 #
 #   brew install cmake glslang spirv-cross
-#   cmake -S src/mac -B src/mac/build && cmake --build src/mac/build -j
+#   cmake -S src/mac -B src/mac/build && cmake --build src/mac/build --parallel "$(sysctl -n hw.ncpu)"
 cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "The oldest macOS the build runs on")
@@ -49,11 +49,12 @@ if(NOT MC_HAS_JTHREAD)
   set(MC_EXPERIMENTAL_LIBRARY -fexperimental-library)
 endif()
 
-# MCVersion.h, from nbgv on every build as on Windows (version.cmake).
+# MCVersion.h and the app's Info.plist, from nbgv on every build as on Windows (version.cmake).
 add_custom_target(mc_version
   COMMAND ${CMAKE_COMMAND} -DREPO_DIR=${MC_SRC}/.. -DOUTPUT=${MC_GENERATED_DIR}/MCVersion.h
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
-  BYPRODUCTS ${MC_GENERATED_DIR}/MCVersion.h
+          -DPLIST_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in -DPLIST=${MC_GENERATED_DIR}/Info.plist
+          -DMIN_MACOS=${CMAKE_OSX_DEPLOYMENT_TARGET} -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
+  BYPRODUCTS ${MC_GENERATED_DIR}/MCVersion.h ${MC_GENERATED_DIR}/Info.plist
   COMMENT "Getting the version from nbgv"
   VERBATIM)
 
@@ -137,12 +138,31 @@ target_link_libraries(MCCore PUBLIC SDL3::SDL3-static mimalloc-static)
 target_compile_options(MCCore PUBLIC -ffp-contract=off ${MC_EXPERIMENTAL_LIBRARY})
 target_link_options(MCCore PUBLIC ${MC_EXPERIMENTAL_LIBRARY})
 
-add_executable(MCRedux ${MCREDUX_SOURCES})
+# The files Visual Studio builds without the precompiled header, because Windows.h (or here CoreGraphics) and MCCore's
+# Win32 stand-ins can't meet.
+set(MC_APP_NO_PCH ${MC_SRC}/apps/MCRedux/MCConsole.cpp ${MC_SRC}/apps/MCRedux/MCCrashTrace.cpp
+                  ${MC_SRC}/apps/MCRedux/MCGameFolder.cpp)
+set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+# The game, as "MechCommander Redux.app": upstream's icon at the Mac's sizes (src/res/MCRedux.icns), and the
+# Info.plist version.cmake writes, put in after linking and sealed with an ad-hoc signature, which Apple silicon needs
+# to run it at all.
+set(MC_ICON ${MC_SRC}/res/MCRedux.icns)
+set_source_files_properties(${MC_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_ICON})
+# The Info.plist is a link dependency, so a changed one (a new version, an edited template) relinks, which copies it.
+set_target_properties(MCRedux PROPERTIES OUTPUT_NAME "MechCommander Redux" LINK_DEPENDS ${MC_GENERATED_DIR}/Info.plist)
 target_include_directories(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
-target_link_libraries(MCRedux PRIVATE MCCore)
+target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics")
+add_custom_command(TARGET MCRedux POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_GENERATED_DIR}/Info.plist
+          $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Info.plist
+  COMMAND codesign --force --sign - $<TARGET_BUNDLE_DIR:MCRedux>
+  COMMENT "Signing MechCommander Redux.app (ad hoc)"
+  VERBATIM)
 
 add_executable(mc_tests ${MCTESTS_SOURCES})
 target_include_directories(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
-target_link_libraries(mc_tests PRIVATE MCCore)
+target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics")

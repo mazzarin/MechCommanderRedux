@@ -140,15 +140,15 @@ TEST_CASE_ISOLATED("game: the logistics chat history draws as the original's pic
 namespace
 {
     /// <summary>
-    /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 76 wide and 11 tall at
-    /// (left, top), its list's rows 10 tall from top + 11. DIFFICULTY's field is at (512, 176) (EASY, REGULAR, HARD),
-    /// RENDERER's at (512, 243) (VULKAN, SOFTWARE), HD ART's at (390, 347) (OFF, ON), HD AUDIO's at (390, 401) (OFF, ON,
-    /// ORCHESTRAL).
+    /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 11 tall at (left, top), 104
+    /// wide in the right column and 96 in the left, its list's rows 10 tall from top + 11. DIFFICULTY's field is at
+    /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 243) (VULKAN, SOFTWARE), HD ART's at (366, 347) (OFF, ON),
+    /// HD AUDIO's at (366, 401) (OFF, ON, ORCHESTRAL).
     /// </summary>
     struct PrefsDropDown
     {
         int32_t Top = 0;
-        int32_t Left = 512;
+        int32_t Left = 488;
 
         int32_t FieldX() const { return Left + 28; }
         int32_t FieldY() const { return Top + 5; }
@@ -157,8 +157,8 @@ namespace
 
     constexpr PrefsDropDown DifficultyDropDown{176};
     constexpr PrefsDropDown RendererDropDown{243};
-    constexpr PrefsDropDown HdArtDropDown{347, 390};
-    constexpr PrefsDropDown HdAudioDropDown{401, 390};
+    constexpr PrefsDropDown HdArtDropDown{347, 366};
+    constexpr PrefsDropDown HdAudioDropDown{401, 366};
 
     /// <summary>Runs five frames: a click lands and the screen settles.</summary>
     void RunFrames()
@@ -308,7 +308,7 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
     char renderer[32] = {};
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath).c_str()), 0);
         REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
         CHECK_EQ(prefs.ReadIdString("Renderer", std::span(renderer).first(sizeof(renderer) - 1)), 0);
     }
@@ -733,8 +733,9 @@ TEST_CASE_ISOLATED("game: the preferences panel keeps the sliders where they wer
     const uint32_t shown = MCScreenInput::ScreenHash();
     MCScreenInput::SaveShot("prefs panel", shown);
 
-    // The PREFERENCES title (the art), the art's frame below the panel, and the panel between its boxes.
-    for (const auto [x, y] : {std::pair{400, 105}, std::pair{480, 425}, std::pair{380, 400}, std::pair{470, 300}})
+    // The PREFERENCES title (the art), the art's frame below the panel, and the panel between its boxes (above the
+    // CONTROLS button at its bottom left).
+    for (const auto [x, y] : {std::pair{400, 105}, std::pair{480, 425}, std::pair{380, 360}, std::pair{470, 300}})
     {
         MCTest::Scope scope(std::format("click at {}, {}", x, y));
         MCScreenInput::RealClick(x, y);

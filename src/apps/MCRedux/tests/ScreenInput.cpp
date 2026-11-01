@@ -8,6 +8,7 @@
 #include "gui/MCUpdateDisplay.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
+#include "platform/MCUtf8Path.h"
 
 namespace MCScreenInput
 {
@@ -48,7 +49,7 @@ namespace MCScreenInput
             return;
         }
 
-        static_cast<void>(MCInput::Display()->SaveScreenshot(std::filesystem::path(*shots) / (name + ".bmp")));
+        static_cast<void>(MCInput::Display()->SaveScreenshot(MCFileSystem::FromUtf8(*shots) / (name + ".bmp")));
         std::printf("  %s: 0x%08x\n", name.c_str(), hash);
     }
 
@@ -61,7 +62,7 @@ namespace MCScreenInput
             return;
         }
 
-        if (auto saved = MCInput::Display()->SaveShownScreenshot(std::filesystem::path(*shots) / (name + ".png"));
+        if (auto saved = MCInput::Display()->SaveShownScreenshot(MCFileSystem::FromUtf8(*shots) / (name + ".png"));
             !saved)
         {
             std::printf("  %s: %s\n", name.c_str(), saved.error().c_str());

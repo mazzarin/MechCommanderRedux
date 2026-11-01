@@ -1,0 +1,28 @@
+Installing MechCommander Redux on a Mac
+======================================
+
+You need your own copy of MechCommander Gold. MechCommander Redux doesn't include any of
+the game's data; it plays the files from your copy, and never changes them.
+
+It needs a Mac with Apple silicon (M1 or later) and macOS 14 or later.
+
+
+1. Drag "MechCommander Redux.app" into your Applications folder (or anywhere you like).
+
+2. The first time, macOS says it can't check the app for malicious software: it isn't
+   signed by an Apple developer account. Open System Settings > Privacy & Security,
+   scroll down and click "Open Anyway" next to MechCommander Redux. You only do this once.
+
+3. Double-click MechCommander Redux. It looks for MechCommander Gold:
+   - in a folder next to the app,
+   - in your Applications folders, including inside a Wineskin, Porting Kit or Kegworks
+     app that runs the Windows version,
+   - in CrossOver's bottles.
+
+   If it finds more than one copy, it asks which one to play. If it finds none, choose
+   the folder MechCommander Gold is installed in: the one with SYSTEM.CFG and MCX.EXE.
+
+It remembers the copy you chose. To choose another, hold Option (⌥) while it opens.
+
+Your saved games and settings are kept in ~/Library/Application Support/MechCommander
+Redux. Games you saved in your MechCommander Gold folder show up too.

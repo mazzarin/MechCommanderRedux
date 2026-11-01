@@ -354,6 +354,9 @@
     <ClCompile Include="iface\MCFriendlyMechIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
+    <ClCompile Include="iface\MCKeyBindings.cpp">
+      <Filter>iface</Filter>
+    </ClCompile>
     <ClCompile Include="iface\MCLanceIcon.cpp">
       <Filter>iface</Filter>
     </ClCompile>
@@ -459,6 +462,9 @@
     <ClCompile Include="logistics\MCConnectMenu.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCControlsPanel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCDragIcon.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -501,6 +507,9 @@
     <ClCompile Include="logistics\MCLogInvScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCLogKeyList.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLogLabel.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -520,6 +529,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogSlider.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCLogTextButton.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogTextObject.cpp">
@@ -714,6 +726,9 @@
     </ClCompile>
     <ClCompile Include="mission\MCScenarioPart.cpp">
       <Filter>mission</Filter>
+    </ClCompile>
+    <ClCompile Include="network\MCMPGameConfiguration.cpp">
+      <Filter>network</Filter>
     </ClCompile>
     <ClCompile Include="network\MCMultiPlayer.cpp">
       <Filter>network</Filter>
@@ -1561,6 +1576,9 @@
     <ClInclude Include="iface\MCInterfaceTypes.h">
       <Filter>iface</Filter>
     </ClInclude>
+    <ClInclude Include="iface\MCKeyBindings.h">
+      <Filter>iface</Filter>
+    </ClInclude>
     <ClInclude Include="iface\MCLanceIcon.h">
       <Filter>iface</Filter>
     </ClInclude>
@@ -1663,6 +1681,9 @@
     <ClInclude Include="logistics\MCConnectMenu.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCControlsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCDragIcon.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1705,6 +1726,9 @@
     <ClInclude Include="logistics\MCLogInvScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCLogKeyList.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCLogLabel.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1724,6 +1748,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogSlider.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCLogTextButton.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogTextObject.h">
@@ -1910,6 +1937,9 @@
     </ClInclude>
     <ClInclude Include="mission\MCScenarioReading.h">
       <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCMPGameConfiguration.h">
+      <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMultiPlayer.h">
       <Filter>network</Filter>
@@ -2299,6 +2329,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCStringTable.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCUtf8Path.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCVulkanPresenter.h">

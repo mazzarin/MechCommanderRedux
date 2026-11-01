@@ -136,6 +136,7 @@ namespace
         GuiSystem().RemoveTimer(Screen(), ScreenTimer);
         MultiPlayer()->SessionManager->SendLatencyInfo();
         SoundSystem()->PlayBettySample(0x19);
+        Screen().PublishMatchState();
         GlobalLog()->InitializeMultiplayer();
         GlobalLog()->LoadCampaign(missionName, extension, false, false);
         GlobalLog()->SetUpBriefingScreen(false);
@@ -1215,22 +1216,16 @@ auto MCSessionScreen::CancelMission() -> void
     }
 }
 
-auto MCSessionScreen::TeamPlayerIds(bool myTeam) const -> std::vector<uint32_t>
+auto MCSessionScreen::PublishMatchState() const -> void
 {
-    // Team 2 when the local player is on it and myTeam is set, or when it isn't and myTeam is clear.
-    const bool onTeam2 = FindSlot(Team2Players, MultiPlayer()->SessionManager->MyPlayer()->Id) >= 0;
-    const std::array<uint32_t, TeamSlots>& players = myTeam == onTeam2 ? Team2Players : Team1Players;
-    std::vector<uint32_t> ids;
-
-    for (uint32_t id : players)
-    {
-        if (id != NoPlayer)
-        {
-            ids.push_back(id);
-        }
-    }
-
-    return ids;
+    MPMatchState& match = MultiPlayer()->Match;
+    match.Team1Players = Team1Players;
+    match.Team2Players = Team2Players;
+    match.Team1TechBase = Team1TechBase;
+    match.Team2TechBase = Team2TechBase;
+    // As the mech bay read the typed points before: the text's buffer.
+    match.Team1Points = std::atoi(Team1RPText->Buffer.c_str());
+    match.Team2Points = std::atoi(Team2RPText->Buffer.c_str());
 }
 
 auto MCSessionScreen::CheckGoodToGo() const -> void

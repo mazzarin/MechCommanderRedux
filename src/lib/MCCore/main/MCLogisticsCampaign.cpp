@@ -422,11 +422,10 @@ auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view exten
         MpMissionName = ReadRequiredText(file, "MissionName", 0x7f, "No mission file in save game file!");
         PlanningTime = file.Read<uint32_t>("PlanningTime").value_or(DefaultPlanningTime);
 
-        // The team's resource points (typed on the session screen) are shared among its players.
+        // The team's resource points (typed on the session screen, or configured) are shared among its players.
         const int32_t teamPlayers = static_cast<int32_t>(MultiPlayer()->PlayersOnHomeTeam()->size());
-        const MCLogTextObject& pointsText =
-            MultiPlayer()->HomeTeam == 0 ? *SessionScreen->Team1RPText : *SessionScreen->Team2RPText;
-        ResourcePoints = std::atoi(pointsText.Buffer.c_str()) / teamPlayers;
+        const MPMatchState& match = MultiPlayer()->Match;
+        ResourcePoints = (MultiPlayer()->HomeTeam == 0 ? match.Team1Points : match.Team2Points) / teamPlayers;
 
         if (file.SeekBlock("MPQuickStart") == 0)
         {

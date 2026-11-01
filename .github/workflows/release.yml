@@ -15,9 +15,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  mac:
+    # The Mac app, built and tested as checks.yml's macos job does, zipped for the release job.
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install the shader tools
+        run: brew install glslang spirv-cross
+
+      - name: Build
+        run: |
+          cmake -S src/mac -B src/mac/build
+          cmake --build src/mac/build --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Test
+        run: src/mac/build/mc_tests
+
+      # ditto keeps the app bundle's links and signature intact, which zip doesn't.
+      - name: Package
+        run: |
+          mkdir -p dist/MechCommanderRedux
+          cp -R "src/mac/build/MechCommander Redux.app" src/docs/INSTALL-Mac.txt dist/MechCommanderRedux/
+          ditto -c -k --keepParent dist/MechCommanderRedux dist/MechCommanderRedux-mac-arm64.zip
+
+      - name: Hand the zip to the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: dist/MechCommanderRedux-mac-arm64.zip
+          if-no-files-found: error
+
   release:
     # Only from main: nbgv treats main as a public release (publicReleaseRefSpec in version.json).
     if: github.ref == 'refs/heads/main'
+    needs: mac
     # The projects use toolset v145, which needs Visual Studio 2026.
     runs-on: windows-2025-vs2026
     steps:
@@ -66,6 +102,12 @@ jobs:
           Copy-Item "$bin\MCRedux.exe", "$bin\SDL3.dll", "$bin\MCEditor.exe", src\docs\README.txt, src\docs\INSTALL.txt "dist\$name"
           Compress-Archive -Path "dist\$name\*" -DestinationPath "dist\$name-win-x64.zip"
           Compress-Archive -Path "$bin\MCRedux.pdb", "$bin\SDL3.pdb", "$bin\MCEditor.pdb" -DestinationPath "dist\$name-win-x64-symbols.zip"
+
+      - name: Get the Mac app
+        uses: actions/download-artifact@v4
+        with:
+          name: mac
+          path: dist
 
       # gh creates the tag on the built commit.
       - name: Publish the release

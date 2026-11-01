@@ -77,7 +77,8 @@ extern int GRenderer;
 extern int GRendererPreference;
 /// <summary>
 /// Port-only: the most lines the in-mission UI is drawn at (PREFS "UIResolution", the preferences screen's UI
-/// RESOLUTION box): 480, 600, 720, 900 or 1080, or 0 for native (the window's height). The screen is never taller than
+/// RESOLUTION box): 480, 600, 720, 900 or 1080, or 0 for native (the window's height in points, which is half its
+/// pixels on a Retina screen, so the UI is the size it is on a 1x screen). The screen is never taller than
 /// the window nor than <see cref="MaxUiResolution"/>, and is as wide as the window's aspect makes it; the world view is
 /// still drawn at the window's pixels (<see cref="MCGuiSystem::FollowWindowSize"/>).
 /// </summary>

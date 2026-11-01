@@ -11,6 +11,7 @@
 // WeaponHitChunk (object/MCWeaponFireChunk.h, object/MCWeaponHitChunk.h), ArtilleryChunk (object/MCArtilleryChunk.h).
 
 #include "linkup/MCSessionManager.h"
+#include "network/MCMPGameConfiguration.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "network/MCWorldStateChunk.h"
 #include "object/MCWeaponHitChunk.h"
@@ -313,6 +314,11 @@ public:
     int32_t CheckInId = -1;
     /// <summary>This machine's team (-1 until chosen).</summary>
     int32_t HomeTeam = -1;
+    /// <summary>
+    /// Port: who is on each team, the tech bases and the points pools the mech bay starts from. Set as the match starts
+    /// (the session screen's start, or a configured match's); the mech bay reads it, never the session screen.
+    /// </summary>
+    MPMatchState Match;
     std::string SessionName;
     std::string PlayerName;
     /// <summary>Per player number: checked in (the DPID on a scripted server).</summary>

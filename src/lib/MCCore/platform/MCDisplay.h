@@ -42,6 +42,12 @@ struct MCDisplayOptions
     /// <see cref="MCDisplay::SetMaxHeight"/>.
     /// </summary>
     int MaxHeight = 0;
+    /// <summary>
+    /// A window-following screen is also no taller than the window in points (its pixels over the display's scale):
+    /// on a Retina screen or a scaled Windows desktop, a line takes what a point does, so the UI keeps the size it has
+    /// on a 1x screen; see <see cref="MCDisplay::SetFollowDisplayScale"/>.
+    /// </summary>
+    bool FollowDisplayScale = false;
     /// <summary>The renderer asked for; Vulkan falls back to software when it can't start.</summary>
     MCRendererKind Renderer = MCRendererKind::Vulkan;
 };
@@ -102,7 +108,8 @@ public:
 
     /// <summary>
     /// The size a window-following screen should have now: the window's size in pixels, or, for a window taller than
-    /// the most (<see cref="SetMaxHeight"/>), that many lines at the window's aspect; no smaller than the minimum
+    /// the most (<see cref="SetMaxHeight"/>, or its height in points with <see cref="SetFollowDisplayScale"/>), that
+    /// many lines at the window's aspect; no smaller than the minimum
     /// (<see cref="MCDisplayOptions::Width"/> x <see cref="MCDisplayOptions::Height"/>). A minimised window keeps the
     /// current size.
     /// </summary>
@@ -115,6 +122,12 @@ public:
     /// is coarser.
     /// </summary>
     void SetMaxHeight(int height) { _MaxHeight = std::max(height, 0); }
+
+    /// <summary>
+    /// Sets whether a window-following screen is also held to the window's height in points
+    /// (<see cref="MCDisplayOptions::FollowDisplayScale"/>), from the next <see cref="WindowScreenSize"/> on.
+    /// </summary>
+    void SetFollowDisplayScale(bool follow) { _FollowDisplayScale = follow; }
 
     /// <summary>
     /// How many window pixels the underlays are composited at per screen pixel down: above 1 when the whole screen is
@@ -337,6 +350,7 @@ private:
     int _MinHeight = 0;
     /// <summary>The tallest a window-following screen gets (0: no limit).</summary>
     int _MaxHeight = 0;
+    bool _FollowDisplayScale = false;
     bool _FollowWindow = false;
     /// <summary>
     /// The screen's window. Its pixels are shared by the screen ports; they are reallocated only when the screen grows

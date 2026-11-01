@@ -23,6 +23,11 @@ public:
     static constexpr size_t MaxCriticalSlots = 12;
     /// <summary>The critical slot of an empty <see cref="ItemSlot"/>.</summary>
     static constexpr uint8_t EmptySlot = 0xff;
+    /// <summary>
+    /// The first weapon's master id: <see cref="PlaceItem"/> places the components below it by form. Desperate
+    /// Measures' Rail Gun (98) and Light Gauss Rifle (99) come before the original game's first weapon (100).
+    /// </summary>
+    static constexpr uint8_t FirstWeaponID = 98;
 
     /// <summary>Armor points of a body location: the maximum and the current.</summary>
     struct ArmorPoints

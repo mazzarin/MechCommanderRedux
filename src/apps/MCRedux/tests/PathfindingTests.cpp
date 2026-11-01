@@ -562,7 +562,7 @@ TEST_CASE("game: pathfinding a global map written back matches the editor's file
     REQUIRE(read.has_value());
     MCGlobalMap& map = **read;
 
-    const std::string path = (std::filesystem::temp_directory_path() / "mc_pathfinding_m0101.gmm").string();
+    const std::string path = MCFileSystem::ToUtf8(std::filesystem::temp_directory_path() / "mc_pathfinding_m0101.gmm");
     {
         MCFile out;
         REQUIRE_EQ(out.Create(path.c_str()), 0);

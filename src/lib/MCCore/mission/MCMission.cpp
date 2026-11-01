@@ -316,7 +316,7 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
     }
 
     _MissionFile = std::make_unique<MCFitIniFile>();
-    const std::string campaignName = std::filesystem::path(campaignFile).stem().string();
+    const std::string campaignName = MCFileSystem::ToUtf8(MCFileSystem::FromUtf8(campaignFile).stem());
 
     if (const int32_t result = _MissionFile->Open(GamePath(MissionPath, campaignName, ".fit")); result != 0)
     {

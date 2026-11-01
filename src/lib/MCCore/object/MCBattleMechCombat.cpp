@@ -180,7 +180,15 @@ auto MCBattleMech::HitInventoryItem(int32_t itemIndex, int setupOnly) -> int
     static constexpr std::array<std::string_view, NumMechBodyLocations> LocationNames = {
         "HEAD", "CTORSO", "LTORSO", "RTORSO", "LARM", "RARM", "LLEG", "RLEG"};
     MCInventoryItem& item = Inventory[itemIndex];
-    item.Health--;
+
+    // Port fix: Health is unsigned here (the original's was a signed byte). A component already at 0 that was hit
+    // again (a second critical on the same space, then its limb being blown off) wrapped to 255 and no longer read
+    // as damaged or destroyed, so the payload list showed it in its normal colour. It stays at 0.
+    if (item.Health > 0)
+    {
+        item.Health--;
+    }
+
     const uint32_t masterId = item.MasterID;
     const uint32_t location = item.BodyLocation;
 

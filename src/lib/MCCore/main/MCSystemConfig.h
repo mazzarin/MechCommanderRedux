@@ -34,6 +34,7 @@ void ReadSystemConfig(MCFitIniFile& file);
 /// <summary>
 /// Reads PREFS.CFG's "MechCommander" block from <paramref name="file"/>: palette cycling, gamma (which "Brightness"
 /// overrides), sprite sizes, the memory switches, the display (full screen, stretch, cursor, frame counter, renderer,
-/// resolution), language, difficulty and volumes. A missing entry takes its default; a missing block is fatal.
+/// resolution), language, difficulty and volumes. A missing entry takes its default; a missing block is fatal. Port:
+/// then the key bindings the player changed, from the "Controls" block (<see cref="MCKeyBindings::ReadPrefs"/>).
 /// </summary>
 void ReadPreferences(MCFitIniFile& file);

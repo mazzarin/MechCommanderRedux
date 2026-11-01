@@ -12,6 +12,7 @@
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
+#include "logistics/MCLogButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -254,6 +255,36 @@ TEST_CASE_ISOLATED("game: the main menu opens its screens in their states, and c
     Settle();
     CHECK(logistics->CurrentScreen() == logistics->BriefingScreen);
     CHECK(logistics->CurrentMission != -1);
+}
+
+/// <summary>
+/// The main menu offers LOAD MISSION while there are saved games, and the load screen lists each by name, sorted (two
+/// here, unreadable: listed without an operation, mission or points). The recorded logistics frames run with none.
+/// </summary>
+TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are saves, and the load screen lists them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    static constexpr std::array<std::string_view, 2> Saves = {"Bravo", "Alpha"};
+    std::optional<MCTestGame::PinnedSaves> saves;
+    REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(Saves); }));
+    Settle();
+    std::shared_ptr<MCLogistics> logistics = GlobalLog();
+    CHECK(!logistics->MainScreen->Element<MCLogButton>(MCTestGame::MainMenuLoadButton)->Disabled);
+
+    LoadScreen();
+    Settle();
+    REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
+    const std::vector<MCFileScrollPane::File>& files = logistics->LoadScreen->FilePane->Files;
+    REQUIRE_EQ(files.size(), Saves.size());
+    CHECK_EQ(files[0].Name, std::string("Alpha"));
+    CHECK_EQ(files[1].Name, std::string("Bravo"));
+    Cancel();
+    Settle();
+    CHECK(logistics->CurrentScreen() == logistics->MainScreen);
 }
 
 namespace

@@ -231,7 +231,7 @@ std::expected<MCStringTable, std::string> MCStringTable::Load(const std::filesys
 
     if (!file)
     {
-        return std::unexpected("can't open " + path.string());
+        return std::unexpected("can't open " + MCFileSystem::ToUtf8(path));
     }
 
     std::vector<uint8_t> image((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());

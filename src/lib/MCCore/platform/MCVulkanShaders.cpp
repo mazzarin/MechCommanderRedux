@@ -72,7 +72,7 @@ namespace MCVulkanShaders
         // SDL keeps the base path (null when it can't tell).
         if (SDL_GetBasePath() != nullptr)
         {
-            folders.push_back(std::filesystem::path(SDL_GetBasePath()) / "shaders");
+            folders.push_back(MCFileSystem::FromUtf8(SDL_GetBasePath()) / "shaders");
         }
 
         if (const std::filesystem::path& data = MCFileSystem::GameRoot(); !data.empty())
@@ -139,13 +139,14 @@ namespace MCVulkanShaders
 
             if (replacement.empty() || replacement.size() % 4 != 0)
             {
-                SDL_Log("MCVulkanShaders: %s isn't SPIR-V; using the built-in %s", path.string().c_str(), name.c_str());
+                SDL_Log("MCVulkanShaders: %s isn't SPIR-V; using the built-in %s", MCFileSystem::ToUtf8(path).c_str(),
+                        name.c_str());
             }
             else
             {
                 create.code = replacement.data();
                 create.code_size = replacement.size();
-                SDL_Log("MCVulkanShaders: %s replaced by %s", name.c_str(), path.string().c_str());
+                SDL_Log("MCVulkanShaders: %s replaced by %s", name.c_str(), MCFileSystem::ToUtf8(path).c_str());
             }
         }
 

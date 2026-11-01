@@ -15,6 +15,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
     - [Platform](#platform)
     - [Display](#display)
     - [Mouse](#mouse)
+    - [Keyboard](#keyboard)
     - [Sound](#sound)
     - [Multiplayer](#multiplayer)
     - [Files and Saves](#files-and-saves)
@@ -46,7 +47,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 
 - Rebuilt as a native 64-bit program. DirectDraw, DirectSound, DirectPlay and the Smacker DLL are replaced by SDL3 and
   a built-in Smacker video decoder.
-- Windows only for now; Linux is planned.
+- Runs on Windows, and on Macs with Apple silicon as `MechCommander Redux.app`. Linux is planned.
 
 ### Display
 
@@ -62,6 +63,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   pixel, and scrolling keeps the same speed on screen at any zoom. The `Use90Pixel` and `Force45Pixel` settings in
   `PREFS.CFG` are no longer used.
 - The menu and logistics screens are still 640x480, and are scaled up to fit the window.
+- UI RESOLUTION's NATIVE setting follows the screen's scale: on a Retina screen or a scaled Windows desktop, the
+  in-mission UI is the size it is on a standard screen instead of half that.
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
   window.
 - Palette changes appear on the next frame drawn instead of instantly.
@@ -76,6 +79,22 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   tactical map's info and salvage pages, the mission results, the multiplayer game list) it scrolls a row or line per
   notch, as the scroll arrows do. A list inside another list scrolls first.
 
+### Keyboard
+
+- The mission keys can be changed: the preferences screen has a CONTROLS button listing every command with its key and
+  an alternate key. Click a key and press the new one, with Ctrl, Alt or Shift if you like; a key another command had
+  moves, and the screen says which command lost it. Right-click clears a key, and DEFAULTS brings back the original
+  keys. Keys that differ from the original are kept in `PREFS.CFG`'s `Controls` block.
+- LAPTOP sets keys every laptop has, with no keypad, F-keys, Home or Page Up and Down, and none macOS keeps for
+  itself:
+  - aimed shots on Shift with U I O / J K L / M . (the keypad's layout);
+  - lances on 1-4 (Shift adds, Ctrl makes) and 5 breaks them up;
+  - support strikes on 7 8 9 0;
+  - map scroll on Shift+arrows;
+  - power up and down on P and Shift+P, and eject on Shift+E;
+  - zoom on = and -;
+  - hold Ctrl, R or H to force an order, a run or a jump.
+
 ### Sound
 
 - Without a sound device, the game runs silently instead of quitting with "DirectSound was unable to initialize".
@@ -87,11 +106,18 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
+- A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
+  and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
+  Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
+  the map selector. See the [README](README.md#premade-matches).
 
 ### Files and Saves
 
 - The game reads its data from your MechCommander Gold folder and never writes to it. See the
   [README](README.md#running-the-game) for how the folder is found.
+- Started from somewhere else, the game finds the folder itself: on a Mac beside the app, in the Applications folders
+  (including inside a Wineskin, Porting Kit or Kegworks app) and in CrossOver's bottles. If it finds more than one
+  copy, or none, it asks, and it remembers the answer. Hold Option as the Mac app opens to choose again.
 - Saves, preferences and temporary files go to `%APPDATA%\MechCommander Redux\`, or to the folder given with `--user`.
   Saves left in the MechCommander Gold folder still show up, and deleting or overwriting one in the game removes it
   from there.
@@ -146,6 +172,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Shots now fly to the spot they hit. In the original, bullets, laser beams and Gauss rifle (railgun) bolts flew to a
   point on the target picked by the firing weapon's mount, while the impact played where the shot hit, so hits often
   looked like misses. Damage is unchanged.
+- A mech component that was already destroyed and then hit again, for example when its limb was blown off, no longer
+  shows in its normal colour on the payload page. Its health wrapped around instead of staying at 0, so a destroyed
+  Gauss rifle (railgun) could look undamaged while a destroyed ER laser showed red.
 
 ### Logistics and Menus
 
@@ -172,6 +201,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   - Each jump jet takes one slot, in the leg with fewer jets. The original miscounted the jets and put each one in
     every empty slot of a leg.
   - A weapon is never put in a full location. The original wrote it over the first slot of the next location.
+  - The Rail Gun and Light Gauss Rifle get a critical slot. The original took them for equipment and gave them none.
+    They still fired, but critical hits and losing their location never destroyed them, their fire arc ignored the
+    torso's turn, and each shot read its starting point from outside the mech's body locations.
 
 ### Mission Scripts
 
@@ -209,6 +241,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Chat from an unknown player takes the first player's colour instead of crashing.
 - A mech icon part for a location without armor no longer divides by zero when it picks its colour. It shows red, as
   in the original.
+- The health bar over popup turrets and gates is green, yellow and red again instead of black.
 
 ### Mission Editor Fixes
 

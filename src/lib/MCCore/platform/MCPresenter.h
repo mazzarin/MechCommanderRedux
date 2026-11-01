@@ -22,6 +22,13 @@ std::optional<MCRendererKind> MCRendererKindFromName(std::string_view name);
 /// <summary>The name of a renderer kind, as <see cref="MCRendererKindFromName"/> reads it.</summary>
 std::string_view MCRendererKindName(MCRendererKind kind);
 
+/// <summary>The graphics API the GPU renderer runs on (SDL GPU's driver), as the window's title names it.</summary>
+#if defined(__APPLE__)
+inline constexpr std::string_view MCGpuApiName = "Metal";
+#else
+inline constexpr std::string_view MCGpuApiName = "Vulkan";
+#endif
+
 /// <summary>A rectangle in window pixels where the logical screen is shown.</summary>
 struct MCViewport
 {

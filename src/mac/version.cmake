@@ -1,8 +1,9 @@
 # Writes MCVersion.h as MechCommander.props's MCGenerateVersionHeader does on Windows: Nerdbank.GitVersioning (nbgv,
 # the local dotnet tool in dotnet-tools.json) computes the version from version.json and the git history. Without
-# dotnet or git (a source zip), the version falls back to 0.0.0.0. The file is only rewritten when the version
-# changes, so unchanged builds stay incremental.
-# cmake -DREPO_DIR=<repository> -DOUTPUT=<MCVersion.h> -P version.cmake
+# dotnet or git (a source zip), the version falls back to 0.0.0.0. With PLIST, it also writes the app's Info.plist
+# from PLIST_TEMPLATE. Files are only rewritten when the version changes, so unchanged builds stay incremental.
+# cmake -DREPO_DIR=<repository> -DOUTPUT=<MCVersion.h> [-DPLIST_TEMPLATE=<Info.plist.in> -DPLIST=<Info.plist>
+#       -DMIN_MACOS=<14.0>] -P version.cmake
 
 set(version "0.0.0.0")
 set(semver "0.0.0-unknown")
@@ -46,6 +47,13 @@ endif()
 
 if(NOT previous STREQUAL header)
   file(WRITE ${OUTPUT} "${header}")
+endif()
+
+# The app's versions are major.minor.patch, as macOS reads them (nbgv's Version adds the commit height).
+if(PLIST)
+  string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MC_BUNDLE_VERSION ${version})
+  set(MC_MIN_MACOS ${MIN_MACOS})
+  configure_file(${PLIST_TEMPLATE} ${PLIST} @ONLY)
 endif()
 
 message(STATUS "MechCommander Redux ${version} (${commit})")

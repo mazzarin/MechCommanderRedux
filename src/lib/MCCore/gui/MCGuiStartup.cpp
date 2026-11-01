@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "network/MCMPGameConfiguration.h"
 #include "gui/MCGuiStartup.h"
 #include "color/MCPalette.h"
 #include "gui/MCGuiSystem.h"
@@ -15,6 +16,7 @@
 #include "main/MCGameSession.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
@@ -286,6 +288,59 @@ auto ParseCommandLine(std::string_view commandLine) -> void
                 }
             }
         }
+        else if (MCIEquals(word, "-matchmap"))
+        {
+            // Port: "-matchmap <mpk name>" with -team1rp/-team2rp (per player), -team1tech/-team2tech (is|clan) and
+            // "-slot <player> <team 1|2> <slot 0-2>" per player fill the host's MPGameConfiguration: a match whose
+            // settings are all known, which skips the ready room and goes from "Waiting for Players" to the mech bay.
+            if (hasArgument)
+            {
+                // The bare name: a folder or ".mpk" typed by habit is dropped.
+                std::string name = words[++i];
+                const size_t slash = name.find_last_of("\\/:");
+                name = slash == std::string::npos ? name : name.substr(slash + 1);
+
+                if (name.size() > 4 && MCIEquals(name.substr(name.size() - 4), ".mpk"))
+                {
+                    name.resize(name.size() - 4);
+                }
+
+                GameConfiguration.Active = true;
+                GameConfiguration.Mission = std::move(name);
+            }
+        }
+        else if (MCIEquals(word, "-team1rp") || MCIEquals(word, "-team2rp"))
+        {
+            if (hasArgument)
+            {
+                const int32_t points = std::max(std::atoi(words[i + 1].c_str()), 0);
+                (MCIEquals(word, "-team1rp") ? GameConfiguration.Team1RpPerPlayer
+                                             : GameConfiguration.Team2RpPerPlayer) = points;
+                i++;
+            }
+        }
+        else if (MCIEquals(word, "-team1tech") || MCIEquals(word, "-team2tech"))
+        {
+            if (hasArgument)
+            {
+                const auto techBase = static_cast<int8_t>(MCIEquals(words[i + 1], "clan") ? -1 : 1);
+                (MCIEquals(word, "-team1tech") ? GameConfiguration.Team1TechBase : GameConfiguration.Team2TechBase) =
+                    techBase;
+                i++;
+            }
+        }
+        else if (MCIEquals(word, "-slot"))
+        {
+            if (i + 3 < words.size())
+            {
+                MPGamePlayer player;
+                player.Name = words[i + 1];
+                player.Team = static_cast<int8_t>(std::atoi(words[i + 2].c_str()));
+                player.Slot = static_cast<int8_t>(std::atoi(words[i + 3].c_str()));
+                GameConfiguration.Roster.push_back(std::move(player));
+                i += 3;
+            }
+        }
         else if (MCIEquals(word, "-mission"))
         {
             if (hasArgument)
@@ -342,7 +397,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
         else if (MCIEquals(word, "-framelog"))
         {
             // Port: "-framelog <file>" writes the slow frames there, with what took their time (MCFrameLog).
-            if (hasArgument && !MCFrameLog::Open(std::string(words[i + 1])))
+            if (hasArgument && !MCFrameLog::Open(MCFileSystem::FromUtf8(words[i + 1])))
             {
                 SDL_Log("-framelog: can't write %s", std::string(words[i + 1]).c_str());
             }
@@ -364,7 +419,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
             // Port: "-gpudump <folder>": mirror mode saves the first frame that differs there.
             if (hasArgument)
             {
-                MCRenderer::SetMirrorDumpFolder(std::string(words[i + 1]));
+                MCRenderer::SetMirrorDumpFolder(MCFileSystem::FromUtf8(words[i + 1]));
             }
 
             i++;
@@ -392,6 +447,24 @@ auto ParseCommandLine(std::string_view commandLine) -> void
     if (LobbyLaunchArgs.Active)
     {
         LaunchedFromLobby = true;
+    }
+
+    // Port: only the host runs a configured match, and only a configuration that can be run (a mission, a player on
+    // each team, each player once on a free slot).
+    if (GameConfiguration.Active)
+    {
+        std::string why;
+
+        if (!LobbyLaunchArgs.IsHost)
+        {
+            why = "needs -host";
+        }
+
+        if (!why.empty() || !GameConfiguration.Validate(why))
+        {
+            SDL_Log("-matchmap: %s; running as a normal game", why.c_str());
+            GameConfiguration = MPGameConfiguration{};
+        }
     }
 
     if (networkFile)

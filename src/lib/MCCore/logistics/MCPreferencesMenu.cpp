@@ -2,7 +2,9 @@
 #include "logistics/MCPreferencesMenu.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCControlsPanel.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogGroupBox.h"
@@ -112,17 +114,24 @@ namespace
     /// <summary>A volume slider's range.</summary>
     constexpr int32_t VolumeMax = 127;
 
-    /// <summary>A drop-down box's title and drop-down (under the title, in the art's checks' column and first row).</summary>
-    constexpr int32_t BoxTitleLeft = 32;
+    /// <summary>
+    /// A drop-down box's title and drop-down (under the title), lined up with the sliders' labels and as wide as the
+    /// box allows (DropDownLeft in from each side: 104 in the right column), so UI RESOLUTION's NATIVE can say it's the
+    /// one for a Retina or HD screen.
+    /// </summary>
+    constexpr int32_t BoxTitleLeft = 8;
     constexpr int32_t BoxTitleTop = 9;
-    constexpr int32_t DropDownLeft = 32;
+    constexpr int32_t DropDownLeft = 8;
     constexpr int32_t DropDownTop = 21;
-    constexpr int32_t DropDownWidth = 76;
+    /// <summary>UI RESOLUTION's native choice: its lines follow the screen's scale (GUiResolution).</summary>
+    constexpr std::string_view NativeUiResolution = "NATIVE (RETINA/HD)";
 
     /// <summary>ACCEPT and CANCEL on the panel: side by side at its bottom right, 10 pixels in.</summary>
     constexpr int32_t AcceptLeft = 120;
     constexpr int32_t CancelLeft = 189;
     constexpr int32_t ButtonsTop = 304;
+    /// <summary>CONTROLS on the panel: at its bottom left, 10 pixels in, in line with ACCEPT and CANCEL.</summary>
+    constexpr int32_t ControlsLeft = 10;
 
     /// <summary>The INTERFACE VOLUME slider (the screen owns it).</summary>
     std::weak_ptr<MCLogSlider> InterfaceSlider;
@@ -230,7 +239,8 @@ namespace
                      std::vector<MCLogComboBox::Item> items, std::function<void(int32_t value)> changed)
     {
         auto dropDown = MCMakeGui<MCLogComboBox>();
-        dropDown->Init(DropDownLeft, DropDownTop, DropDownWidth, setting, std::move(items), std::move(changed));
+        dropDown->Init(DropDownLeft, DropDownTop, box.Width() - 2 * DropDownLeft, setting, std::move(items),
+                       std::move(changed));
         dropDown->ShowGuiWindow(true);
         screen.AdoptChildOf(box, std::move(dropDown));
     }
@@ -318,7 +328,7 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     // UI RESOLUTION: the most lines the in-mission UI is drawn at, from the next scenario on.
     MCLogGroupBox& uiResolution = AddBox(screen, panel, UiResolutionBoxPlace, BoxOutlineColor);
     AddLabel(screen, uiResolution, "UI RESOLUTION", BoxTitleLeft, BoxTitleTop);
-    std::vector<MCLogComboBox::Item> uiResolutions = {{"NATIVE", 0}};
+    std::vector<MCLogComboBox::Item> uiResolutions = {{std::string(NativeUiResolution), 0}};
 
     for (const int lines : UiResolutions)
     {
@@ -358,6 +368,9 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
+
+    // CONTROLS: the in-mission keys, on a panel of their own.
+    AddControlsPanel(screen, panel, ControlsLeft, ButtonsTop);
 }
 
 void ShowPreferences()
@@ -395,6 +408,8 @@ void ShowPreferences()
     DifficultyToggle(0)->Toggled = GameDifficulty == 0;
     DifficultyToggle(1)->Toggled = GameDifficulty == 1;
     DifficultyToggle(2)->Toggled = GameDifficulty != 0 && GameDifficulty != 1;
+    // Port: the preferences panel shows first, and CONTROLS edits the keys as they are.
+    ResetControls();
     logistics->MainScreen->ShowGuiWindow(false);
     logistics->SetCurrentScreen(logistics->PrefScreen);
     logistics->PrefScreen->ShowGuiWindow(true);
@@ -422,6 +437,8 @@ void CancelPrefs()
 
 void WritePrefs()
 {
+    // Port: the keys CONTROLS edited become the player's, and are written after the settings.
+    AcceptControls();
     MCFitIniFile prefs;
     prefs.Create("prefs.cfg");
     prefs.WriteBlock("MechCommander");
@@ -450,6 +467,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
     prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
+    MCKeyBindings::WritePrefs(prefs);
     Cancel();
 }
 

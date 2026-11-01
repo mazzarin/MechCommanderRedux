@@ -230,7 +230,7 @@ std::vector<MCFoundFile> MCMemoryFileSource::FindFileSources(std::string_view ga
         {
             if (entry.is_regular_file(error))
             {
-                add(entry.path().filename().string(), true);
+                add(MCFileSystem::ToUtf8(entry.path().filename()), true);
             }
         }
     }

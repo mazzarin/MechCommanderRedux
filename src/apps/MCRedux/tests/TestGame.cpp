@@ -25,6 +25,7 @@
 #include "main/MCSystemConfig.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameContext.h"
+#include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
@@ -63,6 +64,88 @@ namespace MCTestGame
 
     namespace
     {
+        /// <summary>The folder of the user folder's data folder that PinnedSaves makes the save folder.</summary>
+        constexpr std::string_view PinnedSaveFolder = "mc_tests_saves";
+
+        /// <summary>The extension of a campaign's saves.</summary>
+        constexpr std::string_view SaveExtension = ".sav";
+
+        /// <summary>The pinned save folder on disk.</summary>
+        std::filesystem::path PinnedSaveFolderPath()
+        {
+            return UserFolder() / "data" / PinnedSaveFolder;
+        }
+
+        /// <summary>
+        /// Makes <paramref name="folder"/> the save folder: SavePath, and the folder the file panes of logistics' screens
+        /// list (each took SavePath as the boot made it).
+        /// </summary>
+        void SetSaveFolder(const std::string& folder)
+        {
+            SavePath = folder;
+            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+
+            if (logistics == nullptr)
+            {
+                return;
+            }
+
+            for (const MCSplashScreen* screen :
+                 {logistics->LoadScreen.get(), logistics->SaveScreen.get(), logistics->MultiplayerScreen.get()})
+            {
+                if (screen != nullptr && screen->FilePane != nullptr)
+                {
+                    screen->FilePane->StartDirectory = folder;
+                }
+            }
+        }
+    }
+
+    std::filesystem::path UserFolder()
+    {
+        return std::filesystem::temp_directory_path() / "mc_tests_user";
+    }
+
+    PinnedSaves::PinnedSaves(std::span<const std::string_view> names) : _Kept(SavePath)
+    {
+        const std::filesystem::path folder = PinnedSaveFolderPath();
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+        const std::string pinned = std::format("data\\{}\\", PinnedSaveFolder);
+
+        // The save folder also holds what the game ships there (campaign starts, solo missions, multiplayer maps):
+        // copies of all of it but the saves.
+        for (const std::string& file : MCFileSystem::FindFiles(GamePath(_Kept, "*")))
+        {
+            if (MCPort::StrICmp(std::filesystem::path(file).extension().string(), SaveExtension) != 0)
+            {
+                MCTest::Scope scope(std::format("pinning the saves: copying {}", file));
+                REQUIRE(MCFileSystem::CopyFile(_Kept + file, pinned + file));
+            }
+        }
+
+        for (const std::string_view name : names)
+        {
+            std::ofstream(folder / std::format("{}{}", name, SaveExtension));
+        }
+
+        SetSaveFolder(pinned);
+    }
+
+    PinnedSaves::~PinnedSaves()
+    {
+        SetSaveFolder(_Kept);
+        std::error_code error;
+        std::filesystem::remove_all(PinnedSaveFolderPath(), error);
+
+        if (error)
+        {
+            std::cout << "  can't remove the pinned saves' folder: " << error.message() << "\n";
+        }
+    }
+
+    namespace
+    {
         /// <summary>
         /// The log file named by option <paramref name="option"/>, opened for appending with a <c>== &lt;test&gt;</c>
         /// line first (each isolated test runs in a process of its own and adds its section), or a closed stream
@@ -77,7 +160,7 @@ namespace MCTestGame
                 return {};
             }
 
-            std::ofstream log(std::filesystem::path(*name), std::ios::app);
+            std::ofstream log(MCFileSystem::FromUtf8(*name), std::ios::app);
 
             if (log.is_open())
             {
@@ -107,7 +190,7 @@ namespace MCTestGame
 
             if (shots && shotsWanted.contains(std::format(",{},", presentIndex)))
             {
-                static_cast<void>(MCInput::Display()->SaveScreenshot(std::filesystem::path(*shots) /
+                static_cast<void>(MCInput::Display()->SaveScreenshot(MCFileSystem::FromUtf8(*shots) /
                                                                      std::format("present{}.bmp", presentIndex)));
             }
 
@@ -202,7 +285,7 @@ namespace MCTestGame
             // --game <folder>, else the current folder when it holds the game (as the game looks for SYSTEM.CFG).
             const std::optional<std::string_view> option = MCTest::Option("game");
             const std::filesystem::path root =
-                option ? std::filesystem::path(*option) : std::filesystem::current_path();
+                option ? MCFileSystem::FromUtf8(*option) : std::filesystem::current_path();
 
             if (!std::filesystem::is_regular_file(root / "SYSTEM.CFG"))
             {
@@ -295,7 +378,7 @@ namespace MCTestGame
         return false;
     }
 
-    bool StartLogistics()
+    bool StartLogistics(const std::function<void()>& afterBoot)
     {
         if (booted != 0)
         {
@@ -309,6 +392,11 @@ namespace MCTestGame
         if (!Boot(""))
         {
             return false;
+        }
+
+        if (afterBoot)
+        {
+            afterBoot();
         }
 
         // The intro movie (if any) and the main menu's entrance.
@@ -332,7 +420,7 @@ namespace MCTestGame
         bool Boot(std::string commandLine)
         {
             // The game writes its saves and settings under the user folder; keep them out of the real one.
-            const std::filesystem::path userRoot = std::filesystem::temp_directory_path() / "mc_tests_user";
+            const std::filesystem::path userRoot = UserFolder();
             std::filesystem::create_directories(userRoot);
             MCFileSystem::SetUserRoot(userRoot);
 
@@ -414,7 +502,7 @@ namespace MCTestGame
         static std::ofstream frameLog = []
         {
             const std::optional<std::string_view> name = MCTest::Option("frames");
-            return name ? std::ofstream(std::filesystem::path(*name)) : std::ofstream();
+            return name ? std::ofstream(MCFileSystem::FromUtf8(*name)) : std::ofstream();
         }();
 
         if (frameLog.is_open())

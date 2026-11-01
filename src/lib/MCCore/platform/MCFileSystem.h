@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/MCServices.h"
+#include "platform/MCUtf8Path.h"
 
 /// <summary>
 /// Where the game's files are, and how its paths map onto the disk. The original ran from its install folder and
@@ -15,6 +16,8 @@
 ///
 /// Every function forwards to the current context's <see cref="MCFileSource"/> (platform/MCServices.h): the disk
 /// (<see cref="MCDiskFileSource"/>) in the game, maybe files in memory in a test.
+///
+/// Game paths are UTF-8 strings (platform/MCUtf8Path.h converts them).
 /// </summary>
 namespace MCFileSystem
 {

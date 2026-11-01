@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCConsole.h"
 #include "MCCrashTrace.h"
+#include "MCGameFolder.h"
 #include "MCVersion.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
@@ -22,7 +23,8 @@ namespace
         "MechCommander Redux " MC_VERSION_SEMVER " (build " MC_VERSION ", commit " MC_VERSION_COMMIT ")\n\n"
         "MCRedux [-d|--data <install folder>] [--user <save folder>] [game options]\n\n"
         "  -d, --data     - The MechCommander Gold install; without it, or when it has no\n"
-        "                   SYSTEM.CFG, the current folder, then the executable's folder.\n"
+        "                   SYSTEM.CFG, the current folder, then the executable's folder;\n"
+        "                   without any, the folder chosen last time or found, else ask.\n"
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
@@ -49,19 +51,14 @@ namespace
                                  nullptr);
     }
 
-    /// <summary>Whether <paramref name="folder"/> holds the game's data (its SYSTEM.CFG).</summary>
-    bool HasGameData(const std::filesystem::path& folder)
-    {
-        std::error_code error;
-        return std::filesystem::is_regular_file(folder / "SYSTEM.CFG", error) ||
-               std::filesystem::is_regular_file(folder / "system.cfg", error);
-    }
-
     /// <summary>
-    /// The first of the --data folder (when given), the current folder and the executable's folder that holds the
-    /// game's data, or an error naming every folder tried.
+    /// The game's folder: the first of the --data folder (when given), the current folder and the executable's folder
+    /// that holds the game's data. Without --data, then the folder chosen last time, the one copy in the usual places
+    /// (MCGameFolder), or the player's choice, remembered for next time. Empty when the player quits; an error naming
+    /// every folder tried when --data names no game (a script gets no questions).
     /// </summary>
-    std::expected<std::filesystem::path, std::string> FindGameData(const std::filesystem::path& dataArgument)
+    std::expected<std::filesystem::path, std::string> FindGameData(const std::filesystem::path& dataArgument,
+                                                                   const std::filesystem::path& userFolder)
     {
         std::vector<std::filesystem::path> candidates;
 
@@ -76,24 +73,62 @@ namespace
         // SDL keeps the base path (null when it can't tell).
         if (SDL_GetBasePath() != nullptr)
         {
-            candidates.emplace_back(SDL_GetBasePath());
+            candidates.push_back(MCFileSystem::FromUtf8(SDL_GetBasePath()));
         }
 
         std::string tried;
 
         for (const std::filesystem::path& folder : candidates)
         {
-            if (!folder.empty() && HasGameData(folder))
+            if (!folder.empty() && MCGameFolder::HasGameData(folder))
             {
                 return folder;
             }
 
-            tried += std::format("\n  {}", folder.string());
+            tried += std::format("\n  {}", MCFileSystem::ToUtf8(folder));
         }
 
-        return std::unexpected(std::format("No SYSTEM.CFG found in:{}\nRun MCRedux from the MechCommander Gold "
-                                           "install, put it beside the install, or point -d/--data at it.",
-                                           tried));
+        if (!dataArgument.empty())
+        {
+            return std::unexpected(std::format("No SYSTEM.CFG found in:{}\nRun MCRedux from the MechCommander Gold "
+                                               "install, put it beside the install, or point -d/--data at it.",
+                                               tried));
+        }
+
+        const bool choose = MCGameFolder::ChoiceRequested();
+
+        if (const std::filesystem::path remembered = MCGameFolder::Remembered(userFolder);
+            !choose && !remembered.empty() && MCGameFolder::HasGameData(remembered))
+        {
+            return remembered;
+        }
+
+        const std::vector<std::filesystem::path> found = MCGameFolder::FindInUsualPlaces();
+        std::filesystem::path chosen;
+
+        if (found.size() == 1 && !choose)
+        {
+            chosen = found.front();
+        }
+        else
+        {
+            auto asked = MCGameFolder::Ask(found);
+
+            if (!asked || asked->empty())
+            {
+                return asked;
+            }
+
+            chosen = std::move(*asked);
+        }
+
+        // Not remembering only means searching (or asking) again next time.
+        if (const std::string error = MCGameFolder::Remember(userFolder, chosen); !error.empty())
+        {
+            SDL_Log("Game folder not remembered: %s", error.c_str());
+        }
+
+        return chosen;
     }
 
     /// <summary>The launch options in <paramref name="arguments"/> (the program's name first, as main gets them).</summary>
@@ -112,7 +147,7 @@ namespace
                     return std::unexpected(std::format("{} needs a folder", arg));
                 }
 
-                (arg == "--user" ? options.UserFolder : options.DataFolder) = arguments[++i];
+                (arg == "--user" ? options.UserFolder : options.DataFolder) = MCFileSystem::FromUtf8(arguments[++i]);
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -141,15 +176,6 @@ namespace
             }
         }
 
-        auto dataFolder = FindGameData(options.DataFolder);
-
-        if (!dataFolder)
-        {
-            return std::unexpected(dataFolder.error());
-        }
-
-        options.DataFolder = *dataFolder;
-
         if (options.UserFolder.empty())
         {
             const std::unique_ptr<char, decltype(&SDL_free)> prefPath(SDL_GetPrefPath(nullptr, "MechCommander Redux"),
@@ -160,7 +186,7 @@ namespace
                 return std::unexpected(std::format("No save folder: {}", SDL_GetError()));
             }
 
-            options.UserFolder = prefPath.get();
+            options.UserFolder = MCFileSystem::FromUtf8(prefPath.get());
         }
 
         return options;
@@ -195,7 +221,12 @@ namespace
     }
 }
 
+#ifdef _WIN32
+// Windows hands main the command line in the ANSI code page, which can't spell every folder; wmain gets it whole.
+int wmain(int argc, wchar_t** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     MCConsole::AttachParent();
 
@@ -207,7 +238,15 @@ int main(int argc, char** argv)
 
     MCCrashTrace::Install();
     MCCrashTrace::SetReporter(ReportAblState);
-    const std::vector<std::string_view> arguments(argv, argv + argc);
+    std::vector<std::string> utf8Arguments;
+
+    for (int i = 0; i < argc; i++)
+    {
+        // A path converts the wide argument to UTF-8; on other systems it is UTF-8 already.
+        utf8Arguments.push_back(MCFileSystem::ToUtf8(std::filesystem::path(argv[i])));
+    }
+
+    const std::vector<std::string_view> arguments(utf8Arguments.begin(), utf8Arguments.end());
     auto options = ParseArguments(arguments);
 
     if (!options)
@@ -223,16 +262,31 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    MCFileSystem::SetGameRoot(options->DataFolder);
-    MCFileSystem::SetUserRoot(options->UserFolder);
-    SDL_Log("Game data: %s", options->DataFolder.string().c_str());
-    SDL_Log("User data: %s", options->UserFolder.string().c_str());
-
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS))
     {
         Report(std::format("SDL_Init failed: {}", SDL_GetError()), true);
         return 1;
     }
+
+    const auto dataFolder = FindGameData(options->DataFolder, options->UserFolder);
+
+    if (!dataFolder || dataFolder->empty())
+    {
+        if (!dataFolder)
+        {
+            Report(MCConsole::HasOutput() ? std::format("{}\n\n{}", dataFolder.error(), UsageText) : dataFolder.error(),
+                   true);
+        }
+
+        SDL_Quit();
+        return dataFolder ? 0 : 1;
+    }
+
+    options->DataFolder = *dataFolder;
+    MCFileSystem::SetGameRoot(options->DataFolder);
+    MCFileSystem::SetUserRoot(options->UserFolder);
+    SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
+    SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
     const int result = RunGame(options->GameCommandLine);
     SDL_Quit();

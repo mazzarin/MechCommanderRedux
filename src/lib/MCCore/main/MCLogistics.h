@@ -122,6 +122,12 @@ public:
     /// <summary>Frees what <see cref="InitializeMultiplayer"/> made.</summary>
     void DestroyMultiplayer();
 
+    /// <summary>
+    /// Port: makes the ready lights (the session screen made them when it opened) for the players <paramref name="sortedIds"/>,
+    /// all on a team, for a match that never showed the session screen.
+    /// </summary>
+    void SetUpPlayerLights(std::span<const uint32_t> sortedIds);
+
     /// <summary>Shows or hides the current logistics screen (activating the logistics palette when <paramref name="redraw"/>).</summary>
     void ShowLogScreen(bool show, bool redraw) const;
 

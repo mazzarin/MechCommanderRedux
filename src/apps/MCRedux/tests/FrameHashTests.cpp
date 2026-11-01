@@ -10,7 +10,10 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
+#include "logistics/MCFileScrollPane.h"
+#include "logistics/MCLogButton.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCSplashScreen.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -502,7 +505,7 @@ namespace
     class MCRecordedPrefs
     {
     public:
-        MCRecordedPrefs() : _Path(std::filesystem::temp_directory_path() / "mc_tests_user" / "prefs.cfg")
+        MCRecordedPrefs() : _Path(MCTestGame::UserFolder() / "prefs.cfg")
         {
             std::filesystem::create_directories(_Path.parent_path());
             std::ofstream file(_Path, std::ios::binary);
@@ -544,15 +547,24 @@ namespace
     /// right) took the preferences step to 0x6ea95138 and the folds to 0x097f849e and 0x92debaca (GPU 0x3b586e8e and
     /// 0x9297295d), only there; the run now pins the settings it shows (<see cref="MCRecordedPrefs"/>). The UI
     /// RESOLUTION box (2026-10-18) took the preferences step to 0xd7aa9185 and the folds to 0xcfbe6bb8 and 0xac3d91aa
-    /// (GPU 0x8d317260 and 0xd056cb3d), only there. The HD ART box (2026-10-25) took the preferences step to
-    /// 0xce6ae5e3 (software and GPU), only there; the folds are still the UI RESOLUTION box's, to be recorded again on a
-    /// machine whose load screen matches the recording (the load screen lists the test folder's saved games).
+    /// (GPU 0x8d317260 and 0xd056cb3d), only there. The CONTROLS button (2026-10-25) took the preferences step to
+    /// 0x733386ba (software and GPU agree). The drop-down boxes lined up with the sliders' labels, wide enough for
+    /// NATIVE (RETINA/HD) (2026-10-25), took the preferences step to 0x43e55f2a (software and GPU agree). The two
+    /// together took the folds to 0xb83606d6 and 0xcd07a54a (GPU 0xb5054b56 and 0x7a383add), re-recorded on the
+    /// recording machine, whose test user folder (and so its load screen) couldn't be reproduced elsewhere. The run now
+    /// pins the saves too, to none (<see cref="MCTestGame::PinnedSaves"/>; 2026-10-31): the main menu's LOAD MISSION is
+    /// off and the load screen's list empty on any machine, whatever saves its install or earlier tests left. That took
+    /// the main menu to 0xe30aef7b, the load screen to 0xe34ed709 and the folds to 0x1fd4afc0 and 0xedd1e312 (GPU
+    /// 0x3742f7d8 and 0xdbecf905). The HD ART, HD AUDIO and HD LIGHTING boxes (hd-lighting), the panel taller for them,
+    /// took the preferences step to 0xade01b1a (software and GPU agree) and the folds to 0x734244c0 and 0xce6b9312 (GPU
+    /// 0xa309cad8 and 0x4592e905).
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
         const MCRecordedPrefs prefs;
+        std::optional<MCTestGame::PinnedSaves> saves;
         RequestDrawing(gpu);
-        REQUIRE(MCTestGame::StartLogistics());
+        REQUIRE(MCTestGame::StartLogistics([&saves] { saves.emplace(); }));
 
         if (!DrawingAsAsked(gpu))
         {
@@ -627,11 +639,23 @@ namespace
         };
 
         const Step steps[] = {
-            {"main menu", [] {}, 0x59acc997u},
-            {"preferences", [] { ShowPreferences(); }, 0xce6ae5e3u},
-            {"main menu after preferences", [] { CancelPrefs(); }, 0x59acc997u},
-            {"load screen", [] { LoadScreen(); }, 0xb773197eu},
-            {"main menu after load", [] { Cancel(); }, 0x59acc997u},
+            {"main menu", [] {}, 0xe30aef7bu},
+            {"preferences", [] { ShowPreferences(); }, 0xade01b1au},
+            {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
+            {"load screen",
+             []
+             {
+                 CHECK(GlobalLog()->MainScreen->Element<MCLogButton>(MCTestGame::MainMenuLoadButton)->Disabled);
+                 LoadScreen();
+             },
+             0xe34ed709u},
+            {"main menu after load",
+             []
+             {
+                 CHECK_EQ(GlobalLog()->LoadScreen->FilePane->NumFiles(), 0);
+                 Cancel();
+             },
+             0xe30aef7bu},
             {"briefing", [] { NewCampaign(); }, 0xbcd2ec30u},
             {"purchase", [] { GlobalLog()->SetUpPurchaseScreen(true); }, 0x7e077fadu},
             {"purchase, pilots", [] { GlobalLog()->PurchaseScreen->SetUpPilotInv(true, true); }, 0x4ae27598u},
@@ -725,8 +749,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0x8d317260u : 0xcfbe6bb8u);
-        CHECK_EQ(presents, gpu ? 0xd056cb3du : 0xac3d91aau);
+        CHECK_EQ(frames, gpu ? 0xa309cad8u : 0x734244c0u);
+        CHECK_EQ(presents, gpu ? 0x4592e905u : 0xce6b9312u);
         CheckGpuAlone(gpu);
     }
 }

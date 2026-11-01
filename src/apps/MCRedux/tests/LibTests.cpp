@@ -35,7 +35,13 @@ namespace
         }
 
         /// <summary>The path of <paramref name="name"/> in the folder, as a string the file layer takes.</summary>
-        std::string operator/(std::string_view name) const { return (_Path / name).string(); }
+        std::string operator/(std::string_view name) const
+        {
+            return MCFileSystem::ToUtf8(_Path / MCFileSystem::FromUtf8(name));
+        }
+
+        /// <summary>The folder's path, for the standard library's file functions.</summary>
+        const std::filesystem::path& Path() const { return _Path; }
 
     private:
         std::filesystem::path _Path;
@@ -46,13 +52,13 @@ namespace
         return std::vector<uint8_t>(text.begin(), text.end());
     }
 
-    void WriteFile(const std::string& path, std::span<const uint8_t> bytes)
+    void WriteFile(const std::filesystem::path& path, std::span<const uint8_t> bytes)
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    std::vector<uint8_t> ReadFile(const std::string& path)
+    std::vector<uint8_t> ReadFile(const std::filesystem::path& path)
     {
         std::ifstream in(path, std::ios::binary);
         return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {});
@@ -191,10 +197,10 @@ TEST_CASE("fastfile: entries are found by name and read raw or unpacked")
     ScratchFolder folder("fastfile");
     const std::vector<uint8_t> text = Bytes("FITini\r\n[Block]\r\nl Value = 7\r\n\r\nFITend\r\n");
     const std::vector<uint8_t> packed = Repetitive(5000);
-    WriteFile(folder / "test.fst", BuildFastFile({{"data\\a.txt", Bytes("first"), false},
-                                                  {"DATA\\B.BIN", packed, true},
-                                                  {"data\\A.TXT", Bytes("second"), false},
-                                                  {"data\\c.fit", text, true}}));
+    WriteFile(folder.Path() / "test.fst", BuildFastFile({{"data\\a.txt", Bytes("first"), false},
+                                                         {"DATA\\B.BIN", packed, true},
+                                                         {"data\\A.TXT", Bytes("second"), false},
+                                                         {"data\\c.fit", text, true}}));
 
     auto fastFile = MCFastFile::Create(folder / "test.fst");
     REQUIRE(fastFile.has_value());
@@ -312,7 +318,7 @@ TEST_CASE("file: a line longer than the read is cut and loses the next byte")
 TEST_CASE("file: a child window reads its part of the parent")
 {
     ScratchFolder folder("child");
-    WriteFile(folder / "parent.bin", Bytes("0123456789abcdef"));
+    WriteFile(folder.Path() / "parent.bin", Bytes("0123456789abcdef"));
 
     MCFile parent;
     REQUIRE_EQ(parent.Open(folder / "parent.bin"), NO_ERR);
@@ -374,15 +380,15 @@ TEST_CASE("file: a child window reads its part of the parent")
 TEST_CASE("file: writes go to the user folder and never touch the install")
 {
     ScratchFolder folder("overlay");
-    std::filesystem::create_directories(folder / "install/data");
+    std::filesystem::create_directories(folder.Path() / "install/data");
     const std::vector<uint8_t> original = Bytes("FITini\r\n[Prefs]\r\nl Volume = 3\r\n\r\nFITend\r\n");
-    WriteFile(folder / "install/data/prefs.cfg", original);
+    WriteFile(folder.Path() / "install/data/prefs.cfg", original);
 
     {
         MCTestContextScope scope;
         scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
-        MCFileSystem::SetGameRoot(folder / "install");
-        MCFileSystem::SetUserRoot(folder / "user");
+        MCFileSystem::SetGameRoot(folder.Path() / "install");
+        MCFileSystem::SetUserRoot(folder.Path() / "user");
 
         MCFitIniFile fit;
         REQUIRE_EQ(fit.Open("DATA\\PREFS.CFG"), 0);
@@ -396,13 +402,13 @@ TEST_CASE("file: writes go to the user folder and never touch the install")
         out.WriteIdLong("Volume", 9);
         out.Close();
 
-        CHECK(std::filesystem::exists(folder / "user/data/prefs.cfg"));
+        CHECK(std::filesystem::exists(folder.Path() / "user/data/prefs.cfg"));
         REQUIRE_EQ(fit.Open("data\\prefs.cfg"), 0);
         REQUIRE_EQ(fit.SeekBlock("Prefs"), 0);
         CHECK(fit.Read<int32_t>("Volume") == MCFitResult<int32_t>(9));
     }
 
-    CHECK(ReadFile(folder / "install/data/prefs.cfg") == original);
+    CHECK(ReadFile(folder.Path() / "install/data/prefs.cfg") == original);
 
     MCTestContextScope scope;
     MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
@@ -432,17 +438,17 @@ TEST_CASE("file: writes go to the user folder and never touch the install")
 TEST_CASE("file: deleting a save removes the install's copy too")
 {
     ScratchFolder folder("delete-save");
-    std::filesystem::create_directories(folder / "install/data/savegame");
-    std::filesystem::create_directories(folder / "user/data/savegame");
-    WriteFile(folder / "install/data/savegame/shipped.sav", Bytes("install"));
-    WriteFile(folder / "install/data/savegame/both.sav", Bytes("install"));
-    WriteFile(folder / "user/data/savegame/both.sav", Bytes("user"));
-    WriteFile(folder / "install/data/savegame/other.sav", Bytes("install"));
+    std::filesystem::create_directories(folder.Path() / "install/data/savegame");
+    std::filesystem::create_directories(folder.Path() / "user/data/savegame");
+    WriteFile(folder.Path() / "install/data/savegame/shipped.sav", Bytes("install"));
+    WriteFile(folder.Path() / "install/data/savegame/both.sav", Bytes("install"));
+    WriteFile(folder.Path() / "user/data/savegame/both.sav", Bytes("user"));
+    WriteFile(folder.Path() / "install/data/savegame/other.sav", Bytes("install"));
 
     MCTestContextScope scope;
     scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
-    MCFileSystem::SetGameRoot(folder / "install");
-    MCFileSystem::SetUserRoot(folder / "user");
+    MCFileSystem::SetGameRoot(folder.Path() / "install");
+    MCFileSystem::SetUserRoot(folder.Path() / "user");
 
     // The listing tells which folders have each save.
     const std::vector<MCFoundFile> listed = MCFileSystem::FindFileSources("data\\savegame\\*.sav");
@@ -464,10 +470,10 @@ TEST_CASE("file: deleting a save removes the install's copy too")
     CHECK(MCFileSystem::Exists("data\\savegame\\shipped.sav"));
 
     CHECK(MCFileSystem::RemoveSave("DATA\\SAVEGAME\\SHIPPED.SAV"));
-    CHECK(!std::filesystem::exists(folder / "install/data/savegame/shipped.sav"));
+    CHECK(!std::filesystem::exists(folder.Path() / "install/data/savegame/shipped.sav"));
     CHECK(MCFileSystem::RemoveSave("data\\savegame\\both.sav"));
-    CHECK(!std::filesystem::exists(folder / "install/data/savegame/both.sav"));
-    CHECK(!std::filesystem::exists(folder / "user/data/savegame/both.sav"));
+    CHECK(!std::filesystem::exists(folder.Path() / "install/data/savegame/both.sav"));
+    CHECK(!std::filesystem::exists(folder.Path() / "user/data/savegame/both.sav"));
     CHECK(MCFileSystem::RemoveSave("data\\savegame\\missing.sav"));
 
     const std::vector<std::string> left = MCFileSystem::FindFiles("data\\savegame\\*.sav");
@@ -483,14 +489,14 @@ TEST_CASE("file: deleting a save removes the install's copy too")
 TEST_CASE("file: a relative path never leaves the user or game folder")
 {
     ScratchFolder folder("contain");
-    std::filesystem::create_directories(folder / "install/data");
-    WriteFile(folder / "install/data/shared.cfg", Bytes("install"));
-    WriteFile(folder / "secret.txt", Bytes("outside"));
+    std::filesystem::create_directories(folder.Path() / "install/data");
+    WriteFile(folder.Path() / "install/data/shared.cfg", Bytes("install"));
+    WriteFile(folder.Path() / "secret.txt", Bytes("outside"));
 
     MCTestContextScope scope;
     scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
-    MCFileSystem::SetGameRoot(folder / "install");
-    MCFileSystem::SetUserRoot(folder / "user");
+    MCFileSystem::SetGameRoot(folder.Path() / "install");
+    MCFileSystem::SetUserRoot(folder.Path() / "user");
 
     CHECK(MCFileSystem::ResolveWrite("..\\..\\evil.txt") == MCFileSystem::ResolveWrite("evil.txt"));
     CHECK(MCFileSystem::ResolveWrite("data\\..\\..\\evil.txt") == MCFileSystem::ResolveWrite("evil.txt"));
@@ -516,8 +522,41 @@ TEST_CASE("file: a relative path never leaves the user or game folder")
 
     // A write that tries to climb out of the user folder lands inside it; the install and the folder above stay.
     REQUIRE(MCFileSystem::CopyFile("data\\shared.cfg", "..\\..\\secret.txt"));
-    CHECK(ReadFile(folder / "secret.txt") == Bytes("outside"));
-    CHECK(ReadFile(folder / "user/secret.txt") == Bytes("install"));
+    CHECK(ReadFile(folder.Path() / "secret.txt") == Bytes("outside"));
+    CHECK(ReadFile(folder.Path() / "user/secret.txt") == Bytes("install"));
+}
+
+/// <summary>
+/// Game paths are UTF-8, so names outside the ANSI code page (Windows') resolve, list and open, in an install whose
+/// own folder has such a name too. A missing CD movie path once listed a drive's root holding one and threw.
+/// </summary>
+TEST_CASE("file: names outside the ANSI code page resolve, list and open")
+{
+    ScratchFolder folder("unicode-names");
+    const std::filesystem::path install = folder.Path() / u8"游戏 install";
+    std::filesystem::create_directories(install / "data");
+    WriteFile(install / "data/plain.smk", Bytes("plain"));
+    WriteFile(install / u8"中文.txt", Bytes("root"));
+    WriteFile(install / u8"data/中文.smk", Bytes("data"));
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+    MCFileSystem::SetGameRoot(install);
+
+    // A part that isn't there as spelled lists its folder for a match in another case.
+    CHECK(!MCFileSystem::Exists("movies\\logos1.smk"));
+    CHECK(MCFileSystem::Exists("DATA\\PLAIN.SMK"));
+    CHECK(MCFileSystem::Exists("DATA\\中文.SMK"));
+
+    const std::vector<std::string> listed = MCFileSystem::FindFiles("data\\*.smk");
+    CHECK(std::ranges::contains(listed, std::string("plain.smk")));
+    CHECK(std::ranges::contains(listed, std::string("中文.smk")));
+
+    MCFile file;
+    REQUIRE_EQ(file.Open("data\\中文.smk"), NO_ERR);
+    std::vector<uint8_t> read(file.GetLength());
+    file.Read(read);
+    CHECK(read == Bytes("data"));
 }
 
 /// <summary>
@@ -544,7 +583,7 @@ TEST_CASE("packet file: written packets read back raw and packed")
         CHECK_EQ(out.WritePacket(4, small, MCPacketStorage::Raw), 0);
     }
 
-    const std::vector<uint8_t> raw = ReadFile(folder / "test.pak");
+    const std::vector<uint8_t> raw = ReadFile(folder.Path() / "test.pak");
     REQUIRE(raw.size() > 24);
     CHECK_EQ(Get32(raw, 0), MCPacketFile::PacketFileMagic);
     CHECK_EQ(Get32(raw, 4), 4 * 4 + 8);
@@ -596,7 +635,7 @@ TEST_CASE("packet file: a checksum guards the contents")
         out.WritePacket(1, Bytes("world!"), MCPacketStorage::Raw);
     }
 
-    std::vector<uint8_t> raw = ReadFile(folder / "sum.pak");
+    std::vector<uint8_t> raw = ReadFile(folder.Path() / "sum.pak");
     REQUIRE_EQ(raw.size(), 8u + 2 * 4 + 11);
     CHECK_EQ(Get32(raw, 0), std::accumulate(raw.begin() + 4, raw.end(), 0));
 
@@ -611,7 +650,7 @@ TEST_CASE("packet file: a checksum guards the contents")
     }
 
     raw.back() ^= 1;
-    WriteFile(folder / "sum.pak", raw);
+    WriteFile(folder.Path() / "sum.pak", raw);
     MCPacketFile bad;
     CHECK_EQ(bad.Open(folder / "sum.pak"), static_cast<int32_t>(0xBADF0004));
 }
@@ -661,7 +700,7 @@ TEST_CASE("packet file: a packet file inside one closes with its parent")
         out.WritePacket(0, Bytes("shape"), MCPacketStorage::Raw);
     }
 
-    const std::vector<uint8_t> inner = ReadFile(folder / "inner.pak");
+    const std::vector<uint8_t> inner = ReadFile(folder.Path() / "inner.pak");
     {
         MCPacketFile out;
         REQUIRE_EQ(out.Create(folder / "outer.pak"), NO_ERR);

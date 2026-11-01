@@ -344,12 +344,12 @@ namespace
 {
     /// <summary>
     /// Deletes the save games written while it lives (a finished mission saves the campaign), which would otherwise
-    /// show on the load screen of the recorded-frame tests sharing the test user folder.
+    /// pile up in the test user folder.
     /// </summary>
     class SaveGameCleanup
     {
     public:
-        SaveGameCleanup() : _Folder(std::filesystem::temp_directory_path() / "mc_tests_user" / "data" / "savegame")
+        SaveGameCleanup() : _Folder(MCTestGame::UserFolder() / "data" / "savegame")
         {
             for (const std::filesystem::path& file : Files())
             {

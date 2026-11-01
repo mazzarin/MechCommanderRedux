@@ -88,10 +88,11 @@ public:
     void CancelMission();
 
     /// <summary>
-    /// The player ids of one team (the original's FillDpidArray): <paramref name="myTeam"/> picks the local player's
-    /// team, else the other.
+    /// Port: copies who is on each team, the tech bases and the points into <c>MultiPlayer()->Match</c>, which is all the
+    /// mech bay reads of the match. Called as the match starts, host and guest. (A configured match fills it itself and
+    /// never shows this screen: see <c>MPGameConfiguration</c>.)
     /// </summary>
-    std::vector<uint32_t> TeamPlayerIds(bool myTeam) const;
+    void PublishMatchState() const;
 
     /// <summary>Lights the start button when every player is on a team and a mission is loaded.</summary>
     void CheckGoodToGo() const;

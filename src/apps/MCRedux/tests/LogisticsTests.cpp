@@ -320,6 +320,44 @@ TEST_CASE("game: logistics spreads weapons over the arms and side torsos")
     mechs.Clear();
 }
 
+TEST_CASE("game: logistics gives the Rail Gun and Light Gauss Rifle a critical slot (OB-182)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    LogisticsFixture fixture;
+
+    MCLogMechList mechs;
+    std::shared_ptr<MCLogMech> mech = mechs.AddMech("PM100100", false, true, false);
+    REQUIRE(mech != nullptr);
+    const auto railGun = static_cast<uint8_t>(98);
+    const auto lightGauss = static_cast<uint8_t>(99);
+    REQUIRE_EQ(MasterComponentList[railGun].Name, std::string("Rail Gun"));
+    REQUIRE_EQ(MasterComponentList[lightGauss].Name, std::string("Light Gauss Rifle"));
+
+    // Each takes one slot in an arm or side torso (OB-182: neither got one).
+    ClearSlots(*mech);
+    mech->PlaceItem(railGun, 0, 0);
+    mech->PlaceItem(lightGauss, 1, 0);
+
+    for (const uint8_t weapon : {railGun, lightGauss})
+    {
+        MCTest::Scope scope(std::to_string(weapon));
+        int32_t held = 0;
+
+        for (const int32_t location : {MechLeftArm, MechRightArm, MechLeftTorso, MechRightTorso})
+        {
+            held += CountHeld(*mech, location, weapon);
+        }
+
+        CHECK_EQ(held, 1);
+    }
+
+    mechs.Clear();
+}
+
 TEST_CASE("game: logistics puts each jump jet in one slot of the leg with fewer")
 {
     if (!MCTestGame::Available())

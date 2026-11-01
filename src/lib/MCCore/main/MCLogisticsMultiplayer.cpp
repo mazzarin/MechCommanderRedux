@@ -18,6 +18,8 @@
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "gui/MCGuiOwned.h"
+#include "main/MCMPPlayerLights.h"
 #include "main/MCForceMessages.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
@@ -190,9 +192,10 @@ auto MCLogistics::InitializeMultiplayer() -> void
 
     std::ranges::fill(MultiPlayer()->PlayerSessionCheckIn, 0);
     MultiPlayer()->InLogistics = true;
-    const std::vector<uint32_t> teammates = SessionScreen->TeamPlayerIds(true);
+    const uint32_t localId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    const std::vector<uint32_t> teammates = MultiPlayer()->Match.TeamPlayerIds(true, localId);
     const auto numTeammates = static_cast<int32_t>(teammates.size());
-    const std::vector<uint32_t> opponents = SessionScreen->TeamPlayerIds(false);
+    const std::vector<uint32_t> opponents = MultiPlayer()->Match.TeamPlayerIds(false, localId);
     const auto numOpponents = static_cast<int32_t>(opponents.size());
 
     // Port fix: a side of more than three players ran past the side's lists; the extra players get none.
@@ -239,9 +242,28 @@ auto MCLogistics::InitializeMultiplayer() -> void
         }
     }
 
-    const int8_t techBase = MultiPlayer()->HomeTeam == 0 ? SessionScreen->Team1TechBase : SessionScreen->Team2TechBase;
+    const MPMatchState& match = MultiPlayer()->Match;
+    const int8_t techBase = MultiPlayer()->HomeTeam == 0 ? match.Team1TechBase : match.Team2TechBase;
     PurchaseFile = techBase == 1 ? "ispur" : "clanpur";
     MultiplayerInitialized = true;
+}
+
+auto MCLogistics::SetUpPlayerLights(std::span<const uint32_t> sortedIds) -> void
+{
+    if (PlayerLights.get() == nullptr)
+    {
+        PlayerLights = MCMakeGui<MCMPPlayerLights>();
+        PlayerLights->Init();
+    }
+
+    PlayerLights->SetNumPlayers(static_cast<int32_t>(sortedIds.size()));
+
+    for (size_t index = 0; index < sortedIds.size(); ++index)
+    {
+        PlayerLights->SetPlayerID(static_cast<int32_t>(index), sortedIds[index]);
+        // On a team (the session screen's lights read 1 once a name is dropped on one).
+        PlayerLights->SetPlayerStatus(sortedIds[index], 1);
+    }
 }
 
 auto MCLogistics::SetupSlotsForMultiplayer(int32_t playerIndex, int32_t numPlayers) -> void

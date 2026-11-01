@@ -396,16 +396,18 @@ auto MCPUAppearance::DrawBars() -> void
         health = 1.0 - static_cast<double>(damage) / static_cast<double>(dmgLevel);
     }
 
-    // Green, then yellow below half, red at a fifth (palette colours here).
+    // Green, then yellow below half, red at a fifth. Port fix: these were palette indices (0x0b, 0xf2, 0xef), but the
+    // status bar takes an AlphaTable row, so gates and turrets drew a black bar. The rows are the ones every other
+    // bar uses (0x101 green, 0x102 yellow, 0x103 red).
     int32_t barColor;
 
     if (health < 0.5)
     {
-        barColor = health <= 0.2 ? 0xef : 0xf2;
+        barColor = health <= 0.2 ? 0x103 : 0x102;
     }
     else
     {
-        barColor = 0x0b;
+        barColor = 0x101;
     }
 
     auto barLength = static_cast<float>(health * barWidth);

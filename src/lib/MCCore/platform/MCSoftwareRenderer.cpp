@@ -300,6 +300,12 @@ void MCSoftwareRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& c
 
 void MCSoftwareRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command)
 {
+    // Port-only: sun shadows are drawn by the hardware renderer alone.
+    if (DrawingSunShadow())
+    {
+        return;
+    }
+
     // The shape filled into the buffer (as AG_shape_fill draws it at its bounds' corner into a pane of the bounds),
     // then blended.
     const size_t size = static_cast<size_t>(command.Width) * static_cast<size_t>(command.Height);

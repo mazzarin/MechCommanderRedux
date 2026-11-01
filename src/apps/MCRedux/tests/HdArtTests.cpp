@@ -3,6 +3,8 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "ai/MCMoveGeometry.h"
+#include "ai/MCScenarioMap.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -28,11 +30,13 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
+#include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
+#include "object/MCBattleMechType.h"
 #include "object/MCBullet.h"
 #include "object/MCExplosion.h"
 #include "object/MCGroundVehicleGameSystem.h"
@@ -281,6 +285,8 @@ namespace
         bool Reverse = false;
         /// <summary>Whether its translucent frames hold their blended pixels (an effect's, MCHdArt::Frame::Blended).</summary>
         bool Blended = false;
+        /// <summary>The frames a second the game plays it at (a VFX state's), 0 when not known.</summary>
+        float FrameRate = 0.0f;
         std::vector<DecodedFrame> Frames;
     };
 
@@ -1564,6 +1570,60 @@ namespace
     };
 
     /// <summary>
+    /// The frames a second a VFX type plays <paramref name="packet"/> at: its state's, which the game keeps in a
+    /// sub-state too (MCVfxAppearance::Update); 0 when no state draws the packet.
+    /// </summary>
+    float VfxPacketFrameRate(const MCVfxAppearanceType& vfx, uint32_t packet)
+    {
+        // A state's facings are its packets from its base (every other one when Scaled: the zoomed-out views between).
+        const uint32_t step = vfx.Scaled ? 2u : 1u;
+        const auto draws = [&](const MCActorData& state, const MCActorData& frames)
+        {
+            const uint32_t facings = std::max<uint32_t>(state.NumRotations, 1u);
+            return frames.NumFrames > 0 && packet >= frames.BasePacketNumber &&
+                   packet < frames.BasePacketNumber + facings * step;
+        };
+
+        for (const MCActorData& state : vfx.States)
+        {
+            if (draws(state, state))
+            {
+                return state.FrameRate;
+            }
+        }
+
+        // The sub-states are the normal state's (MCVfxAppearanceType::GetShape).
+        const MCActorData& normal = vfx.StateData(MCActorState::Normal);
+
+        for (const MCActorData& sub : vfx.SubStates)
+        {
+            if (draws(normal, sub))
+            {
+                return normal.FrameRate;
+            }
+        }
+
+        return 0.0f;
+    }
+
+    /// <summary>
+    /// The frames a second <paramref name="type"/> plays <paramref name="packet"/> at: a VFX state's, a weapon effect's
+    /// (its one state's); 0 for the other classes.
+    /// </summary>
+    float PacketFrameRate(const MCAppearanceType& type, uint32_t packet)
+    {
+        switch (static_cast<MCAppearanceClass>(type.AppearanceNum >> AppearanceClassShift))
+        {
+            case MCAppearanceClass::Vfx:
+                return VfxPacketFrameRate(static_cast<const MCVfxAppearanceType&>(type), packet);
+            case MCAppearanceClass::Arm:
+                return static_cast<const MCArmAppearanceType&>(type).ActorData.FrameRate;
+            default:
+                return 0.0f;
+        }
+    }
+
+    /// <summary>
     /// <paramref name="type"/>'s sequences (one a packet <paramref name="packets"/> picks), their translucent frames
     /// holding their blended pixels when <paramref name="keepBlended"/> (an effect's).
     /// </summary>
@@ -1591,6 +1651,7 @@ namespace
             Sequence& sequence = made.Sequences.emplace_back();
             sequence.Folder = MCHdArt::FolderOf(MCHdArt::ObjectShapeKey{shapeFile, appearance, packet});
             sequence.Blended = keepBlended;
+            sequence.FrameRate = PacketFrameRate(*type, packet);
             const std::span<const uint8_t> table = shape->FrameList();
             sequence.Table = std::hash<std::string_view>{}(
                 std::string_view(reinterpret_cast<const char*>(table.data()), table.size()));
@@ -1969,8 +2030,10 @@ TEST_CASE_ISOLATED("tool: --hd-extract-objects writes the vehicles', Elementals'
             const std::string sameAs = repeating[i].has_value()
                                            ? std::format(", \"same_as\": \"{}\"", repeating[i]->generic_string())
                                            : std::string();
-            json += std::format("{}\n  {{\"folder\": \"{}\"{}, \"frames\": [{}]}}", i == 0 ? "" : ",",
-                                sequence.Folder.generic_string(), sameAs, FramesJson(sequence));
+            const std::string frameRate =
+                sequence.FrameRate > 0.0f ? std::format(", \"frame_rate\": {}", sequence.FrameRate) : std::string();
+            json += std::format("{}\n  {{\"folder\": \"{}\"{}{}, \"frames\": [{}]}}", i == 0 ? "" : ",",
+                                sequence.Folder.generic_string(), sameAs, frameRate, FramesJson(sequence));
         }
 
         json += "]}";
@@ -2075,22 +2138,9 @@ namespace
             if (const std::shared_ptr<MCSpriteManager> sprites = SpriteManager(); sprites != nullptr)
             {
                 sprites->DumpAll();
-                sprites->AttachHdArt();
             }
 
-            if (MCGameContext::Current().HasCraterManager())
-            {
-                CraterManager().AttachHdArt();
-            }
-
-            if (const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
-                iface != nullptr && iface->MechBar != nullptr)
-            {
-                for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
-                {
-                    button->AttachHdArt();
-                }
-            }
+            AttachHdArtToLoaded();
         }
 
         ~MCHdArtOn()
@@ -3001,8 +3051,18 @@ TEST_CASE_ISOLATED("game: HD art keeps the craters' palette indices")
 
 namespace
 {
-    /// <summary>A shape's VFX table, one frame, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
-    std::vector<uint8_t> OneFrameTable(int32_t width, int32_t height, std::span<const uint8_t> rows)
+    /// <summary>A frame of a VFX shape table: its bounds' top left from the hot spot, its size, and its encoded rows.</summary>
+    struct TableFrame
+    {
+        int32_t XMin = 0;
+        int32_t YMin = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+        std::span<const uint8_t> Rows;
+    };
+
+    /// <summary>A shape's VFX table of <paramref name="frames"/>, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
+    std::vector<uint8_t> FramesTable(std::span<const TableFrame> frames)
     {
         std::vector<uint8_t> table = {'1', '.', '1', '0'};
         const auto put = [&table](int32_t value)
@@ -3013,19 +3073,40 @@ namespace
             }
         };
 
-        constexpr int32_t FirstFrame = 16;
+        // The directory (each frame's offset, then 0) after the count, then each frame's header and rows.
+        constexpr int32_t DirectoryAt = 8;
+        constexpr int32_t EntryBytes = 8;
+        constexpr int32_t HeaderBytes = 0x18;
         constexpr int BoundsShift = 16;
-        put(1);
-        put(FirstFrame);
-        put(0);
-        put(width << BoundsShift | height);
-        put(0);
-        put(0);
-        put(0);
-        put(width - 1);
-        put(height - 1);
-        table.insert(table.end(), rows.begin(), rows.end());
+        const auto count = static_cast<int32_t>(frames.size());
+        put(count);
+        int32_t offset = DirectoryAt + EntryBytes * count;
+
+        for (const TableFrame& frame : frames)
+        {
+            put(offset);
+            put(0);
+            offset += HeaderBytes + static_cast<int32_t>(frame.Rows.size());
+        }
+
+        for (const TableFrame& frame : frames)
+        {
+            put(frame.Width << BoundsShift | frame.Height);
+            put(0);
+            put(frame.XMin);
+            put(frame.YMin);
+            put(frame.XMin + frame.Width - 1);
+            put(frame.YMin + frame.Height - 1);
+            table.insert(table.end(), frame.Rows.begin(), frame.Rows.end());
+        }
+
         return table;
+    }
+
+    /// <summary>A shape's VFX table, one frame, as the game's encoder lays one out (vfx/MCVfxShapeScan.cpp).</summary>
+    std::vector<uint8_t> OneFrameTable(int32_t width, int32_t height, std::span<const uint8_t> rows)
+    {
+        return FramesTable(std::array{TableFrame{0, 0, width, height, rows}});
     }
 }
 
@@ -3220,6 +3301,417 @@ TEST_CASE_ISOLATED("game: an effect's HD frame draws its blended pixels and ligh
         }
     }
 
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// An object's baked shadow (MCHdArt::MarkBakedShadows) is its black outside its art's outline, in groups more against
+/// empty pixels than drawn ones: a block of black beside the body is marked, a black pixel inside the body is not, and
+/// a frame holding its blended pixels (an effect's) keeps no marks.
+/// </summary>
+TEST_CASE("hd art: an object's baked shadow is its black outside its outline, not the black inside it")
+{
+    // 10 x 6: the body in columns 0-4 (black at 2, 2 inside it), its shadow in columns 5-8 of rows 3-5.
+    constexpr int32_t Width = 10;
+    constexpr int32_t Height = 6;
+    constexpr uint8_t BodyIndex = 50;
+    constexpr int32_t BodyColumns = 5;
+    constexpr std::pair<int32_t, int32_t> Inside = {2, 2};
+    const auto shadowAt = [](int32_t x, int32_t y) { return x >= BodyColumns && x < Width - 1 && y >= 3; };
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, 0);
+
+    for (int32_t y = 0; y < Height; ++y)
+    {
+        for (int32_t x = 0; x < Width; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * Width + x) * MCHdArt::IndexBytes;
+            const bool body = x < BodyColumns;
+
+            if (body || shadowAt(x, y))
+            {
+                frame.Indices[at] = body && std::pair{x, y} != Inside ? BodyIndex : MCHdArt::BakedShadowIndex;
+                frame.Indices[at + 1] = HasIndex;
+            }
+        }
+    }
+
+    MCHdArt::Frame blended = frame;
+    blended.Blended = true;
+    MCHdArt::MarkBakedShadows(frame);
+    MCHdArt::MarkBakedShadows(blended);
+    const auto green = [](const MCHdArt::Frame& marked, int32_t x, int32_t y)
+    { return marked.Indices[(static_cast<size_t>(y) * Width + x) * MCHdArt::IndexBytes + 1]; };
+
+    for (int32_t y = 0; y < Height; ++y)
+    {
+        for (int32_t x = 0; x < Width; ++x)
+        {
+            MCTest::Scope scope(std::format("pixel {}, {}", x, y));
+            const uint8_t expected = shadowAt(x, y) ? MCHdArt::BakedShadow : x < BodyColumns ? HasIndex : uint8_t{0};
+            CHECK_EQ(green(frame, x, y), expected);
+            CHECK_EQ(green(blended, x, y), x < BodyColumns || shadowAt(x, y) ? HasIndex : uint8_t{0});
+        }
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// Writes an object's frame (not holding its blended pixels) as a PNG pair, <paramref name="stem"/>.png and _idx.png:
+    /// <paramref name="width"/> x <paramref name="height"/> original pixels, <paramref name="scale"/> HD pixels each,
+    /// opaque where <paramref name="indexAt"/> gives an index, in that index's colour of <paramref name="colors"/>.
+    /// </summary>
+    void WriteObjectFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
+                          std::span<const SDL_Color, 256> colors,
+                          const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt)
+    {
+        std::vector<uint8_t> pixels(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
+        std::vector<uint8_t> index(pixels.size());
+
+        for (int32_t y = 0; y < height * scale; ++y)
+        {
+            for (int32_t x = 0; x < width * scale; ++x)
+            {
+                const size_t at = (static_cast<size_t>(y) * width * scale + x) * BytesPerPixel;
+                const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
+                const SDL_Color c = colors[original.value_or(0)];
+                const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
+                std::ranges::copy(std::array{c.r, c.g, c.b, alpha}, pixels.begin() + static_cast<ptrdiff_t>(at));
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), alpha, 0, HasIndex},
+                                  index.begin() + static_cast<ptrdiff_t>(at));
+            }
+        }
+
+        SavePng(std::filesystem::path(stem).concat(".png"), width * scale, height * scale, pixels);
+        SavePng(std::filesystem::path(stem).concat("_idx.png"), width * scale, height * scale, index);
+    }
+}
+
+/// <summary>
+/// Sun shadows (GHdSunShadows), on the screen drawn by the GPU over mission 1, paused: an object's frame from the pack
+/// (its body, its baked shadow in black beside it) shows its shadow solid black with them off, and with them on as
+/// what lies under it at half its light; its body is the same either way. A part drawn as a unit's sun shadow
+/// (MCRenderer::SunShadowScope), with the shadow cast a pixel right and up for every pixel above its foot, darkens the
+/// ground where its rows land and leaves its own place as it was.
+/// </summary>
+TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked shadow, and cast a unit's own")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t body = FullColorIndex(colors);
+
+    // 8 x 4, standing 12 to 9 rows above its foot: the body in columns 0-3, its baked shadow in columns 4-7.
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    constexpr int32_t BodyColumns = 4;
+    constexpr int32_t Top = -12;
+    constexpr uint8_t EightPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.push_back(EightPixels);
+
+        for (int32_t column = 0; column < Width; ++column)
+        {
+            rows.push_back(column < BodyColumns ? body : MCHdArt::BakedShadowIndex);
+        }
+
+        rows.push_back(RowEnd);
+    }
+
+    const std::vector<uint8_t> table = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(!shape->FrameList().empty());
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_sun_shadows";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+    std::filesystem::create_directories(pack / MCHdArt::FolderOf(key));
+    constexpr int32_t Scale = 2;
+    WriteObjectFrame(pack / MCHdArt::FolderOf(key) / "0", Width, Height, Scale, colors,
+                     [&](int32_t column, int32_t) { return column < BodyColumns ? body : MCHdArt::BakedShadowIndex; });
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    lighting.SunShadow = Darkness;
+    lighting.SunShadowRight = 1.0f;
+    lighting.SunShadowUp = 1.0f;
+    GamePaused = true;
+
+    // The ground, then the shape drawn on it (as a sun shadow inside the scope): as it is (a shape draw) or mirrored
+    // about its hot spot (a transform's blit), into the pane or a copy of it ending at window column paneRight.
+    const auto drawn =
+        [&](int32_t sunShadows, bool cast, bool mirrored = false, std::optional<int32_t> paneRight = std::nullopt)
+    {
+        GHdSunShadows = sunShadows;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto under = display->ReadFrame();
+        REQUIRE(under.has_value());
+        {
+            MCPane cut = pane;
+            cut.X1 = paneRight.value_or(pane.X1);
+            const MCRenderer::SunShadowScope scope(cast);
+
+            if (mirrored)
+            {
+                AGShapeTransform(cut, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(cut, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto over = display->ReadFrame();
+        REQUIRE(over.has_value());
+        return std::pair{std::move(*under), std::move(*over)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 3; };
+    const auto sameAs = [&](SDL_Color actual, float r, float g, float b)
+    {
+        return near(actual.r, static_cast<int32_t>(std::lround(r))) &&
+               near(actual.g, static_cast<int32_t>(std::lround(g))) &&
+               near(actual.b, static_cast<int32_t>(std::lround(b)));
+    };
+
+    // The inner pixels of the body (columns 1-2) and of its shadow (5-6), rows 1-2 of the frame.
+    const auto [offUnder, off] = drawn(0, false);
+    const auto [onUnder, on] = drawn(1, false);
+
+    for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+    {
+        for (const int32_t column : {1, 2, 5, 6})
+        {
+            const SDL_Color under = at(onUnder, column, row);
+            MCTest::Scope scope(std::format("column {}, row {}", column, row));
+
+            if (column < BodyColumns)
+            {
+                CHECK(sameAs(at(off, column, row), colors[body].r, colors[body].g, colors[body].b));
+                CHECK(sameAs(at(on, column, row), colors[body].r, colors[body].g, colors[body].b));
+            }
+            else
+            {
+                CHECK(sameAs(at(off, column, row), 0.0f, 0.0f, 0.0f));
+                CHECK(sameAs(at(on, column, row), under.r * (1.0f - Darkness), under.g * (1.0f - Darkness),
+                             under.b * (1.0f - Darkness)));
+            }
+        }
+    }
+
+    // Cast: a row h above the foot lands h pixels right of where it stands (column c of a mirrored frame stands at -c);
+    // its own place keeps the ground. In a pane ending at the frame's last column (the cast lands wholly beyond it), the
+    // ground beyond is untouched.
+    for (const bool mirrored : {false, true})
+    {
+        const int32_t lastColumn = mirrored ? 0 : Width - 1;
+
+        for (const bool cut : {false, true})
+        {
+            const auto [castUnder, cast] =
+                drawn(1, true, mirrored, cut ? std::optional(pane.X0 + x + lastColumn) : std::nullopt);
+
+            for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+            {
+                for (const int32_t column : {1, 2, 5, 6})
+                {
+                    const int32_t stands = mirrored ? -column : column;
+                    const int32_t right = stands - row;
+                    REQUIRE(right > lastColumn);
+                    const SDL_Color under = at(castUnder, right, row);
+                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: cast to column {}",
+                                                    mirrored ? "mirrored" : "as is", cut ? ", cut" : "", column, row,
+                                                    right));
+                    const float kept = cut ? 1.0f : 1.0f - Darkness;
+                    CHECK(sameAs(at(cast, right, row), under.r * kept, under.g * kept, under.b * kept));
+                    const SDL_Color own = at(castUnder, stands, row);
+                    CHECK(sameAs(at(cast, stands, row), own.r, own.g, own.b));
+                }
+            }
+        }
+    }
+
+    GamePaused = false;
+    GHdSunShadows = 0;
+    lighting = kept;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// An effect's frame part of the way to its next (MCRenderer::InBetweenScope) shows the pack's in-between instead, over
+/// the two frames' bounds together: on the screen, drawn by the GPU over mission 1, a two-frame shape whose second frame
+/// lies two columns right of its first shows its frame alone, then within the scope the in-between's columns where the
+/// two frames' are, drawn as it is and mirrored about the hot spot (as the frame is).
+/// </summary>
+TEST_CASE_ISOLATED("game: an effect's frame part of the way to its next shows the pack's in-between")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // Two frames of 4 x 4 opaque pixels, the second 2 columns right of the first: 6 columns together.
+    constexpr int32_t Side = 4;
+    constexpr int32_t Shift = 2;
+    constexpr int32_t Together = Side + Shift;
+    constexpr uint8_t FourPixels = 9;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Side; ++row)
+    {
+        rows.insert(rows.end(), {FourPixels, opaque, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table =
+        FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}, TableFrame{Shift, 0, Side, Side, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+    REQUIRE(VfxShapeCount(shape->FrameList()) == 2);
+
+    // The frames red and green; the in-between of the first toward the second blue in its first 3 columns, yellow in
+    // the rest, so a mirrored one shows which way it lies.
+    constexpr int32_t Scale = 2;
+    constexpr int32_t FirstYellow = 3;
+    constexpr SDL_Color Red = {200, 0, 0, 255};
+    constexpr SDL_Color Green = {0, 200, 0, 255};
+    constexpr SDL_Color Blue = {0, 0, 200, 255};
+    constexpr SDL_Color Yellow = {200, 200, 0, 255};
+    const auto none = [](int32_t) { return std::optional<uint8_t>(); };
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_in_between";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::ObjectShapeKey key{"shapes", TestEffectAppearance, 0};
+    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+    std::filesystem::create_directories(folder);
+    WriteBlendedFrame(folder / "0", Side, Side, Scale, [&](int32_t) { return Red; }, none);
+    WriteBlendedFrame(folder / "1", Side, Side, Scale, [&](int32_t) { return Green; }, none);
+    WriteBlendedFrame(
+        folder / "0_1", Together, Side, Scale, [&](int32_t column) { return column < FirstYellow ? Blue : Yellow; },
+        none);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+
+    // The screen's pixels after drawing frame 0 with its hot spot at (x, y), as it is or mirrored, in the scope of an
+    // in-between (none: none), and before.
+    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto before = display->ReadFrame();
+        REQUIRE(before.has_value());
+        {
+            const MCRenderer::InBetweenScope scope(inBetween);
+
+            if (mirrored)
+            {
+                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto after = display->ReadFrame();
+        REQUIRE(after.has_value());
+        return std::pair{std::move(*before), std::move(*after)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+    const auto same = [&](SDL_Color actual, SDL_Color expected)
+    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+
+    // The hot spot's columns each way the two frames reach: a column of the first frame shows red alone, of the
+    // in-between blue or yellow (as it is, column c of the bounds at x + c; mirrored, at x - c).
+    for (const bool mirrored : {false, true})
+    {
+        for (const bool between : {false, true})
+        {
+            const auto [before, after] = drawn(mirrored, between ? std::optional(MCInBetween{0, 1, 1}) : std::nullopt);
+
+            for (int32_t row = 0; row < Side; ++row)
+            {
+                for (int32_t column = 0; column < Together; ++column)
+                {
+                    const int32_t shown = mirrored ? -column : column;
+                    const SDL_Color pixel = at(after, shown, row);
+                    MCTest::Scope scope(std::format("{}{}, column {}, row {}: {} {} {}",
+                                                    mirrored ? "mirrored" : "as is", between ? ", in-between" : "",
+                                                    column, row, pixel.r, pixel.g, pixel.b));
+
+                    if (between)
+                    {
+                        CHECK(same(pixel, column < FirstYellow ? Blue : Yellow));
+                    }
+                    else
+                    {
+                        CHECK(same(pixel, column < Side ? Red : at(before, shown, row)));
+                    }
+                }
+            }
+        }
+    }
+
+    hdArt.reset();
     std::filesystem::remove_all(scratch);
 }
 
@@ -3677,9 +4169,9 @@ namespace
 {
     /// <summary>
     /// With
-    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;]]]]</c>,
+    /// <c>--hd-lighting &lt;strength&gt;[,&lt;ambient&gt;[,&lt;scatter&gt;,&lt;knee&gt;,&lt;most&gt;,&lt;self-lit&gt;[,&lt;facing&gt;[,&lt;shadow&gt;[,&lt;tint&gt;,&lt;bloom&gt;,&lt;bloom-from&gt;,&lt;haze&gt;[,&lt;glow-ovals&gt;[,&lt;water&gt;]]]]]]]</c>,
     /// turns HD lighting on (sprite/MCSceneLights.h), its lights that strong and the world's own light that bright (1 as
-    /// drawn, below 1 dusk), and the tone as given (MCSceneLights::MCLighting's).
+    /// drawn, below 1 dusk), and the tone and the looks as given (MCSceneLights::MCLighting's).
     /// </summary>
     void LightingFromOptions()
     {
@@ -3692,15 +4184,38 @@ namespace
 
         MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
         const std::string given(*lighting);
-        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength, &settings.Ambient,
-                            &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit, &settings.Facing,
-                            &settings.Shadow) >= 1);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &settings.Strength,
+                            &settings.Ambient, &settings.Scatter, &settings.Knee, &settings.Most, &settings.SelfLit,
+                            &settings.Facing, &settings.Shadow, &settings.Tint, &settings.Bloom, &settings.BloomFrom,
+                            &settings.Haze, &settings.GlowOvals, &settings.Water) >= 1);
         GHdLighting = 1;
         std::cout << std::format(
             "  HD lighting: strength {:.2f}, the world's own light {:.2f}, scatter {:.2f}, knee {:.2f}, "
-            "most {:.2f}, self-lit above {:.2f}, facing {:.1f}, shadow {:.2f}\n",
+            "most {:.2f}, self-lit above {:.2f}, facing {:.1f}, shadow {:.2f}, tint {:.2f}, bloom {:.2f} above {:.2f}, "
+            "haze {:.1f}, glow ovals {:.2f}, water {:.2f}\n",
             settings.Strength, settings.Ambient, settings.Scatter, settings.Knee, settings.Most, settings.SelfLit,
-            settings.Facing, settings.Shadow);
+            settings.Facing, settings.Shadow, settings.Tint, settings.Bloom, settings.BloomFrom, settings.Haze,
+            settings.GlowOvals, settings.Water);
+    }
+
+    /// <summary>
+    /// With <c>--hd-sun-shadows &lt;darkness&gt;</c>, turns sun shadows on (GHdSunShadows): objects' shadows take that
+    /// much of the light under them (MCLighting::SunShadow, 0 to 1).
+    /// </summary>
+    void SunShadowsFromOptions()
+    {
+        const std::optional<std::string_view> darkness = MCTest::Option("hd-sun-shadows");
+
+        if (!darkness.has_value())
+        {
+            return;
+        }
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCSceneLights::Lighting().SunShadow = std::strtof(std::string(*darkness).c_str(), nullptr);
+        GHdSunShadows = 1;
+        std::cout << std::format("  sun shadows: {:.2f} of the light under them taken\n",
+                                 MCSceneLights::Lighting().SunShadow);
     }
 
     /// <summary>
@@ -3748,7 +4263,54 @@ namespace
         }
 
         LightingFromOptions();
+        SunShadowsFromOptions();
         return original;
+    }
+
+    /// <summary>
+    /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
+    /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
+    /// command names them (main/MCArtModes.h: original, hd, lit, dusk). Without <c>--hd-original 1</c>, so the pack is
+    /// there for the modes that draw HD art.
+    /// </summary>
+    std::map<int32_t, MCArtMode> ArtModesFromOptions()
+    {
+        std::map<int32_t, MCArtMode> modes;
+
+        for (const std::string& entry : ListOption("hd-art-modes"))
+        {
+            MCTest::Scope scope(std::format("--hd-art-modes {}", entry));
+            const size_t colon = entry.find(':');
+            REQUIRE(colon != std::string::npos);
+            int32_t frame = 0;
+            const auto [end, error] = std::from_chars(entry.data(), entry.data() + colon, frame);
+            REQUIRE((error == std::errc() && end == entry.data() + colon));
+            const std::optional<MCArtMode> mode = ArtModeNamed(std::string_view(entry).substr(colon + 1));
+            REQUIRE(mode.has_value());
+            modes.insert_or_assign(frame, *mode);
+        }
+
+        REQUIRE((modes.empty() || !MCTest::Option("hd-original").has_value()));
+        return modes;
+    }
+
+    /// <summary>
+    /// Shows the art mode <paramref name="modes"/> (<see cref="ArtModesFromOptions"/>) asks for at
+    /// <paramref name="frame"/>, if any.
+    /// </summary>
+    void SwitchArtMode(const std::map<int32_t, MCArtMode>& modes, int32_t frame)
+    {
+        if (const auto found = modes.find(frame); found != modes.end())
+        {
+            MCTest::Scope scope(std::format("--hd-art-modes {}:{}", frame, found->second.Name));
+
+            if (const std::expected<void, std::string> shown = ShowArtMode(found->second); !shown.has_value())
+            {
+                FAIL(shown.error());
+            }
+
+            std::cout << std::format("  frame {}: {}\n", frame, found->second.Name);
+        }
     }
 
     /// <summary>
@@ -3919,6 +4481,27 @@ namespace
 
         return std::nullopt;
     }
+
+    /// <summary>
+    /// Object type <paramref name="type"/> (its packet in the object PAK) as its name and appearance ("name (appearance
+    /// 0x...)"), empty when it has none.
+    /// </summary>
+    std::string ObjectTypeLabel(uint32_t type)
+    {
+        MCPacketFile pak;
+        REQUIRE(pak.Open(GamePath(ObjectPath, ObjectPakName)) == 0);
+        MCFitIniFile fit;
+
+        if (static_cast<int32_t>(type) >= pak.GetNumPackets() || pak.SeekPacket(static_cast<int32_t>(type)) != 0 ||
+            pak.GetPacketSize() <= 0 || fit.Open(pak, static_cast<uint32_t>(pak.GetPacketSize())) != 0 ||
+            fit.SeekBlock("ObjectType") != 0)
+        {
+            return {};
+        }
+
+        return std::format("{} (appearance {:#x})", fit.Read<std::string>("Name").value_or(""),
+                           fit.Read<int32_t>("Appearance").value_or(0));
+    }
 }
 
 /// <summary>
@@ -3926,7 +4509,11 @@ namespace
 /// <c>--explosion &lt;name,...&gt;</c> (object types; default minedet, mdst and gasexpl) goes off beside the player's mech,
 /// shot as it plays (<c>&lt;name&gt;_&lt;frame&gt;_hd.png</c>), or with <c>--hd-original 1</c> without HD art. A run plays
 /// out the same every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as
-/// --hd-pack's.
+/// --hd-pack's. With <c>--hd-effects-video &lt;n&gt;</c>, each plays n frames at 60 a second, every one shot
+/// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
+/// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
+/// tumbling at 7 frames a second as it flies. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
+/// each plays (original, hd, lit, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
 {
@@ -3953,10 +4540,53 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         names = {"minedet", "mdst", "gasexpl"};
     }
 
-    // Beside the mech (world units), the frames shot after it goes off, and the frames it is given to finish.
+    // Beside the mech (world units), the frames shot after it goes off, and the frames it is given to finish; a video's
+    // frames are shorter.
     constexpr float Beside = 60.0f;
     constexpr std::array<int32_t, 5> ShotFrames = {2, 5, 9, 14, 20};
     constexpr int32_t Frames = 45;
+    constexpr float VideoFrameSeconds = 1.0f / 60.0f;
+    int32_t videoFrames = 0;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-effects-video"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), videoFrames);
+    }
+
+    const bool video = videoFrames > 0;
+    const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
+
+    // Plays the effect just set off, shooting its frames as <name>_<frame>.
+    const auto play = [&](std::string_view name)
+    {
+        for (int32_t frame = 1; frame <= (video ? videoFrames : Frames); ++frame)
+        {
+            SwitchArtMode(artModes, frame);
+            MCTestGame::RunFrame(video ? VideoFrameSeconds : FrameSeconds);
+
+            if (video)
+            {
+                Shoot(folder, std::format("{}_{:04}", name, frame), original);
+            }
+            else if (std::ranges::contains(ShotFrames, frame))
+            {
+                Shoot(folder, std::format("{}_{:02}", name, frame), original);
+            }
+        }
+    };
+
+    if (MCTest::Option("hd-effects-arms").has_value())
+    {
+        const auto mech = std::dynamic_pointer_cast<MCBattleMech>(player);
+        REQUIRE(mech != nullptr);
+        const auto& type = static_cast<const MCBattleMechType&>(*mech->GetObjectType());
+        std::cout << std::format("  arms: {} and {}\n", ObjectTypeLabel(type.LeftArmDebrisId),
+                                 ObjectTypeLabel(type.RightArmDebrisId));
+        mech->LeftArmBlownThisFrame = true;
+        mech->RightArmBlownThisFrame = true;
+        play("arms");
+        return;
+    }
 
     for (const std::string& name : names)
     {
@@ -3966,16 +4596,7 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         MCVector3D at = player->GetPosition();
         at.X += Beside;
         CreateExplosion(*type, at, 0.0f, 0.0f);
-
-        for (int32_t frame = 1; frame <= Frames; ++frame)
-        {
-            MCTestGame::RunFrame(FrameSeconds);
-
-            if (std::ranges::contains(ShotFrames, frame))
-            {
-                Shoot(folder, std::format("{}_{:02}", name, frame), original);
-            }
-        }
+        play(name);
     }
 }
 
@@ -9588,4 +10209,106 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
             Shoot(folder, std::format("ground_{}", shot++), original);
         }
     }
+}
+
+namespace
+{
+    /// <summary>--hd-water's frames by default: five seconds.</summary>
+    constexpr int32_t WaterFrames = 150;
+    /// <summary>--hd-water's frames' length: 30 a second, a video's.</summary>
+    constexpr float WaterFrameSeconds = 1.0f / 30.0f;
+    /// <summary>--hd-water's shore is the tile with the most of both water and land within this many tiles each way.</summary>
+    constexpr int32_t ShoreReach = 6;
+    /// <summary>The terrain type of the tiles off the map (the corners outside its diamond).</summary>
+    constexpr uint32_t OffMapTerrain = 0;
+}
+
+/// <summary>
+/// Tool: <c>--hd-water &lt;pack&gt; --shots &lt;folder&gt;</c> pictures the water moving (port-only: HD lighting's
+/// living water) as --hd-pack does: mission <c>--mission</c>'s map revealed, the camera over the shore with the most of
+/// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
+/// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
+/// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
+/// switches the art as it plays (original, hd, lit, dusk: the debug console's art command).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-water");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-water-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCFixedZoomHeight = std::strtof(std::string(*zoom).c_str(), nullptr);
+    }
+
+    int32_t frames = WaterFrames;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-water-frames"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), frames);
+    }
+
+    // The shore: the tile with the most of the fewer of water and land around it, all of it on the map (terrain type 0
+    // is off it, the corners outside its diamond).
+    const int32_t width = GameMap().Width;
+    const int32_t height = GameMap().Height;
+    const auto typeAt = [&](int32_t row, int32_t column)
+    { return GameMap().Map[static_cast<size_t>(row) * width + column].TerrainType(); };
+    int32_t best = -1;
+    int32_t bestRow = height / 2;
+    int32_t bestColumn = width / 2;
+
+    for (int32_t row = ShoreReach; row < height - ShoreReach; ++row)
+    {
+        for (int32_t column = ShoreReach; column < width - ShoreReach; ++column)
+        {
+            int32_t water = 0;
+            int32_t land = 0;
+            bool onMap = true;
+
+            for (int32_t r = row - ShoreReach; r <= row + ShoreReach; ++r)
+            {
+                for (int32_t c = column - ShoreReach; c <= column + ShoreReach; ++c)
+                {
+                    const uint32_t type = typeAt(r, c);
+                    onMap = onMap && type != OffMapTerrain;
+                    ++(type >= FirstWaterTerrain ? water : land);
+                }
+            }
+
+            if (onMap && std::min(water, land) > best)
+            {
+                best = std::min(water, land);
+                bestRow = row;
+                bestColumn = column;
+            }
+        }
+    }
+
+    std::cout << std::format("  the shore: tile ({}, {}), {} of the fewer of water and land around it\n", bestRow,
+                             bestColumn, best);
+    Eye()->SetPosition(MCVector3D(TileColToWorld(bestColumn), TileRowToWorld(bestRow), 0.0f));
+
+    const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        SwitchArtMode(artModes, frame);
+        MCTestGame::RunFrame(WaterFrameSeconds);
+        Shoot(folder, std::format("water_{:04}", frame), original);
+    }
+
+    MCFixedZoomHeight = 0.0f;
 }

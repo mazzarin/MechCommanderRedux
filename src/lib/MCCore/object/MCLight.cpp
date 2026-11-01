@@ -102,6 +102,8 @@ auto MCLight::Init(std::shared_ptr<MCObjectType> objType) -> int32_t
 
     Appearance = std::make_unique<MCVfxAppearance>();
     Appearance->Init();
+    // Port-only (HD lighting): the glow stands for the light the world takes around it.
+    Appearance->Glow = true;
 
     if (const int32_t result = Appearance->Init(apprType, WeakAs<MCGameObject>()); result != 0)
     {

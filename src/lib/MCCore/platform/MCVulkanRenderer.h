@@ -120,6 +120,12 @@ public:
     std::shared_ptr<SDL_GPUTexture> SurfaceTexture(const MCWindow& window, uint32_t& width, uint32_t& height) const;
 
     /// <summary>
+    /// Port-only (HD lighting's living water): the palette indices of <paramref name="window"/>'s surface (R8, the size
+    /// of its colour texture), as <see cref="Execute"/> left them; null when the window has no surface yet.
+    /// </summary>
+    std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
+
+    /// <summary>
     /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
     /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
     /// </summary>
@@ -457,6 +463,17 @@ private:
     bool AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command);
 
     /// <summary>
+    /// Port-only (sun shadows): adds the shadow the sun casts of frame <paramref name="shapeNum"/> of
+    /// <paramref name="table"/> (its HD art pack frame; none without one), the frame's first column and row at window
+    /// (<paramref name="left"/>, <paramref name="top"/>), <paramref name="mirrored"/> its first column drawn its last: each
+    /// point cast MCLighting::SunShadowRight and SunShadowUp per pixel it stands above the hot spot's row, black at
+    /// the frame's coverage as dark as MCLighting::SunShadow, over what lies under it (no indices), within
+    /// <paramref name="clip"/> (window pixels, inclusive; the window's when none).
+    /// </summary>
+    void AddSunShadow(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left, int32_t top,
+                      bool mirrored, const std::optional<Quad>& clip);
+
+    /// <summary>
     /// Port-only: adds the smooth colour pass of a game-drawn picture mapped with its key transparent (the fog of war,
     /// KindSmoothMap): its drawn texels' edges rounded at the output's resolution, as a smooth-edged shape's are, from
     /// <paramref name="source"/> (the picture's surface). False when the polygon's vertices lie in a line.
@@ -519,7 +536,27 @@ private:
     /// bytes' hash (<see cref="MCHdArt::FindShape"/>); null when there is none.
     /// </summary>
     std::shared_ptr<const MCHdArt::Frame> HdShape(std::span<const uint8_t> table, int32_t frame, int32_t width,
-                                                  int32_t height);
+                                                  int32_t height, int32_t step = 0);
+
+    /// <summary>
+    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together: where the frame's
+    /// bounds start in the in-between's, and the in-between's size (original pixels).
+    /// </summary>
+    struct HdInBetweenFrame
+    {
+        std::shared_ptr<const MCHdArt::Frame> Frame;
+        int32_t FrameX = 0;
+        int32_t FrameY = 0;
+        int32_t Width = 0;
+        int32_t Height = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the HD art pack's in-between a draw of frame <paramref name="shapeNum"/> of <paramref name="table"/>
+    /// shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>); none when the draw isn't of the
+    /// in-between's frame or the pack hasn't the in-between.
+    /// </summary>
+    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>

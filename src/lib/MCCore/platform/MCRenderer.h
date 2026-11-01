@@ -16,6 +16,7 @@
 
 #include "lib/MCOptionalRef.h"
 #include "platform/MCAddressKey.h"
+#include "sprite/MCInBetween.h"
 #include "vfx/MCVfx.h"
 
 namespace MCHdArt
@@ -456,6 +457,11 @@ struct MCAlphaBlitCommand
     int32_t Rows;
     bool Mirror;
     bool FullSize;
+    /// <summary>
+    /// Port-only (sun shadows): the window rectangle the blit was clipped to (inclusive; X1 below X0 when unknown),
+    /// which a unit's shadow, cast beyond its bitmap, keeps to.
+    /// </summary>
+    MCRect Clip{0, 0, -1, -1};
 };
 
 /// <summary>
@@ -642,6 +648,77 @@ public:
         ExpectUnregistered(const ExpectUnregistered&) = delete;
         ExpectUnregistered& operator=(const ExpectUnregistered&) = delete;
     };
+
+    /// <summary>
+    /// Port-only (HD lighting): while one made with <c>true</c> is alive, the draws are a light's glow (MCLight's,
+    /// <see cref="MCElement::Glow"/>): the hardware renderer shows them as strong as the lighting's GlowOvals, since the
+    /// light they stand for lights the world around them. One made with <c>false</c> changes nothing.
+    /// </summary>
+    class GlowScope
+    {
+    public:
+        /// <summary>Starts drawing a glow when <paramref name="glow"/>.</summary>
+        explicit GlowScope(bool glow);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~GlowScope();
+
+        GlowScope(const GlowScope&) = delete;
+        GlowScope& operator=(const GlowScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether the draws now are a light's glow (<see cref="GlowScope"/>).</summary>
+    static bool DrawingGlow();
+
+    /// <summary>
+    /// Port-only (HD art): while one lives, the shape draws of its frame (an effect's) show the HD art pack's in-between
+    /// toward the next frame instead, where the pack has it. One made with none draws frames as they are.
+    /// </summary>
+    class InBetweenScope
+    {
+    public:
+        /// <summary>Starts drawing <paramref name="inBetween"/> (none: the frames as they are).</summary>
+        explicit InBetweenScope(const std::optional<MCInBetween>& inBetween);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~InBetweenScope();
+
+        InBetweenScope(const InBetweenScope&) = delete;
+        InBetweenScope& operator=(const InBetweenScope&) = delete;
+
+    private:
+        std::optional<MCInBetween> _Was;
+    };
+
+    /// <summary>The in-between the draws now show (<see cref="InBetweenScope"/>), none outside one.</summary>
+    static const std::optional<MCInBetween>& DrawingInBetween();
+
+    /// <summary>
+    /// Port-only (sun shadows): while one made with <c>true</c> lives, the shape draws (a unit's parts) draw the shadow
+    /// the sun casts of their HD art pack frames instead (the hardware renderer's; nothing without a frame, and nothing
+    /// in software). One made with <c>false</c> changes nothing.
+    /// </summary>
+    class SunShadowScope
+    {
+    public:
+        /// <summary>Starts drawing shadows when <paramref name="shadow"/>.</summary>
+        explicit SunShadowScope(bool shadow);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~SunShadowScope();
+
+        SunShadowScope(const SunShadowScope&) = delete;
+        SunShadowScope& operator=(const SunShadowScope&) = delete;
+
+    private:
+        bool _Was = false;
+    };
+
+    /// <summary>Whether the shape draws now are a unit's sun shadow (<see cref="SunShadowScope"/>).</summary>
+    static bool DrawingSunShadow();
 
     // Frame surfaces ----------------------------------------------------------------------------------------------
 

@@ -55,7 +55,13 @@ struct MCMapTile
 
     /// <summary>The tile's overlay type.</summary>
     uint32_t OverlayType() const { return Overlay & 0x7f; }
+
+    /// <summary>The tile's terrain type.</summary>
+    uint32_t TerrainType() const { return Cells & 0x7f; }
 };
+
+/// <summary>The terrain types from this one on are water.</summary>
+inline constexpr uint32_t FirstWaterTerrain = 0x2b;
 
 static_assert(sizeof(MCMapTile) == 8, "a map tile is read raw from the map file");
 

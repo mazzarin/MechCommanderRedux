@@ -23,6 +23,7 @@
 #include "object/MCVertexPlacement.h"
 #include "object/MCWeaponShotInfo.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
@@ -340,6 +341,9 @@ auto MCFire::Render() -> void
             {
                 SomethingOnFire = 1;
                 flameAppearance.Render(-150);
+
+                // Port-only (HD lighting): the air over the flames shimmers.
+                MCSceneLights::AddHeat(flameAppearance);
             }
         }
 

@@ -230,6 +230,7 @@
     <ClCompile Include="logistics\MCVehiclePurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
     <ClCompile Include="main\MCAblDebuggerConsole.cpp" />
+    <ClCompile Include="main\MCArtModes.cpp" />
     <ClCompile Include="main\MCErrorReport.cpp" />
     <ClCompile Include="main\MCForceMessages.cpp" />
     <ClCompile Include="main\MCGameContext.cpp" />
@@ -640,6 +641,7 @@
     <ClInclude Include="logistics\MCVehiclePurchaseBlock.h" />
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />
     <ClInclude Include="main\MCAblDebuggerConsole.h" />
+    <ClInclude Include="main\MCArtModes.h" />
     <ClInclude Include="main\MCDropSlot.h" />
     <ClInclude Include="main\MCErrorReport.h" />
     <ClInclude Include="main\MCForceMessages.h" />
@@ -818,6 +820,7 @@
     <ClInclude Include="sprite\MCGVAppearanceType.h" />
     <ClInclude Include="sprite\MCHdArt.h" />
     <ClInclude Include="sprite\MCHdMovie.h" />
+    <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />

@@ -20,7 +20,8 @@
 // The screen: one palette index per pixel (red), or the GPU's colours.
 Texture2D<float4> screenTex : register(t0, space2);
 SamplerState screenSampler : register(s0, space2);
-// The screen's op plane: one byte per screen pixel (unused with the GPU's surfaces).
+// The screen's op plane: one byte per screen pixel; with the GPU's surfaces, over an underlay, the GPU world's palette
+// indices (port-only, HD lighting's living water: its index target, the size of its colours).
 Texture2D<float> opTex : register(t1, space2);
 SamplerState opSampler : register(s1, space2);
 // The world view's surface (red, or the GPU's colours; unused without an underlay).
@@ -32,6 +33,15 @@ SamplerState tableSampler : register(s3, space2);
 // The palette, 256 x 1, as shown (gamma applied).
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
+// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear; unused
+// without a bloom).
+Texture2D<float4> bloomTex : register(t5, space2);
+SamplerState bloomSampler : register(s5, space2);
+
+// The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
+static const uint MaxLights = 64;
+// The most fires in heat (MCSceneLights::MaxHeat).
+static const uint MaxHeat = 16;
 
 cbuffer Composite : register(b0, space3)
 {
@@ -44,8 +54,8 @@ cbuffer Composite : register(b0, space3)
     float4 shown;
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
-    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone. y: 1 when the textures are the GPU
-    // renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
+    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone, 2 for the bloom's bright pass of the GPU
+    // world (BrightPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
     // drawn at the size it's shown; 0 or 1 otherwise).
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
@@ -68,13 +78,33 @@ cbuffer Composite : register(b0, space3)
     // shading stands for, so a surface brighter toward a light faces it (0: lit as flat); y, the texels between the
     // pixels its slope is taken across.
     float4 lightFacing;
+    // How the lights colour the world, x: how much more of their hue it takes, its brightness kept. The bloom of the
+    // GPU world: y, its strength (0 none); z, the brightness (a pixel's brightest component's) a pixel blooms above.
+    float4 lightLook;
+    // The bloom's texture: its size in use (xy, half the world's) and allocated (zw).
+    float4 bloomSize;
+    // The heat haze: x, the most a world sample shimmers, and y, the length of its waves (texels); z, the game's time
+    // (seconds); w, the fires in heat.
+    float4 haze;
+    // The living water (MCLighting::Water): x, its strength (0 as the original drew it); y, how far its colour cycle has
+    // gone toward its next step (0 to 1).
+    float4 water;
+    // The ground's map: the world texel of the map's middle (xy); then the meters east (xy) and north (zw) a texel off
+    // it lies, as east = dot(groundAxes.xy, offset), north = dot(groundAxes.zw, offset).
+    float4 ground;
+    float4 groundAxes;
+    // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
+    // the air shimmers.
+    float4 heat[MaxHeat];
     // Three a light, in the world's texels: the ground under it (x0 y0 x1 y1: a point, or a beam's ends); its height
     // and reach (xy); its colour times its strength (rgb).
-    float4 lights[192];
+    float4 lights[MaxLights * 3];
 };
 
-// The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
-static const uint MaxLights = 64;
+// mode.x for the bloom's bright pass.
+static const float BrightPass = 2.0;
+// The brightness the relief takes for height, and the grey a light's hue is taken from.
+static const float3 Luma = float3(0.299, 0.587, 0.114);
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
 // this much of its reach, that much of its reach; faded out to nothing at its reach.
 static const float LightSoftness = 0.3;
@@ -121,11 +151,61 @@ float SelfLit(float3 color)
     return smoothstep(lightTone.w, 1.0, max(color.r, max(color.g, color.b)));
 }
 
+// The air over a fire starts to shimmer this much of its rise below the flames' centre, and fades out from this much of
+// it above.
+static const float HazeBelow = 0.4;
+static const float HazeFadeFrom = 0.4;
+// The haze's waves rise this fast (radians a second); they bend as they go, along waves across the screen this many
+// times as long, swinging this many radians this fast. A sample shimmers up and down this much of how far it does
+// across.
+static const float HazeSpeed = 7.0;
+static const float HazeBendLength = 1.7;
+static const float HazeBend = 1.2;
+static const float HazeBendSpeed = 2.3;
+static const float HazeUpDown = 0.35;
+static const float TwoPi = 6.2831853;
+// How much of the lights a water glint at its brightest sends back (LivingWater, Lit).
+static const float WaterLightGlint = 2.5;
+
+// How far the air over the fires (haze) moves the world's sample at a world texel: rising waves, bent as they go,
+// strongest just above the flames.
+float2 HazeAt(float2 texel)
+{
+    const uint count = min((uint)haze.w, MaxHeat);
+    float weight = 0.0;
+
+    for (uint i = 0; i < count; ++i)
+    {
+        const float4 fire = heat[i];
+        const float side = (texel.x - fire.x) / fire.z;
+        const float up = (fire.y - texel.y) / fire.w;
+
+        if (abs(side) < 1.0 && up > -HazeBelow && up < 1.0)
+        {
+            const float across = 1.0 - side * side;
+            weight = max(weight, across * across * smoothstep(-HazeBelow, 0.0, up) *
+                                     (1.0 - smoothstep(HazeFadeFrom, 1.0, up)));
+        }
+    }
+
+    if (weight <= 0.0)
+    {
+        return float2(0.0, 0.0);
+    }
+
+    const float2 wave = texel * (TwoPi / haze.y);
+    const float bend = HazeBend * sin(wave.x / HazeBendLength + haze.z * HazeBendSpeed);
+    // A phase growing up the screen as time goes: the waves rise.
+    const float phase = wave.y + haze.z * HazeSpeed + bend;
+    return haze.x * weight * float2(sin(phase), HazeUpDown * cos(phase + wave.x));
+}
+
 // The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
 // a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
 // light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
-// brightness: the world's dimming and the lights pass them by.
-float3 Lit(float3 world, float2 texel, float2 slope, float shade)
+// brightness: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of
+// the light, times WaterLightGlint.
+float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint)
 {
     if (lighting.x <= 0.0 && lighting.z == 1.0)
     {
@@ -136,7 +216,10 @@ float3 Lit(float3 world, float2 texel, float2 slope, float shade)
     const float3 base = world * lerp(lighting.z, 1.0, selfLit);
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
-    const float3 lit = base + world * light * (1.0 - selfLit) + light * lightTone.x;
+    // The light's hue, its colour less its grey: more of it shifts what it lights toward its colour, brightening nothing.
+    const float3 hue = light - dot(light, Luma);
+    const float3 lit = base + world * (light + hue * lightLook.x) * (1.0 - selfLit) + light * lightTone.x +
+                       light * glint * WaterLightGlint;
     const float3 knee = min(max(base, lightTone.y), 0.999);
     const float3 over = max(lit - knee, 0.0);
     return min(lit, knee) + (1.0 - knee) * (1.0 - exp(-over / (1.0 - knee)));
@@ -156,6 +239,79 @@ uint Byte(float value)
 float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
     return tex.Sample(samp, (texel + 0.5) / size);
+}
+
+// The GPU world between its texels (from its four nearest, blended), clamped to the surface.
+float4 WorldBetween(float2 texel)
+{
+    const float2 last = worldSize.xy - 1.0;
+    const float2 at = clamp(texel, 0.0, last);
+    const float2 corner = floor(at);
+    const float2 next = min(corner + 1.0, last);
+    const float2 t = at - corner;
+    const float4 top = lerp(TexelAt(worldTex, worldSampler, corner, worldSize.zw),
+                            TexelAt(worldTex, worldSampler, float2(next.x, corner.y), worldSize.zw), t.x);
+    const float4 bottom = lerp(TexelAt(worldTex, worldSampler, float2(corner.x, next.y), worldSize.zw),
+                               TexelAt(worldTex, worldSampler, next, worldSize.zw), t.x);
+    return lerp(top, bottom, t.y);
+}
+
+// The bloom's first level has a texel for BloomScale x BloomScale of the world's pixels (MCVulkanPresenter's).
+static const uint BloomScale = 2;
+
+// The bloom's bright pass: a texel of the bloom's texture holds the light of the GPU world's BloomScale x BloomScale
+// pixels under it brighter than lightLook.z, the more the brighter they are.
+float4 Bright(float2 texel)
+{
+    float3 sum = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < BloomScale * BloomScale; ++i)
+    {
+        const float2 at = min(texel * BloomScale + float2(i % BloomScale, i / BloomScale), worldSize.xy - 1.0);
+        const float3 color = TexelAt(worldTex, worldSampler, at, worldSize.zw).rgb;
+        sum += color * smoothstep(lightLook.z, 1.0, max(color.r, max(color.g, color.b)));
+    }
+
+    return float4(sum / (BloomScale * BloomScale), 1.0);
+}
+
+// The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
+// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before and weighing BloomFalloff of it (a
+// glow mostly close by). Each is taken from four taps half its texel diagonally each way, which smooths its blocks.
+static const uint BloomFirst = 1;
+static const uint BloomLevels = 6;
+static const float BloomFalloff = 0.6;
+static const uint BloomTapCount = 4;
+static const float2 BloomTaps[BloomTapCount] = {float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
+                                                float2(0.5, 0.5)};
+
+float3 BloomAt(float2 texel)
+{
+    if (lightLook.y <= 0.0)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    // The texel's centre in the bloom's first level's texels.
+    const float2 at = (texel + 0.5) / BloomScale;
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float weight = 1.0;
+    float weights = 0.0;
+
+    for (uint level = BloomFirst; level < BloomLevels; ++level)
+    {
+        const float size = (float)(1u << level);
+
+        for (uint tap = 0; tap < BloomTapCount; ++tap)
+        {
+            sum += weight * bloomTex.SampleLevel(bloomSampler, (at + BloomTaps[tap] * size) / bloomSize.zw, level).rgb;
+        }
+
+        weights += weight;
+        weight *= BloomFalloff;
+    }
+
+    return sum * (lightLook.y / (BloomTapCount * weights));
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
@@ -185,9 +341,6 @@ float3 WorldAt(float2 texel)
     return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
 }
 
-// The brightness the relief takes for height.
-static const float3 Luma = float3(0.299, 0.587, 0.114);
-
 // The relief's height at a world texel: its brightness, but a light's own pixels stand at centre's height (the texel the
 // slope is for), or the ground by every glow would slope up to it and face away from its light.
 float HeightAt(float2 texel, float centre)
@@ -213,9 +366,214 @@ float2 SlopeAt(float2 texel)
     return float2(across, down / lighting.w) / (2.0 * step);
 }
 
+// Port-only (HD lighting): the living water (MCLighting::Water). The water is found by the world's indices: the
+// original's water tiles are its blues (WaterBlues, mostly the first two) with its colour-cycled entries scattered over
+// them (color/MCWaterCycle.h: FirstWaterColor and the seven after it), and no land tile has either. Its colour flows from
+// one of the cycle's steps to the next instead of ticking; waves roll over it before a wind (laid on the ground in
+// meters, so they move with it as the view scrolls); the art's own sparkles twinkle as they pass, glinting the sun's light
+// and the lights'; it is paler in the shallows and foam rides along its shores.
+static const uint FirstWaterBlue = 0x58;
+static const uint WaterBlues = 6;
+// The commonest of them: the water's own colour, the art's sparkles brighter than it.
+static const uint CommonWaterBlue = 0x59;
+static const uint FirstWaterColor = 0xd8;
+static const uint WaterColors = 8;
+// A water colour's component is taken as at least this when the flow scales the drawn colour by its change, which
+// brightens it this many times at most.
+static const float WaterFlowFloor = 0.02;
+static const float WaterFlowMost = 4.0;
+// The waves: three trains of crests, each rolling its own way (a unit direction, the first the wind's, east of north)
+// this long and this fast (meters, meters a second), weighing this much. Each comes in sets: its crests swell and fade
+// as slow noise drifting with it (WaveGroups times its length big) rises and falls. Their crests are bent by two
+// layers of drifting noise (WarpSize meters big, up to WarpCycles of a wave) and narrowed (raised to CrestSharpness),
+// leaving calm troughs between. Gusts (GustSize meters big, drifting with the wind at GustSpeed) leave patches calmer
+// (CalmShare of the waves). The water darkens WaveTrough in a trough and brightens up to WaveCrest on a crest.
+static const float2 WaveDirections[3] = {float2(0.9285, 0.3714), float2(0.6846, 0.7290), float2(0.9943, -0.1068)};
+static const float3 WaveLengths = float3(30.0, 13.0, 7.0);
+static const float3 WaveSpeeds = float3(9.0, 6.0, 4.0);
+static const float3 WaveWeights = float3(0.5, 0.35, 0.25);
+static const float WaveGroups = 3.0;
+// A set moves at half its waves' speed (as a group of real waves does), between these levels of its noise from calm to
+// full; each train's sets come from their own part of the noise, this far apart.
+static const float SetSpeed = 0.5;
+static const float2 SetLevels = float2(0.2, 0.8);
+static const float TrainApart = 17.0;
+static const float WarpSize = 34.0;
+static const float WarpCycles = 1.6;
+// The warp's finer layer: this many times finer, weighing this much.
+static const float2 WarpFine = float2(2.5, 0.5);
+static const float CrestSharpness = 3.0;
+static const float GustSize = 90.0;
+static const float GustSpeed = 3.0;
+static const float CalmShare = 0.45;
+static const float2 GustLevels = float2(0.3, 0.7);
+static const float WaveTrough = 0.1;
+static const float WaveCrest = 1.0;
+// The art's sparkles: a water pixel this much brighter than its blues (in Luma) is one, fully from this much more. They
+// twinkle as fine moving noise (this big, drifting this fast) passes: dimmed to SparkleLow off its peaks, glinting from
+// TwinkleFrom up; the sun's glint at its brightest adds this much white (in the world's own light).
+static const float SparkleFrom = 0.06;
+static const float SparkleSpan = 0.25;
+static const float SparkleLow = 0.3;
+static const float TwinkleSize = 5.0;
+static const float2 TwinkleDrift = float2(4.0, -3.0);
+static const float TwinkleFrom = 0.5;
+static const float SunGlint = 1.0;
+// The shore: the land around a water pixel is looked for in this many directions, this near (foam), and this near and
+// far (the shallows, paler by this much at the shore), in meters.
+static const uint ShoreDirections = 8;
+static const float2 ShoreSteps[ShoreDirections] = {float2(1.0, 0.0), float2(0.7071, 0.7071), float2(0.0, 1.0),
+                                                   float2(-0.7071, 0.7071), float2(-1.0, 0.0), float2(-0.7071, -0.7071),
+                                                   float2(0.0, -1.0), float2(0.7071, -0.7071)};
+// The least square meters a texel is taken to cover (the presenter sends no water for a view showing less).
+static const float MinGroundArea = 1e-6;
+static const float ShoreNear = 3.0;
+static const float ShallowNear = 12.0;
+static const float ShallowFar = 36.0;
+static const float3 ShallowTint = float3(1.2, 1.4, 1.25);
+// The foam: drifting noise this big (meters) and fast, from this much up, as pale as this, at most this much of the
+// colour.
+static const float FoamSize = 8.0;
+static const float2 FoamDrift = float2(1.5, 2.0);
+static const float FoamFrom = 0.45;
+static const float3 FoamColour = float3(0.5, 0.53, 0.55);
+static const float FoamMost = 0.8;
+
+// The world's palette index at a world texel: the GPU world's (its index target, bound as opTex) or the software
+// renderer's pixel.
+uint WorldIndexAt(float2 texel)
+{
+    const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
+    return mode.y != 0.0 ? IndexAt(opTex, opSampler, at, worldSize.zw)
+                         : Byte(TexelAt(worldTex, worldSampler, at, worldSize.zw).r);
+}
+
+bool IsWater(uint index)
+{
+    return index - FirstWaterBlue < WaterBlues || index - FirstWaterColor < WaterColors;
+}
+
+// A water entry's colour at a step of its cycle.
+float3 WaterCycleColour(uint entry, uint step)
+{
+    const uint source = (entry + step) & (WaterColors - 1u);
+    const uint index = cycleSources[source >> 2][source & 3u];
+    return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
+}
+
+// A value between 0 and 1 for a lattice point, the same every frame.
+float LatticeHash(float2 lattice)
+{
+    const int2 p = int2(lattice);
+    uint h = (uint)p.x * 1597334677u ^ (uint)p.y * 3812015801u;
+    h ^= h >> 15;
+    h *= 0x2c1b3c6du;
+    h ^= h >> 12;
+    return (float)h / 4294967295.0;
+}
+
+// Smooth value noise between 0 and 1.
+float Noise(float2 p)
+{
+    const float2 corner = floor(p);
+    const float2 f = p - corner;
+    const float2 u = f * f * (3.0 - 2.0 * f);
+    const float top = lerp(LatticeHash(corner), LatticeHash(corner + float2(1.0, 0.0)), u.x);
+    const float bottom = lerp(LatticeHash(corner + float2(0.0, 1.0)), LatticeHash(corner + float2(1.0, 1.0)), u.x);
+    return lerp(top, bottom, u.y);
+}
+
+// How much land lies around a world texel, this many meters away (the share of ShoreDirections): the ground's map
+// (groundAxes) takes a square texel to its determinant's square meters.
+float LandAround(float2 texel, float distance)
+{
+    const float area = abs(groundAxes.x * groundAxes.w - groundAxes.y * groundAxes.z);
+    const float texels = distance * rsqrt(max(area, MinGroundArea));
+    float land = 0.0;
+
+    for (uint i = 0; i < ShoreDirections; ++i)
+    {
+        land += IsWater(WorldIndexAt(texel + ShoreSteps[i] * texels)) ? 0.0 : 1.0;
+    }
+
+    return land / ShoreDirections;
+}
+
+// The water's colour at a world texel (drawn as `color`), and how much it glints (0 to 1; Lit and main add the lights'
+// and the sun's): `color` as it is but for water.
+float3 LivingWater(float3 color, float2 texel, out float glint)
+{
+    glint = 0.0;
+    const uint index = WorldIndexAt(texel);
+
+    if (water.x <= 0.0 || !IsWater(index))
+    {
+        return color;
+    }
+
+    // The colour flowing toward the cycle's next step: the drawn colour (an HD one, recoloured as the entry shows now)
+    // changed as the entry's colour changes.
+    float3 flowing = color;
+
+    if (cycle.y >= 0 && index - (uint)cycle.x < WaterColors)
+    {
+        const uint entry = index - (uint)cycle.x;
+        const float3 now = WaterCycleColour(entry, (uint)cycle.y);
+        const float3 next = WaterCycleColour(entry, (uint)cycle.y + 1u);
+        flowing = color * min(lerp(now, next, water.y) / max(now, WaterFlowFloor), WaterFlowMost);
+    }
+
+    // The ground point (meters), the game's time, and the waves: each train's crests where its phase (along its
+    // direction, rolling on, bent by the warp) comes round, in its sets, under the gusts.
+    const float2 offset = texel - ground.xy;
+    const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
+    const float time = haze.z;
+    const float2 drift = time * WaveDirections[0] * WaveSpeeds.z;
+    const float warp =
+        WarpCycles * TwoPi * (Noise((at - drift) / WarpSize) + WarpFine.y * Noise((at + drift) * WarpFine.x / WarpSize));
+    const float gust = lerp(CalmShare, 1.0, smoothstep(GustLevels.x, GustLevels.y,
+                                                       Noise((at - time * WaveDirections[0] * GustSpeed) / GustSize)));
+    float waves = 0.0;
+
+    for (uint i = 0; i < 3; ++i)
+    {
+        // The second train bends the other way.
+        const float along = dot(at, WaveDirections[i]) - time * WaveSpeeds[i];
+        const float crest = pow(0.5 + 0.5 * sin(TwoPi * along / WaveLengths[i] + warp * (i == 1 ? -1.0 : 1.0)),
+                                CrestSharpness);
+        const float2 setAt = (at - SetSpeed * time * WaveSpeeds[i] * WaveDirections[i]) / (WaveGroups * WaveLengths[i]);
+        const float set = smoothstep(SetLevels.x, SetLevels.y, Noise(setAt + float(i) * TrainApart));
+        waves += WaveWeights[i] * set * crest;
+    }
+
+    waves *= gust;
+    float3 shown = flowing * (1.0 - WaveTrough + WaveCrest * waves);
+
+    // The art's sparkles twinkle, glinting at the twinkle's peaks on the waves' crests.
+    const float sparkle = saturate((dot(color, Luma) - dot(Shown(CommonWaterBlue), Luma) - SparkleFrom) / SparkleSpan);
+    const float twinkle = Noise((at + time * TwinkleDrift) / TwinkleSize);
+    shown *= lerp(1.0, lerp(SparkleLow, 1.0, twinkle), sparkle);
+    glint = sparkle * smoothstep(TwinkleFrom, 1.0, twinkle) * waves;
+
+    // The shallows, paler toward the shore, and foam along it.
+    const float nearLand = LandAround(texel, ShoreNear);
+    const float shallow = max(LandAround(texel, ShallowNear), 0.5 * LandAround(texel, ShallowFar));
+    shown *= lerp(float3(1.0, 1.0, 1.0), ShallowTint, saturate(max(nearLand, shallow)));
+    const float foam = saturate(2.0 * nearLand) * smoothstep(FoamFrom, 1.0, Noise(at / FoamSize + time * FoamDrift));
+    shown = lerp(shown, FoamColour, foam * FoamMost);
+    glint *= water.x * (1.0 - foam);
+    return lerp(color, shown, water.x);
+}
+
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
+
+    if (mode.x == BrightPass)
+    {
+        return Bright(pixel);
+    }
+
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
     // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
     const float2 drawn = max(mode.zw, float2(1.0, 1.0));
@@ -228,9 +586,23 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     if (mode.y != 0.0)
     {
-        // The GPU's colours: the screen over the world, or over the key's colour where there's no world.
-        const float4 lit = TexelAt(worldTex, worldSampler, world, worldSize.zw);
-        const float3 under = mode.x != 0.0 ? Lit(lit.rgb, world + 0.5, SlopeAt(world), lit.a) : Shown(255);
+        // The GPU's colours: the screen over the world (where the air over a fire shimmers, as it moves it, and with
+        // its bloom laid over it as a screen blend, but for a light's own pixels, which keep their colour rather than
+        // whiten), or over the key's colour where there's no world.
+        float3 under = Shown(255);
+
+        if (mode.x != 0.0)
+        {
+            const float2 hazy = world + HazeAt(world + 0.5);
+            const float4 lit =
+                any(hazy != world) ? WorldBetween(hazy) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            float glint;
+            const float3 seen = LivingWater(lit.rgb, hazy, glint);
+            const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
+            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint) + glint * SunGlint * lighting.z;
+            under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
+        }
+
         return Faded(saturate(screen.rgb + under * (1.0 - screen.a)));
     }
 
@@ -238,10 +610,14 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     if (mode.x != 0.0 && index == 255)
     {
-        index = Byte(TexelAt(worldTex, worldSampler, world, worldSize.zw).r);
+        // The world pixel the air over a fire shimmers to (palette indices don't blend).
+        const float2 hazy = clamp(round(world + HazeAt(world + 0.5)), 0.0, worldSize.xy - 1.0);
+        index = Byte(TexelAt(worldTex, worldSampler, hazy, worldSize.zw).r);
         const uint op = IndexAt(opTex, opSampler, screenPixel, screenSize.zw);
         index = IndexAt(tableTex, tableSampler, float2(index, op), float2(256.0, 256.0));
-        return Faded(Lit(Shown(index), world + 0.5, SlopeAt(world), 1.0));
+        float glint;
+        const float3 seen = LivingWater(Shown(index), hazy, glint);
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint) + glint * SunGlint * lighting.z);
     }
 
     return Faded(Shown(index));

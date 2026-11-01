@@ -1,6 +1,7 @@
 #pragma once
 
 #include "appear/MCAppearance.h"
+#include "sprite/MCInBetween.h"
 #include "sprite/MCVfxAppearanceType.h"
 
 /// <summary>An object drawn from its type's shapes, animated through its states and facings.</summary>
@@ -41,6 +42,26 @@ public:
     /// <summary>The number of frames of <paramref name="state"/> (0 when the type hasn't it).</summary>
     int32_t StateExists(MCActorState state) const;
 
+    /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
+    enum class MCFrameDrawing
+    {
+        /// <summary>The current frame.</summary>
+        Plain,
+        /// <summary>A delta animation: its first shape, and over it the frame's change (the next shape).</summary>
+        Delta,
+        /// <summary>Nothing: a delta animation of a type that isn't scaled.</summary>
+        Nothing,
+    };
+
+    /// <summary>How <see cref="Render"/> draws the current state's frames.</summary>
+    MCFrameDrawing FrameDrawing() const;
+
+    /// <summary>
+    /// Port-only (HD art): the in-between of the current frame toward the next that its share of the frame shown calls
+    /// for (none in the frame's first step, at an end the animation stops at, or before it has started).
+    /// </summary>
+    std::optional<MCInBetween> InBetween() const;
+
     /// <summary>The type.</summary>
     std::shared_ptr<MCVfxAppearanceType> AppearType;
     /// <summary>The shape drawn (expired once the cache drops it).</summary>
@@ -53,6 +74,10 @@ public:
     float FramesAdvanced = 0.0f;
     /// <summary>Frames played so far in the current state.</summary>
     int32_t LastFrame = 0;
+    /// <summary>Port-only (HD art's in-betweens): how far the animation is through the frame shown, 0 to 1.</summary>
+    float FrameShare = 0.0f;
+    /// <summary>Port-only (HD art's in-betweens): whether the current state's animation has gone back to its start.</summary>
+    bool Looped = false;
     /// <summary>The frame the animation loops back to at <see cref="LoopEnd"/>.</summary>
     int32_t LoopStart = -1;
     /// <summary>The frame at which the animation goes back to <see cref="LoopStart"/> (-1: loop the whole state).</summary>
@@ -69,6 +94,8 @@ public:
     bool DamageSet = false;
     /// <summary>Set by <see cref="SetTypeId"/> and init.</summary>
     bool TypeChanged = true;
+    /// <summary>Port-only (HD lighting): its frames are a light's glow (MCLight's), drawn as MCElement::Glow.</summary>
+    bool Glow = false;
     /// <summary>The shape's top-left offset from its hotspot (from VFX_shape_minxy; -15 before a shape).</summary>
     float ShapeMinX = -15.0f;
     float ShapeMinY = -15.0f;

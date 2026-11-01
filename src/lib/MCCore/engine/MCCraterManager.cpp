@@ -20,8 +20,6 @@ namespace
     /// </summary>
     constexpr size_t MinShapeSlots = 11;
 
-    /// <summary>The terrain types from this one on are water: no craters.</summary>
-    constexpr uint32_t FirstWaterTerrain = 0x2b;
     /// <summary>The overlay that takes no craters (a road-like overlay).</summary>
     constexpr uint32_t NoCraterOverlay = 0x3e;
     /// <summary>The bridge tiles: no craters.</summary>
@@ -127,8 +125,8 @@ auto MCCraterManager::AddCrater(int32_t craterType, const MCVector3D& position, 
     }
 
     const MCMapTile& tile = GameMap().Map[GameMap().Width * tileR + tileC];
-    const uint32_t terrainType = tile.Cells & 0x7f;
-    const uint32_t overlayType = tile.Overlay & 0x7f;
+    const uint32_t terrainType = tile.TerrainType();
+    const uint32_t overlayType = tile.OverlayType();
     // Seen by the player's side when any corner of the tile is.
     MCByteFlag& visibleBits = Terrain()->HomeVisibleBits();
     const auto row = static_cast<uint32_t>(tileR);
@@ -136,6 +134,7 @@ auto MCCraterManager::AddCrater(int32_t craterType, const MCVector3D& position, 
     const bool visible = visibleBits.GetFlag(row, col) || visibleBits.GetFlag(row + 1, col) ||
                          visibleBits.GetFlag(row + 1, col + 1) || visibleBits.GetFlag(row, col + 1);
 
+    // Water (FirstWaterTerrain on) takes no craters.
     if (terrainType >= FirstWaterTerrain || overlayType == NoCraterOverlay || !visible)
     {
         return;

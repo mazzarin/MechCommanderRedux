@@ -69,8 +69,16 @@ namespace
     /// <summary>The 64-bit FNV-1a hash's start and prime (TerrainTileName, MCHdArt::PictureHash).</summary>
     constexpr uint64_t FnvOffset = 0xcbf29ce484222325ull;
     constexpr uint64_t FnvPrime = 0x100000001b3ull;
-    /// <summary>Where a frame key's folder goes in its hash: above any frame number.</summary>
+    /// <summary>Where a frame key's folder goes in its hash: above any frame number and in-between step.</summary>
     constexpr int FolderHashShift = 40;
+    /// <summary>
+    /// Where a numbered frame's key holds the step of its in-between (MCInBetween; 0: the frame itself), above the
+    /// frame's number (the bits below).
+    /// </summary>
+    constexpr int InBetweenNameShift = 32;
+    constexpr uint64_t FrameNumberMask = (uint64_t{1} << InBetweenNameShift) - 1;
+    /// <summary>What separates an in-between's step from its frame's number in its name (<c>&lt;frame&gt;_&lt;step&gt;</c>).</summary>
+    constexpr std::string_view InBetweenSeparator = "_";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -109,6 +117,8 @@ namespace
         std::filesystem::path Path;
         Naming Names = Naming::Number;
         std::optional<bool> Loose;
+        /// <summary>Whether its frames are objects', whose baked shadows are marked (MCHdArt::MarkBakedShadows).</summary>
+        bool BakedShadows = false;
     };
 
     /// <summary>
@@ -194,6 +204,14 @@ namespace
     {
         static State state;
         return state;
+    }
+
+    /// <summary>The pack sequence the shape table starting at <paramref name="table"/> is tied to, if its owner lives.</summary>
+    const Sequence* AttachedSequence(const uint8_t* table)
+    {
+        const State& state = TheState();
+        const auto found = state.Sequences.find(table);
+        return found == state.Sequences.end() || found->second.Owner.expired() ? nullptr : &found->second;
     }
 
     /// <summary>Logs <paramref name="problem"/> with frames from <paramref name="folder"/>, once per folder.</summary>
@@ -455,6 +473,23 @@ namespace
         return false;
     }
 
+    /// <summary>The key of frame <paramref name="frame"/> of a numbered folder, or of its in-between <paramref name="step"/>.</summary>
+    uint64_t NumberedKey(int32_t frame, int32_t step)
+    {
+        return static_cast<uint64_t>(static_cast<uint32_t>(frame)) | static_cast<uint64_t>(step) << InBetweenNameShift;
+    }
+
+    /// <summary>
+    /// The name of a numbered folder's frame <paramref name="key"/> (<see cref="NumberedKey"/>): its number, and an
+    /// in-between's step after <see cref="InBetweenSeparator"/>.
+    /// </summary>
+    std::string NumberedName(uint64_t key)
+    {
+        const uint64_t step = key >> InBetweenNameShift;
+        const std::string frame = std::to_string(key & FrameNumberMask);
+        return step == 0 ? frame : std::format("{}{}{}", frame, InBetweenSeparator, step);
+    }
+
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>
     std::string HashName(uint64_t hash)
     {
@@ -469,10 +504,26 @@ namespace
 
         if (fresh)
         {
-            state.Folders.push_back(FrameFolder{path, names, std::nullopt});
+            const std::filesystem::path inPack = path.lexically_relative(MCHdArt::PackFolder());
+            const bool objects = !inPack.empty() && *inPack.begin() == ObjectFolder;
+            state.Folders.push_back(FrameFolder{path, names, std::nullopt, objects});
         }
 
         return found->second;
+    }
+
+    /// <summary>A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's.</summary>
+    std::shared_ptr<const MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, const FrameFolder& folder)
+    {
+        auto made = std::make_shared<MCHdArt::Frame>(std::move(frame));
+        made->Id = MCHdArt::NewFrameId();
+
+        if (folder.BakedShadows)
+        {
+            MCHdArt::MarkBakedShadows(*made);
+        }
+
+        return made;
     }
 
     /// <summary>
@@ -492,7 +543,7 @@ namespace
             folder.Loose = std::filesystem::is_directory(folder.Path, error);
         }
 
-        const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : std::to_string(key.Name);
+        const std::string frame = folder.Names == Naming::Hash ? HashName(key.Name) : NumberedName(key.Name);
         const std::filesystem::path path = folder.Path / frame;
         const bool loose = *folder.Loose;
         std::expected<MCHdArt::Frame, std::string> read = std::unexpected(std::string());
@@ -527,9 +578,7 @@ namespace
                     return nullptr;
                 }
 
-                auto made = std::make_shared<MCHdArt::Frame>(std::move(**archived));
-                made->Id = MCHdArt::NewFrameId();
-                return made;
+                return Finished(std::move(**archived), folder);
             }
 
             // Sizes are checked before decoding, so a malformed pack can't make the game decode a huge picture.
@@ -560,9 +609,7 @@ namespace
             return std::unexpected(std::format("frame {}: {}", frame, read.error()));
         }
 
-        auto made = std::make_shared<MCHdArt::Frame>(std::move(*read));
-        made->Id = MCHdArt::NewFrameId();
-        return made;
+        return Finished(std::move(*read), folder);
     }
 
     /// <summary>
@@ -747,6 +794,169 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
                         bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes));
     frame.Indices.assign(bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes), bytes.end());
     return frame;
+}
+
+void MCHdArt::MarkBakedShadows(Frame& frame)
+{
+    const int32_t width = frame.OriginalWidth();
+    const int32_t height = frame.OriginalHeight();
+
+    if (frame.Blended || width <= 0 || height <= 0 ||
+        frame.Indices.size() != static_cast<size_t>(width) * height * IndexBytes)
+    {
+        return;
+    }
+
+    // Per original pixel, with a one-pixel empty border so every walk below stays inside: what the art draws there.
+    enum class Drawn : uint8_t
+    {
+        Empty,
+        Black,
+        Body,
+    };
+
+    const int32_t paddedWidth = width + 2;
+    const int32_t paddedHeight = height + 2;
+    const auto at = [paddedWidth](int32_t x, int32_t y) { return static_cast<size_t>(y) * paddedWidth + x; };
+    std::vector<Drawn> drawn(static_cast<size_t>(paddedWidth) * paddedHeight, Drawn::Empty);
+
+    for (int32_t y = 0; y < height; ++y)
+    {
+        for (int32_t x = 0; x < width; ++x)
+        {
+            const size_t from = (static_cast<size_t>(y) * width + x) * IndexBytes;
+
+            if (frame.Indices[from + 1] == HasIndex)
+            {
+                drawn[at(x + 1, y + 1)] = frame.Indices[from] == BakedShadowIndex ? Drawn::Black : Drawn::Body;
+            }
+        }
+    }
+
+    // The body's outline, closed over one-pixel gaps (dilated, then eroded, by a 3 x 3 square).
+    constexpr int32_t Reach = 1;
+    const auto anyAround = [&](const std::vector<uint8_t>& mask, int32_t x, int32_t y, bool all)
+    {
+        for (int32_t dy = -Reach; dy <= Reach; ++dy)
+        {
+            for (int32_t dx = -Reach; dx <= Reach; ++dx)
+            {
+                const int32_t nx = x + dx;
+                const int32_t ny = y + dy;
+                const bool set = nx >= 0 && ny >= 0 && nx < paddedWidth && ny < paddedHeight && mask[at(nx, ny)] != 0;
+
+                if (set != all)
+                {
+                    return !all;
+                }
+            }
+        }
+
+        return all;
+    };
+
+    std::vector<uint8_t> body(drawn.size());
+    std::ranges::transform(drawn, body.begin(), [](Drawn pixel) { return pixel == Drawn::Body ? 1 : 0; });
+    std::vector<uint8_t> grown(drawn.size());
+    std::vector<uint8_t> closed(drawn.size());
+
+    for (int32_t y = 0; y < paddedHeight; ++y)
+    {
+        for (int32_t x = 0; x < paddedWidth; ++x)
+        {
+            grown[at(x, y)] = anyAround(body, x, y, false) ? 1 : 0;
+        }
+    }
+
+    for (int32_t y = 0; y < paddedHeight; ++y)
+    {
+        for (int32_t x = 0; x < paddedWidth; ++x)
+        {
+            closed[at(x, y)] = anyAround(grown, x, y, true) ? 1 : 0;
+        }
+    }
+
+    // Holes filled: what the outside can't reach (4-connected) past the closed outline is inside it.
+    constexpr std::array<std::pair<int32_t, int32_t>, 4> Sides = {{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
+    std::vector<uint8_t> outside(drawn.size());
+    std::vector<std::pair<int32_t, int32_t>> todo = {{0, 0}};
+    outside[at(0, 0)] = 1;
+
+    while (!todo.empty())
+    {
+        const auto [x, y] = todo.back();
+        todo.pop_back();
+
+        for (const auto [dx, dy] : Sides)
+        {
+            const int32_t nx = x + dx;
+            const int32_t ny = y + dy;
+
+            if (nx >= 0 && ny >= 0 && nx < paddedWidth && ny < paddedHeight && outside[at(nx, ny)] == 0 &&
+                closed[at(nx, ny)] == 0)
+            {
+                outside[at(nx, ny)] = 1;
+                todo.emplace_back(nx, ny);
+            }
+        }
+    }
+
+    // The black outside the outline, in groups (8-connected): a group touching at least as many empty pixels as drawn
+    // ones (the black inside the outline counts as drawn) is shadow.
+    std::vector<uint8_t> seen(drawn.size());
+    std::vector<std::pair<int32_t, int32_t>> group;
+    const auto shadowBlack = [&](int32_t x, int32_t y)
+    { return drawn[at(x, y)] == Drawn::Black && outside[at(x, y)] != 0; };
+
+    for (int32_t y = 1; y <= height; ++y)
+    {
+        for (int32_t x = 1; x <= width; ++x)
+        {
+            if (seen[at(x, y)] != 0 || !shadowBlack(x, y))
+            {
+                continue;
+            }
+
+            group.assign({{x, y}});
+            seen[at(x, y)] = 1;
+            int32_t empty = 0;
+            int32_t art = 0;
+
+            for (size_t next = 0; next < group.size(); ++next)
+            {
+                const auto [gx, gy] = group[next];
+
+                for (const auto [dx, dy] : Sides)
+                {
+                    const Drawn side = drawn[at(gx + dx, gy + dy)];
+                    empty += side == Drawn::Empty ? 1 : 0;
+                    art += side != Drawn::Empty && !shadowBlack(gx + dx, gy + dy) ? 1 : 0;
+                }
+
+                for (int32_t dy = -1; dy <= 1; ++dy)
+                {
+                    for (int32_t dx = -1; dx <= 1; ++dx)
+                    {
+                        if (seen[at(gx + dx, gy + dy)] == 0 && shadowBlack(gx + dx, gy + dy))
+                        {
+                            seen[at(gx + dx, gy + dy)] = 1;
+                            group.emplace_back(gx + dx, gy + dy);
+                        }
+                    }
+                }
+            }
+
+            if (empty == 0 || empty < art)
+            {
+                continue;
+            }
+
+            for (const auto [gx, gy] : group)
+            {
+                frame.Indices[(static_cast<size_t>(gy - 1) * width + (gx - 1)) * IndexBytes + 1] = BakedShadow;
+            }
+        }
+    }
 }
 
 std::filesystem::path MCHdArt::PackFolder()
@@ -1104,7 +1314,8 @@ void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const
     AttachTo(table, owner, FolderOf(key), true);
 }
 
-std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height)
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
+                                                    int32_t step)
 {
     if (!Active())
     {
@@ -1126,7 +1337,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
         return nullptr;
     }
 
-    return Cache(FrameKey{found->second.Folder, static_cast<uint64_t>(frame)}, width, height);
+    return Cache(FrameKey{found->second.Folder, NumberedKey(frame, step)}, width, height);
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesystem::path& folder, int32_t frame,
@@ -1148,17 +1359,21 @@ bool MCHdArt::KeepsFrameEdges(const uint8_t* table)
     return found != state.Sequences.end() && found->second.KeepsEdges;
 }
 
+bool MCHdArt::Attached(const uint8_t* table)
+{
+    return AttachedSequence(table) != nullptr;
+}
+
 std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)
 {
-    const State& state = TheState();
-    const auto found = state.Sequences.find(table);
+    const Sequence* sequence = AttachedSequence(table);
 
-    if (found == state.Sequences.end() || found->second.Owner.expired())
+    if (sequence == nullptr)
     {
         return std::nullopt;
     }
 
-    return state.Folders[found->second.Folder].Path;
+    return TheState().Folders[sequence->Folder].Path;
 }
 
 uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)
@@ -1262,16 +1477,16 @@ std::filesystem::path MCHdArt::ShapeTableFolder(uint64_t hash)
     return std::filesystem::path(ShapeFolder) / HashName(hash);
 }
 
-std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height)
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
+                                                         int32_t step)
 {
     if (!Active())
     {
         return nullptr;
     }
 
-    return Cache(
-        FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), static_cast<uint64_t>(frame)},
-        width, height);
+    return Cache(FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), NumberedKey(frame, step)},
+                 width, height);
 }
 
 uint64_t MCHdArt::NewFrameId()

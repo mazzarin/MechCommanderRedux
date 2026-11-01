@@ -2,13 +2,22 @@
 #include "../MCCrashTrace.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cctype>
+#include <cerrno>
+#include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <expected>
+#include <filesystem>
 #include <iostream>
+#include <mutex>
+#include <span>
 #include <string>
+#include <thread>
 
 #include "lib/MCFatal.h"
 #include "platform/MCAllocator.h"
@@ -120,36 +129,175 @@ std::string_view MCTest::CurrentTestName()
 
 namespace
 {
+    /// <summary>The runner's own option (not passed on to isolated tests' processes): how many isolated tests run at
+    /// once.</summary>
+    constexpr std::string_view JobsOption = "--jobs";
+    /// <summary>The runner's own option: the temporary folder this process runs in (a worker's).</summary>
+    constexpr std::string_view TempFolderOption = "--temp-folder";
+
+    /// <summary>The temporary folder of each worker running isolated tests at once, under the run's own: a worker's
+    /// tests keep their user folder (mc_tests_user) and scratch files apart from the other workers'.</summary>
+    constexpr std::string_view WorkerFolderPrefix = "mc_tests_worker_";
+
+    /// <summary>The bytes an isolated test's output is read in at a time.</summary>
+    constexpr size_t OutputChunk = 4096;
+
+    /// <summary>A folder argument quoted: a trailing backslash would escape the closing quote, so it is doubled.</summary>
+    std::string Quoted(std::string_view value)
+    {
+        const size_t trailing = value.size() - (value.find_last_not_of('\\') + 1);
+        return std::format("\"{}{}\"", value, std::string(trailing, '\\'));
+    }
+
     /// <summary>
-    /// Runs an isolated test in a process of its own: this program again, with <c>--only</c>, the test's name and the
-    /// options.
+    /// The command running an isolated test in a process of its own: this program again, with <c>--only</c>, the test's
+    /// name and the options, in <paramref name="tempFolder"/> when given, its output and errors together when
+    /// <paramref name="joinErrors"/>.
     /// </summary>
-    /// <returns>Whether it passed (the child exited 0).</returns>
-    bool RunIsolated(std::string_view program, const MCTest::TestCase& test)
+    std::string IsolatedCommand(std::string_view program, const MCTest::TestCase& test,
+                                const std::optional<std::filesystem::path>& tempFolder, bool joinErrors)
     {
         std::string command = std::format("\"{}\" --only \"{}\"", program, test.Name);
 
         for (const auto& [key, value] : Options())
         {
-            // A folder's trailing backslash would escape the closing quote: doubled, it stays a backslash.
-            const size_t trailing = value.size() - (value.find_last_not_of('\\') + 1);
-            command += std::format(" --{} \"{}{}\"", key, value, std::string(trailing, '\\'));
+            command += std::format(" --{} {}", key, Quoted(value));
+        }
+
+        if (tempFolder.has_value())
+        {
+            command += std::format(" {} {}", TempFolderOption, Quoted(tempFolder->string()));
         }
 
 #ifdef _WIN32
         // cmd.exe drops the first and last quote of a command that starts with one.
         command = "\"" + command + "\"";
 #endif
+        return joinErrors ? command + " 2>&1" : command;
+    }
+
+    /// <summary>Runs an isolated test in a process of its own (<see cref="IsolatedCommand"/>).</summary>
+    /// <returns>Whether it passed (the child exited 0).</returns>
+    bool RunIsolated(std::string_view program, const MCTest::TestCase& test)
+    {
         std::cout << std::flush;
-        return std::system(command.c_str()) == 0;
+        return std::system(IsolatedCommand(program, test, std::nullopt, false).c_str()) == 0;
+    }
+
+    /// <summary>Runs <paramref name="command"/>, keeping what it prints.</summary>
+    /// <returns>Whether it exited 0, and its output (or why it couldn't start).</returns>
+    std::pair<bool, std::string> RunCaptured(const std::string& command)
+    {
+#ifdef _WIN32
+        FILE* pipe = _popen(command.c_str(), "r");
+#else
+        FILE* pipe = popen(command.c_str(), "r");
+#endif
+
+        if (pipe == nullptr)
+        {
+            return {false, std::format("  can't start {}: {}\n", command,
+                                       std::error_code(errno, std::generic_category()).message())};
+        }
+
+        std::string output;
+        std::array<char, OutputChunk> chunk{};
+
+        for (size_t read = 0; (read = std::fread(chunk.data(), 1, chunk.size(), pipe)) > 0;)
+        {
+            output.append(chunk.data(), read);
+        }
+
+#ifdef _WIN32
+        const int status = _pclose(pipe);
+#else
+        const int status = pclose(pipe);
+#endif
+        return {status == 0, std::move(output)};
+    }
+
+    /// <summary>
+    /// Runs <paramref name="tests"/> (isolated ones), <paramref name="jobs"/> at a time, each worker's in a temporary
+    /// folder of its own under this run's, printing each one's output whole as it ends.
+    /// </summary>
+    /// <returns>The tests that failed, or why the workers' folders can't be made.</returns>
+    std::expected<std::vector<std::reference_wrapper<const MCTest::TestCase>>, std::string> RunIsolatedAtOnce(
+        std::string_view program, std::span<const std::reference_wrapper<const MCTest::TestCase>> tests, int32_t jobs)
+    {
+        std::vector<std::filesystem::path> folders;
+
+        for (int32_t worker = 0; worker < jobs; ++worker)
+        {
+            std::error_code error;
+            const std::filesystem::path folder =
+                std::filesystem::temp_directory_path(error) / std::format("{}{}", WorkerFolderPrefix, worker);
+
+            if (!error)
+            {
+                std::filesystem::create_directories(folder, error);
+            }
+
+            if (error)
+            {
+                return std::unexpected(std::format("can't make the folder {}: {}", folder.string(), error.message()));
+            }
+
+            folders.push_back(folder);
+        }
+
+        std::vector<std::reference_wrapper<const MCTest::TestCase>> failed;
+        std::atomic<size_t> next = 0;
+        std::mutex lock;
+        const auto work = [&](const std::filesystem::path& folder)
+        {
+            for (size_t i = next++; i < tests.size(); i = next++)
+            {
+                const MCTest::TestCase& test = tests[i];
+                const auto [passed, output] = RunCaptured(IsolatedCommand(program, test, folder, true));
+                const std::scoped_lock guard(lock);
+                std::cout << "[ PROC ] " << test.Name << "\n" << output << std::flush;
+
+                if (!passed)
+                {
+                    failed.emplace_back(test);
+                }
+            }
+        };
+
+        std::vector<std::thread> workers;
+
+        for (const std::filesystem::path& folder : folders)
+        {
+            workers.emplace_back(work, folder);
+        }
+
+        for (std::thread& worker : workers)
+        {
+            worker.join();
+        }
+
+        return failed;
+    }
+
+    /// <summary>Makes <paramref name="folder"/> this process's temporary folder (what temp_directory_path gives).</summary>
+    void SetTempFolder(const char* folder)
+    {
+#ifdef _WIN32
+        _putenv_s("TMP", folder);
+        _putenv_s("TEMP", folder);
+#else
+        setenv("TMPDIR", folder, 1);
+#endif
     }
 }
 
 /// <summary>
 /// Runs the registered tests. Arguments are name filters (a test runs when its name holds any of them, ignoring case);
 /// <c>--list</c> prints the names instead, and <c>--only &lt;name&gt;</c> runs the one test of exactly that name in this
-/// process (how isolated tests are run). Any other <c>--name value</c> is an option the tests read
-/// (<see cref="MCTest::Option"/>). Exits 0 when every selected test passed.
+/// process (how isolated tests are run). <c>--jobs &lt;n&gt;</c> runs the isolated tests n at a time, after the others,
+/// each worker's in a temporary folder of its own (its own user folder: a test that reads what earlier ones saved there
+/// may see less). Any other <c>--name value</c> is an option the tests read (<see cref="MCTest::Option"/>). Exits 0 when
+/// every selected test passed.
 /// </summary>
 int main(int argc, char** argv)
 {
@@ -166,6 +314,7 @@ int main(int argc, char** argv)
     std::vector<std::string> filters;
     bool list = false;
     std::optional<std::string_view> only;
+    int32_t jobs = 1;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -178,6 +327,22 @@ int main(int argc, char** argv)
         else if (arg == "--only" && i + 1 < argc)
         {
             only = argv[++i];
+        }
+        else if (arg == JobsOption && i + 1 < argc)
+        {
+            const std::string_view given = argv[++i];
+
+            const auto [end, error] = std::from_chars(given.data(), given.data() + given.size(), jobs);
+
+            if (error != std::errc() || end != given.data() + given.size() || jobs < 1)
+            {
+                std::cerr << JobsOption << " takes a number of tests to run at once, not \"" << given << "\"\n";
+                return 1;
+            }
+        }
+        else if (arg == TempFolderOption && i + 1 < argc)
+        {
+            SetTempFolder(argv[++i]);
         }
         else if (arg.starts_with("--") && arg.size() > 2 && i + 1 < argc)
         {
@@ -211,10 +376,17 @@ int main(int argc, char** argv)
 
     RunState& state = State();
     std::vector<std::reference_wrapper<const MCTest::TestCase>> failed;
+    std::vector<std::reference_wrapper<const MCTest::TestCase>> atOnce;
     const auto runStart = std::chrono::steady_clock::now();
 
     for (const MCTest::TestCase& test : selected)
     {
+        if (test.Isolated && !only && jobs > 1)
+        {
+            atOnce.emplace_back(test);
+            continue;
+        }
+
         if (test.Isolated && !only)
         {
             std::cout << "[ PROC ] " << test.Name << std::endl;
@@ -261,6 +433,20 @@ int main(int argc, char** argv)
         }
 
         std::cout << (passed ? "[   OK ] " : "[ FAIL ] ") << test.Name << " (" << ms << " ms)" << std::endl;
+    }
+
+    if (!atOnce.empty())
+    {
+        auto isolatedFailed = RunIsolatedAtOnce(argv[0], atOnce, jobs);
+
+        if (!isolatedFailed)
+        {
+            std::cerr << isolatedFailed.error() << "\n";
+            return 1;
+        }
+
+        state.Failures += isolatedFailed->size();
+        failed.insert(failed.end(), isolatedFailed->begin(), isolatedFailed->end());
     }
 
     const auto totalMs =

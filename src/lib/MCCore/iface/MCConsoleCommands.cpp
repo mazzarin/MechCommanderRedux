@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "iface/MCConsoleCommands.h"
 #include "iface/MCTacticalInterface.h"
+#include "main/MCArtModes.h"
 #include "object/MCBaseObject.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMover.h"
@@ -71,9 +72,34 @@ namespace
         return {};
     }
 
+    /// <summary>
+    /// <c>art original|hd|lit|dusk</c>: shows that art mode (MCArtModes.h) from the next frame on, as HD ART and HD
+    /// LIGHTING set so would, unsaved.
+    /// </summary>
+    std::expected<void, std::string> Art(MCConsoleArguments arguments)
+    {
+        const std::optional<MCArtMode> mode = arguments.size() == 1 ? ArtModeNamed(arguments[0]) : std::nullopt;
+
+        if (!mode.has_value())
+        {
+            std::string names;
+
+            for (const MCArtMode& each : ArtModes())
+            {
+                names += std::format("{}{}", names.empty() ? "" : "|", each.Name);
+            }
+
+            return std::unexpected(std::format("usage: art {}", names));
+        }
+
+        return ShowArtMode(*mode).transform_error([](const std::string& error)
+                                                  { return std::format("art: {}", error); });
+    }
+
     /// <summary>The commands.</summary>
-    const std::array<MCConsoleCommand, 1> Commands = {{
+    const std::array<MCConsoleCommand, 2> Commands = {{
         {"destroyarm", DestroyArm},
+        {"art", Art},
     }};
 }
 

@@ -8,6 +8,7 @@
 #include "lib/MCFatal.h"
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxClip.h"
 #include "vfx/MCVfxFunctions.h"
@@ -24,6 +25,13 @@ namespace
     {
         return std::format("{}: {}", what, SDL_GetError());
     }
+
+    /// <summary>A VFX shape's header: where its bounds (from its hot spot) lie, and its size (its rows follow).</summary>
+    constexpr size_t ShapeXMinAt = 0x08;
+    constexpr size_t ShapeYMinAt = 0x0c;
+    constexpr size_t ShapeXMaxAt = 0x10;
+    constexpr size_t ShapeYMaxAt = 0x14;
+    constexpr size_t ShapeHeaderBytes = 0x18;
 
     // shaders/draw.pshader's kinds and flags.
     constexpr uint32_t KindFill = 0;
@@ -66,6 +74,11 @@ namespace
     constexpr uint32_t SkipKeyAfterTable = 1u << 8;
     constexpr uint32_t ColorKey = 1u << 9;
     constexpr uint32_t UseColor = 1u << 10;
+    /// <summary>
+    /// Port-only (HD lighting): a light's glow (MCRenderer::GlowScope), blended as strong as the frame's look.x
+    /// (shaders/draw.pshader).
+    /// </summary>
+    constexpr uint32_t Glow = 1u << 11;
     constexpr uint32_t AlphaBlend = 1u << 12;
     constexpr uint32_t TableAfter = 1u << 13;
     /// <summary>The alpha colour is the draw's op.w, not the pixel's value.</summary>
@@ -87,6 +100,8 @@ namespace
     constexpr uint32_t HdAsMade = 1u << 20;
     /// <summary>Port-only: an HD art frame holding its blended pixels, some of which may add light (MCHdArt::Frame).</summary>
     constexpr uint32_t HdLight = 1u << 21;
+    /// <summary>Port-only (sun shadows): an HD art frame drawn as a unit's shadow (AddSunShadow).</summary>
+    constexpr uint32_t SunShadowDraw = 1u << 22;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -161,6 +176,11 @@ namespace
         int32_t SourceScale[4];
         int32_t Cycle[4];
         uint32_t CycleSources[8];
+        /// <summary>
+        /// Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun
+        /// shadows on, how much of the light under it an object's baked shadow takes away (0: off, solid black).
+        /// </summary>
+        float Look[4];
     };
 
     /// <summary>shaders/draw.pshader's alpha colour kinds.</summary>
@@ -922,14 +942,20 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
                            kind == KindSmoothEllipse || kind == KindSmoothBar || (op & SmoothEdges) != 0 || recolours;
     }
 
+    const MCRect written{draw[0], draw[1], draw[2], draw[3]};
+    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
+                       (op & KindMask) == KindSmoothEllipse || (op & KindMask) == KindSmoothPolygon;
+
+    // Only a blended draw can show fainter: an opaque one replaces what lies under it.
+    if (blend && MCRenderer::DrawingGlow())
+    {
+        op |= Glow;
+    }
+
     draw[8] = static_cast<int32_t>(op);
     draw[9] = static_cast<int32_t>(color);
     draw[10] = static_cast<int32_t>(before);
     draw[11] = static_cast<int32_t>(after);
-
-    const MCRect written{draw[0], draw[1], draw[2], draw[3]};
-    const bool blend = (op & (AlphaBlend | TableAfter | SmoothEdges)) != 0 || (op & KindMask) == KindSmoothLine ||
-                       (op & KindMask) == KindSmoothEllipse || (op & KindMask) == KindSmoothPolygon;
     const bool indexOnly = (op & IndexOnly) != 0;
     const bool shadow = (op & KindMask) == KindShadow;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
@@ -1875,7 +1901,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdPicture(const MCWindow
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const uint8_t> table, int32_t frame,
-                                                                int32_t width, int32_t height)
+                                                                int32_t width, int32_t height, int32_t step)
 {
     if (!MCHdArt::Active())
     {
@@ -1884,7 +1910,7 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
 
     if (MCHdArt::AttachedFolder(table.data()).has_value())
     {
-        return MCHdArt::Find(table.data(), frame, width, height);
+        return MCHdArt::Find(table.data(), frame, width, height, step);
     }
 
     // The table's bytes to the end of its block: the whole file or packet its loader read.
@@ -1900,7 +1926,51 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
         }
     }
 
-    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height) : nullptr;
+    return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height, step) : nullptr;
+}
+
+auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum) -> std::optional<HdInBetweenFrame>
+{
+    const std::optional<MCInBetween>& inBetween = MCRenderer::DrawingInBetween();
+    const int32_t count = VfxShapeCount(table);
+
+    if (!inBetween.has_value() || inBetween->Frame != shapeNum || shapeNum < 0 || shapeNum >= count ||
+        inBetween->Next < 0 || inBetween->Next >= count)
+    {
+        return std::nullopt;
+    }
+
+    const size_t frameAt = MCShapeOffset(table, shapeNum);
+    const size_t nextAt = MCShapeOffset(table, inBetween->Next);
+
+    if (table.size() < frameAt + ShapeHeaderBytes || table.size() < nextAt + ShapeHeaderBytes)
+    {
+        return std::nullopt;
+    }
+
+    // The bounds of the frame and of the next, together.
+    const std::span<const uint8_t> frame = table.subspan(frameAt);
+    const std::span<const uint8_t> next = table.subspan(nextAt);
+    const int32_t xMin = std::min(MCRead32(frame, ShapeXMinAt), MCRead32(next, ShapeXMinAt));
+    const int32_t yMin = std::min(MCRead32(frame, ShapeYMinAt), MCRead32(next, ShapeYMinAt));
+    const int32_t xMax = std::max(MCRead32(frame, ShapeXMaxAt), MCRead32(next, ShapeXMaxAt));
+    const int32_t yMax = std::max(MCRead32(frame, ShapeYMaxAt), MCRead32(next, ShapeYMaxAt));
+
+    if (xMax < xMin || yMax < yMin)
+    {
+        return std::nullopt;
+    }
+
+    HdInBetweenFrame found{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
+                           MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin, xMax - xMin + 1,
+                           yMax - yMin + 1};
+
+    if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
+    {
+        return std::nullopt;
+    }
+
+    return found;
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -1995,6 +2065,28 @@ void MCVulkanRenderer::AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& com
 void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command)
 {
     const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
+
+    // Port-only: a unit's sun shadow, from the blit's place (a whole frame at full size: mirrored, its first column
+    // drawn is its last), clipped as the blit was.
+    if (MCRenderer::DrawingSunShadow())
+    {
+        const MCAlphaBlitCommand& blit = command.Blit;
+        const std::optional<std::pair<Quad, Quad>> place =
+            BlitPlace(blit, command.Width, command.Height, "a sun shadow's blit reading outside its shape");
+
+        if (place.has_value() && blit.FullSize)
+        {
+            const auto& [at, from] = *place;
+            const int32_t left = blit.Mirror ? at[0] + from[0] - command.Width + 1 : at[0] - from[0];
+            const bool clipKnown = blit.Clip.X1 >= blit.Clip.X0 && blit.Clip.Y1 >= blit.Clip.Y0;
+            AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], blit.Mirror,
+                         clipKnown ? std::optional(Quad{blit.Clip.X0, blit.Clip.Y0, blit.Clip.X1, blit.Clip.Y1})
+                                   : std::nullopt);
+        }
+
+        return;
+    }
+
     const std::span<const uint8_t> data =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum) + 0x18);
     const int32_t width = command.Width;
@@ -2067,8 +2159,32 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
 
-        AddHd(SurfaceFor(target), *hd, place->first, place->second, command.Table, std::nullopt, HdColours::Corrected,
-              edges);
+        // An effect's frame part of the way to its next shows the pack's in-between instead, over the two frames'
+        // bounds, when the transform draws its whole frame at full size (no clipping to follow): mirrored, the
+        // in-between's last column comes first.
+        const auto& [at, from] = *place;
+        const bool whole = command.Blit.FullSize && command.Blit.Columns == width && command.Blit.Rows == height &&
+                           from[1] == 0 && from[3] == 1 && (from[2] == 1 ? from[0] == 0 : from[0] == width - 1);
+        const std::optional<HdInBetweenFrame> inBetween =
+            hd->Blended && whole ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+        bool drawn = false;
+
+        if (inBetween.has_value())
+        {
+            const bool mirrored = from[2] < 0;
+            const int32_t left =
+                mirrored ? at[0] + width - inBetween->Width + inBetween->FrameX : at[0] - inBetween->FrameX;
+            const int32_t top = at[1] - inBetween->FrameY;
+            const Quad betweenAt = {left, top, left + inBetween->Width - 1, top + inBetween->Height - 1};
+            const Quad betweenFrom = {mirrored ? inBetween->Width - 1 : 0, 0, from[2], 1};
+            drawn = AddHd(SurfaceFor(target), *inBetween->Frame, betweenAt, betweenFrom, command.Table, std::nullopt,
+                          HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+        }
+
+        if (!drawn)
+        {
+            AddHd(SurfaceFor(target), *hd, at, from, command.Table, std::nullopt, HdColours::Corrected, edges);
+        }
 
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
@@ -2416,6 +2532,17 @@ void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t col
 void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
     const AuditScope audit(*this, "Shape", target, command.ShapeTable, command.ShapeNum);
+
+    // Port-only: a unit's sun shadow, clipped as the shape is.
+    if (MCRenderer::DrawingSunShadow())
+    {
+        const bool rowsKnown = command.ClipBottom >= command.ClipTop;
+        AddSunShadow(target, command.ShapeTable, command.ShapeNum, command.Left, command.Top - command.SkipRows, false,
+                     rowsKnown ? std::optional(Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom})
+                               : std::nullopt);
+        return;
+    }
+
     const uint16_t surface = SurfaceFor(target);
     const std::span<const uint8_t> header =
         command.ShapeTable.subspan(MCShapeOffset(command.ShapeTable, command.ShapeNum));
@@ -2578,7 +2705,31 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
-            AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+            // An effect's frame part of the way to its next shows the pack's in-between there instead (over the two
+            // frames' bounds, clipped as the command's rows and columns), over the frame's own indices.
+            const std::optional<HdInBetweenFrame> inBetween =
+                hd->Blended ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            bool drawn = false;
+
+            if (inBetween.has_value())
+            {
+                const int32_t betweenX = command.Left - inBetween->FrameX;
+                const int32_t betweenY = command.Top - command.SkipRows - inBetween->FrameY;
+                const int32_t left = std::max(betweenX, command.Lo);
+                const int32_t top = std::max(betweenY, command.ClipTop);
+                const int32_t right = std::min(betweenX + inBetween->Width - 1, command.Hi);
+                const int32_t bottom = std::min(betweenY + inBetween->Height - 1, command.ClipBottom);
+                drawn = left <= right && top <= bottom &&
+                        AddHd(surface, *inBetween->Frame, Quad{left, top, right, bottom},
+                              Quad{left - betweenX, top - betweenY, 1, 1}, command.Table, std::nullopt,
+                              HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+            }
+
+            if (!drawn)
+            {
+                AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+            }
+
             Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
                 before, after);
 
@@ -2997,6 +3148,87 @@ bool MCVulkanRenderer::AddMapped(uint16_t surface, SourceKind source, uint32_t s
     draw[18] = texture.XMax + 1;
     draw[19] = texture.YMax + 1;
     return true;
+}
+
+void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left,
+                                    int32_t top, bool mirrored, const std::optional<Quad>& clip)
+{
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+    const float up = lighting.SunShadowUp;
+
+    if (GHdSunShadows == 0 || up <= 0.0f)
+    {
+        return;
+    }
+
+    const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
+    const int32_t yMin = MCRead32(header, ShapeYMinAt);
+    const int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
+    const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
+    const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
+
+    if (frame == nullptr)
+    {
+        return;
+    }
+
+    const std::optional<uint32_t> picture = HdPictureOf(*frame);
+
+    if (!picture)
+    {
+        return;
+    }
+
+    // A point h window pixels above the foot (the hot spot's row) casts its shadow right * h right and up * h up of
+    // it; the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
+    const float right = lighting.SunShadowRight;
+    const auto foot = static_cast<float>(top - yMin);
+    const float x0 = static_cast<float>(left);
+    const float y0 = static_cast<float>(top);
+    const float step = mirrored ? -1.0f : 1.0f;
+    const float firstColumn = mirrored ? x0 + static_cast<float>(width) : -x0;
+    const std::array<float, 6> mapping = {step, step * right / up, firstColumn - step * right * foot / up,
+                                          0.0f, 1.0f / up,         foot - foot / up - y0};
+
+    // The shadow's bounds: the frame's corners cast.
+    float minX = std::numeric_limits<float>::max();
+    float minY = minX;
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = maxX;
+
+    for (const float x : {x0, x0 + static_cast<float>(width)})
+    {
+        for (const float y : {y0, y0 + static_cast<float>(height)})
+        {
+            const float above = foot - y;
+            minX = std::min(minX, x + right * above);
+            maxX = std::max(maxX, x + right * above);
+            minY = std::min(minY, foot - up * above);
+            maxY = std::max(maxY, foot - up * above);
+        }
+    }
+
+    const Quad bounds = clip.value_or(Quad{0, 0, target.XMax, target.YMax});
+    const Quad at = {std::max(static_cast<int32_t>(std::floor(minX)), bounds[0]),
+                     std::max(static_cast<int32_t>(std::floor(minY)), bounds[1]),
+                     std::min(static_cast<int32_t>(std::ceil(maxX)) - 1, bounds[2]),
+                     std::min(static_cast<int32_t>(std::ceil(maxY)) - 1, bounds[3])};
+
+    if (at[2] < at[0] || at[3] < at[1])
+    {
+        return;
+    }
+
+    if (Add(SurfaceFor(target), SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1},
+            KindHdMap | AlphaBlend | SunShadowDraw, static_cast<uint32_t>(frame->Scale), 0, 0))
+    {
+        // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
+        std::array<int32_t, 20>& draw = _Draws.back();
+        std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+        draw[18] = frame->OriginalWidth();
+        draw[19] = frame->OriginalHeight();
+        ++_HdDrawn;
+    }
 }
 
 bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)
@@ -4569,6 +4801,11 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {
                 passFrame.CycleSources[i] = _Cycle.Sources[i];
             }
+
+            passFrame.Look[0] =
+                GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
+            passFrame.Look[1] =
+                GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
         }
 
         if (record.TerrainDraw >= 0)
@@ -4845,6 +5082,14 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceTexture(const MCWindow&
     width = 0;
     height = 0;
     return nullptr;
+}
+
+std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceIndexTexture(const MCWindow& window) const
+{
+    const MCAddressKey canonical = SurfaceKeyOf(window);
+    const auto found = std::ranges::find_if(_Surfaces, [&](const Surface& surface)
+                                            { return surface.Key == canonical && surface.Index.Handle != nullptr; });
+    return found != _Surfaces.end() ? found->Index.Handle : nullptr;
 }
 
 std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const

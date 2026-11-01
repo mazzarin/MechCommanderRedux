@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 class MCAppearance;
@@ -33,10 +34,44 @@ struct MCSceneLight
     float Blue = 0.0f;
 };
 
+/// <summary>Port-only (HD lighting): the air over a fire, which shimmers (composite.pshader's heat haze).</summary>
+struct MCSceneHeat
+{
+    /// <summary>The flames' centre, in the world window's pixels.</summary>
+    float X = 0.0f;
+    float Y = 0.0f;
+    /// <summary>How far to each side of it the air shimmers, and how far above it.</summary>
+    float HalfWidth = 0.0f;
+    float Rise = 0.0f;
+};
+
+/// <summary>
+/// Port-only (HD lighting): where the ground lies in the world window: the ground point <c>x</c> meters east and
+/// <c>y</c> north of the map's middle shows at window pixel <c>Origin + East * x + North * y</c> (the ground's height
+/// left out), so what moves over the ground (the water's ripples) moves with it as the view scrolls and zooms.
+/// </summary>
+struct MCSceneGround
+{
+    float OriginX = 0.0f;
+    float OriginY = 0.0f;
+    float EastX = 0.0f;
+    float EastY = 0.0f;
+    float NorthX = 0.0f;
+    float NorthY = 0.0f;
+};
+
 namespace MCSceneLights
 {
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
     inline constexpr size_t MaxLights = 64;
+    /// <summary>The most fires whose air shimmers in a frame (the biggest; composite.pshader's MaxHeat).</summary>
+    inline constexpr size_t MaxHeat = 16;
+    /// <summary>
+    /// The shadows' group in the draw list (the lights' and the sun's): after the terrain's (50,000,000), the craters'
+    /// (30,000,000) and the terrain's overlays' (10,000,000), before every object's (their screen heights, or less), so
+    /// a shadow lies on the ground under every unit and object.
+    /// </summary>
+    inline constexpr int32_t ShadowDepth = 5000000;
 
     /// <summary>Which of a glow's pixels shine: all of a light's glow, only the fire of an explosion (not its dust).</summary>
     enum class MCGlowPixels
@@ -67,6 +102,39 @@ namespace MCSceneLights
         float Facing = 24.0f;
         /// <summary>How much of a light a unit's shadow keeps off the ground behind it (0: no shadows).</summary>
         float Shadow = 0.9f;
+        /// <summary>
+        /// How much more of its hue a light gives what it lights, its brightness kept (0: only its colour as it adds
+        /// up): a daylit world, near white already, shows the light's colour where the light alone mostly whitens it.
+        /// </summary>
+        float Tint = 2.0f;
+        /// <summary>The bloom: how much of the world's brightest pixels' light spreads around them (0: none).</summary>
+        float Bloom = 1.0f;
+        /// <summary>The brightness (of a pixel's brightest component) a pixel blooms above.</summary>
+        float BloomFrom = 0.8f;
+        /// <summary>The most the air over a fire shimmers, in the window's pixels (0: no heat haze).</summary>
+        float Haze = 1.0f;
+        /// <summary>
+        /// How strong a light's own glow (MCLight's sprite: the original's white oval, its stand-in for the light) shows,
+        /// 0 to 1 as drawn: the light it stands for already lights the world around it.
+        /// </summary>
+        float GlowOvals = 0.75f;
+        /// <summary>
+        /// How much the water lives (its colours flowing from one of the original's cycle's steps to the next instead
+        /// of ticking, ripples and the sun's glints moving over it, the lights glinting off it, foam along its shores),
+        /// 0 to 1 (0: the original's cycle).
+        /// </summary>
+        float Water = 1.0f;
+        /// <summary>
+        /// With sun shadows on (<see cref="GHdSunShadows"/>): how much of the light under it an object's shadow takes
+        /// away, 0 to 1 (1: the original's solid black).
+        /// </summary>
+        float SunShadow = 0.55f;
+        /// <summary>
+        /// With sun shadows on: where a unit's shadow falls (the original's objects' baked shadows' way, measured on its
+        /// trees), per window pixel a point of it stands above its foot: this many pixels right, and this many up.
+        /// </summary>
+        float SunShadowRight = 0.6f;
+        float SunShadowUp = 0.25f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
@@ -137,6 +205,13 @@ namespace MCSceneLights
     /// </summary>
     void AddShadows();
 
+    /// <summary>
+    /// The air over the fire of the frame <paramref name="appearance"/> last drew (its Render; a burning fire's flame,
+    /// not an explosion's fireball, which is gone before the air heats): it shimmers above the frame's bright pixels,
+    /// as wide and as high as they are big.
+    /// </summary>
+    void AddHeat(const MCVfxAppearance& appearance);
+
     /// <summary>Ends the frame's lights (MCCamera::Render, once the world is drawn): they are what the window shows.</summary>
     void Finish();
 
@@ -145,6 +220,24 @@ namespace MCSceneLights
     /// <see cref="MaxLights"/>); none when HD lighting is off or nothing lit it.
     /// </summary>
     std::span<const MCSceneLight> Shown(const MCWindow& view);
+
+    /// <summary>
+    /// The fires whose air shimmers in the world window <paramref name="view"/> (as <see cref="Shown"/>, the biggest
+    /// <see cref="MaxHeat"/>).
+    /// </summary>
+    std::span<const MCSceneHeat> ShownHeat(const MCWindow& view);
+
+    /// <summary>The game's time (ScenarioTime) the last finished frame was drawn at: the haze's, still while paused.</summary>
+    float ShownTime();
+
+    /// <summary>
+    /// Where the ground lies in the world window <paramref name="view"/> (as <see cref="Shown"/>, its last finished
+    /// frame's); none when HD lighting is off or another window was drawn.
+    /// </summary>
+    std::optional<MCSceneGround> ShownGround(const MCWindow& view);
+
+    /// <summary>How far the water's colour cycle had gone toward its next step then (WaterCyclePhase).</summary>
+    float ShownWaterPhase();
 
     /// <summary>
     /// The view's tilt: the screen height a ground distance takes across the screen per screen width it takes along it
@@ -158,6 +251,12 @@ namespace MCSceneLights
 /// 2 the same at dusk, the world dimmed and the lights stronger. Off by default.
 /// </summary>
 extern int GHdLighting;
+
+/// <summary>
+/// Port-only: PREFS "HDSunShadows": 0 draws objects' shadows as the original did, solid black; 1 as shadows, darkening
+/// what lies under them (MCLighting::SunShadow; HD art's frames only: MCHdArt::MarkBakedShadows). Off by default.
+/// </summary>
+extern int GHdSunShadows;
 
 /// <summary>GHdLighting's values.</summary>
 enum MCHdLightingSetting : int

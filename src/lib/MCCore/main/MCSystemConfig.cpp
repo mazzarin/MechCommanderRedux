@@ -204,6 +204,8 @@ void ReadPreferences(MCFitIniFile& file)
     // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
     GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(HdLightingOff),
                              static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingDusk));
+    // Port-only: HDSunShadows draws objects' shadows darkening the ground instead of solid black (sprite/MCSceneLights.h).
+    GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

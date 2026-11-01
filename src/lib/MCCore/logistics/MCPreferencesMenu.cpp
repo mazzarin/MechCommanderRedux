@@ -498,6 +498,7 @@ void SavePrefs()
     prefs.WriteIdBoolean("HDArt", GHdArt != 0);
     prefs.WriteIdLong("HDAudio", GHdAudio);
     prefs.WriteIdLong("HDLighting", GHdLighting);
+    prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
     MCKeyBindings::WritePrefs(prefs);
 }
 

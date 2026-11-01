@@ -2,6 +2,7 @@
 
 #include "appear/MCAppearance.h"
 #include "sprite/MCArmAppearanceType.h"
+#include "sprite/MCInBetween.h"
 
 /// <summary>A weapon effect's appearance, turned to its owner's direction of travel.</summary>
 /// <remarks>Original source: <c>sprite\armactor.cpp</c>.</remarks>
@@ -24,6 +25,12 @@ public:
 
     int32_t GetFrameNumber() override { return CurrentFrame; }
 
+    /// <summary>
+    /// Port-only (HD art): the in-between of the current frame toward the next that its share of the frame shown calls
+    /// for (none in the frame's first step, on the last frame, or before the animation has started).
+    /// </summary>
+    std::optional<MCInBetween> InBetween() const;
+
     /// <summary>The type.</summary>
     std::shared_ptr<MCArmAppearanceType> AppearType;
     /// <summary>The shape drawn (expired once the cache drops it).</summary>
@@ -38,6 +45,8 @@ public:
     float FrameRate = 0.0f;
     /// <summary>Frames played so far.</summary>
     int32_t LastFrame = 0;
+    /// <summary>Port-only (HD art's in-betweens): how far the animation is through the frame shown, 0 to 1.</summary>
+    float FrameShare = 0.0f;
     /// <summary>The facing, in degrees.</summary>
     float Rotation = 0.0f;
     /// <summary>The fade table (index into the palette's haze tables) to draw through, -1 for none.</summary>

@@ -627,6 +627,9 @@
     <ClCompile Include="main\MCAblDebuggerConsole.cpp">
       <Filter>main</Filter>
     </ClCompile>
+    <ClCompile Include="main\MCArtModes.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
     <ClCompile Include="main\MCErrorReport.cpp">
       <Filter>main</Filter>
     </ClCompile>
@@ -1837,6 +1840,9 @@
     <ClInclude Include="main\MCAblDebuggerConsole.h">
       <Filter>main</Filter>
     </ClInclude>
+    <ClInclude Include="main\MCArtModes.h">
+      <Filter>main</Filter>
+    </ClInclude>
     <ClInclude Include="main\MCDropSlot.h">
       <Filter>main</Filter>
     </ClInclude>
@@ -2365,6 +2371,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCHdMovie.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCInBetween.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechActor.h">

@@ -87,6 +87,13 @@ namespace MCHdArt
     /// <summary>The bytes an index picture's pixel takes (R8G8), and the green of a pixel with an index.</summary>
     inline constexpr size_t IndexBytes = 2;
     inline constexpr uint8_t HasIndex = 255;
+    /// <summary>
+    /// Port-only: an index picture's green for a pixel with an index that is part of an object's baked shadow
+    /// (<see cref="MarkBakedShadows"/>); otherwise it is as HasIndex's.
+    /// </summary>
+    inline constexpr uint8_t BakedShadow = 254;
+    /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
+    inline constexpr uint8_t BakedShadowIndex = 0x10;
     /// <summary>An index picture's blue in a frame that holds its blended pixels (<see cref="Frame::Blended"/>).</summary>
     inline constexpr uint8_t HoldsBlended = 255;
 
@@ -112,6 +119,15 @@ namespace MCHdArt
     /// <paramref name="width"/> x <paramref name="height"/> (0 x 0: any), or what is wrong with it.
     /// </summary>
     std::expected<Frame, std::string> DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only: marks <paramref name="frame"/>'s baked shadow in its index picture (<see cref="BakedShadow"/>). The
+    /// original's object art (trees, buildings, rocks, turrets) casts its shadow down and right in solid
+    /// <see cref="BakedShadowIndex"/>; the same black also draws detail inside an object (a tank's hull). Its shadow is
+    /// that black outside the rest of the art's outline (closed over one-pixel gaps, holes filled), in groups that touch
+    /// at least as many empty pixels as drawn ones. A frame that holds its blended pixels (an effect's) has none.
+    /// </summary>
+    void MarkBakedShadows(Frame& frame);
 
     /// <summary>Where a mech part's shape comes from.</summary>
     struct MechShapeKey
@@ -215,9 +231,12 @@ namespace MCHdArt
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table starting at <paramref name="table"/> (whose
     /// bounds are <paramref name="width"/> x <paramref name="height"/>), read from the pack the first time; null when
-    /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds.
+    /// HD art is off or the pack has no such frame, or its frame isn't a whole multiple of those bounds. A
+    /// <paramref name="step"/> asks for the frame's in-between of that step toward the next instead (MCInBetween,
+    /// <c>&lt;frame&gt;_&lt;step&gt;</c>), whose bounds are the two frames' together.
     /// </summary>
-    std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height);
+    std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
+                                      int32_t step = 0);
 
     /// <summary>
     /// Whether the frames of the shape table starting at <paramref name="table"/> are drawn with their own alpha's edges
@@ -225,6 +244,12 @@ namespace MCHdArt
     /// default for a frame that doesn't hold its blended pixels).
     /// </summary>
     bool KeepsFrameEdges(const uint8_t* table);
+
+    /// <summary>
+    /// Whether the shape table starting at <paramref name="table"/> is tied to the pack (and its owner lives): its frames
+    /// are looked for there.
+    /// </summary>
+    bool Attached(const uint8_t* table);
 
     /// <summary>
     /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
@@ -286,9 +311,11 @@ namespace MCHdArt
     /// <summary>
     /// The HD copy of frame <paramref name="frame"/> of the shape table whose bytes hash to <paramref name="hash"/>
     /// (<see cref="ShapeTableHash"/>; the frame's bounds <paramref name="width"/> x <paramref name="height"/>), read from
-    /// the pack the first time; null when HD art is off or the pack has none.
+    /// the pack the first time; null when HD art is off or the pack has none. A <paramref name="step"/> asks for an
+    /// in-between, as <see cref="Find"/>'s does.
     /// </summary>
-    std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height);
+    std::shared_ptr<const Frame> FindShape(uint64_t hash, int32_t frame, int32_t width, int32_t height,
+                                           int32_t step = 0);
 
     /// <summary>
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's

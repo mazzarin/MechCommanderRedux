@@ -116,6 +116,7 @@ namespace
         command.Rows = rows;
         command.Mirror = mirror != 0;
         command.FullSize = fullSize != 0;
+        command.Clip = {cx0, cy0, cx1, cy1};
         return true;
     }
 

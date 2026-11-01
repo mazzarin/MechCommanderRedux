@@ -187,17 +187,13 @@ namespace
 
         void AlphaBlit(MCWindow&, const MCAlphaBlitCommand& command) override
         {
-            MCAlphaBlitCommand moved = command;
-            moved.Left += _X;
-            moved.Top += _Y;
-            Target().AlphaBlit(Window(), moved);
+            Target().AlphaBlit(Window(), Move(command));
         }
 
         void ShapeBlit(MCWindow&, const MCShapeBlitCommand& command) override
         {
             MCShapeBlitCommand moved = command;
-            moved.Blit.Left += _X;
-            moved.Blit.Top += _Y;
+            moved.Blit = Move(command.Blit);
             Target().ShapeBlit(Window(), moved);
         }
 
@@ -372,6 +368,16 @@ namespace
         MCRenderer& Target() const { return MCRenderer::For(Window()); }
 
         MCRect Move(const MCRect& rect) const { return MCRect{rect.X0 + _X, rect.Y0 + _Y, rect.X1 + _X, rect.Y1 + _Y}; }
+
+        /// <summary><paramref name="blit"/> moved by the view's origin: where it writes and the rectangle it keeps to.</summary>
+        MCAlphaBlitCommand Move(const MCAlphaBlitCommand& blit) const
+        {
+            MCAlphaBlitCommand moved = blit;
+            moved.Left += _X;
+            moved.Top += _Y;
+            moved.Clip = Move(blit.Clip);
+            return moved;
+        }
 
         /// <summary>Whether a write of <paramref name="color"/> draws nothing (0xff in a colour-keyed view).</summary>
         bool Drops(uint8_t color) const { return _KeyTransparent && color == 0xff; }
@@ -568,6 +574,15 @@ namespace
     /// <summary>How many <see cref="MCRenderer::ExpectUnregistered"/> scopes are alive.</summary>
     int32_t UnregisteredExpected = 0;
 
+    /// <summary>Whether a <see cref="MCRenderer::GlowScope"/> is drawing a glow.</summary>
+    bool GlowDrawn = false;
+
+    /// <summary>The in-between a <see cref="MCRenderer::InBetweenScope"/> is drawing, none outside one.</summary>
+    std::optional<MCInBetween> InBetweenDrawn;
+
+    /// <summary>Whether a <see cref="MCRenderer::SunShadowScope"/> is drawing a unit's sun shadow.</summary>
+    bool SunShadowDrawn = false;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -744,6 +759,51 @@ MCRenderer::ExpectUnregistered::ExpectUnregistered()
 MCRenderer::ExpectUnregistered::~ExpectUnregistered()
 {
     --UnregisteredExpected;
+}
+
+MCRenderer::GlowScope::GlowScope(bool glow) : _Was(GlowDrawn)
+{
+    GlowDrawn = _Was || glow;
+}
+
+MCRenderer::GlowScope::~GlowScope()
+{
+    GlowDrawn = _Was;
+}
+
+bool MCRenderer::DrawingGlow()
+{
+    return GlowDrawn;
+}
+
+MCRenderer::InBetweenScope::InBetweenScope(const std::optional<MCInBetween>& inBetween) : _Was(InBetweenDrawn)
+{
+    InBetweenDrawn = inBetween;
+}
+
+MCRenderer::InBetweenScope::~InBetweenScope()
+{
+    InBetweenDrawn = _Was;
+}
+
+const std::optional<MCInBetween>& MCRenderer::DrawingInBetween()
+{
+    return InBetweenDrawn;
+}
+
+MCRenderer::SunShadowScope::SunShadowScope(bool shadow) : _Was(SunShadowDrawn)
+{
+    SunShadowDrawn = _Was || shadow;
+}
+
+MCRenderer::SunShadowScope::~SunShadowScope()
+{
+    SunShadowDrawn = _Was;
+}
+
+bool MCRenderer::DrawingSunShadow()
+{
+    return SunShadowDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

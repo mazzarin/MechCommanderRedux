@@ -73,6 +73,9 @@ cbuffer Frame : register(b0, space3)
     // colour is transparent on this surface. Index x + i shows the colour of cycleSources[(i + y) & 7].
     int4 cycle;
     uint4 cycleSources[2];
+    // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun shadows
+    // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black).
+    float4 look;
 };
 
 struct Input
@@ -127,6 +130,8 @@ static const uint TableBefore = 1u << 7;
 static const uint SkipKeyAfterTable = 1u << 8;
 static const uint ColorKey = 1u << 9;
 static const uint UseColor = 1u << 10;
+// Port-only (HD lighting): a light's glow, blended as strong as look.x.
+static const uint Glow = 1u << 11;
 static const uint AlphaBlend = 1u << 12;
 static const uint TableAfter = 1u << 13;
 // The alpha colour is op.w, not the pixel's value.
@@ -145,6 +150,9 @@ static const uint BlendedOnly = 1u << 19;
 static const uint HdAsMade = 1u << 20;
 // Port-only: an HD art frame holding its blended pixels.
 static const uint HdLight = 1u << 21;
+// Port-only (sun shadows): an HD art frame drawn as a unit's shadow (KindHdMap, its map the sun's shear): black at its
+// coverage, as dark as look.y.
+static const uint SunShadowDraw = 1u << 22;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -589,6 +597,16 @@ Output SmoothBlendedPixel(Input input, int2 target)
     return Blended(blend * share);
 }
 
+// An HD frame's index picture's green (MCHdArt.h) is 255 for a pixel with an index, and this for one that is also
+// part of an object's baked shadow (MCHdArt::MarkBakedShadows).
+static const uint BakedShadow = 254u;
+
+// Whether an HD frame's index picture's texel has an index.
+bool HasIndexIn(float4 entry)
+{
+    return Byte(entry.g) >= BakedShadow;
+}
+
 // An HD art frame's colour at a texel, transparent outside its size, and where a keyed copy (port-only: an HD picture
 // of a menu's art) leaves out the original's pixel of the key colour (keyed: op.x's ColorKey, the key op.y's bits
 // 8-15). The frame's indices (the source) have a texel for hdScale x hdScale of its colours.
@@ -603,13 +621,51 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     {
         const float4 entry = Fetch(sourceTex, sourceSampler, texel / hdScale);
 
-        if (Byte(entry.g) == 255u && Byte(entry.r) == key)
+        if (HasIndexIn(entry) && Byte(entry.r) == key)
         {
             return float4(0.0, 0.0, 0.0, 0.0);
         }
     }
 
     return Fetch(hdTex, hdSampler, texel);
+}
+
+// Port-only (sun shadows): how much of an HD frame's colour at `shape` (a place in its original's pixels, their
+// centres at .5) is its baked shadow: between the four original pixels around it, of those with an index (so the
+// shadow keeps its strength out to its edge, where the frame's own coverage fades it).
+float BakedShadowAt(int2 original, float2 shape)
+{
+    const float2 at = shape - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    float shadow = 0.0;
+    float drawn = 0.0;
+
+    for (int y = 0; y < 2; y++)
+    {
+        for (int x = 0; x < 2; x++)
+        {
+            const int2 texel = base + int2(x, y);
+
+            if (any(texel < 0) || any(texel >= original))
+            {
+                continue;
+            }
+
+            const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+
+            if (!HasIndexIn(entry))
+            {
+                continue;
+            }
+
+            const float weight = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            drawn += weight;
+            shadow += Byte(entry.g) == BakedShadow ? weight : 0.0;
+        }
+    }
+
+    return drawn > 0.0 ? shadow / drawn : 0.0;
 }
 
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
@@ -704,17 +760,28 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    if ((input.op.x & SunShadowDraw) != 0)
+    {
+        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a));
+    }
+
+    // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it.
+    if (look.y > 0.0 && (input.op.x & HdLight) == 0)
+    {
+        color = lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), BakedShadowAt(original, shape));
+    }
+
     // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
     // brightness.
     const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
-    if (Byte(entry.g) == 255u && (input.op.x & HdAsMade) == 0)
+    if (HasIndexIn(entry) && (input.op.x & HdAsMade) == 0)
     {
         const uint index = Byte(entry.r);
         const uint shown = (input.op.x & TableBefore) != 0 ? Table(input.op.z, index) : index;
         color.rgb = Corrected(color.rgb, color.a, index, shown);
     }
-    else if (Byte(entry.g) != 255u && (input.op.x & TableBefore) != 0)
+    else if (!HasIndexIn(entry) && (input.op.x & TableBefore) != 0)
     {
         // A pixel without an index (an effect's blended one: smoke, dust) drawn through a table (the haze): the
         // table's change of colour, as near as one line a channel follows it.
@@ -1072,7 +1139,8 @@ Output ShadowPixel(Input input, int2 target)
     return Blended(float4(0.0, 0.0, 0.0, strength));
 }
 
-Output main(Input input)
+// The draw's pixel, as main shows it but for a glow's strength.
+Output DrawnOutput(Input input)
 {
     // The drawn pixel, and the window pixel it shows.
     const int2 target = int2(floor(input.position.xy));
@@ -1279,4 +1347,17 @@ Output main(Input input)
     }
 
     return Blended(blend * coverage);
+}
+
+Output main(Input input)
+{
+    Output output = DrawnOutput(input);
+
+    // Port-only (HD lighting): a light's glow, premultiplied through the blend pipeline, fainter as look.x.
+    if ((input.op.x & Glow) != 0)
+    {
+        output.color *= look.x;
+    }
+
+    return output;
 }

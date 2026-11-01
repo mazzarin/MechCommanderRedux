@@ -79,6 +79,8 @@ auto MCVfxAppearance::Init(std::shared_ptr<MCAppearanceType> tree, std::weak_ptr
     Visible = false;
     CurrentTime = 0.0f;
     LastFrame = 0;
+    FrameShare = 0.0f;
+    Looped = false;
     HazeLevel = 0;
     CurrentState = MCActorState::Normal;
     InView = false;
@@ -139,6 +141,21 @@ auto MCVfxAppearance::RecalcBounds(MCOptionalRef<MCCamera> view) -> int
     return result;
 }
 
+auto MCVfxAppearance::FrameDrawing() const -> MCFrameDrawing
+{
+    const MCVfxAppearanceType& type = *AppearType;
+    const uint32_t numFrames = CurrentSubState != NoSubState ? type.SubStates[CurrentSubState].NumFrames
+                                                             : type.StateData(CurrentState).NumFrames;
+
+    if (!type.Delta || numFrames < 2)
+    {
+        return MCFrameDrawing::Plain;
+    }
+
+    // Delta-compressed animations draw unscaled (only when the type is scaled).
+    return type.Scaled ? MCFrameDrawing::Delta : MCFrameDrawing::Nothing;
+}
+
 auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 {
     const std::shared_ptr<MCGameObject> obj = Owner.lock();
@@ -167,34 +184,32 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
     }
 
     const MCVfxAppearanceType& type = *AppearType;
-    uint32_t numFrames = type.StateData(CurrentState).NumFrames;
-
-    if (subState != NoSubState)
-    {
-        numFrames = type.SubStates[subState].NumFrames;
-    }
-
     const int32_t depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
 
     const std::optional<MCColorTable> hazeTable = GamePalette().GetHazePalette(HazeLevel);
+    const MCFrameDrawing drawing = FrameDrawing();
 
-    if (type.Delta && static_cast<int32_t>(numFrames) >= 2)
+    if (drawing != MCFrameDrawing::Plain)
     {
-        // Delta-compressed animations draw unscaled (only when the type is scaled).
-        if (shape != nullptr && !shape->FrameList().empty() && type.Scaled)
+        if (drawing == MCFrameDrawing::Delta && shape != nullptr && !shape->FrameList().empty())
         {
             ElementList().OpenGroup(depth, true);
-            ElementList().Add(ElementList().Make<MCDeltaElement>(shape->FrameList(), static_cast<int32_t>(ScreenPos.X),
-                                                                 static_cast<int32_t>(ScreenPos.Y), CurrentFrame,
-                                                                 hazeTable));
+            MCDeltaElement& element =
+                ElementList().Make<MCDeltaElement>(shape->FrameList(), static_cast<int32_t>(ScreenPos.X),
+                                                   static_cast<int32_t>(ScreenPos.Y), CurrentFrame, hazeTable);
+            element.Glow = Glow;
+            ElementList().Add(element);
         }
     }
     else if (shape != nullptr && !shape->FrameList().empty())
     {
         ElementList().OpenGroup(depth, true);
         // Scaled types have their own zoomed out shapes, so they draw unscaled.
-        ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame,
-                                                           0, hazeTable, type.Scaled ? 1 : 0));
+        MCVfxElement& element = ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                                 CurrentFrame, 0, hazeTable, type.Scaled ? 1 : 0);
+        element.Glow = Glow;
+        element.InBetween = InBetween();
+        ElementList().Add(element);
     }
 
     if (obj->Selected == 1 || obj->GetNumAttackers() > 0)
@@ -303,6 +318,8 @@ auto MCVfxAppearance::Update() -> int32_t
     }
 
     const int32_t wholeFrames = static_cast<int32_t>(std::floor(static_cast<double>(frames)));
+    // Port-only (HD art's in-betweens): how far the animation is through the frame shown.
+    FrameShare = frames - static_cast<float>(wholeFrames);
 
     if (played < wholeFrames)
     {
@@ -338,6 +355,7 @@ auto MCVfxAppearance::Update() -> int32_t
         if (loop && LoopEnd == -1)
         {
             CurrentFrame = static_cast<int32_t>(frameNum % stateFrames);
+            Looped = true;
             return 0;
         }
 
@@ -365,6 +383,47 @@ auto MCVfxAppearance::StateExists(MCActorState state) const -> int32_t
     }
 
     return 0;
+}
+
+auto MCVfxAppearance::InBetween() const -> std::optional<MCInBetween>
+{
+    if (CurrentFrame < 0)
+    {
+        return std::nullopt;
+    }
+
+    const MCActorData& data = AppearType->StateData(CurrentState);
+    uint32_t stateFrames = data.NumFrames;
+    bool loop = true;
+
+    if (CurrentSubState != NoSubState)
+    {
+        loop = AppearType->SubStates[CurrentSubState].Loop;
+        stateFrames = AppearType->SubStates[CurrentSubState].NumFrames;
+    }
+
+    // The pack's in-betweens go from a frame to the one after it, and from the last to the first (a loop that goes
+    // back elsewhere, to LoopStart, has none). An animation that hasn't looped yet holds its last frame, as one that
+    // ends there (an explosion) does.
+    int32_t next = CurrentFrame + 1;
+
+    if (LoopEnd != -1 && LoopEnd <= next)
+    {
+        return std::nullopt;
+    }
+
+    if (stateFrames <= static_cast<uint32_t>(next))
+    {
+        if (!loop || !Looped)
+        {
+            return std::nullopt;
+        }
+
+        next = 0;
+    }
+
+    // Faithful to Update: the state's frame rate, even in a sub-state.
+    return InBetweenOf(CurrentFrame, next, FrameShare, data.FrameRate);
 }
 
 auto MCVfxAppearance::DrawBars() -> void
@@ -457,6 +516,8 @@ auto MCVfxAppearance::SetTypeId(MCActorState state, uint8_t subState) -> void
         CurrentFrame = -1;
         CurrentTime = 0.0f;
         LastFrame = 0;
+        FrameShare = 0.0f;
+        Looped = false;
         CurrentSubState = NoSubState;
 
         if (state != MCActorState::Normal)

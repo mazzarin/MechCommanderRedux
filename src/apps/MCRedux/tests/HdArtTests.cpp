@@ -5168,6 +5168,20 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-footprints-on 1</c>, turns HDFootprints on (GHdFootprints): footprints under the feet as drawn. The
+    /// ring of footprints and craters keeps the mission's length (three times it needs PREFS, read as the mission starts,
+    /// before its ring is made).
+    /// </summary>
+    void FootprintsFromOptions()
+    {
+        if (MCTest::Option("hd-footprints-on").has_value())
+        {
+            GHdFootprints = 1;
+            std::cout << "  footprints: under the feet\n";
+        }
+    }
+
+    /// <summary>
     /// With <c>--hd-turns 1</c>, turns HDTurns on (GHdTurns): mechs drawn turning eased, their legs between facings where
     /// the pack has the middles.
     /// </summary>
@@ -5294,7 +5308,7 @@ namespace
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
     /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
     /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>), the other HD options as
-    /// their flags ask (<see cref="TurnsFromOptions"/>...).
+    /// their flags ask (<see cref="FootprintsFromOptions"/>, <see cref="TurnsFromOptions"/>...).
     /// </summary>
     /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
     bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
@@ -5341,6 +5355,7 @@ namespace
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();
+        FootprintsFromOptions();
         TurnsFromOptions();
         return original;
     }
@@ -5603,7 +5618,6 @@ TEST_CASE_ISOLATED("tool: --hd-footprints pictures where a walking mech's footpr
 
     std::optional<MCHdArtOn> hdArt;
     const bool original = StartPictures(*pack, hdArt);
-    GHdFootprints = MCTest::Option("hd-footprints-on").has_value() ? 1 : 0;
     const std::optional<std::string_view> tree = MCTest::Option("mech");
     const PlayerMech player = tree.has_value() ? GivePlayerMech(*tree) : OwnPlayerMech();
     std::cout << std::format("  the mech: {}\n", player.Mech->TypeAs<MCBattleMechType>().Name);

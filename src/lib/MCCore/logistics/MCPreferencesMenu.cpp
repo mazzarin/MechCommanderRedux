@@ -22,6 +22,7 @@
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
+#include "sprite/MCMechActor.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
@@ -473,6 +474,7 @@ void WritePrefs()
     prefs.WriteIdLong("HDFlecks", GHdFlecks);
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
     prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
+    prefs.WriteIdBoolean("HDTurns", GHdTurns != 0);
     MCKeyBindings::WritePrefs(prefs);
     Cancel();
 }

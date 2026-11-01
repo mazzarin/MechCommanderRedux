@@ -21,6 +21,7 @@
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
+#include "sprite/MCMechActor.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
@@ -224,6 +225,8 @@ void ReadPreferences(MCFitIniFile& file)
     GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
     // Port-only: HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
     GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
+    // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).
+    GHdTurns = file.Read<bool>("HDTurns").value_or(false) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCMissionGlobals.h"
+#include "sprite/MCInBetween.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCShape.h"
 
@@ -40,6 +41,12 @@ namespace
         -1, -1, 21, 22, 2,  -1, -1, -1, -1, -1, -1, -1, 21, 22, 3,  4,  -1, -1, -1, -1, -1, -1, 21, 22, 3,  4,  6,  7,
         -1, -1, -1, -1, 21, 22, 10, 9,  -1, -1, -1, -1, -1, -1, 21, 22, 3,  11, -1, -1, -1, -1, -1, -1, 21, 22, 20, 2,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+
+    /// <summary>A whole turn and half of one, in degrees.</summary>
+    constexpr float FullTurn = 360.0f;
+    constexpr float HalfTurn = 180.0f;
+    /// <summary>How far a turn middle lies from one facing to the next.</summary>
+    constexpr float Halfway = 0.5f;
 
     /// <summary>Upper-body rotations per gesture: 17 when the part is mirrored, else 32.</summary>
     auto PartRotations(bool symmetrical) -> int32_t
@@ -88,6 +95,12 @@ namespace
         return data.FrameRate < 0.0 ? -data.FrameRate : data.FrameRate;
     }
 
+    /// <summary>Whether <paramref name="gesture"/> (falls, deaths and the like: 14..19 and 21..24) has only every fourth facing.</summary>
+    auto EveryFourthFacing(int32_t gesture) -> bool
+    {
+        return (gesture > 0xd && gesture < 0x14) || (gesture > 0x14 && gesture < 0x19);
+    }
+
     /// <summary>Which of a part's facings a rotation shows (its index among the gesture's), and whether mirrored.</summary>
     struct ShownFacing
     {
@@ -125,7 +138,7 @@ namespace
         // Gestures 14..19 and 21..24 only have every fourth facing.
         int32_t index = rotationIndex;
 
-        if ((gesture > 0xd && gesture < 0x14) || (gesture > 0x14 && gesture < 0x19))
+        if (EveryFourthFacing(gesture))
         {
             if (rotationIndex < 2)
             {
@@ -378,9 +391,50 @@ auto MCSpriteTree::DrawnFacing(int32_t gesture, int32_t part, float rotation) co
 
     const MCGestureData& data = Gestures[gesture];
     const ShownFacing shown = ShowsFacing(data, gesture, part, rotation);
-    const float degrees = static_cast<float>(shown.Index) * 360.0f /
+    const float degrees = static_cast<float>(shown.Index) * FullTurn /
                           static_cast<float>(static_cast<int32_t>(data.NumRotations[part]) + 1);
     return MCDrawnFacing{shown.Reverse ? -degrees : degrees, shown.Reverse};
+}
+
+auto MCSpriteTree::TurnMiddle(int32_t gesture, float rotation) const -> std::optional<MCTurnMiddle>
+{
+    if (gesture < 0 || static_cast<size_t>(gesture) >= Gestures.size() || Gestures[gesture].NumFrames == 0 ||
+        EveryFourthFacing(gesture))
+    {
+        return std::nullopt;
+    }
+
+    const MCGestureData& data = Gestures[gesture];
+    const ShownFacing shown = ShowsFacing(data, gesture, 0, rotation);
+    // The legs are always mirrored for negative facings: the way off straight ahead, either side.
+    float away = rotation;
+    const bool negative = Facing(true, away);
+    const auto count = static_cast<int32_t>(data.NumRotations[0]) + 1;
+    const int32_t back = static_cast<int32_t>(data.NumRotations[0]) >> 1;
+    const float step = FullTurn / static_cast<float>(count);
+    const auto facingOf = [step](int32_t index) { return (static_cast<float>(index) + Halfway) * step; };
+
+    // The second half of a facing's range: halfway to the next facing, the other side's mirrored, from straight ahead.
+    if (shown.Index < back && away - static_cast<float>(shown.Index) * step >= step * Halfway)
+    {
+        const float degrees = facingOf(shown.Index);
+
+        if (negative && shown.Index == 0)
+        {
+            return MCTurnMiddle{TurnMirroredStep, 1, true, facingOf(1), -degrees};
+        }
+
+        return MCTurnMiddle{TurnStep, shown.Index + 1, false, facingOf(shown.Index + 1), negative ? -degrees : degrees};
+    }
+
+    // Straight back's range (never mirrored) reaches round to the other side's: its half there (and straight back
+    // itself, on neither side) shows straight back.
+    if (shown.Index == back && (negative || away >= HalfTurn))
+    {
+        return MCTurnMiddle{TurnStep, back, true, facingOf(back), HalfTurn};
+    }
+
+    return std::nullopt;
 }
 
 auto MCSpriteTree::GetGesture(int32_t gesture, int32_t part, float rotation, int32_t& reverse, float& frameRate,

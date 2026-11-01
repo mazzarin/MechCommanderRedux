@@ -71,6 +71,7 @@
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
 #include "sprite/MCVfxAppearance.h"
@@ -5167,6 +5168,19 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-turns 1</c>, turns HDTurns on (GHdTurns): mechs drawn turning eased, their legs between facings where
+    /// the pack has the middles.
+    /// </summary>
+    void TurnsFromOptions()
+    {
+        if (MCTest::Option("hd-turns").has_value())
+        {
+            GHdTurns = 1;
+            std::cout << "  turns: eased, legs between facings\n";
+        }
+    }
+
+    /// <summary>
     /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
     /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
     /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks).
@@ -5279,7 +5293,8 @@ namespace
     /// HD art on with the pack at
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
     /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
-    /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>).
+    /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>), the other HD options as
+    /// their flags ask (<see cref="TurnsFromOptions"/>...).
     /// </summary>
     /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
     bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
@@ -5326,6 +5341,7 @@ namespace
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();
+        TurnsFromOptions();
         return original;
     }
 
@@ -5751,6 +5767,94 @@ TEST_CASE_ISOLATED("game: with HDFootprints a walking mech's footprints land und
     }
 
     GHdFootprints = 0;
+}
+
+/// <summary>
+/// With HDTurns a mech's drawn facing (MCMechActor::TurnedFacing) follows its own, eased: mission 1's mech, walking a
+/// leg then turned 120 degrees onto another, is drawn turning no faster than TurnEaseRate (or kept within TurnLagMost),
+/// lags its facing by more than a facing's width (~21 degrees) as it turns, and catches up once it walks straight; with
+/// HDTurns off it is drawn at its own facing every frame.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDTurns a mech is drawn turning eased, catching up with its facing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const PlayerMech player = OwnPlayerMech();
+    const std::shared_ptr<MCMechWarrior> pilot = player.Mech->GetPilot();
+    REQUIRE(pilot != nullptr);
+    constexpr float FirstWay = 10.0f;
+    constexpr float Turn = 120.0f;
+    constexpr float LegDistance = 250.0f;
+    constexpr int32_t LegFrames = 90;
+    constexpr float LegWidth = 360.0f / 17.0f;
+    constexpr float Caught = 0.5f;
+    constexpr float Slack = 0.01f;
+    const auto wrap = [](float degrees) { return std::remainder(degrees, 360.0f); };
+    const auto walk = [&](float way)
+    {
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        const MCVector3D from = player.Mech->GetPosition();
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                MCVector3D(from.X + static_cast<float>(std::cos(radians)) * LegDistance,
+                                           from.Y + static_cast<float>(std::sin(radians)) * LegDistance, from.Z),
+                                -1, 0);
+    };
+
+    for (const int turns : {0, 1})
+    {
+        MCTest::Scope scope(std::format("HDTurns {}", turns));
+        GHdTurns = turns;
+        walk(FirstWay);
+
+        for (int32_t frame = 0; frame < LegFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        walk(FirstWay + Turn);
+        float most = 0.0f;
+        float last = 0.0f;
+        std::optional<float> before;
+
+        for (int32_t frame = 0; frame < LegFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            REQUIRE(player.Actor->TurnedFacing.has_value());
+            const float drawn = *player.Actor->TurnedFacing;
+            const auto own = static_cast<float>(MCActorFacing(*player.Mech));
+            const float lag = std::fabs(wrap(own - drawn));
+            MCTest::Scope frameScope(std::format("frame {}: facing {:.1f}, drawn {:.1f}", frame, own, drawn));
+            CHECK(lag <= TurnLagMost + Slack);
+
+            // Each frame it turns at the ease rate, or is pulled along within the lag.
+            if (turns != 0 && before.has_value() && lag < TurnLagMost - Slack)
+            {
+                CHECK(std::fabs(wrap(drawn - *before)) <= TurnEaseRate * FrameSeconds + Slack);
+            }
+
+            if (turns == 0)
+            {
+                CHECK(lag == 0.0f);
+            }
+
+            most = std::max(most, lag);
+            last = lag;
+            before = drawn;
+        }
+
+        if (turns != 0)
+        {
+            CHECK(most > LegWidth);
+        }
+
+        CHECK(last < Caught);
+    }
+
+    GHdTurns = 0;
 }
 
 /// <summary>
@@ -11854,4 +11958,146 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
     }
 
     MCFixedZoomHeight = 0.0f;
+}
+
+/// <summary>
+/// A mech's legs turning (HDTurns: MCMechActor::LegsTurnMiddle's in-between, which says where the middle lies) show the
+/// pack's turn middle round their frame, over the frame's own indices: on the screen, drawn by the GPU over mission 1, a
+/// 4 x 4 frame shows red alone; within the scope of its middle (6 x 4, the frame 2 columns in), the middle's colour
+/// from 2 columns before the frame as it is, and mirrored about the hot spot (as the frame is) to 2 columns past the
+/// mirrored frame: blue for the middle toward the next facing, green for the one toward the next facing mirrored.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle round their frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // One frame of 4 x 4 opaque pixels; its middles 6 x 4, the frame 2 columns in.
+    constexpr int32_t Side = 4;
+    constexpr int32_t Shift = 2;
+    constexpr int32_t Together = Side + Shift;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Side; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(Side), opaque, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table = FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+
+    constexpr int32_t Scale = 2;
+    constexpr SDL_Color Red = {200, 0, 0, 255};
+    constexpr SDL_Color Blue = {0, 0, 200, 255};
+    constexpr SDL_Color Green = {0, 200, 0, 255};
+    const auto everywhere = [&](int32_t, int32_t) { return std::optional<uint8_t>(opaque); };
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_turn_middle";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::MechShapeKey key{"legs90", 1, 0};
+    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+    std::filesystem::create_directories(folder);
+    WriteSteppedFrame(folder / "0", Side, Side, Scale, Red, everywhere);
+    WriteSteppedFrame(folder / "0_turn", Together, Side, Scale, Blue, everywhere);
+    WriteSteppedFrame(folder / "0_turnm", Together, Side, Scale, Green, everywhere);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+
+    // The screen's pixels after drawing the frame with its hot spot at (x, y), as it is or mirrored, in the scope of an
+    // in-between (none: none), and before.
+    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto before = display->ReadFrame();
+        REQUIRE(before.has_value());
+        {
+            const MCRenderer::InBetweenScope scope(inBetween);
+
+            if (mirrored)
+            {
+                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto after = display->ReadFrame();
+        REQUIRE(after.has_value());
+        return std::pair{std::move(*before), std::move(*after)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+    const auto same = [&](SDL_Color actual, SDL_Color expected)
+    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+    const MCInBetweenBounds bounds{Shift, 0, Together, Side};
+
+    // Within the edges (smooth, so their pixels are part covered): column c of the middle at x + c - 2 as it is, at
+    // x - (c - 2) mirrored; column c of the frame at x + c, or x - c.
+    for (const bool mirrored : {false, true})
+    {
+        for (const int32_t step : {0, TurnStep, TurnMirroredStep})
+        {
+            const std::optional<MCInBetween> inBetween =
+                step == 0 ? std::nullopt : std::optional(MCInBetween{0, 0, step, bounds});
+            const auto [before, after] = drawn(mirrored, inBetween);
+
+            for (int32_t row = 1; row < Side - 1; ++row)
+            {
+                for (int32_t column = 1; column < Together - 1; ++column)
+                {
+                    const int32_t placed = column - Shift;
+                    const int32_t shown = mirrored ? -placed : placed;
+                    const SDL_Color pixel = at(after, shown, row);
+                    MCTest::Scope scope(std::format("{}, step {}, column {}, row {}: {} {} {}",
+                                                    mirrored ? "mirrored" : "as is", step, column, row, pixel.r,
+                                                    pixel.g, pixel.b));
+
+                    if (step != 0)
+                    {
+                        CHECK(same(pixel, step == TurnStep ? Blue : Green));
+                    }
+                    else if (placed >= 1 && placed < Side - 1)
+                    {
+                        CHECK(same(pixel, Red));
+                    }
+                    else if (placed < -1)
+                    {
+                        CHECK(same(pixel, at(before, shown, row)));
+                    }
+                }
+            }
+        }
+    }
+
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
 }

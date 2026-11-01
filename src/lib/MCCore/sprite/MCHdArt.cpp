@@ -6,6 +6,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
+#include "sprite/MCInBetween.h"
 #include "sprite/MCShape.h"
 
 #include <unordered_set>
@@ -81,6 +82,9 @@ namespace
     constexpr uint64_t FrameNumberMask = (uint64_t{1} << InBetweenNameShift) - 1;
     /// <summary>What separates an in-between's step from its frame's number in its name (<c>&lt;frame&gt;_&lt;step&gt;</c>).</summary>
     constexpr std::string_view InBetweenSeparator = "_";
+    /// <summary>What a turn middle's name has in place of a step (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</summary>
+    constexpr std::string_view TurnName = "turn";
+    constexpr std::string_view TurnMirroredName = "turnm";
     /// <summary>What the palette index picture of a frame adds to its name.</summary>
     constexpr std::string_view IndexSuffix = "_idx";
     /// <summary>A frame file's extension (MCHdArt::EncodeHdf), its header, and what it may be at most.</summary>
@@ -485,13 +489,22 @@ namespace
 
     /// <summary>
     /// The name of a numbered folder's frame <paramref name="key"/> (<see cref="NumberedKey"/>): its number, and an
-    /// in-between's step after <see cref="InBetweenSeparator"/>.
+    /// in-between's step (a turn middle's name) after <see cref="InBetweenSeparator"/>.
     /// </summary>
     std::string NumberedName(uint64_t key)
     {
         const uint64_t step = key >> InBetweenNameShift;
         const std::string frame = std::to_string(key & FrameNumberMask);
-        return step == 0 ? frame : std::format("{}{}{}", frame, InBetweenSeparator, step);
+
+        if (step == 0)
+        {
+            return frame;
+        }
+
+        const std::string stepName = step == TurnStep           ? std::string(TurnName)
+                                     : step == TurnMirroredStep ? std::string(TurnMirroredName)
+                                                                : std::to_string(step);
+        return std::format("{}{}{}", frame, InBetweenSeparator, stepName);
     }
 
     /// <summary>The name a hash gives a frame: 16 hex digits.</summary>

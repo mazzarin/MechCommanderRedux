@@ -2006,13 +2006,37 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
     return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height, step) : nullptr;
 }
 
-auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum) -> std::optional<HdInBetweenFrame>
+auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum, const MCHdArt::Frame& hd)
+    -> std::optional<HdInBetweenFrame>
 {
     const std::optional<MCInBetween>& inBetween = MCRenderer::DrawingInBetween();
     const int32_t count = VfxShapeCount(table);
 
     if (!inBetween.has_value() || inBetween->Frame != shapeNum || shapeNum < 0 || shapeNum >= count ||
         inBetween->Next < 0 || inBetween->Next >= count)
+    {
+        return std::nullopt;
+    }
+
+    const auto shown = [this](HdInBetweenFrame found) -> std::optional<HdInBetweenFrame>
+    {
+        if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
+        {
+            return std::nullopt;
+        }
+
+        return found;
+    };
+
+    // A mech's legs' turn middle: where it lies, the draw says.
+    if (const std::optional<MCInBetweenBounds>& bounds = inBetween->Bounds; bounds.has_value())
+    {
+        return shown(HdInBetweenFrame{HdShape(table, shapeNum, bounds->Width, bounds->Height, inBetween->Step),
+                                      bounds->FrameX, bounds->FrameY, bounds->Width, bounds->Height});
+    }
+
+    // An effect's in-between: its frame holds its blended pixels.
+    if (!hd.Blended)
     {
         return std::nullopt;
     }
@@ -2038,16 +2062,9 @@ auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shape
         return std::nullopt;
     }
 
-    HdInBetweenFrame found{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
-                           MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin, xMax - xMin + 1,
-                           yMax - yMin + 1};
-
-    if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
-    {
-        return std::nullopt;
-    }
-
-    return found;
+    return shown(HdInBetweenFrame{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
+                                  MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin,
+                                  xMax - xMin + 1, yMax - yMin + 1});
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -2236,14 +2253,14 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
 
-        // An effect's frame part of the way to its next shows the pack's in-between instead, over the two frames'
-        // bounds, when the transform draws its whole frame at full size (no clipping to follow): mirrored, the
-        // in-between's last column comes first.
+        // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+        // instead, over the two frames' bounds, when the transform draws its whole frame at full size (no clipping to
+        // follow): mirrored, the in-between's last column comes first.
         const auto& [at, from] = *place;
         const bool whole = command.Blit.FullSize && command.Blit.Columns == width && command.Blit.Rows == height &&
                            from[1] == 0 && from[3] == 1 && (from[2] == 1 ? from[0] == 0 : from[0] == width - 1);
         const std::optional<HdInBetweenFrame> inBetween =
-            hd->Blended && whole ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            whole ? HdInBetween(command.ShapeTable, command.ShapeNum, *hd) : std::nullopt;
         bool drawn = false;
 
         if (inBetween.has_value())
@@ -2782,10 +2799,10 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
-            // An effect's frame part of the way to its next shows the pack's in-between there instead (over the two
-            // frames' bounds, clipped as the command's rows and columns), over the frame's own indices.
-            const std::optional<HdInBetweenFrame> inBetween =
-                hd->Blended ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+            // there instead (over the two frames' bounds, clipped as the command's rows and columns; widened as the
+            // frame for smooth edges), over the frame's own indices.
+            const std::optional<HdInBetweenFrame> inBetween = HdInBetween(command.ShapeTable, command.ShapeNum, *hd);
             bool drawn = false;
 
             if (inBetween.has_value())
@@ -2796,10 +2813,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                 const int32_t top = std::max(betweenY, command.ClipTop);
                 const int32_t right = std::min(betweenX + inBetween->Width - 1, command.Hi);
                 const int32_t bottom = std::min(betweenY + inBetween->Height - 1, command.ClipBottom);
+                const HdEdges betweenEdges = HdEdgesOf(*inBetween->Frame, command.ShapeTable);
+                const Quad betweenAt = {left, top, right, bottom};
+                const Quad betweenFrom = {left - betweenX, top - betweenY, 1, 1};
+                const auto [placedAt, placedFrom] = betweenEdges == HdEdges::Smooth ? widened(betweenAt, betweenFrom)
+                                                                                    : std::pair{betweenAt, betweenFrom};
                 drawn = left <= right && top <= bottom &&
-                        AddHd(surface, *inBetween->Frame, Quad{left, top, right, bottom},
-                              Quad{left - betweenX, top - betweenY, 1, 1}, command.Table, std::nullopt,
-                              HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+                        AddHd(surface, *inBetween->Frame, placedAt, placedFrom, command.Table, std::nullopt,
+                              HdColours::Corrected, betweenEdges);
             }
 
             if (!drawn)

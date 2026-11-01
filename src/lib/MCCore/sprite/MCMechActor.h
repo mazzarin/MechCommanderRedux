@@ -2,6 +2,7 @@
 
 #include "appear/MCAppearance.h"
 #include "main/MCOriginalBugFixes.h"
+#include "sprite/MCInBetween.h"
 #include "sprite/MCSpriteTree.h"
 
 #include <bit>
@@ -88,6 +89,13 @@ public:
 
     /// <summary>Draws the jump's arc and landing point.</summary>
     void RenderJump();
+
+    /// <summary>
+    /// Port-only (HDTurns): notes how the legs (shape <paramref name="legs"/>) are drawn at <paramref name="facing"/>
+    /// (<see cref="DrawnLegs"/>), and with HDTurns, the turn middle to draw them as (MCSpriteTree::TurnMiddle) when the
+    /// HD art pack has it, where it lies round their frame (its bounds and the frame's neighbour's together).
+    /// </summary>
+    std::optional<MCInBetween> LegsTurnMiddle(float facing, const MCShape& legs);
 
     /// <summary>
     /// The jump's or fall's height per frame of the legs: the mech type's gesture outline of
@@ -215,7 +223,42 @@ public:
     bool CombatModeLowering = false;
     /// <summary>Set when the gun pose starts changing: the next update starts the upper body's change gesture.</summary>
     int32_t CombatModeChanged = ActorUnset;
+    /// <summary>
+    /// Port-only (HDTurns): the facing the mech is drawn at, following its own (MCActorFacing) at
+    /// <see cref="TurnEaseRate"/>, never more than <see cref="TurnLagMost"/> behind; its own while HDTurns is off. Set
+    /// by each update.
+    /// </summary>
+    std::optional<float> TurnedFacing;
+    /// <summary>
+    /// Port-only (HDFootprints): how the legs were last drawn, in gesture <see cref="DrawnLegsGesture"/>: the way their
+    /// facing (or turn middle) points and whether mirrored (MCSpriteTree::DrawnFacing). Set by each render.
+    /// </summary>
+    std::optional<MCDrawnFacing> DrawnLegs;
+    int32_t DrawnLegsGesture = -1;
 };
+
+/// <summary>
+/// Port-only: PREFS "HDTurns": 1 eases a mech's turns as drawn (<see cref="TurnEaseRate"/>; it turns as the original
+/// does, and its torso and arms are drawn turned from the eased facing as from its own) and draws its legs halfway
+/// between their stored facings where the HD art pack has those middles (MCSpriteTree::TurnMiddle); 0 as the original.
+/// Off by default.
+/// </summary>
+extern int GHdTurns;
+
+/// <summary>
+/// Port-only (HDTurns): how fast a mech's drawn facing follows its facing, degrees a second (its pivot rate's floor; it
+/// turns walking at 720 or more, a corner in a frame or two).
+/// </summary>
+inline constexpr float TurnEaseRate = 180.0f;
+
+/// <summary>Port-only (HDTurns): how far a mech's drawn facing may lag its facing, in degrees.</summary>
+inline constexpr float TurnLagMost = 90.0f;
+
+/// <summary>
+/// Port-only (HDTurns): <paramref name="shown"/> turned the short way toward <paramref name="facing"/> by at most
+/// <paramref name="maxTurn"/> degrees, then brought within <paramref name="lagMost"/> of it; -180 to 180.
+/// </summary>
+float MCEaseFacing(float shown, float facing, float maxTurn, float lagMost);
 
 /// <summary>The frames of a jump in the air.</summary>
 struct MCJumpFrames

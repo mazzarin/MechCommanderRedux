@@ -523,6 +523,45 @@ TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrore
     CHECK_EQ(reverse, 1);
     CHECK_EQ(tree->DrawnFacing(14, 1, 100.0f)->Degrees, 8 * 360.0f / 33.0f);
 
+    // Turn middles (the legs' 9 facings round, 40 degrees apart): none in a facing's first half; in its second, halfway
+    // to the next facing, mirrored on the other side; from straight ahead on the other side, halfway to the next facing
+    // mirrored; on the other side of straight back, straight back.
+    constexpr float Apart = 40.0f;
+    CHECK(!tree->TurnMiddle(2, 10.0f).has_value());
+    std::optional<MCTurnMiddle> middle = tree->TurnMiddle(2, 25.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 1);
+    CHECK(!middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, Apart / 2);
+    where = tree->GesturePacket(2, 0, middle->TowardRotation);
+    CHECK_EQ(where->Packet, 2u * 9 + 1);
+    CHECK(!where->Reverse);
+    middle = tree->TurnMiddle(2, -25.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnMirroredStep);
+    CHECK_EQ(middle->Toward, 1);
+    CHECK(middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, -Apart / 2);
+    middle = tree->TurnMiddle(2, -70.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 2);
+    CHECK(!middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, -1.5f * Apart);
+    CHECK(!tree->TurnMiddle(2, 165.0f).has_value());
+    middle = tree->TurnMiddle(2, -165.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 4);
+    CHECK(middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, 180.0f);
+    // A fall has every fourth facing only; a gesture without frames, none.
+    CHECK(!tree->TurnMiddle(14, 25.0f).has_value());
+    CHECK(!tree->TurnMiddle(3, 25.0f).has_value());
+    CHECK(MCStrideGesture(4));
+    CHECK(!MCStrideGesture(2));
+
     // A gesture without frames has no shapes; the frame rate is made positive.
     CHECK(!tree->GesturePacket(3, 0, 0.0f).has_value());
     CHECK(!tree->DrawnFacing(3, 0, 0.0f).has_value());
@@ -534,6 +573,20 @@ TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrore
     REQUIRE(shape != nullptr);
     CHECK_EQ(Tag(shape), 8000 + 2 * 9 + 2);
     CHECK(tree->GetGesture(2, 0, 90.0f, reverse, frameRate, false) == shape);
+}
+
+TEST_CASE("sprites: a mech's drawn facing eases toward its own the short way round, never lagging too far")
+{
+    constexpr float Step = 9.0f;
+    constexpr float Lag = 90.0f;
+    // Short of the step, it arrives; else it turns a step, across straight back if that is the short way.
+    CHECK_EQ(MCEaseFacing(0.0f, 5.0f, Step, Lag), 5.0f);
+    CHECK_EQ(MCEaseFacing(10.0f, 0.0f, Step, Lag), 1.0f);
+    CHECK_EQ(MCEaseFacing(170.0f, -170.0f, Step, Lag), 179.0f);
+    CHECK_EQ(MCEaseFacing(-175.0f, 175.0f, Step, Lag), 176.0f);
+    // A turn too far to follow leaves it the lag behind.
+    CHECK_EQ(MCEaseFacing(0.0f, 150.0f, Step, Lag), 60.0f);
+    CHECK_EQ(MCEaseFacing(0.0f, -150.0f, Step, Lag), -60.0f);
 }
 
 TEST_CASE("sprites: a mech's transitions come from its own table when it has one")

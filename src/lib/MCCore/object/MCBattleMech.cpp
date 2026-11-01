@@ -1380,9 +1380,16 @@ auto MCBattleMech::Update() -> int32_t
                 // mirrored to 17), as much as 40 degrees off the legs as drawn; and took the legs as mirrored left of
                 // straight ahead and straight back, which are drawn unmirrored, printing each foot at the other's
                 // place there. A print could land between the feet. With HDFootprints a foot prints at its frame (or
-                // up to two after, should frames be skipped), turned and mirrored as its legs are drawn.
-                const std::optional<MCDrawnFacing> drawn =
-                    GHdFootprints != 0 ? actor.MechTree->DrawnFacing(gestureNow, 0, stepFacing) : std::nullopt;
+                // up to two after, should frames be skipped), turned and mirrored as its legs are drawn (with HDTurns,
+                // as last drawn in this gesture, eased, maybe as a turn middle; else as drawn at the eased facing).
+                const bool drawnInGesture =
+                    GHdTurns != 0 && actor.DrawnLegs.has_value() && actor.DrawnLegsGesture == gestureNow;
+                const float legsFacing =
+                    GHdTurns != 0 && actor.TurnedFacing.has_value() ? *actor.TurnedFacing : stepFacing;
+                const std::optional<MCDrawnFacing> drawn = GHdFootprints == 0 ? std::nullopt
+                                                           : drawnInGesture
+                                                               ? actor.DrawnLegs
+                                                               : actor.MechTree->DrawnFacing(gestureNow, 0, legsFacing);
                 // A mirrored actor swaps the feet's offsets. (The original also checks, dead, for a half turn.)
                 const int mirrored = drawn.has_value() ? drawn->Mirrored : actor.Reverse[0] != 0;
                 const size_t firstOffset = mirrored ? 1 : 5;

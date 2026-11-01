@@ -625,6 +625,73 @@ auto MCMechActor::RenderJump() -> void
     LowerRight.Y = ShapeMaxY + y;
 }
 
+int GHdTurns = 0;
+
+auto MCEaseFacing(float shown, float facing, float maxTurn, float lagMost) -> float
+{
+    constexpr float Round = 360.0f;
+    constexpr float Half = 180.0f;
+    const auto wrap = [](float degrees) { return degrees - Round * std::floor((degrees + Half) / Round); };
+    const float gap = wrap(facing - shown);
+    const float turned = std::clamp(gap, -maxTurn, maxTurn);
+    return wrap(facing - std::clamp(gap - turned, -lagMost, lagMost));
+}
+
+auto MCMechActor::LegsTurnMiddle(float facing, const MCShape& legs) -> std::optional<MCInBetween>
+{
+    DrawnLegs = MechTree->DrawnFacing(CurrentGesture, 0, facing);
+    DrawnLegsGesture = CurrentGesture;
+    const std::optional<MCTurnMiddle> middle =
+        GHdTurns != 0 && MCHdArt::Active() ? MechTree->TurnMiddle(CurrentGesture, facing) : std::nullopt;
+
+    if (!middle.has_value() || !DrawnLegs.has_value())
+    {
+        return std::nullopt;
+    }
+
+    int32_t reverse = 0;
+    float frameRate = 0.0f;
+    const std::shared_ptr<MCShape> toward =
+        MechTree->GetGesture(CurrentGesture, 0, middle->TowardRotation, reverse, frameRate, true);
+
+    if (toward == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const std::span<const uint8_t> table = legs.FrameList();
+    const int32_t frame = MCClampShapeFrame(table, CurrentFrame[MCMechPart::Legs]);
+    const auto frames = static_cast<int32_t>(MechTree->Gestures[CurrentGesture].NumFrames);
+    // A mirrored neighbour leads with the other leg: in a stride, its frame half a cycle on leads with this one's (as
+    // tools/upscale/make_turn_middles.py pairs them).
+    const bool halfOn = middle->TowardMirrored && MCStrideGesture(CurrentGesture) && frames > 0;
+    const int32_t towardFrame = MCClampShapeFrame(toward->FrameList(), halfOn ? (frame + frames / 2) % frames : frame);
+    const MCFrameBounds own = MCShapeFrameBounds(table, frame);
+    const MCFrameBounds other = MCShapeFrameBounds(toward->FrameList(), towardFrame);
+
+    if (own.Width <= 0.0f || own.Height <= 0.0f || other.Width <= 0.0f || other.Height <= 0.0f)
+    {
+        return std::nullopt;
+    }
+
+    // Mirrored, a frame spans -xMax..-xMin round the hot spot (AGShapeTransform).
+    const float otherMinX = middle->TowardMirrored ? -(other.MinX + other.Width - 1.0f) : other.MinX;
+    const float minX = std::min(own.MinX, otherMinX);
+    const float minY = std::min(own.MinY, other.MinY);
+    const float maxX = std::max(own.MinX + own.Width, otherMinX + other.Width);
+    const float maxY = std::max(own.MinY + own.Height, other.MinY + other.Height);
+    const MCInBetweenBounds bounds{static_cast<int32_t>(own.MinX - minX), static_cast<int32_t>(own.MinY - minY),
+                                   static_cast<int32_t>(maxX - minX), static_cast<int32_t>(maxY - minY)};
+
+    if (MCHdArt::Find(table.data(), frame, bounds.Width, bounds.Height, middle->Step) == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    DrawnLegs->Degrees = middle->Degrees;
+    return MCInBetween{frame, frame, middle->Step, bounds};
+}
+
 auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 {
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
@@ -635,7 +702,9 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     constexpr bool largeSprites = true;
     RenderJump();
 
-    const float facing = static_cast<float>(MCActorFacing(*mech));
+    // Port-only (HDTurns): the facing as drawn (eased by update).
+    const float facing =
+        GHdTurns != 0 && TurnedFacing.has_value() ? *TurnedFacing : static_cast<float>(MCActorFacing(*mech));
     const float torso = mech->TorsoRotation;
     const float rightArm = mech->RightArmRotation;
     const float leftArm = mech->LeftArmRotation;
@@ -738,7 +807,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         // alternates; an unmirrored one keeps in step with it.
         const int32_t gesture = CurrentGesture;
         const bool combatAnim = InCombatMode || CombatModeRaising || CombatModeLowering;
-        StrideGesture = (gesture == 4 || gesture == 7 || gesture == 9 || gesture == 11) ? 1 : 0;
+        StrideGesture = MCStrideGesture(gesture) ? 1 : 0;
 
         if (StrideGesture != 0 && Reverse[part] != 0)
         {
@@ -789,8 +858,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             }
         }
 
-        StrideGesture =
-            (CurrentGesture == 4 || CurrentGesture == 7 || CurrentGesture == 9 || CurrentGesture == 11) ? 1 : 0;
+        StrideGesture = MCStrideGesture(CurrentGesture) ? 1 : 0;
 
         if (StrideGesture != 0 && Reverse[part] == 0)
         {
@@ -822,6 +890,11 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
         auto& element = ElementList().Make<MCVfxElement>(shapes[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                          CurrentFrame[part], Reverse[part], fadeTable, 1);
+
+        if (part == MCMechPart::Legs)
+        {
+            element.InBetween = LegsTurnMiddle(facing, *shapes[part]);
+        }
 
         ElementList().Add(element);
     }
@@ -922,6 +995,12 @@ auto MCMechActor::Update() -> int32_t
     const auto mech = std::static_pointer_cast<MCBattleMech>(Owner.lock());
     const std::shared_ptr<MCSpriteTree> tree = MechTree;
     GoalPending = false;
+
+    // Port-only (HDTurns): the facing drawn follows the mech's.
+    const auto ownFacing = static_cast<float>(MCActorFacing(*mech));
+    TurnedFacing = GHdTurns != 0 && TurnedFacing.has_value()
+                       ? MCEaseFacing(*TurnedFacing, ownFacing, TurnEaseRate * FrameLength, TurnLagMost)
+                       : ownFacing;
 
     // Moving with nowhere to go: stand.
     if (CheckStop())
@@ -1323,8 +1402,8 @@ auto MCMechActor::Update() -> int32_t
         FrameRate[MCMechPart::Legs] = -FrameRate[MCMechPart::Legs];
     }
 
-    // Each part's mirroring and rate at its facing.
-    const float facing = static_cast<float>(MCActorFacing(*mech));
+    // Each part's mirroring and rate at its facing (port-only, HDTurns: as drawn).
+    const float facing = *TurnedFacing;
     const float torso = mech->TorsoRotation;
     const float rotation3 = mech->RightArmRotation + facing + torso;
     const float rotation2 = facing + mech->LeftArmRotation + torso;

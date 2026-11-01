@@ -551,8 +551,9 @@ private:
                                                   int32_t height, int32_t step = 0);
 
     /// <summary>
-    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together: where the frame's
-    /// bounds start in the in-between's, and the in-between's size (original pixels).
+    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together (a turn middle: its
+    /// frame's and its neighbour's): where the frame's bounds start in the in-between's, and the in-between's size
+    /// (original pixels).
     /// </summary>
     struct HdInBetweenFrame
     {
@@ -565,10 +566,12 @@ private:
 
     /// <summary>
     /// Port-only: the HD art pack's in-between a draw of frame <paramref name="shapeNum"/> of <paramref name="table"/>
-    /// shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>); none when the draw isn't of the
-    /// in-between's frame or the pack hasn't the in-between.
+    /// (its HD frame <paramref name="hd"/>) shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>): an
+    /// effect's, whose frame holds its blended pixels, or (HDTurns) a mech's legs' turn middle, where the draw says it
+    /// lies. None when the draw isn't of the in-between's frame or the pack hasn't the in-between.
     /// </summary>
-    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
+    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum,
+                                                const MCHdArt::Frame& hd);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>

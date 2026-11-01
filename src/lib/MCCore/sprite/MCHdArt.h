@@ -17,7 +17,9 @@ class MCShape;
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured. A frame that holds a translucent shape's blended pixels too (an effect's,
-/// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255.</para>
+/// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255. A legs
+/// frame's turn middles (HDTurns: halfway to a neighbouring facing) lie beside it as <c>&lt;frame&gt;_turn</c> and
+/// <c>&lt;frame&gt;_turnm</c> (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
 /// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own

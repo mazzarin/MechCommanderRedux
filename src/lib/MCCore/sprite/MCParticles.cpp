@@ -17,6 +17,7 @@
 #include <map>
 #include <numbers>
 #include <random>
+#include <tuple>
 #include <unordered_map>
 
 int GHdParticles = 0;
@@ -69,24 +70,60 @@ namespace
     /// <summary>A burst's flecks start up to this much of its fire's side from its middle, up to this long apart.</summary>
     constexpr float FleckSpread = 0.3f;
     constexpr float FleckStagger = 0.12f;
-    /// <summary>The lowest a fleck flies off a unit (a share of its speed up; off the ground, none down).</summary>
-    constexpr float FleckMinUp = -0.3f;
     /// <summary>A burst's lean (a way at random), for each fleck's own way: this much of it.</summary>
     constexpr float FleckLean = 0.7f;
-    /// <summary>Its speed: most slow, few fast (the range's share is a throw's square); a fire this big throws as made.</summary>
-    constexpr float FleckSpeedLow = 30.0f;
-    constexpr float FleckSpeedHigh = 230.0f;
+    /// <summary>A fire this big throws its flecks as fast as made; a bigger or smaller one, as much faster as its root, within these.</summary>
     constexpr float FleckSpeedFire = 20.0f;
-    /// <summary>A bigger or smaller fire throws its flecks as much faster as its root, within these.</summary>
     constexpr float FleckSpeedLeast = 0.7f;
     constexpr float FleckSpeedMost = 1.6f;
-    constexpr float FleckDrag = 4.0f;
-    constexpr float FleckLifeLow = 0.2f;
-    constexpr float FleckLifeHigh = 0.75f;
-    constexpr float FleckRadiusLow = 0.5f;
-    constexpr float FleckRadiusHigh = 0.9f;
     /// <summary>Of an explosion's fire's pixels, a colour fewer than this share of them have is left out of its flecks'.</summary>
     constexpr float FleckColorLeast = 0.01f;
+
+    /// <summary>How a burst's flecks fly (MCFleckStyle::Burst, MCFleckStyle::Falling).</summary>
+    struct FleckFlight
+    {
+        /// <summary>Of the flecks a burst throws, this share.</summary>
+        float Share = 1.0f;
+        /// <summary>The lowest a fleck flies off the ground and off a unit (a share of its speed up).</summary>
+        float MinUpGround = 0.0f;
+        float MinUpUnit = -0.3f;
+        /// <summary>Its speed: most slow, few fast (the range's share is a throw's square).</summary>
+        float SpeedLow = 30.0f;
+        float SpeedHigh = 230.0f;
+        float Drag = 4.0f;
+        float LifeLow = 0.2f;
+        float LifeHigh = 0.75f;
+        float RadiusLow = 0.5f;
+        float RadiusHigh = 0.9f;
+    };
+
+    /// <summary>Flung out at once, fast and slowing fast; most go out before they land.</summary>
+    constexpr FleckFlight BurstFlight{};
+    /// <summary>Fewer, bigger and slower, thrown up and falling back, going out as they land.</summary>
+    constexpr FleckFlight FallingFlight{.Share = 0.5f,
+                                        .MinUpGround = 0.3f,
+                                        .MinUpUnit = 0.0f,
+                                        .SpeedLow = 40.0f,
+                                        .SpeedHigh = 130.0f,
+                                        .Drag = 0.8f,
+                                        .LifeLow = 0.9f,
+                                        .LifeHigh = 1.6f,
+                                        .RadiusLow = 0.65f,
+                                        .RadiusHigh = 1.0f};
+
+    // Flecks breaking off an explosion's fire's edge as it burns (MCFleckStyle::Edge): from the outline of each frame
+    // drawn, in its pixels' own colours, drifting out from the fire's middle, slowing and sinking a little.
+    /// <summary>Flecks a second for each pixel of the drawn frame's outline.</summary>
+    constexpr float EdgeFlecksPerPixel = 0.2f;
+    constexpr float EdgeSpeedLow = 10.0f;
+    constexpr float EdgeSpeedHigh = 45.0f;
+    constexpr float EdgeDrag = 1.5f;
+    /// <summary>The share of the pull down an edge's fleck feels.</summary>
+    constexpr float EdgeWeight = 0.15f;
+    constexpr float EdgeLifeLow = 0.25f;
+    constexpr float EdgeLifeHigh = 0.6f;
+    constexpr float EdgeRadiusLow = 0.5f;
+    constexpr float EdgeRadiusHigh = 0.8f;
 
     // Embers: glowing motes that rise and drift with the wind, swaying and flickering.
     constexpr float EmberRiseLow = 18.0f;
@@ -299,6 +336,8 @@ namespace
         float Alpha = 1.0f;
         /// <summary>How fast it eases toward its rise and the wind's drift (rising kinds), or loses speed (falling ones).</summary>
         float Drag = 0.0f;
+        /// <summary>The share of the pull down it feels (falling kinds).</summary>
+        float Weight = 1.0f;
         float Rise = 0.0f;
         float Drift = 0.0f;
         /// <summary>A chunk's turn and its turning a second; an ember's flicker phase and rate.</summary>
@@ -508,6 +547,27 @@ namespace
     /// <summary>A shape table, by its place and length.</summary>
     using TableKey = std::pair<const uint8_t*, size_t>;
 
+    /// <summary>A shape table's frame, by the table's place and length and the frame's number.</summary>
+    using FrameKey = std::tuple<const uint8_t*, size_t, int32_t>;
+
+    /// <summary>A frame's fire's outline (MCSceneLights::FrameOutline's), and its middle (the mean of its pixels).</summary>
+    struct Outline
+    {
+        std::vector<MCSceneLights::MCGlowPixel> Pixels;
+        float MiddleX = 0.0f;
+        float MiddleY = 0.0f;
+    };
+
+    /// <summary>An explosion drawn this frame whose fire's edge breaks off: where, its frame's outline, its fire's colours.</summary>
+    struct PendingEdge
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        const Outline* Edge = nullptr;
+        uint16_t Ramp = 0;
+    };
+
     /// <summary>The particles, their dice, what this frame began and the shakes.</summary>
     struct State
     {
@@ -527,6 +587,9 @@ namespace
         std::map<TableKey, BurstLook> Looks;
         /// <summary>The fires' colours flecks are drawn in, brightest first (index 0 is FallbackFire, kept apart).</summary>
         std::vector<std::vector<FleckColor>> Ramps;
+        /// <summary>The frames' outlines, measured once a frame (their nodes stay put, so PendingEdge keeps them).</summary>
+        std::map<FrameKey, Outline> Outlines;
+        std::vector<PendingEdge> Edges;
         std::weak_ptr<MCWindow> ShownWindow;
         MCParticles::MCShake Shown;
     };
@@ -542,6 +605,15 @@ namespace
     float PixelsPerUnit()
     {
         return std::max(std::hypot(MCTerrain::ProjectionCos, MCTerrain::ProjectionSin), 1e-3f);
+    }
+
+    /// <summary>
+    /// The world units along both of the ground's axes that move a point a pixel across the screen and none down it
+    /// (MCTerrain::ProjectTerrain).
+    /// </summary>
+    float UnitsPerPixelAcross()
+    {
+        return 1.0f / (2.0f * std::max(MCTerrain::ProjectionCos, 1e-3f));
     }
 
     /// <summary>A point in <paramref name="camera"/>'s view, as ProjectToScreen puts it but to the pixel's fraction.</summary>
@@ -703,7 +775,15 @@ namespace
     /// </summary>
     void Flecks(State& state, const PendingBurst& at, int32_t count, bool offGround)
     {
+        if (state.Look.Flecks == MCParticles::MCFleckStyle::Edge)
+        {
+            return;
+        }
+
+        const FleckFlight& flight =
+            state.Look.Flecks == MCParticles::MCFleckStyle::Falling ? FallingFlight : BurstFlight;
         MCDice& dice = state.Dice;
+        count = dice.Count(static_cast<float>(count) * flight.Share);
         const float perUnit = PixelsPerUnit();
         const std::span<const FleckColor> ramp = RampOf(state, at.Ramp);
         int32_t pixels = 0;
@@ -713,7 +793,7 @@ namespace
             pixels += color.Pixels;
         }
 
-        const float minUp = offGround ? 0.0f : FleckMinUp;
+        const float minUp = offGround ? flight.MinUpGround : flight.MinUpUnit;
         const MCVector3D lean = Upward(dice, minUp);
         const float spread = at.Size.Fire * FleckSpread;
         const float faster = std::clamp(std::sqrt(at.Size.Fire / FleckSpeedFire), FleckSpeedLeast, FleckSpeedMost);
@@ -736,11 +816,11 @@ namespace
             const float length = std::max(std::hypot(wayX, wayY, wayZ), 1e-3f);
             const float thrown = dice.Unit();
             Launch(*fleck, MCVector3D(wayX / length, wayY / length, wayZ / length),
-                   (FleckSpeedLow + (FleckSpeedHigh - FleckSpeedLow) * thrown * thrown) * faster, 0.0f);
+                   (flight.SpeedLow + (flight.SpeedHigh - flight.SpeedLow) * thrown * thrown) * faster, 0.0f);
             fleck->Age = -dice.Between(0.0f, FleckStagger);
-            fleck->Life = dice.Between(FleckLifeLow, FleckLifeHigh);
-            fleck->Size = dice.Between(FleckRadiusLow, FleckRadiusHigh);
-            fleck->Drag = FleckDrag;
+            fleck->Life = dice.Between(flight.LifeLow, flight.LifeHigh);
+            fleck->Size = dice.Between(flight.RadiusLow, flight.RadiusHigh);
+            fleck->Drag = flight.Drag;
             fleck->Ramp = at.Ramp;
 
             // Its first colour: one of the fire's, as often as its pixels have it.
@@ -754,6 +834,80 @@ namespace
             }
 
             fleck->Shade = static_cast<uint8_t>(std::min<size_t>(shade, std::numeric_limits<uint8_t>::max()));
+        }
+    }
+
+    /// <summary>The colour of fire <paramref name="ramp"/> nearest <paramref name="color"/>.</summary>
+    uint8_t NearestShade(std::span<const FleckColor> ramp, const std::array<float, 3>& color)
+    {
+        size_t nearest = 0;
+        float least = std::numeric_limits<float>::max();
+
+        for (size_t i = 0; i < ramp.size(); ++i)
+        {
+            const float red = ramp[i].Red - color[0];
+            const float green = ramp[i].Green - color[1];
+            const float blue = ramp[i].Blue - color[2];
+
+            if (const float off = red * red + green * green + blue * blue; off < least)
+            {
+                least = off;
+                nearest = i;
+            }
+        }
+
+        return static_cast<uint8_t>(std::min<size_t>(nearest, std::numeric_limits<uint8_t>::max()));
+    }
+
+    /// <summary>
+    /// Flecks breaking off <paramref name="at"/>'s fire's edge for <paramref name="step"/>: from its outline's pixels,
+    /// in their colours, drifting out from its middle.
+    /// </summary>
+    void Break(State& state, const PendingEdge& at, float step)
+    {
+        const Outline& edge = *at.Edge;
+
+        if (edge.Pixels.empty())
+        {
+            return;
+        }
+
+        MCDice& dice = state.Dice;
+        const float across = UnitsPerPixelAcross();
+        const std::span<const FleckColor> ramp = RampOf(state, at.Ramp);
+        const int32_t count = dice.Count(EdgeFlecksPerPixel * static_cast<float>(edge.Pixels.size()) *
+                                         std::max(state.Look.Amount, 0.0f) * step);
+
+        for (int32_t i = 0; i < count; ++i)
+        {
+            const size_t picked = std::min(static_cast<size_t>(dice.Unit() * static_cast<float>(edge.Pixels.size())),
+                                           edge.Pixels.size() - 1);
+            const MCSceneLights::MCGlowPixel& pixel = edge.Pixels[picked];
+            const auto pixelX = static_cast<float>(pixel.X);
+            const auto pixelY = static_cast<float>(pixel.Y);
+            Particle* fleck =
+                Make(state, MCParticleKind::Fleck, at.X + pixelX * across, at.Y + pixelX * across, at.Z - pixelY);
+
+            if (fleck == nullptr)
+            {
+                return;
+            }
+
+            fleck->Z = std::max(fleck->Z, fleck->Ground);
+            // Out from the fire's middle: across the screen along both axes, up it as height.
+            const float outX = pixelX - edge.MiddleX;
+            const float outY = pixelY - edge.MiddleY;
+            const float length = std::max(std::hypot(outX, outY), 1e-3f);
+            const float speed = dice.Between(EdgeSpeedLow, EdgeSpeedHigh);
+            fleck->VX = outX / length * speed * across;
+            fleck->VY = fleck->VX;
+            fleck->VZ = -outY / length * speed;
+            fleck->Life = dice.Between(EdgeLifeLow, EdgeLifeHigh);
+            fleck->Size = dice.Between(EdgeRadiusLow, EdgeRadiusHigh);
+            fleck->Drag = EdgeDrag;
+            fleck->Weight = EdgeWeight;
+            fleck->Ramp = at.Ramp;
+            fleck->Shade = NearestShade(ramp, pixel.Color);
         }
     }
 
@@ -1009,8 +1163,8 @@ namespace
     {
         MCDice& dice = state.Dice;
         const float amount = std::max(state.Look.Amount, 0.0f);
-        // Its bright pixels' centre: across the screen is along both of the ground's axes (MCTerrain::ProjectTerrain).
-        const float across = fire.Across / (2.0f * std::max(MCTerrain::ProjectionCos, 1e-3f));
+        // Its bright pixels' centre: across the screen is along both of the ground's axes.
+        const float across = fire.Across * UnitsPerPixelAcross();
         const float x = fire.X + across;
         const float y = fire.Y + across;
         const float z = fire.Z + fire.Up;
@@ -1138,7 +1292,7 @@ namespace
                 const float keep = std::exp(-particle.Drag * step);
                 particle.VX *= keep;
                 particle.VY *= keep;
-                particle.VZ = particle.VZ * keep - Gravity * step;
+                particle.VZ = particle.VZ * keep - Gravity * particle.Weight * step;
                 particle.Turn += particle.Spin * step;
                 break;
             }
@@ -1391,6 +1545,8 @@ namespace
         state.Shakes.clear();
         state.Looks.clear();
         state.Ramps.clear();
+        state.Outlines.clear();
+        state.Edges.clear();
         state.Shown = {};
         state.Time.reset();
         state.Dice.Restart();
@@ -1416,6 +1572,44 @@ auto MCParticles::AddExplosion(const MCVfxAppearance& appearance, const MCVector
         const BurstLook look = LookOf(state, appearance);
         state.Bursts.push_back({position.X, position.Y, position.Z, look.Size, look.Ramp, shakes});
     }
+}
+
+auto MCParticles::AddExplosionFrame(const MCVfxAppearance& appearance, const MCVector3D& position) -> void
+{
+    State& state = TheState();
+
+    if (GHdParticles == 0 || state.Look.Flecks != MCFleckStyle::Edge)
+    {
+        return;
+    }
+
+    const std::optional<MCSceneLights::MCTableFrame> drawn = MCSceneLights::DrawnFrame(appearance);
+
+    if (!drawn.has_value())
+    {
+        return;
+    }
+
+    const auto [found, isNew] =
+        state.Outlines.try_emplace(FrameKey{drawn->Table.data(), drawn->Table.size(), drawn->Frame});
+    Outline& edge = found->second;
+
+    if (isNew)
+    {
+        edge.Pixels = MCSceneLights::FrameOutline(drawn->Table, drawn->Frame, MCSceneLights::MCGlowPixels::Bright);
+
+        for (const MCSceneLights::MCGlowPixel& pixel : edge.Pixels)
+        {
+            edge.MiddleX += static_cast<float>(pixel.X);
+            edge.MiddleY += static_cast<float>(pixel.Y);
+        }
+
+        const auto pixels = static_cast<float>(std::max<size_t>(edge.Pixels.size(), 1));
+        edge.MiddleX /= pixels;
+        edge.MiddleY /= pixels;
+    }
+
+    state.Edges.push_back({position.X, position.Y, position.Z, &edge, LookOf(state, appearance).Ramp});
 }
 
 auto MCParticles::AddBurst(const MCVector3D& position, MCBurstSize size, bool shakes) -> void
@@ -1485,6 +1679,11 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
                 Wade(state, mover, step);
             }
 
+            for (const PendingEdge& edge : state.Edges)
+            {
+                Break(state, edge, step);
+            }
+
             std::erase_if(state.Tracks, [&](const auto& track) { return track.second.Seen != state.Frame; });
         }
     }
@@ -1512,6 +1711,7 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
     state.Bursts.clear();
     state.Fires.clear();
     state.Movers.clear();
+    state.Edges.clear();
     std::erase_if(state.Shakes, [&](const Shake& shake) { return now - shake.Start > ShakeLasts; });
     state.ShownWindow = GlobalPane->Window;
     state.Shown = GHdShake != 0 ? ShakeAt(state, now) : MCShake{};

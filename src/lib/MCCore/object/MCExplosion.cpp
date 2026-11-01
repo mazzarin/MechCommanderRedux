@@ -119,12 +119,14 @@ auto MCExplosion::Render() -> void
         // where it has one, is a flash that ends sooner).
         MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
 
-        // Port-only (HD particles): what it throws, once, as it's first seen.
+        // Port-only (HD particles): what it throws, once, as it's first seen, and what breaks off it as it burns.
         if (!Burst)
         {
             Burst = true;
             MCParticles::AddExplosion(*Appearance, Position, Shakes);
         }
+
+        MCParticles::AddExplosionFrame(*Appearance, Position);
     }
 
     if (Light != nullptr)

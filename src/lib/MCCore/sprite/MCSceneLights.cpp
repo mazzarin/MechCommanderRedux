@@ -16,6 +16,8 @@
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <map>
+
 int GHdLighting = 0;
 int GHdSunShadows = 0;
 int GHdClouds = 0;
@@ -249,7 +251,7 @@ namespace
     }
 
     /// <summary>The frame of a shape table an appearance drew, and the shape that holds the table.</summary>
-    struct DrawnFrame
+    struct DrawnShape
     {
         std::shared_ptr<MCShape> Shape;
         std::span<const uint8_t> Table;
@@ -260,7 +262,7 @@ namespace
     /// The frame <paramref name="appearance"/> last drew (its Render), when it drew one of a VFX shape table: as
     /// MCVfxElement and MCDeltaElement draw it, a delta animation's change over its first shape (its fire).
     /// </summary>
-    std::optional<DrawnFrame> FrameDrawn(const MCVfxAppearance& appearance)
+    std::optional<DrawnShape> FrameDrawn(const MCVfxAppearance& appearance)
     {
         std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
         const MCVfxAppearance::MCFrameDrawing drawing = appearance.FrameDrawing();
@@ -276,7 +278,7 @@ namespace
         const int32_t frame = drawing == MCVfxAppearance::MCFrameDrawing::Delta
                                   ? std::min(appearance.CurrentFrame + 1, last)
                                   : std::min(appearance.CurrentFrame, last);
-        return DrawnFrame{std::move(shape), table, frame};
+        return DrawnShape{std::move(shape), table, frame};
     }
 
     /// <summary>How high <paramref name="position"/> is above the ground under it (0 without a terrain).</summary>
@@ -453,7 +455,7 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
         return;
     }
 
-    if (const std::optional<DrawnFrame> drawn = FrameDrawn(appearance); drawn.has_value())
+    if (const std::optional<DrawnShape> drawn = FrameDrawn(appearance); drawn.has_value())
     {
         AddGlow(drawn->Table, drawn->Frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position),
                 pixels);
@@ -462,7 +464,7 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
 
 auto MCSceneLights::MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels) -> std::optional<MCGlowMeasure>
 {
-    const std::optional<DrawnFrame> drawn = FrameDrawn(appearance);
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
     return drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, pixels) : std::nullopt;
 }
 
@@ -501,6 +503,47 @@ auto MCSceneLights::FrameColors(std::span<const uint8_t> shapeTable, int32_t fra
     }
 
     return colors;
+}
+
+auto MCSceneLights::FrameOutline(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::vector<MCGlowPixel>
+{
+    if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+    {
+        return {};
+    }
+
+    const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    std::map<std::pair<int32_t, int32_t>, std::array<float, 3>> shining;
+    VfxShapeVisit(shapeTable, frame,
+                  [&](int32_t x, int32_t y, uint8_t color)
+                  {
+                      if (const std::optional<ShiningPixel> shone = Shining(color, translucent, pixels);
+                          shone.has_value())
+                      {
+                          shining[{x, y}] = shone->Light.Color;
+                      }
+                  });
+    std::vector<MCGlowPixel> outline;
+
+    for (const auto& [at, color] : shining)
+    {
+        const auto [x, y] = at;
+
+        if (!shining.contains({x - 1, y}) || !shining.contains({x + 1, y}) || !shining.contains({x, y - 1}) ||
+            !shining.contains({x, y + 1}))
+        {
+            outline.push_back({x, y, color});
+        }
+    }
+
+    return outline;
+}
+
+auto MCSceneLights::DrawnFrame(const MCVfxAppearance& appearance) -> std::optional<MCTableFrame>
+{
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
+    return drawn.has_value() ? std::optional<MCTableFrame>({drawn->Table, drawn->Frame}) : std::nullopt;
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -671,7 +714,7 @@ auto MCSceneLights::AddHeat(const MCVfxAppearance& appearance) -> void
         return;
     }
 
-    const std::optional<DrawnFrame> drawn = FrameDrawn(appearance);
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
     const std::optional<Glow> fire =
         drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, MCGlowPixels::Bright) : std::nullopt;
 

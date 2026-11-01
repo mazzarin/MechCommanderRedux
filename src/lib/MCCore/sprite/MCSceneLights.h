@@ -215,6 +215,33 @@ namespace MCSceneLights
     /// </summary>
     std::vector<MCGlowColor> FrameColors(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
 
+    /// <summary>A pixel of a frame: where it is from the frame's hot spot (in its pixels, down the screen), and its light.</summary>
+    struct MCGlowPixel
+    {
+        int32_t X = 0;
+        int32_t Y = 0;
+        std::array<float, 3> Color{};
+    };
+
+    /// <summary>
+    /// The <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/> on their
+    /// outline (beside a pixel that isn't one of them); none for a table that isn't a VFX shape table.
+    /// </summary>
+    std::vector<MCGlowPixel> FrameOutline(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>A shape table's frame.</summary>
+    struct MCTableFrame
+    {
+        std::span<const uint8_t> Table;
+        int32_t Frame = 0;
+    };
+
+    /// <summary>
+    /// The frame <paramref name="appearance"/> last drew (its Render), as <see cref="MeasureDrawn"/> measures it; none when
+    /// it drew none of a VFX shape table. Its table is the appearance's shape's, for as long as it keeps it.
+    /// </summary>
+    std::optional<MCTableFrame> DrawnFrame(const MCVfxAppearance& appearance);
+
     /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,
     /// <paramref name="y1"/>), <paramref name="width"/> pixels to each side, in palette colour

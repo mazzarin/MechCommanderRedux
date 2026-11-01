@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 class MCCamera;
 class MCVector3D;
@@ -21,11 +22,24 @@ struct MCWindow;
 /// </summary>
 namespace MCParticles
 {
-    /// <summary>How the particles and the shake show (the tools' --hd-particles and --hd-shake set them).</summary>
+    /// <summary>
+    /// How an explosion's flecks fly (a prototype's choice, the tools' --hd-flecks): flung out of it at once, breaking off
+    /// its fire's edge as it burns, or fewer and heavier, falling.
+    /// </summary>
+    enum class MCFleckStyle : uint8_t
+    {
+        Burst,
+        Edge,
+        Falling,
+    };
+
+    /// <summary>How the particles and the shake show (the tools' --hd-particles, --hd-shake and --hd-flecks set them).</summary>
     struct MCParticleLook
     {
         /// <summary>How many particles fly, 1 as made (0.5: half as many).</summary>
         float Amount = 1.0f;
+        /// <summary>How explosions' flecks fly.</summary>
+        MCFleckStyle Flecks = MCFleckStyle::Burst;
         /// <summary>How far a shaking explosion shakes the picture, 1 as made (0: not at all).</summary>
         float Shake = 1.0f;
     };
@@ -52,6 +66,13 @@ namespace MCParticles
     /// flecks in its fire's colours; it shakes the picture when <paramref name="shakes"/> (MCExplosion::Shakes).
     /// </summary>
     void AddExplosion(const MCVfxAppearance& appearance, const MCVector3D& position, bool shakes);
+
+    /// <summary>
+    /// An explosion drawn this frame (MCExplosion::Render, each frame it's drawn): with flecks breaking off its fire's
+    /// edge (MCFleckStyle::Edge), they break off the frame <paramref name="appearance"/> drew at
+    /// <paramref name="position"/>, as many as its edge is long.
+    /// </summary>
+    void AddExplosionFrame(const MCVfxAppearance& appearance, const MCVector3D& position);
 
     /// <summary>
     /// A burst at <paramref name="position"/>, as big as <paramref name="size"/>, its flecks in the game's fire's colours:

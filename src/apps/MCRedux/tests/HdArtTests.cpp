@@ -4858,7 +4858,8 @@ namespace
 
     /// <summary>
     /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
-    /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong.
+    /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
+    /// <c>--hd-flecks burst|edge|falling</c> picks how explosions' flecks fly (MCParticles::MCFleckStyle).
     /// </summary>
     void ParticlesFromOptions()
     {
@@ -4877,6 +4878,15 @@ namespace
             look.Shake = std::strtof(std::string(*shake).c_str(), nullptr);
             GHdShake = 1;
             std::cout << std::format("  shake: {:.2f} as strong as made\n", look.Shake);
+        }
+
+        if (const std::optional<std::string_view> flecks = MCTest::Option("hd-flecks"); flecks.has_value())
+        {
+            using enum MCParticles::MCFleckStyle;
+            look.Flecks = *flecks == "edge" ? Edge : *flecks == "falling" ? Falling : Burst;
+            std::cout << std::format("  flecks: {}\n", look.Flecks == Edge      ? "breaking off the fire's edge"
+                                                       : look.Flecks == Falling ? "falling"
+                                                                                : "flung out at once");
         }
     }
 

@@ -15,6 +15,7 @@
 #include "object/MCTreeType.h"
 #include "object/MCVertexPlacement.h"
 #include "object/MCWeaponShotInfo.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
@@ -217,21 +218,23 @@ auto MCTree::Render() -> void
 
     if (numVisible != 0)
     {
-        // Standing, it sorts with the terrain; fallen, by its screen row.
+        // Standing, it sorts with the terrain; fallen, by its screen row. Port-only (sun shadows): at dusk and night it
+        // casts its own shadow (MCVfxAppearance) instead of drawing its art's.
         const auto& type = TypeAs<MCTreeType>();
         const bool standing = Appearance->CurrentState == MCActorState::Normal;
+        const bool artShadow = !MCSceneLights::RecastsSunShadows();
         Appearance->Render(standing ? 0 : static_cast<int32_t>(ScreenPos.Y));
 
         if (!standing)
         {
-            if (const std::span<uint8_t> shadow = type.DestroyedShadow.Bytes(); !shadow.empty())
+            if (const std::span<uint8_t> shadow = type.DestroyedShadow.Bytes(); artShadow && !shadow.empty())
             {
                 ElementList().OpenGroup(static_cast<int32_t>(ScreenPos.Y), true);
                 ElementList().Add(
                     ElementList().Make<MCVfxElement>(shadow, ScreenPos.X, ScreenPos.Y, 0, 0, hazePalette, 0));
             }
         }
-        else if (const std::span<uint8_t> shadow = type.NormalShadow.Bytes(); !shadow.empty())
+        else if (const std::span<uint8_t> shadow = type.NormalShadow.Bytes(); artShadow && !shadow.empty())
         {
             ElementList().OpenGroup(static_cast<int32_t>(-ScreenPos.Y), true);
             ElementList().Add(ElementList().Make<MCVfxElement>(shadow, ScreenPos.X, ScreenPos.Y, 0, 0, hazePalette, 0));

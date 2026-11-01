@@ -201,6 +201,14 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
                                                    static_cast<int32_t>(ScreenPos.Y), CurrentFrame, hazeTable);
             element.Glow = Glow;
             ElementList().Add(element);
+
+            // Port-only (sun shadows): a terrain-placed object (a swaying tree) casts its animation's first shape, its
+            // whole outline (the delta frames only change it), as its own shadow at dusk.
+            if (placed)
+            {
+                const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, 0};
+                MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
+            }
         }
     }
     else if (shape != nullptr && !shape->FrameList().empty())

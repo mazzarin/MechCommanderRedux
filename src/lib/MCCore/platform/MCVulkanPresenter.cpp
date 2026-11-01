@@ -54,6 +54,8 @@ namespace
         float Clouds[4] = {};
         /// <summary>The shake: the world's texels the world shown is moved by.</summary>
         float Shake[4] = {};
+        /// <summary>The world's own light's colour (times Lighting's), and how much of their colour its colours lose.</summary>
+        float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -113,6 +115,13 @@ namespace
         uniforms.Lighting[1] = lighting.Strength;
         uniforms.Lighting[2] = GHdLighting != HdLightingOff ? lighting.Ambient : 1.0f;
         uniforms.Lighting[3] = across / (down * MCSceneLights::GroundAspect());
+
+        if (GHdLighting != HdLightingOff)
+        {
+            std::ranges::copy(lighting.AmbientTint, uniforms.AmbientLook);
+            uniforms.AmbientLook[3] = lighting.AmbientGrey;
+        }
+
         uniforms.LightTone[0] = lighting.Scatter;
         uniforms.LightTone[1] = lighting.Knee;
         uniforms.LightTone[2] = lighting.Most;

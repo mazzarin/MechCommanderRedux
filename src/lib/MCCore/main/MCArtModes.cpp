@@ -17,11 +17,12 @@ namespace
     constexpr int HdArtOn = 1;
 
     /// <summary>The modes.</summary>
-    constexpr std::array<MCArtMode, 4> Modes = {{
+    constexpr std::array<MCArtMode, 5> Modes = {{
         {"original", HdArtOff, HdLightingOff},
         {"hd", HdArtOn, HdLightingOff},
         {"lit", HdArtOn, HdLightingOn},
         {"dusk", HdArtOn, HdLightingDusk},
+        {"night", HdArtOn, HdLightingNight},
     }};
 }
 

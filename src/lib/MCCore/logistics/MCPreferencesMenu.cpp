@@ -337,12 +337,14 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
-    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h); DUSK dims the world
-    // and lights it more. From the next frame on.
+    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h), ON at the mission's
+    // own time of day; DUSK dims every mission's world and lights it more, NIGHT darkens it further. From the next frame
+    // on.
     MCLogGroupBox& hdLighting = AddBox(screen, panel, HdLightingBoxPlace, BoxOutlineColor);
     AddLabel(screen, hdLighting, "HD LIGHTING", BoxTitleLeft, BoxTitleTop);
     AddDropDown(screen, hdLighting, GHdLighting,
-                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}}, nullptr);
+                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}, {"NIGHT", HdLightingNight}},
+                nullptr);
 
     // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
     MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);

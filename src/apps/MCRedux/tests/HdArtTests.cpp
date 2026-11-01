@@ -13,6 +13,7 @@
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
+#include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
@@ -3835,6 +3836,180 @@ namespace
 }
 
 /// <summary>
+/// A mission's time of day (port-only): its scenario file's [Environment] TimeOfDay, named in any case; day without the
+/// block or the key, and for a name that isn't a time of day. HD lighting ON shows the mission's own, DUSK and NIGHT
+/// their own whatever the mission's, and off shows day (as drawn); dusk dims the world's light, night more and blue, its
+/// colours paler and the lights stronger.
+/// </summary>
+TEST_CASE("hd lighting: a mission's time of day is its scenario file's, shown as HD LIGHTING says")
+{
+    MCTestContextScope scope;
+    MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    const auto read = [&](std::string_view name, std::string_view environment)
+    {
+        const std::string path = GamePath(MissionPath, name, ".fit");
+        files.AddFile(path, std::format("FITini\r\n[Music]\r\nuc scenarioTuneNum = 0\r\n{}FITend\r\n", environment));
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(path), 0);
+        return MCSceneLights::ReadTimeOfDay(file);
+    };
+
+    CHECK(read("plain", "") == MCTimeOfDay::Day);
+    CHECK(read("bare", "[Environment]\r\n") == MCTimeOfDay::Day);
+    CHECK(read("day", "[Environment]\r\nst TimeOfDay = \"Day\"\r\n") == MCTimeOfDay::Day);
+    CHECK(read("dusk", "[Environment]\r\nst TimeOfDay = \"Dusk\"\r\n") == MCTimeOfDay::Dusk);
+    CHECK(read("night", "[Environment]\r\nst TimeOfDay = \"NIGHT\"\r\n") == MCTimeOfDay::Night);
+    CHECK(read("noon", "[Environment]\r\nst TimeOfDay = \"Noon\"\r\n") == MCTimeOfDay::Day);
+
+    const int lightingWas = GHdLighting;
+    const MCTimeOfDay missionWas = MCSceneLights::MissionTime();
+    const auto shownAt = [](int lighting, MCTimeOfDay mission)
+    {
+        GHdLighting = lighting;
+        MCSceneLights::SetMissionTime(mission);
+        return MCSceneLights::TimeOfDay();
+    };
+
+    CHECK(shownAt(HdLightingOff, MCTimeOfDay::Night) == MCTimeOfDay::Day);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Day) == MCTimeOfDay::Day);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Dusk) == MCTimeOfDay::Dusk);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Night) == MCTimeOfDay::Night);
+    CHECK(shownAt(HdLightingDusk, MCTimeOfDay::Night) == MCTimeOfDay::Dusk);
+    CHECK(shownAt(HdLightingNight, MCTimeOfDay::Day) == MCTimeOfDay::Night);
+
+    shownAt(HdLightingOn, MCTimeOfDay::Day);
+    const MCSceneLights::MCLighting day = MCSceneLights::ShownLighting();
+    shownAt(HdLightingOn, MCTimeOfDay::Dusk);
+    const MCSceneLights::MCLighting dusk = MCSceneLights::ShownLighting();
+    shownAt(HdLightingOn, MCTimeOfDay::Night);
+    const MCSceneLights::MCLighting night = MCSceneLights::ShownLighting();
+    GHdLighting = lightingWas;
+    MCSceneLights::SetMissionTime(missionWas);
+
+    CHECK(dusk.Ambient < day.Ambient);
+    CHECK(night.Ambient < dusk.Ambient);
+    CHECK(dusk.Strength > day.Strength);
+    CHECK(night.Strength > dusk.Strength);
+    CHECK(night.AmbientTint[2] > night.AmbientTint[0]);
+    CHECK(night.AmbientGrey > 0.0f);
+    CHECK(dusk.AmbientGrey == 0.0f);
+}
+
+/// <summary>
+/// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
+/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
+/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still and bluer, and HD
+/// LIGHTING's DUSK shows a night mission just as a dusk one.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mission set at dusk or night shows its world darker, at night bluer")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Night);
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    CHECK(MCSceneLights::MissionTime() == MCTimeOfDay::Day);
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    GamePaused = true;
+
+    const auto shown = [&](int lighting, MCTimeOfDay time)
+    {
+        GHdLighting = lighting;
+        MCSceneLights::SetMissionTime(time);
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const std::vector<SDL_Color> drawn = shown(HdLightingOff, MCTimeOfDay::Day);
+    const std::vector<SDL_Color> unlitNight = shown(HdLightingOff, MCTimeOfDay::Night);
+    const std::vector<SDL_Color> day = shown(HdLightingOn, MCTimeOfDay::Day);
+    const std::vector<SDL_Color> dusk = shown(HdLightingOn, MCTimeOfDay::Dusk);
+    const std::vector<SDL_Color> night = shown(HdLightingOn, MCTimeOfDay::Night);
+    const std::vector<SDL_Color> duskChosen = shown(HdLightingDusk, MCTimeOfDay::Night);
+    GamePaused = false;
+    GHdLighting = HdLightingOff;
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
+    SaveShownFrame(day, width, height, "time-of-day-day");
+    SaveShownFrame(dusk, width, height, "time-of-day-dusk");
+    SaveShownFrame(night, width, height, "time-of-day-night");
+
+    // The world clear of the interface (as the cloud shadows' test): right of the panels, below the paused message.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    struct Measure
+    {
+        double Luma = 0.0;
+        double Red = 0.0;
+        double Blue = 0.0;
+    };
+
+    const auto measure = [&](const std::vector<SDL_Color>& frame)
+    {
+        Measure sum;
+        size_t count = 0;
+
+        for (int32_t y = top; y < height; ++y)
+        {
+            for (int32_t x = left; x < width; ++x)
+            {
+                const SDL_Color color = frame[static_cast<size_t>(y) * width + x];
+                sum.Luma += LumaOf(color);
+                sum.Red += color.r;
+                sum.Blue += color.b;
+                ++count;
+            }
+        }
+
+        REQUIRE(count > 0);
+        return Measure{sum.Luma / count, sum.Red / count, sum.Blue / count};
+    };
+
+    // Different pixels in that world (none where two frames show it the same).
+    const auto different = [&](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    {
+        size_t count = 0;
+
+        for (int32_t y = top; y < height; ++y)
+        {
+            for (int32_t x = left; x < width; ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+                count += SameColor(a[i], b[i]) ? 0 : 1;
+            }
+        }
+
+        return count;
+    };
+
+    const Measure byDay = measure(day);
+    const Measure atDusk = measure(dusk);
+    const Measure atNight = measure(night);
+    std::cout << std::format("  the world's brightness: {:.1f} by day, {:.1f} at dusk, {:.1f} at night; blue per red "
+                             "{:.2f} by day, {:.2f} at night\n",
+                             byDay.Luma, atDusk.Luma, atNight.Luma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red);
+    CHECK_EQ(different(unlitNight, drawn), size_t{0});
+    CHECK_EQ(different(duskChosen, dusk), size_t{0});
+    CHECK(atDusk.Luma < 0.8 * byDay.Luma);
+    CHECK(atNight.Luma < 0.75 * atDusk.Luma);
+    CHECK(atNight.Blue / atNight.Red > 1.2 * (byDay.Blue / byDay.Red));
+}
+
+/// <summary>
 /// HD particles (GHdParticles), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
 /// interface: with them off a burst makes nothing. On, a shot's hit on a unit and a big explosion on the ground in the
 /// view's middle show there as they're made and nowhere else; as the game's time goes on they fly out from it, and by the
@@ -4915,11 +5090,31 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-time-of-day day|dusk|night</c>, sets the mission at that time of day, as its scenario file's
+    /// [Environment] TimeOfDay would (MCSceneLights::SetMissionTime): shown so with HD lighting on.
+    /// </summary>
+    void TimeOfDayFromOptions()
+    {
+        const std::optional<std::string_view> name = MCTest::Option("hd-time-of-day");
+
+        if (!name.has_value())
+        {
+            return;
+        }
+
+        const std::optional<MCTimeOfDay> time = MCSceneLights::TimeOfDayNamed(*name);
+        REQUIRE(time.has_value());
+        MCSceneLights::SetMissionTime(*time);
+        std::cout << std::format("  time of day: {}\n", *name);
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
-    /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>).
+    /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
+    /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>).
     /// </summary>
     /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
     bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
@@ -4959,6 +5154,7 @@ namespace
         }
 
         LightingFromOptions();
+        TimeOfDayFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();
@@ -4968,8 +5164,8 @@ namespace
     /// <summary>
     /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
     /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
-    /// command names them (main/MCArtModes.h: original, hd, lit, dusk). Without <c>--hd-original 1</c>, so the pack is
-    /// there for the modes that draw HD art.
+    /// command names them (main/MCArtModes.h: original, hd, lit, dusk, night). Without <c>--hd-original 1</c>, so the
+    /// pack is there for the modes that draw HD art.
     /// </summary>
     std::map<int32_t, MCArtMode> ArtModesFromOptions()
     {

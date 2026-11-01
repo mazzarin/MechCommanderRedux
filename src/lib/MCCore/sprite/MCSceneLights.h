@@ -5,9 +5,11 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 class MCAppearance;
+class MCFitIniFile;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCPane;
@@ -60,6 +62,17 @@ struct MCSceneGround
     float EastY = 0.0f;
     float NorthX = 0.0f;
     float NorthY = 0.0f;
+};
+
+/// <summary>
+/// Port-only (HD lighting): the time of day a mission is set at (a map maker's choice, its scenario file's
+/// [Environment] TimeOfDay; see MCSceneLights::ReadTimeOfDay). The original's missions are all by day.
+/// </summary>
+enum class MCTimeOfDay : uint8_t
+{
+    Day,
+    Dusk,
+    Night,
 };
 
 namespace MCSceneLights
@@ -148,13 +161,48 @@ namespace MCSceneLights
         float CloudSize = 300.0f;
         /// <summary>With cloud shadows on: how fast they drift before the wind, in meters a second of the game's time.</summary>
         float CloudSpeed = 15.0f;
+        /// <summary>The colour of the world's own light, times <see cref="Ambient"/> (white by day; night's is blue).</summary>
+        std::array<float, 3> AmbientTint{1.0f, 1.0f, 1.0f};
+        /// <summary>
+        /// How much of their colour the world's own colours lose in its light, 0 to 1 (0 by day): at night the eye sees
+        /// little colour but where a light shines.
+        /// </summary>
+        float AmbientGrey = 0.0f;
     };
 
-    /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
+    /// <summary>The settings the next frames are shown with (the tools set them; a time of day takes its own, see Shown).</summary>
     MCLighting& Lighting();
 
-    /// <summary>The settings the frames are shown with: <see cref="Lighting"/>'s, at DUSK its strength and dimming.</summary>
+    /// <summary>
+    /// The settings the frames are shown with: <see cref="Lighting"/>'s, at dusk and at night (<see cref="TimeOfDay"/>)
+    /// with that time's world light and lights' strength.
+    /// </summary>
     MCLighting ShownLighting();
+
+    /// <summary>
+    /// Sets the time of day of the mission being played (MCScenario::Load: its scenario file's, see
+    /// <see cref="ReadTimeOfDay"/>; the tools' --hd-time-of-day).
+    /// </summary>
+    void SetMissionTime(MCTimeOfDay time);
+
+    /// <summary>The time of day of the mission being played (day until one is set).</summary>
+    MCTimeOfDay MissionTime();
+
+    /// <summary>
+    /// The time of day the world is shown at: with HD lighting off, day (as drawn); at HD LIGHTING's DUSK or NIGHT, that;
+    /// else the mission's own (<see cref="MissionTime"/>).
+    /// </summary>
+    MCTimeOfDay TimeOfDay();
+
+    /// <summary>The time of day named <paramref name="name"/> ("day", "dusk" or "night", in any case); none for another.</summary>
+    std::optional<MCTimeOfDay> TimeOfDayNamed(std::string_view name);
+
+    /// <summary>
+    /// The time of day a scenario file (<paramref name="file"/>) sets its mission at: its block "Environment"'s string
+    /// "TimeOfDay" (Day, Dusk or Night), day without one, as the original's missions are. The original game reads
+    /// neither, so a mission that sets it plays there as ever, by day.
+    /// </summary>
+    MCTimeOfDay ReadTimeOfDay(MCFitIniFile& file);
 
     /// <summary>
     /// Starts the lights of the world drawn into <paramref name="pane"/> (MCCamera::Render, as its draw list starts).
@@ -328,8 +376,10 @@ namespace MCSceneLights
 }
 
 /// <summary>
-/// Port-only: PREFS "HDLighting": 0 draws the world as the original did; 1 lights it around shots, fires and explosions;
-/// 2 the same at dusk, the world dimmed and the lights stronger. Off by default.
+/// Port-only: PREFS "HDLighting": 0 draws the world as the original did; 1 lights it around shots, fires and explosions,
+/// at the mission's time of day (MCSceneLights::MissionTime: by day, but for a mission set at dusk or night); 2 the same,
+/// every mission at dusk (the world dimmed, the lights stronger); 3 every mission at night (darker, its light blue and
+/// its colours paler, the lights stronger still). Off by default.
 /// </summary>
 extern int GHdLighting;
 
@@ -351,4 +401,5 @@ enum MCHdLightingSetting : int
     HdLightingOff = 0,
     HdLightingOn = 1,
     HdLightingDusk = 2,
+    HdLightingNight = 3,
 };

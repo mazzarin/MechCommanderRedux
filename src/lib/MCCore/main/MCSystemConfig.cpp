@@ -202,9 +202,10 @@ void ReadPreferences(MCFitIniFile& file)
     // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
     GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(HdAudioOff), static_cast<int32_t>(HdAudioOff),
                           static_cast<int32_t>(HdAudioOrchestral));
-    // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
+    // Port-only: HDLighting lights the world around shots, fires and explosions, at the mission's time of day or at dusk
+    // or night (sprite/MCSceneLights.h).
     GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(HdLightingOff),
-                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingDusk));
+                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingNight));
     // Port-only: HDSunShadows draws objects' shadows darkening the ground instead of solid black (sprite/MCSceneLights.h).
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
     // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).

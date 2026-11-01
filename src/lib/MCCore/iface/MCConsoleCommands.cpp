@@ -73,7 +73,7 @@ namespace
     }
 
     /// <summary>
-    /// <c>art original|hd|lit|dusk</c>: shows that art mode (MCArtModes.h) from the next frame on, as HD ART and HD
+    /// <c>art original|hd|lit|dusk|night</c>: shows that art mode (MCArtModes.h) from the next frame on, as HD ART and HD
     /// LIGHTING set so would, unsaved.
     /// </summary>
     std::expected<void, std::string> Art(MCConsoleArguments arguments)

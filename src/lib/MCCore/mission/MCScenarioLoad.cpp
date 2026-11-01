@@ -48,6 +48,7 @@
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCParticles.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
@@ -201,6 +202,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         }
     }
 
+    // Port-only (HD lighting): the time of day the map maker set the mission at; by day without one.
+    MCSceneLights::SetMissionTime(MCSceneLights::ReadTimeOfDay(file));
     LoadPalette(file);
     LoadForces(file);
     LoadSettings(file);

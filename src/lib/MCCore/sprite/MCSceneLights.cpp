@@ -6,6 +6,7 @@
 #include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
+#include "lib/MCFitIniFile.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCObjectDrawing.h"
@@ -42,9 +43,23 @@ namespace
     constexpr float BeamGain = 0.9f;
     /// <summary>A beam's height above the ground (the arms and torsos it runs between), in pixels.</summary>
     constexpr float BeamHeight = 10.0f;
-    /// <summary>DUSK's world light (the world dimmed to it) and its lights' strength.</summary>
+    /// <summary>Dusk's world light (the world dimmed to it) and its lights' strength.</summary>
     constexpr float DuskAmbient = 0.6f;
     constexpr float DuskStrength = 1.0f;
+    /// <summary>
+    /// Night's world light: dimmer than dusk's, the moon's blue (its tint about as bright as white), and the world's
+    /// colours paler in it; the lights stronger.
+    /// </summary>
+    constexpr float NightAmbient = 0.35f;
+    constexpr std::array<float, 3> NightTint{0.78f, 0.95f, 1.45f};
+    constexpr float NightGrey = 0.5f;
+    constexpr float NightStrength = 1.5f;
+    /// <summary>The times of day by name (a scenario file's TimeOfDay, the tools' --hd-time-of-day).</summary>
+    constexpr std::array<std::pair<std::string_view, MCTimeOfDay>, 3> TimesOfDay{{
+        {"Day", MCTimeOfDay::Day},
+        {"Dusk", MCTimeOfDay::Dusk},
+        {"Night", MCTimeOfDay::Night},
+    }};
     /// <summary>A muzzle flash's reach, its colour (a propellant's) and how much it lights the ground under it.</summary>
     constexpr float MuzzleFlashReach = 36.0f;
     constexpr std::array<float, 3> MuzzleFlashColor{1.0f, 0.72f, 0.38f};
@@ -77,6 +92,8 @@ namespace
     struct State
     {
         MCSceneLights::MCLighting Lighting;
+        /// <summary>The time of day of the mission being played.</summary>
+        MCTimeOfDay MissionTime = MCTimeOfDay::Day;
         /// <summary>The window whose world is being drawn.</summary>
         std::weak_ptr<MCWindow> Drawing;
         std::vector<MCSceneLight> Adding;
@@ -393,13 +410,83 @@ auto MCSceneLights::ShownLighting() -> MCLighting
 {
     MCLighting shown = TheState().Lighting;
 
-    if (GHdLighting == HdLightingDusk)
+    switch (TimeOfDay())
     {
-        shown.Ambient = DuskAmbient;
-        shown.Strength = DuskStrength;
+        case MCTimeOfDay::Day:
+            break;
+        case MCTimeOfDay::Dusk:
+        {
+            shown.Ambient = DuskAmbient;
+            shown.Strength = DuskStrength;
+            break;
+        }
+        case MCTimeOfDay::Night:
+        {
+            shown.Ambient = NightAmbient;
+            shown.AmbientTint = NightTint;
+            shown.AmbientGrey = NightGrey;
+            shown.Strength = NightStrength;
+            break;
+        }
     }
 
     return shown;
+}
+
+auto MCSceneLights::SetMissionTime(MCTimeOfDay time) -> void
+{
+    TheState().MissionTime = time;
+}
+
+auto MCSceneLights::MissionTime() -> MCTimeOfDay
+{
+    return TheState().MissionTime;
+}
+
+auto MCSceneLights::TimeOfDay() -> MCTimeOfDay
+{
+    switch (GHdLighting)
+    {
+        case HdLightingOff:
+            return MCTimeOfDay::Day;
+        case HdLightingDusk:
+            return MCTimeOfDay::Dusk;
+        case HdLightingNight:
+            return MCTimeOfDay::Night;
+        default:
+            return MissionTime();
+    }
+}
+
+auto MCSceneLights::TimeOfDayNamed(std::string_view name) -> std::optional<MCTimeOfDay>
+{
+    const auto found =
+        std::ranges::find_if(TimesOfDay, [name](const auto& time) { return MCIEquals(time.first, name); });
+    return found != TimesOfDay.end() ? std::optional(found->second) : std::nullopt;
+}
+
+auto MCSceneLights::ReadTimeOfDay(MCFitIniFile& file) -> MCTimeOfDay
+{
+    if (file.SeekBlock("Environment") != 0)
+    {
+        return MCTimeOfDay::Day;
+    }
+
+    const MCFitResult<std::string> name = file.Read<std::string>("TimeOfDay");
+
+    if (!name)
+    {
+        return MCTimeOfDay::Day;
+    }
+
+    if (const std::optional<MCTimeOfDay> time = TimeOfDayNamed(*name); time.has_value())
+    {
+        return *time;
+    }
+
+    SDL_Log("MCSceneLights: the scenario's [Environment] TimeOfDay \"%s\" is none of Day, Dusk and Night; shown by day",
+            name->c_str());
+    return MCTimeOfDay::Day;
 }
 
 auto MCSceneLights::Begin(const MCPane& pane) -> void

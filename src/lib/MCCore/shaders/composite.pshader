@@ -98,6 +98,10 @@ cbuffer Composite : register(b0, space3)
     float4 clouds;
     // Port-only (HD particles' shake, MCParticles::ShownShake): xy, the world's texels the world shown is moved by.
     float4 shake;
+    // Port-only (HD lighting's time of day, MCLighting::AmbientTint and AmbientGrey): the world's own light's colour
+    // (rgb, times lighting.z; white by day, the moon's blue at night) and how much of their colour the world's own
+    // colours lose in it (w: 0 by day).
+    float4 ambientLook;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -209,21 +213,31 @@ float2 HazeAt(float2 texel)
 // darken the ground's brightest colours (sand, snow) as they do the rest.
 static const float CloudSpareFrom = 0.9;
 
+// The world's own light: its strength (lighting.z) in its colour (ambientLook.rgb).
+float3 AmbientLight()
+{
+    return lighting.z * ambientLook.rgb;
+}
+
 // The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
 // a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
-// light's scatter added, and what rises above the knee eased toward white. A light's own bright pixels keep their
-// brightness: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of
-// the light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
+// light's scatter added, and what rises above the knee eased toward white. In the world's own light its colours lose
+// ambientLook.w of their colour (the lights show them in full). A light's own bright pixels keep their brightness and
+// colour: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of the
+// light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
 // unchanged.
 float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, float3 cloudLight)
 {
-    if (lighting.x <= 0.0 && lighting.z == 1.0 && all(cloudLight == 1.0))
+    const float3 ambient = AmbientLight();
+
+    if (lighting.x <= 0.0 && all(ambient == 1.0) && ambientLook.w <= 0.0 && all(cloudLight == 1.0))
     {
         return world;
     }
 
     const float selfLit = SelfLit(world);
-    const float3 base = world * lerp(lighting.z, 1.0, selfLit) *
+    const float3 own = lerp(world, dot(world, Luma), ambientLook.w * (1.0 - selfLit));
+    const float3 base = own * lerp(ambient, 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
@@ -667,7 +681,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
             const float3 cloudLight = CloudsAt(hazy + 0.5);
             const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint, cloudLight) +
-                                 glint * SunGlint * lighting.z * cloudLight;
+                                 glint * SunGlint * AmbientLight() * cloudLight;
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -687,7 +701,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
         return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight) +
-                     glint * SunGlint * lighting.z * cloudLight);
+                     glint * SunGlint * AmbientLight() * cloudLight);
     }
 
     return Faded(Shown(index));

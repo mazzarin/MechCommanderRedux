@@ -263,8 +263,10 @@ private:
         MCAddressKey Key;
         std::weak_ptr<MCWindow> Window;
         /// <summary>
-        /// The surface's colours (premultiplied RGBA) and indices (R8), both colour targets, and the copy of the indices
-        /// draws that read the surface itself read.
+        /// The surface's colours (premultiplied RGBA) and indices, both colour targets, and the copy of the indices
+        /// draws that read the surface itself read. The indices are RGBA8: R the palette index; port-only (HD
+        /// lighting's relief maps), G and B the slope of the HD ground drawn there and A 1 where it is (MCHdArt's
+        /// relief maps: what draws over the ground writes 0, what blends over it leaves the ground's).
         /// </summary>
         Texture Target;
         Texture Index;
@@ -360,6 +362,15 @@ private:
         Texture HdAtlas;
         Texture HdAtlas2;
         int32_t HdScale = 0;
+        /// <summary>
+        /// Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): the tiles' relief maps at ReliefScale, BC5,
+        /// shelved as the HD tiles are (none without them).
+        /// </summary>
+        Texture ReliefAtlas;
+        Texture ReliefAtlas2;
+        int32_t ReliefScale = 0;
+        /// <summary>Whether it was made for the relief maps (ReliefMapsInUse), so turning them on or off remakes it.</summary>
+        bool Relief = false;
         /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
         uint64_t HdPack = 0;
         std::shared_ptr<SDL_GPUBuffer> Cells;
@@ -702,8 +713,13 @@ private:
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
     /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
     static uint64_t HdPackInUse();
+    /// <summary>
+    /// Whether the terrain takes the HD art pack's relief maps (HD lighting on, MCLighting::ReliefMaps above 0).
+    /// </summary>
+    static bool ReliefMapsInUse();
     /// <summary>Makes one of the terrain's HD atlases (BC7, MaxHdAtlasSide wide), or says why there is none.</summary>
-    std::expected<void, std::string> MakeHdTerrainAtlas(Texture& atlas, uint32_t height);
+    std::expected<void, std::string> MakeHdTerrainAtlas(
+        Texture& atlas, uint32_t height, SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM);
     /// <summary>Puts an HD terrain tile's colours into HD atlas <paramref name="atlas"/> at (x, y), a block corner.</summary>
     void UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>

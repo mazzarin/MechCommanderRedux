@@ -170,6 +170,12 @@ namespace MCSceneLights
         /// </summary>
         float SunRelief = 0.0f;
         /// <summary>
+        /// How steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's bumps for the
+        /// lights and the sun, where it has them: its slopes times this (0: the ground is lit by its brightness, as the
+        /// rest; 3 about matches the brightness relief's strength).
+        /// </summary>
+        float ReliefMaps = 0.0f;
+        /// <summary>
         /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
         /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).
         /// </summary>
@@ -196,6 +202,12 @@ namespace MCSceneLights
 
     /// <summary>The settings the next frames are shown with (the tools set them; a time of day takes its own, see Shown).</summary>
     MCLighting& Lighting();
+
+    /// <summary>
+    /// Whether the HD ground takes the HD art pack's relief maps: HD art and HD lighting on, MCLighting::ReliefMaps
+    /// above 0.
+    /// </summary>
+    bool ReliefMapsOn();
 
     /// <summary>
     /// The settings the frames are shown with: <see cref="Lighting"/>'s, at dusk and at night (<see cref="TimeOfDay"/>)

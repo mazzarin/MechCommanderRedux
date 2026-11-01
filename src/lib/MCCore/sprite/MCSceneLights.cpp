@@ -486,6 +486,11 @@ auto MCSceneLights::Lighting() -> MCLighting&
     return TheState().Lighting;
 }
 
+auto MCSceneLights::ReliefMapsOn() -> bool
+{
+    return MCHdArt::Active() && GHdLighting != HdLightingOff && TheState().Lighting.ReliefMaps > 0.0f;
+}
+
 auto MCSceneLights::ShownLighting() -> MCLighting
 {
     MCLighting shown = TheState().Lighting;

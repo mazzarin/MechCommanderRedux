@@ -5234,6 +5234,23 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-relief-maps &lt;steepness&gt;</c>, the HD ground takes the pack's relief maps that steep
+    /// (MCLighting::ReliefMaps; 3 about matches the brightness relief).
+    /// </summary>
+    void ReliefMapsFromOptions()
+    {
+        const std::optional<std::string_view> steepness = MCTest::Option("hd-relief-maps");
+
+        if (!steepness.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::Lighting().ReliefMaps = std::strtof(std::string(*steepness).c_str(), nullptr);
+        std::cout << std::format("  relief maps: {:.2f}\n", MCSceneLights::Lighting().ReliefMaps);
+    }
+
+    /// <summary>
     /// With <c>--hd-time-of-day day|dusk|night</c>, sets the mission at that time of day, as its scenario file's
     /// [Environment] TimeOfDay would (MCSceneLights::SetMissionTime): shown so with HD lighting on.
     /// </summary>
@@ -5301,6 +5318,7 @@ namespace
         TimeOfDayFromOptions();
         AirBeamsFromOptions();
         SunReliefFromOptions();
+        ReliefMapsFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();

@@ -24,6 +24,8 @@ namespace
     constexpr std::string_view CraterFolder = "craters";
     constexpr std::string_view IconFolder = "icons";
     constexpr std::string_view TerrainFolder = "terrain";
+    /// <summary>The ground tiles' relief maps (MCHdArt::FindTerrainRelief).</summary>
+    constexpr std::string_view ReliefFolder = "relief";
     constexpr std::string_view OverlayFolder = "overlays";
     /// <summary>The pack's folder of shape tables loaded outside the sprite, crater and icon files, each named by its hash.</summary>
     constexpr std::string_view ShapeFolder = "shapes";
@@ -88,6 +90,8 @@ namespace
     constexpr uint32_t HdfBc7 = 1;
     /// <summary>The colour format of a frame holding its blended pixels (MCHdArt::Frame::Blended).</summary>
     constexpr uint32_t HdfBc7Blended = 2;
+    /// <summary>The colour format of a frame of BC5 blocks (MCHdArt::ColorFormat::Bc5: a relief map).</summary>
+    constexpr uint32_t HdfBc5 = 3;
     constexpr size_t HdfHeaderBytes = 16;
     constexpr size_t MaxHdfBytes = 64u * 1024u * 1024u;
     using MCHdArt::HasIndex;
@@ -738,12 +742,12 @@ namespace
 
 std::vector<uint8_t> MCHdArt::EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options)
 {
-    const std::vector<uint8_t> blocks = frame.Format == ColorFormat::Bc7
+    const std::vector<uint8_t> blocks = frame.Format != ColorFormat::Rgba8
                                             ? frame.Colors
                                             : MCBc7::Encode(frame.Colors, frame.Width, frame.Height, options);
     std::vector<uint8_t> bytes(HdfMagic.begin(), HdfMagic.end());
     WriteLittle(bytes, HdfVersion, 2);
-    WriteLittle(bytes, frame.Blended ? HdfBc7Blended : HdfBc7, 1);
+    WriteLittle(bytes, frame.Format == ColorFormat::Bc5 ? HdfBc5 : (frame.Blended ? HdfBc7Blended : HdfBc7), 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.Scale), 1);
     WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalWidth()), 2);
     WriteLittle(bytes, static_cast<uint32_t>(frame.OriginalHeight()), 2);
@@ -758,9 +762,10 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
 {
     if (bytes.size() < HdfHeaderBytes || !std::equal(HdfMagic.begin(), HdfMagic.end(), bytes.begin()) ||
         ReadLittle(bytes, 4, 2) != HdfVersion ||
-        (ReadLittle(bytes, 6, 1) != HdfBc7 && ReadLittle(bytes, 6, 1) != HdfBc7Blended))
+        (ReadLittle(bytes, 6, 1) != HdfBc7 && ReadLittle(bytes, 6, 1) != HdfBc7Blended &&
+         ReadLittle(bytes, 6, 1) != HdfBc5))
     {
-        return std::unexpected(std::string("not a version 1 BC7 HD frame"));
+        return std::unexpected(std::string("not a version 1 BC7 or BC5 HD frame"));
     }
 
     Frame frame;
@@ -789,7 +794,7 @@ auto MCHdArt::DecodeHdf(std::span<const uint8_t> bytes, int32_t width, int32_t h
                                            originalHeight, frame.Scale, colorBytes, bytes.size()));
     }
 
-    frame.Format = ColorFormat::Bc7;
+    frame.Format = ReadLittle(bytes, 6, 1) == HdfBc5 ? ColorFormat::Bc5 : ColorFormat::Bc7;
     frame.Colors.assign(bytes.begin() + HdfHeaderBytes,
                         bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes));
     frame.Indices.assign(bytes.begin() + static_cast<ptrdiff_t>(HdfHeaderBytes + colorBytes), bytes.end());
@@ -1443,28 +1448,41 @@ std::string MCHdArt::TerrainTileName(std::span<const uint8_t> tile)
     return HashName(TerrainTileHash(tile));
 }
 
+namespace
+{
+    /// <summary>
+    /// The frame of <paramref name="folder"/> named by its picture's data <paramref name="data"/> (a terrain tile's, an
+    /// overlay's: TerrainTileHash), its bounds <paramref name="width"/> x <paramref name="height"/>; null with HD art off.
+    /// </summary>
+    std::shared_ptr<const MCHdArt::Frame> FindHashed(std::string_view folder, std::span<const uint8_t> data,
+                                                     int32_t width, int32_t height)
+    {
+        if (!MCHdArt::Active())
+        {
+            return nullptr;
+        }
+
+        return Cache(FrameKey{FolderIndex(MCHdArt::PackFolder() / folder, Naming::Hash), TerrainTileHash(data)}, width,
+                     height);
+    }
+}
+
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainTile(std::span<const uint8_t> tile, int32_t width,
                                                                int32_t height)
 {
-    if (!Active())
-    {
-        return nullptr;
-    }
+    return FindHashed(TerrainFolder, tile, width, height);
+}
 
-    return Cache(FrameKey{FolderIndex(PackFolder() / TerrainFolder, Naming::Hash), TerrainTileHash(tile)}, width,
-                 height);
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindTerrainRelief(std::span<const uint8_t> tile, int32_t width,
+                                                                 int32_t height)
+{
+    return FindHashed(ReliefFolder, tile, width, height);
 }
 
 std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindOverlay(std::span<const uint8_t> shape, int32_t width,
                                                            int32_t height)
 {
-    if (!Active())
-    {
-        return nullptr;
-    }
-
-    return Cache(FrameKey{FolderIndex(PackFolder() / OverlayFolder, Naming::Hash), TerrainTileHash(shape)}, width,
-                 height);
+    return FindHashed(OverlayFolder, shape, width, height);
 }
 
 uint64_t MCHdArt::ShapeTableHash(std::span<const uint8_t> table)

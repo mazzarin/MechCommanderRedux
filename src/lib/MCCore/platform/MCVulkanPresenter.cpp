@@ -61,6 +61,8 @@ namespace
         float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         /// <summary>How much the spotlights' beams show in the air (0 none).</summary>
         float AirBeams[4] = {};
+        /// <summary>How steeply the HD ground's relief maps stand its bumps (0: lit by its brightness).</summary>
+        float ReliefLook[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -126,6 +128,7 @@ namespace
             std::ranges::copy(lighting.AmbientTint, uniforms.AmbientLook);
             uniforms.AmbientLook[3] = lighting.AmbientGrey;
             uniforms.AirBeams[0] = lighting.AirBeams;
+            uniforms.ReliefLook[0] = MCSceneLights::ReliefMapsOn() ? lighting.ReliefMaps : 0.0f;
         }
 
         uniforms.LightTone[0] = lighting.Scatter;

@@ -20,9 +20,10 @@
 // The screen: one palette index per pixel (red), or the GPU's colours.
 Texture2D<float4> screenTex : register(t0, space2);
 SamplerState screenSampler : register(s0, space2);
-// The screen's op plane: one byte per screen pixel; with the GPU's surfaces, over an underlay, the GPU world's palette
-// indices (port-only, HD lighting's living water: its index target, the size of its colours).
-Texture2D<float> opTex : register(t1, space2);
+// The screen's op plane: one byte per screen pixel (red); with the GPU's surfaces, over an underlay, the GPU world's
+// index target, the size of its colours (port-only, HD lighting's living water and relief maps): its palette indices
+// (red), and the HD ground's slopes (green, blue) where its relief map drew (alpha).
+Texture2D<float4> opTex : register(t1, space2);
 SamplerState opSampler : register(s1, space2);
 // The world view's surface (red, or the GPU's colours; unused without an underlay).
 Texture2D<float4> worldTex : register(t2, space2);
@@ -107,6 +108,9 @@ cbuffer Composite : register(b0, space3)
     // Port-only (HD lighting's headlights, MCLighting::AirBeams): x, how much the spotlights' beams show in the air (0
     // none).
     float4 airBeams;
+    // Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): x, how steeply the HD ground's relief maps stand
+    // its bumps (0: the ground is lit by its brightness, as the rest).
+    float4 reliefLook;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -448,6 +452,11 @@ uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
     return Byte(tex.Sample(samp, (texel + 0.5) / size));
 }
 
+uint IndexAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
+{
+    return Byte(tex.Sample(samp, (texel + 0.5) / size).r);
+}
+
 // The colour index shows, through the colour cycle.
 float3 Shown(uint index)
 {
@@ -478,13 +487,32 @@ float HeightAt(float2 texel, float centre)
     return lerp(dot(color, Luma), centre, SelfLit(color));
 }
 
+// A relief map's byte for flat ground, and the bytes a rise of a texel takes (MCHdArt::ReliefFlat).
+static const float ReliefFlat = 128.0;
+static const float ReliefSteps = 127.0;
+
 // The slope of the world's relief at a world texel, its own shading taken for height (lightFacing): its brightness's
-// rise a texel along the ground. None when the relief is flat, or nothing lights it (no lights, no sun).
+// rise a texel along the ground. Port-only: where the HD ground's relief map drew (opTex's alpha), its slopes instead,
+// reliefLook.x as steep, in the brightness's heights. None when the relief is flat, or nothing lights it (no lights, no
+// sun).
 float2 SlopeAt(float2 texel)
 {
     if (lightFacing.x == 0.0 || (lighting.x <= 0.0 && all(lightFacing.zw == 0.0)))
     {
         return float2(0.0, 0.0);
+    }
+
+    if (mode.y != 0.0 && reliefLook.x > 0.0)
+    {
+        const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
+        const float4 drawn = TexelAt(opTex, opSampler, at, worldSize.zw);
+
+        if (drawn.a > 0.5)
+        {
+            // A texel down the screen is lighting.w texels along the ground.
+            const float2 rise = (drawn.gb * 255.0 - ReliefFlat) / ReliefSteps;
+            return float2(rise.x, rise.y / lighting.w) * (reliefLook.x / lightFacing.x);
+        }
     }
 
     const float centre = dot(WorldAt(texel), Luma);

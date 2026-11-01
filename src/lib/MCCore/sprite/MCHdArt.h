@@ -34,6 +34,9 @@ class MCShape;
 /// original tile's pixels; their alpha is unused. A terrain overlay's (a fast shape over the ground: roads, rivers'
 /// banks, rubble, mines) are <c>overlays/&lt;key&gt;.hdf</c> (named as tiles are), with their alpha; a translucent
 /// one's hold its blended pixels.</para>
+/// <para>A terrain tile's relief map is <c>relief/&lt;key&gt;.hdf</c> (named as its tile), BC5 at its own scale: each
+/// pixel's slope, its height's rise a pixel right (R) and a pixel down the picture (G), 128 flat and 255 a rise of 127
+/// / 128 of a pixel (<see cref="ReliefFlat"/>).</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
 /// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -50,6 +53,11 @@ namespace MCHdArt
         Rgba8,
         /// <summary>BC7 blocks (sprite/MCBc7.h) for the size padded to whole blocks, block row by block row.</summary>
         Bc7,
+        /// <summary>
+        /// BC5 blocks (two channels, a BC4 block each), laid out as Bc7's: a ground tile's relief map
+        /// (<see cref="FindTerrainRelief"/>).
+        /// </summary>
+        Bc5,
     };
 
     /// <summary>An HD frame as the GPU takes it.</summary>
@@ -290,6 +298,15 @@ namespace MCHdArt
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
+    inline constexpr int32_t ReliefFlat = 128;
+
+    /// <summary>
+    /// Terrain tile <paramref name="tile"/>'s relief map (its bounds <paramref name="width"/> x
+    /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
     /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its

@@ -8,6 +8,7 @@
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCSceneLights.h"
 #include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
 #include "terrain/MCTerrainTiles.h"
@@ -340,6 +341,12 @@ void MCTerrainReadHdTiles()
                 if (const int32_t width = VfxTileWidth(tile); width != 0)
                 {
                     MCHdArt::FindTerrainTile(tile, width, tile[2]);
+
+                    // Port-only: its relief map too, when the HD ground takes them.
+                    if (MCSceneLights::ReliefMapsOn())
+                    {
+                        MCHdArt::FindTerrainRelief(tile, width, tile[2]);
+                    }
                 }
             }
         }

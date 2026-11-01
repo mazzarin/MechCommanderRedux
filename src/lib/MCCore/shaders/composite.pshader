@@ -76,7 +76,9 @@ cbuffer Composite : register(b0, space3)
     float4 lightTone;
     // How the lights take the world's relief: x, the height (in the world's texels) a step from black to white in its own
     // shading stands for, so a surface brighter toward a light faces it (0: lit as flat); y, the texels between the
-    // pixels its slope is taken across.
+    // pixels its slope is taken across; zw, the sun's (MCLighting::SunRelief): the way away from it along the ground, as
+    // long as the shadow a texel of the relief's height casts, times x and its strength (0: the world's own light lights
+    // it flat).
     float4 lightFacing;
     // How the lights colour the world, x: how much more of their hue it takes, its brightness kept. The bloom of the
     // GPU world: y, its strength (0 none); z, the brightness (a pixel's brightest component's) a pixel blooms above.
@@ -309,6 +311,17 @@ float3 AmbientLight()
     return lighting.z * ambientLook.rgb;
 }
 
+// The sun's relief takes or adds at most this share of the world's own light, easing toward it: the sharp edge of a
+// dark patch (a shadow, a forest's) stands for a cliff, and would light the ground along its rim.
+static const float SunFacingMost = 0.3;
+
+// How much of the world's own light a texel whose ground rises by slope takes, by the sun (lightFacing.zw): more on a
+// slope facing it and less on one facing away; 1 on flat ground or with no sun.
+float SunFacing(float2 slope)
+{
+    return 1.0 + SunFacingMost * tanh(dot(slope, lightFacing.zw) / SunFacingMost);
+}
+
 // The world's colour at a texel (sloped as SlopeAt finds, shade of the lights reaching it: the GPU world's alpha, which
 // a unit's shadow takes down) in the world's own light and the lights' (lightTone): lit as a surface of that colour, the
 // light's scatter added, and what rises above the knee eased toward white. In the world's own light its colours lose
@@ -320,14 +333,15 @@ float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, f
 {
     const float3 ambient = AmbientLight();
 
-    if (lighting.x <= 0.0 && all(ambient == 1.0) && ambientLook.w <= 0.0 && all(cloudLight == 1.0))
+    if (lighting.x <= 0.0 && all(ambient == 1.0) && ambientLook.w <= 0.0 && all(cloudLight == 1.0) &&
+        all(lightFacing.zw == 0.0))
     {
         return world;
     }
 
     const float selfLit = SelfLit(world);
     const float3 own = lerp(world, dot(world, Luma), ambientLook.w * (1.0 - selfLit));
-    const float3 base = own * lerp(ambient, 1.0, selfLit) *
+    const float3 base = own * lerp(ambient * SunFacing(slope), 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
@@ -465,10 +479,10 @@ float HeightAt(float2 texel, float centre)
 }
 
 // The slope of the world's relief at a world texel, its own shading taken for height (lightFacing): its brightness's
-// rise a texel along the ground. None when nothing is lit or the lights take no relief.
+// rise a texel along the ground. None when the relief is flat, or nothing lights it (no lights, no sun).
 float2 SlopeAt(float2 texel)
 {
-    if (lighting.x <= 0.0 || lightFacing.x == 0.0)
+    if (lightFacing.x == 0.0 || (lighting.x <= 0.0 && all(lightFacing.zw == 0.0)))
     {
         return float2(0.0, 0.0);
     }

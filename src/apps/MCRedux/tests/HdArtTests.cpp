@@ -5217,6 +5217,23 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sun-relief &lt;strength&gt;</c>, the sun shows the world's relief that much (MCLighting::SunRelief,
+    /// 0 to 1).
+    /// </summary>
+    void SunReliefFromOptions()
+    {
+        const std::optional<std::string_view> strength = MCTest::Option("hd-sun-relief");
+
+        if (!strength.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::Lighting().SunRelief = std::strtof(std::string(*strength).c_str(), nullptr);
+        std::cout << std::format("  sun relief: {:.2f}\n", MCSceneLights::Lighting().SunRelief);
+    }
+
+    /// <summary>
     /// With <c>--hd-time-of-day day|dusk|night</c>, sets the mission at that time of day, as its scenario file's
     /// [Environment] TimeOfDay would (MCSceneLights::SetMissionTime): shown so with HD lighting on.
     /// </summary>
@@ -5283,6 +5300,7 @@ namespace
         LightingFromOptions();
         TimeOfDayFromOptions();
         AirBeamsFromOptions();
+        SunReliefFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
         ParticlesFromOptions();

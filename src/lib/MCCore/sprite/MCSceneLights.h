@@ -163,6 +163,13 @@ namespace MCSceneLights
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
         /// <summary>
+        /// How much the sun shows the world's relief (its own shading taken for height, as <see cref="Facing"/>'s): a
+        /// surface facing the sun takes more of the world's own light and one facing away less, the more the lower the
+        /// sun (its shadows' way and length, <see cref="SunShadowRight"/> and Up; none at night), 0 to 1 (0: lit as
+        /// flat ground, as drawn; 1: as much as that sun would).
+        /// </summary>
+        float SunRelief = 0.0f;
+        /// <summary>
         /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
         /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).
         /// </summary>

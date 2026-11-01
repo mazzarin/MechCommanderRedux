@@ -37,7 +37,10 @@ namespace
         float Lighting[4] = {0.0f, 0.0f, 1.0f, 1.0f};
         /// <summary>The lights' tone: their scatter, the knee, the most light and the brightness of a light's own pixels.</summary>
         float LightTone[4] = {};
-        /// <summary>How the lights take the world's relief: its height from black to white and the texels its slope spans.</summary>
+        /// <summary>
+        /// How the lights take the world's relief: its height from black to white and the texels its slope spans; then
+        /// the sun's way along the ground, times its strength.
+        /// </summary>
         float LightFacing[4] = {};
         /// <summary>How much more of their hue the lights give, the bloom's strength and the brightness it starts at.</summary>
         float LightLook[4] = {};
@@ -132,6 +135,17 @@ namespace
         // The relief in the texture's pixels, its slope across FacingSpan of the window's each side.
         uniforms.LightFacing[0] = lighting.Facing * across;
         uniforms.LightFacing[1] = std::max(across * FacingSpan, 1.0f);
+
+        if (GHdLighting != HdLightingOff)
+        {
+            // The sun's relief: the way away from the sun along the ground, as long as the shadow a pixel of the
+            // relief's height casts (the sun shadows' window pixels right and up per pixel of height, a screen height
+            // of ground GroundAspect of one).
+            const float relief = lighting.SunRelief * uniforms.LightFacing[0];
+            uniforms.LightFacing[2] = relief * lighting.SunShadowRight;
+            uniforms.LightFacing[3] = -relief * lighting.SunShadowUp / MCSceneLights::GroundAspect();
+        }
+
         uniforms.LightLook[0] = lighting.Tint;
         uniforms.LightLook[1] = GHdLighting != HdLightingOff ? lighting.Bloom : 0.0f;
         uniforms.LightLook[2] = lighting.BloomFrom;

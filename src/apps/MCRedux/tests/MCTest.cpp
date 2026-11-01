@@ -21,6 +21,7 @@
 
 #include "lib/MCFatal.h"
 #include "platform/MCAllocator.h"
+#include "platform/MCUtf8Path.h"
 
 namespace
 {
@@ -150,9 +151,9 @@ namespace
     }
 
     /// <summary>
-    /// The command running an isolated test in a process of its own: this program again, with <c>--only</c>, the test's
-    /// name and the options, in <paramref name="tempFolder"/> when given, its output and errors together when
-    /// <paramref name="joinErrors"/>.
+    /// The command (UTF-8) running an isolated test in a process of its own: this program again, with <c>--only</c>,
+    /// the test's name and the options, in <paramref name="tempFolder"/> when given, its output and errors together
+    /// when <paramref name="joinErrors"/>.
     /// </summary>
     std::string IsolatedCommand(std::string_view program, const MCTest::TestCase& test,
                                 const std::optional<std::filesystem::path>& tempFolder, bool joinErrors)
@@ -166,7 +167,7 @@ namespace
 
         if (tempFolder.has_value())
         {
-            command += std::format(" {} {}", TempFolderOption, Quoted(tempFolder->string()));
+            command += std::format(" {} {}", TempFolderOption, Quoted(MCFileSystem::ToUtf8(*tempFolder)));
         }
 
 #ifdef _WIN32
@@ -180,16 +181,23 @@ namespace
     /// <returns>Whether it passed (the child exited 0).</returns>
     bool RunIsolated(std::string_view program, const MCTest::TestCase& test)
     {
+        const std::string command = IsolatedCommand(program, test, std::nullopt, false);
         std::cout << std::flush;
-        return std::system(IsolatedCommand(program, test, std::nullopt, false).c_str()) == 0;
+#ifdef _WIN32
+        // The wide call keeps every character of the UTF-8 command; system would read it in the ANSI code page.
+        return _wsystem(MCFileSystem::FromUtf8(command).c_str()) == 0;
+#else
+        return std::system(command.c_str()) == 0;
+#endif
     }
 
-    /// <summary>Runs <paramref name="command"/>, keeping what it prints.</summary>
+    /// <summary>Runs <paramref name="command"/> (UTF-8), keeping what it prints.</summary>
     /// <returns>Whether it exited 0, and its output (or why it couldn't start).</returns>
     std::pair<bool, std::string> RunCaptured(const std::string& command)
     {
 #ifdef _WIN32
-        FILE* pipe = _popen(command.c_str(), "r");
+        // Wide, as RunIsolated's call.
+        FILE* pipe = _wpopen(MCFileSystem::FromUtf8(command).c_str(), L"r");
 #else
         FILE* pipe = popen(command.c_str(), "r");
 #endif
@@ -239,7 +247,8 @@ namespace
 
             if (error)
             {
-                return std::unexpected(std::format("can't make the folder {}: {}", folder.string(), error.message()));
+                return std::unexpected(
+                    std::format("can't make the folder {}: {}", MCFileSystem::ToUtf8(folder), error.message()));
             }
 
             folders.push_back(folder);
@@ -279,14 +288,18 @@ namespace
         return failed;
     }
 
-    /// <summary>Makes <paramref name="folder"/> this process's temporary folder (what temp_directory_path gives).</summary>
-    void SetTempFolder(const char* folder)
+    /// <summary>
+    /// Makes <paramref name="folder"/> (UTF-8) this process's temporary folder (what temp_directory_path gives).
+    /// </summary>
+    /// <returns>Whether it was set.</returns>
+    bool SetTempFolder(std::string_view folder)
     {
 #ifdef _WIN32
-        _putenv_s("TMP", folder);
-        _putenv_s("TEMP", folder);
+        // Wide, so a folder outside the ANSI code page keeps every character.
+        const std::filesystem::path path = MCFileSystem::FromUtf8(folder);
+        return _wputenv_s(L"TMP", path.c_str()) == 0 && _wputenv_s(L"TEMP", path.c_str()) == 0;
 #else
-        setenv("TMPDIR", folder, 1);
+        return setenv("TMPDIR", std::string(folder).c_str(), 1) == 0;
 #endif
     }
 }
@@ -299,7 +312,12 @@ namespace
 /// may see less). Any other <c>--name value</c> is an option the tests read (<see cref="MCTest::Option"/>). Exits 0 when
 /// every selected test passed.
 /// </summary>
+#ifdef _WIN32
+// Windows hands main the command line in the ANSI code page, which can't spell every folder; wmain gets it whole.
+int wmain(int argc, wchar_t** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     if (const auto allocator = MCInitializeAllocator(); !allocator)
     {
@@ -311,6 +329,14 @@ int main(int argc, char** argv)
     // assertion) prints its stack and writes mc_tests.dmp instead of showing a dialog.
     MCNoMessageBoxes = true;
     MCCrashTrace::Install();
+    std::vector<std::string> arguments;
+
+    for (int i = 0; i < argc; i++)
+    {
+        // A path converts the wide argument to UTF-8; on other systems it is UTF-8 already.
+        arguments.push_back(MCFileSystem::ToUtf8(std::filesystem::path(argv[i])));
+    }
+
     std::vector<std::string> filters;
     bool list = false;
     std::optional<std::string_view> only;
@@ -318,7 +344,7 @@ int main(int argc, char** argv)
 
     for (int i = 1; i < argc; ++i)
     {
-        std::string_view arg = argv[i];
+        std::string_view arg = arguments[i];
 
         if (arg == "--list")
         {
@@ -326,12 +352,11 @@ int main(int argc, char** argv)
         }
         else if (arg == "--only" && i + 1 < argc)
         {
-            only = argv[++i];
+            only = arguments[++i];
         }
         else if (arg == JobsOption && i + 1 < argc)
         {
-            const std::string_view given = argv[++i];
-
+            const std::string_view given = arguments[++i];
             const auto [end, error] = std::from_chars(given.data(), given.data() + given.size(), jobs);
 
             if (error != std::errc() || end != given.data() + given.size() || jobs < 1)
@@ -342,11 +367,17 @@ int main(int argc, char** argv)
         }
         else if (arg == TempFolderOption && i + 1 < argc)
         {
-            SetTempFolder(argv[++i]);
+            const std::string_view folder = arguments[++i];
+
+            if (!SetTempFolder(folder))
+            {
+                std::cerr << "can't make " << folder << " the temporary folder\n";
+                return 1;
+            }
         }
         else if (arg.starts_with("--") && arg.size() > 2 && i + 1 < argc)
         {
-            Options().emplace_back(std::string(arg.substr(2)), argv[++i]);
+            Options().emplace_back(std::string(arg.substr(2)), arguments[++i]);
         }
         else
         {
@@ -391,7 +422,7 @@ int main(int argc, char** argv)
         {
             std::cout << "[ PROC ] " << test.Name << std::endl;
 
-            if (!RunIsolated(argv[0], test))
+            if (!RunIsolated(arguments[0], test))
             {
                 ++state.Failures;
                 failed.emplace_back(test);
@@ -437,7 +468,7 @@ int main(int argc, char** argv)
 
     if (!atOnce.empty())
     {
-        auto isolatedFailed = RunIsolatedAtOnce(argv[0], atOnce, jobs);
+        auto isolatedFailed = RunIsolatedAtOnce(arguments[0], atOnce, jobs);
 
         if (!isolatedFailed)
         {

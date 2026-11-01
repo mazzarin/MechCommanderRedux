@@ -745,7 +745,12 @@ namespace
     /// <summary>Moves the multiplayer ready lights onto <paramref name="screen"/>, in front.</summary>
     void MoveLights(MCMPPlayerLights& lights, MCLogObject& screen)
     {
-        lights.ParentObject()->RemoveChild(lights);
+        // Port: a match that skipped the session screen makes the lights with no parent.
+        if (!lights.Parent.expired())
+        {
+            lights.ParentObject()->RemoveChild(lights);
+        }
+
         screen.AddChild(lights.weak_from_this());
         lights.SetDepth(100);
     }

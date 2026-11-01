@@ -309,7 +309,7 @@ TEST_CASE_ISOLATED("game: the preferences screen chooses the renderer and saves 
     char renderer[32] = {};
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string().c_str()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath).c_str()), 0);
         REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
         CHECK_EQ(prefs.ReadIdString("Renderer", std::span(renderer).first(sizeof(renderer) - 1)), 0);
     }

@@ -9,7 +9,7 @@ enum class MCDiskFileMode : uint8_t
     Create
 };
 
-/// <summary>An open file on disk (a <c>std::FILE</c>), closed when destroyed.</summary>
+/// <summary>An open file on disk (a <c>std::fstream</c>), closed when destroyed.</summary>
 class MCDiskFile
 {
 public:
@@ -40,5 +40,5 @@ private:
     MCDiskFile() = default;
 
     /// <summary>The open file.</summary>
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> _Handle{nullptr, &std::fclose};
+    std::fstream _Stream;
 };

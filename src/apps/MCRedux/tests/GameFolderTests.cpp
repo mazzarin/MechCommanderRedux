@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../MCGameFolder.h"
 #include "MCTest.h"
+#include "platform/MCUtf8Path.h"
 
 namespace
 {
@@ -75,13 +76,13 @@ TEST_CASE("launcher: the game is found in folders and Wine wrappers, not in mods
 
     for (size_t i = 0; i < found.size(); i++)
     {
-        CHECK_EQ(found[i].string(), expected[i].string());
+        CHECK_EQ(MCFileSystem::ToUtf8(found[i]), MCFileSystem::ToUtf8(expected[i]));
     }
 
     // A wrapper itself, as the player might choose it.
     const std::vector<std::filesystem::path> inWrapper = MCGameFolder::FindInstalls(root / "MechCommander Gold.app", 0);
     REQUIRE_EQ(inWrapper.size(), size_t{1});
-    CHECK_EQ(inWrapper.front().string(), wrapped.string());
+    CHECK_EQ(MCFileSystem::ToUtf8(inWrapper.front()), MCFileSystem::ToUtf8(wrapped));
 
     CHECK(MCGameFolder::HasGameData(lowercase));
     CHECK(MCGameFolder::HasGameData(root / "No Exe"));

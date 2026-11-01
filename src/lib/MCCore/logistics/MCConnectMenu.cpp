@@ -17,6 +17,7 @@
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "network/MCMPGameConfiguration.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
@@ -813,6 +814,24 @@ void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     if (manager->IsHost != 0)
     {
         GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = players.size() < 2;
+
+        // Port: a configured match (MPGameConfiguration) goes on as soon as every player it named has joined, straight
+        // to the mech bay: no ready room, map screen or settings wait. A problem leaves the host here, with Go.
+        if (GameConfiguration.Active)
+        {
+            MPPollConfiguredMatch();
+
+            if (players.size() >= GameConfiguration.Roster.size() &&
+                std::ranges::all_of(GameConfiguration.Roster,
+                                    [&players](const MPGamePlayer& wanted)
+                                    {
+                                        return std::ranges::any_of(players, [&wanted](const auto& player)
+                                                                   { return player->Name == wanted.Name; });
+                                    }))
+            {
+                MPBeginConfiguredMatch();
+            }
+        }
     }
 }
 

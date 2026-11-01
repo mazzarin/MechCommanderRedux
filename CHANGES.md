@@ -118,6 +118,10 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
+- A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
+  and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
+  Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
+  the map selector. See the [README](README.md#premade-matches).
 
 ### Files and Saves
 
@@ -180,6 +184,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Shots now fly to the spot they hit. In the original, bullets, laser beams and Gauss rifle (railgun) bolts flew to a
   point on the target picked by the firing weapon's mount, while the impact played where the shot hit, so hits often
   looked like misses. Damage is unchanged.
+- A mech component that was already destroyed and then hit again, for example when its limb was blown off, no longer
+  shows in its normal colour on the payload page. Its health wrapped around instead of staying at 0, so a destroyed
+  Gauss rifle (railgun) could look undamaged while a destroyed ER laser showed red.
 
 ### Logistics and Menus
 
@@ -206,6 +213,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   - Each jump jet takes one slot, in the leg with fewer jets. The original miscounted the jets and put each one in
     every empty slot of a leg.
   - A weapon is never put in a full location. The original wrote it over the first slot of the next location.
+  - The Rail Gun and Light Gauss Rifle get a critical slot. The original took them for equipment and gave them none.
+    They still fired, but critical hits and losing their location never destroyed them, their fire arc ignored the
+    torso's turn, and each shot read its starting point from outside the mech's body locations.
 
 ### Mission Scripts
 
@@ -243,6 +253,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Chat from an unknown player takes the first player's colour instead of crashing.
 - A mech icon part for a location without armor no longer divides by zero when it picks its colour. It shows red, as
   in the original.
+- The health bar over popup turrets and gates is green, yellow and red again instead of black.
 
 ### Mission Editor Fixes
 

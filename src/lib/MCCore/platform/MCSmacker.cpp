@@ -401,7 +401,7 @@ std::expected<std::unique_ptr<MCSmacker>, std::string> MCSmacker::Open(const std
 
     if (!smacker->_File)
     {
-        return std::unexpected(std::format("can't open {}", path.string()));
+        return std::unexpected(std::format("can't open {}", MCFileSystem::ToUtf8(path)));
     }
 
     smacker->_File.seekg(0, std::ios::end);
@@ -410,7 +410,7 @@ std::expected<std::unique_ptr<MCSmacker>, std::string> MCSmacker::Open(const std
 
     if (auto result = smacker->ReadHeader(); !result)
     {
-        return std::unexpected(std::format("{}: {}", path.filename().string(), result.error()));
+        return std::unexpected(std::format("{}: {}", MCFileSystem::ToUtf8(path.filename()), result.error()));
     }
 
     return smacker;

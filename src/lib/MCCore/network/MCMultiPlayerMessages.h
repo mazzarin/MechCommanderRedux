@@ -46,7 +46,9 @@ enum class MCMPMessageType : uint16_t
     SwitchScreen = 42,
     RPUpdate = 43,
     TechbaseChange = 44,
-    SessionCheckIn = 45
+    SessionCheckIn = 45,
+    /// <summary>Port: a configured match (<c>MPGameConfiguration</c>): teams, tech bases, points and the mission in one.</summary>
+    StartMatch = 46
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -190,6 +192,36 @@ struct MCMPTwoLongMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPTwoLongMessage) == 0x10);
+
+/// <summary>One player of a configured match: the id, the team (1 or 2) and the slot on it.</summary>
+struct MCMPMatchPlayer
+{
+    uint32_t PlayerID = 0;
+    int8_t Team = 0;
+    int8_t Slot = 0;
+};
+
+static_assert(sizeof(MCMPMatchPlayer) == 6);
+
+/// <summary>
+/// Start match (guaranteed, from the host): the whole of a configured match. A guest that gets it puts the players on
+/// their teams, sets the tech bases and points and goes to the mech bay, without the session screen.
+/// </summary>
+/// <remarks>Fixed layout; the mission's bare name (zero-terminated) follows it.</remarks>
+struct MCMPStartMatchMessage : public MCFIGuaranteedMessageHeader
+{
+    static constexpr size_t MaxMatchPlayers = 6;
+
+    /// <summary>Each team's resource point pool.</summary>
+    int32_t Team1Points = 0;
+    int32_t Team2Points = 0;
+    int8_t Team1TechBase = 1;
+    int8_t Team2TechBase = -1;
+    uint8_t NumPlayers = 0;
+    std::array<MCMPMatchPlayer, MaxMatchPlayers> Players{};
+};
+
+static_assert(sizeof(MCMPStartMatchMessage) == 0x37);
 
 #pragma pack(pop)
 

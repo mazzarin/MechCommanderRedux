@@ -16,6 +16,7 @@
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "network/MCMPGameConfiguration.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
 #include "main/MCGameStrings.h"
@@ -1180,6 +1181,12 @@ void HandleAppFileReport(uint32_t fromID, std::span<const uint8_t> msg)
 {
     const bool haveFile = ReadLinkupMessage<MCMPLongMessage>(msg).Value != 0;
 
+    // Port: a configured match asked (it has no session screen to count the answers).
+    if (MPConfiguredMatchFileReport(fromID, haveFile))
+    {
+        return;
+    }
+
     if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
     {
         GlobalLog()->SessionScreen->FileReport(fromID, haveFile);
@@ -1218,6 +1225,7 @@ void HandleAppStart(uint32_t fromID, std::span<const uint8_t> msg)
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
     Game().SessionManager->SendLatencyInfo();
     SoundSystem()->PlayBettySample(0x19);
+    GlobalLog()->SessionScreen->PublishMatchState();
     GlobalLog()->InitializeMultiplayer();
     GlobalLog()->LoadCampaign(missionName, ".MPK", false, false);
     GlobalLog()->SetUpBriefingScreen(false);
@@ -1362,6 +1370,7 @@ namespace
             case MCMPMessageType::SwitchScreen:
             case MCMPMessageType::RPUpdate:
             case MCMPMessageType::TechbaseChange:
+            case MCMPMessageType::StartMatch:
             {
                 const MCMultiPlayer& game = Game();
                 return fromID == game.ServerID || fromID == game.HostID ||
@@ -1606,6 +1615,12 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::TechbaseChange:
         {
             HandleAppTechbaseChange(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::StartMatch:
+        {
+            MPHandleStartMatch(fromID, bytes);
             break;
         }
 

@@ -11,6 +11,7 @@
 #include "object/MCTurret.h"
 #include "object/MCTurretType.h"
 #include "terrain/MCTerrain.h"
+#include "platform/MCUtf8Path.h"
 
 namespace
 {
@@ -21,7 +22,7 @@ namespace
     struct TypeFile
     {
         explicit TypeFile(std::string_view text)
-            : Path((std::filesystem::temp_directory_path() / "mc_type_test.fit").string())
+            : Path(MCFileSystem::ToUtf8(std::filesystem::temp_directory_path() / "mc_type_test.fit"))
         {
             {
                 std::ofstream out(Path, std::ios::binary);

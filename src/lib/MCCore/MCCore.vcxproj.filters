@@ -727,6 +727,9 @@
     <ClCompile Include="mission\MCScenarioPart.cpp">
       <Filter>mission</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCMPGameConfiguration.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMultiPlayer.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -1932,6 +1935,9 @@
     <ClInclude Include="mission\MCScenarioReading.h">
       <Filter>mission</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCMPGameConfiguration.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCMultiPlayer.h">
       <Filter>network</Filter>
     </ClInclude>
@@ -2320,6 +2326,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCStringTable.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCUtf8Path.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCVulkanPresenter.h">

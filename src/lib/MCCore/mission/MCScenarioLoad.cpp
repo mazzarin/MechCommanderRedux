@@ -5,6 +5,7 @@
 #include "object/MCCameraDrone.h"
 #include "platform/MCInput.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "abl/MCAblRuntime.h"
 #include "ai/MCMoveSystem.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -670,7 +671,7 @@ auto MCScenario::LoadTerrain(MCFitIniFile& file, std::string_view terrainName) -
     }
     else
     {
-        InstallTerrain(std::filesystem::path(terrainName).stem().string());
+        InstallTerrain(MCFileSystem::ToUtf8(MCFileSystem::FromUtf8(terrainName).stem()));
     }
 
     // Read from whichever block is current (the TerrainSystem block's, on the game's path).

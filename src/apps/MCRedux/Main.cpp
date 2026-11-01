@@ -74,7 +74,7 @@ namespace
         // SDL keeps the base path (null when it can't tell).
         if (SDL_GetBasePath() != nullptr)
         {
-            candidates.emplace_back(SDL_GetBasePath());
+            candidates.push_back(MCFileSystem::FromUtf8(SDL_GetBasePath()));
         }
 
         std::string tried;
@@ -86,7 +86,7 @@ namespace
                 return folder;
             }
 
-            tried += std::format("\n  {}", folder.string());
+            tried += std::format("\n  {}", MCFileSystem::ToUtf8(folder));
         }
 
         if (!dataArgument.empty())
@@ -148,7 +148,7 @@ namespace
                     return std::unexpected(std::format("{} needs a folder", arg));
                 }
 
-                (arg == "--user" ? options.UserFolder : options.DataFolder) = arguments[++i];
+                (arg == "--user" ? options.UserFolder : options.DataFolder) = MCFileSystem::FromUtf8(arguments[++i]);
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -187,7 +187,7 @@ namespace
                 return std::unexpected(std::format("No save folder: {}", SDL_GetError()));
             }
 
-            options.UserFolder = prefPath.get();
+            options.UserFolder = MCFileSystem::FromUtf8(prefPath.get());
         }
 
         return options;
@@ -222,7 +222,12 @@ namespace
     }
 }
 
+#ifdef _WIN32
+// Windows hands main the command line in the ANSI code page, which can't spell every folder; wmain gets it whole.
+int wmain(int argc, wchar_t** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     MCConsole::AttachParent();
 
@@ -234,7 +239,15 @@ int main(int argc, char** argv)
 
     MCCrashTrace::Install();
     MCCrashTrace::SetReporter(ReportAblState);
-    const std::vector<std::string_view> arguments(argv, argv + argc);
+    std::vector<std::string> utf8Arguments;
+
+    for (int i = 0; i < argc; i++)
+    {
+        // A path converts the wide argument to UTF-8; on other systems it is UTF-8 already.
+        utf8Arguments.push_back(MCFileSystem::ToUtf8(std::filesystem::path(argv[i])));
+    }
+
+    const std::vector<std::string_view> arguments(utf8Arguments.begin(), utf8Arguments.end());
     auto options = ParseArguments(arguments);
 
     if (!options)
@@ -273,8 +286,8 @@ int main(int argc, char** argv)
     options->DataFolder = *dataFolder;
     MCFileSystem::SetGameRoot(options->DataFolder);
     MCFileSystem::SetUserRoot(options->UserFolder);
-    SDL_Log("Game data: %s", options->DataFolder.string().c_str());
-    SDL_Log("User data: %s", options->UserFolder.string().c_str());
+    SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
+    SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
     // Personal build: the HD options are on unless PREFS.CFG turns them off.
     UseHdByDefault();

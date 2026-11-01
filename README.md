@@ -136,6 +136,38 @@ For example:
 MCRedux.exe --data "C:\Games\MechCommander Gold"
 ```
 
+### Premade Matches
+
+A launcher (or a script) can set up a multiplayer match before anyone starts the game, so nobody has to pick the
+mission, drag names onto teams or type resource points. Start the host with `-host` plus the match, and each other
+player with `-join` and the `-player` name the host's `-slot` entries use:
+
+```
+MCRedux.exe -host 28800 -player Alice -session "Match42" -maxplayers 4 ^
+  -matchmap desert_duel -team1rp 20000 -team2rp 15000 -team1tech is -team2tech clan ^
+  -slot Alice 1 0 -slot Bob 1 1 -slot Carol 2 0 -slot Dave 2 1
+
+MCRedux.exe -join 192.168.1.10:28800 -player Bob -session "Match42"
+```
+
+When every player named by a `-slot` has joined, the host checks that they are exactly the roster and that every machine
+has the mission file, then takes everyone **straight from "Waiting for Players" to the mech bay**. The ready room, the map
+selector and the wait for the mission's settings are never loaded: the host fills in an `MPGameConfiguration` (mission,
+points, tech bases, roster) and sends it to the guests in one message. Guests need no extra options.
+
+| Option (host only)                    | Description                                                                          |
+|---------------------------------------|--------------------------------------------------------------------------------------|
+| `-matchmap <name>`                    | The multiplayer mission (`.mpk`), without folder or extension. Every player needs the same file in the same place. |
+| `-team1rp <n>`, `-team2rp <n>`        | Resource points for **each player** of the team (the session screen's figure is a team's pool, shared out among its players). Without them the mission file's figures are kept. |
+| `-team1tech <is\|clan>`, `-team2tech <is\|clan>` | The team's tech base. Without them the mission's are kept. |
+| `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
+
+The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
+player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
+left on the "Waiting for Players" screen with a log message and can press Go to carry on by hand. A locked mission keeps
+its own points and tech bases. The game checks only that each player has a file of the mission's name, not that it is the
+same file, so a launcher should check the files match.
+
 ### Saves and Settings
 
 Without `--user`, saves and preferences go to your user profile, in

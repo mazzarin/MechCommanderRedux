@@ -925,7 +925,7 @@ auto MCTacticalMap::DrawWeapons() const -> void
 
         entry.SortKey = static_cast<int16_t>(component.Damage + static_cast<float>(bracket));
 
-        if (static_cast<int32_t>(item.Health) < static_cast<int8_t>(component.Health))
+        if (item.Disabled != 0 || static_cast<int32_t>(item.Health) < static_cast<int8_t>(component.Health))
         {
             entry.State = 0xff;
         }

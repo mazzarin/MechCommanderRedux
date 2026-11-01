@@ -42,7 +42,7 @@
     <Link>
       <!-- No console window; main stays the entry point (the game's own WinMain is the reconstructed one). -->
       <SubSystem>Windows</SubSystem>
-      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>

@@ -173,7 +173,7 @@ namespace MCTestGame
                 return {};
             }
 
-            std::ofstream log(std::filesystem::path(*name), std::ios::app);
+            std::ofstream log(MCFileSystem::FromUtf8(*name), std::ios::app);
 
             if (log.is_open())
             {
@@ -203,7 +203,7 @@ namespace MCTestGame
 
             if (shots && shotsWanted.contains(std::format(",{},", presentIndex)))
             {
-                static_cast<void>(MCInput::Display()->SaveScreenshot(std::filesystem::path(*shots) /
+                static_cast<void>(MCInput::Display()->SaveScreenshot(MCFileSystem::FromUtf8(*shots) /
                                                                      std::format("present{}.bmp", presentIndex)));
             }
 
@@ -298,7 +298,7 @@ namespace MCTestGame
             // --game <folder>, else the current folder when it holds the game (as the game looks for SYSTEM.CFG).
             const std::optional<std::string_view> option = MCTest::Option("game");
             const std::filesystem::path root =
-                option ? std::filesystem::path(*option) : std::filesystem::current_path();
+                option ? MCFileSystem::FromUtf8(*option) : std::filesystem::current_path();
 
             if (!std::filesystem::is_regular_file(root / "SYSTEM.CFG"))
             {
@@ -533,7 +533,7 @@ namespace MCTestGame
         static std::ofstream frameLog = []
         {
             const std::optional<std::string_view> name = MCTest::Option("frames");
-            return name ? std::ofstream(std::filesystem::path(*name)) : std::ofstream();
+            return name ? std::ofstream(MCFileSystem::FromUtf8(*name)) : std::ofstream();
         }();
 
         if (frameLog.is_open())

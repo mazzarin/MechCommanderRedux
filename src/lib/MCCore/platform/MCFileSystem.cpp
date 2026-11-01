@@ -61,7 +61,7 @@ namespace
         {
             if (gamePath.size() >= 2 && gamePath[1] == ':')
             {
-                result = std::string(gamePath.substr(0, 2)) + "/";
+                result = MCFileSystem::FromUtf8(std::string(gamePath.substr(0, 2)) + "/");
                 first = 1;
             }
             else
@@ -102,7 +102,7 @@ namespace
             }
 
             ++depth;
-            std::filesystem::path exact = result / part;
+            std::filesystem::path exact = result / MCFileSystem::FromUtf8(part);
             std::error_code error;
 
             if (std::filesystem::exists(exact, error))
@@ -118,9 +118,7 @@ namespace
             {
                 for (const auto& entry : std::filesystem::directory_iterator(result, error))
                 {
-                    const std::string name = entry.path().filename().string();
-
-                    if (MCPort::StrICmp(name, part) == 0)
+                    if (MCPort::StrICmp(MCFileSystem::ToUtf8(entry.path().filename()), part) == 0)
                     {
                         result = entry.path();
                         found = true;
@@ -159,7 +157,7 @@ namespace
                 continue;
             }
 
-            const std::string name = entry.path().filename().string();
+            const std::string name = MCFileSystem::ToUtf8(entry.path().filename());
 
             if (!MCFileSystem::WildcardMatch(pattern, name))
             {

@@ -368,7 +368,7 @@ auto MCFileScrollPane::GetAllFiles(std::string_view extension, bool sort) -> voi
     {
         File& file = Files.emplace_back();
         // The name without its extension.
-        file.Name = std::filesystem::path(found.Name).stem().string();
+        file.Name = MCFileSystem::ToUtf8(MCFileSystem::FromUtf8(found.Name).stem());
         file.InUserFolder = found.InUserFolder;
         file.InGameFolder = found.InGameFolder;
 

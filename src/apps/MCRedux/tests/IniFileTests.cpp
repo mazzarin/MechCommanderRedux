@@ -5,13 +5,14 @@
 #include "lib/MCFastFileSet.h"
 #include "lib/MCFitIniFile.h"
 #include "main/MCGameContext.h"
+#include "platform/MCUtf8Path.h"
 
 namespace
 {
     /// <summary>A scratch path outside the game install.</summary>
     std::string ScratchPath(std::string_view name)
     {
-        return (std::filesystem::temp_directory_path() / name).string();
+        return MCFileSystem::ToUtf8(std::filesystem::temp_directory_path() / name);
     }
 
     /// <summary>Opens a FIT file and requires success.</summary>

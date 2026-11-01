@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "platform/MCDisplay.h"
 #include "main/MCGameContext.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSdlPresenter.h"
 #include "platform/MCVulkanPresenter.h"
@@ -660,7 +661,7 @@ std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::files
                     static_cast<size_t>(shown.w) * sizeof(SDL_Color));
     }
 
-    const bool saved = SDL_SavePNG(surface, path.string().c_str());
+    const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
     SDL_DestroySurface(surface);
 
     if (!saved)
@@ -776,7 +777,7 @@ std::expected<void, std::string> MCDisplay::SaveScreenshot(const std::filesystem
                     shown.data() + static_cast<size_t>(_View.y + y) * _Width + _View.x, static_cast<size_t>(_View.w));
     }
 
-    const bool saved = SDL_SavePNG(surface, path.string().c_str());
+    const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());
     SDL_DestroySurface(surface);
 
     if (!saved)

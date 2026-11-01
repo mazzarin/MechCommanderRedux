@@ -139,7 +139,11 @@ auto MCLogMech::PlaceItem(uint8_t masterID, int32_t itemNum, int32_t hits) -> vo
     auto holds = [&](int32_t location)
     { return std::ranges::any_of(slotsOf(location), [&](const ItemSlot& slot) { return slot.MasterID == masterID; }); };
 
-    if (masterID < 100)
+    // OB-182 (fixed): MCX.EXE placed master ids below 100 by form, where a weapon matches no case, so Desperate
+    // Measures' Rail Gun (98) and Light Gauss Rifle (99) got no critical slot in the profile a mission loads. They
+    // still fired, but were never lost with a location, their fire arc followed the hull instead of the torso, and
+    // each shot read its hot spot from body location 0xff, past the mech's body locations.
+    if (masterID < FirstWeaponID)
     {
         switch (MasterComponentList[masterID].Form)
         {

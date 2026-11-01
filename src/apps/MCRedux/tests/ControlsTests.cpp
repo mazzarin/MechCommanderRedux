@@ -13,7 +13,9 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCInput.h"
 
 // The player's key bindings (iface/MCKeyBindings) and the preferences' CONTROLS panel that edits them: the defaults
 // are the original's, every command a player can bind is listed once, the names read back, a key moves from the
@@ -319,7 +321,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
 
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
         REQUIRE_EQ(prefs.SeekBlock("Controls"), 0);
         CHECK_EQ(prefs.Read<std::string>("Jump"), MCFitResult<std::string>("CTRL+K"));
         CHECK_EQ(prefs.Read<std::string>("AimHead"), MCFitResult<std::string>("SHIFT+Q"));
@@ -331,7 +333,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
     MCKeyBindings::SetPlayer(MCKeyBindings::Defaults());
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
         ReadPreferences(prefs);
     }
 
@@ -340,7 +342,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
     // A name PREFS gives that isn't a key leaves that command's key alone.
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Create(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(prefsPath)), 0);
         prefs.WriteBlock("MechCommander");
         prefs.WriteIdLong("Difficulty", 1);
         prefs.WriteBlock("Controls");
@@ -350,7 +352,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps the changed keys and reads them back")
 
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
         ReadPreferences(prefs);
     }
 
@@ -486,7 +488,7 @@ TEST_CASE_ISOLATED("game: the CONTROLS panel binds keys with a player's mouse an
 
     {
         MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
         REQUIRE_EQ(prefs.SeekBlock("Controls"), 0);
         CHECK_EQ(prefs.Read<std::string>("Jump"), MCFitResult<std::string>("K"));
     }

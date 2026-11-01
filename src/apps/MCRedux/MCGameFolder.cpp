@@ -1,5 +1,6 @@
 // Built without the precompiled header: macOS's CoreGraphics and MCCore's Win32 stand-ins (MCWin32Defs.h) cannot meet.
 #include "MCGameFolder.h"
+#include "platform/MCUtf8Path.h"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -53,16 +54,8 @@ namespace
         QuitButton = -2,
     };
 
-    std::string Utf8(const std::filesystem::path& path)
-    {
-        const std::u8string text = path.u8string();
-        return std::string(text.begin(), text.end());
-    }
-
-    std::filesystem::path FromUtf8(std::string_view text)
-    {
-        return std::filesystem::path(std::u8string(text.begin(), text.end()));
-    }
+    using MCFileSystem::FromUtf8;
+    using MCFileSystem::ToUtf8;
 
     bool EqualsIgnoringCase(std::string_view a, std::string_view b)
     {
@@ -110,7 +103,7 @@ namespace
         {
             std::error_code typeError;
 
-            if (EqualsIgnoringCase(Utf8(it->path().filename()), name) && it->is_regular_file(typeError))
+            if (EqualsIgnoringCase(ToUtf8(it->path().filename()), name) && it->is_regular_file(typeError))
             {
                 return true;
             }
@@ -163,7 +156,7 @@ namespace
 
             if (error)
             {
-                SDL_LogVerbose(SDL_LOG_CATEGORY_APPLICATION, "Game search: can't read %s: %s", Utf8(folder).c_str(),
+                SDL_LogVerbose(SDL_LOG_CATEGORY_APPLICATION, "Game search: can't read %s: %s", ToUtf8(folder).c_str(),
                                error.message().c_str());
             }
 
@@ -171,12 +164,12 @@ namespace
 
             for (const std::filesystem::path& subfolder : subfolders)
             {
-                if (IsSkipped(Utf8(subfolder.filename())))
+                if (IsSkipped(ToUtf8(subfolder.filename())))
                 {
                     continue;
                 }
 
-                if (EqualsIgnoringCase(Utf8(subfolder.extension()), AppExtension))
+                if (EqualsIgnoringCase(ToUtf8(subfolder.extension()), AppExtension))
                 {
                     SearchWrapper(subfolder);
                 }
@@ -248,14 +241,14 @@ namespace
 
         const std::filesystem::path base = FromUtf8(basePath).lexically_normal();
 
-        if (Utf8(base).find("/AppTranslocation/") != std::string::npos)
+        if (ToUtf8(base).find("/AppTranslocation/") != std::string::npos)
         {
             return {};
         }
 
         for (std::filesystem::path folder = base; folder.has_relative_path(); folder = folder.parent_path())
         {
-            if (EqualsIgnoringCase(Utf8(folder.extension()), AppExtension))
+            if (EqualsIgnoringCase(ToUtf8(folder.extension()), AppExtension))
             {
                 return folder;
             }
@@ -279,7 +272,7 @@ namespace
 
         for (size_t i = 0; i < listed.size(); i++)
         {
-            text += std::format("\n{}. {}", i + 1, Utf8(listed[i]));
+            text += std::format("\n{}. {}", i + 1, ToUtf8(listed[i]));
         }
 
 #if defined(__APPLE__)
@@ -397,7 +390,7 @@ namespace
     {
         const std::string text = std::format("There's no MechCommander Gold in {}.\n\nChoose the folder it's installed "
                                              "in: the one with SYSTEM.CFG and MCX.EXE.",
-                                             Utf8(folder));
+                                             ToUtf8(folder));
 
         if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, DialogTitle, text.c_str(), nullptr))
         {
@@ -421,7 +414,7 @@ std::vector<std::filesystem::path> MCGameFolder::FindInstalls(const std::filesys
     std::vector<std::filesystem::path> found;
     MCInstallSearch search(found);
 
-    if (EqualsIgnoringCase(Utf8(root.extension()), AppExtension))
+    if (EqualsIgnoringCase(ToUtf8(root.extension()), AppExtension))
     {
         search.SearchWrapper(root);
     }
@@ -499,16 +492,16 @@ std::string MCGameFolder::Remember(const std::filesystem::path& userFolder, cons
 
     if (error)
     {
-        return std::format("Can't make {}: {}", Utf8(userFolder), error.message());
+        return std::format("Can't make {}: {}", ToUtf8(userFolder), error.message());
     }
 
     const std::filesystem::path file = userFolder / RememberedFile;
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out << Utf8(folder) << '\n';
+    out << ToUtf8(folder) << '\n';
 
     if (!out.flush())
     {
-        return std::format("Can't write {}", Utf8(file));
+        return std::format("Can't write {}", ToUtf8(file));
     }
 
     return {};
@@ -518,20 +511,20 @@ std::string MCGameFolder::Label(const std::filesystem::path& install)
 {
     for (std::filesystem::path folder = install; folder.has_relative_path(); folder = folder.parent_path())
     {
-        if (EqualsIgnoringCase(Utf8(folder.extension()), AppExtension))
+        if (EqualsIgnoringCase(ToUtf8(folder.extension()), AppExtension))
         {
-            return Utf8(folder.filename());
+            return ToUtf8(folder.filename());
         }
 
         const std::filesystem::path parent = folder.parent_path();
 
         if (parent.filename() == "Bottles" && parent.parent_path().filename() == "CrossOver")
         {
-            return std::format("{} bottle", Utf8(folder.filename()));
+            return std::format("{} bottle", ToUtf8(folder.filename()));
         }
     }
 
-    return Utf8(install.filename());
+    return ToUtf8(install.filename());
 }
 
 bool MCGameFolder::ChoiceRequested()

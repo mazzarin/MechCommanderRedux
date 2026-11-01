@@ -145,7 +145,7 @@ namespace MCSceneLights
         /// <summary>With cloud shadows on: how big the clouds are (a cloud and the gap beside it, about), in meters.</summary>
         float CloudSize = 300.0f;
         /// <summary>With cloud shadows on: how fast they drift before the wind, in meters a second of the game's time.</summary>
-        float CloudSpeed = 6.0f;
+        float CloudSpeed = 15.0f;
     };
 
     /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>

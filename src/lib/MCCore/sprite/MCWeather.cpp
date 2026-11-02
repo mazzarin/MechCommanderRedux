@@ -97,6 +97,13 @@ namespace
     /// </summary>
     constexpr float SoilSaturation = 0.27f;
     constexpr int32_t ComponentMost = 63;
+    /// <summary>
+    /// The pixels round a drop's landing point (view pixels right and down of it) whose ground votes on what it lands on,
+    /// the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns.
+    /// </summary>
+    constexpr std::array<std::pair<int32_t, int32_t>, 5> GroundVotes{{{0, 0}, {-2, -1}, {2, -1}, {-2, 1}, {2, 1}}};
+    /// <summary>The kinds of ground (MCWeather::MCSplashGround's).</summary>
+    constexpr size_t GroundKinds = 5;
 
     /// <summary>
     /// A drop's size, as near the eye it falls (a top-down view: the nearer, the higher): how far it falls on screen and
@@ -144,8 +151,8 @@ namespace
          .Ring = 1.8f,
          .RingLife = 0.3f,
          .RingAlpha = 0.35f,
-         .Soak = 0.5f,
-         .Puff = 0.8f},
+         .Soak = 0.8f,
+         .Puff = 1.0f},
         {.FallLow = 33.0f,
          .FallHigh = 62.0f,
          .SpeedLow = 310.0f,
@@ -163,8 +170,8 @@ namespace
          .Ring = 3.6f,
          .RingLife = 0.45f,
          .RingAlpha = 0.5f,
-         .Soak = 0.8f,
-         .Puff = 1.2f},
+         .Soak = 1.2f,
+         .Puff = 1.5f},
         {.FallLow = 67.0f,
          .FallHigh = 115.0f,
          .SpeedLow = 420.0f,
@@ -182,14 +189,14 @@ namespace
          .Ring = 5.3f,
          .RingLife = 0.6f,
          .RingAlpha = 0.6f,
-         .Soak = 1.1f,
-         .Puff = 1.7f},
+         .Soak = 1.6f,
+         .Puff = 2.1f},
     }};
     constexpr size_t NearDrop = 2;
 
     /// <summary>
     /// The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d); fitting
-    /// the ground, wet soil's dark brown (0x91), the grass's lightest green (0x7f) and a glint's near white (0x1e).
+    /// the ground, wet soil's dark brown (0x91) and a glint's near white (0x1e).
     /// </summary>
     struct Rgb
     {
@@ -204,7 +211,6 @@ namespace
     constexpr Rgb SplashGrey{200.0f / 255.0f, 200.0f / 255.0f, 200.0f / 255.0f};
     constexpr Rgb PaleGrey{220.0f / 255.0f, 220.0f / 255.0f, 220.0f / 255.0f};
     constexpr Rgb SoakBrown{44.0f / 255.0f, 24.0f / 255.0f, 0.0f};
-    constexpr Rgb PuffGreen{116.0f / 255.0f, 152.0f / 255.0f, 88.0f / 255.0f};
     constexpr Rgb GlintWhite{236.0f / 255.0f, 236.0f / 255.0f, 236.0f / 255.0f};
 
     /// <summary>
@@ -245,25 +251,28 @@ namespace
     // Splashes fitting the ground (MCWeatherSettings::Ground; each mark's strength times it, at most whole): off hard
     // ground HardDroplets more droplets (from a drop that throws any), crisper, HardDropletAlpha strong and fading only to
     // HardFadeTo; into soil a dark dot (SoakBrown) the size's Soak to each side, lying on the ground, spreading from
-    // SoakFrom of it over SoakSpread of its life as it soaks in, SoakAlpha strong, gone in SoakLife; in grass a soft
-    // puff (PuffGreen) the size's Puff to each side, PuffSoftness soft, spreading from PuffFrom of it and rising PuffRise
-    // pixels, PuffAlpha strong, gone in PuffLife; on a unit's metal top a tick of a glint (GlintWhite) GlintWidth to each
-    // side and GlintLength tall, GlintAlpha strong (a far drop's FarGlint of that), gone in GlintLife (two frames).
+    // SoakFrom of it over SoakSpread of its life as it soaks in, SoakAlpha strong, holding, then gone by SoakLife; in
+    // grass a soft puff of spray (SplashGrey) the size's Puff to each side, PuffSoftness soft, spreading from PuffFrom of it and
+    // rising PuffRise pixels, PuffAlpha strong, gone in PuffLife; on a flat stretch of a unit's metal top a tick of a
+    // glint (GlintWhite) GlintInset pixels into it, GlintWidth to each side, GlintLength tall and GlintArm of that
+    // across, GlintAlpha strong (a far drop's FarGlint of that), gone in GlintLife (two frames).
     constexpr int32_t HardDroplets = 1;
     constexpr float HardDropletAlpha = 0.8f;
     constexpr float HardFadeTo = 0.75f;
-    constexpr float SoakFrom = 0.6f;
-    constexpr float SoakSpread = 0.25f;
+    constexpr float SoakFrom = 0.5f;
+    constexpr float SoakSpread = 0.3f;
     constexpr float SoakAlpha = 0.5f;
-    constexpr float SoakLife = 0.45f;
-    constexpr float PuffSoftness = 0.7f;
+    constexpr float SoakLife = 0.5f;
+    constexpr float PuffSoftness = 0.35f;
     constexpr float PuffFrom = 0.5f;
-    constexpr float PuffRise = 1.0f;
-    constexpr float PuffAlpha = 0.45f;
+    constexpr float PuffRise = 1.5f;
+    constexpr float PuffAlpha = 0.5f;
     constexpr float PuffLife = 0.2f;
     constexpr float GlintWidth = 0.35f;
     constexpr float GlintLength = 1.0f;
-    constexpr float GlintAlpha = 0.9f;
+    constexpr float GlintArm = 0.6f;
+    constexpr float GlintAlpha = 0.6f;
+    constexpr float GlintInset = 1.5f;
     constexpr float FarGlint = 0.6f;
     constexpr float GlintLife = 0.07f;
     // A foot coming down in a puddle (MCWeather::AddStep): a spray of StepDroplets droplets StepDropletSize to each side
@@ -292,6 +301,16 @@ namespace
     constexpr float FootDepth = 0.3f;
     constexpr float FootLeast = 6.0f;
     constexpr float Band = 6.0f;
+    /// <summary>
+    /// A drop glints only where it lands on a flat stretch of a unit's top as the unit stands when it lands (it may have
+    /// moved on while the drop fell): within OnTopReach pixels above its top to Band and OnTopReach below it, the columns
+    /// FlatReach to each side drawn, their tops within FlatStep pixels of its, at least FlatInside columns in from its
+    /// sides.
+    /// </summary>
+    constexpr float OnTopReach = 1.0f;
+    constexpr int32_t FlatReach = 2;
+    constexpr float FlatStep = 2.0f;
+    constexpr int32_t FlatInside = 5;
     constexpr int32_t DripAbove = 4;
     constexpr float DripSize = 0.5f * MockPixel;
     constexpr float DripLength = MockPixel;
@@ -806,6 +825,50 @@ namespace
         return &circles;
     }
 
+    /// <summary>
+    /// Whether <paramref name="unit"/>'s top at its column <paramref name="column"/> is a flat stretch: FlatInside
+    /// columns in from its sides, the columns FlatReach to each side drawn, their tops within FlatStep of its (not its
+    /// outline's edge, nor an aerial).
+    /// </summary>
+    bool FlatAt(const StandingUnit& unit, int32_t column)
+    {
+        if (column < FlatInside || static_cast<size_t>(column + FlatInside) >= unit.Top.size())
+        {
+            return false;
+        }
+
+        const float top = unit.Top[static_cast<size_t>(column)];
+        const auto near = [&](int32_t at)
+        {
+            return at >= 0 && static_cast<size_t>(at) < unit.Top.size() &&
+                   std::abs(unit.Top[static_cast<size_t>(at)] - top) <= FlatStep;
+        };
+
+        return near(column - FlatReach) && near(column + FlatReach);
+    }
+
+    /// <summary>
+    /// Whether a drop landing at view point (x, y) lands on a flat stretch of one of <paramref name="units"/>' tops
+    /// (FlatAt), where a glint shows.
+    /// </summary>
+    bool OnFlatTop(std::span<const StandingUnit> units, float x, float y)
+    {
+        return std::ranges::any_of(units,
+                                   [&](const StandingUnit& unit)
+                                   {
+                                       const auto column = static_cast<int32_t>(std::floor(x)) - unit.Left;
+
+                                       if (column < 0 || static_cast<size_t>(column) >= unit.Top.size())
+                                       {
+                                           return false;
+                                       }
+
+                                       const float top = unit.Top[static_cast<size_t>(column)];
+                                       return y >= top - OnTopReach && y <= top + Band + OnTopReach &&
+                                              FlatAt(unit, column);
+                                   });
+    }
+
     /// <summary>Where on <paramref name="unit"/> a drop meant for the ground at view point (x, y) lands, or none.</summary>
     std::optional<float> HitOn(const StandingUnit& unit, float x, float y)
     {
@@ -912,8 +975,32 @@ namespace
             return MCWeather::MCSplashGround::Water;
         }
 
-        const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera);
-        return surface.has_value() ? MCWeather::GroundOf(*surface) : MCWeather::MCSplashGround::Hard;
+        // The land's kinds the pixels round it vote for (the water's colours at a shore vote for none).
+        std::array<int32_t, GroundKinds> votes{};
+        std::optional<MCWeather::MCSplashGround> first;
+
+        for (const auto& [right, down] : GroundVotes)
+        {
+            const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera, right, down);
+
+            if (!surface.has_value() || MCWeather::GroundOf(*surface) == MCWeather::MCSplashGround::Water)
+            {
+                continue;
+            }
+
+            const MCWeather::MCSplashGround ground = MCWeather::GroundOf(*surface);
+            first = first.value_or(ground);
+            ++votes[static_cast<size_t>(ground)];
+        }
+
+        auto best = static_cast<size_t>(first.value_or(MCWeather::MCSplashGround::Hard));
+
+        for (size_t kind = 0; kind < votes.size(); ++kind)
+        {
+            best = votes[kind] > votes[best] ? kind : best;
+        }
+
+        return static_cast<MCWeather::MCSplashGround>(best);
     }
 
     /// <summary>A mark of a splash's own (a dot, a soak, a puff, a glint) where <paramref name="drop"/> lands.</summary>
@@ -936,7 +1023,7 @@ namespace
     /// hard ground, droplets thrown up, crisp; into soil, a dark dot soaking in; in grass, a soft puff; on a unit's metal
     /// top, a glint and droplets. False at a strength of 0 and in water or a puddle, which splash as ever.
     /// </summary>
-    bool ThrowFitting(State& state, const Drop& drop, MCWeather::MCSplashGround ground)
+    bool ThrowFitting(State& state, const Drop& drop, MCWeather::MCSplashGround ground, const MCCamera& camera)
     {
         const float strength = std::max(state.Settings.Ground, 0.0f);
 
@@ -965,15 +1052,21 @@ namespace
             case MCWeather::MCSplashGround::Grass:
             {
                 state.Splashes.push_back(
-                    MarkOf(drop, SplashKind::Puff, size.Puff, PuffLife, PuffGreen, PuffAlpha * strength, drop.Depth));
+                    MarkOf(drop, SplashKind::Puff, size.Puff, PuffLife, SplashGrey, PuffAlpha * strength, drop.Depth));
                 return true;
             }
 
             case MCWeather::MCSplashGround::Metal:
             {
-                const float far = drop.Size == 0 ? FarGlint : 1.0f;
-                state.Splashes.push_back(MarkOf(drop, SplashKind::Glint, GlintWidth, GlintLife, GlintWhite,
-                                                GlintAlpha * far * strength, drop.Depth));
+                if (const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera); OnFlatTop(state.Units, at.X, at.Y))
+                {
+                    const float far = drop.Size == 0 ? FarGlint : 1.0f;
+                    Splash& glint =
+                        state.Splashes.emplace_back(MarkOf(drop, SplashKind::Glint, GlintWidth, GlintLife, GlintWhite,
+                                                           GlintAlpha * far * strength, drop.Depth));
+                    glint.Up = -GlintInset;
+                }
+
                 break;
             }
 
@@ -1008,7 +1101,7 @@ namespace
         const MCWeather::MCSplashGround ground =
             drop.OnUnit ? MCWeather::MCSplashGround::Metal : GroundUnder(state, look, drop.X, drop.Y, drop.Z, camera);
 
-        if (ThrowFitting(state, drop, ground))
+        if (ThrowFitting(state, drop, ground, camera))
         {
             return;
         }
@@ -1321,7 +1414,7 @@ namespace
                     // Lying on the ground, spreading a little as it soaks in, then drying away.
                     command.Radius = splash.Size * std::lerp(SoakFrom, 1.0f, std::min(age / SoakSpread, 1.0f));
                     command.Aspect = MCSceneLights::GroundAspect();
-                    alpha *= 1.0f - age;
+                    alpha *= 1.0f - age * age;
                     break;
                 }
 
@@ -1364,6 +1457,17 @@ namespace
                                                             : command.Y0;
             SetColor(command, splash.Color, alpha);
             Mark(camera, command, splash.Depth);
+
+            // A glint's arm across its tick, through its middle.
+            if (splash.Kind == SplashKind::Glint)
+            {
+                const float arm = 0.5f * GlintLength * GlintArm;
+                command.Y0 -= 0.5f * GlintLength;
+                command.Y1 = command.Y0;
+                command.X0 -= arm;
+                command.X1 += arm;
+                Mark(camera, command, splash.Depth);
+            }
         }
     }
 

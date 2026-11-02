@@ -654,9 +654,11 @@ namespace
     /// The palette entry drawn at world point (x, y, z) in <paramref name="camera"/>'s view: the pixel there of the last
     /// tile its terrain window drew over it (each block's at its top-left corner, row by row, as MCTerrainBlock::Draw);
     /// with <paramref name="overlays"/>, that of the last overlay drawn over the tiles there (MCTerrainBlock::
-    /// DrawOverlay, after them all) where one covers it. None outside the window's tiles.
+    /// DrawOverlay, after them all) where one covers it; the pixel <paramref name="right"/> and <paramref name="down"/>
+    /// of where the point is drawn. None outside the window's tiles.
     /// </summary>
-    std::optional<uint8_t> DrawnAt(float x, float y, float z, const MCCamera& camera, bool overlays)
+    std::optional<uint8_t> DrawnAt(float x, float y, float z, const MCCamera& camera, bool overlays, int32_t right = 0,
+                                   int32_t down = 0)
     {
         const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
         const std::shared_ptr<MCTerrain> terrain = Terrain();
@@ -676,8 +678,8 @@ namespace
         int32_t col = 0;
         MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
         const MCVector2D at = Project(x, y, z, camera);
-        const auto px = static_cast<int32_t>(std::floor(at.X));
-        const auto py = static_cast<int32_t>(std::floor(at.Y));
+        const auto px = static_cast<int32_t>(std::floor(at.X)) + right;
+        const auto py = static_cast<int32_t>(std::floor(at.Y)) + down;
         std::optional<uint8_t> drawn;
         std::optional<uint8_t> over;
 
@@ -1784,9 +1786,10 @@ auto MCParticles::GroundDrawnAt(float x, float y, float z, const MCCamera& camer
     return DrawnAt(x, y, z, camera, false);
 }
 
-auto MCParticles::SurfaceDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
+auto MCParticles::SurfaceDrawnAt(float x, float y, float z, const MCCamera& camera, int32_t right, int32_t down)
+    -> std::optional<uint8_t>
 {
-    return DrawnAt(x, y, z, camera, true);
+    return DrawnAt(x, y, z, camera, true, right, down);
 }
 
 auto MCParticles::BridgedAt(float x, float y) -> bool

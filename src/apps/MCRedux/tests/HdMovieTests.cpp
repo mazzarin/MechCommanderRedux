@@ -30,6 +30,16 @@ namespace
     constexpr int32_t OriginalPitch = OriginalWidth + 4;
     constexpr size_t RgbaBytes = 4;
     constexpr uint8_t Opaque = 255;
+    /// <summary>An IVF file's header, and where in it the frames are counted (little-endian).</summary>
+    constexpr size_t IvfHeaderBytes = 32;
+    constexpr size_t IvfFramesAt = 24;
+    /// <summary>
+    /// How long the tests wait for a frame: longer than the tiny movies' frames take however loaded the machine (the
+    /// game's wait, <see cref="MCHdMovie::MaxWait"/>, is a display frame).
+    /// </summary>
+    constexpr auto TestWait = std::chrono::seconds(10);
+    /// <summary>A movie longer than the frames decoded ahead (12): the fixture this many times over.</summary>
+    constexpr uint32_t LongTimes = 6;
 
     std::vector<uint8_t> Original()
     {
@@ -41,6 +51,49 @@ namespace
         }
 
         return pixels;
+    }
+
+    /// <summary>
+    /// The fixture <paramref name="times"/> times over, its header counting every frame: each time starts on a key
+    /// frame, so the frames come red, green, blue, red, and so on.
+    /// </summary>
+    std::vector<uint8_t> Repeated(uint32_t times)
+    {
+        const std::vector<uint8_t> once = MCHdMovieFixture::Bytes();
+        std::vector<uint8_t> bytes(once.begin(), once.begin() + IvfHeaderBytes);
+        const uint32_t frames = MCHdMovieFixture::Frames * times;
+
+        for (size_t i = 0; i < sizeof(frames); ++i)
+        {
+            bytes[IvfFramesAt + i] = static_cast<uint8_t>(frames >> (i * CHAR_BIT));
+        }
+
+        for (uint32_t time = 0; time < times; ++time)
+        {
+            bytes.insert(bytes.end(), once.begin() + IvfHeaderBytes, once.end());
+        }
+
+        return bytes;
+    }
+
+    /// <summary>The pixels of <paramref name="colors"/> (RGBA) not opaque and near <paramref name="color"/>.</summary>
+    size_t OffColor(std::span<const uint8_t> colors, const std::array<uint8_t, 3>& color)
+    {
+        size_t off = 0;
+
+        for (size_t at = 0; at + RgbaBytes <= colors.size(); at += RgbaBytes)
+        {
+            bool near = colors[at + 3] == Opaque;
+
+            for (size_t channel = 0; channel < color.size(); ++channel)
+            {
+                near = near && std::abs(colors[at + channel] - color[channel]) <= MCHdMovieFixture::Tolerance;
+            }
+
+            off += near ? 0 : 1;
+        }
+
+        return off;
     }
 
     std::expected<std::unique_ptr<MCHdMovie>, std::string> OpenBytes(const std::filesystem::path& path,
@@ -78,7 +131,7 @@ TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over 
     for (uint32_t index = 0; index < MCHdMovieFixture::Frames; ++index)
     {
         MCTest::Scope scope(std::format("frame {}", index));
-        const auto next = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch);
+        const auto next = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
         REQUIRE(next.has_value());
         const MCHdArt::Frame& frame = **next;
         CHECK_EQ(frame.Width, MCHdMovieFixture::Width);
@@ -90,22 +143,7 @@ TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over 
         lastId = frame.Id;
         REQUIRE_EQ(frame.Colors.size(),
                    static_cast<size_t>(MCHdMovieFixture::Width) * MCHdMovieFixture::Height * RgbaBytes);
-        size_t off = 0;
-
-        for (size_t at = 0; at < frame.Colors.size(); at += RgbaBytes)
-        {
-            bool near = frame.Colors[at + 3] == Opaque;
-
-            for (size_t channel = 0; channel < 3; ++channel)
-            {
-                near = near && std::abs(frame.Colors[at + channel] - MCHdMovieFixture::Colors[index][channel]) <=
-                                   MCHdMovieFixture::Tolerance;
-            }
-
-            off += near ? 0 : 1;
-        }
-
-        CHECK_EQ(off, size_t{0});
+        CHECK_EQ(OffColor(frame.Colors, MCHdMovieFixture::Colors[index]), size_t{0});
         REQUIRE_EQ(frame.Indices.size(), static_cast<size_t>(OriginalWidth) * OriginalHeight * MCHdArt::IndexBytes);
         size_t wrong = 0;
 
@@ -122,15 +160,52 @@ TEST_CASE("hd art: an HD movie's frames decode in order, in their colours, over 
         CHECK_EQ(wrong, size_t{0});
     }
 
-    const auto past = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch);
+    const auto past = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
     REQUIRE(!past.has_value());
     CHECK(past.error().contains("no more frames"));
 }
 
 /// <summary>
+/// A movie of more frames than are decoded ahead comes out whole and in order, each frame in its colour: the decoding
+/// waits while the frames ahead are full, and goes on as they're taken. One closed after its first frame, while it
+/// decodes ahead, closes.
+/// </summary>
+TEST_CASE("hd art: an HD movie longer than its frames decoded ahead comes out whole and in order, and closes mid-way")
+{
+    const MCScratch scratch("mc_tests_hd_movie_long");
+    const std::vector<uint8_t> original = Original();
+    const uint32_t frames = MCHdMovieFixture::Frames * LongTimes;
+
+    {
+        auto opened = OpenBytes(scratch.Path / "LONG.ivf", Repeated(LongTimes));
+        REQUIRE(opened.has_value());
+        MCHdMovie& movie = **opened;
+        CHECK_EQ(movie.Frames(), frames);
+        uint32_t wrong = 0;
+
+        for (uint32_t index = 0; index < frames; ++index)
+        {
+            const auto next = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
+            REQUIRE(next.has_value());
+            wrong += OffColor((*next)->Colors, MCHdMovieFixture::Colors[index % MCHdMovieFixture::Frames]) == 0 ? 0 : 1;
+        }
+
+        CHECK_EQ(wrong, 0u);
+        const auto past = movie.Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
+        REQUIRE(!past.has_value());
+        CHECK(past.error().contains("no more frames"));
+    }
+
+    auto closed = OpenBytes(scratch.Path / "CLOSED.ivf", Repeated(LongTimes));
+    REQUIRE(closed.has_value());
+    CHECK((*closed)->Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait).has_value());
+    closed->reset();
+}
+
+/// <summary>
 /// The pack check counts a movie's frames to its end; a file that isn't IVF, or holds another codec, isn't opened; one
-/// cut short fails where it ends; and a frame isn't made over an original it doesn't scale to, or given short. Each
-/// says why, naming the file.
+/// cut short fails where it ends, after the frames before; and a frame isn't made over an original it doesn't scale to,
+/// or given short. Each says why, naming the file.
 /// </summary>
 TEST_CASE("hd art: an HD movie is counted to its end, and a broken one is refused with its reason")
 {
@@ -170,6 +245,23 @@ TEST_CASE("hd art: an HD movie is counted to its end, and a broken one is refuse
         const auto counted = (*opened)->Validate();
         REQUIRE(!counted.has_value());
         CHECK(counted.error().contains("SHORT.ivf is cut short"));
+    }
+
+    {
+        // The last frame's bytes cut short: the two frames before it still come.
+        constexpr size_t Cut = 2;
+        auto opened = OpenBytes(scratch.Path / "CUT.ivf", std::span(bytes).first(bytes.size() - Cut));
+        REQUIRE(opened.has_value());
+        const std::vector<uint8_t> original = Original();
+
+        for (uint32_t index = 0; index + 1 < MCHdMovieFixture::Frames; ++index)
+        {
+            CHECK((*opened)->Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait).has_value());
+        }
+
+        const auto cut = (*opened)->Next(original, OriginalWidth, OriginalHeight, OriginalPitch, TestWait);
+        REQUIRE(!cut.has_value());
+        CHECK(cut.error().contains("CUT.ivf is cut short"));
     }
 
     {

@@ -81,6 +81,7 @@ auto MCGuiSmackerWindow::StartSmackerMovie(std::unique_ptr<MCSmackTag> newMovie,
 auto MCGuiSmackerWindow::OpenHdMovie() -> void
 {
     HdMovie.reset();
+    HdDropped.reset();
     HdNextFrame = 0;
     const std::optional<std::filesystem::path> path = MCHdArt::FindMovie(Movie->FileName);
 
@@ -146,7 +147,7 @@ auto MCGuiSmackerWindow::DropHdMovie(MCTexture& texture, std::string_view why) -
 {
     SDL_Log("HD movie: %s: %.*s; the original plays on", Movie->FileName.c_str(), static_cast<int>(why.size()),
             why.data());
-    HdMovie.reset();
+    HdDropped = std::move(HdMovie);
     MCRenderer::ShowHdPicture(texture, nullptr, 0, 0);
 }
 
@@ -154,6 +155,7 @@ auto MCGuiSmackerWindow::Destroy() -> void
 {
     Movie.reset();
     HdMovie.reset();
+    HdDropped.reset();
 
     if (MovieWindow != nullptr)
     {

@@ -67,6 +67,11 @@ public:
     /// the next one. Null once they fail (the movie plays on as it is).
     /// </summary>
     std::unique_ptr<MCHdMovie> HdMovie;
+    /// <summary>
+    /// Port-only: <see cref="HdMovie"/> once dropped, closed with the window: closing it waits for the frame it's
+    /// decoding, which is long on a machine it fell behind on.
+    /// </summary>
+    std::unique_ptr<MCHdMovie> HdDropped;
 
 private:
     /// <summary>Port-only: opens the HD art pack's frames for the movie (<see cref="HdMovie"/>), from the first.</summary>

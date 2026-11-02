@@ -443,6 +443,9 @@ int VfxShapeScan(const MCPane& pane, uint8_t transparentColor, int hotX, int hot
 // vfx\fastshp.cpp (vfx/MCFastShape.cpp)
 // ---------------------------------------------------------------------------------------------------------------
 
+/// <summary>The tag at the start of a fast-shape table ("DNAH" read as a little-endian int).</summary>
+inline constexpr int32_t FastShapeTag = 'D' | ('N' << 8) | ('A' << 16) | ('H' << 24);
+
 /// <summary>
 /// Draws shape <paramref name="shapeNum"/> of a "fast shape" table (the terrain overlay tiles, tables tagged "DNAH";
 /// not the VFX format), its hot spot at (hotX, hotY), each colour mapped through
@@ -466,6 +469,15 @@ std::optional<size_t> FastShapeRowBytes(std::span<const uint8_t> row, int32_t wi
 /// row runs past <paramref name="shape"/>.
 /// </summary>
 std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape);
+
+/// <summary>
+/// Port-only: the pixel shape <paramref name="shapeNum"/> of fast-shape table <paramref name="shapeTable"/> covers
+/// (<paramref name="x"/>, <paramref name="y"/>) right and down of its hot spot with (where <see cref="FastShapeDraw"/>
+/// puts it drawn at that hot spot); none where a run of colour 255 leaves it see-through, outside its box, for a
+/// translucent shape (its pixels blend with what lies under them), for a table not tagged <see cref="FastShapeTag"/>,
+/// or where its table or that row lie outside the data (only that row is read).
+/// </summary>
+std::optional<uint8_t> FastShapePixel(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t x, int32_t y);
 
 // ---------------------------------------------------------------------------------------------------------------
 // vfx\vfx_ellipse.cpp (vfx/MCAgEllipse.cpp)

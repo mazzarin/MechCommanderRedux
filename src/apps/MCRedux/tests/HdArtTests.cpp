@@ -5685,6 +5685,314 @@ TEST_CASE("HD weather: showers come and go over minutes, the same each time, and
 }
 
 /// <summary>
+/// HD weather's splashes fitting the ground (MCWeather::MCWeatherSettings::Ground), on mission 1 drawn by the GPU in a
+/// downpour letting no rain of its own fall, paused, as the game's time goes: a near drop landed (MCWeather::AddDrop)
+/// on hard ground throws droplets up; into soil it soaks, a dark dot, and in grass it puffs, neither throwing any; on
+/// the water drawn it rings; on the player's mech's top it glints, throwing droplets. At a strength of 0 every land and
+/// the mech throw droplets, as the rain first fell. Each shows where it lands (the soak darker, the puff and the glint
+/// lighter), the same drop splashes the same again, and none of it throws the game's dice.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a raindrop splashes as the ground takes it: off rock droplets, into soil a dark dot, in grass a "
+    "puff, on water rings, on a unit a glint")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    using Ground = MCWeather::MCSplashGround;
+    const std::shared_ptr<MCMover> mech = GetMoverFromPartId(PlayerMechPartId);
+    REQUIRE(mech != nullptr);
+    GHdWeather = HdWeatherDownpour;
+    MCWeather::Settings().Amount = 0.0f;
+    GamePaused = true;
+    const float now = ScenarioTime;
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+
+    // The nearest point of each ground to the camera's middle, as the camera shows it, in the world clear of the
+    // interface (as the rain's test: the panels take the screen's left third, the paused message its top quarter's
+    // middle), Margin pixels in from its edges, and clear of the mech (Clear pixels to its sides, Tall above its feet
+    // and Margin below them).
+    constexpr float Reach = 400.0f;
+    constexpr float Apart = 4.0f;
+    constexpr float Margin = 24.0f;
+    constexpr float Clear = 40.0f;
+    constexpr int32_t Tall = 60;
+    const auto findGrounds = [&](const MCVector3D& middle)
+    {
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+        std::map<Ground, std::pair<float, MCVector3D>> nearest;
+        const MCVector2D feet = MCParticles::ViewPoint(mech->Position.X, mech->Position.Y, mech->Position.Z, *camera);
+
+        for (float dy = -Reach; dy <= Reach; dy += Apart)
+        {
+            for (float dx = -Reach; dx <= Reach; dx += Apart)
+            {
+                MCVector3D point(middle.X + dx, middle.Y + dy, 0.0f);
+                point.Z = MCParticles::GroundAt(point.X, point.Y);
+                const MCVector2D at = MCParticles::ViewPoint(point.X, point.Y, point.Z, *camera);
+
+                const bool byMech = std::abs(at.X - feet.X) < Clear && at.Y > feet.Y - static_cast<float>(Tall) &&
+                                    at.Y < feet.Y + Margin;
+
+                if (byMech || at.X < static_cast<float>(width / 3) + Margin ||
+                    at.X > static_cast<float>(width) - Margin || at.Y < static_cast<float>(height / 4) + Margin ||
+                    at.Y > static_cast<float>(height) - Margin ||
+                    !MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, *camera).has_value())
+                {
+                    continue;
+                }
+
+                const float off = std::hypot(dx, dy);
+                const auto [found, isNew] = nearest.try_emplace(MCWeather::GroundAt(point, *camera), off, point);
+
+                if (!isNew && off < found->second.first)
+                {
+                    found->second = {off, point};
+                }
+            }
+        }
+
+        std::map<Ground, MCVector3D> found;
+
+        for (const auto& [ground, point] : nearest)
+        {
+            found.emplace(ground, point.second);
+        }
+
+        return found;
+    };
+
+    // What a near drop landed at a point splashes into: its pieces at their most over the frames it lasts, and the
+    // frame shown as it lands; the weather's dice started again.
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 20;
+    constexpr uint8_t NearDrop = 2;
+    struct Splashed
+    {
+        MCWeather::MCSplashPieces Most;
+        std::vector<SDL_Color> Landing;
+        MCVector2D At;
+        size_t Left = 0;
+    };
+
+    const auto splashed = [&](const std::optional<MCVector3D>& point)
+    {
+        MCWeather::Clear();
+        ScenarioTime = now;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        Splashed made;
+
+        if (point.has_value())
+        {
+            MCWeather::AddDrop(*point, NearDrop);
+            made.At = MCParticles::ViewPoint(point->X, point->Y, point->Z, *ActiveMainCamera());
+        }
+
+        for (int32_t frame = 1; frame <= Frames; ++frame)
+        {
+            ScenarioTime = now + Step * static_cast<float>(frame);
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCWeather::MCSplashPieces pieces = MCWeather::Pieces();
+            MCWeather::MCSplashPieces& most = made.Most;
+            most.Droplets = std::max(most.Droplets, pieces.Droplets);
+            most.Dots = std::max(most.Dots, pieces.Dots);
+            most.Rings = std::max(most.Rings, pieces.Rings);
+            most.Soaks = std::max(most.Soaks, pieces.Soaks);
+            most.Puffs = std::max(most.Puffs, pieces.Puffs);
+            most.Glints = std::max(most.Glints, pieces.Glints);
+
+            if (frame == 1)
+            {
+                auto shown = display->ReadFrame();
+                REQUIRE(shown.has_value());
+                REQUIRE(shown->size() == static_cast<size_t>(width) * height);
+                made.Landing = std::move(*shown);
+            }
+        }
+
+        made.Left = MCWeather::Count();
+        return made;
+    };
+
+    // How the frame a drop lands in differs from one without round where it lands (Near pixels to each side and below
+    // it, Tall above it, a unit's top's height): how many pixels, and how much brighter on average.
+    constexpr int32_t Near = 12;
+    const auto changeOf = [&](const Splashed& made, const Splashed& none)
+    {
+        size_t changed = 0;
+        float brighter = 0.0f;
+        const auto x0 = static_cast<int32_t>(made.At.X);
+        const auto y0 = static_cast<int32_t>(made.At.Y);
+
+        for (int32_t y = std::max(y0 - Tall, 0); y <= std::min(y0 + Near, height - 1); ++y)
+        {
+            for (int32_t x = std::max(x0 - Near, 0); x <= std::min(x0 + Near, width - 1); ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+
+                if (!SameColor(made.Landing[i], none.Landing[i]))
+                {
+                    ++changed;
+                    brighter += LumaOf(made.Landing[i]) - LumaOf(none.Landing[i]);
+                }
+            }
+        }
+
+        return std::pair(changed, changed > 0 ? brighter / static_cast<float>(changed) : 0.0f);
+    };
+
+    const auto print = [](std::string_view name, const Splashed& made)
+    {
+        const MCWeather::MCSplashPieces& most = made.Most;
+        std::cout << std::format("  {}: {} droplets, {} dots, {} rings, {} soaks, {} puffs, {} glints\n", name,
+                                 most.Droplets, most.Dots, most.Rings, most.Soaks, most.Puffs, most.Glints);
+    };
+
+    const uint32_t dice = MCGameContext::Current().Random().State();
+
+    // The water: the camera over the map's (the tile with the most water round it).
+    const MCScenarioMap& map = GameMap();
+    constexpr int32_t Round = 2;
+    int32_t most = 0;
+    MCVector3D waterMiddle;
+
+    for (int32_t row = Round; row < map.Height - Round; ++row)
+    {
+        for (int32_t column = Round; column < map.Width - Round; ++column)
+        {
+            int32_t water = 0;
+
+            for (int32_t r = row - Round; r <= row + Round; ++r)
+            {
+                for (int32_t c = column - Round; c <= column + Round; ++c)
+                {
+                    water += map.Map[static_cast<size_t>(r) * map.Width + c].TerrainType() >= FirstWaterTerrain ? 1 : 0;
+                }
+            }
+
+            if (water > most)
+            {
+                most = water;
+                waterMiddle = MCVector3D(TileColToWorld(column), TileRowToWorld(row), 0.0f);
+            }
+        }
+    }
+
+    REQUIRE(most > 0);
+    Eye()->SetPosition(waterMiddle);
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::map<Ground, MCVector3D> byWater = findGrounds(waterMiddle);
+    REQUIRE(byWater.contains(Ground::Water));
+    const Splashed water = splashed(byWater.at(Ground::Water));
+
+    // The land and the mech: the camera on the mech; a point of its footprint just behind its feet, up the view.
+    Eye()->ChangeTarget(mech, true);
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::map<Ground, MCVector3D> byMech = findGrounds(mech->Position);
+
+    for (const auto& [ground, point] : byMech)
+    {
+        std::cout << std::format("  ground {} at ({:.0f}, {:.0f})\n", static_cast<int>(ground), point.X, point.Y);
+    }
+
+    REQUIRE(byMech.contains(Ground::Hard));
+    REQUIRE(byMech.contains(Ground::Soil));
+    REQUIRE(byMech.contains(Ground::Grass));
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    constexpr float Behind = 4.0f;
+    constexpr float WorldStep = 0.5f;
+    constexpr float FarthestBack = 60.0f;
+    const float feetY = MCParticles::ViewPoint(mech->Position.X, mech->Position.Y, mech->Position.Z, *camera).Y;
+    std::optional<MCVector3D> onMech;
+
+    for (float back = WorldStep; back <= FarthestBack && !onMech.has_value(); back += WorldStep)
+    {
+        MCVector3D point(mech->Position.X - back, mech->Position.Y + back, 0.0f);
+        point.Z = MCParticles::GroundAt(point.X, point.Y);
+
+        if (MCParticles::ViewPoint(point.X, point.Y, point.Z, *camera).Y <= feetY - Behind)
+        {
+            onMech = point;
+        }
+    }
+
+    REQUIRE(onMech.has_value());
+    const Splashed none = splashed(std::nullopt);
+    const Splashed hard = splashed(byMech.at(Ground::Hard));
+    const Splashed hardAgain = splashed(byMech.at(Ground::Hard));
+    const Splashed soil = splashed(byMech.at(Ground::Soil));
+    const Splashed grass = splashed(byMech.at(Ground::Grass));
+    const Splashed metal = splashed(onMech);
+    MCWeather::Settings().Ground = 0.0f;
+    const Splashed soilAsFirst = splashed(byMech.at(Ground::Soil));
+    const Splashed grassAsFirst = splashed(byMech.at(Ground::Grass));
+    const Splashed metalAsFirst = splashed(onMech);
+    MCWeather::Settings().Ground = 1.0f;
+    MCWeather::Settings().Amount = 1.0f;
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    ScenarioTime = now;
+    GHdWeather = HdWeatherOff;
+    GamePaused = false;
+
+    print("hard", hard);
+    print("soil", soil);
+    print("grass", grass);
+    print("water", water);
+    print("metal", metal);
+    print("soil at 0", soilAsFirst);
+    print("grass at 0", grassAsFirst);
+    print("metal at 0", metalAsFirst);
+    const auto [soilChanged, soilBrighter] = changeOf(soil, none);
+    const auto [grassChanged, grassBrighter] = changeOf(grass, none);
+    const auto [metalChanged, metalBrighter] = changeOf(metal, none);
+    std::cout << std::format("  as they land: soil {} pixels {:+.1f} brighter, grass {} {:+.1f}, metal {} {:+.1f}\n",
+                             soilChanged, soilBrighter, grassChanged, grassBrighter, metalChanged, metalBrighter);
+
+    CHECK(none.Most.Droplets + none.Most.Dots + none.Most.Soaks + none.Most.Puffs + none.Most.Glints == 0);
+    CHECK(hard.Most.Droplets > 0);
+    CHECK(hard.Most.Dots > 0);
+    CHECK(hard.Most.Soaks + hard.Most.Puffs + hard.Most.Glints + hard.Most.Rings == 0);
+    CHECK(hardAgain.Most.Droplets == hard.Most.Droplets);
+    CHECK(changeOf(hardAgain, hard).first == 0);
+    CHECK(soil.Most.Soaks > 0);
+    CHECK(soil.Most.Droplets + soil.Most.Dots + soil.Most.Puffs + soil.Most.Glints + soil.Most.Rings == 0);
+    CHECK(grass.Most.Puffs > 0);
+    CHECK(grass.Most.Droplets + grass.Most.Dots + grass.Most.Soaks + grass.Most.Glints + grass.Most.Rings == 0);
+    CHECK(water.Most.Rings > 0);
+    CHECK(water.Most.Soaks + water.Most.Puffs + water.Most.Glints == 0);
+    CHECK(metal.Most.Glints > 0);
+    CHECK(metal.Most.Droplets > 0);
+    CHECK(metal.Most.Soaks + metal.Most.Puffs + metal.Most.Rings == 0);
+    CHECK(soilAsFirst.Most.Droplets > 0);
+    CHECK(grassAsFirst.Most.Droplets > 0);
+    CHECK(soilAsFirst.Most.Soaks + grassAsFirst.Most.Puffs + metalAsFirst.Most.Glints == 0);
+    CHECK(metalAsFirst.Most.Droplets > 0);
+    CHECK(soilChanged > 0);
+    CHECK(soilBrighter < 0.0f);
+    CHECK(grassChanged > 0);
+    CHECK(grassBrighter > 0.0f);
+    CHECK(metalChanged > 0);
+    CHECK(metalBrighter > 0.0f);
+    CHECK(hard.Left == 0);
+}
+
+/// <summary>
 /// HD particles' steps (MCParticles::AddStep: a mech's feet, where they print or would), on the screen drawn by the GPU
 /// over mission 1's water, paused: as the game's time goes a foot coming down in the water drawn splashes, droplets and a
 /// ring; one on the land drawn throws nothing; none splash at a strength of 0 (MCParticleLook::Steps) or with the
@@ -6772,7 +7080,9 @@ namespace
     /// its showers coming and going that far, 1 as made (0: steady rain, its puddles as made from the start;
     /// MCWeatherSettings::Showers), that many times as fast (MCWeatherSettings::ShowerPace; 8 shows a burst and a lull
     /// in a 70-second take); with <c>--hd-rain-light &lt;strength&gt;</c>, the drops catch the lights they fall past
-    /// that much, 1 as made (0: none, as before; MCWeatherSettings::Light).
+    /// that much, 1 as made (0: none, as before; MCWeatherSettings::Light); with <c>--hd-splashes &lt;strength&gt;</c>,
+    /// its drops splashing as the ground takes them that strongly, 1 as made (0: every land alike, as the rain first
+    /// fell; MCWeatherSettings::Ground).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -6828,13 +7138,18 @@ namespace
             MCWeather::Settings().Light = std::strtof(std::string(*light).c_str(), nullptr);
         }
 
+        if (const std::optional<std::string_view> splashes = MCTest::Option("hd-splashes"); splashes.has_value())
+        {
+            MCWeather::Settings().Ground = std::strtof(std::string(*splashes).c_str(), nullptr);
+        }
+
         const MCWeather::MCWeatherSettings& settings = MCWeather::Settings();
         std::cout << std::format(
             "  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud, lightning {:.2f} "
             "as bright, {:.2f} as often, showers {:.2f} as far as made, {:.2f} times as fast, drops catching {:.2f} of "
-            "the light as made\n",
+            "the light as made, splashes fitting the ground {:.2f} as strongly\n",
             given->substr(0, comma), settings.Amount, settings.Thunder, settings.Flash, settings.Strikes,
-            settings.Showers, settings.ShowerPace, settings.Light);
+            settings.Showers, settings.ShowerPace, settings.Light, settings.Ground);
     }
 
     /// <summary>

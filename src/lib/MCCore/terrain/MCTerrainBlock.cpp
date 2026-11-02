@@ -17,9 +17,6 @@
 
 namespace
 {
-    /// <summary>The tag at the start of a fast-shape table ("DNAH" read as a little-endian int).</summary>
-    constexpr int32_t FastShapeTag = 'D' | ('N' << 8) | ('A' << 16) | ('H' << 24);
-
     /// <summary>Tile number of the first mine tile (by the corners' relative elevations).</summary>
     constexpr int32_t MineTileBase = 0xed1;
     /// <summary>Tile number of the exploded-mine crater.</summary>

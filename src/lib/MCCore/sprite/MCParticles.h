@@ -143,6 +143,16 @@ namespace MCParticles
     std::optional<uint8_t> GroundDrawnAt(float x, float y, float z, const MCCamera& camera);
 
     /// <summary>
+    /// The palette entry drawn at world point (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) with
+    /// what is laid on the ground there: the pixel of the last overlay <paramref name="camera"/>'s terrain window drew
+    /// over it (roads, runways, bridges' decks, walls; MCTerrainBlock::DrawOverlay) where one covers it, else
+    /// <see cref="GroundDrawnAt"/>'s. Translucent overlays are taken as covering nothing. With <paramref name="right"/>
+    /// and <paramref name="down"/>, the pixel that many right and down of where the point is drawn.
+    /// </summary>
+    std::optional<uint8_t> SurfaceDrawnAt(float x, float y, float z, const MCCamera& camera, int32_t right = 0,
+                                          int32_t down = 0);
+
+    /// <summary>
     /// Whether a bridge spans the map's tile at world point (<paramref name="x"/>, <paramref name="y"/>): its road is
     /// drawn over the water (<see cref="GroundDrawnAt"/>'s ground under it).
     /// </summary>

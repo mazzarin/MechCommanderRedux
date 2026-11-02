@@ -153,6 +153,11 @@ static const uint ReliefScaleShift = 4;
 static const uint ReliefXShift = 8;
 static const uint ReliefYShift = 20;
 static const uint ReliefPlaceMask = 0xfffu;
+// span.w (terrain.vshader): the relief map's atlas in its low byte, the share of the cell that can't be entered in the
+// byte from BlockedShift; the index target's alpha where none of it can is BlockedMarkSpan below 1 (the composite's).
+static const int ReliefAtlasMask = 0xff;
+static const uint BlockedShift = 8;
+static const float BlockedMarkSpan = 0.25;
 static const int BlockSide = 4;
 // A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
 // walk its place in the source (x0, y0, x1, y1).
@@ -379,7 +384,7 @@ float2 ReliefAt(Input input, int2 target)
     const int2 low =
         int2((fields >> ReliefXShift) & ReliefPlaceMask, (fields >> ReliefYShift) & ReliefPlaceMask) * BlockSide;
     const int2 high = low + input.span.xy * reliefScale - 1;
-    const int atlas = input.span.w;
+    const int atlas = input.span.w & ReliefAtlasMask;
     const float2 at = float2(low) + TileLocal(input, target) * (float)reliefScale - 0.5;
     const int2 base = int2(floor(at));
     const float2 f = at - float2(base);
@@ -391,16 +396,18 @@ float2 ReliefAt(Input input, int2 target)
 }
 
 // A terrain tile's pixel in HD colours (HdTerrainColour), and its index; port-only, with its relief map's slopes beside
-// the index (G, B) and A set where it has one (the composite's SlopeAt).
+// the index (G, B) and A set where it has one (the composite's SlopeAt): 1 where the cell can be entered, down to
+// BlockedMarkSpan less where none of it can (terrain.vshader's share in span.w: cliffs), still above GroundMark.
 Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 {
     Output output;
     output.color = float4(HdTerrainColour(input, target, original, value), 1.0);
     output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
 
-    if (input.span.w != 0)
+    if ((input.span.w & ReliefAtlasMask) != 0)
     {
-        output.index.yzw = float3(ReliefAt(input, target), 1.0);
+        const float blocked = (float)(((uint)input.span.w >> BlockedShift) & 255u) / 255.0;
+        output.index.yzw = float3(ReliefAt(input, target), 1.0 - BlockedMarkSpan * blocked);
     }
 
     return output;

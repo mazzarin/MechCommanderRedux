@@ -32,6 +32,22 @@ struct MCMapTile
         return (Cells & (0x4000u << shift)) >> (shift + 14);
     }
 
+    /// <summary>How many of the tile's cells can't be entered (0 to MapCellDim * MapCellDim; port helper).</summary>
+    uint32_t BlockedCells() const
+    {
+        uint32_t blocked = 0;
+
+        for (int32_t cellR = 0; cellR < MapCellDim; ++cellR)
+        {
+            for (int32_t cellC = 0; cellC < MapCellDim; ++cellC)
+            {
+                blocked += GetCellPassable(cellR, cellC) == 0 ? 1u : 0u;
+            }
+        }
+
+        return blocked;
+    }
+
     /// <summary>Whether cell (cellR, cellC) lets line of sight through (0 or 1).</summary>
     uint32_t GetCellLos(int32_t cellR, int32_t cellC) const
     {

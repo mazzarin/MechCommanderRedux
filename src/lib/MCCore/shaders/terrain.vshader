@@ -39,8 +39,8 @@ struct Image
 Texture2D<float4> fogTex : register(t0, space0);
 SamplerState fogSampler : register(s0, space0);
 // Per cell: x the image (0xffffffff: none), y the elevations of its corners (top left, top right, bottom right, bottom
-// left; a byte each).
-StructuredBuffer<uint2> cells : register(t1, space0);
+// left; a byte each), z how many of its map tile's movement cells can't be entered (port-only), w unused.
+StructuredBuffer<uint4> cells : register(t1, space0);
 StructuredBuffer<Image> images : register(t2, space0);
 
 cbuffer Terrain : register(b0, space1)
@@ -93,6 +93,11 @@ static const uint UseColor = 1u << 10;
 static const uint HdColors = 1u << 16;
 // How far the seam pass reaches past a tile's box (window pixels): as far as its B-spline's coverage reaches.
 static const int SeamReach = 2;
+// Port-only (HD weather's puddles): the share of a cell's movement cells that can't be entered (cliffs) rides in
+// span.w's bits from BlockedShift, above the relief map's atlas, as a byte (255: all of its MovementCells;
+// draw.pshader's).
+static const uint BlockedShift = 8;
+static const uint MovementCells = 9;
 
 // The screen point of map vertex (row, col) at elevation level e.
 int2 Point(int row, int col, uint e)
@@ -147,7 +152,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     const uint index = (uint)origin.w + instance;
     const int row = steps.z + (int)(index / (uint)mesh.x);
     const int col = steps.w + (int)(index % (uint)mesh.x);
-    const uint2 cell = cells[index];
+    const uint4 cell = cells[index];
 
     if (cell.x == 0xffffffffu || row < grid.x || col < grid.y || row > grid.z || col > grid.w)
     {
@@ -238,9 +243,10 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         const uint fields = relief != 0 ? (uint)mesh.y | (uint)pane.w << ReliefScaleShift |
                                               (reliefAt & 0xffffu) << ReliefXShift | (reliefAt >> 16) << ReliefYShift
                                         : (uint)mesh.y;
+        const uint blocked = min(cell.z, MovementCells) * 255u / MovementCells;
         output.op = uint4(flags | HdColors, color, before, fields);
         output.walk = uint4((packed & 0xffffu) * 4u, (packed >> 16) * 4u, (uint)image.atlas.x, (uint)image.atlas.y);
-        output.span = int4(image.atlas.zw, image.hot.z - 1, (int)relief);
+        output.span = int4(image.atlas.zw, image.hot.z - 1, (int)(relief != 0 ? relief | blocked << BlockedShift : 0u));
     }
 
     return output;

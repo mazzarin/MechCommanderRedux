@@ -55,12 +55,6 @@ namespace
     constexpr uint32_t PackAheadSeconds = 1;
     /// <summary>The sample frames read from a pack sound at a time.</summary>
     constexpr size_t PackChunkFrames = 4096;
-    /// <summary>The thunder's dice's first seed.</summary>
-    constexpr uint32_t ThunderSeed = 0x7b0d3e11u;
-    /// <summary>A clap's wait, as a share of the average wait (a minute over the claps a minute): the least and most.</summary>
-    constexpr float ThunderWaitLeast = 0.4f;
-    constexpr float ThunderWaitMost = 1.6f;
-    constexpr float SecondsAMinute = 60.0f;
     /// <summary>The nearest clap plays this much faster than the thunder as made, the farthest this much (deeper, longer).</summary>
     constexpr float ThunderNearSpeed = 1.08f;
     constexpr float ThunderFarSpeed = 0.8f;
@@ -68,13 +62,8 @@ namespace
     constexpr float ThunderFarLevel = 0.45f;
     /// <summary>The most a clap is panned to a side, in hundredths of a decibel.</summary>
     constexpr float ThunderPanMost = 600.0f;
-
-    /// <summary>A throw of <paramref name="dice"/>, from 0 to 1.</summary>
-    float Roll(std::minstd_rand& dice)
-    {
-        constexpr double range = static_cast<double>(std::minstd_rand::max() - std::minstd_rand::min());
-        return static_cast<float>(static_cast<double>(dice() - std::minstd_rand::min()) / range);
-    }
+    /// <summary>The seconds a clap still rolling takes to fade out under a newer one.</summary>
+    constexpr float ThunderFadeOut = 1.5f;
 
     /// <summary>
     /// The HD audio pack's sound at <paramref name="path"/> (none: the pack lacks it) opened into <paramref
@@ -225,7 +214,6 @@ int32_t SoundPanPosition(float dx, float dy)
 MCSoundSystem::MCSoundSystem() : _Renderer(MCSoundRenderer::Install(NUM_SOUND_CHANNELS))
 {
     SmackSoundUseDirectSound(_Renderer.MixerReference());
-    _ThunderDice.seed(ThunderSeed);
     _SoundOn = true;
 }
 
@@ -464,10 +452,8 @@ void MCSoundSystem::PurgeSoundSystem()
     StopRain();
     _RainLevel = 0.0f;
     _RainMissing = false;
-    StopThunder();
-    _ThunderWait = -1.0f;
+    _ThunderRolls.clear();
     _ThunderMissing = false;
-    _ThunderDice.seed(ThunderSeed);
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -771,7 +757,9 @@ void MCSoundSystem::Update()
     const MCWeather::MCWeatherLook heard =
         UseSound != 0 && scenarioRuns ? MCWeather::HeardLook() : MCWeather::MCWeatherLook{};
     UpdateRain(heard.Heard);
-    UpdateThunder(heard.Thunder, heard.ThunderHeard);
+    const std::optional<MCWeather::MCThunderClap> clap =
+        UseSound != 0 && scenarioRuns ? MCWeather::TakeThunder() : std::nullopt;
+    UpdateThunder(heard.ThunderHeard, clap.has_value() ? &*clap : nullptr);
 
     if (UseSound == 0 || UseMusic == 0)
     {
@@ -940,85 +928,56 @@ void MCSoundSystem::StopRain()
     _RainLoop.reset();
 }
 
-void MCSoundSystem::UpdateThunder(float claps, float heard)
+void MCSoundSystem::UpdateThunder(float heard, const MCWeather::MCThunderClap* clap)
 {
-    if (claps <= 0.0f || heard <= 0.0f || _ThunderMissing)
+    if (clap != nullptr && heard > 0.0f && !_ThunderMissing)
     {
-        _ThunderWait = -1.0f;
+        StartThunder(heard, *clap);
     }
-    else
+
+    const float fade = FrameLength / ThunderFadeOut;
+
+    for (MCThunderRoll& roll : _ThunderRolls)
     {
-        const float average = SecondsAMinute / claps;
-        const auto nextWait = [&]
-        { return average * std::lerp(ThunderWaitLeast, ThunderWaitMost, Roll(_ThunderDice)); };
+        roll.Left = roll.Fading ? std::max(roll.Left - fade, 0.0f) : roll.Left;
+        roll.Stream->SetVolume(
+            MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * roll.Level * roll.Left));
+        const uint64_t ahead = uint64_t{PackAheadSeconds} * roll.File->Format().Rate;
 
-        // The first clap waits as the others do.
-        if (_ThunderWait < 0.0f)
+        while (!roll.Read && roll.Stream->QueuedFrames() < ahead)
         {
-            _ThunderWait = nextWait();
-        }
-
-        _ThunderWait -= FrameLength;
-
-        if (_ThunderWait <= 0.0f)
-        {
-            _ThunderWait = nextWait();
-
-            // One rolls at a time: a clap due while one rolls doesn't come.
-            if (_ThunderStream == nullptr)
-            {
-                StartThunder(heard);
-            }
+            const size_t read = roll.File->Read(_ThunderChunk);
+            roll.Stream->Queue(std::span(_ThunderChunk).first(read));
+            roll.Read = read < _ThunderChunk.size();
         }
     }
 
-    if (_ThunderStream == nullptr)
-    {
-        return;
-    }
-
-    _ThunderStream->SetVolume(MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * _ThunderLevel));
-    const uint64_t ahead = uint64_t{PackAheadSeconds} * _Thunder->Format().Rate;
-
-    while (!_ThunderRead && _ThunderStream->QueuedFrames() < ahead)
-    {
-        const size_t read = _Thunder->Read(_ThunderChunk);
-        _ThunderStream->Queue(std::span(_ThunderChunk).first(read));
-        _ThunderRead = read < _ThunderChunk.size();
-    }
-
-    if (_ThunderRead && _ThunderStream->QueuedFrames() == 0)
-    {
-        StopThunder();
-    }
+    // A clap played out, or faded out under a newer one, is done.
+    std::erase_if(_ThunderRolls, [](const MCThunderRoll& roll)
+                  { return (roll.Read && roll.Stream->QueuedFrames() == 0) || roll.Left <= 0.0f; });
 }
 
-void MCSoundSystem::StartThunder(float heard)
+void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
 {
-    // How far off and to which side, thrown first so the dice go on the same whether or not it plays.
-    const float far = Roll(_ThunderDice);
-    const float side = Roll(_ThunderDice);
-    _ThunderStream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::Thunder(), "thunder",
-                                   std::lerp(ThunderNearSpeed, ThunderFarSpeed, far), _Thunder);
+    MCThunderRoll roll;
+    roll.Stream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::Thunder(), "thunder",
+                                std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
 
-    if (_ThunderStream == nullptr)
+    if (roll.Stream == nullptr)
     {
         _ThunderMissing = true;
-        StopThunder();
         return;
     }
 
-    _ThunderChunk.resize(PackChunkFrames * _Thunder->Format().BlockAlign());
-    _ThunderRead = false;
-    _ThunderLevel = heard * std::lerp(1.0f, ThunderFarLevel, far);
-    _ThunderStream->SetPan(static_cast<int32_t>(std::lround(std::lerp(-ThunderPanMost, ThunderPanMost, side))));
-}
+    for (MCThunderRoll& older : _ThunderRolls)
+    {
+        older.Fading = true;
+    }
 
-void MCSoundSystem::StopThunder()
-{
-    _ThunderStream.reset();
-    _Thunder.reset();
-    _ThunderRead = false;
+    _ThunderChunk.resize(PackChunkFrames * roll.File->Format().BlockAlign());
+    roll.Level = heard * std::lerp(1.0f, ThunderFarLevel, clap.Far);
+    roll.Stream->SetPan(static_cast<int32_t>(std::lround(clap.Side * ThunderPanMost)));
+    _ThunderRolls.push_back(std::move(roll));
 }
 
 int32_t MCSoundSystem::PlayDigitalMusic(int32_t musicId, bool loop)

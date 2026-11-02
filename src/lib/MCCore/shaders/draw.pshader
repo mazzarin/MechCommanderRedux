@@ -5,7 +5,8 @@
 // writes the colour of its index (the frame's palette, through the colour cycle) and the index; on a surface shown over
 // another (the screen over the world view), the key colour 255 is written transparent. A translucent pixel is alpha
 // blended into the colours (the blend pipeline: ONE, ONE_MINUS_SRC_ALPHA) and leaves the index; nothing reads the
-// target.
+// target. Port-only (HD weather): a third target holds the light the raindrops caught (Output's glint), blended as the
+// colours are; every other draw covers it as it covers the colours.
 //
 // Translucency follows AlphaPal.ini (InitAlphaLookup's entries, the alpha texture), not AlphaTable: a special colour
 // is drawn as RGB * A over the pixel with 1 - B2 coverage, a colour-dodge entry (A and B2 both 0) as added light;
@@ -99,6 +100,9 @@ struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
+    // Port-only (HD weather): the light a raindrop caught (premultiplied), which the composite adds over the lit world;
+    // every other draw covers what lies under it as its colour does (MCVulkanRenderer's Surface::Glints).
+    float4 glint : SV_Target2;
 };
 
 // Kinds (op.x bits 0-3).
@@ -241,15 +245,18 @@ Output Opaque(uint index)
     Output output;
     output.color = cycle.z != 0 && index == 255 ? float4(0.0, 0.0, 0.0, 0.0) : float4(Shown(index), 1.0);
     output.index = float4((float)index / 255.0, 0.0, 0.0, 0.0);
+    output.glint = float4(0.0, 0.0, 0.0, 0.0);
     return output;
 }
 
-// A blended pixel: premultiplied colour and coverage (the blend pipeline leaves the index).
+// A blended pixel: premultiplied colour and coverage (the blend pipeline leaves the index), covering the glints under
+// it as much.
 Output Blended(float4 color)
 {
     Output output;
     output.color = color;
     output.index = float4(0.0, 0.0, 0.0, 0.0);
+    output.glint = float4(0.0, 0.0, 0.0, color.a);
     return output;
 }
 
@@ -397,6 +404,7 @@ Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
     Output output;
     output.color = float4(HdTerrainColour(input, target, original, value), 1.0);
     output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
+    output.glint = float4(0.0, 0.0, 0.0, 0.0);
 
     if (input.span.w != 0)
     {
@@ -1194,10 +1202,19 @@ float4 ParticleColor(Input input)
            255.0;
 }
 
+// Port-only (HD weather): the light a raindrop or a splash caught where it shows whole (op.z, MCParticleCommand::Glint:
+// a byte a component, from red up; none for another particle).
+float3 CaughtLight(Input input)
+{
+    const uint packed = input.op.z;
+    return float3(float(packed & 255u), float((packed >> 8) & 255u), float((packed >> 16) & 255u)) / 255.0;
+}
+
 // Port-only (HD weather): a raindrop's colour at drawn pixel `target` (MCParticleStyle::RainStreak): falling from its
 // tail, window asfloat(span.xy), to its head, asfloat(span.zw), in columns of whole drawn pixels (twice asfloat(walk.x)
 // across, rounded, at least one), each row's under the streak's middle there; the left ones brighter, its tail fainter
-// and darker, the last asfloat(source.y) window pixels of its head brightest.
+// and darker, the last asfloat(source.y) window pixels of its head brightest. The light it caught (CaughtLight) shows
+// on it as its colour does, its brightest columns whole.
 Output RainStreakPixel(Input input, int2 target, float4 color)
 {
     const float2 drawn = float2(scale.zw) / float2(scale.xy);
@@ -1237,7 +1254,9 @@ Output RainStreakPixel(Input input, int2 target, float4 color)
         strength = RainMiddleStrength;
     }
 
-    return Blended(float4(color.rgb * shade, color.a) * strength);
+    Output output = Blended(float4(color.rgb * shade, color.a) * strength);
+    output.glint.rgb = CaughtLight(input) * (shade / RainRampMost) * output.glint.a;
+    return output;
 }
 
 // Port-only (HD weather): a hard particle's colour at drawn pixel `target` (MCParticleStyle::Hard), on whole drawn
@@ -1278,7 +1297,9 @@ Output HardParticlePixel(Input input, int2 target, float4 color)
         discard;
     }
 
-    return Blended(color);
+    Output output = Blended(color);
+    output.glint.rgb = CaughtLight(input) * color.a;
+    return output;
 }
 
 // Port-only (HD particles): a particle's colour at drawn pixel `target` (MCParticleCommand): a streak from window
@@ -1724,6 +1745,7 @@ Output main(Input input)
     if ((input.op.x & Glow) != 0)
     {
         output.color *= look.x;
+        output.glint *= look.x;
     }
 
     if ((input.op.x & (Sways | IndexOnly)) == (Sways | IndexOnly))

@@ -34,7 +34,9 @@ enum class MCWeatherKind : uint8_t
 /// spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten, and a foot coming down in a
 /// puddle sprays it up and the puddle reacts round it. The sky, the sheen and the puddles are the presenter's
 /// composite's (composite.pshader); the drops are drawn into the world as the particles are (MCParticles::AddMark), so
-/// units nearer the eye cover those falling behind them.
+/// units nearer the eye cover those falling behind them. With HD lighting, the drops and the droplets they throw up
+/// catch the light of the lights they fall past (MCWeatherSettings::Light): drawn into the GPU world's glints, which the
+/// composite adds over the lit world, so the night doesn't dim it.
 /// Like the particles, the drops never touch the game: they throw their own dice (never the game's), take nothing from
 /// it but where things are and change nothing in it, and move with the game's time (ScenarioTime).
 /// </summary>
@@ -89,6 +91,14 @@ namespace MCWeather
         float Steps = 1.0f;
         /// <summary>How loud the thunder is heard, 1 as made (0: none; the tools' --hd-thunder sets it).</summary>
         float Thunder = 1.0f;
+        /// <summary>
+        /// How much the drops, and the droplets they throw up, catch the lights they fall past (HD lighting's: a fire,
+        /// a shot's flash, an explosion, a headlight's beam), mostly at dusk and night, 1 as made (0: none, each lit as
+        /// what lies behind it; the tools' --hd-rain-light sets it). With it on, the rain's splashes are never so pale
+        /// at dusk and night that the composite takes them for a light's own pixels: away from the lights they stay as
+        /// dim as the night.
+        /// </summary>
+        float Light = 1.0f;
     };
 
     /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
@@ -121,6 +131,21 @@ namespace MCWeather
 
     /// <summary>The settings the next frames are shown with.</summary>
     MCWeatherSettings& Settings();
+
+    /// <summary>
+    /// How much of the light at them (MCSceneLights::LightInAir) the drops catch at the time of day shown: the lights'
+    /// strength (MCSceneLights::ShownLighting) times <see cref="MCWeatherSettings::Light"/>, all of it from dusk's
+    /// world light down, a quarter by day, when the light shows little on the sky's.
+    /// </summary>
+    float CatchGain();
+
+    /// <summary>
+    /// The light a drop shows (a glint: added over the lit world, as it is) from <paramref name="caught"/>, the light
+    /// at it, times <paramref name="gain"/> (<see cref="CatchGain"/>) and its <paramref name="facet"/> (0 to 1: how
+    /// much its facets turn the light to the eye): in the lights' hue (further from grey), its brightest component in a
+    /// palette ramp's few steps (none under the first: the drops by a light's edge stay dim).
+    /// </summary>
+    std::array<float, 3> Glint(const std::array<float, 3>& caught, float gain, float facet);
 
     /// <summary>
     /// Sets the weather of the mission being played (MCScenario::Load: its scenario file's, see <see cref="Read"/>; the

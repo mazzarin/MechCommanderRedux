@@ -149,6 +149,10 @@ namespace
     /// <summary>The surfaces' index targets (Surface::Index): RGBA8, the palette index in R.</summary>
     constexpr SDL_GPUTextureFormat IndexFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     constexpr uint32_t IndexPixelBytes = 4;
+    /// <summary>Port-only (HD weather): the surfaces' glint targets (Surface::Glints), premultiplied RGBA8.</summary>
+    constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    /// <summary>A surface's colour targets: its colours, its indices and (port-only) its glints.</summary>
+    constexpr uint32_t SurfaceTargets = 3;
     /// <summary>
     /// The palette texture's rows: the colours shown, then the ones the HD art pack was made from (the shown ones when
     /// there is none), which draw.pshader corrects HD colours by.
@@ -617,32 +621,39 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     renderer->_TerrainShader = std::move(*terrain);
 
-    // A surface's two targets: its colours and its indices. Opaque draws write both; blended draws blend their
-    // premultiplied colour over the colours (ONE, ONE_MINUS_SRC_ALPHA) and leave the indices. A shadow (HD lighting)
-    // takes the colours' alpha down by its own (ZERO, ONE_MINUS_SRC_ALPHA) and leaves the rest.
+    // A surface's targets: its colours, its indices and (port-only, HD weather) its glints. Opaque draws write all
+    // three; blended draws blend their premultiplied colour over the colours and the glints (ONE, ONE_MINUS_SRC_ALPHA)
+    // and leave the indices. A shadow (HD lighting) takes the colours' alpha down by its own (ZERO,
+    // ONE_MINUS_SRC_ALPHA) and leaves the rest, as an index-only draw leaves all but the indices.
     const auto makePipeline =
         [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false, bool marks = false)
     {
-        SDL_GPUColorTargetDescription targets[2]{};
+        SDL_GPUColorTargetDescription targets[SurfaceTargets]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
         targets[1].format = IndexFormat;
+        targets[2].format = GlintFormat;
 
         if (indexOnly)
         {
             targets[0].blend_state.enable_color_write_mask = true;
             targets[0].blend_state.color_write_mask = 0;
+            targets[2].blend_state.enable_color_write_mask = true;
+            targets[2].blend_state.color_write_mask = 0;
         }
 
         if (blend)
         {
-            SDL_GPUColorTargetBlendState& colors = targets[0].blend_state;
-            colors.enable_blend = true;
-            colors.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
-            colors.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-            colors.color_blend_op = SDL_GPU_BLENDOP_ADD;
-            colors.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
-            colors.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-            colors.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            for (SDL_GPUColorTargetBlendState* const colors : {&targets[0].blend_state, &targets[2].blend_state})
+            {
+                colors->enable_blend = true;
+                colors->src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                colors->dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+                colors->color_blend_op = SDL_GPU_BLENDOP_ADD;
+                colors->src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+                colors->dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+                colors->alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+            }
+
             targets[1].blend_state.enable_color_write_mask = true;
             targets[1].blend_state.color_write_mask = 0;
         }
@@ -661,6 +672,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             light.color_write_mask = SDL_GPU_COLORCOMPONENT_A;
             targets[1].blend_state.enable_color_write_mask = true;
             targets[1].blend_state.color_write_mask = 0;
+            targets[2].blend_state.enable_color_write_mask = true;
+            targets[2].blend_state.color_write_mask = 0;
         }
 
         // Port-only (HDSway): a forest's HD frame writes the sway mark (the indices' alpha) alone.
@@ -676,7 +689,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-        pipeline.target_info.num_color_targets = 2;
+        pipeline.target_info.num_color_targets = SurfaceTargets;
         pipeline.target_info.color_target_descriptions = targets;
         return MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device.get(), &pipeline),
                                                     MCGpuRelease{device});
@@ -743,6 +756,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
         Release(surface.Target);
         Release(surface.Index);
         Release(surface.Copy);
+        Release(surface.Glints);
     }
 
     for (Page& page : _Pages)
@@ -3920,9 +3934,11 @@ void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& comma
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
                                           command.Aspect, command.Softness, command.Ring},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
-        // Its style and a raindrop's tip in the source's slots, which a particle has none of.
+        // Its style and a raindrop's tip in the source's slots, which a particle has none of; the light it caught in
+        // the op's (its table's, which it has none of either).
         draw[4] = static_cast<int32_t>(command.Style);
         draw[5] = std::bit_cast<int32_t>(command.Tip);
+        draw[10] = static_cast<int32_t>(command.Glint);
     }
 }
 
@@ -4744,7 +4760,8 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
                                     surface.DrawnHeight),
                       EnsureTexture(surface.Index, IndexFormat, target, surface.DrawnWidth, surface.DrawnHeight),
                       EnsureTexture(surface.Copy, IndexFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, surface.DrawnWidth,
-                                    surface.DrawnHeight)})
+                                    surface.DrawnHeight),
+                      EnsureTexture(surface.Glints, GlintFormat, target, surface.DrawnWidth, surface.DrawnHeight)})
     {
         if (!made)
         {
@@ -4752,11 +4769,12 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         }
     }
 
-    // Index 0 everywhere, in the colour of palette entry 0.
-    SDL_GPUColorTargetInfo clear[2]{};
+    // Index 0 everywhere, in the colour of palette entry 0; no glints.
+    SDL_GPUColorTargetInfo clear[SurfaceTargets]{};
     clear[0].texture = surface.Target.Handle.get();
     clear[0].clear_color = SDL_FColor{_Colors[0].r / 255.0f, _Colors[0].g / 255.0f, _Colors[0].b / 255.0f, 1.0f};
     clear[1].texture = surface.Index.Handle.get();
+    clear[2].texture = surface.Glints.Handle.get();
 
     for (SDL_GPUColorTargetInfo& info : clear)
     {
@@ -4764,7 +4782,7 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
         info.store_op = SDL_GPU_STOREOP_STORE;
     }
 
-    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, 2, nullptr));
+    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(&commands, clear, SurfaceTargets, nullptr));
     surface.Copied = MCRect{0, 0, -1, -1};
     surface.DrawnSinceCopy.clear();
     return {};
@@ -5063,9 +5081,10 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         if (passSurface != record.SurfaceIndex)
         {
             endPass();
-            SDL_GPUColorTargetInfo targets[2]{};
+            SDL_GPUColorTargetInfo targets[SurfaceTargets]{};
             targets[0].texture = surface.Target.Handle.get();
             targets[1].texture = surface.Index.Handle.get();
+            targets[2].texture = surface.Glints.Handle.get();
 
             for (SDL_GPUColorTargetInfo& target : targets)
             {
@@ -5073,7 +5092,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                 target.store_op = SDL_GPU_STOREOP_STORE;
             }
 
-            pass = SDL_BeginGPURenderPass(&commands, targets, 2, nullptr);
+            pass = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
             passSurface = record.SurfaceIndex;
             const SDL_GPUViewport viewport{
                 0.0f, 0.0f, static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height),
@@ -5264,6 +5283,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             Release(surface.Target);
             Release(surface.Index);
             Release(surface.Copy);
+            Release(surface.Glints);
         }
     }
 
@@ -5388,6 +5408,14 @@ std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceIndexTexture(const MCWi
     const auto found = std::ranges::find_if(_Surfaces, [&](const Surface& surface)
                                             { return surface.Key == canonical && surface.Index.Handle != nullptr; });
     return found != _Surfaces.end() ? found->Index.Handle : nullptr;
+}
+
+std::shared_ptr<SDL_GPUTexture> MCVulkanRenderer::SurfaceGlintTexture(const MCWindow& window) const
+{
+    const MCAddressKey canonical = SurfaceKeyOf(window);
+    const auto found = std::ranges::find_if(_Surfaces, [&](const Surface& surface)
+                                            { return surface.Key == canonical && surface.Glints.Handle != nullptr; });
+    return found != _Surfaces.end() ? found->Glints.Handle : nullptr;
 }
 
 std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) const

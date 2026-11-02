@@ -1,22 +1,18 @@
 #include "stdafx.h"
 #include "sprite/MCWeather.h"
-#include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
-#include "color/MCWaterCycle.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCVector2D.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCParticles.h"
-#include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
-#include "terrain/MCTerrainTiles.h"
-#include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <map>
+#include <numbers>
 #include <random>
 
 int GHdWeather = 0;
@@ -82,14 +78,6 @@ namespace
     constexpr int GroundSteps = 2;
     /// <summary>A pixel of the mock-ups' (drawn at a zoom of 2.25), in window pixels.</summary>
     constexpr float MockPixel = 1.0f / 2.25f;
-    /// <summary>
-    /// The water's palette entries (composite.pshader's IsWater): its blues, and the colour cycle's (FirstWaterColor on).
-    /// </summary>
-    constexpr uint8_t FirstWaterBlue = 0x58;
-    constexpr uint8_t WaterBlues = 6;
-    constexpr uint8_t WaterColors = 8;
-    /// <summary>The tile drawn over a world point is its own map vertex's, or one this many rows or columns off.</summary>
-    constexpr int32_t TileNear = 2;
     /// <summary>
     /// Grass soaks the puddles up (composite.pshader's GrassDry): a palette colour this much greener than its red and blue
     /// (VFX's 6-bit components) is grass.
@@ -225,6 +213,24 @@ namespace
     constexpr float SecondRingShare = 0.55f;
     constexpr float SecondRingLife = 0.7f;
     constexpr float SecondRingAlpha = 0.8f;
+    // A foot coming down in a puddle (MCWeather::AddStep): a spray of StepDroplets droplets StepDropletSize to each side
+    // of their middle, StepDropletAlpha strong, from within StepSpread pixels of it and StepStagger seconds of each
+    // other, thrown StepOut times a splash's usual speeds out and StepUp times up (as high as a mech's shins); and the
+    // puddle reacting round it for StepLife (the composite's SteppedPuddleAt), all times MCWeatherSettings::Steps. A
+    // foot splashes only StepMargin inside the puddles' level (more than a drop: the composite's puddles take the
+    // ground's dips too, so a foot at an edge may be out of one). The puddle reacts from the outline of its footprint,
+    // taken as circles (PrintShapeOf, PrintRounds rounds), or of one PrintFallback meters round for a foot without one.
+    constexpr float StepDroplets = 18.0f;
+    constexpr float StepDropletSize = 1.75f * MockPixel;
+    constexpr float StepDropletAlpha = 0.95f;
+    constexpr float StepSpread = 5.0f;
+    constexpr float StepStagger = 0.07f;
+    constexpr float StepOut = 1.4f;
+    constexpr float StepUp = 4.3f;
+    constexpr float StepLife = 0.7f;
+    constexpr float StepMargin = 0.04f;
+    constexpr int32_t PrintRounds = 6;
+    constexpr float PrintFallback = 4.0f;
 
     // Units: drops falling into a unit's footprint (FootDepth of its width deep behind its feet, at least FootLeast
     // pixels) land on its top, within Band pixels below its top edge (the farther back, the nearer its edge); water
@@ -392,6 +398,42 @@ namespace
         int32_t Depth = 0;
     };
 
+    /// <summary>
+    /// Droplets thrown up from a point: how many, how fast out and up (times a splash's usual speeds), from within how many
+    /// view pixels to its sides, within how many seconds of each other, how big and how strong.
+    /// </summary>
+    struct DropletThrow
+    {
+        int32_t Count = 0;
+        float Out = 1.0f;
+        float Up = 1.0f;
+        float Spread = 0.0f;
+        float Stagger = 0.0f;
+        float Size = 0.0f;
+        float Alpha = DropletAlpha;
+    };
+
+    /// <summary>A foot coming down this frame (MCWeather::AddStep): where, and its footprint's shape table and frame.</summary>
+    struct PendingStep
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        std::span<const uint8_t> Print;
+        int32_t PrintFrame = -1;
+    };
+
+    /// <summary>A circle in the view: its middle (view pixels off a shape's hot spot) and its radius.</summary>
+    struct ViewCircle
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Radius = 0.0f;
+    };
+
+    /// <summary>A footprint's shape as circles (PrintShapeOf).</summary>
+    using PrintShape = std::array<ViewCircle, MCWeather::PrintCircles>;
+
     /// <summary>A shape's frame's columns, from its hot spot: each one's top and bottom pixel, and its lower edges.</summary>
     struct FrameColumns
     {
@@ -425,8 +467,10 @@ namespace
 
     /// <summary>
     /// The weather's state: its settings and the mission's weather; the drops falling and the splashes showing, and the
-    /// most there may be (for this frame's view); the units drawn this frame (Draw empties them each frame); the shapes'
-    /// frames' columns measured so far (kept for the mission); the dice; the game's time the last frame was drawn at.
+    /// most there may be (for this frame's view); the units drawn and the feet come down this frame (Draw empties them
+    /// each frame); the feet's puddles still reacting (the newest MCWeather::MaxPuddleSteps); the shapes' frames'
+    /// columns and footprints' shapes measured so far (kept for the mission); the dice, the rain's and the feet's (so the
+    /// rain falls the same whoever steps in it); the game's time the last frame was drawn at.
     /// </summary>
     struct State
     {
@@ -436,8 +480,12 @@ namespace
         std::vector<Splash> Splashes;
         size_t Most = 0;
         std::vector<StandingUnit> Units;
+        std::vector<PendingStep> Steps;
+        std::vector<MCWeather::MCPuddleStep> PuddleSteps;
         std::map<FrameKey, FrameColumns> Frames;
+        std::map<FrameKey, std::optional<PrintShape>> Prints;
         MCDice Dice;
+        MCDice StepDice;
         std::optional<float> Time;
         /// <summary>The puddles' levels for their shares of the ground, measured once (PuddleLevel).</summary>
         std::vector<float> PuddleSamples;
@@ -450,76 +498,11 @@ namespace
         return state;
     }
 
-    /// <summary>Whether palette entry <paramref name="index"/> is the water's.</summary>
-    bool IsWaterIndex(uint8_t index)
-    {
-        return static_cast<uint8_t>(index - FirstWaterBlue) < WaterBlues ||
-               static_cast<uint8_t>(index - FirstWaterColor) < WaterColors;
-    }
-
     /// <summary>Whether palette entry <paramref name="index"/> is grass's (green).</summary>
     bool IsGrassIndex(uint8_t index)
     {
         const MCVfxRgb color = GamePalette().Colors()[index];
         return color.G - std::max(color.R, color.B) >= GrassGreen;
-    }
-
-    /// <summary>
-    /// The palette entry of the ground drawn at view point (<paramref name="x"/>, <paramref name="y"/>), world point
-    /// (<paramref name="worldX"/>, <paramref name="worldY"/>): the pixel there of the last tile <paramref name="camera"/>'s
-    /// terrain window drew over it (each block's at its top-left corner, row by row, as MCTerrainBlock::Draw); none
-    /// outside the window's tiles. (The map's own water, its tiles' terrain types as MCParticles::WaterAt reads them, lies a
-    /// tile or so off the water drawn, too far for a splash.)
-    /// </summary>
-    std::optional<uint8_t> GroundDrawnAt(const MCCamera& camera, float x, float y, float worldX, float worldY)
-    {
-        const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
-        const std::shared_ptr<MCTerrain> terrain = Terrain();
-
-        if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
-            terrain->Tiles == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        // The window's grid from its first vertex's map vertex, and the map vertex the world point lies by.
-        const int32_t side = window->Side();
-        const uint32_t firstTile = window->Vertices[0].PosTile;
-        const int32_t firstRow = static_cast<int32_t>(firstTile) >> 16;
-        const int32_t firstCol = static_cast<int16_t>(firstTile & 0xffff);
-        int32_t row = 0;
-        int32_t col = 0;
-        MCScenarioMap::WorldToMapTilePos(MCVector3D(worldX, worldY, 0.0f), row, col);
-        const auto px = static_cast<int32_t>(std::floor(x));
-        const auto py = static_cast<int32_t>(std::floor(y));
-        std::optional<uint8_t> drawn;
-
-        for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2);
-             ++r)
-        {
-            for (int32_t c = std::max(col - TileNear - firstCol, 0); c <= std::min(col + TileNear - firstCol, side - 2);
-                 ++c)
-            {
-                const MCVertex& corner = window->Vertices[static_cast<size_t>(r) * side + c];
-                const int32_t texture = terrain->MapBlocks->Vertex(corner.MapVertex).TextureData;
-                const std::span<const uint8_t> tile =
-                    texture < 0 ? std::span<const uint8_t>() : terrain->Tiles->Lookup(texture);
-
-                if (tile.size() < 2)
-                {
-                    continue;
-                }
-
-                if (const std::optional<uint8_t> pixel =
-                        VfxTilePixel(tile, px - corner.Px + tile[0], py - corner.Py + tile[1]);
-                    pixel.has_value())
-                {
-                    drawn = pixel;
-                }
-            }
-        }
-
-        return drawn;
     }
 
     /// <summary>A world point's place in the view (MCParticles::ViewPoint).</summary>
@@ -643,6 +626,114 @@ namespace
         return &columns;
     }
 
+    /// <summary>
+    /// A footprint's shape (shape table <paramref name="table"/>'s frame <paramref name="frame"/>) as MCWeather::
+    /// PrintCircles circles round its pixels, measured once: its pixels grouped round as many seeds (each the pixel
+    /// farthest from those before; the first, from their middle), each seed moved to its group's middle PrintRounds times;
+    /// each circle reaching its group's farthest pixel. None for a frame without pixels.
+    /// </summary>
+    const PrintShape* PrintShapeOf(State& state, std::span<const uint8_t> table, int32_t frame)
+    {
+        if (!VfxIsShapeTable(table) || frame < 0 || frame >= VfxShapeCount(table))
+        {
+            return nullptr;
+        }
+
+        const auto [found, isNew] = state.Prints.try_emplace(FrameKey{table.data(), table.size(), frame, false});
+        std::optional<PrintShape>& shape = found->second;
+
+        if (!isNew)
+        {
+            return shape.has_value() ? &*shape : nullptr;
+        }
+
+        // The pixels' middles.
+        std::vector<std::pair<float, float>> pixels;
+        VfxShapeVisit(table, frame, [&](int32_t x, int32_t y, uint8_t)
+                      { pixels.emplace_back(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f); });
+
+        if (pixels.empty())
+        {
+            return nullptr;
+        }
+
+        const auto apart = [](const std::pair<float, float>& a, const std::pair<float, float>& b)
+        { return std::hypot(a.first - b.first, a.second - b.second); };
+        std::pair<float, float> middle;
+
+        for (const auto& [x, y] : pixels)
+        {
+            middle.first += x / static_cast<float>(pixels.size());
+            middle.second += y / static_cast<float>(pixels.size());
+        }
+
+        std::array<std::pair<float, float>, MCWeather::PrintCircles> seeds;
+
+        for (size_t k = 0; k < seeds.size(); ++k)
+        {
+            // The pixel farthest from the seeds so far (from the middle, for the first).
+            const auto nearestSeed = [&](const std::pair<float, float>& pixel)
+            {
+                float nearest = k == 0 ? apart(pixel, middle) : std::numeric_limits<float>::max();
+
+                for (size_t j = 0; j < k; ++j)
+                {
+                    nearest = std::min(nearest, apart(pixel, seeds[j]));
+                }
+
+                return nearest;
+            };
+
+            seeds[k] = *std::ranges::max_element(pixels, {}, nearestSeed);
+        }
+
+        const auto groupOf = [&](const std::pair<float, float>& pixel)
+        {
+            return static_cast<size_t>(
+                std::ranges::min_element(seeds, {}, [&](const auto& seed) { return apart(pixel, seed); }) -
+                seeds.begin());
+        };
+
+        for (int32_t round = 0; round < PrintRounds; ++round)
+        {
+            std::array<std::pair<float, float>, MCWeather::PrintCircles> sums{};
+            std::array<size_t, MCWeather::PrintCircles> counts{};
+
+            for (const auto& pixel : pixels)
+            {
+                const size_t group = groupOf(pixel);
+                sums[group].first += pixel.first;
+                sums[group].second += pixel.second;
+                ++counts[group];
+            }
+
+            for (size_t k = 0; k < seeds.size(); ++k)
+            {
+                if (counts[k] > 0)
+                {
+                    seeds[k] = {sums[k].first / static_cast<float>(counts[k]),
+                                sums[k].second / static_cast<float>(counts[k])};
+                }
+            }
+        }
+
+        // Each circle round its group, reaching its farthest pixel's far side.
+        PrintShape& circles = shape.emplace();
+
+        for (size_t k = 0; k < seeds.size(); ++k)
+        {
+            circles[k] = {seeds[k].first, seeds[k].second, 0.0f};
+        }
+
+        for (const auto& pixel : pixels)
+        {
+            ViewCircle& circle = circles[groupOf(pixel)];
+            circle.Radius = std::max(circle.Radius, apart(pixel, {circle.X, circle.Y}) + 0.5f);
+        }
+
+        return &circles;
+    }
+
     /// <summary>Where on <paramref name="unit"/> a drop meant for the ground at view point (x, y) lands, or none.</summary>
     std::optional<float> HitOn(const StandingUnit& unit, float x, float y)
     {
@@ -660,6 +751,71 @@ namespace
     }
 
     /// <summary>
+    /// Whether ground drawn in palette entry <paramref name="drawn"/> at world point (x, y, z) lies in a puddle,
+    /// <paramref name="margin"/> inside its level: where the composite lays them, with the wet look (the relief maps),
+    /// not on grass.
+    /// </summary>
+    bool InPuddle(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
+                  float z, float margin)
+    {
+        if (!drawn.has_value() || IsGrassIndex(*drawn) || look.Puddles <= 0.0f || !MCSceneLights::ReliefMapsOn())
+        {
+            return false;
+        }
+
+        const auto [east, north] = FlatGround(x, y, z);
+        return PuddleField(east, north) < PuddleLevel(state, look.Puddles) - margin;
+    }
+
+    /// <summary>
+    /// Ring <paramref name="ring"/> spreading on water or a puddle; with <paramref name="twice"/>, a second inside it a
+    /// moment later.
+    /// </summary>
+    void Rings(State& state, Splash ring, bool twice)
+    {
+        state.Splashes.push_back(ring);
+
+        if (twice)
+        {
+            ring.Age = -SecondRingAfter;
+            ring.Size *= SecondRingShare;
+            ring.Life *= SecondRingLife;
+            ring.Alpha *= SecondRingAlpha;
+            ring.Color = PaleBlue;
+            state.Splashes.push_back(ring);
+        }
+    }
+
+    /// <summary>
+    /// The droplets <paramref name="thrown"/> up from world point (x, y, z) with <paramref name="dice"/>, spread round a
+    /// little unevenly (each its own way out, most of them up), drawn at <paramref name="depth"/>.
+    /// </summary>
+    void Droplets(State& state, MCDice& dice, float x, float y, float z, const DropletThrow& thrown, int32_t depth)
+    {
+        for (int32_t k = 0; k < thrown.Count; ++k)
+        {
+            const float side = k % 2 == 0 ? -1.0f : 1.0f;
+            const bool pale = dice.Unit() < PaleDropletShare;
+            const float across = thrown.Spread > 0.0f ? dice.Between(-thrown.Spread, thrown.Spread) : 0.0f;
+            const float late = thrown.Stagger > 0.0f ? dice.Between(0.0f, thrown.Stagger) : 0.0f;
+            state.Splashes.push_back({.Kind = SplashKind::Droplet,
+                                      .X = x,
+                                      .Y = y,
+                                      .Z = z,
+                                      .Across = across,
+                                      .VAcross = side * dice.Between(DropletOutLow, DropletOutHigh) * thrown.Out,
+                                      .VUp = dice.Between(DropletUpLow, DropletUpHigh) * thrown.Up,
+                                      .Size = thrown.Size,
+                                      .Age = -late,
+                                      .Color = pale ? PaleGrey : PalestBlue,
+                                      .Alpha = thrown.Alpha,
+                                      .Depth = depth});
+            Splash& droplet = state.Splashes.back();
+            droplet.Life = 2.0f * droplet.VUp / Gravity;
+        }
+    }
+
+    /// <summary>
     /// <paramref name="drop"/> landing: a dot where it lands; in water or a puddle, a ring (a near drop's two); on land
     /// or a unit, droplets thrown up.
     /// </summary>
@@ -667,16 +823,13 @@ namespace
     {
         const DropSize& size = DropSizes[drop.Size];
         MCDice& dice = state.Dice;
-        const auto [east, north] = FlatGround(drop.X, drop.Y, drop.Z);
         const MCWeather::MCWeatherLook look = MCWeather::ShownLook();
-        const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera);
         const std::optional<uint8_t> drawn =
-            drop.OnUnit ? std::nullopt : GroundDrawnAt(camera, at.X, at.Y, drop.X, drop.Y);
-        // Puddles lie where the composite lays them: with the wet look (the relief maps), not on grass.
-        const bool puddle = drawn.has_value() && !IsGrassIndex(*drawn) && look.Puddles > 0.0f &&
-                            MCSceneLights::ReliefMapsOn() &&
-                            PuddleField(east, north) < PuddleLevel(state, look.Puddles) - PuddleMargin;
-        const bool wet = puddle || (drawn.has_value() && IsWaterIndex(*drawn));
+            drop.OnUnit ? std::nullopt : MCParticles::GroundDrawnAt(drop.X, drop.Y, drop.Z, camera);
+        // A bridge's road is drawn over the water (the ground drawn under it).
+        const bool wet = !MCParticles::BridgedAt(drop.X, drop.Y) &&
+                         (InPuddle(state, look, drawn, drop.X, drop.Y, drop.Z, PuddleMargin) ||
+                          (drawn.has_value() && MCParticles::IsWaterColor(*drawn)));
         Splash dot{.Kind = SplashKind::Dot,
                    .X = drop.X,
                    .Y = drop.Y,
@@ -690,55 +843,97 @@ namespace
 
         if (wet)
         {
-            const float alpha = size.RingAlpha * dice.Between(RingAlphaLeast, 1.0f);
-            const float most = size.Ring * dice.Between(1.0f - RingSizeVary, 1.0f + RingSizeVary);
-            const int32_t depth = GroundDepthFixup + drop.Depth;
-            Splash ring{.Kind = SplashKind::Ring,
-                        .X = drop.X,
-                        .Y = drop.Y,
-                        .Z = drop.Z,
-                        .Size = most,
-                        .Life = size.RingLife,
-                        .Color = dice.Unit() < RingPaleShare ? PaleBlue : WaterBlue,
-                        .Alpha = alpha,
-                        .Depth = depth};
-            state.Splashes.push_back(ring);
+            Rings(state,
+                  {.Kind = SplashKind::Ring,
+                   .X = drop.X,
+                   .Y = drop.Y,
+                   .Z = drop.Z,
+                   .Size = size.Ring * dice.Between(1.0f - RingSizeVary, 1.0f + RingSizeVary),
+                   .Life = size.RingLife,
+                   .Color = dice.Unit() < RingPaleShare ? PaleBlue : WaterBlue,
+                   .Alpha = size.RingAlpha * dice.Between(RingAlphaLeast, 1.0f),
+                   .Depth = GroundDepthFixup + drop.Depth},
+                  drop.Size == NearDrop);
 
-            if (drop.Size == NearDrop)
-            {
-                ring.Age = -SecondRingAfter;
-                ring.Size = most * SecondRingShare;
-                ring.Life = size.RingLife * SecondRingLife;
-                ring.Alpha = alpha * SecondRingAlpha;
-                ring.Color = PaleBlue;
-                state.Splashes.push_back(ring);
-            }
-            else
+            if (drop.Size != NearDrop)
             {
                 return;
             }
         }
 
         const int32_t count = size.DropletsHigh > 0 ? dice.Between(size.DropletsLow, size.DropletsHigh) : 0;
+        Droplets(state, dice, drop.X, drop.Y, drop.Z,
+                 {.Count = count,
+                  .Out = size.Throw,
+                  .Up = size.Throw,
+                  .Size = drop.Size == NearDrop ? 2.0f * DropletSize : DropletSize},
+                 drop.Depth);
+    }
 
-        for (int32_t k = 0; k < count; ++k)
+    /// <summary>
+    /// <paramref name="step"/>'s foot coming down: in a puddle (as <paramref name="camera"/> shows the ground there), a
+    /// spray of droplets thrown up round it, and the puddle reacting round it (the newest MCWeather::MaxPuddleSteps), as
+    /// big as MCWeatherSettings::Steps has them.
+    /// </summary>
+    void Step(State& state, const PendingStep& step, const MCCamera& camera)
+    {
+        const float strength = std::max(state.Settings.Steps, 0.0f);
+
+        if (strength <= 0.0f || !MCWeather::PuddleAt(MCVector3D(step.X, step.Y, step.Z), camera))
         {
-            // Spread round, a little uneven: each its own way out, most of them up.
-            const float side = k % 2 == 0 ? -1.0f : 1.0f;
-            const bool pale = dice.Unit() < PaleDropletShare;
-            state.Splashes.push_back({.Kind = SplashKind::Droplet,
-                                      .X = drop.X,
-                                      .Y = drop.Y,
-                                      .Z = drop.Z,
-                                      .VAcross = side * dice.Between(DropletOutLow, DropletOutHigh) * size.Throw,
-                                      .VUp = dice.Between(DropletUpLow, DropletUpHigh) * size.Throw,
-                                      .Size = drop.Size == NearDrop ? 2.0f * DropletSize : DropletSize,
-                                      .Color = pale ? PaleGrey : PalestBlue,
-                                      .Alpha = DropletAlpha,
-                                      .Depth = drop.Depth});
-            Splash& droplet = state.Splashes.back();
-            droplet.Life = 2.0f * droplet.VUp / Gravity;
+            return;
         }
+
+        const int32_t depth = -static_cast<int32_t>(std::floor(Project(step.X, step.Y, step.Z, camera).Y));
+        MCDice& dice = state.StepDice;
+        Droplets(state, dice, step.X, step.Y, step.Z,
+                 {.Count = dice.Count(StepDroplets * strength),
+                  .Out = StepOut * strength,
+                  .Up = StepUp * strength,
+                  .Spread = StepSpread * strength,
+                  .Stagger = StepStagger,
+                  .Size = StepDropletSize,
+                  .Alpha = StepDropletAlpha},
+                 depth);
+        const auto [east, north] = FlatGround(step.X, step.Y, step.Z);
+        MCWeather::MCPuddleStep& puddle =
+            state.PuddleSteps.emplace_back(MCWeather::MCPuddleStep{.East = east, .North = north, .Strength = strength});
+        const PrintShape* print = PrintShapeOf(state, step.Print, step.PrintFrame);
+        const float cosine = std::max(MCTerrain::ProjectionCos, MinProjection);
+        const float sine = std::max(MCTerrain::ProjectionSin, MinProjection);
+
+        for (size_t k = 0; k < puddle.Print.size(); ++k)
+        {
+            if (print == nullptr)
+            {
+                puddle.Print[k] = {east, north, PrintFallback};
+                continue;
+            }
+
+            // The flat projection undone (GroundPointAt's): view pixels across and down to meters east and north; a
+            // radius as wide as the view's.
+            const ViewCircle& circle = (*print)[k];
+            const float across = circle.X / cosine;
+            const float down = circle.Y / sine;
+            puddle.Print[k] = {east + 0.5f * (across + down), north - 0.5f * (down - across),
+                               circle.Radius / (cosine * std::numbers::sqrt2_v<float>)};
+        }
+
+        if (state.PuddleSteps.size() > MCWeather::MaxPuddleSteps)
+        {
+            state.PuddleSteps.erase(state.PuddleSteps.begin());
+        }
+    }
+
+    /// <summary>The feet's puddles react on for <paramref name="step"/> seconds of the game's time, till StepLife.</summary>
+    void AgePuddleSteps(State& state, float step)
+    {
+        for (MCWeather::MCPuddleStep& puddle : state.PuddleSteps)
+        {
+            puddle.Age += step;
+        }
+
+        std::erase_if(state.PuddleSteps, [](const MCWeather::MCPuddleStep& puddle) { return puddle.Age > StepLife; });
     }
 
     /// <summary>
@@ -986,15 +1181,18 @@ namespace
 
     /// <summary>
     /// Drops every drop and splash and the columns measured, and throws the dice from their start again; the units drawn
-    /// this frame stay (the game's time went back after they were added).
+    /// and the feet come down this frame stay (the game's time went back after they were added).
     /// </summary>
     void ClearState(State& state)
     {
         state.Drops.clear();
         state.Splashes.clear();
+        state.PuddleSteps.clear();
         state.Frames.clear();
+        state.Prints.clear();
         state.Time.reset();
         state.Dice.Restart();
+        state.StepDice.Restart();
     }
 }
 
@@ -1146,6 +1344,26 @@ auto MCWeather::AddUnit(std::span<const MCSceneLights::MCSunShadowPart> parts, c
     state.Units.push_back(std::move(unit));
 }
 
+auto MCWeather::AddStep(const MCVector3D& foot, std::span<const uint8_t> print, int32_t printFrame) -> void
+{
+    if (Shown() != MCWeatherKind::Clear)
+    {
+        TheState().Steps.push_back({foot.X, foot.Y, foot.Z, print, printFrame});
+    }
+}
+
+auto MCWeather::PuddleAt(const MCVector3D& point, const MCCamera& camera) -> bool
+{
+    return !MCParticles::BridgedAt(point.X, point.Y) &&
+           InPuddle(TheState(), ShownLook(), MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, camera), point.X,
+                    point.Y, point.Z, StepMargin);
+}
+
+auto MCWeather::ShownPuddleSteps() -> std::span<const MCPuddleStep>
+{
+    return TheState().PuddleSteps;
+}
+
 auto MCWeather::Draw(const MCCamera& camera) -> void
 {
     State& state = TheState();
@@ -1166,6 +1384,8 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         state.Drops.clear();
         state.Splashes.clear();
         state.Units.clear();
+        state.Steps.clear();
+        state.PuddleSteps.clear();
         return;
     }
 
@@ -1173,11 +1393,18 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     if (step > 0.0f)
     {
         Move(state, step, camera);
+        AgePuddleSteps(state, step);
         Rain(state, camera, look, step, now);
         Drip(state, look, step);
+
+        for (const PendingStep& foot : state.Steps)
+        {
+            Step(state, foot, camera);
+        }
     }
 
     state.Units.clear();
+    state.Steps.clear();
     AddSplashes(state, camera);
     AddDrops(state, camera);
 }

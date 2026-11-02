@@ -31,9 +31,10 @@ enum class MCWeatherKind : uint8_t
 /// wind's gusts and splash where they land (droplets on land, rings on the water drawn and in puddles, on a unit's top
 /// when it stands in their way), and water drips off the units. With the HD ground's relief maps (MCSceneLights::
 /// ReliefMapsOn, which tell the ground from what stands on it) the world is wet too: puddles lie in the ground's low
-/// spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten. The sky, the sheen and the
-/// puddles are the presenter's composite's (composite.pshader); the drops are drawn into the world as the particles are
-/// (MCParticles::AddMark), so units nearer the eye cover those falling behind them.
+/// spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten, and a foot coming down in a
+/// puddle sprays it up and the puddle reacts round it. The sky, the sheen and the puddles are the presenter's
+/// composite's (composite.pshader); the drops are drawn into the world as the particles are (MCParticles::AddMark), so
+/// units nearer the eye cover those falling behind them.
 /// Like the particles, the drops never touch the game: they throw their own dice (never the game's), take nothing from
 /// it but where things are and change nothing in it, and move with the game's time (ScenarioTime).
 /// </summary>
@@ -72,6 +73,36 @@ namespace MCWeather
     {
         /// <summary>How many drops fall, 1 as made (0.5: half as many).</summary>
         float Amount = 1.0f;
+        /// <summary>How big a foot's splash in a puddle is, 1 as made (0: none; the tools' --hd-steps sets it).</summary>
+        float Steps = 1.0f;
+    };
+
+    /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
+    constexpr size_t MaxPuddleSteps = 8;
+
+    /// <summary>The circles a footprint's shape is taken as, its ripple spreading from their outline (its PrintCircles).</summary>
+    constexpr size_t PrintCircles = 4;
+
+    /// <summary>A circle on the ground as the composite takes it: its middle (meters east and north) and its radius.</summary>
+    struct MCGroundCircle
+    {
+        float East = 0.0f;
+        float North = 0.0f;
+        float Radius = 0.0f;
+    };
+
+    /// <summary>
+    /// A foot come down in a puddle, which reacts round it (composite.pshader's SteppedPuddleAt): its ground point as the
+    /// composite takes it (meters east and north of the map's middle), how long ago it came down (seconds of the game's
+    /// time), how big its splash is (MCWeatherSettings::Steps), and its footprint's shape, as circles.
+    /// </summary>
+    struct MCPuddleStep
+    {
+        float East = 0.0f;
+        float North = 0.0f;
+        float Age = 0.0f;
+        float Strength = 0.0f;
+        std::array<MCGroundCircle, PrintCircles> Print{};
     };
 
     /// <summary>The settings the next frames are shown with.</summary>
@@ -113,6 +144,22 @@ namespace MCWeather
     /// </summary>
     void AddUnit(std::span<const MCSceneLights::MCSunShadowPart> parts, const MCVector3D& position, float feetX,
                  float feetY, int32_t depth);
+
+    /// <summary>
+    /// A unit's foot coming down at <paramref name="foot"/> (MCBattleMech's footprints, made or not): in a puddle, it
+    /// sprays droplets up and the puddle reacts round it, from the outline of the footprint it leaves (shape table
+    /// <paramref name="print"/>'s frame <paramref name="printFrame"/>, MCCraterManager's; a small round one without).
+    /// </summary>
+    void AddStep(const MCVector3D& foot, std::span<const uint8_t> print = {}, int32_t printFrame = -1);
+
+    /// <summary>
+    /// Whether a foot coming down at world point <paramref name="point"/> lands in a puddle, as <paramref name="camera"/>
+    /// shows the ground there: none but in rain shown with the wet look, nor on a bridge.
+    /// </summary>
+    bool PuddleAt(const MCVector3D& point, const MCCamera& camera);
+
+    /// <summary>The feet's puddles reacting now (the newest MaxPuddleSteps), oldest first.</summary>
+    std::span<const MCPuddleStep> ShownPuddleSteps();
 
     /// <summary>
     /// Moves the drops on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list

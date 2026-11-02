@@ -68,8 +68,15 @@ namespace
         float Sway[4] = {};
         /// <summary>The weather's overcast, its colours' grey, wet land's darkening and its veil (0: a clear sky).</summary>
         float Weather[4] = {};
-        /// <summary>The wet look: how much sky wet ground mirrors, the puddles' level and the bright metal's gloss.</summary>
+        /// <summary>
+        /// The wet look: how much sky wet ground mirrors, the puddles' level, the bright metal's gloss and the feet's
+        /// puddles reacting in PuddleSteps.
+        /// </summary>
         float WetLook[4] = {};
+        /// <summary>One a foot's puddle reacting: its ground point (meters), its age (seconds) and its strength.</summary>
+        float PuddleSteps[MCWeather::MaxPuddleSteps][4] = {};
+        /// <summary>MCWeather::PrintCircles a foot: its footprint's circles, their middles and radii (meters).</summary>
+        float PuddlePrints[MCWeather::MaxPuddleSteps * MCWeather::PrintCircles][4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -199,6 +206,23 @@ namespace
                 uniforms.WetLook[0] = std::clamp(look.Sheen, 0.0f, 1.0f);
                 uniforms.WetLook[1] = MCWeather::PuddleLevel(look.Puddles);
                 uniforms.WetLook[2] = std::clamp(look.Gloss, 0.0f, 1.0f);
+                const std::span<const MCWeather::MCPuddleStep> steps = MCWeather::ShownPuddleSteps();
+                const size_t count = std::min(steps.size(), MCWeather::MaxPuddleSteps);
+                uniforms.WetLook[3] = static_cast<float>(count);
+
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const MCWeather::MCPuddleStep& step = steps[i];
+                    std::ranges::copy(std::array{step.East, step.North, step.Age, step.Strength},
+                                      uniforms.PuddleSteps[i]);
+
+                    for (size_t k = 0; k < MCWeather::PrintCircles; ++k)
+                    {
+                        const MCWeather::MCGroundCircle& circle = step.Print[k];
+                        std::ranges::copy(std::array{circle.East, circle.North, circle.Radius, 0.0f},
+                                          uniforms.PuddlePrints[i * MCWeather::PrintCircles + k]);
+                    }
+                }
             }
 
             uniforms.AmbientLook[3] = 1.0f - (1.0f - uniforms.AmbientLook[3]) * (1.0f - uniforms.Weather[1]);

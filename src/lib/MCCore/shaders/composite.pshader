@@ -43,6 +43,10 @@ SamplerState bloomSampler : register(s5, space2);
 static const uint MaxLights = 64;
 // The most fires in heat (MCSceneLights::MaxHeat).
 static const uint MaxHeat = 16;
+// The most feet's puddles reacting at once (MCWeather::MaxPuddleSteps), and the circles a footprint's shape is taken as
+// (MCWeather::PrintCircles).
+static const uint MaxPuddleSteps = 8;
+static const uint PrintCircles = 4;
 
 cbuffer Composite : register(b0, space3)
 {
@@ -119,8 +123,14 @@ cbuffer Composite : register(b0, space3)
     // how much darker wet land shows; w, how much of a rain-grey veil hangs over the world, drifting in sheets.
     float4 weather;
     // x, how much of the sky flat wet ground mirrors; y, the puddles' level (PuddleField below it is a puddle; 0 none);
-    // z, how much of the sky the bright metal of what stands on the ground mirrors.
+    // z, how much of the sky the bright metal of what stands on the ground mirrors; w, the feet's puddles reacting in
+    // puddleSteps.
     float4 wetLook;
+    // One a foot come down in a puddle (MCWeather::ShownPuddleSteps): its ground point (xy, meters, as GroundPointAt),
+    // how long ago (z, seconds of the game's time) and how big its splash is (w); then PrintCircles a foot, the circles
+    // its footprint's shape is taken as: each one's middle on the ground (xy) and its radius (z, meters).
+    float4 puddleSteps[MaxPuddleSteps];
+    float4 puddlePrints[MaxPuddleSteps * PrintCircles];
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -1010,6 +1020,26 @@ static const float PuddleNear = 0.08;
 static const float BrightMetal = 0.4;
 static const float MetalGreen = 0.02;
 static const float UnitWet = 0.9;
+// A foot come down in a puddle (puddleSteps): from its footprint's outline (puddlePrints), the water pushed back,
+// StepHollow meters out and spreading StepHollowSpread meters a second, StepHollowDark as bright and filling in again
+// over StepHollowLife; a crest (StepCrestShare of the way to pale, StepCrest meters wide) and a trough behind it
+// (StepTrough wide, StepTroughDark darker) spreading from StepFrontFrom meters out at StepFrontSpeed meters a second,
+// fading over StepLife (MCWeather.cpp's); all times the foot's strength. Near the foot the ring takes the print's shape,
+// rounding as it spreads.
+static const float StepHollow = 2.0;
+static const float StepHollowSpread = 10.0;
+static const float StepHollowLife = 0.3;
+static const float StepHollowDark = 0.9;
+static const float StepFrontFrom = 1.0;
+static const float StepFrontSpeed = 40.0;
+static const float StepCrest = 1.5;
+static const float StepTrough = 2.0;
+static const float StepCrestShare = 0.25;
+static const float StepTroughDark = 0.1;
+static const float StepLife = 0.7;
+static const float3 StepCrestColor = float3(220.0, 220.0, 220.0) / 255.0;
+// Farther from a footprint than any ground point lies (OutsidePrint's start).
+static const float FarFromPrint = 1.0e6;
 
 // The slope of the HD ground's relief map at a world texel (its rise a texel right and a texel down the picture,
 // MCHdArt's relief maps), and the index target's alpha there (above GroundMark, that ground); none elsewhere.
@@ -1069,6 +1099,59 @@ float SheenShare(float2 slope)
                                   : SheenShares.x;
 }
 
+// How far ground point `at` lies outside foot `step`'s footprint (its circles' nearest edge; below 0 inside it).
+float OutsidePrint(float2 at, uint step)
+{
+    float outside = FarFromPrint;
+
+    for (uint k = 0; k < PrintCircles; ++k)
+    {
+        const float4 circle = puddlePrints[step * PrintCircles + k];
+        outside = min(outside, length(at - circle.xy) - circle.z);
+    }
+
+    return outside;
+}
+
+// A puddle's `color` at world texel `texel` round the feet come down in it (puddleSteps): from each footprint's outline,
+// darker where the water is pushed back, then a pale crest and a dark trough spreading out; in hard steps, a texel at a
+// time.
+float3 SteppedPuddleAt(float3 color, float2 texel)
+{
+    const float2 at = GroundPointAt(floor(texel) + 0.5);
+
+    for (uint i = 0; i < min((uint)wetLook.w, MaxPuddleSteps); ++i)
+    {
+        const float4 step = puddleSteps[i];
+        const float age = step.z;
+
+        if (age > StepLife || step.w <= 0.0)
+        {
+            continue;
+        }
+
+        const float r = OutsidePrint(at, i) / step.w;
+        const float fade = 1.0 - age / StepLife;
+        const float front = StepFrontFrom + StepFrontSpeed * age;
+
+        if (age < StepHollowLife && r < StepHollow + StepHollowSpread * age)
+        {
+            color *= lerp(StepHollowDark, 1.0, age / StepHollowLife);
+        }
+
+        if (r < front && r >= front - StepCrest)
+        {
+            color = lerp(color, StepCrestColor, StepCrestShare * fade);
+        }
+        else if (r < front - StepCrest && r >= front - StepCrest - StepTrough)
+        {
+            color *= 1.0 - StepTroughDark * fade;
+        }
+    }
+
+    return color;
+}
+
 // `color` at world texel `texel` (drawn as `art`) in the rain: wet ground mirrors a little of the overcast sky, in
 // steps as its slopes turn it to the eye; puddles lie in its low spots, soaked and smoothed, mirroring more of it; what
 // stands on the ground is darker, its bright metal glossed with it. As it is without the wet look or on water.
@@ -1119,7 +1202,7 @@ float3 WetAt(float3 color, float3 art, float2 texel)
     const float smoothing = clamp((dot(round, Luma) + 0.02) / (dot(art, Luma) + 0.02), 0.5, 2.0);
     const float3 under = lerp(color, color * smoothing, Smoothed) * Soaked;
     const float3 puddle = lerp(under, sky, PuddleMirror);
-    return PuddleAt(texel + up) ? puddle : lerp(puddle, sky, EdgeMirror);
+    return SteppedPuddleAt(PuddleAt(texel + up) ? puddle : lerp(puddle, sky, EdgeMirror), texel);
 }
 
 // `color` at a world texel seen through the rain's veil (as it is without one).

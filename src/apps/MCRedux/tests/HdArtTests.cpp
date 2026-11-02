@@ -5053,6 +5053,139 @@ TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast,
 }
 
 /// <summary>
+/// HD particles' steps (MCParticles::AddStep: a mech's feet, where they print or would), on the screen drawn by the GPU
+/// over mission 1's water, paused: as the game's time goes a foot coming down in the water drawn splashes, droplets and a
+/// ring; one on the land drawn throws nothing; none splash at a strength of 0 (MCParticleLook::Steps) or with the
+/// particles off; and none of it throws the game's dice.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDParticles a foot coming down in the water drawn splashes, and on land it doesn't")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    // The camera over the map's water: the tile with the most water round it.
+    constexpr int32_t Round = 2;
+    const MCScenarioMap& map = GameMap();
+    int32_t most = 0;
+    int32_t waterRow = 0;
+    int32_t waterColumn = 0;
+
+    for (int32_t row = Round; row < map.Height - Round; ++row)
+    {
+        for (int32_t column = Round; column < map.Width - Round; ++column)
+        {
+            int32_t water = 0;
+
+            for (int32_t r = row - Round; r <= row + Round; ++r)
+            {
+                for (int32_t c = column - Round; c <= column + Round; ++c)
+                {
+                    water += map.Map[static_cast<size_t>(r) * map.Width + c].TerrainType() >= FirstWaterTerrain ? 1 : 0;
+                }
+            }
+
+            if (water > most)
+            {
+                most = water;
+                waterRow = row;
+                waterColumn = column;
+            }
+        }
+    }
+
+    REQUIRE(most > 0);
+    const MCVector3D middle(TileColToWorld(waterColumn), TileRowToWorld(waterRow), 0.0f);
+    Eye()->SetPosition(middle);
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+
+    // A point of the water drawn and one of the land drawn, round it.
+    constexpr float Reach = 300.0f;
+    constexpr float Apart = 10.0f;
+    std::optional<MCVector3D> water;
+    std::optional<MCVector3D> land;
+
+    for (float dy = -Reach; dy <= Reach && (!water.has_value() || !land.has_value()); dy += Apart)
+    {
+        for (float dx = -Reach; dx <= Reach; dx += Apart)
+        {
+            MCVector3D point(middle.X + dx, middle.Y + dy, 0.0f);
+            point.Z = MCParticles::GroundAt(point.X, point.Y);
+
+            if (const std::optional<uint8_t> drawn = MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, *camera);
+                drawn.has_value())
+            {
+                (MCParticles::IsWaterColor(*drawn) ? water : land) = point;
+            }
+        }
+    }
+
+    REQUIRE(water.has_value());
+    REQUIRE(land.has_value());
+
+    // The most particles over a few frames after a foot comes down (or none), the dice started again.
+    const float now = ScenarioTime;
+    GamePaused = true;
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 10;
+    constexpr float HalfWidth = 20.0f;
+    const auto splashed = [&](const std::optional<MCVector3D>& foot)
+    {
+        MCParticles::Clear();
+        ScenarioTime = now;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (foot.has_value())
+        {
+            MCParticles::AddStep(*foot, HalfWidth);
+        }
+
+        size_t made = 0;
+
+        for (int32_t frame = 1; frame <= Frames; ++frame)
+        {
+            ScenarioTime = now + Step * static_cast<float>(frame);
+            MCTestGame::RunFrame(FrameSeconds);
+            made = std::max(made, MCParticles::Count());
+        }
+
+        return made;
+    };
+
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    GHdParticles = 1;
+    const size_t none = splashed(std::nullopt);
+    const size_t inWater = splashed(water);
+    const size_t onLand = splashed(land);
+    MCParticles::Look().Steps = 0.0f;
+    const size_t still = splashed(water);
+    MCParticles::Look().Steps = 1.0f;
+    GHdParticles = 0;
+    const size_t off = splashed(water);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    ScenarioTime = now;
+    std::cout << std::format("  particles: {} with no foot, {} after a foot in the water, {} on land, {} at a strength "
+                             "of 0, {} with the particles off\n",
+                             none, inWater, onLand, still, off);
+    CHECK(inWater > none);
+    CHECK(onLand == none);
+    CHECK(still == none);
+    CHECK(off == 0);
+}
+
+/// <summary>
 /// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a burst that shakes (a
 /// large artillery strike's, a building's end) in the view's middle moves the world shown, all of it the same whole
 /// pixels, the way the shake says; a big one that doesn't (a unit's end) leaves it be, and once the shake has died away
@@ -5960,7 +6093,8 @@ namespace
     /// <summary>
     /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
     /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
-    /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks).
+    /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks); <c>--hd-steps &lt;strength&gt;</c>
+    /// how big feet coming down in water and puddles splash (MCParticleLook::Steps, MCWeatherSettings::Steps).
     /// </summary>
     void ParticlesFromOptions()
     {
@@ -5987,6 +6121,13 @@ namespace
             GHdFlecks =
                 static_cast<int>(falling ? MCParticles::MCFleckStyle::Falling : MCParticles::MCFleckStyle::Edge);
             std::cout << std::format("  flecks: {}\n", falling ? "falling" : "breaking off the fire's edge");
+        }
+
+        if (const std::optional<std::string_view> steps = MCTest::Option("hd-steps"); steps.has_value())
+        {
+            look.Steps = std::strtof(std::string(*steps).c_str(), nullptr);
+            MCWeather::Settings().Steps = look.Steps;
+            std::cout << std::format("  steps: feet splash {:.2f} as big as made\n", look.Steps);
         }
     }
 
@@ -7739,6 +7880,212 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
     std::cout << std::format("  {} of {} ground pixels lit by the relief\n", groundLit, groundPixels);
     CHECK(mirrored > 0);
     CHECK(groundLit * 2 > groundPixels);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// HD weather's feet in puddles (MCWeather::AddStep), on mission 1's HD ground with its relief maps (the wet look) in a
+/// downpour, paused, as the game's time goes: a foot coming down in a puddle sprays and the puddle reacts round it, from
+/// its footprint's outline (the print taken as circles apart), changing only what lies near it, for as long as it lasts;
+/// one on dry ground, or at a strength of 0, changes nothing shown; and none of it throws the game's dice.
+/// </summary>
+TEST_CASE_ISOLATED("game: in a downpour a foot coming down in a puddle sprays and the puddle reacts round its print")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    constexpr int32_t Rise = 20;
+    const std::filesystem::path ground = scene->Scratch / "ground";
+    REQUIRE(WriteTerrainPack(ground, *mesh, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(ground, *mesh, Rise) > 0);
+    const MCHdArtOn hdArt(ground);
+    const int lightingWas = GHdLighting;
+    GHdLighting = HdLightingOn;
+    GHdRelief = 1;
+    GHdWeather = HdWeatherDownpour;
+    GamePaused = true;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    REQUIRE(MCSceneLights::ReliefMapsOn());
+
+    // A puddle a foot splashes in round the mech, the camera over it, and dry ground near it.
+    constexpr float Reach = 200.0f;
+    constexpr float Apart = 4.0f;
+    const MCVector3D from = scene->Player.Mech->GetPosition();
+    const auto find = [&](bool wet) -> std::optional<MCVector3D>
+    {
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+
+        for (float dy = -Reach; dy <= Reach; dy += Apart)
+        {
+            for (float dx = -Reach; dx <= Reach; dx += Apart)
+            {
+                MCVector3D point(from.X + dx, from.Y + dy, 0.0f);
+                point.Z = MCParticles::GroundAt(point.X, point.Y);
+                const std::optional<uint8_t> drawn = MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, *camera);
+
+                if (drawn.has_value() && !MCParticles::IsWaterColor(*drawn) &&
+                    MCWeather::PuddleAt(point, *camera) == wet)
+                {
+                    return point;
+                }
+            }
+        }
+
+        return std::nullopt;
+    };
+
+    const std::optional<MCVector3D> puddle = find(true);
+    REQUIRE(puddle.has_value());
+    Eye()->SetPosition(*puddle);
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::optional<MCVector3D> dry = find(false);
+    REQUIRE(dry.has_value());
+    REQUIRE(MCWeather::PuddleAt(*puddle, *ActiveMainCamera()));
+
+    // The mech's footprint, facing the first way.
+    const std::span<const std::vector<uint8_t>> prints = CraterManager().Shapes();
+    const auto printType = static_cast<size_t>(scene->Player.Mech->TypeAs<MCBattleMechType>().FootprintType);
+    REQUIRE(printType < prints.size());
+    const std::span<const uint8_t> print = prints[printType];
+
+    // The frame shown Shown frames after a foot comes down (or none), the most puddles reacting then, the first's print,
+    // and how many still react once its time is up; the weather's dice started again.
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Shown = 6;
+    // How long a puddle reacts (MCWeather.cpp's StepLife).
+    constexpr float Life = 0.7f;
+    const auto lastFrame = static_cast<int32_t>(std::ceil(Life / Step)) + 2;
+    struct Stepped
+    {
+        std::vector<SDL_Color> Frame;
+        size_t Reacting = 0;
+        std::array<MCWeather::MCGroundCircle, MCWeather::PrintCircles> Print{};
+        size_t Left = 0;
+    };
+
+    const auto stepped = [&](const std::optional<MCVector3D>& foot)
+    {
+        MCWeather::Clear();
+        ScenarioTime = now;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (foot.has_value())
+        {
+            MCWeather::AddStep(*foot, print, 0);
+        }
+
+        Stepped made;
+
+        for (int32_t frame = 1; frame <= lastFrame; ++frame)
+        {
+            ScenarioTime = now + Step * static_cast<float>(frame);
+            MCTestGame::RunFrame(FrameSeconds);
+            const std::span<const MCWeather::MCPuddleStep> reacting = MCWeather::ShownPuddleSteps();
+            made.Reacting = std::max(made.Reacting, reacting.size());
+
+            if (frame == 1 && !reacting.empty())
+            {
+                made.Print = reacting.front().Print;
+            }
+
+            if (frame == Shown)
+            {
+                auto shown = display->ReadFrame();
+                REQUIRE(shown.has_value());
+                REQUIRE(shown->size() == static_cast<size_t>(width) * height);
+                made.Frame = std::move(*shown);
+            }
+        }
+
+        made.Left = MCWeather::ShownPuddleSteps().size();
+        return made;
+    };
+
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    const Stepped none = stepped(std::nullopt);
+    const Stepped inPuddle = stepped(puddle);
+    const Stepped onDry = stepped(dry);
+    MCWeather::Settings().Steps = 0.0f;
+    const Stepped still = stepped(puddle);
+    MCWeather::Settings().Steps = 1.0f;
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    ScenarioTime = now;
+    GHdWeather = HdWeatherOff;
+    GHdRelief = 0;
+    GHdLighting = lightingWas;
+    GamePaused = false;
+
+    // The pixels a foot changed, and how far apart they lie.
+    struct Touched
+    {
+        size_t Count = 0;
+        int32_t Left = std::numeric_limits<int32_t>::max();
+        int32_t Right = std::numeric_limits<int32_t>::min();
+        int32_t Top = std::numeric_limits<int32_t>::max();
+        int32_t Bottom = std::numeric_limits<int32_t>::min();
+    };
+
+    const auto changedBy = [&](const Stepped& made)
+    {
+        Touched changed;
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            for (int32_t x = 0; x < width; ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+
+                if (!SameColor(made.Frame[i], none.Frame[i]))
+                {
+                    ++changed.Count;
+                    changed.Left = std::min(changed.Left, x);
+                    changed.Right = std::max(changed.Right, x);
+                    changed.Top = std::min(changed.Top, y);
+                    changed.Bottom = std::max(changed.Bottom, y);
+                }
+            }
+        }
+
+        return changed;
+    };
+
+    const Touched splashed = changedBy(inPuddle);
+    const Touched dryChanged = changedBy(onDry);
+    const Touched stillChanged = changedBy(still);
+    const auto apart = std::ranges::count_if(
+        inPuddle.Print, [&](const MCWeather::MCGroundCircle& circle)
+        { return std::hypot(circle.East - inPuddle.Print[0].East, circle.North - inPuddle.Print[0].North) > 0.5f; });
+    std::cout << std::format(
+        "  a foot in a puddle: {} pixels changed over {}x{}, {} of its print's circles apart from the "
+        "first; on dry ground {}, at a strength of 0 {}\n",
+        splashed.Count, splashed.Right - splashed.Left + 1, splashed.Bottom - splashed.Top + 1, apart, dryChanged.Count,
+        stillChanged.Count);
+    CHECK(none.Reacting == 0);
+    CHECK(inPuddle.Reacting == 1);
+    CHECK(inPuddle.Left == 0);
+    CHECK(splashed.Count > 0);
+    CHECK(splashed.Right - splashed.Left < width / 3);
+    CHECK(splashed.Bottom - splashed.Top < height / 3);
+    CHECK(apart > 0);
+    CHECK(inPuddle.Print[0].Radius > 0.0f);
+    CHECK(onDry.Reacting == 0);
+    CHECK(dryChanged.Count == 0);
+    CHECK(still.Reacting == 0);
+    CHECK(stillChanged.Count == 0);
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -12985,6 +13332,167 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
         Shoot(folder, std::format("water_{:04}", frame), original);
     }
 
+    MCFixedZoomHeight = 0.0f;
+}
+
+namespace
+{
+    /// <summary>--hd-walk's frames unless --hd-walk-frames says, at 30 a second (WaterFrameSeconds).</summary>
+    constexpr int32_t WalkFrames = 240;
+    /// <summary>
+    /// --hd-walk's mech walks this many tiles on unless --hd-walk-to says where, the way with the most puddles, looked
+    /// for every PuddleLook world units.
+    /// </summary>
+    constexpr int32_t WalkTiles = 4;
+    constexpr float PuddleLook = 8.0f;
+
+    /// <summary>
+    /// The map tile a tool's option <paramref name="name"/> names, as <c>row,column</c>; <paramref name="otherwise"/>
+    /// without it.
+    /// </summary>
+    std::pair<int32_t, int32_t> TileOption(std::string_view name, std::pair<int32_t, int32_t> otherwise)
+    {
+        const std::optional<std::string_view> given = MCTest::Option(name);
+
+        if (!given.has_value())
+        {
+            return otherwise;
+        }
+
+        int32_t row = 0;
+        int32_t column = 0;
+        REQUIRE(std::sscanf(std::string(*given).c_str(), "%d,%d", &row, &column) == 2);
+        REQUIRE(GameMap().OnMap(row, column));
+        return {row, column};
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-walk &lt;pack&gt; --shots &lt;folder&gt;</c> pictures a mech walking (port-only: its feet splashing in
+/// puddles in HD weather, at the water's edge with HD particles): mission <c>--mission</c>'s map revealed, its player's
+/// first mech put on map tile <c>--hd-walk-from &lt;row,column&gt;</c> (or where it stands), walking to
+/// <c>--hd-walk-to &lt;row,column&gt;</c> (or 4 tiles on along the map's rows, columns or diagonals, the way with the
+/// most puddles in the rain), the camera following it (held between with <c>--hd-walk-held 1</c>); the view zoomed to <c>--hd-walk-zoom &lt;lines&gt;</c> if given,
+/// then <c>--hd-walk-frames &lt;n&gt;</c> frames (default 240) at 30 a second, <c>walk_NNNN_hd.png</c> (or
+/// _original.png with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-steps</c> sizes the splashes.
+/// (The original's mechs never walk into the water: a water tile they can enter has a bridge over it, or is the shore.)
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-walk pictures a mech walking")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-walk");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    RevealAll();
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+
+    int32_t frames = WalkFrames;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("hd-walk-frames"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), frames);
+    }
+
+    const PlayerMech player = OwnPlayerMech();
+    int32_t standingRow = 0;
+    int32_t standingColumn = 0;
+    MCScenarioMap::WorldToMapTilePos(player.Mech->GetPosition(), standingRow, standingColumn);
+    const auto [fromRow, fromColumn] = TileOption("hd-walk-from", {standingRow, standingColumn});
+    MCVector3D from(TileColToWorld(fromColumn), TileRowToWorld(fromRow), 0.0f);
+    from.Z = MCTerrain::GetTerrainElevation(from);
+
+    // The way with the most puddles, the ground drawn round the mech (at the game's own zoom, the most of it).
+    Eye()->SetPosition(from);
+    MCTestGame::RunFrame(WaterFrameSeconds);
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    std::pair<int32_t, int32_t> wettest{fromRow, fromColumn + WalkTiles};
+    int32_t mostPuddles = 0;
+
+    for (int32_t wayRow = -1; wayRow <= 1; ++wayRow)
+    {
+        for (int32_t wayColumn = -1; wayColumn <= 1; ++wayColumn)
+        {
+            const int32_t row = fromRow + wayRow * WalkTiles;
+            const int32_t column = fromColumn + wayColumn * WalkTiles;
+
+            if ((wayRow == 0 && wayColumn == 0) || !GameMap().OnMap(row, column))
+            {
+                continue;
+            }
+
+            const float x = TileColToWorld(column);
+            const float y = TileRowToWorld(row);
+            const auto looks = static_cast<int32_t>(std::hypot(x - from.X, y - from.Y) / PuddleLook);
+            int32_t puddles = 0;
+
+            for (int32_t at = 0; at <= looks; ++at)
+            {
+                const float share = static_cast<float>(at) / static_cast<float>(looks);
+                MCVector3D point(std::lerp(from.X, x, share), std::lerp(from.Y, y, share), 0.0f);
+                point.Z = MCTerrain::GetTerrainElevation(point);
+                puddles += MCWeather::PuddleAt(point, *camera) ? 1 : 0;
+            }
+
+            if (puddles > mostPuddles)
+            {
+                mostPuddles = puddles;
+                wettest = {row, column};
+            }
+        }
+    }
+
+    const auto [toRow, toColumn] = TileOption("hd-walk-to", wettest);
+
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-walk-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCFixedZoomHeight = std::strtof(std::string(*zoom).c_str(), nullptr);
+    }
+
+    const MCVector3D to(TileColToWorld(toColumn), TileRowToWorld(toRow), 0.0f);
+    player.Mech->SetPosition(from);
+    const std::shared_ptr<MCMechWarrior> pilot = player.Mech->GetPilot();
+    REQUIRE(pilot != nullptr);
+    pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player, to, -1, 0);
+    const MCVector3D between((from.X + to.X) * 0.5f, (from.Y + to.Y) * 0.5f, 0.0f);
+    std::cout << std::format("  the mech ({}) walks from tile ({}, {}) to ({}, {}); the wettest way had {} puddle "
+                             "points {:.0f} apart\n",
+                             player.Mech->TypeAs<MCBattleMechType>().Name, fromRow, fromColumn, toRow, toColumn,
+                             mostPuddles, PuddleLook);
+    const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
+
+    // The camera follows the mech (its target), or with --hd-walk-held is held between.
+    const bool held = MCTest::Option("hd-walk-held").has_value();
+
+    if (held)
+    {
+        Eye()->ChangeTarget(nullptr, true);
+    }
+
+    for (int32_t frame = 0; frame < frames; ++frame)
+    {
+        SwitchArtMode(artModes, frame);
+
+        if (held)
+        {
+            Eye()->SetPosition(between);
+        }
+
+        MCTestGame::RunFrame(WaterFrameSeconds);
+        Shoot(folder, std::format("walk_{:04}", frame), original);
+    }
+
+    const MCVector3D reached = player.Mech->GetPosition();
+    std::cout << std::format("  the mech ended {:.0f} from where it was sent\n",
+                             std::hypot(reached.X - to.X, reached.Y - to.Y));
     MCFixedZoomHeight = 0.0f;
 }
 

@@ -468,6 +468,43 @@ namespace
         }
     }
 
+    /// <summary>
+    /// Port-only (HD ground's seam pass, draw.pshader's PatchMask): with HD ground, the terrain atlas's columns past each
+    /// tile's place, which hold its rows' runs (a tile's row is one run, DecodeTile's): red the first column drawn, green
+    /// the last (first past last: none). A column is a byte, so a tile with HD ground is at most TerrainRunWidest wide.
+    /// </summary>
+    constexpr int32_t TerrainRunColumns = 1;
+    constexpr int32_t TerrainRunWidest = UINT8_MAX + 1;
+
+    /// <summary>
+    /// Writes the rows' runs of a tile <paramref name="width"/> pixels wide into the last column of
+    /// <paramref name="texels"/>, where DecodeTile decoded it as <paramref name="height"/> rows of width +
+    /// TerrainRunColumns value + state pairs.
+    /// </summary>
+    void WriteTileRuns(int32_t width, int32_t height, std::span<uint8_t> texels)
+    {
+        const int32_t stride = width + TerrainRunColumns;
+
+        for (int32_t y = 0; y < height; ++y)
+        {
+            const std::span<uint8_t> line = texels.subspan(static_cast<size_t>(y) * stride * 2);
+            int32_t first = UINT8_MAX;
+            int32_t last = 0;
+
+            for (int32_t x = 0; x < width; ++x)
+            {
+                if (line[x * 2 + 1] != 0)
+                {
+                    first = std::min(first, x);
+                    last = std::max(last, x);
+                }
+            }
+
+            line[width * 2] = static_cast<uint8_t>(first);
+            line[width * 2 + 1] = static_cast<uint8_t>(last);
+        }
+    }
+
     /// <summary>The terrain shader's vertex uniforms (shaders/terrain.vshader, cbuffer Terrain).</summary>
     struct TerrainUniforms
     {
@@ -4415,8 +4452,23 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         }
     }
 
+    // The seam pass's runs hold a column in a byte (TerrainRunWidest), so a wider tile keeps the map's ground original.
+    const auto tooWide = [](std::span<const uint8_t> tile) { return VfxTileWidth(tile) > TerrainRunWidest; };
+
+    if (const auto wide = hdScale != 0 ? std::ranges::find_if(mesh.Tiles, tooWide) : mesh.Tiles.end();
+        wide != mesh.Tiles.end())
+    {
+        SDL_Log("MCVulkanRenderer: the HD terrain is off for this map: a tile is %d pixels wide, more than its runs "
+                "hold (%d)",
+                VfxTileWidth(*wide), TerrainRunWidest);
+        hdScale = 0;
+        std::ranges::fill(hdTiles, nullptr);
+    }
+
     const int32_t align = hdScale != 0 ? MCBc7::BlockSide : 1;
     const auto aligned = [align](int32_t value) { return (value + align - 1) / align * align; };
+    // Port-only: with HD ground, each place has its rows' runs beside it (TerrainRunColumns), for the seam pass.
+    const int32_t runColumns = hdScale != 0 ? TerrainRunColumns : 0;
 
     for (size_t i = 0; i < mesh.Tiles.size(); ++i)
     {
@@ -4430,7 +4482,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
             continue;
         }
 
-        if (shelfX + aligned(place.Width) > TerrainAtlasWidth)
+        if (shelfX + aligned(place.Width + runColumns) > TerrainAtlasWidth)
         {
             shelfY += shelfHeight;
             shelfX = 0;
@@ -4439,7 +4491,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
         place.X = shelfX;
         place.Y = shelfY;
-        shelfX += aligned(place.Width);
+        shelfX += aligned(place.Width + runColumns);
         shelfHeight = std::max(shelfHeight, aligned(place.Height));
     }
 
@@ -4623,12 +4675,19 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
         if (place.Width != 0)
         {
-            DecodeTile(mesh.Tiles[i], place.Width,
-                       QueueUpload(_TerrainMesh.Atlas.Handle, static_cast<uint32_t>(place.X),
-                                   static_cast<uint32_t>(place.Y), static_cast<uint32_t>(place.Width),
-                                   static_cast<uint32_t>(place.Height), 2));
+            const int32_t stride = place.Width + runColumns;
+            const std::span<uint8_t> texels =
+                QueueUpload(_TerrainMesh.Atlas.Handle, static_cast<uint32_t>(place.X), static_cast<uint32_t>(place.Y),
+                            static_cast<uint32_t>(stride), static_cast<uint32_t>(place.Height), 2);
+            DecodeTile(mesh.Tiles[i], stride, texels);
+
+            if (runColumns != 0)
+            {
+                WriteTileRuns(place.Width, place.Height, texels);
+            }
+
             ++_FrameUploads.AtlasImages;
-            _FrameUploads.AtlasBytes += static_cast<int64_t>(place.Width) * place.Height * 2;
+            _FrameUploads.AtlasBytes += static_cast<int64_t>(stride) * place.Height * 2;
         }
     }
 

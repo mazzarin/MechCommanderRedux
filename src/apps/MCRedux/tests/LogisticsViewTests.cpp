@@ -710,7 +710,7 @@ TEST_CASE_ISOLATED("game: the preferences panel keeps the sliders where they wer
     {
         MCTest::Scope scope(std::format("slider {}", i));
         MCLogSlider& slider = *sliders[i];
-        CHECK(slider.TrackPort != nullptr);
+        CHECK(slider.TrackArt != nullptr);
         CHECK_EQ(slider.GlobalY(), Tops[i]);
         const int32_t saved = slider.CurrentValue;
 

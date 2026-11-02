@@ -20,10 +20,12 @@ public:
     void Draw() override;
 
     /// <summary>
-    /// Port: gives the slider a track picture of its own size to draw under the thumb (the original's tracks were the
-    /// screen's art), with the thumb's travel <paramref name="thumbInset"/> pixels in from each end.
+    /// Port: gives the slider a track to draw under the thumb: the slider's size of <paramref name="art"/> from
+    /// (<paramref name="left"/>, <paramref name="top"/>) (the original's tracks were the screen's art; copied from the
+    /// art itself, HD art shows the pack's), with the thumb's travel <paramref name="thumbInset"/> pixels in from each
+    /// end.
     /// </summary>
-    void SetTrack(std::shared_ptr<MCLogPort> track, int32_t thumbInset);
+    void SetTrack(std::shared_ptr<MCLogPort> art, int32_t left, int32_t top, int32_t thumbInset);
 
     /// <summary>Port: the slider draws itself each frame.</summary>
     bool DrawsLive() override { return true; }
@@ -45,8 +47,10 @@ public:
     int32_t CurrentValue = 0;
     /// <summary>The thumb picture.</summary>
     std::shared_ptr<MCLogPort> ThumbPort;
-    /// <summary>Port: the track picture (null: none, the screen's art shows through).</summary>
-    std::shared_ptr<MCLogPort> TrackPort;
+    /// <summary>Port: the art the track is copied from (null: none, the screen's art shows through), and where.</summary>
+    std::shared_ptr<MCLogPort> TrackArt;
+    int32_t TrackLeft = 0;
+    int32_t TrackTop = 0;
     /// <summary>Port: how far in from each end the thumb's travel starts and stops.</summary>
     int32_t ThumbInset = 0;
 

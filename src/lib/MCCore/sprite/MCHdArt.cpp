@@ -707,7 +707,8 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
                 (static_cast<size_t>(y) * scale * index->Width + static_cast<size_t>(x) * scale) * BytesPerPixel;
             const size_t to = (static_cast<size_t>(y) * width + x) * IndexBytes;
             made.Indices[to] = index->Pixels[from];
-            made.Indices[to + 1] = index->Pixels[from + 1] == HasIndex ? HasIndex : 0;
+            const uint8_t green = index->Pixels[from + 1];
+            made.Indices[to + 1] = green == HasIndex || green == BakedShadow ? green : 0;
         }
     }
 

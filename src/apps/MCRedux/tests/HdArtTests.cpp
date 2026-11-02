@@ -3367,6 +3367,45 @@ TEST_CASE("hd art: an object's baked shadow is its black outside its outline, no
     }
 }
 
+/// <summary>
+/// A frame read from a PNG pair keeps the baked shadow its generator marked in the index picture's green (a forest's,
+/// which the game doesn't mark): green 255 and the mark stay as they are, any other green has no index.
+/// </summary>
+TEST_CASE("hd art: a frame read from PNGs keeps the baked shadow its generator marked")
+{
+    constexpr int32_t Scale = 2;
+    constexpr std::array<uint8_t, 4> Greens = {HasIndex, MCHdArt::BakedShadow, 0, 200};
+    constexpr int32_t Width = static_cast<int32_t>(Greens.size());
+    std::vector<uint8_t> color(static_cast<size_t>(Width * Scale) * Scale * BytesPerPixel, HasIndex);
+    std::vector<uint8_t> index(color.size());
+
+    for (int32_t y = 0; y < Scale; ++y)
+    {
+        for (int32_t x = 0; x < Width * Scale; ++x)
+        {
+            const size_t at = (static_cast<size_t>(y) * Width * Scale + x) * BytesPerPixel;
+            std::ranges::copy(std::array<uint8_t, 4>{MCHdArt::BakedShadowIndex, Greens[x / Scale], 0, HasIndex},
+                              index.begin() + static_cast<ptrdiff_t>(at));
+        }
+    }
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_marked_shadow";
+    std::filesystem::create_directories(scratch);
+    SavePng(scratch / "0.png", Width * Scale, Scale, color);
+    SavePng(scratch / "0_idx.png", Width * Scale, Scale, index);
+    const auto frame = MCHdArt::FrameFromPngs(scratch / "0.png", scratch / "0_idx.png", Scale);
+    std::filesystem::remove_all(scratch);
+    REQUIRE(frame.has_value());
+    REQUIRE_EQ(frame->Indices.size(), Greens.size() * MCHdArt::IndexBytes);
+
+    for (size_t x = 0; x < Greens.size(); ++x)
+    {
+        MCTest::Scope scope(std::format("pixel {}", x));
+        CHECK_EQ(frame->Indices[x * MCHdArt::IndexBytes], MCHdArt::BakedShadowIndex);
+        CHECK_EQ(frame->Indices[x * MCHdArt::IndexBytes + 1], x < 2 ? Greens[x] : uint8_t{0});
+    }
+}
+
 namespace
 {
     /// <summary>

@@ -656,7 +656,7 @@ Output SmoothBlendedPixel(Input input, int2 target)
 }
 
 // An HD frame's index picture's green (MCHdArt.h) is 255 for a pixel with an index, and this for one that is also
-// part of an object's baked shadow (MCHdArt::MarkBakedShadows).
+// part of an object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's).
 static const uint BakedShadow = 254u;
 
 // Whether an HD frame's index picture's texel has an index.

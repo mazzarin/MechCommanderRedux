@@ -28,8 +28,9 @@ enum class MCWeatherKind : uint8_t
 /// Port-only (HD weather, PREFS "HDWeather"): rain over the battle, drawn by the GPU (none with the software renderer).
 /// The sky clouds over (the world's own light dimmed and greyed, wet land darker, a grey veil drifting over it in sheets
 /// before the wind; no sun: its shadows faint, its relief and the water's glints gone), drops fall slanted before the
-/// wind's gusts and splash where they land (droplets on land, rings on the water drawn and in puddles, on a unit's top
-/// when it stands in their way), and water drips off the units. With the HD ground's relief maps (MCSceneLights::
+/// wind's gusts and splash where they land as the ground there takes them (MCSplashGround: droplets off rock and roads,
+/// a dark dot soaking into soil, a soft puff in grass, rings on the water drawn and in puddles, a glint on a unit's
+/// metal top when it stands in their way), and water drips off the units. With the HD ground's relief maps (MCSceneLights::
 /// ReliefMapsOn, which tell the ground from what stands on it) the world is wet too: puddles lie in the ground's low
 /// spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten, and a foot coming down in a
 /// puddle sprays it up and the puddle reacts round it. The sky, the sheen and the puddles are the presenter's
@@ -80,6 +81,21 @@ namespace MCWeather
     /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing).</summary>
     MCWeatherLook LookOf(MCWeatherKind kind);
 
+    /// <summary>
+    /// What a drop lands on, which says how it splashes (with MCWeatherSettings::Ground above 0): hard ground (rock,
+    /// roads, concrete, packed earth) throws droplets up, crisply; soil (dirt, ploughed fields) takes it with a dark dot
+    /// as it soaks in, and grass with a soft puff among its blades, neither throwing droplets; water and puddles ring; a
+    /// unit's metal top glints a moment, throwing droplets as hard ground does.
+    /// </summary>
+    enum class MCSplashGround : uint8_t
+    {
+        Hard,
+        Soil,
+        Grass,
+        Water,
+        Metal,
+    };
+
     /// <summary>How the weather shows beyond its look (the tools' --hd-weather sets it).</summary>
     struct MCWeatherSettings
     {
@@ -89,6 +105,30 @@ namespace MCWeather
         float Steps = 1.0f;
         /// <summary>How loud the thunder is heard, 1 as made (0: none; the tools' --hd-thunder sets it).</summary>
         float Thunder = 1.0f;
+        /// <summary>
+        /// How strongly drops splash as the ground they land on takes them (MCSplashGround), 1 as made (0: every land
+        /// alike, droplets thrown up, as the rain first fell; the tools' --hd-splashes sets it).
+        /// </summary>
+        float Ground = 1.0f;
+    };
+
+    /// <summary>How many of each piece the splashes showing are made of.</summary>
+    struct MCSplashPieces
+    {
+        /// <summary>Droplets thrown up (off hard ground and units' tops, out of puddles under a foot).</summary>
+        size_t Droplets = 0;
+        /// <summary>Dots where drops land (on hard ground, in water).</summary>
+        size_t Dots = 0;
+        /// <summary>Rings spreading on the water drawn and in puddles.</summary>
+        size_t Rings = 0;
+        /// <summary>Dark dots soaking into soil.</summary>
+        size_t Soaks = 0;
+        /// <summary>Soft puffs in grass.</summary>
+        size_t Puffs = 0;
+        /// <summary>Glints on units' metal tops.</summary>
+        size_t Glints = 0;
+        /// <summary>Drips falling off units.</summary>
+        size_t Drips = 0;
     };
 
     /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
@@ -186,6 +226,32 @@ namespace MCWeather
 
     /// <summary>The feet's puddles reacting now (the newest MaxPuddleSteps), oldest first.</summary>
     std::span<const MCPuddleStep> ShownPuddleSteps();
+
+    /// <summary>
+    /// The ground land drawn in palette entry <paramref name="index"/> is taken for: grass by its green (which the
+    /// puddles leave dry too), soil by a brown's strong colour (its saturation: the dirt's and the fields' browns and
+    /// tans), else hard ground (the rock's, the roads', concrete's and packed earth's greys and grey browns); the water's
+    /// colours (MCParticles::IsWaterColor) are water.
+    /// </summary>
+    MCSplashGround GroundOf(uint8_t index);
+
+    /// <summary>
+    /// What a drop landing at world point <paramref name="point"/> (not on a unit) splashes on, as
+    /// <paramref name="camera"/> shows the ground there: water where the water is drawn (not under a bridge) or a puddle
+    /// lies, else what <see cref="GroundOf"/> takes the surface drawn there for (MCParticles::SurfaceDrawnAt: the
+    /// overlays laid on the ground, such as roads, over its tiles); hard ground where none is drawn.
+    /// </summary>
+    MCSplashGround GroundAt(const MCVector3D& point, const MCCamera& camera);
+
+    /// <summary>
+    /// A drop of size <paramref name="size"/> (0 far from the eye, 1 between, 2 near) landing at world point
+    /// <paramref name="point"/> as the game's time next goes on (on a unit's top when one stands in its way), splashing
+    /// there: the tools' and tests' own drops (the rain's are thrown by <see cref="Draw"/>).
+    /// </summary>
+    void AddDrop(const MCVector3D& point, uint8_t size);
+
+    /// <summary>How many of each piece the splashes showing now are made of.</summary>
+    MCSplashPieces Pieces();
 
     /// <summary>
     /// Moves the drops on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list

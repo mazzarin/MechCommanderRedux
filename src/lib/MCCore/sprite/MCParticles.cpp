@@ -651,6 +651,73 @@ namespace
     }
 
     /// <summary>
+    /// The palette entry drawn at world point (x, y, z) in <paramref name="camera"/>'s view: the pixel there of the last
+    /// tile its terrain window drew over it (each block's at its top-left corner, row by row, as MCTerrainBlock::Draw);
+    /// with <paramref name="overlays"/>, that of the last overlay drawn over the tiles there (MCTerrainBlock::
+    /// DrawOverlay, after them all) where one covers it. None outside the window's tiles.
+    /// </summary>
+    std::optional<uint8_t> DrawnAt(float x, float y, float z, const MCCamera& camera, bool overlays)
+    {
+        const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
+        const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+        if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
+            terrain->Tiles == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // The window's grid from its first vertex's map vertex, and the map vertex the world point lies by.
+        const int32_t side = window->Side();
+        const uint32_t firstTile = window->Vertices[0].PosTile;
+        const int32_t firstRow = static_cast<int32_t>(firstTile) >> 16;
+        const int32_t firstCol = static_cast<int16_t>(firstTile & 0xffff);
+        int32_t row = 0;
+        int32_t col = 0;
+        MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
+        const MCVector2D at = Project(x, y, z, camera);
+        const auto px = static_cast<int32_t>(std::floor(at.X));
+        const auto py = static_cast<int32_t>(std::floor(at.Y));
+        std::optional<uint8_t> drawn;
+        std::optional<uint8_t> over;
+
+        for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2);
+             ++r)
+        {
+            for (int32_t c = std::max(col - TileNear - firstCol, 0); c <= std::min(col + TileNear - firstCol, side - 2);
+                 ++c)
+            {
+                const MCVertex& corner = window->Vertices[static_cast<size_t>(r) * side + c];
+                const MCPrecompVertex& vertex = terrain->MapBlocks->Vertex(corner.MapVertex);
+                const std::span<const uint8_t> tile =
+                    vertex.TextureData < 0 ? std::span<const uint8_t>() : terrain->Tiles->Lookup(vertex.TextureData);
+
+                if (tile.size() >= 2)
+                {
+                    if (const std::optional<uint8_t> pixel =
+                            VfxTilePixel(tile, px - corner.Px + tile[0], py - corner.Py + tile[1]);
+                        pixel.has_value())
+                    {
+                        drawn = pixel;
+                    }
+                }
+
+                if (overlays && vertex.OverlayData >= 0)
+                {
+                    if (const std::optional<uint8_t> pixel = FastShapePixel(terrain->Tiles->Lookup(vertex.OverlayData),
+                                                                            0, px - corner.Px, py - corner.Py);
+                        pixel.has_value())
+                    {
+                        over = pixel;
+                    }
+                }
+            }
+        }
+
+        return over.has_value() ? over : drawn;
+    }
+
+    /// <summary>
     /// Whether the ground drawn at (x, y, z) in <paramref name="camera"/>'s view is the water's
     /// (MCParticles::GroundDrawnAt), with no bridge over it. (The map's terrain types from FirstWaterTerrain on, which
     /// take no craters, are paved ground too, and lie a tile or so off the water drawn.)
@@ -1714,53 +1781,12 @@ auto MCParticles::GroundAt(float x, float y) -> float
 
 auto MCParticles::GroundDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
 {
-    const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
-    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    return DrawnAt(x, y, z, camera, false);
+}
 
-    if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
-        terrain->Tiles == nullptr)
-    {
-        return std::nullopt;
-    }
-
-    // The window's grid from its first vertex's map vertex, and the map vertex the world point lies by.
-    const int32_t side = window->Side();
-    const uint32_t firstTile = window->Vertices[0].PosTile;
-    const int32_t firstRow = static_cast<int32_t>(firstTile) >> 16;
-    const int32_t firstCol = static_cast<int16_t>(firstTile & 0xffff);
-    int32_t row = 0;
-    int32_t col = 0;
-    MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
-    const MCVector2D at = Project(x, y, z, camera);
-    const auto px = static_cast<int32_t>(std::floor(at.X));
-    const auto py = static_cast<int32_t>(std::floor(at.Y));
-    std::optional<uint8_t> drawn;
-
-    for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2); ++r)
-    {
-        for (int32_t c = std::max(col - TileNear - firstCol, 0); c <= std::min(col + TileNear - firstCol, side - 2);
-             ++c)
-        {
-            const MCVertex& corner = window->Vertices[static_cast<size_t>(r) * side + c];
-            const int32_t texture = terrain->MapBlocks->Vertex(corner.MapVertex).TextureData;
-            const std::span<const uint8_t> tile =
-                texture < 0 ? std::span<const uint8_t>() : terrain->Tiles->Lookup(texture);
-
-            if (tile.size() < 2)
-            {
-                continue;
-            }
-
-            if (const std::optional<uint8_t> pixel =
-                    VfxTilePixel(tile, px - corner.Px + tile[0], py - corner.Py + tile[1]);
-                pixel.has_value())
-            {
-                drawn = pixel;
-            }
-        }
-    }
-
-    return drawn;
+auto MCParticles::SurfaceDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
+{
+    return DrawnAt(x, y, z, camera, true);
 }
 
 auto MCParticles::BridgedAt(float x, float y) -> bool

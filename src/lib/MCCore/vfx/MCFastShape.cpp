@@ -160,3 +160,70 @@ std::optional<size_t> FastShapeSize(std::span<const uint8_t> shape)
     const std::optional<size_t> bytes = FastShapeRowBytes(shape.subspan(last), width);
     return bytes.has_value() ? std::optional(std::max(header, last + *bytes)) : std::nullopt;
 }
+
+std::optional<uint8_t> FastShapePixel(std::span<const uint8_t> shapeTable, int32_t shapeNum, int32_t x, int32_t y)
+{
+    constexpr size_t FirstShape = 8;
+    constexpr size_t RowOffsets = 0xc;
+    constexpr uint32_t Literal = 0x80;
+    constexpr uint8_t SeeThrough = 0xff;
+
+    if (shapeNum < 0 || shapeTable.size() < FirstShape + (static_cast<size_t>(shapeNum) + 1) * 4 ||
+        MCVfxRead32(shapeTable) != FastShapeTag)
+    {
+        return std::nullopt;
+    }
+
+    const auto at = static_cast<size_t>(MCVfxRead32(shapeTable, FirstShape + static_cast<size_t>(shapeNum) * 4));
+
+    if (at + RowOffsets > shapeTable.size())
+    {
+        return std::nullopt;
+    }
+
+    const std::span<const uint8_t> shape = shapeTable.subspan(at);
+    const int32_t column = x + static_cast<int16_t>(Read16(shape, 4));
+    const int32_t row = y + static_cast<int16_t>(Read16(shape, 6));
+    const int32_t height = Read16(shape, 8);
+    const int32_t width = Read16(shape, 10) + 1;
+
+    if (column < 0 || row < 0 || column >= width || row >= height ||
+        RowOffsets + (static_cast<size_t>(row) + 1) * 2 > shape.size())
+    {
+        return std::nullopt;
+    }
+
+    // A translucent shape's first row starts with the word 1 (FastShapeDraw's).
+    const size_t firstRow = Read16(shape, RowOffsets);
+
+    if (height > 0 && firstRow + 2 <= shape.size() && Read16(shape, firstRow) == 1)
+    {
+        return std::nullopt;
+    }
+
+    size_t data = Read16(shape, RowOffsets + static_cast<size_t>(row) * 2);
+
+    // A byte c < 0x80 is a run of c pixels of the next byte; c >= 0x80 is c - 0x80 literal pixels following.
+    for (int32_t count = 0; data < shape.size();)
+    {
+        const uint32_t c = shape[data++];
+        const auto pixels = static_cast<int32_t>(c >= Literal ? c - Literal : c);
+
+        if (column < count + pixels)
+        {
+            const size_t pixel = c >= Literal ? data + static_cast<size_t>(column - count) : data;
+
+            if (pixel >= shape.size() || (c < Literal && shape[pixel] == SeeThrough))
+            {
+                return std::nullopt;
+            }
+
+            return shape[pixel];
+        }
+
+        count += pixels;
+        data += c >= Literal ? c - Literal : 1;
+    }
+
+    return std::nullopt;
+}

@@ -327,6 +327,8 @@ private:
         bool IndexOnly = false;
         /// <summary>Port-only: whether the draws are shadows (HD lighting), taking the colours' alpha down alone.</summary>
         bool Shadow = false;
+        /// <summary>Port-only (HDSway): whether the draws are a forest's, its HD frame marking the sway alone.</summary>
+        bool Marks = false;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -767,6 +769,8 @@ private:
     MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexOnly;
     /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
+    /// <summary>Port-only (HDSway): a forest's HD frame, blended, writing the sway mark (the indices' alpha) alone.</summary>
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _BlendMarks;
     /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;

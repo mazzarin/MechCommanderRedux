@@ -189,14 +189,14 @@ namespace MCSceneLights
         float CloudSpeed = 15.0f;
         /// <summary>
         /// With forests swaying (<see cref="GHdSway"/>): how far a forest's canopy sways at the height of a gust, in
-        /// meters along the ground (its crowns lean before the wind and rock about it).
+        /// meters along the ground (its crowns lean before the wind and rock about it, each its own way).
         /// </summary>
-        float Sway = 0.8f;
+        float Sway = 0.3f;
         /// <summary>
         /// With forests swaying: how much brighter the canopy shows at the height of a gust, its leaves turned up to it
         /// (0: as drawn).
         /// </summary>
-        float SwayLight = 0.12f;
+        float SwayLight = 0.05f;
         /// <summary>The colour of the world's own light, times <see cref="Ambient"/> (white by day; night's is blue).</summary>
         std::array<float, 3> AmbientTint{1.0f, 1.0f, 1.0f};
         /// <summary>

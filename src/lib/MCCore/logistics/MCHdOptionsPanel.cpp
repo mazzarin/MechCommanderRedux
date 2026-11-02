@@ -86,7 +86,7 @@ namespace
             .Key = HdLightingKey,
             .Choices = HdLightingChoices},
         Row{.Label = "SUN SHADOWS",
-            .Description = "SHADOWS DARKEN THE GROUND INSTEAD OF SOLID BLACK; MECHS CAST THEIR OWN.",
+            .Description = "SHADOWS DARKEN THE GROUND INSTEAD OF SOLID BLACK.",
             .Key = "HDSunShadows",
             .Choices = OffOn,
             .Needs = HdArtKey,

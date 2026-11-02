@@ -637,7 +637,9 @@ namespace
     /// off and the load screen's list empty on any machine, whatever saves its install or earlier tests left. That took
     /// the main menu to 0xe30aef7b, the load screen to 0xe34ed709 and the folds to 0x1fd4afc0 and 0xedd1e312 (GPU
     /// 0x3742f7d8 and 0xdbecf905). The SCROLL SPEED box (2026-10-31) took the preferences step to 0x911a71aa (software
-    /// and GPU agree) and the folds to 0xf45ad0c0 and 0x9f228312 (GPU 0xb74d2ed8 and 0xc9a41905).
+    /// and GPU agree) and the folds to 0xf45ad0c0 and 0x9f228312 (GPU 0xb74d2ed8 and 0xc9a41905). The INTERFACE SIZE
+    /// box, the right column's boxes 42 lines tall to hold it (2026-11-02), took the preferences step to 0xe23d2589
+    /// (software and GPU agree) and the folds to 0x072d7e52 and 0x0f69a772 (GPU 0x24a373aa and 0xa8f8c2e5).
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -720,7 +722,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0xe30aef7bu},
-            {"preferences", [] { ShowPreferences(); }, 0x911a71aau},
+            {"preferences", [] { ShowPreferences(); }, 0xe23d2589u},
             {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
             {"load screen",
              []
@@ -854,8 +856,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0xb74d2ed8u : 0xf45ad0c0u);
-        CHECK_EQ(presents, gpu ? 0xc9a41905u : 0x9f228312u);
+        CHECK_EQ(frames, gpu ? 0x24a373aau : 0x072d7e52u);
+        CHECK_EQ(presents, gpu ? 0xa8f8c2e5u : 0x0f69a772u);
         CheckGpuAlone(gpu);
     }
 }

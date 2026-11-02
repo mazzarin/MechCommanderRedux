@@ -271,7 +271,7 @@ float MCDisplay::AutoInterfaceScale(int lines)
     return static_cast<float>(std::clamp(std::round(wanted / AutoScaleStep) * AutoScaleStep, 1.0, AutoScaleMost));
 }
 
-float MCDisplay::AutoInterfaceScaleNow() const
+float MCDisplay::AutoInterfaceScaleNow(int maxHeight, bool followDisplayScale) const
 {
     int pixelWidth = 0;
     int pixelHeight = 0;
@@ -281,8 +281,11 @@ float MCDisplay::AutoInterfaceScaleNow() const
         return 1.0f;
     }
 
-    const int maxHeight = UnscaledMaxHeight(pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), ScreenFit());
-    return AutoInterfaceScale(maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight);
+    MCScreenFit fit = ScreenFit();
+    fit.MaxHeight = std::max(maxHeight, 0);
+    fit.FollowDisplayScale = followDisplayScale;
+    const int most = UnscaledMaxHeight(pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), fit);
+    return AutoInterfaceScale(most > 0 ? std::min(most, pixelHeight) : pixelHeight);
 }
 
 SDL_Point MCDisplay::FollowingScreenSize(int pixelWidth, int pixelHeight, float displayScale, const MCScreenFit& fit)

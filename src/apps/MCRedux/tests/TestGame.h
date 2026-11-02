@@ -64,6 +64,13 @@ namespace MCTestGame
     /// <returns>Whether the main menu is up.</returns>
     bool StartLogistics(const std::function<void()>& afterBoot = {});
 
+    /// <summary>
+    /// From logistics' main menu (<see cref="StartLogistics"/>): a new campaign's first mission, started with the
+    /// force's first mech deployed. Runs frames until its scenario has started up.
+    /// </summary>
+    /// <returns>Whether the scenario is up.</returns>
+    bool StartCampaignMission();
+
     /// <summary>The tests' user folder (under the temporary folder): the game writes its saves and settings there.</summary>
     std::filesystem::path UserFolder();
 
@@ -90,6 +97,27 @@ namespace MCTestGame
     private:
         /// <summary>The save folder it replaced.</summary>
         std::string _Kept;
+    };
+
+    /// <summary>
+    /// Deletes the save games written while it lives (a mission's start and a finished mission save the campaign),
+    /// which would otherwise pile up in the test user folder.
+    /// </summary>
+    class SaveGameCleanup
+    {
+    public:
+        SaveGameCleanup();
+        ~SaveGameCleanup();
+
+        SaveGameCleanup(const SaveGameCleanup&) = delete;
+        SaveGameCleanup& operator=(const SaveGameCleanup&) = delete;
+
+    private:
+        /// <summary>The files directly in the save folder.</summary>
+        std::vector<std::filesystem::path> Files() const;
+
+        std::filesystem::path _Folder;
+        std::set<std::filesystem::path> _Before;
     };
 
     /// <summary>

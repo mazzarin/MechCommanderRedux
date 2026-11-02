@@ -67,6 +67,12 @@ public:
     /// </summary>
     /// <returns>Whether the screen changed size.</returns>
     bool FollowWindowSize();
+    /// <summary>
+    /// Port-only: the interface size in percent AUTO (<see cref="GInterfaceSize"/>'s) picks for the window as it is
+    /// now, at the UI RESOLUTION set (<see cref="GUiResolution"/>), as the next <see cref="FollowWindowSize"/> takes
+    /// it; the original's size before the display opens.
+    /// </summary>
+    int AutoInterfaceSizeNow() const;
     /// <summary>The display, or null before it opens; the caller keeps it as its pin.</summary>
     std::shared_ptr<MCDisplay> Display() const { return _Display; }
     /// <summary>Whether the display is up (palette changes and repaints wait for it).</summary>

@@ -140,7 +140,7 @@ namespace
     /// <summary>
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 104 wide and 11 tall at
     /// (488, top), its list's rows 10 tall from top + 11. DIFFICULTY's field is at y 176 (EASY, REGULAR, HARD),
-    /// RENDERER's at y 243 (VULKAN, SOFTWARE), SCROLL SPEED's at y 351 (AUTO, 1.5X to 3X).
+    /// RENDERER's at y 222 (VULKAN, SOFTWARE), SCROLL SPEED's at y 360 (AUTO, 1.5X to 3X).
     /// </summary>
     struct PrefsDropDown
     {
@@ -152,8 +152,8 @@ namespace
     };
 
     constexpr PrefsDropDown DifficultyDropDown{176};
-    constexpr PrefsDropDown RendererDropDown{243};
-    constexpr PrefsDropDown ScrollSpeedDropDown{351};
+    constexpr PrefsDropDown RendererDropDown{222};
+    constexpr PrefsDropDown ScrollSpeedDropDown{360};
 
     /// <summary>The drop-down under <paramref name="parent"/> (at any depth) whose field lies at <paramref name="dropDown"/>.</summary>
     std::shared_ptr<MCLogComboBox> FindDropDownIn(MCGuiObject& parent, const PrefsDropDown& dropDown)

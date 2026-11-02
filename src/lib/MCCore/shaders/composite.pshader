@@ -117,7 +117,8 @@ cbuffer Composite : register(b0, space3)
     // none).
     float4 airBeams;
     // Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): x, how steeply the HD ground's relief maps stand
-    // its bumps (0: the ground is lit by its brightness, as the rest).
+    // its bumps (0: the ground is lit by its brightness, as the rest); y (MCLighting::CanopyRelief), how much of the
+    // sun's relief a forest's canopy shows where it is marked (IsCanopy; 1: as the ground's).
     float4 reliefLook;
     // Port-only (HDSway, MCLighting::Sway): x, how far a forest's canopy sways at the height of a gust (meters, 0 none);
     // y, how much brighter it shows there.
@@ -360,8 +361,10 @@ float SunFacing(float2 slope)
 // colour: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of the
 // light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
 // unchanged. Port-only (HD weather): the overcast leaves overcast of it (OvercastAt), sparing a light's own pixels alone,
-// as the night does.
-float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, float3 cloudLight, float3 overcast)
+// as the night does. Port-only: the sun shows sunRelief of the relief (1: all of it; a forest's canopy less,
+// reliefLook.y).
+float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shade, float glint, float3 cloudLight,
+           float3 overcast)
 {
     const float3 ambient = AmbientLight() * overcast;
 
@@ -373,7 +376,7 @@ float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, f
 
     const float selfLit = SelfLit(world);
     const float3 own = lerp(world, dot(world, Luma), ambientLook.w * (1.0 - selfLit));
-    const float3 base = own * lerp(ambient * SunFacing(slope), 1.0, selfLit) *
+    const float3 base = own * lerp(ambient * lerp(1.0, SunFacing(slope), sunRelief), 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
     const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
@@ -1310,8 +1313,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float sunGlint = weather.x > 0.0 ? 0.0 : SunGlint;
             const float3 caught =
                 TexelAt(glintTex, glintSampler, clamp(round(hazy), 0.0, worldSize.xy - 1.0), worldSize.zw).rgb;
+            // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
+            const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
             const float3 shone =
-                WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), lit.a, glint, cloudLight, overcast) +
+                WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast) +
                                    glint * sunGlint * AmbientLight() * cloudLight,
                                hazy + 0.5),
                       seen, hazy) +
@@ -1334,7 +1339,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         float glint;
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0)) +
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0)) +
                      glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5));
     }
 

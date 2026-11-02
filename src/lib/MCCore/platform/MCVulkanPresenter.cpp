@@ -62,7 +62,10 @@ namespace
         float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         /// <summary>How much the spotlights' beams show in the air (0 none).</summary>
         float AirBeams[4] = {};
-        /// <summary>How steeply the HD ground's relief maps stand its bumps (0: lit by its brightness).</summary>
+        /// <summary>
+        /// How steeply the HD ground's relief maps stand its bumps (0: lit by its brightness), and how much of the sun's
+        /// relief a forest's canopy shows (1: as the ground's).
+        /// </summary>
         float ReliefLook[4] = {};
         /// <summary>How far a forest's canopy sways at the height of a gust (meters, 0 none), and how much brighter.</summary>
         float Sway[4] = {};
@@ -145,6 +148,7 @@ namespace
             uniforms.AmbientLook[3] = lighting.AmbientGrey;
             uniforms.AirBeams[0] = lighting.AirBeams;
             uniforms.ReliefLook[0] = MCSceneLights::ReliefMapsOn() ? lighting.ReliefMaps : 0.0f;
+            uniforms.ReliefLook[1] = lighting.CanopyRelief;
         }
 
         uniforms.LightTone[0] = lighting.Scatter;

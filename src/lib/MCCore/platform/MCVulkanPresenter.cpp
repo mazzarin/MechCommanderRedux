@@ -78,6 +78,13 @@ namespace
         float WetLook[4] = {};
         /// <summary>The lightning: how much it lights the world now (0 none) and from which side of the view (-1 to 1).</summary>
         float Flash[4] = {};
+        /// <summary>
+        /// Port-only (HD lighting): the light tiles' side in the world's texels (0: none) and how many there are across
+        /// and down (LightTiles).
+        /// </summary>
+        float LightTiles[4] = {};
+        /// <summary>The spotlights among the lights, a bit a light (the first 32 in the first word).</summary>
+        uint32_t SpotLights[4] = {};
         /// <summary>One a foot's puddle reacting: its ground point (meters), its age (seconds) and its strength.</summary>
         float PuddleSteps[MCWeather::MaxPuddleSteps][4] = {};
         /// <summary>MCWeather::PrintCircles a foot: its footprint's circles, their middles and radii (meters).</summary>
@@ -108,8 +115,87 @@ namespace
     constexpr float MinCloudSize = 1.0f;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t6).</summary>
-    constexpr size_t CompositeSamplers = 7;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t7).</summary>
+    constexpr size_t CompositeSamplers = 8;
+    /// <summary>
+    /// The light tiles' side, in the world's texels (composite.pshader's lightTiles): a tile meets few lights, and a
+    /// SIMD group's pixels mostly share one.
+    /// </summary>
+    constexpr float LightTileTexels = 32.0f;
+    /// <summary>A light's box is this many texels wider each way than its reach, against its tile's rounding.</summary>
+    constexpr float LightTilePadding = 1.0f;
+    /// <summary>The lights' bits come in words of this many (composite.pshader's LightWordBits).</summary>
+    constexpr size_t LightWordBits = 32;
+    /// <summary>
+    /// A light tile's texels: a word of its lights' bits in each, its bytes red to alpha (a little-endian word's), read
+    /// as the shaders read every other byte.
+    /// </summary>
+    constexpr SDL_GPUTextureFormat LightTileFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    static_assert(std::endian::native == std::endian::little, "a light tile's words go up as their bytes");
+
+    /// <summary>A light tile: the lights whose pool may reach it, a bit a light (the first LightWordBits in the first).</summary>
+    using LightTile = std::array<uint32_t, 2>;
+    /// <summary>A light tile's texels side by side (composite.pshader's LightWords), a word each.</summary>
+    constexpr uint32_t LightTileTexelsWide = std::tuple_size_v<LightTile>;
+
+    /// <summary>A world's light tiles, LightTileTexels on a side from its top left: Across x Down of them, row by row.</summary>
+    struct LightTiles
+    {
+        uint32_t Across = 0;
+        uint32_t Down = 0;
+        std::vector<LightTile> Tiles;
+    };
+
+    /// <summary>
+    /// The light tiles of a world <paramref name="width"/> x <paramref name="height"/> texels for the first
+    /// <paramref name="count"/> lights of <paramref name="uniforms"/>: each light in every tile its box meets, the
+    /// ground within its reach of its point or beam (composite.pshader's LightAt: heights stretched as the ground's,
+    /// lighting.w; at least a texel), so a tile holds every light that can light one of its texels. A texel off the
+    /// world takes its nearest tile's lights, so a box off it marks the tiles at its edge.
+    /// </summary>
+    LightTiles MakeLightTiles(const CompositeUniforms& uniforms, size_t count, float width, float height)
+    {
+        LightTiles made;
+        made.Across = std::max(static_cast<uint32_t>(std::ceil(width / LightTileTexels)), 1u);
+        made.Down = std::max(static_cast<uint32_t>(std::ceil(height / LightTileTexels)), 1u);
+        made.Tiles.assign(static_cast<size_t>(made.Across) * made.Down, LightTile{});
+        // The tiles a box from low to high texels meets, in tiles of a row or column of `tiles`; all of them for a box
+        // that isn't a number.
+        const auto tilesMet = [](float low, float high, uint32_t tiles)
+        {
+            const float last = static_cast<float>(tiles - 1);
+            const float first = low > 0.0f ? std::min(std::floor(low / LightTileTexels), last) : 0.0f;
+            const float end = high < last * LightTileTexels ? std::max(std::floor(high / LightTileTexels), 0.0f) : last;
+            return std::pair{static_cast<uint32_t>(first), static_cast<uint32_t>(end)};
+        };
+
+        // A texel down the screen is this much of the ground's distance across (LightAt's ground).
+        const float stretch = uniforms.Lighting[3];
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const std::span<const float, 4> ends = uniforms.Lights[i * 3];
+            const float reach = std::max(uniforms.Lights[i * 3 + 1][1], 1.0f) + LightTilePadding;
+            const float reachDown =
+                stretch > 0.0f ? reach / stretch + LightTilePadding : std::numeric_limits<float>::infinity();
+            const auto [x0, x1] =
+                tilesMet(std::min(ends[0], ends[2]) - reach, std::max(ends[0], ends[2]) + reach, made.Across);
+            const auto [y0, y1] =
+                tilesMet(std::min(ends[1], ends[3]) - reachDown, std::max(ends[1], ends[3]) + reachDown, made.Down);
+            const uint32_t bit = 1u << (i % LightWordBits);
+
+            for (uint32_t y = y0; y <= y1; ++y)
+            {
+                for (uint32_t x = x0; x <= x1; ++x)
+                {
+                    made.Tiles[static_cast<size_t>(y) * made.Across + x][i / LightWordBits] |= bit;
+                }
+            }
+        }
+
+        return made;
+    }
+
     /// <summary>A quad's vertices (quad.vshader's two triangles).</summary>
     constexpr uint32_t QuadVertices = 6;
 
@@ -128,9 +214,10 @@ namespace
     /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
     /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
-    /// <paramref name="height"/>), and distances in the texture's pixels across.
+    /// <paramref name="height"/>), and distances in the texture's pixels across; returns the lights' tiles (none
+    /// without lights), whose size it sets in the uniforms.
     /// </summary>
-    void SetLighting(CompositeUniforms& uniforms, const MCWindow& world, float width, float height)
+    LightTiles SetLighting(CompositeUniforms& uniforms, const MCWindow& world, float width, float height)
     {
         const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
         const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
@@ -290,7 +377,25 @@ namespace
             uniforms.Lights[i * 3 + 2][1] = light.Green;
             uniforms.Lights[i * 3 + 2][2] = light.Blue;
             uniforms.Lights[i * 3 + 2][3] = light.SpotCos;
+
+            // A spotlight: one aimed (composite.pshader's AirBeamsAt), with an angle its beam fades out at.
+            if (!(light.SpotCos <= 0.0f) &&
+                (uniforms.Lights[i * 3 + 1][2] != 0.0f || uniforms.Lights[i * 3 + 1][3] != 0.0f))
+            {
+                uniforms.SpotLights[i / LightWordBits] |= 1u << (i % LightWordBits);
+            }
         }
+
+        if (count == 0)
+        {
+            return {};
+        }
+
+        LightTiles tiles = MakeLightTiles(uniforms, count, width, height);
+        uniforms.LightTiles[0] = LightTileTexels;
+        uniforms.LightTiles[1] = static_cast<float>(tiles.Across);
+        uniforms.LightTiles[2] = static_cast<float>(tiles.Down);
+        return tiles;
     }
 
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
@@ -439,13 +544,13 @@ MCVulkanPresenter::~MCVulkanPresenter()
 
     _Renderer.reset();
 
-    for (Texture& texture :
-         {std::ref(_Screen), std::ref(_Ops), std::ref(_Tables), std::ref(_Palette), std::ref(_Frame)})
+    for (Texture& texture : {std::ref(_Screen), std::ref(_Ops), std::ref(_Tables), std::ref(_Palette), std::ref(_Frame),
+                             std::ref(_NoLightTiles)})
     {
         Release(texture);
     }
 
-    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms})
+    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_LightTiles})
     {
         for (Texture& texture : *textures)
         {
@@ -454,6 +559,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
     }
 
     _Upload.reset();
+    _LightTileUpload.reset();
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
@@ -595,17 +701,7 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
 
     // What goes up this frame: the palette when it changed; unless the GPU's surfaces are shown, the screen, and with
     // underlays their surfaces, the ops and the op tables in use.
-    struct Part
-    {
-        std::span<const std::byte> Data;
-        std::reference_wrapper<SDL_GPUTexture> Texture;
-        uint32_t Width;
-        uint32_t Height;
-        uint32_t BytesPerPixel;
-        uint32_t Offset;
-    };
-
-    std::vector<Part> parts;
+    std::vector<UploadPart> parts;
     // The underlays' pictures, held while their pixels go up.
     std::vector<std::shared_ptr<const MCWindow>> sources;
 
@@ -668,6 +764,14 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
         parts.push_back({std::as_bytes(frame.PaletteColors), *_Palette.Handle, 256, 1, 4, 0});
     }
 
+    return UploadParts(commands, parts, _Upload, _UploadSize);
+}
+
+std::expected<void, std::string> MCVulkanPresenter::UploadParts(SDL_GPUCommandBuffer& commands,
+                                                                std::span<UploadPart> parts,
+                                                                MCGpuHandle<SDL_GPUTransferBuffer>& buffer,
+                                                                uint32_t& bufferSize)
+{
     if (parts.empty())
     {
         return {};
@@ -675,48 +779,48 @@ std::expected<void, std::string> MCVulkanPresenter::Upload(SDL_GPUCommandBuffer&
 
     uint32_t total = 0;
 
-    for (Part& part : parts)
+    for (UploadPart& part : parts)
     {
         part.Offset = AlignUpload(total);
         total = part.Offset + part.Width * part.Height * part.BytesPerPixel;
     }
 
-    if (_Upload == nullptr || _UploadSize < total)
+    if (buffer == nullptr || bufferSize < total)
     {
-        _Upload.reset();
+        buffer.reset();
         SDL_GPUTransferBufferCreateInfo info{};
         info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
         info.size = total + total / 4;
-        _Upload = MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(_Device.get(), &info),
-                                                     MCGpuRelease{_Device});
-        _UploadSize = _Upload != nullptr ? info.size : 0;
+        buffer = MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(_Device.get(), &info),
+                                                    MCGpuRelease{_Device});
+        bufferSize = buffer != nullptr ? info.size : 0;
 
-        if (_Upload == nullptr)
+        if (buffer == nullptr)
         {
             return std::unexpected(SdlError("SDL_CreateGPUTransferBuffer"));
         }
     }
 
-    void* const mapped = SDL_MapGPUTransferBuffer(_Device.get(), _Upload.get(), true);
+    void* const mapped = SDL_MapGPUTransferBuffer(_Device.get(), buffer.get(), true);
 
     if (mapped == nullptr)
     {
         return std::unexpected(SdlError("SDL_MapGPUTransferBuffer"));
     }
 
-    for (const Part& part : parts)
+    for (const UploadPart& part : parts)
     {
         std::memcpy(static_cast<uint8_t*>(mapped) + part.Offset, part.Data.data(),
                     static_cast<size_t>(part.Width) * part.Height * part.BytesPerPixel);
     }
 
-    SDL_UnmapGPUTransferBuffer(_Device.get(), _Upload.get());
+    SDL_UnmapGPUTransferBuffer(_Device.get(), buffer.get());
     SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(&commands);
 
-    for (const Part& part : parts)
+    for (const UploadPart& part : parts)
     {
         SDL_GPUTextureTransferInfo source{};
-        source.transfer_buffer = _Upload.get();
+        source.transfer_buffer = buffer.get();
         source.offset = part.Offset;
         source.pixels_per_row = part.Width;
         source.rows_per_layer = part.Height;
@@ -744,6 +848,17 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     const float originX = scaled ? static_cast<float>(frame.View.x) : 0.0f;
     const float originY = scaled ? static_cast<float>(frame.View.y) : 0.0f;
     const float screenMap[4] = {originX, originY, mapX, mapY};
+
+    // Port-only (HD lighting): the light tiles bound where there are none (the bloom's pass, the screen's), filled with
+    // none when made, in the light tiles' copy pass.
+    const bool noLightTilesNew = _NoLightTiles.Handle == nullptr;
+
+    if (auto made = Ensure(_NoLightTiles, LightTileFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, LightTileTexelsWide, 1, true);
+        !made)
+    {
+        SDL_Log("MCVulkanPresenter: the frame isn't composited: %s", made.error().c_str());
+        return;
+    }
 
     // The screen's texture and its allocated size; the GPU's surfaces have no op plane or op tables (the screen is
     // bound in their place, unread).
@@ -828,6 +943,114 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         }
     }
 
+    // Each underlay's rectangle on the target and its uniforms, with its lights and their tiles (null: none, every
+    // light tried everywhere), which go up before the pass that reads them.
+    struct UnderlayDraw
+    {
+        std::array<float, 4> Rect{};
+        CompositeUniforms Uniforms{};
+        LightTiles Lights;
+        SDL_GPUTexture* LightTileTexture = nullptr;
+    };
+
+    std::vector<std::optional<UnderlayDraw>> underlayDraws(frame.Underlays.size());
+
+    for (size_t i = 0; i < frame.Underlays.size(); ++i)
+    {
+        const MCUnderlay& underlay = frame.Underlays[i];
+        const World& world = worlds[i];
+        const int x0 = std::max(underlay.Rect.X0, 0);
+        const int y0 = std::max(underlay.Rect.Y0, 0);
+        const int x1 = std::min(underlay.Rect.X1, frame.Width - 1);
+        const int y1 = std::min(underlay.Rect.Y1, frame.Height - 1);
+
+        if (x1 < x0 || y1 < y0 || world.Texture == nullptr)
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = underlayDraws[i].emplace();
+        drawn.Rect = {(static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
+                      static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY};
+
+        // The rectangle and its part on the screen, in target pixels.
+        CompositeUniforms& uniforms = drawn.Uniforms;
+        uniforms = CompositeUniforms{
+            {screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
+            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
+            {(static_cast<float>(underlay.Rect.X0) - originX) / mapX,
+             (static_cast<float>(underlay.Rect.Y0) - originY) / mapY,
+             static_cast<float>(underlay.Rect.X1 - underlay.Rect.X0 + 1) / mapX,
+             static_cast<float>(underlay.Rect.Y1 - underlay.Rect.Y0 + 1) / mapY},
+            {world.Size[0], world.Size[1], world.Size[2], world.Size[3]},
+            {1.0f, source, drawnX, drawnY},
+        };
+
+        drawn.Lights = SetLighting(uniforms, *world.Source, world.Size[0], world.Size[1]);
+
+        if (world.Bloom != nullptr)
+        {
+            const Texture& bloom = _Blooms[i];
+            uniforms.BloomSize[0] = std::ceil(world.Size[0] / static_cast<float>(BloomScale));
+            uniforms.BloomSize[1] = std::ceil(world.Size[1] / static_cast<float>(BloomScale));
+            uniforms.BloomSize[2] = static_cast<float>(bloom.Width);
+            uniforms.BloomSize[3] = static_cast<float>(bloom.Height);
+        }
+        else
+        {
+            uniforms.LightLook[1] = 0.0f;
+        }
+    }
+
+    // Port-only (HD lighting): the light tiles go up, each underlay's into its texture. One that can't shows its world
+    // with every light tried everywhere, as the same light.
+    static constexpr LightTile NoLights{};
+    std::vector<UploadPart> tileParts;
+    _LightTiles.resize(std::max(_LightTiles.size(), underlayDraws.size()));
+
+    if (noLightTilesNew)
+    {
+        tileParts.push_back({std::as_bytes(std::span(&NoLights, 1)), *_NoLightTiles.Handle, LightTileTexelsWide, 1,
+                             sizeof(uint32_t), 0});
+    }
+
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
+    {
+        if (!underlayDraws[i].has_value() || underlayDraws[i]->Lights.Tiles.empty())
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = *underlayDraws[i];
+
+        if (auto made = Ensure(_LightTiles[i], LightTileFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                               drawn.Lights.Across * LightTileTexelsWide, drawn.Lights.Down, false);
+            !made)
+        {
+            SDL_Log("MCVulkanPresenter: underlay %zu's lights shown without their tiles: %s", i, made.error().c_str());
+            drawn.Uniforms.LightTiles[0] = 0.0f;
+            continue;
+        }
+
+        drawn.LightTileTexture = _LightTiles[i].Handle.get();
+        tileParts.push_back({std::as_bytes(std::span(drawn.Lights.Tiles)), *drawn.LightTileTexture,
+                             drawn.Lights.Across * LightTileTexelsWide, drawn.Lights.Down, sizeof(uint32_t), 0});
+    }
+
+    if (auto uploaded = UploadParts(commands, tileParts, _LightTileUpload, _LightTileUploadSize); !uploaded)
+    {
+        SDL_Log("MCVulkanPresenter: the lights shown without their tiles: %s", uploaded.error().c_str());
+
+        for (std::optional<UnderlayDraw>& drawn : underlayDraws)
+        {
+            if (drawn.has_value())
+            {
+                drawn->Uniforms.LightTiles[0] = 0.0f;
+                drawn->LightTileTexture = nullptr;
+            }
+        }
+    }
+
     SDL_GPUColorTargetInfo target{};
     target.texture = _Frame.Handle.get();
     // The first quad covers every pixel.
@@ -838,8 +1061,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     const SDL_GPUViewport viewport{0.0f, 0.0f, width, height, 0.0f, 1.0f};
     SDL_SetGPUViewport(pass, &viewport);
 
-    auto draw = [&](float x, float y, float w, float h, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
-                    SDL_GPUTexture& indices, SDL_GPUTexture& glints, CompositeUniforms uniforms)
+    auto draw = [&](const std::array<float, 4>& rect, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
+                    SDL_GPUTexture& indices, SDL_GPUTexture& glints, SDL_GPUTexture& lightTiles,
+                    CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = frame.Cycle.First;
         uniforms.Cycle[1] = frame.Cycle.Step;
@@ -859,63 +1083,32 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {_Palette.Handle.get(), _Nearest.get()},
             {&bloom, _Linear.get()},
             {&glints, _Nearest.get()},
+            {&lightTiles, _Nearest.get()},
         }};
 
-        DrawComposite(commands, *pass, bindings, {{x, y, w, h}, {width, height, 0.0f, 0.0f}}, uniforms);
+        DrawComposite(commands, *pass, bindings, {{rect[0], rect[1], rect[2], rect[3]}, {width, height, 0.0f, 0.0f}},
+                      uniforms);
     };
 
     // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
-    draw(0.0f, 0.0f, width, height, *screen, *screen, *ops, *screen,
+    draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
                            {1.0f, 1.0f, 1.0f, 1.0f},
                            {0.0f, source, drawnX, drawnY}});
 
-    for (size_t i = 0; i < frame.Underlays.size(); ++i)
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
     {
-        const MCUnderlay& underlay = frame.Underlays[i];
-        const World& world = worlds[i];
-        const int x0 = std::max(underlay.Rect.X0, 0);
-        const int y0 = std::max(underlay.Rect.Y0, 0);
-        const int x1 = std::min(underlay.Rect.X1, frame.Width - 1);
-        const int y1 = std::min(underlay.Rect.Y1, frame.Height - 1);
-
-        if (x1 < x0 || y1 < y0 || world.Texture == nullptr)
+        if (!underlayDraws[i].has_value())
         {
             continue;
         }
 
-        // The rectangle and its part on the screen, in target pixels.
-        CompositeUniforms uniforms{
-            {screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
-            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
-            {(static_cast<float>(underlay.Rect.X0) - originX) / mapX,
-             (static_cast<float>(underlay.Rect.Y0) - originY) / mapY,
-             static_cast<float>(underlay.Rect.X1 - underlay.Rect.X0 + 1) / mapX,
-             static_cast<float>(underlay.Rect.Y1 - underlay.Rect.Y0 + 1) / mapY},
-            {world.Size[0], world.Size[1], world.Size[2], world.Size[3]},
-            {1.0f, source, drawnX, drawnY},
-        };
-
-        SetLighting(uniforms, *world.Source, world.Size[0], world.Size[1]);
-
-        if (world.Bloom != nullptr)
-        {
-            const Texture& bloom = _Blooms[i];
-            uniforms.BloomSize[0] = std::ceil(world.Size[0] / static_cast<float>(BloomScale));
-            uniforms.BloomSize[1] = std::ceil(world.Size[1] / static_cast<float>(BloomScale));
-            uniforms.BloomSize[2] = static_cast<float>(bloom.Width);
-            uniforms.BloomSize[3] = static_cast<float>(bloom.Height);
-        }
-        else
-        {
-            uniforms.LightLook[1] = 0.0f;
-        }
-
-        draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
-             static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world.Texture,
-             world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, *world.Glints, uniforms);
+        const UnderlayDraw& drawn = *underlayDraws[i];
+        const World& world = worlds[i];
+        draw(drawn.Rect, *world.Texture, world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, *world.Glints,
+             drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle, drawn.Uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
@@ -978,6 +1171,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
         {&world, _Nearest.get()},
         {&world, _Linear.get()},
         {&world, _Nearest.get()},
+        {_NoLightTiles.Handle.get(), _Nearest.get()},
     }};
 
     DrawComposite(commands, *pass, bindings,

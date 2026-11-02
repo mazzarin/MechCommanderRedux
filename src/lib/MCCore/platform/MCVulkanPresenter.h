@@ -86,6 +86,23 @@ private:
                                              bool read);
     /// <summary>Uploads the frame's textures in a copy pass on <paramref name="commands"/>.</summary>
     std::expected<void, std::string> Upload(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
+    /// <summary>Bytes to go up into a texture's top left, and (UploadParts') where they lie in the transfer buffer.</summary>
+    struct UploadPart
+    {
+        std::span<const std::byte> Data;
+        std::reference_wrapper<SDL_GPUTexture> Texture;
+        uint32_t Width;
+        uint32_t Height;
+        uint32_t BytesPerPixel;
+        uint32_t Offset;
+    };
+
+    /// <summary>
+    /// Uploads <paramref name="parts"/> (none: nothing) in a copy pass on <paramref name="commands"/>, through
+    /// <paramref name="buffer"/> (<paramref name="bufferSize"/> bytes; made or grown as needed).
+    /// </summary>
+    std::expected<void, std::string> UploadParts(SDL_GPUCommandBuffer& commands, std::span<UploadPart> parts,
+                                                 MCGpuHandle<SDL_GPUTransferBuffer>& buffer, uint32_t& bufferSize);
     /// <summary>Composites the frame into the frame texture, from the uploaded textures or the GPU's surfaces.</summary>
     void Composite(SDL_GPUCommandBuffer& commands, const MCFrame& frame, bool gpuSurfaces);
     /// <summary>
@@ -121,9 +138,17 @@ private:
     std::vector<Texture> _Underlays;
     /// <summary>Port-only (HD lighting): the underlays' blooms (Bloom), in the same order.</summary>
     std::vector<Texture> _Blooms;
-    /// <summary>The upload buffer, and its size.</summary>
+    /// <summary>
+    /// Port-only (HD lighting): the underlays' light tiles (composite.pshader's lightTileTex), in the same order, and
+    /// one bound where there are none (never read; made empty).
+    /// </summary>
+    std::vector<Texture> _LightTiles;
+    Texture _NoLightTiles;
+    /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
     MCGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;
+    MCGpuHandle<SDL_GPUTransferBuffer> _LightTileUpload;
+    uint32_t _LightTileUploadSize = 0;
     /// <summary>The renderer of the frame surfaces (the renderers refer to it while it is set as the hardware one).</summary>
     std::shared_ptr<MCVulkanRenderer> _Renderer;
 };

@@ -26,6 +26,7 @@
 int GHdLighting = 0;
 int GHdSunShadows = 0;
 int GHdClouds = 0;
+int GHdSway = 0;
 int GHdRelief = 0;
 
 namespace

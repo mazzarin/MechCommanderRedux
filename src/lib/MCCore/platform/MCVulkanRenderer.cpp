@@ -108,6 +108,20 @@ namespace
     /// pass (shaders/draw.pshader's ParticlePixel).
     /// </summary>
     constexpr uint32_t ParticleDraw = 1u << 23;
+    /// <summary>
+    /// Port-only (HDSway): an index pass of a forest's canopy, which marks its pixels in the index target's alpha for the
+    /// composite to sway (shaders/draw.pshader's SwayMark).
+    /// </summary>
+    constexpr uint32_t Sways = 1u << 24;
+
+    /// <summary>
+    /// Sways for an HD frame's index pass when forests sway (GHdSway) and it is a forest's (a frame whose painted shadow
+    /// the pack's generator marked: tools/upscale/baked_shadow.py marks only a forest's canopy and edges), else nothing.
+    /// </summary>
+    uint32_t SwaysOf(const MCHdArt::Frame& frame)
+    {
+        return GHdSway != 0 && frame.PaintedShadow ? Sways : 0u;
+    }
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -2830,8 +2844,8 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                 AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
             }
 
-            Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
-                before, after);
+            Add(surface, SourceKind::Atlas, place->Page, at, from,
+                op | IndexOnly | (translucent ? OpaqueOnly : 0u) | SwaysOf(*hd), 0, before, after);
 
             // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
             if (blendsOwn && !smooth)
@@ -2957,7 +2971,7 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
                 return;
             }
 
-            op |= IndexOnly;
+            op |= IndexOnly | SwaysOf(*hd);
         }
     }
 

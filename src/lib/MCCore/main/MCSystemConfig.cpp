@@ -213,6 +213,8 @@ void ReadPreferences(MCFitIniFile& file)
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
     // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
     GHdClouds = file.Read<bool>("HDClouds").value_or(false) ? 1 : 0;
+    // Port-only: HDSway lets a forest's canopy sway before the wind (sprite/MCSceneLights.h).
+    GHdSway = file.Read<bool>("HDSway").value_or(false) ? 1 : 0;
     // Port-only: HDRelief lets the sun show the world's relief, the HD ground's from the pack's relief maps
     // (sprite/MCSceneLights.h).
     GHdRelief = file.Read<bool>("HDRelief").value_or(false) ? 1 : 0;

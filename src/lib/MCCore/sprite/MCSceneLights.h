@@ -187,6 +187,16 @@ namespace MCSceneLights
         float CloudSize = 300.0f;
         /// <summary>With cloud shadows on: how fast they drift before the wind, in meters a second of the game's time.</summary>
         float CloudSpeed = 15.0f;
+        /// <summary>
+        /// With forests swaying (<see cref="GHdSway"/>): how far a forest's canopy sways at the height of a gust, in
+        /// meters along the ground (its crowns lean before the wind and rock about it).
+        /// </summary>
+        float Sway = 0.8f;
+        /// <summary>
+        /// With forests swaying: how much brighter the canopy shows at the height of a gust, its leaves turned up to it
+        /// (0: as drawn).
+        /// </summary>
+        float SwayLight = 0.12f;
         /// <summary>The colour of the world's own light, times <see cref="Ambient"/> (white by day; night's is blue).</summary>
         std::array<float, 3> AmbientTint{1.0f, 1.0f, 1.0f};
         /// <summary>
@@ -490,6 +500,13 @@ extern int GHdSunShadows;
 /// the presenter's composite, composite.pshader's CloudsAt); 0 shows none, as the original. Off by default.
 /// </summary>
 extern int GHdClouds;
+
+/// <summary>
+/// Port-only: PREFS "HDSway": with HD art, 1 lets a forest's canopy sway before the wind's gusts (MCLighting::Sway; the
+/// presenter's composite, composite.pshader's SwayedAt, over the canopy the renderer marks: MCVulkanRenderer's Sways);
+/// 0 draws it still, as the original. Off by default.
+/// </summary>
+extern int GHdSway;
 
 /// <summary>
 /// Port-only: PREFS "HDRelief": with HD lighting on, 1 lets the sun show the world's relief (MCLighting::SunRelief)

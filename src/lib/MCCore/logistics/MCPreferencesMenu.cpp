@@ -470,6 +470,7 @@ void WritePrefs()
     prefs.WriteIdLong("HDLighting", GHdLighting);
     prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
     prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
+    prefs.WriteIdBoolean("HDSway", GHdSway != 0);
     prefs.WriteIdBoolean("HDRelief", GHdRelief != 0);
     prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
     prefs.WriteIdLong("HDFlecks", GHdFlecks);

@@ -63,6 +63,8 @@ namespace
         float AirBeams[4] = {};
         /// <summary>How steeply the HD ground's relief maps stand its bumps (0: lit by its brightness).</summary>
         float ReliefLook[4] = {};
+        /// <summary>How far a forest's canopy sways at the height of a gust (meters, 0 none), and how much brighter.</summary>
+        float Sway[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -180,6 +182,12 @@ namespace
             uniforms.Clouds[1] = std::clamp(lighting.CloudCover, 0.0f, 1.0f);
             uniforms.Clouds[2] = std::max(lighting.CloudSize, MinCloudSize);
             uniforms.Clouds[3] = lighting.CloudSpeed;
+        }
+
+        if (!flat && GHdSway != 0)
+        {
+            uniforms.Sway[0] = std::max(lighting.Sway, 0.0f);
+            uniforms.Sway[1] = std::max(lighting.SwayLight, 0.0f);
         }
 
         if (!flat)

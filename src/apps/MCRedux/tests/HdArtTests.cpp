@@ -5359,6 +5359,26 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sway &lt;meters&gt;[,&lt;light&gt;]</c>, lets a forest's canopy sway (GHdSway) that far at the
+    /// height of a gust, that much brighter there (MCLighting::Sway, SwayLight; each left out keeps its default).
+    /// </summary>
+    void SwayFromOptions()
+    {
+        const std::optional<std::string_view> sway = MCTest::Option("hd-sway");
+
+        if (!sway.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*sway);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f", &settings.Sway, &settings.SwayLight) >= 1);
+        GHdSway = 1;
+        std::cout << std::format("  forests sway: {:.2f} m, {:.2f} brighter\n", settings.Sway, settings.SwayLight);
+    }
+
+    /// <summary>
     /// With <c>--hd-footprints-on 1</c>, turns HDFootprints on (GHdFootprints): footprints under the feet as drawn. The
     /// ring of footprints and craters keeps the mission's length (three times it needs PREFS, read as the mission starts,
     /// before its ring is made).
@@ -5565,6 +5585,7 @@ namespace
         ReliefMapsFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
+        SwayFromOptions();
         ParticlesFromOptions();
         FootprintsFromOptions();
         TurnsFromOptions();

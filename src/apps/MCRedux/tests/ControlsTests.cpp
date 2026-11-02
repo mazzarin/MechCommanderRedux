@@ -56,25 +56,7 @@ namespace
         return commands;
     }
 
-    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
-    std::shared_ptr<MCLogTextButton> FindTextButton(MCGuiObject& parent, std::string_view label)
-    {
-        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
-        {
-            if (auto button = std::dynamic_pointer_cast<MCLogTextButton>(child);
-                button != nullptr && button->Label() == label)
-            {
-                return button;
-            }
-
-            if (std::shared_ptr<MCLogTextButton> found = FindTextButton(*child, label); found != nullptr)
-            {
-                return found;
-            }
-        }
-
-        return nullptr;
-    }
+    using MCScreenInput::FindTextButton;
 
     /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
     void Frames()

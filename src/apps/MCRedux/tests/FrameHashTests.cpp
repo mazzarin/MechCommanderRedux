@@ -554,7 +554,9 @@ namespace
     /// to none (<see cref="MCTestGame::PinnedSaves"/>; 2026-10-31): the main menu's LOAD MISSION is off and the load
     /// screen's list empty on any machine, whatever saves its install or earlier tests left. That took the main menu to
     /// 0xe30aef7b, the load screen to 0xe34ed709, the preferences step to 0x924ff616 (software and GPU agree) and the
-    /// folds to 0xe4d5afc8 and 0xca197992 (GPU 0xb80a21d0 and 0xf18c3e85).
+    /// folds to 0xe4d5afc8 and 0xca197992 (GPU 0xb80a21d0 and 0xf18c3e85). The HD box in place of the HD ART, HD AUDIO
+    /// and HD LIGHTING boxes, the panel shorter (personal, 2026-11-02) took the preferences step to 0x7f8ed0c6 (software
+    /// and GPU agree) and the folds to 0xd54ea188 and 0x6a56c692 (GPU 0xac28e610 and 0xcaada585), only there.
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -637,7 +639,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0xe30aef7bu},
-            {"preferences", [] { ShowPreferences(); }, 0x924ff616u},
+            {"preferences", [] { ShowPreferences(); }, 0x7f8ed0c6u},
             {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
             {"load screen",
              []
@@ -746,8 +748,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0xb80a21d0u : 0xe4d5afc8u);
-        CHECK_EQ(presents, gpu ? 0xf18c3e85u : 0xca197992u);
+        CHECK_EQ(frames, gpu ? 0xac28e610u : 0xd54ea188u);
+        CHECK_EQ(presents, gpu ? 0xcaada585u : 0x6a56c692u);
         CheckGpuAlone(gpu);
     }
 }

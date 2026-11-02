@@ -127,6 +127,13 @@ public:
     std::shared_ptr<SDL_GPUTexture> SurfaceIndexTexture(const MCWindow& window) const;
 
     /// <summary>
+    /// Port-only (HD weather's drops catching the light): the light the raindrops on <paramref name="window"/>'s
+    /// surface caught (premultiplied RGBA, the size of its colour texture: Surface::Glints), as <see cref="Execute"/>
+    /// left it; null when the window has no surface yet.
+    /// </summary>
+    std::shared_ptr<SDL_GPUTexture> SurfaceGlintTexture(const MCWindow& window) const;
+
+    /// <summary>
     /// The drawn pixels per window pixel of <paramref name="window"/>'s surface across and down (above 1 for a screen
     /// drawn at the size it's shown, <see cref="SetScreenScale"/>); 1, 1 when it has none.
     /// </summary>
@@ -271,6 +278,12 @@ private:
         Texture Target;
         Texture Index;
         Texture Copy;
+        /// <summary>
+        /// Port-only (HD weather): a third colour target, the light the raindrops caught (MCParticleCommand::Glint,
+        /// premultiplied RGBA), which the composite adds over the lit world. Every draw covers it as it covers the
+        /// colours (an opaque one clears it), so a unit in front of a drop hides its light.
+        /// </summary>
+        Texture Glints;
         /// <summary>The window rectangles blended draws covered in the frame being recorded, and in the last one run.</summary>
         std::vector<MCRect> Blended;
         std::vector<MCRect> LastBlended;

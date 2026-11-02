@@ -336,6 +336,20 @@ namespace
     constexpr float PuddleDry = 720.0f;
     constexpr float PuddleStep = 1.0f;
     constexpr float DampSheen = 0.4f;
+    // Drops catching the lights (MCWeatherSettings::Light, MCSceneLights::LightInAir), at the middle of their streaks:
+    // shown in GlintSteps steps of their brightest component up to GlintMost, the last from GlintFull of light caught
+    // (times the drop's facet), none under the first; in the lights' hue GlintSaturation times as far from grey (a
+    // fire's light mixed with its glow oval's grey reads as the fire's). A drop's facet is CatchLeast to 1, hashed from
+    // its place FacetScale to a world unit (not the dice: the rain falls the same with it or without). The drops catch
+    // all of it from GlintDusk's world light down, DayGlint of it by day (a world light of 1).
+    constexpr int32_t GlintSteps = 3;
+    constexpr float GlintMost = 0.7f;
+    constexpr float GlintFull = 0.6f;
+    constexpr float GlintSaturation = 1.5f;
+    constexpr float CatchLeast = 0.25f;
+    constexpr float FacetScale = 8.0f;
+    constexpr float GlintDusk = 0.6f;
+    constexpr float DayGlint = 0.25f;
 
     /// <summary>A value between 0 and 1 for a lattice point, the same every frame (composite.pshader's LatticeHash).</summary>
     float LatticeHash(float x, float y)
@@ -367,6 +381,13 @@ namespace
     float Layered(float x, float y, float apartX, float apartY)
     {
         return (2.0f * Noise(x, y) + Noise(2.0f * x + apartX, 2.0f * y + apartY)) / 3.0f;
+    }
+
+    /// <summary>How much of the light at it a drop or droplet at world (x, y) catches: CatchLeast to 1, by its
+    /// place.</summary>
+    float Facet(float x, float y)
+    {
+        return CatchLeast + (1.0f - CatchLeast) * LatticeHash(std::floor(x * FacetScale), std::floor(y * FacetScale));
     }
 
     /// <summary>The puddles' field at a ground point (meters east and north of the map's middle; PuddleField's).</summary>
@@ -1218,15 +1239,66 @@ namespace
         }
     }
 
+    /// <summary>A share, 0 to 1, as a byte.</summary>
+    uint8_t Byte(float value)
+    {
+        return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+    }
+
     /// <summary>Sets <paramref name="command"/>'s colour, premultiplied: <paramref name="color"/> at <paramref name="alpha"/>.</summary>
     void SetColor(MCParticleCommand& command, const Rgb& color, float alpha)
     {
-        const auto byte = [](float value)
-        { return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f)); };
-        command.Red = byte(color.Red * alpha);
-        command.Green = byte(color.Green * alpha);
-        command.Blue = byte(color.Blue * alpha);
-        command.Alpha = byte(alpha);
+        command.Red = Byte(color.Red * alpha);
+        command.Green = Byte(color.Green * alpha);
+        command.Blue = Byte(color.Blue * alpha);
+        command.Alpha = Byte(alpha);
+    }
+
+    /// <summary>
+    /// What the rain's drops and droplets catch of the frame's lights: the lights (the window's pixels), how much of
+    /// their light (MCWeather::CatchGain) and the view's tilt (MCSceneLights::GroundAspect). None caught without
+    /// lights.
+    /// </summary>
+    struct Catching
+    {
+        std::vector<MCSceneLight> Lights;
+        float Gain = 0.0f;
+        float Aspect = 1.0f;
+    };
+
+    /// <summary>
+    /// Sets <paramref name="command"/>'s glint (MCParticleCommand::Glint): the light <paramref name="catching"/> shows
+    /// on a drop or droplet <paramref name="height"/> view pixels above the ground at view point (<paramref name="x"/>,
+    /// <paramref name="y"/>), with <paramref name="facet"/>.
+    /// </summary>
+    void SetGlint(MCParticleCommand& command, const Catching& catching, float x, float y, float height, float facet)
+    {
+        if (catching.Lights.empty() || catching.Gain <= 0.0f)
+        {
+            return;
+        }
+
+        const std::array<float, 3> glint = MCWeather::Glint(
+            MCSceneLights::LightInAir(catching.Lights, x, y, height, catching.Aspect), catching.Gain, facet);
+        command.Glint = static_cast<uint32_t>(Byte(glint[0])) | static_cast<uint32_t>(Byte(glint[1])) << 8 |
+                        static_cast<uint32_t>(Byte(glint[2])) << 16;
+    }
+
+    /// <summary>
+    /// <paramref name="color"/> made no paler than <paramref name="most"/> (its brightest component), its hue kept: at
+    /// dusk and night, a splash's, so the composite doesn't take it for a light's own pixel (MCLighting::SelfLit).
+    /// </summary>
+    Rgb NoPalerThan(const Rgb& color, float most)
+    {
+        const float brightest = std::max({color.Red, color.Green, color.Blue});
+
+        if (brightest <= most || brightest <= 0.0f)
+        {
+            return color;
+        }
+
+        const float scale = most / brightest;
+        return {color.Red * scale, color.Green * scale, color.Blue * scale};
     }
 
     /// <summary>Whether a mark round (x0, y0)-(x1, y1), <paramref name="reach"/> about it, shows in the view.</summary>
@@ -1248,8 +1320,11 @@ namespace
         }
     }
 
-    /// <summary>Adds the falling drops to the draw list: hard-edged streaks, slanted, their tails toward the wind.</summary>
-    void AddDrops(const State& state, const MCCamera& camera)
+    /// <summary>
+    /// Adds the falling drops to the draw list: hard-edged streaks, slanted, their tails toward the wind, catching the
+    /// light by the lights as <paramref name="catching"/> says.
+    /// </summary>
+    void AddDrops(const State& state, const MCCamera& camera, const Catching& catching)
     {
         for (const Drop& drop : state.Drops)
         {
@@ -1267,12 +1342,18 @@ namespace
             command.Style = MCParticleStyle::RainStreak;
             command.Tip = size.Tip;
             SetColor(command, WaterBlue, drop.Alpha);
+            // Its streak's middle, above the ground it falls to.
+            const float middle = left + 0.5f * length;
+            SetGlint(command, catching, at.X - middle * drop.Slant, at.Y, middle, Facet(drop.X, drop.Y));
             Mark(camera, command, drop.Depth);
         }
     }
 
-    /// <summary>Adds the splashes' pieces and the drips to the draw list, hard edged.</summary>
-    void AddSplashes(const State& state, const MCCamera& camera)
+    /// <summary>
+    /// Adds the splashes' pieces and the drips to the draw list, hard edged, those in the air catching the light by the
+    /// lights as <paramref name="catching"/> says; their colours no paler than <paramref name="palest"/>.
+    /// </summary>
+    void AddSplashes(const State& state, const MCCamera& camera, const Catching& catching, float palest)
     {
         for (const Splash& splash : state.Splashes)
         {
@@ -1321,7 +1402,15 @@ namespace
 
             command.X1 = command.X0;
             command.Y1 = splash.Kind == SplashKind::Drip ? command.Y0 - DripLength : command.Y0;
-            SetColor(command, splash.Color, alpha);
+            SetColor(command, NoPalerThan(splash.Color, palest), alpha);
+
+            // A droplet or a drip in the air (a dot and a ring lie on the ground, which the lights light).
+            if (splash.Kind == SplashKind::Droplet || splash.Kind == SplashKind::Drip)
+            {
+                SetGlint(command, catching, command.X0, at.Y, at.Y - command.Y0,
+                         Facet(splash.X + splash.VAcross, splash.Y + splash.VUp));
+            }
+
             Mark(camera, command, splash.Depth);
         }
     }
@@ -1489,6 +1578,35 @@ auto MCWeather::LookAt(MCWeatherKind kind, float time) -> MCWeatherLook
 auto MCWeather::Settings() -> MCWeatherSettings&
 {
     return TheState().Settings;
+}
+
+auto MCWeather::CatchGain() -> float
+{
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+    const float dark = std::clamp((1.0f - lighting.Ambient) / (1.0f - GlintDusk), 0.0f, 1.0f);
+    return TheState().Settings.Light * lighting.Strength * std::lerp(DayGlint, 1.0f, dark);
+}
+
+auto MCWeather::Glint(const std::array<float, 3>& caught, float gain, float facet) -> std::array<float, 3>
+{
+    const float brightest = std::max({caught[0], caught[1], caught[2]});
+    const float shown = brightest * gain * facet;
+    const int32_t step =
+        std::min(static_cast<int32_t>(std::floor(shown / GlintFull * static_cast<float>(GlintSteps))), GlintSteps);
+
+    if (brightest <= 0.0f || step <= 0)
+    {
+        return {};
+    }
+
+    // The lights' hue, further from grey, its brightest component the step's.
+    const float grey = (caught[0] + caught[1] + caught[2]) / 3.0f;
+    std::array<float, 3> hue{};
+    std::ranges::transform(caught, hue.begin(), [&](float component)
+                           { return std::max(grey + (component - grey) * GlintSaturation, 0.0f); });
+    const float level =
+        GlintMost * static_cast<float>(step) / static_cast<float>(GlintSteps) / std::max({hue[0], hue[1], hue[2]});
+    return {hue[0] * level, hue[1] * level, hue[2] * level};
 }
 
 auto MCWeather::SetMissionWeather(MCWeatherKind weather) -> void
@@ -1757,8 +1875,17 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
 
     state.Units.clear();
     state.Steps.clear();
-    AddSplashes(state, camera);
-    AddDrops(state, camera);
+    // Port-only (HD lighting): the drops catch the lights they fall past; at dusk and night, the splashes stay dim.
+    Catching catching{.Gain = CatchGain(), .Aspect = MCSceneLights::GroundAspect()};
+
+    if (catching.Gain > 0.0f)
+    {
+        catching.Lights = MCSceneLights::Drawing();
+    }
+
+    const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
+    AddSplashes(state, camera, catching, night ? MCSceneLights::ShownLighting().SelfLit : 1.0f);
+    AddDrops(state, camera, catching);
 }
 
 auto MCWeather::Clear() -> void

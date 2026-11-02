@@ -105,8 +105,8 @@ namespace
     constexpr float MinCloudSize = 1.0f;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t5).</summary>
-    constexpr size_t CompositeSamplers = 6;
+    /// <summary>The composite shader's textures (composite.pshader's t0 to t6).</summary>
+    constexpr size_t CompositeSamplers = 7;
     /// <summary>A quad's vertices (quad.vshader's two triangles).</summary>
     constexpr uint32_t QuadVertices = 6;
 
@@ -773,6 +773,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         SDL_GPUTexture* Bloom = nullptr;
         /// <summary>The GPU world's palette indices (the living water's), else the op plane as the screen's draw binds it.</summary>
         SDL_GPUTexture* Indices = nullptr;
+        /// <summary>Port-only (HD weather): the light the GPU world's raindrops caught, else the screen
+        /// (unread).</summary>
+        SDL_GPUTexture* Glints = nullptr;
     };
 
     std::vector<World> worlds(frame.Underlays.size());
@@ -782,6 +785,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         World& world = worlds[i];
         world.Source = frame.Underlays[i].Source.lock();
         world.Indices = ops;
+        world.Glints = screen;
 
         if (world.Source == nullptr)
         {
@@ -811,6 +815,12 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {
                 world.Indices = indices;
             }
+
+            if (SDL_GPUTexture* const glints = held.emplace_back(_Renderer->SurfaceGlintTexture(*world.Source)).get();
+                glints != nullptr)
+            {
+                world.Glints = glints;
+            }
         }
     }
 
@@ -825,7 +835,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     SDL_SetGPUViewport(pass, &viewport);
 
     auto draw = [&](float x, float y, float w, float h, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
-                    SDL_GPUTexture& indices, CompositeUniforms uniforms)
+                    SDL_GPUTexture& indices, SDL_GPUTexture& glints, CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = frame.Cycle.First;
         uniforms.Cycle[1] = frame.Cycle.Step;
@@ -844,13 +854,14 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {tables, _Nearest.get()},
             {_Palette.Handle.get(), _Nearest.get()},
             {&bloom, _Linear.get()},
+            {&glints, _Nearest.get()},
         }};
 
         DrawComposite(commands, *pass, bindings, {{x, y, w, h}, {width, height, 0.0f, 0.0f}}, uniforms);
     };
 
     // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
-    draw(0.0f, 0.0f, width, height, *screen, *screen, *ops,
+    draw(0.0f, 0.0f, width, height, *screen, *screen, *ops, *screen,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -900,7 +911,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         draw((static_cast<float>(x0) - originX) / mapX, (static_cast<float>(y0) - originY) / mapY,
              static_cast<float>(x1 - x0 + 1) / mapX, static_cast<float>(y1 - y0 + 1) / mapY, *world.Texture,
-             world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, uniforms);
+             world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, *world.Glints, uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
@@ -962,6 +973,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
         {&world, _Nearest.get()},
         {&world, _Nearest.get()},
         {&world, _Linear.get()},
+        {&world, _Nearest.get()},
     }};
 
     DrawComposite(commands, *pass, bindings,

@@ -38,6 +38,10 @@ SamplerState paletteSampler : register(s4, space2);
 // without a bloom).
 Texture2D<float4> bloomTex : register(t5, space2);
 SamplerState bloomSampler : register(s5, space2);
+// Port-only (HD weather): the light the GPU world's raindrops caught by the lights they fall past (MCWeather::Glint;
+// premultiplied, the size of its colours), added over the lit world (unused without an underlay).
+Texture2D<float4> glintTex : register(t6, space2);
+SamplerState glintSampler : register(s6, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
@@ -1300,15 +1304,18 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
             const float3 cloudLight = CloudsAt(hazy + 0.5);
-            // Port-only (HD weather): under the overcast, its light and no sun to glint; the rain's veil; the wet look.
+            // Port-only (HD weather): under the overcast, its light and no sun to glint; the rain's veil; the wet look;
+            // the light the drops caught, as it is.
             const float3 overcast = OvercastAt(hazy);
             const float sunGlint = weather.x > 0.0 ? 0.0 : SunGlint;
+            const float3 caught =
+                TexelAt(glintTex, glintSampler, clamp(round(hazy), 0.0, worldSize.xy - 1.0), worldSize.zw).rgb;
             const float3 shone =
                 WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), lit.a, glint, cloudLight, overcast) +
                                    glint * sunGlint * AmbientLight() * cloudLight,
                                hazy + 0.5),
                       seen, hazy) +
-                AirBeamsAt(hazy + 0.5);
+                caught + AirBeamsAt(hazy + 0.5);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 

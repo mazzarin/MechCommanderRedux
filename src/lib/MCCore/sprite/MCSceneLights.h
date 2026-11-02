@@ -451,6 +451,13 @@ namespace MCSceneLights
     void Finish();
 
     /// <summary>
+    /// Port-only (HD weather): the lights added so far to the world being drawn (since <see cref="Begin"/>, its muzzle
+    /// flashes too), in its window's pixels; none when HD lighting is off or no world is being drawn. The drops falling
+    /// past them catch their light (MCWeather::Draw, once the objects have added theirs).
+    /// </summary>
+    std::vector<MCSceneLight> Drawing();
+
+    /// <summary>
     /// The lights the world window <paramref name="view"/> shows (its last finished frame's, in its pixels, the brightest
     /// <see cref="MaxLights"/>); none when HD lighting is off or nothing lit it.
     /// </summary>
@@ -480,6 +487,17 @@ namespace MCSceneLights
     /// (MCTerrain's projection, ProjectionSin / ProjectionCos). A light's pool is an ellipse this much flatter.
     /// </summary>
     float GroundAspect();
+
+    /// <summary>
+    /// Port-only (HD weather): the light <paramref name="lights"/> (in a world window's pixels) shine on a point in the
+    /// air <paramref name="height"/> of that window's pixels above the ground at window point (<paramref name="x"/>,
+    /// <paramref name="y"/>), their colours times their strengths added: a light that shines every way as near as the
+    /// point is to it, falling off as its pool on the ground does from under it and gone at its reach; a spotlight only
+    /// within its beam, falling off as the square of the way from its lamp. A screen height of the ground is
+    /// <paramref name="aspect"/> of its width (<see cref="GroundAspect"/>). What a raindrop falling there catches
+    /// (MCWeather).
+    /// </summary>
+    std::array<float, 3> LightInAir(std::span<const MCSceneLight> lights, float x, float y, float height, float aspect);
 }
 
 /// <summary>

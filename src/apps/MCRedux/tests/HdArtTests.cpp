@@ -4595,6 +4595,144 @@ TEST_CASE("hd lighting: a mission's time of day is its scenario file's, shown as
 }
 
 /// <summary>
+/// HD weather's drops catching the light (port-only, MCSceneLights::LightInAir and MCWeather::Glint): a drop by a light
+/// that shines every way (a fire's) catches its colour, most at its height and less below or beside it, none past its
+/// reach; one by a spotlight (a headlight) catches it only inside its beam, ahead of its lamp, not behind it nor beside
+/// its beam. What a drop shows of it is the light's hue (as far from grey or further) in a few steps, none for a little
+/// light, more for more, the drops whose facets turn less of it to the eye showing less. They catch none with the
+/// setting at 0, more at dusk than by day and more at night.
+/// </summary>
+TEST_CASE("hd weather: a drop catches a light by it in the light's colour, a headlight's only in its beam, in steps")
+{
+    // The view's tilt (a screen height of the ground per its width), and a fire's light: its ground, height and reach.
+    constexpr float Aspect = 0.5f;
+    constexpr float FireX = 100.0f;
+    constexpr float FireY = 100.0f;
+    constexpr float FireHeight = 20.0f;
+    constexpr float FireReach = 60.0f;
+    const MCSceneLight fire{.X0 = FireX,
+                            .Y0 = FireY,
+                            .X1 = FireX,
+                            .Y1 = FireY,
+                            .Height = FireHeight,
+                            .Reach = FireReach,
+                            .Red = 1.0f,
+                            .Green = 0.5f,
+                            .Blue = 0.2f};
+    const std::array lights{fire};
+    const auto at = [&](std::span<const MCSceneLight> shining, float x, float y, float height)
+    { return MCSceneLights::LightInAir(shining, x, y, height, Aspect); };
+
+    const std::array<float, 3> inFire = at(lights, FireX, FireY, FireHeight);
+    const std::array<float, 3> under = at(lights, FireX, FireY, 0.0f);
+    const std::array<float, 3> beside = at(lights, FireX + 0.5f * FireReach, FireY, FireHeight);
+    const std::array<float, 3> past = at(lights, FireX + 1.1f * FireReach, FireY, FireHeight);
+    CHECK(std::abs(inFire[0] - fire.Red) < 1e-4f);
+    CHECK(std::abs(inFire[1] / inFire[0] - fire.Green / fire.Red) < 1e-4f);
+    CHECK(under[0] < inFire[0]);
+    CHECK(under[0] > 0.0f);
+    CHECK(beside[0] < inFire[0]);
+    CHECK(beside[0] > 0.0f);
+    CHECK(past[0] == 0.0f);
+
+    // A headlight: its lamp over the ground at (LampX, LampY), its beam aimed across the screen at the ground Ahead on.
+    constexpr float LampX = 300.0f;
+    constexpr float LampY = 100.0f;
+    constexpr float LampHeight = 20.0f;
+    constexpr float Ahead = 70.0f;
+    constexpr float BeamDegrees = 22.0f;
+    const MCSceneLight headlight{.X0 = LampX,
+                                 .Y0 = LampY,
+                                 .X1 = LampX,
+                                 .Y1 = LampY,
+                                 .Height = LampHeight,
+                                 .Reach = 180.0f,
+                                 .Red = 0.8f,
+                                 .Green = 0.75f,
+                                 .Blue = 0.65f,
+                                 .SpotX = Ahead,
+                                 .SpotCos = std::cos(BeamDegrees * std::numbers::pi_v<float> / 180.0f)};
+    const std::array spot{headlight};
+    // Halfway along its beam's middle; as far behind its lamp; and as far ahead but well off to the side of the beam.
+    const std::array<float, 3> inBeam = at(spot, LampX + 0.5f * Ahead, LampY, 0.5f * LampHeight);
+    const std::array<float, 3> behind = at(spot, LampX - 0.5f * Ahead, LampY, 0.5f * LampHeight);
+    const std::array<float, 3> aside = at(spot, LampX + 0.5f * Ahead, LampY + 0.5f * Ahead * Aspect, LampHeight);
+    std::cout << std::format("  fire: {:.3f} in it, {:.3f} under it, {:.3f} beside it; headlight: {:.3f} in its beam, "
+                             "{:.3f} behind, {:.3f} aside\n",
+                             inFire[0], under[0], beside[0], inBeam[0], behind[0], aside[0]);
+    CHECK(inBeam[0] > headlight.Red);
+    CHECK(behind[0] == 0.0f);
+    CHECK(aside[0] == 0.0f);
+
+    // What a drop shows: steps of one hue (the light's, its red ahead of its green as far or further), none for a
+    // little, never brighter for less (but for rounding).
+    constexpr int32_t Samples = 200;
+    constexpr float Rounding = 1e-5f;
+    std::set<int32_t> steps;
+    float lastShown = 0.0f;
+    std::optional<float> hue;
+    bool hueKept = true;
+    bool neverLess = true;
+
+    for (int32_t i = 0; i <= Samples; ++i)
+    {
+        const float light = 2.0f * static_cast<float>(i) / static_cast<float>(Samples);
+        const std::array<float, 3> glint =
+            MCWeather::Glint({light * fire.Red, light * fire.Green, light * fire.Blue}, 1.0f, 1.0f);
+        steps.insert(static_cast<int32_t>(std::lround(glint[0] * 1000.0f)));
+        neverLess = neverLess && glint[0] >= lastShown - Rounding;
+        lastShown = glint[0];
+
+        if (glint[0] > 0.0f)
+        {
+            hue = hue.value_or(glint[1] / glint[0]);
+            hueKept = hueKept && std::abs(glint[1] / glint[0] - *hue) < Rounding;
+        }
+    }
+
+    const std::array<float, 3> faint = MCWeather::Glint({0.05f, 0.025f, 0.01f}, 1.0f, 1.0f);
+    const std::array<float, 3> fullFacet = MCWeather::Glint(inFire, 1.0f, 1.0f);
+    const std::array<float, 3> leastFacet = MCWeather::Glint(inFire, 1.0f, 0.35f);
+    CHECK(faint[0] == 0.0f);
+    CHECK(steps.contains(0));
+    CHECK(steps.size() >= 3);
+    CHECK(steps.size() <= 5);
+    CHECK(neverLess);
+    REQUIRE(hue.has_value());
+    CHECK(hueKept);
+    CHECK(*hue > 0.0f);
+    CHECK(*hue <= fire.Green / fire.Red);
+    CHECK(lastShown <= 1.0f);
+    CHECK(leastFacet[0] < fullFacet[0]);
+
+    // How much they catch: none at 0, a little by day, more at dusk, more at night.
+    const int lightingWas = GHdLighting;
+    const MCTimeOfDay missionWas = MCSceneLights::MissionTime();
+    const float settingWas = MCWeather::Settings().Light;
+    const auto gainAt = [](MCTimeOfDay time, float setting)
+    {
+        GHdLighting = HdLightingOn;
+        MCSceneLights::SetMissionTime(time);
+        MCWeather::Settings().Light = setting;
+        return MCWeather::CatchGain();
+    };
+
+    const float day = gainAt(MCTimeOfDay::Day, 1.0f);
+    const float dusk = gainAt(MCTimeOfDay::Dusk, 1.0f);
+    const float night = gainAt(MCTimeOfDay::Night, 1.0f);
+    const float none = gainAt(MCTimeOfDay::Night, 0.0f);
+    const float twice = gainAt(MCTimeOfDay::Dusk, 2.0f);
+    GHdLighting = lightingWas;
+    MCSceneLights::SetMissionTime(missionWas);
+    MCWeather::Settings().Light = settingWas;
+    CHECK(none == 0.0f);
+    CHECK(day > 0.0f);
+    CHECK(dusk > day);
+    CHECK(night > dusk);
+    CHECK(std::abs(twice - 2.0f * dusk) < 1e-5f);
+}
+
+/// <summary>
 /// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
 /// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
 /// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
@@ -4753,6 +4891,159 @@ TEST_CASE_ISOLATED(
     CHECK_EQ(duskSpots, size_t{0});
     CHECK(nightSpots >= 3);
     CHECK_EQ(shutDownSpots, size_t{0});
+}
+
+/// <summary>
+/// HD weather's drops catching the light (MCWeatherSettings::Light), on the screen drawn by the GPU over mission 1 at
+/// night in a downpour, paused, where the world shows clear of the interface, the rain falling as the game's time goes:
+/// with the units' headlights on, the drops in their beams show brighter than without it, in the lamps' warm light, a
+/// few of the world's pixels; with every unit shut down (no light at all) none shows brighter for it. The rain falls
+/// the same with it or without.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: at night in a downpour the drops in a headlight's beam catch its light, and none away from it")
+{
+    // A mover's status shut down (MCMover::ShutDown).
+    constexpr int32_t MechShutDown = 4;
+    // A frame's step of the game's time, and the frames the rain falls for before it's looked at.
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 30;
+    // A pixel shows brighter for it when a component rises this much; at least this many do in the headlights, at most
+    // this share of the world.
+    constexpr int32_t Brighter = 12;
+    constexpr size_t LeastCaught = 20;
+    constexpr double MostShare = 0.05;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    const float settingWas = MCWeather::Settings().Light;
+    GamePaused = true;
+    GHdLighting = HdLightingOn;
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Night);
+    GHdWeather = HdWeatherDownpour;
+
+    // The rain's last frame with the drops catching `light` as made, and how many drops and splashes there were.
+    size_t count = 0;
+    const auto rain = [&](float light)
+    {
+        MCWeather::Settings().Light = light;
+        MCWeather::Clear();
+        std::vector<SDL_Color> last;
+
+        for (int32_t frame = 0; frame <= Frames; ++frame)
+        {
+            ScenarioTime = now + Step * static_cast<float>(frame);
+            MCTestGame::RunFrame(FrameSeconds);
+            auto shown = display->ReadFrame();
+            REQUIRE(shown.has_value());
+            REQUIRE(shown->size() == static_cast<size_t>(width) * height);
+            last = std::move(*shown);
+        }
+
+        count = MCWeather::Count();
+        return last;
+    };
+
+    const std::vector<SDL_Color> caught = rain(1.0f);
+    const size_t caughtCount = count;
+    const std::vector<SDL_Color> uncaught = rain(0.0f);
+    const size_t uncaughtCount = count;
+
+    // Every mech shut down (no headlights), then as it was.
+    std::vector<std::pair<std::shared_ptr<MCBaseObject>, int32_t>> statuses;
+
+    for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
+    {
+        for (const std::shared_ptr<MCBaseObject>& object : *list)
+        {
+            auto& mech = static_cast<MCBattleMech&>(*object);
+            statuses.emplace_back(object, mech.Status);
+            mech.Status = MechShutDown;
+        }
+    }
+
+    const std::vector<SDL_Color> darkCaught = rain(1.0f);
+    const std::vector<SDL_Color> darkUncaught = rain(0.0f);
+
+    for (const auto& [object, status] : statuses)
+    {
+        static_cast<MCBattleMech&>(*object).Status = status;
+    }
+
+    ScenarioTime = now;
+    GamePaused = false;
+    GHdWeather = HdWeatherOff;
+    GHdLighting = HdLightingOff;
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
+    MCWeather::Settings().Light = settingWas;
+    SaveShownFrame(caught, width, height, "rain-light-caught");
+    SaveShownFrame(uncaught, width, height, "rain-light-uncaught");
+
+    // The pixels of the world clear of the interface (as the rain's test) that show brighter in `a` than in `b`, and
+    // how much their red and blue rose.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    struct Rise
+    {
+        size_t Pixels = 0;
+        int64_t Red = 0;
+        int64_t Blue = 0;
+    };
+
+    const auto brighter = [&](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    {
+        Rise rise;
+
+        for (int32_t y = top; y < height; ++y)
+        {
+            for (int32_t x = left; x < width; ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+                const int32_t red = a[i].r - b[i].r;
+                const int32_t green = a[i].g - b[i].g;
+                const int32_t blue = a[i].b - b[i].b;
+
+                if (std::max({red, green, blue}) >= Brighter)
+                {
+                    ++rise.Pixels;
+                    rise.Red += red;
+                    rise.Blue += blue;
+                }
+            }
+        }
+
+        return rise;
+    };
+
+    const Rise lit = brighter(caught, uncaught);
+    const Rise dark = brighter(darkCaught, darkUncaught);
+    const size_t world = static_cast<size_t>(width - left) * static_cast<size_t>(height - top);
+    std::cout << std::format(
+        "  drops catching the headlights: {} pixels brighter of {} (red up {}, blue up {}); {} with "
+        "no light; {} drops and splashes with it, {} without\n",
+        lit.Pixels, world, lit.Red, lit.Blue, dark.Pixels, caughtCount, uncaughtCount);
+    CHECK(caughtCount > 0);
+    CHECK_EQ(caughtCount, uncaughtCount);
+    CHECK(lit.Pixels >= LeastCaught);
+    CHECK(static_cast<double>(lit.Pixels) <= MostShare * static_cast<double>(world));
+    CHECK(lit.Red > lit.Blue);
+    CHECK_EQ(dark.Pixels, size_t{0});
 }
 
 /// <summary>
@@ -6477,10 +6768,11 @@ namespace
     /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount); with
     /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder);
     /// with <c>--hd-lightning &lt;flash&gt;[,&lt;strikes&gt;]</c>, its lightning that bright and that many times as
-    /// often, 1 as made (MCWeatherSettings::Flash and Strikes).
-    /// with <c>--hd-showers &lt;strength&gt;[,&lt;pace&gt;]</c>, its showers coming and going that far, 1 as made (0:
-    /// steady rain, its puddles as made from the start; MCWeatherSettings::Showers), that many times as fast
-    /// (MCWeatherSettings::ShowerPace; 8 shows a burst and a lull in a 70-second take).
+    /// often, 1 as made (MCWeatherSettings::Flash and Strikes); with <c>--hd-showers &lt;strength&gt;[,&lt;pace&gt;]</c>,
+    /// its showers coming and going that far, 1 as made (0: steady rain, its puddles as made from the start;
+    /// MCWeatherSettings::Showers), that many times as fast (MCWeatherSettings::ShowerPace; 8 shows a burst and a lull
+    /// in a 70-second take); with <c>--hd-rain-light &lt;strength&gt;</c>, the drops catch the lights they fall past
+    /// that much, 1 as made (0: none, as before; MCWeatherSettings::Light).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -6531,12 +6823,18 @@ namespace
             }
         }
 
+        if (const std::optional<std::string_view> light = MCTest::Option("hd-rain-light"); light.has_value())
+        {
+            MCWeather::Settings().Light = std::strtof(std::string(*light).c_str(), nullptr);
+        }
+
         const MCWeather::MCWeatherSettings& settings = MCWeather::Settings();
         std::cout << std::format(
             "  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud, lightning {:.2f} "
-            "as bright, {:.2f} as often, showers {:.2f} as far as made, {:.2f} times as fast\n",
+            "as bright, {:.2f} as often, showers {:.2f} as far as made, {:.2f} times as fast, drops catching {:.2f} of "
+            "the light as made\n",
             given->substr(0, comma), settings.Amount, settings.Thunder, settings.Flash, settings.Strikes,
-            settings.Showers, settings.ShowerPace);
+            settings.Showers, settings.ShowerPace, settings.Light);
     }
 
     /// <summary>

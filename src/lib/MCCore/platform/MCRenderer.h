@@ -402,6 +402,12 @@ struct MCParticleCommand
     uint8_t Alpha = 0;
     MCParticleStyle Style = MCParticleStyle::Soft;
     float Tip = 0.0f;
+    /// <summary>
+    /// Port-only (HD weather, a raindrop's or a splash's: RainStreak or Hard): the light it caught from the lights it
+    /// falls by (sprite/MCWeather.h), where it shows whole: a byte a component from red up (0: none). Drawn into the
+    /// GPU world's glints, which the composite adds over the lit world, so night doesn't dim it.
+    /// </summary>
+    uint32_t Glint = 0;
 };
 
 /// <summary>

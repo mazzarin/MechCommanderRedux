@@ -378,13 +378,14 @@ namespace
     };
 
     /// <summary>
-    /// A spotlight's (<paramref name="light"/>'s) light on the ground (<paramref name="dx"/>, <paramref name="dy"/>) off
-    /// the ground under it (along the ground, a screen height <paramref name="aspect"/> of one), as a share of its light
-    /// where its beam's middle meets the ground: as the composite's SpotPool.
+    /// A spotlight's (<paramref name="light"/>'s) light at a point <paramref name="up"/> window pixels above the ground
+    /// (<paramref name="dx"/>, <paramref name="dy"/>) off the ground under it (along the ground, a screen height
+    /// <paramref name="aspect"/> of one), as a share of its light where its beam's middle meets the ground: on the
+    /// ground (up 0), as the composite's SpotPool.
     /// </summary>
-    float SpotPool(const MCSceneLight& light, float dx, float dy, float aspect)
+    float SpotPool(const MCSceneLight& light, float dx, float dy, float aspect, float up = 0.0f)
     {
-        const std::array<float, 3> ray{dx, dy, -light.Height};
+        const std::array<float, 3> ray{dx, dy, up - light.Height};
         const std::array<float, 3> aim{light.SpotX, light.SpotY / aspect, -light.Height};
         const auto dot = [](const std::array<float, 3>& a, const std::array<float, 3>& b)
         { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
@@ -407,10 +408,11 @@ namespace
     }
 
     /// <summary>
-    /// How <paramref name="light"/> reaches the ground at window (<paramref name="x"/>, <paramref name="y"/>), as the
-    /// composite's LightAt pools it; distances along the ground, a screen height <paramref name="aspect"/> of one.
+    /// The ground under <paramref name="light"/> nearest window point (<paramref name="x"/>, <paramref name="y"/>): its
+    /// point, or a beam's nearest, in the window's pixels across and the ground's down (a screen height
+    /// <paramref name="aspect"/> of one).
     /// </summary>
-    Reaching LightReaching(const MCSceneLight& light, float x, float y, float aspect)
+    std::array<float, 2> NearestUnder(const MCSceneLight& light, float x, float y, float aspect)
     {
         const float ax = light.X0;
         const float ay = light.Y0 / aspect;
@@ -419,9 +421,19 @@ namespace
         const float length2 = abx * abx + aby * aby;
         const float t =
             length2 > 0.0f ? std::clamp(((x - ax) * abx + (y / aspect - ay) * aby) / length2, 0.0f, 1.0f) : 0.0f;
+        return {ax + abx * t, ay + aby * t};
+    }
+
+    /// <summary>
+    /// How <paramref name="light"/> reaches the ground at window (<paramref name="x"/>, <paramref name="y"/>), as the
+    /// composite's LightAt pools it; distances along the ground, a screen height <paramref name="aspect"/> of one.
+    /// </summary>
+    Reaching LightReaching(const MCSceneLight& light, float x, float y, float aspect)
+    {
         Reaching reaching;
-        reaching.X = ax + abx * t;
-        reaching.Y = ay + aby * t;
+        const auto [underX, underY] = NearestUnder(light, x, y, aspect);
+        reaching.X = underX;
+        reaching.Y = underY;
         const float dx = x - reaching.X;
         const float dy = y / aspect - reaching.Y;
         const float d2 = dx * dx + dy * dy;
@@ -1111,6 +1123,20 @@ auto MCSceneLights::Finish() -> void
     state.ShownWindow = std::exchange(state.Drawing, {});
 }
 
+auto MCSceneLights::Drawing() -> std::vector<MCSceneLight>
+{
+    const State& state = TheState();
+
+    if (GHdLighting == HdLightingOff || state.Drawing.expired())
+    {
+        return {};
+    }
+
+    std::vector<MCSceneLight> lights = state.Adding;
+    lights.insert(lights.end(), state.Flashes.begin(), state.Flashes.end());
+    return lights;
+}
+
 auto MCSceneLights::Shown(const MCWindow& view) -> std::span<const MCSceneLight>
 {
     const State& state = TheState();
@@ -1162,4 +1188,42 @@ auto MCSceneLights::ShownWaterPhase() -> float
 auto MCSceneLights::GroundAspect() -> float
 {
     return MCTerrain::ProjectionCos != 0.0f ? MCTerrain::ProjectionSin / MCTerrain::ProjectionCos : 1.0f;
+}
+
+auto MCSceneLights::LightInAir(std::span<const MCSceneLight> lights, float x, float y, float height, float aspect)
+    -> std::array<float, 3>
+{
+    std::array<float, 3> sum{};
+
+    if (aspect <= 0.0f)
+    {
+        return sum;
+    }
+
+    for (const MCSceneLight& light : lights)
+    {
+        const auto [underX, underY] = NearestUnder(light, x, y, aspect);
+        const float dx = x - underX;
+        const float dy = y / aspect - underY;
+        const float up = height - light.Height;
+        const float d2 = dx * dx + dy * dy + up * up;
+        const float reach2 = std::max(light.Reach * light.Reach, 1.0f);
+
+        if (d2 >= reach2)
+        {
+            continue;
+        }
+
+        // Faded out at its reach as its pool is; a light shining every way as soft as its pool's softest.
+        const float near2 = d2 / reach2;
+        const float fade = 1.0f - near2 * near2;
+        const float soft = light.Reach * LightSoftness;
+        const float share = IsSpot(light) ? SpotPool(light, dx, dy, aspect, height) : soft * soft / (d2 + soft * soft);
+        const float lit = fade * fade * share;
+        sum[0] += light.Red * lit;
+        sum[1] += light.Green * lit;
+        sum[2] += light.Blue * lit;
+    }
+
+    return sum;
 }

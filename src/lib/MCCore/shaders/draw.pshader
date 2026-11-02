@@ -170,6 +170,13 @@ static const uint HdLight = 1u << 21;
 static const uint SunShadowDraw = 1u << 22;
 // Port-only (HD particles): a KindSmoothEllipse draw that is a particle (MCParticleCommand: ParticlePixel).
 static const uint Particle = 1u << 23;
+// Port-only (HDSway): a draw of a forest's canopy (MCVulkanRenderer's Sways): its index pass sets its pixels' alpha in
+// the index target to SwayMark, which the composite sways (composite.pshader's SwayedAt; the relief maps' alpha is 1);
+// its HD frame, drawn after, sets it again, 0 on its painted shadow, which shows the ground under it (the frame's
+// pipeline writes nothing else of the indices). The renderer's IndexOnly marks an index pass.
+static const uint Sways = 1u << 24;
+static const uint IndexOnly = 1u << 15;
+static const float SwayMark = 64.0 / 255.0;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -835,6 +842,14 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    // A forest's canopy marks where it is drawn, not its painted shadow (Sways).
+    float swayMark = 0.0;
+
+    if ((input.op.x & Sways) != 0)
+    {
+        swayMark = BakedShadowAt(original, shape) < 0.5 ? SwayMark : 0.0;
+    }
+
     // A frame cast as a sun shadow casts its body, not the shadow baked beside it.
     if ((input.op.x & SunShadowDraw) != 0)
     {
@@ -866,7 +881,9 @@ Output HdPixelAt(Input input, float2 shape)
         color.rgb = TableShift(input.op.z, color.rgb, color.a);
     }
 
-    return Blended(color);
+    Output output = Blended(color);
+    output.index.a = swayMark;
+    return output;
 }
 
 // An HD art frame's pixel: the source is the place in the original shape's bounds of the rectangle's first pixel and
@@ -1532,6 +1549,11 @@ Output main(Input input)
     if ((input.op.x & Glow) != 0)
     {
         output.color *= look.x;
+    }
+
+    if ((input.op.x & (Sways | IndexOnly)) == (Sways | IndexOnly))
+    {
+        output.index.a = SwayMark;
     }
 
     return output;

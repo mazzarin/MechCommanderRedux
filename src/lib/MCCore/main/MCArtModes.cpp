@@ -20,7 +20,7 @@ namespace
     constexpr std::array<MCArtMode, 5> Modes = {{
         {"original", HdArtOff, HdLightingOff},
         {"hd", HdArtOn, HdLightingOff},
-        {"lit", HdArtOn, HdLightingOn},
+        {"day", HdArtOn, HdLightingOn},
         {"dusk", HdArtOn, HdLightingDusk},
         {"night", HdArtOn, HdLightingNight},
     }};

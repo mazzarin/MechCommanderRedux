@@ -111,6 +111,9 @@ cbuffer Composite : register(b0, space3)
     // Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): x, how steeply the HD ground's relief maps stand
     // its bumps (0: the ground is lit by its brightness, as the rest).
     float4 reliefLook;
+    // Port-only (HDSway, MCLighting::Sway): x, how far a forest's canopy sways at the height of a gust (meters, 0 none);
+    // y, how much brighter it shows there.
+    float4 sway;
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -724,6 +727,135 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
     return lerp(color, shown, water.x);
 }
 
+// Port-only (HDSway): a forest's canopy swaying, where the renderer marked it in the index target's alpha (draw.pshader's
+// SwayMark, within SwayMarkNear), tree by tree. The ground is cut into crowns about SwayCrownSize meters apart (a
+// jittered grid's cells, each round its own point), each moving whole: its colour is read from a little way off along
+// the ground. Gusts sweep over the forest before the wind: noise SwayGustSize meters big (two layers, the finer a
+// third), drifting at SwayGustSpeed, full from the top of SwayGustLevels, calm below its bottom. A gust leans each crown
+// it passes up to sway.x downwind, and each rocks about it as a tree on a spring: at its own rate (SwayRates, a second),
+// its beat wandering (up to SwayWander of a turn, over 1 / SwayWanderRate seconds) and swelling and fading (over
+// 1 / SwaySwellRate seconds), a little across the wind (SwayAcross), SwayRock of sway.x (SwayCalm of that between
+// gusts). Neighbouring crowns blend over SwayCrownEdge meters, so none tears from the next. Leaning downwind, a crown
+// shows up to sway.y brighter, its leaves turned up to the wind. Where the place read from is no canopy (at the
+// forest's edge) it holds still.
+static const float SwayMark = 64.0 / 255.0;
+static const float SwayMarkNear = 16.0 / 255.0;
+static const float SwayCrownSize = 25.0;
+static const float SwayCrownJitter = 0.8;
+static const float SwayCrownEdge = 3.0;
+static const float SwayGustSize = 62.0;
+static const float SwayGustSpeed = 10.7;
+static const float2 SwayGustLevels = float2(0.4, 0.7);
+static const float2 SwayRates = float2(0.35, 0.7);
+static const float SwayWander = 0.25;
+static const float SwayWanderRate = 0.15;
+static const float SwaySwellRate = 0.3;
+static const float SwayAcross = 0.4;
+static const float SwayRock = 0.7;
+static const float SwayCalm = 0.25;
+// Each crown's own values, its cell's places in the lattice this far apart; the gusts' finer layer this far off.
+static const float2 CrownApart = float2(17.0, 59.0);
+static const float2 GustLayerApart = float2(17.3, -9.1);
+
+bool IsCanopy(float2 texel)
+{
+    const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
+    return abs(TexelAt(opTex, opSampler, at, worldSize.zw).a - SwayMark) < SwayMarkNear;
+}
+
+// The point of crown cell `cell` (meters), and its own values (0 to 1) for its rate, beat and swell.
+float2 CrownPoint(float2 cell, out float3 own)
+{
+    own = float3(LatticeHash(cell + 2.0 * CrownApart), LatticeHash(cell + 3.0 * CrownApart),
+                 LatticeHash(cell + 4.0 * CrownApart));
+    const float2 jitter = float2(LatticeHash(cell), LatticeHash(cell + CrownApart)) - 0.5;
+    return (cell + 0.5 + SwayCrownJitter * jitter) * SwayCrownSize;
+}
+
+// How far a crown round `centre` with its own values is swayed at `time`, in meters east and north.
+float2 CrownSway(float2 centre, float3 own, float time)
+{
+    const float2 gustAt = (centre - time * SwayGustSpeed * Wind) / SwayGustSize;
+    const float gust = smoothstep(SwayGustLevels.x, SwayGustLevels.y,
+                                  (2.0 * Noise(gustAt) + Noise(2.0 * gustAt + GustLayerApart)) / 3.0);
+    const float rate = lerp(SwayRates.x, SwayRates.y, own.x);
+    const float wander = SwayWander * Noise(float2(time * SwayWanderRate, own.y * CrownApart.y));
+    const float phase = TwoPi * (time * rate + own.y + wander);
+    const float swell = Noise(float2(time * SwaySwellRate, own.z * CrownApart.y));
+    const float2 crosswind = float2(-Wind.y, Wind.x);
+    const float2 rock = (Wind * cos(phase) + crosswind * (SwayAcross * sin(phase))) * swell;
+    return sway.x * (gust * Wind + SwayRock * lerp(SwayCalm, 1.0, gust) * rock);
+}
+
+// The world texel a texel's colour is read from as the canopy sways (the texel itself where none does), and how much
+// brighter it shows (light, 1 as drawn).
+float2 SwayedAt(float2 texel, out float light)
+{
+    light = 1.0;
+    const float determinant = groundAxes.x * groundAxes.w - groundAxes.y * groundAxes.z;
+
+    if (sway.x <= 0.0 || mode.y == 0.0 || abs(determinant) < MinGroundArea || !IsCanopy(texel))
+    {
+        return texel;
+    }
+
+    const float2 offset = texel + 0.5 - ground.xy;
+    const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
+    const float2 home = floor(at / SwayCrownSize);
+    // The nearest crown's point and the next nearest's.
+    float2 nearest = float2(0.0, 0.0);
+    float2 next = float2(0.0, 0.0);
+    float3 nearestOwn = float3(0.0, 0.0, 0.0);
+    float3 nextOwn = float3(0.0, 0.0, 0.0);
+    float nearestAway = 1e9;
+    float nextAway = 1e9;
+
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            float3 own;
+            const float2 centre = CrownPoint(home + float2(dx, dy), own);
+            const float away = length(centre - at);
+
+            if (away < nearestAway)
+            {
+                next = nearest;
+                nextOwn = nearestOwn;
+                nextAway = nearestAway;
+                nearest = centre;
+                nearestOwn = own;
+                nearestAway = away;
+            }
+            else if (away < nextAway)
+            {
+                next = centre;
+                nextOwn = own;
+                nextAway = away;
+            }
+        }
+    }
+
+    const float time = haze.z;
+    const float2 own = CrownSway(nearest, nearestOwn, time);
+    const float2 between = 0.5 * (own + CrownSway(next, nextOwn, time));
+    const float2 meters = lerp(between, own, smoothstep(0.0, SwayCrownEdge, nextAway - nearestAway));
+    // The ground's map inverted: meters east and north to texels.
+    const float2 texels = float2(groundAxes.w * meters.x - groundAxes.y * meters.y,
+                                 groundAxes.x * meters.y - groundAxes.z * meters.x) /
+                          determinant;
+    // Read from upwind: the canopy drawn there moves downwind.
+    const float2 swayed = texel - texels;
+
+    if (!IsCanopy(swayed))
+    {
+        return texel;
+    }
+
+    light = 1.0 + sway.y * saturate(dot(meters, Wind) / sway.x);
+    return swayed;
+}
+
 // Port-only (HD lighting): the clouds' shadows (GHdClouds, MCLighting::Clouds), drifting over the ground (laid on it in
 // meters, as the water's waves) before the wind. They are fractal noise: CloudLayers layers, each twice as fine and half
 // as strong as the one before and turned CloudTurn radians from it (hiding the noise's grid). Each finer one also slides
@@ -806,13 +938,15 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (mode.x != 0.0)
         {
             const float2 hazy = world + HazeAt(world + 0.5);
+            float swayLight;
+            const float2 swayed = SwayedAt(hazy, swayLight);
             const float4 lit =
-                any(hazy != world) ? WorldBetween(hazy) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
+                any(swayed != world) ? WorldBetween(swayed) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
             float glint;
-            const float3 seen = LivingWater(lit.rgb, hazy, glint);
+            const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
             const float3 cloudLight = CloudsAt(hazy + 0.5);
-            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(hazy), lit.a, glint, cloudLight) +
+            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(swayed), lit.a, glint, cloudLight) +
                                  glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }

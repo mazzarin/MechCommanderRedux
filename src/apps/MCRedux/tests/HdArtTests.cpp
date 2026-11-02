@@ -4091,6 +4091,412 @@ namespace
 }
 
 /// <summary>
+/// Forests swaying (GHdSway) over mission 1 drawn by the GPU, paused: a forest's frame from the pack drawn in the world
+/// (a shape table's, its canopy in squares of two colours at random, its painted shadow beside it;
+/// MCHdArt::Frame::PaintedShadow) shows as drawn with them off whatever the game's time, and the same at the same time
+/// with them on. With them on, as the game's time goes on the canopy is drawn moved: its middle as a whole and in the
+/// canopy's own colours, never twice its sway away, rocking to and fro and downwind on the average (the gusts lean it
+/// before the wind); the ground round it and under its painted shadow stays put. Leaning downwind, it shows brighter,
+/// by up to its light.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDSway a forest's canopy sways downwind as the game's time goes, the ground staying put")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+
+    // The canopy's two colours: free ones (as FullColorIndex's) with room to brighten, far apart.
+    constexpr int32_t FirstFree = 10;
+    constexpr int32_t EndFree = 246;
+    constexpr uint8_t Least = 40;
+    constexpr uint8_t Most = 160;
+    constexpr float Apart = 40.0f;
+    const auto canopyColor = [&](std::optional<uint8_t> other)
+    {
+        const auto free = std::views::iota(FirstFree, EndFree);
+        const auto found = std::ranges::find_if(
+            free,
+            [&](int32_t i)
+            {
+                const SDL_Color& c = colors[static_cast<size_t>(i)];
+                return SpecialColor[static_cast<size_t>(i)] == 0 && std::min({c.r, c.g, c.b}) >= Least &&
+                       std::max({c.r, c.g, c.b}) <= Most &&
+                       (!other.has_value() || std::abs(LumaOf(c) - LumaOf(colors[*other])) >= Apart);
+            });
+        REQUIRE(found != free.end());
+        return static_cast<uint8_t>(*found);
+    };
+
+    const uint8_t firstShade = canopyColor(std::nullopt);
+    const std::array<uint8_t, 2> shades = {firstShade, canopyColor(firstShade)};
+
+    // 96 x 48 above its foot: the canopy in columns 0-63, in Cell pixel squares of either colour by a hash of their
+    // place (so no shift of it looks like it), its painted shadow in the rest.
+    constexpr int32_t Width = 96;
+    constexpr int32_t Height = 48;
+    constexpr int32_t CanopyColumns = 64;
+    constexpr int32_t Cell = 4;
+    constexpr int32_t Top = -Height;
+    constexpr uint32_t HashAcross = 374761393u;
+    constexpr uint32_t HashDown = 668265263u;
+    constexpr uint32_t HashMix = 1274126177u;
+    constexpr int HashFold = 13;
+    constexpr int HashBit = 16;
+    const auto indexAt = [&](int32_t column, int32_t row) -> uint8_t
+    {
+        if (column >= CanopyColumns)
+        {
+            return MCHdArt::BakedShadowIndex;
+        }
+
+        uint32_t hash =
+            static_cast<uint32_t>(column / Cell) * HashAcross + static_cast<uint32_t>(row / Cell) * HashDown;
+        hash = (hash ^ (hash >> HashFold)) * HashMix;
+        return shades[(hash >> HashBit) & 1u];
+    };
+
+    constexpr uint8_t RowPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.push_back(RowPixels);
+
+        for (int32_t column = 0; column < Width; ++column)
+        {
+            rows.push_back(indexAt(column, row));
+        }
+
+        rows.push_back(RowEnd);
+    }
+
+    const std::vector<uint8_t> made = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}});
+    MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
+    std::ranges::copy(made, table.Bytes().begin());
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_sway";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
+    std::filesystem::create_directories(folder);
+    constexpr int32_t Scale = 2;
+    WriteObjectFrame(folder / "0", Width, Height, Scale, colors, indexAt,
+                     [](int32_t column, int32_t) { return column >= CanopyColumns; });
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    REQUIRE(camera->View() != nullptr);
+
+    // The screen's pixels a meter of the ground takes (the most, east or north), and the wind's way on the screen.
+    constexpr float Span = 100.0f;
+    const MCVector2D origin = ProjectToScreen(MCVector3D(0.0f, 0.0f, 0.0f), *camera);
+    const auto onScreen = [&](float east, float north)
+    {
+        const MCVector2D to = ProjectToScreen(MCVector3D(east, north, 0.0f), *camera);
+        return std::array{to.X - origin.X, to.Y - origin.Y};
+    };
+
+    const std::array<float, 2> east = onScreen(Span, 0.0f);
+    const std::array<float, 2> north = onScreen(0.0f, Span);
+    const std::array<float, 2> wind = onScreen(MCSceneLights::WindEast * Span, MCSceneLights::WindNorth * Span);
+    const float perMeter = std::max(std::hypot(east[0], east[1]), std::hypot(north[0], north[1])) / Span;
+    const float windLength = std::hypot(wind[0], wind[1]);
+    REQUIRE(perMeter > 0.0f);
+    REQUIRE(windLength > 0.0f);
+    const float alongWind = windLength / Span;
+
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    // The sway, at most SwayPixels on the screen; the light it shows leaning downwind.
+    constexpr float SwayPixels = 6.0f;
+    constexpr float Light = 0.4f;
+    lighting.Sway = SwayPixels / perMeter;
+    const float now = ScenarioTime;
+    GamePaused = true;
+
+    // A frame of the world, with the forest drawn in it (a little right of the middle and up, clear of the units) or not.
+    constexpr int32_t Aside = 30;
+    const auto drawn = [&](bool forest, int32_t sways, float time, float light)
+    {
+        GHdSway = sways;
+        ScenarioTime = time;
+        lighting.SwayLight = light;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (forest)
+        {
+            MCPane& world = camera->View()->WorldFrame();
+            AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside, (world.Y1 - world.Y0) / 2 - Aside);
+        }
+
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t x, int32_t y)
+    { return frame[static_cast<size_t>(y) * width + x]; };
+
+    // The frame on the screen, where it differs from the bare ground (near the middle: the minimap's blips blink), and
+    // its canopy, the left CanopyColumns of its Width (each past its last pixel).
+    const std::vector<SDL_Color> bare = drawn(false, 0, now, 0.0f);
+    const std::vector<SDL_Color> still = drawn(true, 0, now, 0.0f);
+    SaveShownFrame(still, width, height, "sway-still");
+    int32_t frameLeft = width;
+    int32_t frameRight = 0;
+    int32_t frameTop = height;
+    int32_t frameBottom = 0;
+
+    for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+    {
+        for (int32_t x = width / 4; x < width * 3 / 4; ++x)
+        {
+            if (!SameColor(at(bare, x, y), at(still, x, y)))
+            {
+                frameLeft = std::min(frameLeft, x);
+                frameRight = std::max(frameRight, x + 1);
+                frameTop = std::min(frameTop, y);
+                frameBottom = std::max(frameBottom, y + 1);
+            }
+        }
+    }
+
+    REQUIRE(frameRight > frameLeft);
+    REQUIRE(frameBottom > frameTop);
+    const int32_t canopyLeft = frameLeft;
+    const int32_t canopyRight = frameLeft + (frameRight - frameLeft) * CanopyColumns / Width;
+    const int32_t canopyTop = frameTop;
+    const int32_t canopyBottom = frameBottom;
+
+    // The frame and Margin pixels round it but for its canopy and Fringe pixels round that (its edge, drawn smooth):
+    // the pixels that differ from the still frame's.
+    constexpr int32_t Margin = 8;
+    constexpr int32_t Fringe = 2;
+    const auto movedOutside = [&](const std::vector<SDL_Color>& frame)
+    {
+        size_t moved = 0;
+
+        for (int32_t y = frameTop - Margin; y < frameBottom + Margin; ++y)
+        {
+            for (int32_t x = frameLeft - Margin; x < frameRight + Margin; ++x)
+            {
+                const bool canopy = x >= canopyLeft - Fringe && x < canopyRight + Fringe && y >= canopyTop - Fringe &&
+                                    y < canopyBottom + Fringe;
+                moved += canopy || SameColor(at(frame, x, y), at(still, x, y)) ? 0 : 1;
+            }
+        }
+
+        return moved;
+    };
+
+    // The pixels of the frame and Margin round it that differ between two frames.
+    const auto differing = [&](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    {
+        size_t count = 0;
+
+        for (int32_t y = frameTop - Margin; y < frameBottom + Margin; ++y)
+        {
+            for (int32_t x = frameLeft - Margin; x < frameRight + Margin; ++x)
+            {
+                count += SameColor(at(a, x, y), at(b, x, y)) ? 0 : 1;
+            }
+        }
+
+        return count;
+    };
+
+    // The canopy's own colours: each component's least and most, as drawn inside its edge.
+    std::array<int32_t, 3> least = {255, 255, 255};
+    std::array<int32_t, 3> most = {0, 0, 0};
+
+    for (int32_t y = canopyTop + Fringe; y < canopyBottom - Fringe; ++y)
+    {
+        for (int32_t x = canopyLeft + Fringe; x < canopyRight - Fringe; ++x)
+        {
+            const SDL_Color c = at(still, x, y);
+            const std::array<int32_t, 3> parts = {c.r, c.g, c.b};
+
+            for (size_t part = 0; part < parts.size(); ++part)
+            {
+                least[part] = std::min(least[part], parts[part]);
+                most[part] = std::max(most[part], parts[part]);
+            }
+        }
+    }
+
+    const int32_t contrast = most[0] - least[0] + most[1] - least[1] + most[2] - least[2];
+    REQUIRE(contrast > 0);
+
+    // The canopy's middle, Patch pixels square: the shift of the still canopy it best shows (within Reach), and how far
+    // from that it is (each pixel's components, on the average).
+    constexpr int32_t Patch = 16;
+    constexpr auto Reach = static_cast<int32_t>(2.0f * SwayPixels) + 1;
+    const int32_t patchLeft = (canopyLeft + canopyRight - Patch) / 2;
+    const int32_t patchTop = (canopyTop + canopyBottom - Patch) / 2;
+    REQUIRE(patchLeft - Reach >= canopyLeft);
+    REQUIRE(patchLeft + Patch + Reach <= canopyRight);
+    REQUIRE(patchTop - Reach >= canopyTop);
+    REQUIRE(patchTop + Patch + Reach <= canopyBottom);
+    const auto mismatch = [&](const std::vector<SDL_Color>& frame, int32_t dx, int32_t dy)
+    {
+        int64_t sum = 0;
+
+        for (int32_t y = patchTop; y < patchTop + Patch; ++y)
+        {
+            for (int32_t x = patchLeft; x < patchLeft + Patch; ++x)
+            {
+                const SDL_Color a = at(frame, x, y);
+                const SDL_Color b = at(still, x - dx, y - dy);
+                sum += std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b);
+            }
+        }
+
+        return static_cast<double>(sum) / (Patch * Patch);
+    };
+
+    struct Shift
+    {
+        int32_t Dx = 0;
+        int32_t Dy = 0;
+        double Mismatch = 0.0;
+    };
+
+    const auto shown = [&](const std::vector<SDL_Color>& frame)
+    {
+        Shift best{0, 0, std::numeric_limits<double>::max()};
+
+        for (int32_t dy = -Reach; dy <= Reach; ++dy)
+        {
+            for (int32_t dx = -Reach; dx <= Reach; ++dx)
+            {
+                if (const double off = mismatch(frame, dx, dy); off < best.Mismatch)
+                {
+                    best = {dx, dy, off};
+                }
+            }
+        }
+
+        return best;
+    };
+
+    const auto downwind = [&](const Shift& shift) { return (shift.Dx * wind[0] + shift.Dy * wind[1]) / windLength; };
+
+    // Every Step seconds for Steps.
+    constexpr float Step = 0.5f;
+    constexpr int32_t Steps = 60;
+    constexpr int32_t Rounding = 2;
+    size_t moved = 0;
+    size_t foreign = 0;
+    double worst = 0.0;
+    double farthest = 0.0;
+    double leaned = 0.0;
+    float leanedAt = now;
+    double downwindSum = 0.0;
+    std::set<std::pair<int32_t, int32_t>> shifts;
+
+    for (int32_t step = 0; step < Steps; ++step)
+    {
+        const float time = now + static_cast<float>(step) * Step;
+        const std::vector<SDL_Color> frame = drawn(true, 1, time, 0.0f);
+        moved += movedOutside(frame);
+
+        // Inside its edge farther than the sway reaches (the edge, drawn smooth over the ground, sways with it).
+        for (int32_t y = canopyTop + Fringe + Reach; y < canopyBottom - Fringe - Reach; ++y)
+        {
+            for (int32_t x = canopyLeft + Fringe + Reach; x < canopyRight - Fringe - Reach; ++x)
+            {
+                const SDL_Color c = at(frame, x, y);
+                const std::array<int32_t, 3> parts = {c.r, c.g, c.b};
+                const bool own = std::ranges::all_of(
+                    std::views::iota(size_t{0}, parts.size()), [&](size_t part)
+                    { return parts[part] >= least[part] - Rounding && parts[part] <= most[part] + Rounding; });
+                foreign += own ? 0 : 1;
+            }
+        }
+
+        const Shift shift = shown(frame);
+        shifts.insert({shift.Dx, shift.Dy});
+        worst = std::max(worst, shift.Mismatch);
+        farthest = std::max(farthest, std::hypot(static_cast<double>(shift.Dx), static_cast<double>(shift.Dy)));
+        downwindSum += downwind(shift);
+
+        if (downwind(shift) > leaned)
+        {
+            leaned = downwind(shift);
+            leanedAt = time;
+        }
+    }
+
+    const double downwindMean = downwindSum / Steps;
+    const std::vector<SDL_Color> leaning = drawn(true, 1, leanedAt, 0.0f);
+    const std::vector<SDL_Color> again = drawn(true, 1, leanedAt, 0.0f);
+    const std::vector<SDL_Color> lit = drawn(true, 1, leanedAt, Light);
+    const std::vector<SDL_Color> stillLater = drawn(true, 0, leanedAt, 0.0f);
+    SaveShownFrame(leaning, width, height, "sway-leaning");
+    SaveShownFrame(lit, width, height, "sway-leaning-lit");
+
+    // The light leaning downwind, and the lean's share of its most (its sway).
+    double lumaLit = 0.0;
+    double lumaUnlit = 0.0;
+
+    for (int32_t y = patchTop; y < patchTop + Patch; ++y)
+    {
+        for (int32_t x = patchLeft; x < patchLeft + Patch; ++x)
+        {
+            lumaLit += LumaOf(at(lit, x, y));
+            lumaUnlit += LumaOf(at(leaning, x, y));
+        }
+    }
+
+    const double brighter = lumaLit / lumaUnlit;
+    const double leanShare = std::clamp(leaned / alongWind / lighting.Sway, 0.0, 1.0);
+    GamePaused = false;
+    GHdSway = 0;
+    ScenarioTime = now;
+    lighting = kept;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+
+    std::cout << std::format("  swayed up to {:.1f} pixels of {:.0f}, {:.1f} downwind at most and {:.1f} on the "
+                             "average, through {} places; mismatch {:.1f} of {} at worst; {:.2f} as bright leaning "
+                             "{:.0f}% of its sway\n",
+                             farthest, SwayPixels, leaned, downwindMean, shifts.size(), worst, contrast, brighter,
+                             100.0 * leanShare);
+    CHECK(differing(stillLater, still) == 0);
+    CHECK(differing(again, leaning) == 0);
+    CHECK(moved == 0);
+    CHECK(foreign == 0);
+    CHECK(farthest >= 2.0);
+    CHECK(farthest <= 2.0 * SwayPixels);
+    CHECK(shifts.size() >= 3);
+    CHECK(downwindMean > 0.0);
+    CHECK(leanShare > 0.5);
+    CHECK(worst < 0.25 * contrast);
+    CHECK(brighter > 1.0 + 0.5 * Light * leanShare);
+    CHECK(brighter < 1.0 + Light + 0.02);
+}
+
+/// <summary>
 /// A mission's time of day (port-only): its scenario file's [Environment] TimeOfDay, named in any case; day without the
 /// block or the key, and for a name that isn't a time of day. HD lighting ON shows the mission's own, DUSK and NIGHT
 /// their own whatever the mission's, and off shows day (as drawn); dusk dims the world's light, night more and blue, its
@@ -5359,6 +5765,26 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sway &lt;meters&gt;[,&lt;light&gt;]</c>, lets a forest's canopy sway (GHdSway) that far at the
+    /// height of a gust, that much brighter there (MCLighting::Sway, SwayLight; each left out keeps its default).
+    /// </summary>
+    void SwayFromOptions()
+    {
+        const std::optional<std::string_view> sway = MCTest::Option("hd-sway");
+
+        if (!sway.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*sway);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f", &settings.Sway, &settings.SwayLight) >= 1);
+        GHdSway = 1;
+        std::cout << std::format("  forests sway: {:.2f} m, {:.2f} brighter\n", settings.Sway, settings.SwayLight);
+    }
+
+    /// <summary>
     /// With <c>--hd-footprints-on 1</c>, turns HDFootprints on (GHdFootprints): footprints under the feet as drawn. The
     /// ring of footprints and craters keeps the mission's length (three times it needs PREFS, read as the mission starts,
     /// before its ring is made).
@@ -5565,6 +5991,7 @@ namespace
         ReliefMapsFromOptions();
         SunShadowsFromOptions();
         CloudsFromOptions();
+        SwayFromOptions();
         ParticlesFromOptions();
         FootprintsFromOptions();
         TurnsFromOptions();
@@ -5575,7 +6002,7 @@ namespace
     /// <summary>
     /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
     /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
-    /// command names them (main/MCArtModes.h: original, hd, lit, dusk, night). Without <c>--hd-original 1</c>, so the
+    /// command names them (main/MCArtModes.h: original, hd, day, dusk, night). Without <c>--hd-original 1</c>, so the
     /// pack is there for the modes that draw HD art.
     /// </summary>
     std::map<int32_t, MCArtMode> ArtModesFromOptions()
@@ -6195,7 +6622,7 @@ namespace
 /// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
 /// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
 /// tumbling at 7 frames a second as it flies. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
-/// each plays (original, hd, lit, dusk: the debug console's art command).
+/// each plays (original, hd, day, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
 {
@@ -12102,7 +12529,7 @@ namespace
 /// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
 /// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
 /// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
-/// switches the art as it plays (original, hd, lit, dusk: the debug console's art command).
+/// switches the art as it plays (original, hd, day, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
 {

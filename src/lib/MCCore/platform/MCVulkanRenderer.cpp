@@ -108,6 +108,21 @@ namespace
     /// pass (shaders/draw.pshader's ParticlePixel).
     /// </summary>
     constexpr uint32_t ParticleDraw = 1u << 23;
+    /// <summary>
+    /// Port-only (HDSway): a draw of a forest's canopy. Its index pass, drawn first, marks its pixels in the index
+    /// target's alpha for the composite to sway (shaders/draw.pshader's SwayMark); its HD frame then takes the mark off
+    /// its painted shadow, which shows the ground under it (_BlendMarks: the indices' alpha alone).
+    /// </summary>
+    constexpr uint32_t Sways = 1u << 24;
+
+    /// <summary>
+    /// Sways for an HD frame's draws when forests sway (GHdSway) and it is a forest's (a frame whose painted shadow the
+    /// pack's generator marked: tools/upscale/baked_shadow.py marks only a forest's canopy and edges), else nothing.
+    /// </summary>
+    uint32_t SwaysOf(const MCHdArt::Frame& frame)
+    {
+        return GHdSway != 0 && frame.PaintedShadow ? Sways : 0u;
+    }
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -605,7 +620,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // A surface's two targets: its colours and its indices. Opaque draws write both; blended draws blend their
     // premultiplied colour over the colours (ONE, ONE_MINUS_SRC_ALPHA) and leave the indices. A shadow (HD lighting)
     // takes the colours' alpha down by its own (ZERO, ONE_MINUS_SRC_ALPHA) and leaves the rest.
-    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false)
+    const auto makePipeline =
+        [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false, bool marks = false)
     {
         SDL_GPUColorTargetDescription targets[2]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -647,6 +663,13 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             targets[1].blend_state.color_write_mask = 0;
         }
 
+        // Port-only (HDSway): a forest's HD frame writes the sway mark (the indices' alpha) alone.
+        if (marks)
+        {
+            targets[1].blend_state.enable_color_write_mask = true;
+            targets[1].blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_A;
+        }
+
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = &vertexShader;
         pipeline.fragment_shader = renderer->_FragmentShader.get();
@@ -663,12 +686,13 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_Blend = makePipeline(*renderer->_VertexShader, true);
     renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
     renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
+    renderer->_BlendMarks = makePipeline(*renderer->_VertexShader, true, false, false, true);
     renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
     renderer->_TerrainSeamPipeline = makePipeline(*renderer->_TerrainShader, true);
 
     if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
-        renderer->_ShadowPipeline == nullptr || renderer->_TerrainPipeline == nullptr ||
-        renderer->_TerrainSeamPipeline == nullptr)
+        renderer->_ShadowPipeline == nullptr || renderer->_BlendMarks == nullptr ||
+        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -772,6 +796,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _Blend.reset();
     _IndexOnly.reset();
     _ShadowPipeline.reset();
+    _BlendMarks.reset();
     _TerrainPipeline.reset();
     _TerrainSeamPipeline.reset();
     _VertexShader.reset();
@@ -1035,13 +1060,15 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[11] = static_cast<int32_t>(after);
     const bool indexOnly = (op & IndexOnly) != 0;
     const bool shadow = (op & KindMask) == KindShadow;
+    const bool marks = (op & Sways) != 0 && blend;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
     const auto continues = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
                last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
-               last.Shadow == shadow && (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
+               last.Shadow == shadow && last.Marks == marks &&
+               (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
                last.First + last.Count == _Draws.size();
     };
 
@@ -1056,6 +1083,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.Blend = blend;
         fresh.IndexOnly = indexOnly;
         fresh.Shadow = shadow;
+        fresh.Marks = marks;
         fresh.First = static_cast<uint32_t>(_Draws.size());
         _Records.push_back(fresh);
     }
@@ -2576,7 +2604,7 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
 
     // The colour field carries the frame's scale (shaders/draw.pshader's KindHd), and the key a keyed copy leaves out.
     uint32_t op = (edges == HdEdges::Smooth ? KindHdSmooth : KindHd) | AlphaBlend | (key.has_value() ? ColorKey : 0) |
-                  (colours == HdColours::AsMade ? HdAsMade : 0) | (frame.Blended ? HdLight : 0u);
+                  (colours == HdColours::AsMade ? HdAsMade : 0) | (frame.Blended ? HdLight : 0u) | SwaysOf(frame);
     uint32_t before = 0;
 
     if (table.has_value())
@@ -2801,6 +2829,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
             AddPaintedShadow(surface, *hd, hdAt[0] - shapeFrom[0], hdAt[1] - shapeFrom[1],
                              Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom});
+            // A forest's index pass comes first, marking the sway, which its HD frame takes off its painted shadow.
+            const uint32_t indexOp = op | IndexOnly | (translucent ? OpaqueOnly : 0u) | SwaysOf(*hd);
+
+            if ((indexOp & Sways) != 0)
+            {
+                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+            }
+
             // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
             // there instead (over the two frames' bounds, clipped as the command's rows and columns; widened as the
             // frame for smooth edges), over the frame's own indices.
@@ -2830,8 +2866,10 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                 AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
             }
 
-            Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | (translucent ? OpaqueOnly : 0u), 0,
-                before, after);
+            if ((indexOp & Sways) == 0)
+            {
+                Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
+            }
 
             // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
             if (blendsOwn && !smooth)
@@ -2949,10 +2987,17 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
 
         AddPaintedShadow(surface, *hd, at[0] - column, at[1] - command.FirstRow,
                          Quad{command.ClipX0, command.ClipY0, command.ClipX1, command.ClipY1});
+        // A forest's index pass comes first, marking the sway, which its HD frame takes off its painted shadow.
+        const uint32_t sways = command.Alpha ? 0u : SwaysOf(*hd);
+
+        if (sways != 0)
+        {
+            Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly | sways, 0, before, 0);
+        }
 
         if (AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges))
         {
-            if (command.Alpha)
+            if (command.Alpha || sways != 0)
             {
                 return;
             }
@@ -5061,8 +5106,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
                 next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
-                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.ReadsCopy ||
-                record.ReadsCopy || next.First != previous.First + previous.Count)
+                next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
+                next.ReadsCopy || record.ReadsCopy || next.First != previous.First + previous.Count)
             {
                 break;
             }
@@ -5131,7 +5176,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
         SDL_BindGPUGraphicsPipeline(pass, record.Shadow      ? _ShadowPipeline.get()
                                           : record.IndexOnly ? _IndexOnly.get()
-                                          : record.Blend     ? _Blend.get()
+                                          : record.Blend     ? (record.Marks ? _BlendMarks.get() : _Blend.get())
                                                              : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),

@@ -25,12 +25,14 @@ extern int GMechBraking;
 /// </summary>
 [[nodiscard]] bool MCMechBrakingInForce();
 
-/// <summary>Port-only (MechBraking): the tree's gestures a stop plays.</summary>
+/// <summary>Port-only (MechBraking, HDStops): the tree's gestures standing, walking, running and between them.</summary>
 namespace MCStopGesture
 {
     inline constexpr int32_t Stand = 2;
+    inline constexpr int32_t StandToWalk = 3;
     inline constexpr int32_t Walk = 4;
     inline constexpr int32_t WalkToStand = 5;
+    inline constexpr int32_t WalkToRun = 6;
     inline constexpr int32_t Run = 7;
     inline constexpr int32_t RunToWalk = 8;
 } // namespace MCStopGesture

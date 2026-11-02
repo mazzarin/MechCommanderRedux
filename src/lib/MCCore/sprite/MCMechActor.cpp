@@ -143,8 +143,121 @@ namespace
         }
     }
 
-    /// <summary>Port-only (HDStops): the gesture a mech sets off walking in, from standing.</summary>
-    constexpr int32_t GestureStandToWalk = 3;
+    /// <summary>Port-only (HDStops): the most gestures a stride drawn on goes through in an update.</summary>
+    constexpr int32_t MostDrawnPasses = 4;
+
+    /// <summary>
+    /// Port-only (HDStops): the stride, or standing, gesture <paramref name="gesture"/> heads for (itself for a stride or
+    /// standing); none for a gesture beyond walking, running and standing.
+    /// </summary>
+    auto HeadsFor(int32_t gesture) -> std::optional<int32_t>
+    {
+        switch (gesture)
+        {
+            case MCStopGesture::Stand:
+            case MCStopGesture::WalkToStand:
+                return MCStopGesture::Stand;
+            case MCStopGesture::StandToWalk:
+            case MCStopGesture::Walk:
+            case MCStopGesture::RunToWalk:
+                return MCStopGesture::Walk;
+            case MCStopGesture::WalkToRun:
+            case MCStopGesture::Run:
+                return MCStopGesture::Run;
+            default:
+                return std::nullopt;
+        }
+    }
+
+    /// <summary>
+    /// Port-only (HDStops): the stride or standing gesture of state <paramref name="state"/> (MCMechActor's state
+    /// gestures: 1 standing, 2 walking, 3 running); none for another.
+    /// </summary>
+    auto StateGesture(int32_t state) -> std::optional<int32_t>
+    {
+        switch (state)
+        {
+            case MCStopState::Stand:
+                return MCStopGesture::Stand;
+            case MCStopState::Walk:
+                return MCStopGesture::Walk;
+            case MCStopState::Run:
+                return MCStopGesture::Run;
+            default:
+                return std::nullopt;
+        }
+    }
+
+    /// <summary>Port-only (HDStops): a step of a stride drawn on to the next gesture.</summary>
+    struct MCDrawnStep
+    {
+        /// <summary>The next gesture.</summary>
+        int32_t Next = 0;
+        /// <summary>The legs' frame the gesture gives way at (its frame count: its end).</summary>
+        int32_t At = 0;
+        /// <summary>The frame the next starts at.</summary>
+        int32_t Start = 0;
+    };
+
+    /// <summary>
+    /// Port-only (HDStops): the next gesture a stride drawn on in gesture <paramref name="from"/> plays toward
+    /// <paramref name="goal"/> (a stride, or standing) through <paramref name="tree"/>'s art, as update moves the mech's
+    /// own on (with the stopping art, MCStopTransition); none once there, or from a gesture beyond walking, running and
+    /// standing.
+    /// </summary>
+    auto NextDrawnStep(MCSpriteTree& tree, int32_t from, int32_t goal) -> std::optional<MCDrawnStep>
+    {
+        if (from == goal)
+        {
+            return std::nullopt;
+        }
+
+        const MCMechSpecialInfo& info = tree.SpecialInfo;
+        const auto end = [&](int32_t gesture) { return static_cast<int32_t>(tree.Gestures[gesture].NumFrames); };
+        const auto special = [&](uint32_t frame, int32_t gesture)
+        { return frame != NoFrame ? static_cast<int32_t>(frame) : end(gesture); };
+
+        switch (from)
+        {
+            case MCStopGesture::Stand:
+                return MCDrawnStep{MCStopGesture::StandToWalk, 0, 0};
+            case MCStopGesture::StandToWalk:
+                return MCDrawnStep{MCStopGesture::Walk, end(MCStopGesture::StandToWalk),
+                                   info.SWToWalkFrame != NoFrame ? static_cast<int32_t>(info.SWToWalkFrame) : 0};
+            case MCStopGesture::Walk:
+            {
+                if (goal == MCStopGesture::Run)
+                {
+                    return MCHasGestureArt(tree, MCStopGesture::WalkToRun)
+                               ? MCDrawnStep{MCStopGesture::WalkToRun, static_cast<int32_t>(info.WalkToWRFrame), 0}
+                               : MCDrawnStep{MCStopGesture::Run, end(MCStopGesture::Walk), 0};
+                }
+
+                return MCHasGestureArt(tree, MCStopGesture::WalkToStand)
+                           ? MCDrawnStep{MCStopGesture::WalkToStand, special(info.WalkToWSFrame, MCStopGesture::Walk),
+                                         0}
+                           : MCDrawnStep{MCStopGesture::Stand, end(MCStopGesture::Walk), 0};
+            }
+            case MCStopGesture::Run:
+            {
+                const std::optional<uint32_t> runToWalk = MCRunToWalkFrame(tree, MCMechBrakingInForce());
+                const int32_t at = runToWalk.has_value() ? static_cast<int32_t>(*runToWalk) : end(MCStopGesture::Run);
+                return MCHasGestureArt(tree, MCStopGesture::RunToWalk)
+                           ? MCDrawnStep{MCStopGesture::RunToWalk, at, 0}
+                           : MCDrawnStep{MCStopGesture::Walk, end(MCStopGesture::Run), 0};
+            }
+            case MCStopGesture::WalkToRun:
+                return MCDrawnStep{MCStopGesture::Run, end(MCStopGesture::WalkToRun),
+                                   info.SpecialDuaneFlag != 0 ? end(MCStopGesture::Run) / 2 : 0};
+            case MCStopGesture::RunToWalk:
+                return MCDrawnStep{MCStopGesture::Walk, end(MCStopGesture::RunToWalk), 0};
+            case MCStopGesture::WalkToStand:
+                return MCDrawnStep{MCStopGesture::Stand, end(MCStopGesture::WalkToStand), 0};
+            default:
+                return std::nullopt;
+        }
+    }
+
     /// <summary>Port-only (HDStops): a move shorter than this, metres, leaves a mech standing still.</summary>
     constexpr float StillMetres = 0.001f;
     /// <summary>Port-only (HDStops): the frames within which a stride drawn on is put on the stride played.</summary>
@@ -606,28 +719,30 @@ int GHdStops = 0;
 
 auto MCMechActor::HoldStride(const MCBattleMech& mech) -> void
 {
-    if (GHdStops == 0 || !mech.MoveHeldUp())
+    if (GHdStops == 0)
     {
         DrawnStride.reset();
         return;
     }
 
-    // Held as last drawn (render keeps a stride's parts' frames in step), unless it is drawn on already (stopped again
-    // before back in step with it).
+    // Held as last drawn (render keeps a stride's parts' frames in step); one drawn on already goes on as it was.
     const bool stride =
         (CurrentGesture == MCStopGesture::Walk || CurrentGesture == MCStopGesture::Run) && !PlayBackwards;
 
-    if (stride && (!DrawnStride.has_value() || DrawnStride->Gesture != CurrentGesture))
+    if (DrawnStride.has_value() || !stride || !mech.MoveHeldUp())
     {
-        MCDrawnStride drawn{CurrentGesture, {}, InCombatMode || CombatModeRaising || CombatModeLowering, 0.0f};
-
-        for (int32_t part = 0; part < MechPartCount; ++part)
-        {
-            drawn.Frame[part] = static_cast<float>(std::max(CurrentFrame[part], 0));
-        }
-
-        DrawnStride = drawn;
+        return;
     }
+
+    MCDrawnStride drawn{CurrentGesture, {}, InCombatMode || CombatModeRaising || CombatModeLowering};
+    drawn.MechGesture = MCStopGesture::Stand;
+
+    for (int32_t part = 0; part < MechPartCount; ++part)
+    {
+        drawn.Frame[part] = static_cast<float>(std::max(CurrentFrame[part], 0));
+    }
+
+    DrawnStride = drawn;
 }
 
 auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
@@ -646,56 +761,199 @@ auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
     }
 
     MCDrawnStride& drawn = *DrawnStride;
-    const MCGestureData& data = MechTree->Gestures[static_cast<size_t>(drawn.Gesture)];
-    const auto frames = static_cast<float>(data.NumFrames);
-    const float rate = std::fabs(data.FrameRate);
-    const int32_t state = drawn.Gesture == MCStopGesture::Run ? MCStopState::Run : MCStopState::Walk;
-    // Standing, setting off, or on the way back to the stride held.
-    const bool holding = CurrentGesture == MCStopGesture::Stand || CurrentGesture == GestureStandToWalk ||
-                         (InTransition && GestureGoal == state && CurrentGesture != drawn.Gesture);
-    drawn.StillSeconds = holding && moved < StillMetres ? drawn.StillSeconds + FrameLength : 0.0f;
+    const std::optional<int32_t> headsFor = PlayBackwards ? std::nullopt : HeadsFor(CurrentGesture);
 
-    // Standing with nowhere to go after all (its orders given up): standing as the original.
-    const bool goesOn = CurrentGesture != MCStopGesture::Stand || mech.MoveHeldUp();
-
-    if (GHdStops == 0 || !(frames > 0.0f) || !(rate > 0.0f) || !(data.StartVelocity > 0.0f) ||
-        (!holding && CurrentGesture != drawn.Gesture) || drawn.StillSeconds > HoldMostSeconds || !goesOn)
+    if (GHdStops == 0 || !headsFor.has_value() ||
+        (drawn.Gesture == MCStopGesture::Stand && CurrentGesture == MCStopGesture::Stand))
     {
         DrawnStride.reset();
         return;
     }
 
-    // The stride's frames the ground covered takes.
-    float step = moved * rate / data.StartVelocity;
-    bool onStride = false;
-
-    if (!holding)
+    // Where the mech left its walk or run (the frame it was last on), for the drawn to leave them there too.
+    if (CurrentGesture != drawn.MechGesture &&
+        (drawn.MechGesture == MCStopGesture::Walk || drawn.MechGesture == MCStopGesture::Run))
     {
-        // Its stride plays again: close on it, the short way round; within a part of a frame, put on it (render hands
-        // back to it once their frames are the same).
-        const float gap =
-            std::remainder(static_cast<float>(CurrentFrame[MCMechPart::Legs]) - drawn.Frame[MCMechPart::Legs], frames);
-        onStride = std::fabs(gap) < InStepFrames;
-        step = onStride ? gap : step * (gap > 0.0f ? MaxStrideRate : MinStrideRate);
+        std::optional<int32_t>& left = drawn.MechGesture == MCStopGesture::Run ? drawn.RunLeftAt : drawn.WalkLeftAt;
+        left = left.value_or(drawn.MechFrame);
     }
 
-    const bool combat = InCombatMode || CombatModeRaising || CombatModeLowering;
+    drawn.MechGesture = CurrentGesture;
+    drawn.MechFrame = CurrentFrame[MCMechPart::Legs];
+
+    // Standing, setting off, or on the way from standing to the stride drawn.
+    const std::optional<int32_t> going =
+        InTransition && CurrentStateGesture == MCStopState::Stand ? StateGesture(GestureGoal) : std::nullopt;
+    const bool restart = CurrentGesture == MCStopGesture::Stand || CurrentGesture == MCStopGesture::StandToWalk ||
+                         (going == drawn.Gesture && CurrentGesture != drawn.Gesture);
+    const bool drawnStride = drawn.Gesture == MCStopGesture::Walk || drawn.Gesture == MCStopGesture::Run;
+    drawn.StillSeconds = restart && moved < StillMetres ? drawn.StillSeconds + FrameLength : 0.0f;
+    const bool still = CurrentGesture == MCStopGesture::Stand && moved < StillMetres;
+    MCDrawnMode mode = MCDrawnMode::Following;
+
+    if (restart && drawn.Gesture != MCStopGesture::Stand)
+    {
+        // Settles once still too long or with nowhere to go, and keeps on settling while the mech stands still.
+        const bool settles = drawn.StillSeconds > HoldMostSeconds ||
+                             (CurrentGesture == MCStopGesture::Stand && !InTransition && !mech.MoveHeldUp()) ||
+                             (drawn.Mode == MCDrawnMode::Settling && still);
+        mode = settles ? MCDrawnMode::Settling : MCDrawnMode::Held;
+    }
+
+    if (mode == MCDrawnMode::Held && drawn.Mode != MCDrawnMode::Held)
+    {
+        drawn.WalkLeftAt.reset();
+        drawn.RunLeftAt.reset();
+    }
+
+    drawn.Mode = mode;
+    const MCGestureData& data = MechTree->Gestures[static_cast<size_t>(drawn.Gesture)];
+    const auto frames = static_cast<float>(data.NumFrames);
+    const float timeStep = std::fabs(data.FrameRate) * FrameLength;
     const float legs = drawn.Frame[MCMechPart::Legs];
+    const bool combat = InCombatMode || CombatModeRaising || CombatModeLowering;
 
-    for (int32_t part = 0; part < MechPartCount; ++part)
+    // The gun lowered, the upper body takes the legs' frame (as update has it do).
+    if (drawn.UpperInCombat && !combat)
     {
-        // The gun lowered, the upper body takes the legs' frame (as update has it do).
-        const bool synced = part != static_cast<int32_t>(MCMechPart::Legs) && drawn.UpperInCombat && !combat;
-        const float frame = std::fmod((synced ? legs : drawn.Frame[part]) + step, frames);
-        drawn.Frame[part] = frame < 0.0f ? frame + frames : frame;
-    }
-
-    if (onStride)
-    {
-        drawn.Frame[MCMechPart::Legs] = static_cast<float>(CurrentFrame[MCMechPart::Legs]);
+        for (int32_t part = 1; part < MechPartCount; ++part)
+        {
+            drawn.Frame[part] = legs;
+        }
     }
 
     drawn.UpperInCombat = combat;
+
+    if (!(frames > 0.0f))
+    {
+        DrawnStride.reset();
+        return;
+    }
+
+    if (mode == MCDrawnMode::Held)
+    {
+        // A stride by the ground covered, its frames a metre; between strides on to the next at its own rate.
+        const bool byGround = drawnStride && data.StartVelocity > 0.0f;
+        const int32_t goal = drawnStride ? drawn.Gesture : HeadsFor(drawn.Gesture).value_or(drawn.Gesture);
+        PlayDrawnStride(byGround ? moved * std::fabs(data.FrameRate) / data.StartVelocity : timeStep, goal, false);
+        return;
+    }
+
+    if (mode == MCDrawnMode::Settling)
+    {
+        PlayDrawnStride(timeStep, MCStopGesture::Stand, true);
+        return;
+    }
+
+    // Following: faster than the mech's gestures play, closing on its own once in it (behind it, the way it plays).
+    float step = timeStep * MaxStrideRate * (drawn.Gesture == CurrentGesture ? StrideRate : 1.0f);
+
+    if (drawn.Gesture == CurrentGesture)
+    {
+        const auto mechFrame = static_cast<float>(CurrentFrame[MCMechPart::Legs]);
+        const float behind = drawnStride ? std::fmod(mechFrame - legs + frames, frames) : mechFrame - legs;
+
+        if (std::fabs(behind) < InStepFrames || behind > frames - InStepFrames)
+        {
+            // On it, exactly, so that its frame floors to the mech's (render hands back to it).
+            const float onto = std::remainder(mechFrame - legs, frames);
+
+            for (int32_t part = 0; part < MechPartCount; ++part)
+            {
+                drawn.Frame[part] = std::fmod(drawn.Frame[part] + onto + frames, frames);
+            }
+
+            drawn.Frame[MCMechPart::Legs] = mechFrame;
+            return;
+        }
+
+        step *= behind < 0.0f ? MinStrideRate / MaxStrideRate : 1.0f;
+    }
+
+    PlayDrawnStride(step, *headsFor, false);
+}
+
+auto MCMechActor::PlayDrawnStride(float frames, int32_t goal, bool settling) -> void
+{
+    MCDrawnStride& drawn = *DrawnStride;
+
+    for (int32_t pass = 0; pass < MostDrawnPasses && frames > 0.0f; ++pass)
+    {
+        const int32_t gesture = drawn.Gesture;
+        const auto count = static_cast<float>(MechTree->Gestures[static_cast<size_t>(gesture)].NumFrames);
+        const bool stride = gesture == MCStopGesture::Walk || gesture == MCStopGesture::Run;
+        const std::optional<MCDrawnStep> next = NextDrawnStep(*MechTree, gesture, goal);
+        const float legs = drawn.Frame[MCMechPart::Legs];
+
+        if (!(count > 0.0f))
+        {
+            return;
+        }
+
+        // Each part on by `by` frames: a stride round, anything else up to its end (its last frame, once there).
+        const float last = next.has_value() ? std::nextafter(count, 0.0f) : count - 1.0f;
+        const auto advance = [&](float by)
+        {
+            for (int32_t part = 0; part < MechPartCount; ++part)
+            {
+                const float frame = drawn.Frame[part] + by;
+                drawn.Frame[part] =
+                    stride ? std::fmod(std::fmod(frame, count) + count, count) : std::clamp(frame, 0.0f, last);
+            }
+        };
+
+        if (!next.has_value())
+        {
+            advance(frames);
+            return;
+        }
+
+        // Where it gives way: where the mech left it, else where the tree's art leaves it; a stride forward round to
+        // there (settling, the short way round, backwards maybe), anything else on to it. Settling, a start or a walk
+        // speeding up goes back the way it came, to standing or the walk.
+        std::optional<int32_t>& left = gesture == MCStopGesture::Run ? drawn.RunLeftAt : drawn.WalkLeftAt;
+        const bool mechLeft = stride && left.has_value();
+        const bool goesBack =
+            settling && (gesture == MCStopGesture::StandToWalk || gesture == MCStopGesture::WalkToRun);
+        const auto at = static_cast<float>(mechLeft ? *left : next->At);
+        float toward = goesBack ? legs : stride ? std::fmod(at - legs + count, count) : std::max(at - legs, 0.0f);
+        float way = goesBack ? -1.0f : 1.0f;
+        MCDrawnStep onTo = *next;
+
+        if (goesBack)
+        {
+            const auto walkFrames = static_cast<int32_t>(MechTree->Gestures[MCStopGesture::Walk].NumFrames);
+            const int32_t walkToRun = static_cast<int32_t>(MechTree->SpecialInfo.WalkToWRFrame);
+            onTo = gesture == MCStopGesture::StandToWalk
+                       ? MCDrawnStep{MCStopGesture::Stand, 0, 0}
+                       : MCDrawnStep{MCStopGesture::Walk, 0, std::clamp(walkToRun, 0, std::max(walkFrames - 1, 0))};
+        }
+        else if (settling && stride && !mechLeft && count - toward < toward)
+        {
+            toward = count - toward;
+            way = -1.0f;
+        }
+
+        if (frames < toward)
+        {
+            advance(frames * way);
+            return;
+        }
+
+        // On to the next gesture, every part at its start (as update has it).
+        frames -= toward;
+        drawn.Gesture = onTo.Next;
+
+        for (int32_t part = 0; part < MechPartCount; ++part)
+        {
+            drawn.Frame[part] = static_cast<float>(onTo.Start);
+        }
+
+        if (stride)
+        {
+            left.reset();
+        }
+    }
 }
 
 auto MCMechActor::DrawnGesture() const -> int32_t
@@ -1166,7 +1424,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         // Port-only (HDStops): the stride drawn on keeps its parts' steps by the same rule.
         if (held(part))
         {
-            if (!combatAnim)
+            if (!combatAnim && MCStrideGesture(DrawnStride->Gesture))
             {
                 FollowStride(*MechTree, heldFrame, part, DrawnStride->Gesture, drawnReverse[part] != 0, false);
             }

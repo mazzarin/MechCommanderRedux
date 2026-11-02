@@ -10,13 +10,28 @@
 class MCBattleMech;
 class MCMovePath;
 
+/// <summary>Port-only (HDStops): how a stride drawn on (<see cref="MCDrawnStride"/>) moves on.</summary>
+enum class MCDrawnMode : uint8_t
+{
+    /// <summary>Held while the mech stands or sets off with its move held up: moved on by the ground it covers.</summary>
+    Held,
+    /// <summary>
+    /// After the mech's gestures, through the tree's art between them, behind them and faster than they play until in
+    /// step with them.
+    /// </summary>
+    Following,
+    /// <summary>Settling where the mech stands: stepped the short way round to where its stop starts, then the stop.</summary>
+    Settling,
+};
+
 /// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
-/// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped.
+/// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped;
+/// then drawn after the mech's own gestures until in step with them, or settled to standing in place.
 /// </summary>
 struct MCDrawnStride
 {
-    /// <summary>The stride's gesture: the walk or the run.</summary>
+    /// <summary>The gesture drawn: the walk or the run, or the tree's art between them and standing.</summary>
     int32_t Gesture = 0;
     /// <summary>Each part's frame, and how far into it.</summary>
     MCMechParts<float> Frame{};
@@ -24,6 +39,14 @@ struct MCDrawnStride
     bool UpperInCombat = false;
     /// <summary>The seconds the mech has stood still, held.</summary>
     float StillSeconds = 0.0f;
+    /// <summary>How it moved on at the last update.</summary>
+    MCDrawnMode Mode = MCDrawnMode::Held;
+    /// <summary>The mech's gesture and legs' frame at the last update.</summary>
+    int32_t MechGesture = 0;
+    int32_t MechFrame = 0;
+    /// <summary>The legs' frame the mech last left its walk and run at since held (where the drawn leaves them).</summary>
+    std::optional<int32_t> WalkLeftAt;
+    std::optional<int32_t> RunLeftAt;
 };
 
 /// <summary>The value of the mech actor's fields the original left uninitialised (0 with the port's fix).</summary>
@@ -124,19 +147,28 @@ public:
 
     /// <summary>
     /// Port-only (HDStops): as the mech stands from a stride (<see cref="CheckStop"/>) with its move held up
-    /// (MCBattleMech::MoveHeldUp), holds the stride as drawn (<see cref="DrawnStride"/>); drops it as the mech stands at
-    /// its move's end, drawn standing as the original.
+    /// (MCBattleMech::MoveHeldUp), holds the stride as drawn (<see cref="DrawnStride"/>); one drawn on already goes on as
+    /// it was (<see cref="StepDrawnStride"/> holds or settles it). A mech standing at its move's end is drawn standing, as
+    /// the original.
     /// </summary>
     void HoldStride(const MCBattleMech& mech);
 
     /// <summary>
-    /// Port-only (HDStops): moves the stride drawn on by the ground the mech covered since the last update while the mech
-    /// stands or sets off again; once its stride plays again, draws the stride closing on it (within
-    /// <see cref="MinStrideRate"/> and <see cref="MaxStrideRate"/> of its rate), then on it (render hands back to it).
-    /// Drops it on any other gesture, once the mech has stood still <see cref="HoldMostSeconds"/>, or stands with
-    /// nowhere to go after all.
+    /// Port-only (HDStops): moves the stride drawn on: held (<see cref="MCDrawnMode::Held"/>) by the ground the mech
+    /// covers while it stands or sets off with its move held up; after its gestures (Following) once it goes on, through
+    /// the tree's art between them, played faster (<see cref="MaxStrideRate"/>) until in step (render hands back to them);
+    /// settled to standing in place (Settling) once the mech has stood still <see cref="HoldMostSeconds"/> or stands with
+    /// nowhere to go. Dropped on a gesture beyond walking, running and standing.
     /// </summary>
     void StepDrawnStride(const MCBattleMech& mech);
+
+    /// <summary>
+    /// Port-only (HDStops): plays the stride drawn on <paramref name="frames"/> of its gestures' frames toward gesture
+    /// <paramref name="goal"/> (a stride, or standing), through the tree's art between them, leaving a stride where the
+    /// mech left it; <paramref name="settling"/>, a stride steps the short way round (backwards, maybe) to where its stop
+    /// starts.
+    /// </summary>
+    void PlayDrawnStride(float frames, int32_t goal, bool settling);
 
     /// <summary>Port-only (HDStops): the gesture the legs are drawn in (the stride drawn on, else the playing one).</summary>
     int32_t DrawnGesture() const;
@@ -322,7 +354,7 @@ extern int GHdStops;
 
 /// <summary>
 /// Port-only (HDStops): the longest a mech stands still with its stride held, seconds (a mech yields to a unit in its way
-/// for its CrashYieldTime, 2): then it is drawn standing.
+/// for its CrashYieldTime, 2): then it settles to standing in place.
 /// </summary>
 inline constexpr float HoldMostSeconds = 3.0f;
 

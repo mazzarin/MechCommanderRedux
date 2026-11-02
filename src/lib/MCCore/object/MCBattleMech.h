@@ -150,8 +150,8 @@ public:
     float LastStepMargin() const;
     /// <summary>
     /// Port-only (HDStops): whether the mech's move still has somewhere to go: its path paused with steps left (yielding
-    /// to a unit in its way), a path asked for, or (but on a multiplayer client) a next leg, path or way point. Reads the
-    /// orders as they stand (MCMechWarrior::GetMovePath would move them on).
+    /// to a unit in its way), a path asked for, or a next leg, path or way point; always on a multiplayer client, whose
+    /// path is the server's latest steps. Reads the orders as they stand (MCMechWarrior::GetMovePath would move them on).
     /// </summary>
     bool MoveHeldUp() const;
     /// <summary>Turns the torso toward the target (or back to straight) at the dynamics' rate.</summary>

@@ -1105,6 +1105,12 @@ auto MCBattleMech::MoveHeldUp() const -> bool
 {
     const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
 
+    // A multiplayer client's path is the server's latest steps: it can't tell a mech held up from one there.
+    if (MultiPlayerClient())
+    {
+        return true;
+    }
+
     if (warrior == nullptr)
     {
         return false;
@@ -1123,7 +1129,7 @@ auto MCBattleMech::MoveHeldUp() const -> bool
         return true;
     }
 
-    return !MultiPlayerClient() && path != nullptr && MoveGoesOn(*warrior, *path);
+    return path != nullptr && MoveGoesOn(*warrior, *path);
 }
 
 auto MCBattleMech::UpdateTorso(float newRotatePerSec) -> void

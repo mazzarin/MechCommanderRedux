@@ -159,7 +159,7 @@ namespace
     /// <summary>The HD terrain's atlases at most (a big map's tiles fill more than one; shaders/draw.pshader's hdTex2).</summary>
     constexpr uint32_t HdTerrainAtlases = 2;
     /// <summary>A terrain image's ints in the mesh's image buffer (shaders/terrain.vshader's Image).</summary>
-    constexpr size_t TerrainImageInts = 12;
+    constexpr size_t TerrainImageInts = 16;
     /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
     constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
     /// <summary>
@@ -4454,6 +4454,8 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         image[8] = reliefTiles[i] != nullptr ? static_cast<int32_t>(reliefPlaces[i].Atlas + 1) : 0;
         image[9] = static_cast<int32_t>(reliefPlaces[i].X / MCBc7::BlockSide | reliefPlaces[i].Y / MCBc7::BlockSide
                                                                                    << HalfShift);
+        // The width its header gives, which VFX_nTile_draw's test for a tile off the pane reads.
+        image[12] = tile[3];
     }
 
     const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));

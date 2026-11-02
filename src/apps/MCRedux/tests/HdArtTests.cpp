@@ -10049,9 +10049,8 @@ TEST_CASE_ISOLATED("game: a terrain overlay is drawn from the HD art pack")
 /// </summary>
 TEST_CASE_ISOLATED("game: HD art keeps the terrain overlays' palette indices")
 {
-    // Frame 105 of this battle differs at the screen's top left with HD art off too (16 pixels, software 151, GPU 43),
-    // so the run stops before it; some 900 overlays are drawn from the pack by then.
-    constexpr int32_t Frames = 90;
+    // Ten seconds: some 1,300 overlays are drawn from the pack by then.
+    constexpr int32_t Frames = 150;
 
     if (!MCTestGame::Available())
     {

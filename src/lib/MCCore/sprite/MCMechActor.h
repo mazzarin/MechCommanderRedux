@@ -156,19 +156,25 @@ public:
     /// <summary>
     /// Port-only (HDStops): moves the stride drawn on: held (<see cref="MCDrawnMode::Held"/>) by the ground the mech
     /// covers while it stands or sets off with its move held up; after its gestures (Following) once it goes on, through
-    /// the tree's art between them, played faster (<see cref="MaxStrideRate"/>) until in step (render hands back to them);
-    /// settled to standing in place (Settling) once the mech has stood still <see cref="HoldMostSeconds"/> or stands with
-    /// nowhere to go. Dropped on a gesture beyond walking, running and standing.
+    /// the tree's art between them, played faster or slower (<see cref="MaxStrideRate"/>, <see cref="MinStrideRate"/>)
+    /// until in step (render hands back to them); settled to standing in place (Settling), briskly, once the mech has
+    /// stood still <see cref="HoldMostSeconds"/> or stands with nowhere to go, if it's near where its art stops (else
+    /// dropped to standing, as the original stops). Dropped on a gesture beyond walking, running and standing.
     /// </summary>
     void StepDrawnStride(const MCBattleMech& mech);
 
     /// <summary>
     /// Port-only (HDStops): plays the stride drawn on <paramref name="frames"/> of its gestures' frames toward gesture
     /// <paramref name="goal"/> (a stride, or standing), through the tree's art between them, leaving a stride where the
-    /// mech left it; <paramref name="settling"/>, a stride steps the short way round (backwards, maybe) to where its stop
-    /// starts.
+    /// mech left it; <paramref name="settling"/>, a start or a walk speeding up goes back the way it came.
     /// </summary>
     void PlayDrawnStride(float frames, int32_t goal, bool settling);
+
+    /// <summary>
+    /// Port-only (HDStops): whether the stride drawn on would settle to standing in place from where it is, its steps on
+    /// the way no longer than <see cref="SettleMostSeconds"/> (else it drops to standing); false with none.
+    /// </summary>
+    bool DrawnSettlesNear() const;
 
     /// <summary>Port-only (HDStops): the gesture the legs are drawn in (the stride drawn on, else the playing one).</summary>
     int32_t DrawnGesture() const;
@@ -357,6 +363,13 @@ extern int GHdStops;
 /// for its CrashYieldTime, 2): then it settles to standing in place.
 /// </summary>
 inline constexpr float HoldMostSeconds = 3.0f;
+
+/// <summary>
+/// Port-only (HDStops): the longest a stride settling in place steps on (or back) to where it gives way to stopping,
+/// seconds (it steps faster than it plays, MaxStrideRate); from further it would walk on the spot, so it drops to standing
+/// as the original does.
+/// </summary>
+inline constexpr float SettleMostSeconds = 0.4f;
 
 /// <summary>
 /// Port-only: PREFS "HDTurns": 1 eases a mech's turns as drawn (<see cref="TurnEaseRate"/>; it turns as the original

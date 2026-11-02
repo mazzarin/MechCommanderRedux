@@ -263,6 +263,98 @@ namespace
     /// <summary>Port-only (HDStops): the frames within which a stride drawn on is put on the stride played.</summary>
     constexpr float InStepFrames = 0.5f;
 
+    /// <summary>Port-only (HDStops): whether gesture <paramref name="gesture"/> is walking or running.</summary>
+    auto WalkOrRun(int32_t gesture) -> bool
+    {
+        return gesture == MCStopGesture::Walk || gesture == MCStopGesture::Run;
+    }
+
+    /// <summary>
+    /// Port-only (HDStops): the legs' frame stride drawn <paramref name="drawn"/> gives way to <paramref name="next"/>
+    /// at from gesture <paramref name="gesture"/>: for a walk or run the mech left, where it left it, else where the art
+    /// leaves it.
+    /// </summary>
+    auto LeaveFrame(const MCDrawnStride& drawn, int32_t gesture, const MCDrawnStep& next) -> int32_t
+    {
+        if (gesture == MCStopGesture::Walk)
+        {
+            return drawn.WalkLeftAt.value_or(next.At);
+        }
+
+        return gesture == MCStopGesture::Run ? drawn.RunLeftAt.value_or(next.At) : next.At;
+    }
+
+    /// <summary>
+    /// Port-only (HDStops): where a stride drawn on settling to standing goes from gesture <paramref name="gesture"/>
+    /// played backwards to its start, the way it came: from a start to standing, from a walk speeding up to the walk (at
+    /// the frame it sped up from); none for a gesture that settles forward.
+    /// </summary>
+    auto SettleBack(const MCSpriteTree& tree, int32_t gesture) -> std::optional<MCDrawnStep>
+    {
+        if (gesture == MCStopGesture::StandToWalk)
+        {
+            return MCDrawnStep{MCStopGesture::Stand, 0, 0};
+        }
+
+        if (gesture != MCStopGesture::WalkToRun)
+        {
+            return std::nullopt;
+        }
+
+        const auto walkFrames = static_cast<int32_t>(tree.Gestures[MCStopGesture::Walk].NumFrames);
+        const auto walkToRun = static_cast<int32_t>(tree.SpecialInfo.WalkToWRFrame);
+        return MCDrawnStep{MCStopGesture::Walk, 0, std::clamp(walkToRun, 0, std::max(walkFrames - 1, 0))};
+    }
+
+    /// <summary>
+    /// Port-only (HDStops): the frames a stride settling in place steps the short way round (backwards, maybe) to where
+    /// it gives way at, frame <paramref name="at"/>, from frame <paramref name="frame"/> of its
+    /// <paramref name="count"/>: backwards below 0.
+    /// </summary>
+    auto SettleSteps(float frame, float at, float count) -> float
+    {
+        return std::remainder(at - frame, count);
+    }
+
+    /// <summary>
+    /// Port-only (HDStops): whether stride drawn <paramref name="drawn"/> settles to standing through
+    /// <paramref name="tree"/>'s art stepping no longer than <see cref="SettleMostSeconds"/> in any stride on the way.
+    /// </summary>
+    auto SettlesNear(MCSpriteTree& tree, const MCDrawnStride& drawn) -> bool
+    {
+        int32_t gesture = drawn.Gesture;
+        float frame = drawn.Frame[MCMechPart::Legs];
+
+        for (int32_t pass = 0; pass < MostDrawnPasses; ++pass)
+        {
+            const std::optional<MCDrawnStep> back = SettleBack(tree, gesture);
+            const std::optional<MCDrawnStep> next =
+                back.has_value() ? back : NextDrawnStep(tree, gesture, MCStopGesture::Stand);
+
+            if (!next.has_value())
+            {
+                return true;
+            }
+
+            if (WalkOrRun(gesture))
+            {
+                const MCGestureData& data = tree.Gestures[static_cast<size_t>(gesture)];
+                const auto count = static_cast<float>(data.NumFrames);
+                const auto at = static_cast<float>(LeaveFrame(drawn, gesture, *next));
+
+                if (std::fabs(SettleSteps(frame, at, count)) >
+                    SettleMostSeconds * std::fabs(data.FrameRate) * MaxStrideRate)
+                {
+                    return false;
+                }
+            }
+
+            gesture = next->Next;
+            frame = static_cast<float>(next->Start);
+        }
+
+        return true;
+    }
 }
 
 auto MCMechActor::HitMech(int32_t) -> int
@@ -726,8 +818,7 @@ auto MCMechActor::HoldStride(const MCBattleMech& mech) -> void
     }
 
     // Held as last drawn (render keeps a stride's parts' frames in step); one drawn on already goes on as it was.
-    const bool stride =
-        (CurrentGesture == MCStopGesture::Walk || CurrentGesture == MCStopGesture::Run) && !PlayBackwards;
+    const bool stride = WalkOrRun(CurrentGesture) && !PlayBackwards;
 
     if (DrawnStride.has_value() || !stride || !mech.MoveHeldUp())
     {
@@ -770,9 +861,9 @@ auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
         return;
     }
 
-    // Where the mech left its walk or run (the frame it was last on), for the drawn to leave them there too.
-    if (CurrentGesture != drawn.MechGesture &&
-        (drawn.MechGesture == MCStopGesture::Walk || drawn.MechGesture == MCStopGesture::Run))
+    // Where the mech left its walk or run for the gesture after (the frame it was last on), for the drawn to leave them
+    // there too; dropping to standing (as the original stops) leaves it no frame to go from.
+    if (CurrentGesture != drawn.MechGesture && CurrentGesture != MCStopGesture::Stand && WalkOrRun(drawn.MechGesture))
     {
         std::optional<int32_t>& left = drawn.MechGesture == MCStopGesture::Run ? drawn.RunLeftAt : drawn.WalkLeftAt;
         left = left.value_or(drawn.MechFrame);
@@ -786,7 +877,7 @@ auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
         InTransition && CurrentStateGesture == MCStopState::Stand ? StateGesture(GestureGoal) : std::nullopt;
     const bool restart = CurrentGesture == MCStopGesture::Stand || CurrentGesture == MCStopGesture::StandToWalk ||
                          (going == drawn.Gesture && CurrentGesture != drawn.Gesture);
-    const bool drawnStride = drawn.Gesture == MCStopGesture::Walk || drawn.Gesture == MCStopGesture::Run;
+    const bool drawnStride = WalkOrRun(drawn.Gesture);
     drawn.StillSeconds = restart && moved < StillMetres ? drawn.StillSeconds + FrameLength : 0.0f;
     const bool still = CurrentGesture == MCStopGesture::Stand && moved < StillMetres;
     MCDrawnMode mode = MCDrawnMode::Following;
@@ -798,6 +889,13 @@ auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
                              (CurrentGesture == MCStopGesture::Stand && !InTransition && !mech.MoveHeldUp()) ||
                              (drawn.Mode == MCDrawnMode::Settling && still);
         mode = settles ? MCDrawnMode::Settling : MCDrawnMode::Held;
+    }
+
+    // Settling from further than a moment's steps would walk on the spot: it drops to standing as the original does.
+    if (mode == MCDrawnMode::Settling && drawn.Mode != MCDrawnMode::Settling && !SettlesNear(*MechTree, drawn))
+    {
+        DrawnStride.reset();
+        return;
     }
 
     if (mode == MCDrawnMode::Held && drawn.Mode != MCDrawnMode::Held)
@@ -841,19 +939,20 @@ auto MCMechActor::StepDrawnStride(const MCBattleMech& mech) -> void
 
     if (mode == MCDrawnMode::Settling)
     {
-        PlayDrawnStride(timeStep, MCStopGesture::Stand, true);
+        PlayDrawnStride(timeStep * MaxStrideRate, MCStopGesture::Stand, true);
         return;
     }
 
-    // Following: faster than the mech's gestures play, closing on its own once in it (behind it, the way it plays).
+    // Following: faster than the mech's gestures play, closing on its own once in it the shorter way (a stride round
+    // either way): faster behind it, slower ahead of it.
     float step = timeStep * MaxStrideRate * (drawn.Gesture == CurrentGesture ? StrideRate : 1.0f);
 
     if (drawn.Gesture == CurrentGesture)
     {
         const auto mechFrame = static_cast<float>(CurrentFrame[MCMechPart::Legs]);
-        const float behind = drawnStride ? std::fmod(mechFrame - legs + frames, frames) : mechFrame - legs;
+        const float behind = drawnStride ? std::remainder(mechFrame - legs, frames) : mechFrame - legs;
 
-        if (std::fabs(behind) < InStepFrames || behind > frames - InStepFrames)
+        if (std::fabs(behind) < InStepFrames)
         {
             // On it, exactly, so that its frame floors to the mech's (render hands back to it).
             const float onto = std::remainder(mechFrame - legs, frames);
@@ -881,7 +980,7 @@ auto MCMechActor::PlayDrawnStride(float frames, int32_t goal, bool settling) -> 
     {
         const int32_t gesture = drawn.Gesture;
         const auto count = static_cast<float>(MechTree->Gestures[static_cast<size_t>(gesture)].NumFrames);
-        const bool stride = gesture == MCStopGesture::Walk || gesture == MCStopGesture::Run;
+        const bool stride = WalkOrRun(gesture);
         const std::optional<MCDrawnStep> next = NextDrawnStep(*MechTree, gesture, goal);
         const float legs = drawn.Frame[MCMechPart::Legs];
 
@@ -908,31 +1007,18 @@ auto MCMechActor::PlayDrawnStride(float frames, int32_t goal, bool settling) -> 
             return;
         }
 
-        // Where it gives way: where the mech left it, else where the tree's art leaves it; a stride forward round to
-        // there (settling, the short way round, backwards maybe), anything else on to it. Settling, a start or a walk
-        // speeding up goes back the way it came, to standing or the walk.
-        std::optional<int32_t>& left = gesture == MCStopGesture::Run ? drawn.RunLeftAt : drawn.WalkLeftAt;
-        const bool mechLeft = stride && left.has_value();
-        const bool goesBack =
-            settling && (gesture == MCStopGesture::StandToWalk || gesture == MCStopGesture::WalkToRun);
-        const auto at = static_cast<float>(mechLeft ? *left : next->At);
-        float toward = goesBack ? legs : stride ? std::fmod(at - legs + count, count) : std::max(at - legs, 0.0f);
-        float way = goesBack ? -1.0f : 1.0f;
-        MCDrawnStep onTo = *next;
-
-        if (goesBack)
-        {
-            const auto walkFrames = static_cast<int32_t>(MechTree->Gestures[MCStopGesture::Walk].NumFrames);
-            const int32_t walkToRun = static_cast<int32_t>(MechTree->SpecialInfo.WalkToWRFrame);
-            onTo = gesture == MCStopGesture::StandToWalk
-                       ? MCDrawnStep{MCStopGesture::Stand, 0, 0}
-                       : MCDrawnStep{MCStopGesture::Walk, 0, std::clamp(walkToRun, 0, std::max(walkFrames - 1, 0))};
-        }
-        else if (settling && stride && !mechLeft && count - toward < toward)
-        {
-            toward = count - toward;
-            way = -1.0f;
-        }
+        // Where it gives way (LeaveFrame): a stride forward round to there (settling, the short way round, backwards
+        // maybe: SettleSteps), anything else on to it. Settling, a start or a walk speeding up goes back the way it came
+        // (SettleBack).
+        const std::optional<MCDrawnStep> back = settling ? SettleBack(*MechTree, gesture) : std::nullopt;
+        const auto at = static_cast<float>(LeaveFrame(drawn, gesture, *next));
+        const float steps = settling && stride ? SettleSteps(legs, at, count) : 0.0f;
+        const float toward = back.has_value()     ? legs
+                             : settling && stride ? std::fabs(steps)
+                             : stride             ? std::fmod(at - legs + count, count)
+                                                  : std::max(at - legs, 0.0f);
+        const float way = back.has_value() || steps < 0.0f ? -1.0f : 1.0f;
+        const MCDrawnStep onTo = back.value_or(*next);
 
         if (frames < toward)
         {
@@ -949,11 +1035,20 @@ auto MCMechActor::PlayDrawnStride(float frames, int32_t goal, bool settling) -> 
             drawn.Frame[part] = static_cast<float>(onTo.Start);
         }
 
-        if (stride)
+        if (gesture == MCStopGesture::Walk)
         {
-            left.reset();
+            drawn.WalkLeftAt.reset();
+        }
+        else if (gesture == MCStopGesture::Run)
+        {
+            drawn.RunLeftAt.reset();
         }
     }
+}
+
+auto MCMechActor::DrawnSettlesNear() const -> bool
+{
+    return DrawnStride.has_value() && SettlesNear(*MechTree, *DrawnStride);
 }
 
 auto MCMechActor::DrawnGesture() const -> int32_t

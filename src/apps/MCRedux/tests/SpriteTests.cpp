@@ -1210,7 +1210,10 @@ TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its s
 
 namespace
 {
-    /// <summary>A frame of a held up mech: its gesture, legs frame, and its legs as drawn (HDStops).</summary>
+    /// <summary>
+    /// A frame of a held up mech: its gesture, legs frame, and its legs as drawn (HDStops), with whether they'd settle in
+    /// place from there (MCMechActor::DrawnSettlesNear).
+    /// </summary>
     struct HeldFrame
     {
         int32_t Gesture = 0;
@@ -1220,6 +1223,7 @@ namespace
         bool Held = false;
         MCDrawnMode Mode = MCDrawnMode::Held;
         bool Still = false;
+        bool Near = false;
     };
 
     /// <summary>A held up move: how the mech goes, how long it is held up, and how it goes on.</summary>
@@ -1317,7 +1321,7 @@ namespace
             frames.push_back({actor->CurrentGesture, actor->CurrentFrame[MCMechPart::Legs], actor->DrawnGesture(),
                               actor->DrawnLegsFrame(), actor->DrawnStride.has_value(),
                               actor->DrawnStride.has_value() ? actor->DrawnStride->Mode : MCDrawnMode::Held,
-                              at.X == last.X && at.Y == last.Y});
+                              at.X == last.X && at.Y == last.Y, actor->DrawnSettlesNear()});
             last = at;
             still = paused >= 0 && now > paused + hold.PausedFrames && actor->CurrentGesture == MCStopGesture::Stand &&
                             !actor->InTransition && !actor->DrawnStride.has_value()
@@ -1334,10 +1338,11 @@ namespace
 /// <summary>
 /// With HDStops a mech whose move is held up mid-stride (its path paused, as a unit in its way pauses it) holds its
 /// stride as drawn while it stands, then goes on from it: mission 1's mech walks or runs 120 metres, paused in the middle
-/// of a stride for a second, or five (it settles to standing), then going on as it was, or ordered to run or walk on, or
-/// to walk just 15 metres more, braking (MechBraking). Held, its legs stay at the frame they stopped on while it stands
-/// still and go on with it; they never jump: from frame to frame a frame or two on, or on to the next gesture through
-/// the art between them (walk to run, run to walk, the stop), the way the mech's own go; they hand back to its own
+/// of a stride for a second, or five (it settles to standing; from a run, too far to step in place, it drops to standing
+/// as the original, rather than walk on the spot), then going on as it was, or ordered to run or walk on, or to walk just 15
+/// metres more, braking (MechBraking). Held, its legs stay at the frame they stopped on while it stands still and go on
+/// with it; they never jump: from frame to frame a frame or two on, or on to the next gesture through the art between
+/// them (walk to run, run to walk, the stop), the way the mech's own go, but for that drop; they hand back to its own
 /// gestures once in step; and it stands still at its move's end, drawn as it plays. Without, it drops to standing as
 /// the original.
 /// </summary>
@@ -1362,6 +1367,7 @@ TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its strid
     const std::vector<HoldUp> holds = {
         {"walking, a second", false, Second},
         {"walking, five seconds", false, Settled},
+        {"running, five seconds", true, Settled},
         {"running, a second, on walking", true, Second, false, 120.0f},
         {"walking, a second, on running", false, Second, true, 120.0f},
         {"walking, a second, on 15 metres braking", false, Second, false, BrakingMetres, true},
@@ -1448,7 +1454,9 @@ TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its strid
 
                 if (f->DrawnGesture != prev->DrawnGesture)
                 {
-                    CHECK(byArt(prev->DrawnGesture, f->DrawnGesture));
+                    // Or dropped to standing as the original stops, the mech standing still, from too far to settle.
+                    const bool dropped = !f->Held && f->Gesture == MCStopGesture::Stand && f->Still && !prev->Near;
+                    CHECK((byArt(prev->DrawnGesture, f->DrawnGesture) || dropped));
                     continue;
                 }
 
@@ -1470,10 +1478,18 @@ TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its strid
 
             if (hold.PausedFrames == Settled)
             {
-                // Settled to standing while it waited, through its stop.
+                // Settled to standing while it waited, through its stop; too far from it to step there in place, dropped
+                // once held as long as a stride is (from a run).
                 const auto settled = std::find_if(stood, pause + Settled, [](const HeldFrame& f) { return !f.Held; });
                 CHECK(settled != pause + Settled);
-                CHECK(played(MCStopGesture::WalkToStand) == MCHasGestureArt(tree, MCStopGesture::WalkToStand));
+                CHECK(stood->Near == !hold.Run);
+                CHECK(played(MCStopGesture::WalkToStand) ==
+                      (MCHasGestureArt(tree, MCStopGesture::WalkToStand) && stood->Near));
+
+                if (!stood->Near)
+                {
+                    CHECK(std::distance(stood, settled) >= static_cast<int32_t>(HoldMostSeconds * Second));
+                }
             }
 
             if (hold.Run && hold.OnRunning == false)

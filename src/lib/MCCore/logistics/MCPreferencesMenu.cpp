@@ -66,11 +66,12 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 275};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION, INTERFACE SIZE and
-    /// SCROLL SPEED under DIFFICULTY, each drop-down's box as far round it as BRIGHTNESS's round its slider.
+    /// The boxes on the panel: the art's (SOUND one row taller, its top in line with RENDERER's), then RENDERER, UI
+    /// RESOLUTION, INTERFACE SIZE and SCROLL SPEED under DIFFICULTY, each drop-down's box as far round it as
+    /// BRIGHTNESS's round its slider.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
-    constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
+    constexpr MCPrefsPlace SoundBoxPlace{10, 57, 112, 115};
     constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 42};
     constexpr MCPrefsPlace RendererBoxPlace{132, 57, 120, 42};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 103, 120, 42};
@@ -94,10 +95,10 @@ namespace
     constexpr int32_t SliderLabelLeft = 7;
     constexpr int32_t SliderLeft = 6;
     constexpr MCPrefsSliderRow BrightnessRow{"SCREEN BRIGHTNESS", 9, 20};
-    constexpr MCPrefsSliderRow MusicRow{"MUSIC VOLUME", 9, 19};
-    constexpr MCPrefsSliderRow RadioRow{"RADIO MESSAGE VOLUME", 35, 45};
-    constexpr MCPrefsSliderRow FxRow{"SOUND FX VOLUME", 62, 72};
-    constexpr MCPrefsSliderRow InterfaceRow{"INTERFACE VOLUME", 88, 98};
+    constexpr MCPrefsSliderRow MusicRow{"MUSIC VOLUME", 11, 21};
+    constexpr MCPrefsSliderRow RadioRow{"RADIO MESSAGE VOLUME", 37, 47};
+    constexpr MCPrefsSliderRow FxRow{"SOUND FX VOLUME", 64, 74};
+    constexpr MCPrefsSliderRow InterfaceRow{"INTERFACE VOLUME", 90, 100};
 
     /// <summary>
     /// A slider's track in the art (the brightness one, with the black rows above and below it that the thumb covers),

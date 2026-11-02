@@ -25,8 +25,7 @@ namespace
     constexpr std::string_view OptionTitle = "OPTION";
     constexpr std::string_view SettingTitle = "SETTING";
 
-    /// <summary>The status line's hint, and what it says with the SOFTWARE renderer chosen.</summary>
-    constexpr std::string_view Hint = "CLICK A SETTING FOR ITS NEXT CHOICE, RIGHT-CLICK FOR THE ONE BEFORE.";
+    /// <summary>What the status line says with the SOFTWARE renderer chosen (else nothing, but what a button did).</summary>
     constexpr std::string_view SoftwareHint = "THE SOFTWARE RENDERER DRAWS NONE OF THESE (HD AUDIO STILL PLAYS).";
 
     /// <summary>The sample a change plays.</summary>
@@ -65,7 +64,7 @@ auto MCLogOptionList::Status() const -> std::string_view
         return _News;
     }
 
-    return GRendererPreference == static_cast<int>(MCRendererKind::Software) ? SoftwareHint : Hint;
+    return GRendererPreference == static_cast<int>(MCRendererKind::Software) ? SoftwareHint : std::string_view();
 }
 
 auto MCLogOptionList::Setting(int32_t row) const -> int&

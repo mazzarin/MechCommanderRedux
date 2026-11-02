@@ -82,7 +82,7 @@ namespace
             .Changed = HdAudioChanged},
         Row{.Label = "LIGHTING"},
         Row{.Label = HdLightingLabel,
-            .Description = "SHOTS, FIRES AND EXPLOSIONS LIGHT THE WORLD. ON: THE MISSION'S TIME OF DAY.",
+            .Description = "SHOTS, FIRES AND EXPLOSIONS LIGHT THE WORLD. DUSK OR NIGHT DARKENS EVERY MISSION.",
             .Key = HdLightingKey,
             .Choices = HdLightingChoices},
         Row{.Label = "SUN SHADOWS",

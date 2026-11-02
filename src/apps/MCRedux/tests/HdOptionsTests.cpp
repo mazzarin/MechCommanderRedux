@@ -237,7 +237,7 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
     REQUIRE(list != nullptr);
     CHECK_EQ(list->FirstRow(), 0);
-    CHECK_EQ(list->Status(), "CLICK A SETTING FOR ITS NEXT CHOICE, RIGHT-CLICK FOR THE ONE BEFORE.");
+    CHECK(list->Status().empty());
     MCScreenInput::SaveShot("hd options", MCScreenInput::ScreenHash());
 
     // Every HD setting is listed once.
@@ -308,7 +308,7 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     CHECK(MCHdSettings::Now() == OriginalSettings());
     CHECK_EQ(list->Status(), "EVERY HD OPTION IS OFF: THE ORIGINAL GAME.");
     RealClickOption(*list, "HDClouds");
-    CHECK_EQ(list->Status(), "CLICK A SETTING FOR ITS NEXT CHOICE, RIGHT-CLICK FOR THE ONE BEFORE.");
+    CHECK(list->Status().empty());
     const std::shared_ptr<MCLogTextButton> defaults = FindTextButton(screen, "DEFAULTS");
     REQUIRE(defaults != nullptr);
     RealClickOn(*defaults);

@@ -5,7 +5,7 @@
 /// <summary>
 /// Port-only: the HD OPTIONS page's list of settings (<see cref="MCHdSettings"/>). A row per option under headings:
 /// its name, a line under it saying what it does, and its setting in a box at the right; a status line under the rows
-/// says what to do and what changed. The list edits the settings themselves and draws every frame from them, in the
+/// says what a button did. The list edits the settings themselves and draws every frame from them, in the
 /// CONTROLS list's style.
 /// </summary>
 /// <remarks>
@@ -68,7 +68,7 @@ public:
     /// <summary>The mouse left the list: no row is lit.</summary>
     void Leave() override;
 
-    /// <summary>Back to the top with the status line's hint (the screen opened).</summary>
+    /// <summary>Back to the top with the status line clear (the screen opened).</summary>
     void Reset();
 
     /// <summary>Says <paramref name="news"/> on the status line (what a button did), until the next change.</summary>

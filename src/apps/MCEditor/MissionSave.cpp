@@ -743,6 +743,7 @@ bool SingleMap::saveMission(DaoDatabase& database, CString& name)
     mission.m_PlayerForceLimit = playerForceLimit;
     mission.m_Planet = tileSetStringOffset == GTILES_OFFSET ? "Garotte" : "PortArthur";
     mission.m_TimeOfDay = static_cast<long>(timeOfDay);
+    mission.m_Weather = weather;
     mission.Update();
     mission.FindLast(filter);
     const long missionId = mission.m_MissionID;

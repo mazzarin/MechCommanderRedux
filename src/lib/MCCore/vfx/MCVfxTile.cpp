@@ -90,6 +90,40 @@ int32_t VfxTileWidth(std::span<const uint8_t> tile)
     return width;
 }
 
+std::optional<uint8_t> VfxTilePixel(std::span<const uint8_t> tile, int32_t column, int32_t row)
+{
+    if (tile.size() < 4 || row < 0 || column < 0 || row >= tile[2] ||
+        tile.size() < 4 + (static_cast<size_t>(row) + 2) * 4)
+    {
+        return std::nullopt;
+    }
+
+    const auto offset = [&](int32_t at)
+    {
+        uint32_t value = 0;
+        std::memcpy(&value, tile.data() + 4 + static_cast<size_t>(at) * 4, sizeof(value));
+        return static_cast<size_t>(value);
+    };
+
+    const size_t start = offset(row);
+    const size_t end = offset(row + 1);
+
+    // An empty row, or one outside the data.
+    if (end <= start + 1 || end > tile.size())
+    {
+        return std::nullopt;
+    }
+
+    const int32_t first = tile[start];
+
+    if (column < first || std::cmp_greater_equal(column - first, end - start - 1))
+    {
+        return std::nullopt;
+    }
+
+    return tile[start + 1 + static_cast<size_t>(column - first)];
+}
+
 int32_t VfxNTileDraw(const MCPane& pane, std::span<const uint8_t> tile, int32_t x, int32_t y, const MCTileXlat& xlat)
 {
     const std::shared_ptr<MCWindow> window = pane.Window.lock();

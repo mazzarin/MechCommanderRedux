@@ -4,6 +4,8 @@
 #include "mission/MCScenario.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
+#include "platform/MCRenderer.h"
+#include "sprite/MCWeather.h"
 
 namespace
 {
@@ -13,11 +15,13 @@ namespace
     /// <summary>
     /// Boots mission <paramref name="segment"/>, runs <see cref="StateFrames"/> frames and folds each frame's
     /// MCTestGame::StateHash into one hash, which must be <paramref name="expected"/>. --state-log lists the frames'
-    /// hashes, to find the first frame two builds disagree on (tools/ci/baseline.py).
+    /// hashes, to find the first frame two builds disagree on (tools/ci/baseline.py). Port-only: shown in
+    /// <paramref name="weather"/> (GHdWeather, set once the mission has read the preferences).
     /// </summary>
-    void MissionState(int32_t segment, uint32_t expected)
+    void MissionState(int32_t segment, uint32_t expected, int weather = HdWeatherOff)
     {
         REQUIRE(MCTestGame::StartMission(segment));
+        GHdWeather = weather;
         uint32_t frames = 0x811c9dc5;
         std::set<uint32_t> distinct;
 
@@ -45,6 +49,22 @@ TEST_CASE_ISOLATED("game: mission 1's game state matches the recorded run")
     if (MCTestGame::Available())
     {
         MissionState(1, 0x9ff2e0b4u);
+    }
+}
+
+/// <summary>
+/// Port-only (HD weather): mission 1's game state in a downpour drawn by the GPU (drops falling over the battle, splashing
+/// on the ground and on the units' tops, dripping off them) is the recorded run: the weather never touches the game.
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 1's game state in a downpour drawn by the GPU matches the recorded run")
+{
+    if (MCTestGame::Available())
+    {
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        MissionState(1, 0x9ff2e0b4u, HdWeatherDownpour);
+        CHECK(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+        CHECK(MCWeather::Count() > 0);
+        GHdWeather = HdWeatherOff;
     }
 }
 

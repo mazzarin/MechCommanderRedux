@@ -147,6 +147,12 @@ BEGIN
             MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
             MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
         END
+        POPUP "&Weather"
+        BEGIN
+            MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
+            MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
+            MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
+        END
     END
     POPUP "&Tools"
     BEGIN
@@ -254,6 +260,12 @@ BEGIN
         MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
         MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
     END
+    POPUP "&Weather"
+    BEGIN
+        MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
+        MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
+        MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
+    END
 END
 
 IDR_MULTIPLAYER_MISSION_MENU MENU
@@ -274,6 +286,12 @@ BEGIN
         MENUITEM "&Day", ID_MISSION_TIME_OF_DAY_DAY
         MENUITEM "D&usk", ID_MISSION_TIME_OF_DAY_DUSK
         MENUITEM "&Night", ID_MISSION_TIME_OF_DAY_NIGHT
+    END
+    POPUP "&Weather"
+    BEGIN
+        MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
+        MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
+        MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
     END
 END
 
@@ -886,6 +904,9 @@ BEGIN
     ID_MISSION_TIME_OF_DAY_DAY               "Set the mission by day.\nDay"
     ID_MISSION_TIME_OF_DAY_DUSK              "Set the mission at dusk: MCRedux shows it darker with HD lighting on, and units see less.\nDusk"
     ID_MISSION_TIME_OF_DAY_NIGHT             "Set the mission at night: MCRedux shows it dark with HD lighting on, and units see much less.\nNight"
+    ID_MISSION_WEATHER_CLEAR                 "Set the mission under a clear sky.\nClear"
+    ID_MISSION_WEATHER_RAIN                  "Set the mission in rain: MCRedux shows it with HD weather on, and nothing in play changes.\nRain"
+    ID_MISSION_WEATHER_DOWNPOUR              "Set the mission in a downpour: MCRedux shows heavier rain, with thunder, with HD weather on, and nothing in play changes.\nDownpour"
     ID_UNDO                                  "Undo the last operation.\nUndo"
     ID_REDO                                  "Redo the previously undone action.\nRedo"
     IDS_ASSIGN_A_SPECIFIC_HEIGHT             "Assign a specific height to all selected vertices.\nSet Height"

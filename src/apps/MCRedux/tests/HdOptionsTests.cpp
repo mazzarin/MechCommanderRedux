@@ -141,7 +141,7 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK_EQ(MCHdSettings::Default(setting), setting.Original);
     }
 
-    CHECK_EQ(keys.size(), size_t{14});
+    CHECK_EQ(keys.size(), size_t{15});
 }
 
 /// <summary>

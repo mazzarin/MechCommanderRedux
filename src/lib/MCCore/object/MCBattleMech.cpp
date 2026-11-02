@@ -68,6 +68,8 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCParticles.h"
+#include "sprite/MCWeather.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCWeaponChunkDebug.h"
 #include "object/MCWeaponShotInfo.h"
@@ -1023,7 +1025,8 @@ namespace
 
     /// <summary>
     /// Leaves a footprint at hot spot offset (<paramref name="offsetX"/>, <paramref name="offsetY"/>) turned by
-    /// -<paramref name="angle"/> degrees, rotation <paramref name="direction"/> (of 16), with a step sound.
+    /// -<paramref name="angle"/> degrees, rotation <paramref name="direction"/> (of 16), with a step sound. Port-only
+    /// (HD particles, HD weather): the foot splashes in water or a puddle.
     /// </summary>
     void MakeFootprint(MCBattleMech& mech, float offsetX, float offsetY, float angle, int32_t direction)
     {
@@ -1032,8 +1035,17 @@ namespace
         printPos.Z = mech.Position.Z;
         printPos.X = offsetX * 20.0f + mech.Position.X;
         printPos.Y = offsetY * 20.0f + mech.Position.Y;
-        CraterManager().AddCrater(mech.TypeAs<MCBattleMechType>().FootprintType, printPos, direction);
+        const int32_t printType = mech.TypeAs<MCBattleMechType>().FootprintType;
+        CraterManager().AddCrater(printType, printPos, direction);
         SoundSystem()->PlayDigitalSample(0xd, 1, mech, false, false);
+        const float halfWidth = static_cast<MCMechActor*>(mech.Appearance.get())->ShapeMaxX * 0.5f;
+        MCParticles::AddStep(printPos, halfWidth);
+        const std::span<const std::vector<uint8_t>> prints = CraterManager().Shapes();
+        MCWeather::AddStep(printPos,
+                           printType >= 0 && static_cast<size_t>(printType) < prints.size()
+                               ? std::span<const uint8_t>(prints[static_cast<size_t>(printType)])
+                               : std::span<const uint8_t>(),
+                           direction);
     }
 
     /// <summary>The frames either side of a foot's frame (its hot spot packet's) its print may be made in.</summary>

@@ -5,6 +5,7 @@
 #include "EditorTile.h"
 #include "MissionText.h"
 #include "MissionTimeOfDay.h"
+#include "MissionWeather.h"
 
 class ControlLink;
 class DaoDatabase;
@@ -582,6 +583,11 @@ public:
     /// the original's layout.
     /// </summary>
     MissionTimeOfDay timeOfDay = MissionTimeOfDay::Day;
+    /// <summary>
+    /// Port-only: the weather the mission is set in (Mission > Weather), its MISSION_WEATHERS value, saved in its
+    /// NewMissions row; not in the original's layout.
+    /// </summary>
+    long weather = MISSION_WEATHER_CLEAR;
 
     /// <summary>
     /// The global map's area of the tile of cell (<paramref name="col"/>, <paramref name="row"/>): 0 without a global

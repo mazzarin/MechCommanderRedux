@@ -39,6 +39,7 @@ for how to set it up. To see what changed in each version, or to download an old
     - [Setting Up the Editor](#setting-up-the-editor)
     - [What the Editor Changes in Your Game Folder](#what-the-editor-changes-in-your-game-folder)
     - [A Mission's Time of Day](#a-missions-time-of-day)
+    - [A Mission's Weather](#a-missions-weather)
     - [Editor Command-Line Options](#editor-command-line-options)
     - [Troubleshooting the Editor](#troubleshooting-the-editor)
   - [Building](#building)
@@ -271,6 +272,28 @@ st TimeOfDay = "Night"
   shorter table on past its end.
 - `[Environment]`'s `TimeOfDay` is `Day`, `Dusk` or `Night` (in any case). Without it, or with any other name, the
   mission is by day. The original game skips the block.
+
+### A Mission's Weather
+
+New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain** or a **Downpour**. Missions are clear
+until you change it, as every mission of the original is.
+
+- **Look.** With **WEATHER** set to **ON** (in Preferences, on the HD OPTIONS page), Redux rains on the mission, a
+  downpour harder, with thunder. The player's **RAIN** and **DOWNPOUR** choices rain on every mission whatever its
+  own. The original game shows every mission under a clear sky.
+- **Play.** The weather changes nothing in play: units see, move and fight as under a clear sky.
+
+For a mission's `.FIT` file, the editor writes this for rain or a downpour (for a clear sky, nothing):
+
+```
+[Environment]
+st Weather = "Rain"
+```
+
+- `Weather` is `Clear`, `Rain` or `Downpour` (in any case). Without it, or with any other name, the mission is clear.
+  The original game skips the block.
+- A mission set at dusk or night too has its `TimeOfDay` in the same block. Write a single `[Environment]` block: Redux
+  reads only the first.
 
 ### Editor Command-Line Options
 

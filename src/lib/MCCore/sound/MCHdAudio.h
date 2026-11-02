@@ -23,6 +23,7 @@ enum MCHdAudioSetting : int
 /// (<c>[HDAudioPack]</c>, <c>Format=1</c>) marks the pack; <c>audio/music/stereo|orchestral/MUSICnn.flac</c> replace the
 /// music by name and <c>audio/samples/&lt;SampleKey&gt;.flac</c> the effects and voices by their PCM. A replacement is
 /// used only when <see cref="GHdAudio"/> is on and its length matches the original's; otherwise the original plays.
+/// <c>audio/ambience/rain.flac</c> is HD weather's rain, a loop beyond the original's sounds.
 /// </summary>
 class MCHdAudio
 {
@@ -36,6 +37,13 @@ public:
 
     /// <summary>The pack's replacement for the music file <paramref name="original"/> (MUSICnn only), or none.</summary>
     static std::optional<std::filesystem::path> Music(std::string_view original);
+    /// <summary>
+    /// The pack's rain loop (<c>audio/ambience/rain.flac</c>), or none. It goes with HD weather, an option of its own, so
+    /// it is there whatever <see cref="GHdAudio"/> is set to.
+    /// </summary>
+    static std::optional<std::filesystem::path> RainLoop();
+    /// <summary>The pack's thunder (<c>audio/ambience/thunder.flac</c>), or none; there whatever HD audio is, as the rain loop.</summary>
+    static std::optional<std::filesystem::path> Thunder();
     /// <summary>Canonical FNV-1a key: rate u32, channels u16, bits u16 (little endian), then the original PCM bytes.</summary>
     static std::string SampleKey(std::span<const uint8_t> wave);
     /// <summary>

@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 class MCCamera;
+class MCVector2D;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCParticleCommand;
@@ -13,8 +15,9 @@ struct MCWindow;
 /// Port-only (HD particles, PREFS "HDParticles"): what flies about a battle, drawn into the world as the GPU draws it
 /// (MCRenderer::Particle; the software renderer draws none): flecks of an explosion's fire in its own colours, dirt thrown
 /// up by shots into the ground, debris, smoke and embers from big explosions, embers and smoke rising from fires and
-/// drifting with the wind, splashes and ripples where shots land in water, and wakes behind units wading through it. They lie in the world, so the
-/// lights light them and the view scrolls over them, and units nearer the eye cover them.
+/// drifting with the wind, splashes and ripples where shots land in water, wakes behind units wading through it and
+/// splashes where their feet come down in it. They lie in the world, so the lights light them and the view scrolls over
+/// them, and units nearer the eye cover them.
 /// They never touch the game: they throw their own dice (never the game's), take nothing from it but where things are and
 /// change nothing in it. They move with the game's time (ScenarioTime), so they hold still while it's paused.
 /// What shakes the ground near the view (a large artillery strike's explosions, a building's end; MCBlastShake) also
@@ -40,6 +43,8 @@ namespace MCParticles
         float Amount = 1.0f;
         /// <summary>How far a shaking explosion shakes the picture, 1 as made (0: not at all).</summary>
         float Shake = 1.0f;
+        /// <summary>How big a foot's splash in water is, 1 as made (0: none).</summary>
+        float Steps = 1.0f;
     };
 
     /// <summary>The settings the next frames are drawn with.</summary>
@@ -93,6 +98,13 @@ namespace MCParticles
     void AddMover(const void* unit, const MCVector3D& position, float halfWidth);
 
     /// <summary>
+    /// A unit's foot coming down at <paramref name="foot"/> (MCBattleMech's footprints, made or not: the water takes none),
+    /// its sprite <paramref name="halfWidth"/> window pixels to each side: in the water drawn there (not on a bridge
+    /// over it: mechs can walk the water's edge, but no farther), it splashes.
+    /// </summary>
+    void AddStep(const MCVector3D& foot, float halfWidth);
+
+    /// <summary>
     /// Adds a soft mark (<paramref name="command"/>, in the world pane's pixels) to the frame's draw list at
     /// <paramref name="depth"/>, drawn as a particle is, whatever HD particles' setting: a headlight's lamp
     /// (MCSceneLights::AddHeadlight).
@@ -111,6 +123,36 @@ namespace MCParticles
 
     /// <summary>How many particles there are.</summary>
     size_t Count();
+
+    /// <summary>
+    /// World point (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) in <paramref name="camera"/>'s view,
+    /// as ProjectToScreen puts it but to the pixel's fraction (the particles' own placing, for MCWeather's drops).
+    /// </summary>
+    MCVector2D ViewPoint(float x, float y, float z, const MCCamera& camera);
+
+    /// <summary>The ground's height at world point (<paramref name="x"/>, <paramref name="y"/>) (0 without a terrain).</summary>
+    float GroundAt(float x, float y);
+
+    /// <summary>
+    /// The palette entry of the ground drawn at world point (<paramref name="x"/>, <paramref name="y"/>,
+    /// <paramref name="z"/>): the pixel there of the last tile <paramref name="camera"/>'s terrain window drew over it
+    /// (each block's at its top-left corner, row by row, as MCTerrainBlock::Draw); none outside the window's tiles. (The
+    /// map's own water, its tiles' terrain types from FirstWaterTerrain on, lies a tile or so off the water drawn, too
+    /// far for a splash, and some of those types are paved.)
+    /// </summary>
+    std::optional<uint8_t> GroundDrawnAt(float x, float y, float z, const MCCamera& camera);
+
+    /// <summary>
+    /// Whether a bridge spans the map's tile at world point (<paramref name="x"/>, <paramref name="y"/>): its road is
+    /// drawn over the water (<see cref="GroundDrawnAt"/>'s ground under it).
+    /// </summary>
+    bool BridgedAt(float x, float y);
+
+    /// <summary>
+    /// Whether palette entry <paramref name="index"/> is the water's (composite.pshader's IsWater): its blues, and the
+    /// colour cycle's.
+    /// </summary>
+    bool IsWaterColor(uint8_t index);
 
     /// <summary>How many of them are flecks.</summary>
     size_t FleckCount();

@@ -43,6 +43,10 @@ SamplerState bloomSampler : register(s5, space2);
 static const uint MaxLights = 64;
 // The most fires in heat (MCSceneLights::MaxHeat).
 static const uint MaxHeat = 16;
+// The most feet's puddles reacting at once (MCWeather::MaxPuddleSteps), and the circles a footprint's shape is taken as
+// (MCWeather::PrintCircles).
+static const uint MaxPuddleSteps = 8;
+static const uint PrintCircles = 4;
 
 cbuffer Composite : register(b0, space3)
 {
@@ -114,6 +118,19 @@ cbuffer Composite : register(b0, space3)
     // Port-only (HDSway, MCLighting::Sway): x, how far a forest's canopy sways at the height of a gust (meters, 0 none);
     // y, how much brighter it shows there.
     float4 sway;
+    // Port-only (HD weather, sprite/MCWeather.h's MCWeatherLook): x, how much of the world's own light the overcast
+    // takes (0: a clear sky); y, how much of their colour the world's own colours lose under it (in ambientLook.w); z,
+    // how much darker wet land shows; w, how much of a rain-grey veil hangs over the world, drifting in sheets.
+    float4 weather;
+    // x, how much of the sky flat wet ground mirrors; y, the puddles' level (PuddleField below it is a puddle; 0 none);
+    // z, how much of the sky the bright metal of what stands on the ground mirrors; w, the feet's puddles reacting in
+    // puddleSteps.
+    float4 wetLook;
+    // One a foot come down in a puddle (MCWeather::ShownPuddleSteps): its ground point (xy, meters, as GroundPointAt),
+    // how long ago (z, seconds of the game's time) and how big its splash is (w); then PrintCircles a foot, the circles
+    // its footprint's shape is taken as: each one's middle on the ground (xy) and its radius (z, meters).
+    float4 puddleSteps[MaxPuddleSteps];
+    float4 puddlePrints[MaxPuddleSteps * PrintCircles];
     // One a fire, in the world's texels: its flames' centre (xy), and how far to each side of it (z) and above it (w)
     // the air shimmers.
     float4 heat[MaxHeat];
@@ -335,10 +352,11 @@ float SunFacing(float2 slope)
 // ambientLook.w of their colour (the lights show them in full). A light's own bright pixels keep their brightness and
 // colour: the world's dimming and the lights pass them by. Water's glints (LivingWater) send back this much more of the
 // light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
-// unchanged.
-float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, float3 cloudLight)
+// unchanged. Port-only (HD weather): the overcast leaves overcast of it (OvercastAt), sparing a light's own pixels alone,
+// as the night does.
+float3 Lit(float3 world, float2 texel, float2 slope, float shade, float glint, float3 cloudLight, float3 overcast)
 {
-    const float3 ambient = AmbientLight();
+    const float3 ambient = AmbientLight() * overcast;
 
     if (lighting.x <= 0.0 && all(ambient == 1.0) && ambientLook.w <= 0.0 && all(cloudLight == 1.0) &&
         all(lightFacing.zw == 0.0))
@@ -908,6 +926,297 @@ float3 CloudsAt(float2 texel)
     return 1.0 - clouds.x * cloud * CloudShadeTint;
 }
 
+// Port-only (HD weather): the light under the overcast, a little blue.
+static const float3 OvercastTint = float3(0.94, 0.98, 1.06);
+// The rain's veil: its grey (in the world's own light); how thick it hangs where its sheets are thinnest (times
+// weather.w), and how much more where they're thickest.
+static const float3 VeilColour = float3(150.0, 160.0, 172.0) / 255.0;
+static const float VeilLeast = 0.4;
+static const float VeilSheets = 1.2;
+// The veil's sheets (MCWeather.cpp's SheetsAt, which thins the drops where they're thin): noise SheetSize meters big
+// drifting downwind at SheetSpeed meters a second, two layers, the finer SheetApart off; thick from SheetFrom of it to
+// SheetTo.
+static const float SheetSize = 70.0;
+static const float SheetSpeed = 25.0;
+static const float SheetFrom = 0.3;
+static const float SheetTo = 0.7;
+static const float2 SheetApart = float2(17.3, -9.1);
+
+// The ground point a world texel shows as flat ground: meters east and north of the map's middle (groundAxes).
+float2 GroundPointAt(float2 texel)
+{
+    const float2 offset = texel - ground.xy;
+    return float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
+}
+
+// Two layers of noise at p, the finer one twice as fine and half as strong, `apart` off (MCWeather.cpp's Layered).
+float Layered(float2 p, float2 apart)
+{
+    return (2.0 * Noise(p) + Noise(2.0 * p + apart)) / 3.0;
+}
+
+// How thick the veil's sheets are at a ground point now (haze.z), 0 to 1.
+float SheetsAt(float2 at)
+{
+    const float2 p = (at - haze.z * SheetSpeed * Wind) / SheetSize;
+    return saturate((Layered(p, SheetApart) - SheetFrom) / (SheetTo - SheetFrom));
+}
+
+// The world's own light the overcast leaves at a world texel (1 under a clear sky): dimmed and a little blue, and on
+// land, wet, darker still.
+float3 OvercastAt(float2 texel)
+{
+    if (weather.x <= 0.0 && weather.z <= 0.0)
+    {
+        return float3(1.0, 1.0, 1.0);
+    }
+
+    const float wet = IsWater(WorldIndexAt(texel)) ? 0.0 : weather.z;
+    return (1.0 - weather.x) * OvercastTint * (1.0 - wet);
+}
+
+// The wet look (wetLook; tools/upscale/rain-proto/render_rain3.py, mock-up 3). The overcast sky as wet things mirror
+// it: the water ramp's light end (palette 0x5f) WetSkyGain times, lighter than any ground under it, in the world's own
+// light under the cloud, its sheets drifting in it from SkySheetLow of its light to SkySheetLow + SkySheetSpan.
+static const float3 WetSky = float3(168.0, 192.0, 216.0) / 255.0;
+static const float WetSkyGain = 1.25;
+static const float SkySheetLow = 0.4;
+static const float SkySheetSpan = 1.2;
+// The index target's alpha above GroundMark: HD ground where its relief map drew; below it, what stands on the ground:
+// above CanopyMark a forest's canopy (its sway mark), else 0.
+static const float GroundMark = 0.5;
+static const float CanopyMark = 0.125;
+// The sheen: the way to the eye (down the picture and up: its height over the ground's sine is tan 30 degrees),
+// water's reflectance head on, the light of the sky below the horizon (the ground mirrored); from each gloss (against
+// flat ground's) up, the share of wetLook.x wet ground takes, in hard steps.
+static const float3 EyeWay = float3(0.0, 0.8165, 0.5774);
+static const float Reflectance = 0.02;
+static const float GroundSeen = 0.1;
+static const float4 SheenFrom = float4(0.0, 0.85, 1.15, 1.5);
+static const float4 SheenShares = float4(0.5, 1.0, 1.5, 2.0);
+// The puddles (wetLook.y, MCWeather.cpp's PuddleField: noise PuddleSize meters big, two layers, the finer PuddleApart
+// off) lie lower in the ground's dips: their relief's slopes spreading over DipSpan texels each way, times DipWeight;
+// grass soaks them up: the field GrassDry higher where the ground there and that far round is green, its green past its
+// red and blue by GrassFrom to GrassTo on average (roads, concrete and bare earth are none).
+// Under one, the ground is Soaked darker, Smoothed of it its neighbours' brightness (SmoothSpan texels round), mirroring
+// PuddleMirror of the sky; its far edge mirrors EdgeMirror more, its bank is RimDark darker. Within PuddleNear of the
+// level a texel's neighbours are looked at for the edges.
+static const float PuddleSize = 22.0;
+static const float2 PuddleApart = float2(31.7, -12.3);
+static const float DipSpan = 6.0;
+static const float DipWeight = 0.5;
+static const float GrassFrom = 0.005;
+static const float GrassTo = 0.03;
+static const float GrassDry = 0.6;
+static const float Soaked = 0.85;
+static const float Smoothed = 0.6;
+static const float SmoothSpan = 1.5;
+static const float PuddleMirror = 0.28;
+static const float EdgeMirror = 0.2;
+static const float RimDark = 0.9;
+static const float PuddleNear = 0.08;
+// What stands on the ground: its bright metal (brighter than BrightMetal, as drawn, and no greener than MetalGreen past
+// its red or blue: not leaves) glosses with wetLook.z of the sky; the rest is UnitWet as bright.
+static const float BrightMetal = 0.4;
+static const float MetalGreen = 0.02;
+static const float UnitWet = 0.9;
+// A foot come down in a puddle (puddleSteps): from its footprint's outline (puddlePrints), the water pushed back,
+// StepHollow meters out and spreading StepHollowSpread meters a second, StepHollowDark as bright and filling in again
+// over StepHollowLife; a crest (StepCrestShare of the way to pale, StepCrest meters wide) and a trough behind it
+// (StepTrough wide, StepTroughDark darker) spreading from StepFrontFrom meters out at StepFrontSpeed meters a second,
+// fading over StepLife (MCWeather.cpp's); all times the foot's strength. Near the foot the ring takes the print's shape,
+// rounding as it spreads.
+static const float StepHollow = 2.0;
+static const float StepHollowSpread = 10.0;
+static const float StepHollowLife = 0.3;
+static const float StepHollowDark = 0.9;
+static const float StepFrontFrom = 1.0;
+static const float StepFrontSpeed = 40.0;
+static const float StepCrest = 1.5;
+static const float StepTrough = 2.0;
+static const float StepCrestShare = 0.25;
+static const float StepTroughDark = 0.1;
+static const float StepLife = 0.7;
+static const float3 StepCrestColor = float3(220.0, 220.0, 220.0) / 255.0;
+// Farther from a footprint than any ground point lies (OutsidePrint's start).
+static const float FarFromPrint = 1.0e6;
+
+// The slope of the HD ground's relief map at a world texel (its rise a texel right and a texel down the picture,
+// MCHdArt's relief maps), and the index target's alpha there (above GroundMark, that ground); none elsewhere.
+float2 ReliefAt(float2 texel, out float mark)
+{
+    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    mark = drawn.a;
+    return mark > GroundMark ? (drawn.gb * 255.0 - ReliefFlat) / ReliefSteps : float2(0.0, 0.0);
+}
+
+// How much greener a colour is than its red and blue.
+float Greenness(float3 color)
+{
+    return color.g - max(color.r, color.b);
+}
+
+// The puddles' field at a world texel: below wetLook.y, a puddle (on ground).
+float PuddleFieldAt(float2 texel)
+{
+    float mark;
+    const float2 east = ReliefAt(texel + float2(DipSpan, 0.0), mark);
+    const float2 west = ReliefAt(texel - float2(DipSpan, 0.0), mark);
+    const float2 south = ReliefAt(texel + float2(0.0, DipSpan), mark);
+    const float2 north = ReliefAt(texel - float2(0.0, DipSpan), mark);
+    const float spread = (east.x - west.x + south.y - north.y) / (2.0 * DipSpan);
+    const float green = (Greenness(WorldAt(texel)) + Greenness(WorldAt(texel + float2(DipSpan, 0.0))) +
+                         Greenness(WorldAt(texel - float2(DipSpan, 0.0))) +
+                         Greenness(WorldAt(texel + float2(0.0, DipSpan))) +
+                         Greenness(WorldAt(texel - float2(0.0, DipSpan)))) /
+                        5.0;
+    return Layered(GroundPointAt(texel + 0.5) / PuddleSize, PuddleApart) - DipWeight * spread +
+           GrassDry * smoothstep(GrassFrom, GrassTo, green);
+}
+
+// Whether a puddle lies at a world texel.
+bool PuddleAt(float2 texel)
+{
+    float mark;
+    ReliefAt(texel, mark);
+    return mark > GroundMark && PuddleFieldAt(texel) < wetLook.y;
+}
+
+// How much of wetLook.x's sky wet ground whose relief rises by slope mirrors: a share in steps, more the more its slope
+// turns it to the eye (Fresnel, against a sky lighter overhead).
+float SheenShare(float2 slope)
+{
+    const float3 n = normalize(float3(-slope, 1.0));
+    const float facing = clamp(dot(n, EyeWay), 0.01, 1.0);
+    const float up = 2.0 * facing * n.z - EyeWay.z;
+    const float sky = up > 0.0 ? (1.0 + 2.0 * up) / 3.0 : GroundSeen;
+    const float fresnel = Reflectance + (1.0 - Reflectance) * pow(1.0 - facing, 5.0);
+    const float flat = (Reflectance + (1.0 - Reflectance) * pow(1.0 - EyeWay.z, 5.0)) * (1.0 + 2.0 * EyeWay.z) / 3.0;
+    const float gloss = fresnel * sky / flat;
+    return gloss >= SheenFrom.w   ? SheenShares.w
+           : gloss >= SheenFrom.z ? SheenShares.z
+           : gloss >= SheenFrom.y ? SheenShares.y
+                                  : SheenShares.x;
+}
+
+// How far ground point `at` lies outside foot `step`'s footprint (its circles' nearest edge; below 0 inside it).
+float OutsidePrint(float2 at, uint step)
+{
+    float outside = FarFromPrint;
+
+    for (uint k = 0; k < PrintCircles; ++k)
+    {
+        const float4 circle = puddlePrints[step * PrintCircles + k];
+        outside = min(outside, length(at - circle.xy) - circle.z);
+    }
+
+    return outside;
+}
+
+// A puddle's `color` at world texel `texel` round the feet come down in it (puddleSteps): from each footprint's outline,
+// darker where the water is pushed back, then a pale crest and a dark trough spreading out; in hard steps, a texel at a
+// time.
+float3 SteppedPuddleAt(float3 color, float2 texel)
+{
+    const float2 at = GroundPointAt(floor(texel) + 0.5);
+
+    for (uint i = 0; i < min((uint)wetLook.w, MaxPuddleSteps); ++i)
+    {
+        const float4 step = puddleSteps[i];
+        const float age = step.z;
+
+        if (age > StepLife || step.w <= 0.0)
+        {
+            continue;
+        }
+
+        const float r = OutsidePrint(at, i) / step.w;
+        const float fade = 1.0 - age / StepLife;
+        const float front = StepFrontFrom + StepFrontSpeed * age;
+
+        if (age < StepHollowLife && r < StepHollow + StepHollowSpread * age)
+        {
+            color *= lerp(StepHollowDark, 1.0, age / StepHollowLife);
+        }
+
+        if (r < front && r >= front - StepCrest)
+        {
+            color = lerp(color, StepCrestColor, StepCrestShare * fade);
+        }
+        else if (r < front - StepCrest && r >= front - StepCrest - StepTrough)
+        {
+            color *= 1.0 - StepTroughDark * fade;
+        }
+    }
+
+    return color;
+}
+
+// `color` at world texel `texel` (drawn as `art`) in the rain: wet ground mirrors a little of the overcast sky, in
+// steps as its slopes turn it to the eye; puddles lie in its low spots, soaked and smoothed, mirroring more of it; what
+// stands on the ground is darker, its bright metal glossed with it. As it is without the wet look or on water.
+float3 WetAt(float3 color, float3 art, float2 texel)
+{
+    if (wetLook.x <= 0.0 || IsWater(WorldIndexAt(texel)))
+    {
+        return color;
+    }
+
+    const float3 sky = WetSky * WetSkyGain * AmbientLight() * (1.0 - weather.x) *
+                       (SkySheetLow + SkySheetSpan * SheetsAt(GroundPointAt(texel + 0.5)));
+    float mark;
+    const float2 slope = ReliefAt(texel, mark);
+
+    if (mark <= GroundMark)
+    {
+        const bool metal = mark <= CanopyMark && dot(art, Luma) > BrightMetal && Greenness(art) <= MetalGreen;
+        return metal ? lerp(color, sky, wetLook.z) : color * UnitWet;
+    }
+
+    const float3 wet = lerp(color, sky, saturate(wetLook.x * SheenShare(slope)));
+
+    if (wetLook.y <= 0.0)
+    {
+        return wet;
+    }
+
+    const float field = PuddleFieldAt(texel);
+
+    if (field >= wetLook.y + PuddleNear)
+    {
+        return wet;
+    }
+
+    const float2 up = float2(0.0, -1.0);
+    const float2 side = float2(1.0, 0.0);
+
+    if (field >= wetLook.y)
+    {
+        const bool bank = PuddleAt(texel + up) || PuddleAt(texel - up) || PuddleAt(texel + side) || PuddleAt(texel - side);
+        return bank ? wet * RimDark : wet;
+    }
+
+    // The ground under the water: its brightness smoothed (the art's round it against its own), soaked darker.
+    const float3 round = (WorldAt(texel + SmoothSpan * side) + WorldAt(texel - SmoothSpan * side) +
+                          WorldAt(texel + SmoothSpan * up) + WorldAt(texel - SmoothSpan * up)) / 4.0;
+    const float smoothing = clamp((dot(round, Luma) + 0.02) / (dot(art, Luma) + 0.02), 0.5, 2.0);
+    const float3 under = lerp(color, color * smoothing, Smoothed) * Soaked;
+    const float3 puddle = lerp(under, sky, PuddleMirror);
+    return SteppedPuddleAt(PuddleAt(texel + up) ? puddle : lerp(puddle, sky, EdgeMirror), texel);
+}
+
+// `color` at a world texel seen through the rain's veil (as it is without one).
+float3 VeiledAt(float3 color, float2 texel)
+{
+    if (weather.w <= 0.0)
+    {
+        return color;
+    }
+
+    const float veil = saturate(weather.w * (VeilLeast + VeilSheets * SheetsAt(GroundPointAt(texel))));
+    return lerp(color, VeilColour * AmbientLight(), veil);
+}
+
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const float2 pixel = floor(position.xy);
@@ -946,8 +1255,15 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
             const float3 cloudLight = CloudsAt(hazy + 0.5);
-            const float3 shone = Lit(seen, hazy + 0.5, SlopeAt(swayed), lit.a, glint, cloudLight) +
-                                 glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5);
+            // Port-only (HD weather): under the overcast, its light and no sun to glint; the rain's veil; the wet look.
+            const float3 overcast = OvercastAt(hazy);
+            const float sunGlint = weather.x > 0.0 ? 0.0 : SunGlint;
+            const float3 shone =
+                WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), lit.a, glint, cloudLight, overcast) +
+                                   glint * sunGlint * AmbientLight() * cloudLight,
+                               hazy + 0.5),
+                      seen, hazy) +
+                AirBeamsAt(hazy + 0.5);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -966,7 +1282,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         float glint;
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight) +
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0)) +
                      glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5));
     }
 

@@ -605,3 +605,10 @@ bool VfxTileFits(std::span<const uint8_t> tile);
 /// tiles that reach past their box (see <see cref="VfxTileFits"/>, which the tile must pass).
 /// </summary>
 int32_t VfxTileWidth(std::span<const uint8_t> tile);
+
+/// <summary>
+/// Port: the pixel of <paramref name="tile"/> at (<paramref name="column"/>, <paramref name="row"/>) of its box (the
+/// pixel VfxNTileDraw writes that far right and down from its top-left corner, its hot spot taken off); none where its
+/// span leaves a hole, or where that row's table entries or span lie outside the data (only that row is read).
+/// </summary>
+std::optional<uint8_t> VfxTilePixel(std::span<const uint8_t> tile, int32_t column, int32_t row);

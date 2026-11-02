@@ -1237,6 +1237,9 @@
     <ClCompile Include="sprite\MCVfxBuildingAppearanceType.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCWeather.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="terrain\MCArtilleryButton.cpp">
       <Filter>terrain</Filter>
@@ -2461,6 +2464,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCVfxBuildingAppearanceType.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCWeather.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="stdafx.h" />

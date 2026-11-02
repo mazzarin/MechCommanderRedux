@@ -3,6 +3,7 @@
 #include "ai/MCMoveSystem.h"
 #include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
+#include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
 #include "lib/MCVector3D.h"
@@ -11,7 +12,10 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
+#include "terrain/MCMapBlockManager.h"
 #include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainTiles.h"
+#include "terrain/MCTerrainWindow.h"
 #include "vfx/MCVfxFunctions.h"
 
 #include <map>
@@ -246,6 +250,27 @@ namespace
     constexpr float WakeFoamOut = 0.6f;
     constexpr float WakeFoamUp = 0.35f;
 
+    // Steps: a foot coming down in water (MCParticles::AddStep) throws StepDroplets of droplets, StepOut and StepUp
+    // times a splash's speeds, and a ring spreads round it from StepRingFrom of its unit's half width to StepRingTo (all
+    // times MCParticleLook::Steps).
+    constexpr float StepDroplets = 5.0f;
+    constexpr float StepOut = 0.35f;
+    constexpr float StepUp = 0.4f;
+    constexpr float StepRingFrom = 0.1f;
+    constexpr float StepRingTo = 0.6f;
+    constexpr float StepRingLifeLow = 0.8f;
+    constexpr float StepRingLifeHigh = 1.1f;
+    constexpr float StepRingAlpha = 0.5f;
+
+    /// <summary>
+    /// The water's palette entries (composite.pshader's IsWater): its blues, and the colour cycle's (FirstWaterColor on).
+    /// </summary>
+    constexpr uint8_t FirstWaterBlue = 0x58;
+    constexpr uint8_t WaterBlues = 6;
+    constexpr uint8_t WaterColors = 8;
+    /// <summary>The tile drawn over a world point is its own map vertex's, or one this many rows or columns off.</summary>
+    constexpr int32_t TileNear = 2;
+
     // Fires: embers and smoke a second for each pixel of the side of a square of a flame's bright pixels.
     constexpr float FireEmbers = 0.25f;
     constexpr float FireSmoke = 0.12f;
@@ -385,6 +410,15 @@ namespace
     struct PendingMover
     {
         const void* Unit = nullptr;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float HalfWidth = 0.0f;
+    };
+
+    /// <summary>A foot come down this frame: where, and its unit's half width.</summary>
+    struct PendingStep
+    {
         float X = 0.0f;
         float Y = 0.0f;
         float Z = 0.0f;
@@ -564,6 +598,7 @@ namespace
         std::vector<PendingBurst> Bursts;
         std::vector<PendingFire> Fires;
         std::vector<PendingMover> Movers;
+        std::vector<PendingStep> Steps;
         std::unordered_map<const void*, Track> Tracks;
         std::vector<Shake> Shakes;
         std::map<TableKey, BurstLook> Looks;
@@ -615,21 +650,20 @@ namespace
         return Terrain() != nullptr ? MCTerrain::GetTerrainElevation(MCVector3D(x, y, 0.0f)) : 0.0f;
     }
 
-    /// <summary>Whether the map's tile at (x, y) is water (as the craters' test).</summary>
-    bool IsWater(float x, float y)
+    /// <summary>
+    /// Whether the ground drawn at (x, y, z) in <paramref name="camera"/>'s view is the water's
+    /// (MCParticles::GroundDrawnAt), with no bridge over it. (The map's terrain types from FirstWaterTerrain on, which
+    /// take no craters, are paved ground too, and lie a tile or so off the water drawn.)
+    /// </summary>
+    bool IsWater(float x, float y, float z, const MCCamera& camera)
     {
-        int32_t row = 0;
-        int32_t col = 0;
-        MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
-        const MCScenarioMap& map = GameMap();
-
-        if (row < 0 || row >= map.Height || col < 0 || col >= map.Width)
+        if (MCParticles::BridgedAt(x, y))
         {
             return false;
         }
 
-        const size_t at = static_cast<size_t>(map.Width) * static_cast<size_t>(row) + static_cast<size_t>(col);
-        return at < map.Map.size() && map.Map[at].TerrainType() >= FirstWaterTerrain;
+        const std::optional<uint8_t> drawn = MCParticles::GroundDrawnAt(x, y, z, camera);
+        return drawn.has_value() && MCParticles::IsWaterColor(*drawn);
     }
 
     /// <summary>A fire's colour's brightness, to put its brightest first.</summary>
@@ -1032,7 +1066,7 @@ namespace
     }
 
     /// <summary>What a burst throws, as its place (a unit, the ground, water) and size have it.</summary>
-    void Burst(State& state, const PendingBurst& at)
+    void Burst(State& state, const PendingBurst& at, const MCCamera& camera)
     {
         MCDice& dice = state.Dice;
         const float amount = std::max(state.Look.Amount, 0.0f);
@@ -1044,7 +1078,7 @@ namespace
         const bool big = fire >= BigFire;
         const float spread = extent * BurstSpread;
 
-        if (onGround && IsWater(at.X, at.Y))
+        if (onGround && IsWater(at.X, at.Y, ground, camera))
         {
             const float strength = std::clamp((fire - BigFire) / (HugeFire - BigFire), 0.0f, 1.0f);
             Droplets(state, at.X, at.Y, ground, count(SplashDroplets + extent * SplashDropletsPerExtent),
@@ -1154,7 +1188,7 @@ namespace
     }
 
     /// <summary>A unit's wake for <paramref name="step"/>: ripples at its feet in water, and foam as it goes.</summary>
-    void Wade(State& state, const PendingMover& mover, float step)
+    void Wade(State& state, const PendingMover& mover, float step, const MCCamera& camera)
     {
         auto [found, isNew] = state.Tracks.try_emplace(mover.Unit);
         Track& track = found->second;
@@ -1164,7 +1198,7 @@ namespace
         track.Seen = state.Frame;
         const float ground = GroundUnder(mover.X, mover.Y);
 
-        if (mover.Z - ground > WadeHeight || !IsWater(mover.X, mover.Y))
+        if (mover.Z - ground > WadeHeight || !IsWater(mover.X, mover.Y, ground, camera))
         {
             return;
         }
@@ -1192,8 +1226,36 @@ namespace
         }
     }
 
+    /// <summary>
+    /// <paramref name="foot"/> coming down: in the water <paramref name="camera"/> shows there (not on a bridge over it),
+    /// droplets thrown up and a
+    /// ring spreading round it, as big as MCParticleLook::Steps has them.
+    /// </summary>
+    void Step(State& state, const PendingStep& foot, const MCCamera& camera)
+    {
+        const float strength = std::max(state.Look.Steps, 0.0f);
+
+        if (strength <= 0.0f)
+        {
+            return;
+        }
+
+        const float ground = GroundUnder(foot.X, foot.Y);
+
+        if (!IsWater(foot.X, foot.Y, ground, camera))
+        {
+            return;
+        }
+
+        MCDice& dice = state.Dice;
+        Droplets(state, foot.X, foot.Y, ground, dice.Count(StepDroplets * strength * std::max(state.Look.Amount, 0.0f)),
+                 StepOut * strength, StepUp * strength);
+        Ripple(state, foot.X, foot.Y, foot.HalfWidth * StepRingFrom, foot.HalfWidth * StepRingTo * strength,
+               dice.Between(StepRingLifeLow, StepRingLifeHigh), StepRingAlpha, 0.0f);
+    }
+
     /// <summary>A fallen particle reaching the ground: it bounces, rests or is gone.</summary>
-    void Land(State& state, Particle& particle)
+    void Land(State& state, Particle& particle, const MCCamera& camera)
     {
         particle.Z = particle.Ground;
 
@@ -1207,7 +1269,7 @@ namespace
 
             case MCParticleKind::Droplet:
             {
-                if (state.Dice.Unit() < DropletRippleShare && IsWater(particle.X, particle.Y))
+                if (state.Dice.Unit() < DropletRippleShare && IsWater(particle.X, particle.Y, particle.Ground, camera))
                 {
                     Ripple(state, particle.X, particle.Y, particle.Size, particle.Size * DropletRippleGrows,
                            DropletRippleLife, DropletRippleAlpha, 0.0f);
@@ -1219,7 +1281,7 @@ namespace
 
             case MCParticleKind::Debris:
             {
-                if (IsWater(particle.X, particle.Y))
+                if (IsWater(particle.X, particle.Y, particle.Ground, camera))
                 {
                     Ripple(state, particle.X, particle.Y, particle.Size, particle.Size * SinkRippleGrows,
                            SinkRippleLife, SinkRippleAlpha, 0.0f);
@@ -1251,8 +1313,11 @@ namespace
         }
     }
 
-    /// <summary>Moves <paramref name="particle"/> on by <paramref name="step"/>.</summary>
-    void Move(State& state, Particle& particle, float step)
+    /// <summary>
+    /// Moves <paramref name="particle"/> on by <paramref name="step"/>; landing, on the ground <paramref name="camera"/>
+    /// shows there.
+    /// </summary>
+    void Move(State& state, Particle& particle, float step, const MCCamera& camera)
     {
         particle.Age += step;
 
@@ -1323,7 +1388,7 @@ namespace
             }
             else if (particle.VZ < 0.0f)
             {
-                Land(state, particle);
+                Land(state, particle, camera);
             }
         }
     }
@@ -1513,7 +1578,7 @@ namespace
         }
     }
 
-    /// <summary>Drops every particle, shake and pending burst, fire and unit, and restarts the dice.</summary>
+    /// <summary>Drops every particle, shake and pending burst, fire, unit and step, and restarts the dice.</summary>
     void ClearState(State& state)
     {
         state.Particles.clear();
@@ -1521,6 +1586,7 @@ namespace
         state.Bursts.clear();
         state.Fires.clear();
         state.Movers.clear();
+        state.Steps.clear();
         state.Tracks.clear();
         state.Shakes.clear();
         state.Looks.clear();
@@ -1622,10 +1688,96 @@ auto MCParticles::AddMover(const void* unit, const MCVector3D& position, float h
     }
 }
 
+auto MCParticles::AddStep(const MCVector3D& foot, float halfWidth) -> void
+{
+    if (GHdParticles != 0)
+    {
+        TheState().Steps.push_back({foot.X, foot.Y, foot.Z, halfWidth});
+    }
+}
+
 auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> void
 {
     ElementList().OpenGroup(depth, true);
     ElementList().Add(ElementList().Make<MCParticleElement>(command, depth));
+}
+
+auto MCParticles::ViewPoint(float x, float y, float z, const MCCamera& camera) -> MCVector2D
+{
+    return Project(x, y, z, camera);
+}
+
+auto MCParticles::GroundAt(float x, float y) -> float
+{
+    return GroundUnder(x, y);
+}
+
+auto MCParticles::GroundDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
+{
+    const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+
+    if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
+        terrain->Tiles == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    // The window's grid from its first vertex's map vertex, and the map vertex the world point lies by.
+    const int32_t side = window->Side();
+    const uint32_t firstTile = window->Vertices[0].PosTile;
+    const int32_t firstRow = static_cast<int32_t>(firstTile) >> 16;
+    const int32_t firstCol = static_cast<int16_t>(firstTile & 0xffff);
+    int32_t row = 0;
+    int32_t col = 0;
+    MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
+    const MCVector2D at = Project(x, y, z, camera);
+    const auto px = static_cast<int32_t>(std::floor(at.X));
+    const auto py = static_cast<int32_t>(std::floor(at.Y));
+    std::optional<uint8_t> drawn;
+
+    for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2); ++r)
+    {
+        for (int32_t c = std::max(col - TileNear - firstCol, 0); c <= std::min(col + TileNear - firstCol, side - 2);
+             ++c)
+        {
+            const MCVertex& corner = window->Vertices[static_cast<size_t>(r) * side + c];
+            const int32_t texture = terrain->MapBlocks->Vertex(corner.MapVertex).TextureData;
+            const std::span<const uint8_t> tile =
+                texture < 0 ? std::span<const uint8_t>() : terrain->Tiles->Lookup(texture);
+
+            if (tile.size() < 2)
+            {
+                continue;
+            }
+
+            if (const std::optional<uint8_t> pixel =
+                    VfxTilePixel(tile, px - corner.Px + tile[0], py - corner.Py + tile[1]);
+                pixel.has_value())
+            {
+                drawn = pixel;
+            }
+        }
+    }
+
+    return drawn;
+}
+
+auto MCParticles::BridgedAt(float x, float y) -> bool
+{
+    int32_t row = 0;
+    int32_t col = 0;
+    MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
+    const MCScenarioMap& map = GameMap();
+    return map.OnMap(row, col) &&
+           OverlayIsBridge[map.Map[static_cast<size_t>(map.Width) * static_cast<size_t>(row) + static_cast<size_t>(col)]
+                               .OverlayType()];
+}
+
+auto MCParticles::IsWaterColor(uint8_t index) -> bool
+{
+    return static_cast<uint8_t>(index - FirstWaterBlue) < WaterBlues ||
+           static_cast<uint8_t>(index - FirstWaterColor) < WaterColors;
 }
 
 auto MCParticles::Draw(const MCCamera& camera) -> void
@@ -1647,7 +1799,7 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
     {
         for (Particle& particle : state.Particles)
         {
-            Move(state, particle, step);
+            Move(state, particle, step, camera);
         }
 
         std::erase_if(state.Particles, [](const Particle& particle) { return particle.Age >= particle.Life; });
@@ -1662,7 +1814,12 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
 
             for (const PendingMover& mover : state.Movers)
             {
-                Wade(state, mover, step);
+                Wade(state, mover, step, camera);
+            }
+
+            for (const PendingStep& foot : state.Steps)
+            {
+                Step(state, foot, camera);
             }
 
             for (const PendingEdge& edge : state.Edges)
@@ -1688,7 +1845,7 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
 
         if (GHdParticles != 0)
         {
-            Burst(state, burst);
+            Burst(state, burst, camera);
         }
     }
 
@@ -1697,6 +1854,7 @@ auto MCParticles::Draw(const MCCamera& camera) -> void
     state.Bursts.clear();
     state.Fires.clear();
     state.Movers.clear();
+    state.Steps.clear();
     state.Edges.clear();
     std::erase_if(state.Shakes, [&](const Shake& shake) { return now - shake.Start > ShakeLasts; });
     state.ShownWindow = GlobalPane->Window;

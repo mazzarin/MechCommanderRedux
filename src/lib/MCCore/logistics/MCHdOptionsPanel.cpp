@@ -10,6 +10,7 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 
 namespace
 {
@@ -44,6 +45,8 @@ namespace
                                            Choice{"ORCHESTRAL", HdAudioOrchestral, OrchestralOffered}};
     constexpr std::array HdLightingChoices = {Choice{"OFF", HdLightingOff}, Choice{"ON", HdLightingOn},
                                               Choice{"DUSK", HdLightingDusk}, Choice{"NIGHT", HdLightingNight}};
+    constexpr std::array WeatherChoices = {Choice{"OFF", HdWeatherOff}, Choice{"ON", HdWeatherOn},
+                                           Choice{"RAIN", HdWeatherRain}, Choice{"DOWNPOUR", HdWeatherDownpour}};
     constexpr std::array FleckChoices = {Choice{"EDGE", static_cast<int32_t>(MCFleckStyle::Edge)},
                                          Choice{"FALLING", static_cast<int32_t>(MCFleckStyle::Falling)}};
 
@@ -126,6 +129,10 @@ namespace
             .Description = "FEET PRINT WHERE THEY STEP; THREE TIMES AS MANY PRINTS AND CRATERS STAY.",
             .Key = "HDFootprints",
             .Choices = OffOn},
+        Row{.Label = "WEATHER",
+            .Description = "RAIN WHERE A MAP MAKER SETS IT. RAIN OR DOWNPOUR RAINS ON EVERY MISSION.",
+            .Key = "HDWeather",
+            .Choices = WeatherChoices},
         Row{.Label = "MECHS"},
         Row{.Label = "SMOOTH TURNS",
             .Description = "MECHS TURN SMOOTHLY, THEIR LEGS DRAWN BETWEEN THEIR FACINGS.",

@@ -573,5 +573,17 @@ protected:
     /// </summary>
     afx_msg void OnUpdateMissionTimeOfDay(CCmdUI* pCmdUI);
 
+    /// <summary>
+    /// Port-only: handles ON_COMMAND_RANGE(MISSION_WEATHER_FIRST_COMMAND, MISSION_WEATHER_LAST_COMMAND), Mission >
+    /// Weather: sets the mission's weather, and marks the document changed if it was another.
+    /// </summary>
+    afx_msg void OnMissionWeather(UINT nID);
+
+    /// <summary>
+    /// Port-only: handles ON_UPDATE_COMMAND_UI_RANGE(MISSION_WEATHER_FIRST_COMMAND, MISSION_WEATHER_LAST_COMMAND): the
+    /// mission's weather is marked.
+    /// </summary>
+    afx_msg void OnUpdateMissionWeather(CCmdUI* pCmdUI);
+
     DECLARE_MESSAGE_MAP()
 };

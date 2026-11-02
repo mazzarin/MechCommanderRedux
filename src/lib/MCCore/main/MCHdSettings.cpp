@@ -9,6 +9,7 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 
 namespace
 {
@@ -48,6 +49,12 @@ namespace
                   .Original = static_cast<int32_t>(MCFleckStyle::Edge),
                   .Personal = static_cast<int32_t>(MCFleckStyle::Edge)},
         MCSetting{.Key = "HDShake", .Value = &GHdShake},
+        // HDWeather shows the missions in their own weather, or every one in rain or a downpour (sprite/MCWeather.h).
+        MCSetting{.Key = "HDWeather",
+                  .Value = &GHdWeather,
+                  .Most = HdWeatherDownpour,
+                  .Boolean = false,
+                  .Personal = HdWeatherOn},
         // HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
         MCSetting{.Key = "HDFootprints", .Value = &GHdFootprints},
         // HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).

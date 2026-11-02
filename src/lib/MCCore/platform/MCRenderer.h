@@ -360,12 +360,31 @@ struct MCShadowCommand
     float Aspect;
 };
 
+/// <summary>Port-only: how a particle's mark is drawn (MCParticleCommand::Style).</summary>
+enum class MCParticleStyle : uint8_t
+{
+    /// <summary>Its edge smooth, softened over Softness.</summary>
+    Soft,
+    /// <summary>
+    /// On whole pixels of the output, none partly covered, as the art's own: a dot or a streak, at least a pixel; a ring
+    /// a pixel wide.
+    /// </summary>
+    Hard,
+    /// <summary>
+    /// A raindrop (sprite/MCWeather.h) falling from its tail (X0, Y0) to its head (X1, Y1): columns of whole output
+    /// pixels (its width, at least one), the left ones brighter by the palette's water ramp, its tail in steps fainter
+    /// and darker, its head's last Tip pixels brightest.
+    /// </summary>
+    RainStreak,
+};
+
 /// <summary>
 /// Port-only (HD particles, sprite/MCParticles.h): a soft mark drawn over what lies under it, leaving the indices: a
 /// streak from window (X0, Y0) to (X1, Y1) (a dot where they meet), Radius pixels to each side, its edge softened over
 /// Softness of that (0 to 1); or, with Ring above 0, the outline Ring pixels to each side of that edge. A distance down
 /// the screen is Aspect times one across (1, or a ring lying on the ground). Its colour is premultiplied: Red, Green and
 /// Blue are what it adds where it is whole, Alpha how much of what lies under it it hides (0: light alone, a spark's).
+/// Style says how it is drawn (Tip: a raindrop's).
 /// </summary>
 struct MCParticleCommand
 {
@@ -381,6 +400,8 @@ struct MCParticleCommand
     uint8_t Green = 0;
     uint8_t Blue = 0;
     uint8_t Alpha = 0;
+    MCParticleStyle Style = MCParticleStyle::Soft;
+    float Tip = 0.0f;
 };
 
 /// <summary>

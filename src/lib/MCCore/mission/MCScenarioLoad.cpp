@@ -50,6 +50,7 @@
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
@@ -204,6 +205,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
 
     // Port-only (HD lighting): the time of day the map maker set the mission at; by day without one.
     MCSceneLights::SetMissionTime(MCSceneLights::ReadTimeOfDay(file));
+    // Port-only (HD weather): the weather the map maker set it in; clear without one.
+    MCWeather::SetMissionWeather(MCWeather::Read(file));
     LoadPalette(file);
     LoadForces(file);
     LoadSettings(file);
@@ -249,8 +252,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     }
 
     ScenarioTime = 0.0f;
-    // Port-only (HD particles): none from the last mission, and their dice from the start.
+    // Port-only (HD particles, HD weather): none from the last mission, and their dice from the start.
     MCParticles::Clear();
+    MCWeather::Clear();
     MissionStartTime = 0;
     RunningTime = 0.0f;
     ActualTime = 0.0f;

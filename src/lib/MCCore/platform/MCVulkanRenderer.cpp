@@ -2130,7 +2130,7 @@ auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, 
 
 void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                                    std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                                   bool smoothEdges, bool blendedOnly)
+                                   bool smoothEdges, BlitPixels pixels)
 {
     const std::optional<std::pair<Quad, Quad>> place = BlitPlace(blit, width, height, command);
 
@@ -2147,8 +2147,9 @@ void MCVulkanRenderer::BlitPicture(MCWindow& target, const MCAlphaBlitCommand& b
     }
 
     const uint16_t surface = SurfaceFor(target);
-    const uint32_t op =
-        KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u) | (blendedOnly ? BlendedOnly : 0u);
+    const uint32_t op = KindTexture | OpaqueSource | AlphaBlend | (smoothEdges ? SmoothEdges : 0u) |
+                        (pixels == BlitPixels::Blended ? BlendedOnly : 0u) |
+                        (pixels == BlitPixels::OpaqueIndices ? IndexOnly | OpaqueOnly : 0u);
 
     // A smooth-edged picture's place in the source is the whole picture.
     if (Add(surface, SourceKind::Picture, *index, place->first, place->second, op, 0, 0, 0) && smoothEdges)
@@ -2259,9 +2260,15 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
                              [&](std::span<uint8_t> out) { FillShape(data, height, width, command.Table, out); });
     };
 
-    // Port-only: the HD art pack's frame instead, where it has one (the transform writes no indices either), its edges
-    // smooth unless it holds its blended pixels (an effect's). A translucent shape's blended pixels that its frame
-    // leaves out are blended first, with smooth edges, so the frame's edge lies over them.
+    // The shape's opaque pixels' indices, as the original's transform writes them (its colours' blit, blended, leaves
+    // the indices): the composite tells what stands on the ground by them (the water, the relief's light, the rain's
+    // wet look).
+    const auto indices = [&]
+    { BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, BlitPixels::OpaqueIndices); };
+
+    // Port-only: the HD art pack's frame instead, where it has one, its edges smooth unless it holds its blended pixels
+    // (an effect's). A translucent shape's blended pixels that its frame leaves out are blended first, with smooth
+    // edges, so the frame's edge lies over them.
     if (const std::shared_ptr<const MCHdArt::Frame> hd = HdShape(command.ShapeTable, command.ShapeNum, width, height);
         hd != nullptr && HdPictureOf(*hd).has_value())
     {
@@ -2278,7 +2285,7 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 
         if (blendsOwn && smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, BlitPixels::Blended);
         }
 
         // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
@@ -2311,14 +2318,16 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
         if (blendsOwn && !smooth)
         {
-            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, true);
+            BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, false, BlitPixels::Blended);
         }
 
+        indices();
         return;
     }
 
     BlitPicture(target, command.Blit, width, height, ReadsOutside, picture,
                 MCHdArt::SmoothEdges(command.ShapeTable.data()));
+    indices();
 }
 
 auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
@@ -3911,6 +3920,9 @@ void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& comma
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
                                           command.Aspect, command.Softness, command.Ring},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+        // Its style and a raindrop's tip in the source's slots, which a particle has none of.
+        draw[4] = static_cast<int32_t>(command.Style);
+        draw[5] = std::bit_cast<int32_t>(command.Tip);
     }
 }
 

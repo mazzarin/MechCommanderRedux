@@ -26,6 +26,7 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -231,6 +232,13 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     }
 
     MCSceneLights::AddRecastShadows(sunShadow, depth, false);
+
+    // Port-only (HD weather): a ground vehicle's parts take the rain (a train's cars, an artillery strike's shells and a
+    // camera drone don't).
+    if (objectClass == MCObjectClass::GroundVehicle)
+    {
+        MCWeather::AddUnit(sunShadow, obj->Position, ScreenPos.X, ScreenPos.Y, depth);
+    }
 
     const int32_t selected = obj->Selected;
 

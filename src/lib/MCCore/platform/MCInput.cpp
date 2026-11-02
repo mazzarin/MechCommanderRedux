@@ -38,10 +38,14 @@ namespace
         std::shared_ptr<SDL_Cursor> GameCursor;
         /// <summary>The game's ClipCursor rectangle (logical screen), if it set one.</summary>
         std::optional<MCClipRect> ClipRect;
+        /// <summary>The window area keeping the cursor off the screen's corners (GuardCorners), if any.</summary>
+        std::optional<SDL_Rect> CornerGuard;
         /// <summary>The mouse is over the window's letterbox bars, not the picture.</summary>
         bool OutsidePicture = false;
         uint32_t DoubleClickTime = 500;
         bool Active = false;
+        /// <summary>Whether a text field has the keyboard (<see cref="MCInput::SetTextInput"/>).</summary>
+        bool TextInput = false;
 
         /// <summary>The last button press, for double clicks.</summary>
         int LastClickButton = -1;
@@ -53,6 +57,44 @@ namespace
     {
         static MCInputState instance;
         return instance;
+    }
+
+    /// <summary>The first printable character: WM_CHAR below it is a control character.</summary>
+    constexpr int FirstPrintable = 0x20;
+
+    /// <summary>Whether SDL's text input runs in the attached window (keys type their text through it).</summary>
+    bool textInputActive()
+    {
+        const std::shared_ptr<MCDisplay> display = state().Display.lock();
+        return display != nullptr && SDL_TextInputActive(&display->Window());
+    }
+
+    /// <summary>
+    /// Starts or stops SDL's text input in the window, as <see cref="MCInput::SetTextInput"/> asks, once no key SDL
+    /// read under the old setting waits in its queue.
+    /// </summary>
+    void applyTextInput()
+    {
+        MCInputState& input = state();
+        const std::shared_ptr<MCDisplay> display = input.Display.lock();
+
+        if (display == nullptr || SDL_HasEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_TEXT_INPUT))
+        {
+            return;
+        }
+
+        SDL_Window* window = &display->Window();
+
+        if (SDL_TextInputActive(window) == input.TextInput)
+        {
+            return;
+        }
+
+        if (!(input.TextInput ? SDL_StartTextInput(window) : SDL_StopTextInput(window)))
+        {
+            SDL_Log("MCInput: can't %s text input in window %u: %s", input.TextInput ? "start" : "stop",
+                    SDL_GetWindowID(window), SDL_GetError());
+        }
     }
 
     /// <summary>Sends a message to the window procedure.</summary>
@@ -129,6 +171,12 @@ namespace
         const MCClipRect area = screenArea();
         point.x = std::clamp(static_cast<int32_t>(std::floor(x)), area.left, area.right - 1);
         point.y = std::clamp(static_cast<int32_t>(std::floor(y)), area.top, area.bottom - 1);
+
+        if (const std::optional<SDL_Rect>& guard = state().CornerGuard; guard.has_value())
+        {
+            point.x = MCInput::GuardedX(windowX, *guard, point.x, area.left, area.right);
+        }
+
         return point;
     }
 
@@ -218,12 +266,13 @@ namespace
     /// Sets where the system cursor may go: the game's ClipCursor rectangle if it set one; else, full screen and
     /// focused, the picture. The original's full screen switched the monitor to the game's resolution, so the mouse
     /// never left the picture; letterboxed, the hidden cursor would wander into the bars while the game's cursor
-    /// stuck at the edge.
+    /// stuck at the edge. Kept to the picture, the cursor stays off its corners too (MCInput::GuardCorners).
     /// </summary>
     void applyMouseRect()
     {
         MCInputState& input = state();
         const std::shared_ptr<MCDisplay> display = input.Display.lock();
+        input.CornerGuard.reset();
 
         if (display == nullptr)
         {
@@ -232,8 +281,9 @@ namespace
 
         SDL_Window* window = &display->Window();
         std::optional<MCClipRect> logical = input.ClipRect;
+        const bool fullscreenPicture = !logical && input.Active && display->IsFullscreen();
 
-        if (!logical && input.Active && display->IsFullscreen())
+        if (fullscreenPicture)
         {
             logical = screenArea();
         }
@@ -256,6 +306,13 @@ namespace
         area.y = static_cast<int>(std::ceil(top));
         area.w = std::max(1, static_cast<int>(std::floor(right)) - area.x);
         area.h = std::max(1, static_cast<int>(std::floor(bottom)) - area.y);
+
+        if (fullscreenPicture)
+        {
+            area = MCInput::GuardCorners(area);
+            input.CornerGuard = area;
+        }
+
         SDL_SetWindowMouseRect(window, &area);
     }
 
@@ -364,6 +421,47 @@ namespace
         return -1;
     }
 
+    /// <summary>
+    /// The Windows-1252 character a key (<paramref name="vk"/>) makes with the modifiers held, in the keyboard layout,
+    /// or -1 (a key that makes none, or one the code page lacks): TranslateMessage's WM_CHAR, for when SDL's text
+    /// input is off.
+    /// </summary>
+    int typedCharacter(const SDL_KeyboardEvent& key, int vk)
+    {
+        // The keypad's keys (digits with NumLock on).
+        if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9)
+        {
+            return '0' + (vk - VK_NUMPAD0);
+        }
+
+        switch (vk)
+        {
+            case VK_MULTIPLY:
+                return '*';
+            case VK_ADD:
+                return '+';
+            case VK_SUBTRACT:
+                return '-';
+            case VK_DECIMAL:
+                return '.';
+            case VK_DIVIDE:
+                return '/';
+            default:
+                break;
+        }
+
+        const SDL_Keycode typed = SDL_GetKeyFromScancode(key.scancode, key.mod, false);
+
+        // Keys without a character have keycodes built from their scancode (or SDL's extended ones).
+        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 ||
+            typed < static_cast<SDL_Keycode>(FirstPrintable) || typed == SDLK_DELETE)
+        {
+            return -1;
+        }
+
+        return MCInput::CodePointToWindows1252(typed);
+    }
+
     void handleKey(const SDL_KeyboardEvent& key)
     {
         MCInputState& input = state();
@@ -397,6 +495,13 @@ namespace
         if (down && !system)
         {
             int character = controlCharacter(vk, ctrlDown, altDown);
+
+            // No text field has the keyboard: the key's own character (with it, SDL_EVENT_TEXT_INPUT brings the text).
+            // Command (the Windows key) chords are the system's shortcuts, and type nothing.
+            if (character < 0 && !ctrlDown && (key.mod & SDL_KMOD_GUI) == 0 && !textInputActive())
+            {
+                character = typedCharacter(key, vk);
+            }
 
             if (character >= 0)
             {
@@ -455,10 +560,11 @@ namespace MCInput
 
         if (display == nullptr)
         {
+            input.CornerGuard.reset();
             return;
         }
 
-        SDL_StartTextInput(&display->Window());
+        applyTextInput();
         SDL_Keymod mod = SDL_GetModState();
         input.Toggled[VK_CAPITAL] = (mod & SDL_KMOD_CAPS) != 0;
         input.Toggled[VK_NUMLOCK] = (mod & SDL_KMOD_NUM) != 0;
@@ -482,6 +588,11 @@ namespace MCInput
         state().Proc = std::move(proc);
     }
 
+    void SetTextInput(bool on)
+    {
+        state().TextInput = on;
+    }
+
     bool PumpMessages()
     {
         MCInputState& input = state();
@@ -503,6 +614,8 @@ namespace MCInput
             }
         }
 
+        // Between the batches of keys SDL reads (see SetTextInput).
+        applyTextInput();
         SDL_Event event;
 
         while (SDL_PollEvent(&event))
@@ -510,11 +623,13 @@ namespace MCInput
             HandleEvent(event);
         }
 
+        applyTextInput();
         return !input.Quit;
     }
 
     bool WaitMessage(int timeoutMs)
     {
+        applyTextInput();
         SDL_Event event;
 
         if (SDL_WaitEventTimeout(&event, timeoutMs))
@@ -666,6 +781,33 @@ namespace MCInput
         applyMouseRect();
     }
 
+    SDL_Rect GuardCorners(SDL_Rect picture)
+    {
+        if (picture.w > 2 * CornerGuardPoints)
+        {
+            picture.x += CornerGuardPoints;
+            picture.w -= 2 * CornerGuardPoints;
+        }
+
+        return picture;
+    }
+
+    int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right)
+    {
+        // The cursor reaches the area's first point and its last (SDL's confinement holds x + w - 1).
+        if (windowX < static_cast<float>(guarded.x + 1))
+        {
+            return left;
+        }
+
+        if (windowX >= static_cast<float>(guarded.x + guarded.w - 1))
+        {
+            return right - 1;
+        }
+
+        return x;
+    }
+
     void RefreshMouseArea()
     {
         applyMouseRect();
@@ -734,7 +876,7 @@ namespace MCInput
                 {
                     int character = CodePointToWindows1252(codePoint);
 
-                    if (character >= 0x20)
+                    if (character >= FirstPrintable)
                     {
                         send(WM_CHAR, static_cast<uint32_t>(character), 1);
                     }
@@ -846,6 +988,8 @@ namespace MCInput
         input.CursorCounter = 0;
         input.DoubleClickTime = 500;
         input.Active = false;
+        input.TextInput = false;
+        input.CornerGuard.reset();
         input.LastClickButton = -1;
         input.LastClickTime = 0;
         input.LastClickPos = {};

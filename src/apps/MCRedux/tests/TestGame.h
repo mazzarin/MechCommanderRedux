@@ -16,6 +16,37 @@ namespace MCTestGame
     void OpenFastFiles();
 
     /// <summary>
+    /// How <see cref="StartMission"/> and <see cref="StartLogistics"/> boot. The defaults are the recorded runs': a
+    /// 640x480 window and a world view fixed at 480 lines.
+    /// </summary>
+    struct MCBootOptions
+    {
+        /// <summary>
+        /// The hidden window's size in pixels once the display is open, before the first frame (the window a player
+        /// had in the menus); 0 keeps 640x480.
+        /// </summary>
+        int WindowWidth = 0;
+        int WindowHeight = 0;
+        /// <summary>The world view's lines at any zoom (MCFixedZoomHeight); 0 lets the zoom start as in play.</summary>
+        float FixedZoomHeight = 480.0f;
+        /// <summary>Called once the game has started (PREFS read, the display open), before the window is resized.</summary>
+        std::function<void()> Started;
+    };
+
+    /// <summary>The options the next boot uses (set them before it).</summary>
+    extern MCBootOptions BootOptions;
+
+    /// <summary>The size of a player's window the large-window tests boot in, in pixels.</summary>
+    inline constexpr int LargeWindowWidth = 1600;
+    inline constexpr int LargeWindowHeight = 1200;
+
+    /// <summary>
+    /// Sets <see cref="BootOptions"/> for a player's 1600x1200 window with the zoom free, at UI RESOLUTION
+    /// <paramref name="uiResolution"/> and INTERFACE SIZE <paramref name="interfaceSize"/> (in place of PREFS's).
+    /// </summary>
+    void BootInLargeWindow(int uiResolution, int interfaceSize);
+
+    /// <summary>
     /// Boots the whole game in a hidden window with <c>-mission &lt;segment&gt;</c> (SYSTEM.CFG's campaign, logistics
     /// skipped), as RunGame does, and runs frames until the scenario is playing. Only a TEST_CASE_ISOLATED test may:
     /// the boot expects a fresh process. The clock is an MCManualClock, installed in the context current at the boot

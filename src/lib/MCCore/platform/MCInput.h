@@ -41,6 +41,10 @@ using MCWindowProc = std::function<int32_t(uint32_t message, uint32_t wParam, in
 /// Escape and Ctrl+letter), WM_MOUSEMOVE, WM_[LRM]BUTTONDOWN/UP, WM_[LRM]BUTTONDBLCLK (the window class had
 /// CS_DBLCLKS), WM_MOUSEWHEEL, WM_ACTIVATEAPP (focus gained/lost, on change only), WM_PAINT (exposed),
 /// WM_CLOSE / WM_DESTROY, and whatever <see cref="PostMessage"/> queued.</para>
+/// <para>Typed text comes from SDL's text input (the system's input methods, accents and press-and-hold) only while
+/// a text field has the keyboard (<see cref="SetTextInput"/>). Otherwise the system's input methods stay out of the
+/// game's keys, and WM_CHAR carries the character the key makes in the keyboard layout, as TranslateMessage did
+/// (cheat codes are typed so).</para>
 /// <para>Threads: <see cref="PumpMessages"/> and the procedure run on the main thread. The state queries
 /// (<see cref="GetAsyncKeyState"/>, <see cref="GetKeyState"/>, <see cref="GetCursorPos"/>) and
 /// <see cref="PostMessage"/> may be called from any thread (the original read them from its mouse timer).</para>
@@ -48,9 +52,9 @@ using MCWindowProc = std::function<int32_t(uint32_t message, uint32_t wParam, in
 namespace MCInput
 {
     /// <summary>
-    /// Connects the input to the display whose window it reads and whose logical screen it maps to, and starts SDL's
-    /// text input. Sends WM_ACTIVATEAPP(1) at once if the window already has focus. The input refers to the display
-    /// while it lives; an empty one detaches it.
+    /// Connects the input to the display whose window it reads and whose logical screen it maps to, with SDL's text
+    /// input as <see cref="SetTextInput"/> last asked. Sends WM_ACTIVATEAPP(1) at once if the window already has
+    /// focus. The input refers to the display while it lives; an empty one detaches it.
     /// </summary>
     void Attach(std::weak_ptr<MCDisplay> attached);
 
@@ -59,6 +63,13 @@ namespace MCInput
 
     /// <summary>Sets the game's window procedure; every message goes to it.</summary>
     void SetWindowProc(MCWindowProc proc);
+
+    /// <summary>
+    /// Whether a text field has the keyboard (the GUI's text focus): SDL's text input runs only then. It starts or
+    /// stops when the pump next finds no key waiting, not at once: SDL decides whether a key types text as it reads
+    /// the key, so a change among keys already read would lose or double their characters.
+    /// </summary>
+    void SetTextInput(bool on);
 
     /// <summary>
     /// Handles every pending event and posted message (the <c>PeekMessage</c> loop of <c>aSystem::run</c>).
@@ -123,9 +134,30 @@ namespace MCInput
 
     /// <summary>
     /// Confines the cursor to a rectangle of the logical screen (<c>ClipCursor</c>). None frees it, back to the
-    /// default: the picture while full screen and focused, anywhere otherwise.
+    /// default: the picture while full screen and focused (kept off its corners: <see cref="GuardCorners"/>),
+    /// anywhere otherwise.
     /// </summary>
     void ClipCursor(std::optional<MCClipRect> rect);
+
+    /// <summary>
+    /// How far (window points) the cursor is kept from the picture's left and right sides while full screen and
+    /// focused: then the picture's corners are the screen's, where macOS's hot corners (Lock Screen, Mission
+    /// Control...) fire, and edge scrolling pushes the cursor into them.
+    /// </summary>
+    inline constexpr int CornerGuardPoints = 2;
+
+    /// <summary>
+    /// The window area the cursor may cover full screen: <paramref name="picture"/>'s, <see cref="CornerGuardPoints"/>
+    /// in from its left and right sides, so it reaches no corner (all of it, if too narrow for that).
+    /// </summary>
+    SDL_Rect GuardCorners(SDL_Rect picture);
+
+    /// <summary>
+    /// The logical x of a window x inside a <see cref="GuardCorners"/> area: <paramref name="x"/>, its plain mapping,
+    /// except at the last point the cursor reaches at either side, which is that side of the screen (from
+    /// <paramref name="left"/> to <paramref name="right"/>, exclusive), so edge scrolling still works there.
+    /// </summary>
+    int32_t GuardedX(float windowX, const SDL_Rect& guarded, int32_t x, int32_t left, int32_t right);
 
     /// <summary>Recomputes the cursor's area after the picture moved in the window without a window event (a new
     /// logical size).</summary>

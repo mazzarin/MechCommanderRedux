@@ -5,6 +5,8 @@
 #include "MCVersion.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
+#include "main/MCHdSettings.h"
+#include "main/MCSystemConfig.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 
@@ -288,6 +290,8 @@ int main(int argc, char** argv)
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
+    // Personal build: the HD options are on unless PREFS.CFG turns them off.
+    UseHdByDefault();
     const int result = RunGame(options->GameCommandLine);
     SDL_Quit();
     return result;

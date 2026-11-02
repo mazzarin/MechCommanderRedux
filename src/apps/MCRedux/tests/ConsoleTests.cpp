@@ -31,6 +31,15 @@ namespace
         }
     }
 
+    /// <summary>
+    /// Presses and lets go of the key that types <paramref name="letter"/> in the keyboard layout, with
+    /// <paramref name="mod"/> held.
+    /// </summary>
+    void RealLetter(char letter, SDL_Keymod mod = SDL_KMOD_NONE)
+    {
+        MCScreenInput::RealKey(SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(letter), nullptr), mod);
+    }
+
     /// <summary>How many pixels of two shown frames differ in red, green or blue (all of them, sizes apart).</summary>
     size_t DifferentPixels(const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
     {
@@ -116,6 +125,60 @@ TEST_CASE_ISOLATED("game: the debug console opens on Enter with -debug and blows
     CHECK(RunConsoleCommand("").has_value());
     TacticalInterface()->ClearMechSelection();
     CHECK(!RunConsoleCommand("destroyarm left").has_value());
+}
+
+/// <summary>
+/// SDL's text input (the system's input methods: an IME, macOS's press-and-hold accents) runs only while a text field
+/// has the keyboard. Elsewhere the keys make their own characters, so a cheat code typed in a mission still works
+/// (Command chords, the system's shortcuts, type nothing); in the console's line, the text is text input's and the keys
+/// make none of their own.
+/// </summary>
+TEST_CASE_ISOLATED("game: keys go through text input only while a text field has the keyboard")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    SDL_Window* window = &MCInput::Display()->Window();
+    CHECK(GuiSystem().TextObject() == nullptr);
+    CHECK(!SDL_TextInputActive(window));
+
+    CheatsOn = true;
+    const bool duh = Duh;
+
+    RealLetter('d');
+    RealLetter('u');
+    RealLetter('h', SDL_KMOD_LGUI);
+    CHECK(Duh == duh);
+
+    for (const char letter : std::string_view("duh"))
+    {
+        RealLetter(letter);
+    }
+
+    CHECK(Duh != duh);
+    Duh = duh;
+    CheatsOn = false;
+
+    DebugOn = true;
+    MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
+    REQUIRE(GuiSystem().Console != nullptr);
+    CHECK(SDL_TextInputActive(window));
+    RealLetter('o');
+    CHECK(GuiSystem().Console->Text.empty());
+    SDL_Event text{};
+    text.type = SDL_EVENT_TEXT_INPUT;
+    text.text.windowID = SDL_GetWindowID(window);
+    text.text.text = "o";
+    MCInput::HandleEvent(text);
+    CHECK_EQ(GuiSystem().Console->Text, std::string("o"));
+
+    MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);
+    CHECK(GuiSystem().Console == nullptr);
+    CHECK(!SDL_TextInputActive(window));
+    DebugOn = false;
 }
 
 /// <summary>

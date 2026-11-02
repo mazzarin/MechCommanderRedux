@@ -27,3 +27,17 @@ void MCTerrainForgetMesh();
 
 /// <summary>Port: the ground mesh built last (its tiles, for tests and the HD art tools), or null.</summary>
 const MCTerrainMesh* MCTerrainMeshInUse();
+
+/// <summary>
+/// Port-only, for the HD art tools: the steps the ground mesh built last places its vertices by (across and down a
+/// vertex, and up an elevation level: vertex (row, col) at elevation e lies (col - row) * across, (row + col) * down -
+/// e * up from vertex (0, 0)), or none without a mesh.
+/// </summary>
+struct MCTerrainMeshSteps
+{
+    int32_t Across = 0;
+    int32_t Down = 0;
+    int32_t Up = 0;
+};
+
+std::optional<MCTerrainMeshSteps> MCTerrainMeshStepsInUse();

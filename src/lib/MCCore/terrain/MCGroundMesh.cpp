@@ -362,3 +362,13 @@ const MCTerrainMesh* MCTerrainMeshInUse()
 {
     return GroundMesh != nullptr ? &GroundMesh->Mesh : nullptr;
 }
+
+std::optional<MCTerrainMeshSteps> MCTerrainMeshStepsInUse()
+{
+    if (GroundMesh == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    return MCTerrainMeshSteps{GroundMesh->StepX, GroundMesh->StepY, GroundMesh->ElevStep};
+}

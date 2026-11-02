@@ -477,6 +477,9 @@
     <ClCompile Include="logistics\MCGenericScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCHdOptionsPanel.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -519,10 +522,16 @@
     <ClCompile Include="logistics\MCLogObject.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCLogOptionList.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCLogPort.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogRows.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCLogScrollList.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCLogScrollTextObject.cpp">
@@ -568,6 +577,9 @@
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCPreferencesMenu.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
+    <ClCompile Include="logistics\MCPrefsPage.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
     <ClCompile Include="logistics\MCPurchaseDlg.cpp">
@@ -646,6 +658,9 @@
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCGameStrings.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
+    <ClCompile Include="main\MCHdSettings.cpp">
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCInventoryList.cpp">
@@ -1702,6 +1717,9 @@
     <ClInclude Include="logistics\MCGenericScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCHdOptionsPanel.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1744,10 +1762,16 @@
     <ClInclude Include="logistics\MCLogObject.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCLogOptionList.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCLogPort.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogRows.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCLogScrollList.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCLogScrollTextObject.h">
@@ -1793,6 +1817,9 @@
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPreferencesMenu.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
+    <ClInclude Include="logistics\MCPrefsPage.h">
       <Filter>logistics</Filter>
     </ClInclude>
     <ClInclude Include="logistics\MCPurchaseDlg.h">
@@ -1874,6 +1901,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCGameStrings.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCHdSettings.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCInventoryList.h">

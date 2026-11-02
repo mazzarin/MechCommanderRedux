@@ -162,6 +162,7 @@ std::expected<std::unique_ptr<MCDisplay>, std::string> MCDisplay::Create(const M
         display->_MinHeight = options.Height;
         display->_MaxHeight = std::max(options.MaxHeight, 0);
         display->_FollowDisplayScale = options.FollowDisplayScale;
+        display->SetInterfaceScale(options.InterfaceScale);
         SDL_SetWindowMinimumSize(window, options.Width, options.Height);
         SDL_SyncWindow(window);
         display->WindowScreenSize(display->_Width, display->_Height);
@@ -205,34 +206,99 @@ void MCDisplay::MakeScreen()
     _PaletteDirty = true;
 }
 
+namespace
+{
+    /// <summary>
+    /// The lines a screen in a window <paramref name="pixelHeight"/> pixels tall at <paramref name="displayScale"/>
+    /// pixels a point gets within <paramref name="fit"/>'s limits before its interface scale (0: the window's).
+    /// </summary>
+    int UnscaledMaxHeight(int pixelHeight, float displayScale, const MCScreenFit& fit)
+    {
+        int maxHeight = fit.MaxHeight;
+
+        // On a high-DPI display (SDL's display scale: a Retina screen's 2, a Windows desktop's 150%), no taller than the
+        // window in points, nor shorter than the smallest screen (a short window on a scaled desktop), so the screen
+        // keeps the window's aspect.
+        if (fit.FollowDisplayScale && displayScale > 1.0f)
+        {
+            const int pointHeight =
+                std::max(static_cast<int>(std::lround(static_cast<double>(pixelHeight) / displayScale)), fit.MinHeight);
+            maxHeight = maxHeight > 0 ? std::min(maxHeight, pointHeight) : pointHeight;
+        }
+
+        return maxHeight;
+    }
+
+    /// <summary>AUTO's steps and largest scale (the interface size choices': 100 to 200 percent by 25).</summary>
+    constexpr double AutoScaleStep = 0.25;
+    constexpr double AutoScaleMost = 2.0;
+}
+
+bool MCDisplay::WindowPixelSize(int& pixelWidth, int& pixelHeight) const
+{
+    return (SDL_GetWindowFlags(_Window.get()) & SDL_WINDOW_MINIMIZED) == 0 &&
+           SDL_GetWindowSizeInPixels(_Window.get(), &pixelWidth, &pixelHeight) && pixelWidth > 0 && pixelHeight > 0;
+}
+
+MCScreenFit MCDisplay::ScreenFit() const
+{
+    return MCScreenFit{.MinWidth = _MinWidth,
+                       .MinHeight = _MinHeight,
+                       .MaxHeight = _MaxHeight,
+                       .FollowDisplayScale = _FollowDisplayScale,
+                       .InterfaceScale = _InterfaceScale};
+}
+
 void MCDisplay::WindowScreenSize(int& width, int& height) const
 {
     width = _Width;
     height = _Height;
-
-    if ((SDL_GetWindowFlags(_Window.get()) & SDL_WINDOW_MINIMIZED) != 0)
-    {
-        return;
-    }
-
     int pixelWidth = 0;
     int pixelHeight = 0;
 
-    if (!SDL_GetWindowSizeInPixels(_Window.get(), &pixelWidth, &pixelHeight) || pixelWidth <= 0 || pixelHeight <= 0)
+    if (!WindowPixelSize(pixelWidth, pixelHeight))
     {
         return;
     }
 
-    int maxHeight = _MaxHeight;
+    const SDL_Point size =
+        FollowingScreenSize(pixelWidth, pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), ScreenFit());
+    width = size.x;
+    height = size.y;
+}
 
-    // On a high-DPI display (SDL's display scale: a Retina screen's 2, a Windows desktop's 150%), no taller than the
-    // window in points, nor shorter than the smallest screen (a short window on a scaled desktop), so the screen keeps
-    // the window's aspect.
-    if (const float scale = SDL_GetWindowDisplayScale(_Window.get()); _FollowDisplayScale && scale > 1.0f)
+float MCDisplay::AutoInterfaceScale(int lines)
+{
+    const double wanted = static_cast<double>(lines) / OriginalLines;
+    return static_cast<float>(std::clamp(std::round(wanted / AutoScaleStep) * AutoScaleStep, 1.0, AutoScaleMost));
+}
+
+float MCDisplay::AutoInterfaceScaleNow() const
+{
+    int pixelWidth = 0;
+    int pixelHeight = 0;
+
+    if (!WindowPixelSize(pixelWidth, pixelHeight))
     {
-        const int pointHeight =
-            std::max(static_cast<int>(std::lround(static_cast<double>(pixelHeight) / scale)), _MinHeight);
-        maxHeight = maxHeight > 0 ? std::min(maxHeight, pointHeight) : pointHeight;
+        return 1.0f;
+    }
+
+    const int maxHeight = UnscaledMaxHeight(pixelHeight, SDL_GetWindowDisplayScale(_Window.get()), ScreenFit());
+    return AutoInterfaceScale(maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight);
+}
+
+SDL_Point MCDisplay::FollowingScreenSize(int pixelWidth, int pixelHeight, float displayScale, const MCScreenFit& fit)
+{
+    int maxHeight = UnscaledMaxHeight(pixelHeight, displayScale, fit);
+
+    // A bigger interface (AUTO's for the display, or the one asked for): that many times fewer lines than the limits
+    // so far leave, but never fewer than the smallest screen's.
+    const int lines = maxHeight > 0 ? std::min(maxHeight, pixelHeight) : pixelHeight;
+    const float interfaceScale = fit.InterfaceScale == AutoInterface ? AutoInterfaceScale(lines) : fit.InterfaceScale;
+
+    if (interfaceScale > 1.0f)
+    {
+        maxHeight = std::max(static_cast<int>(std::lround(static_cast<double>(lines) / interfaceScale)), fit.MinHeight);
     }
 
     // A window taller than the most: that many lines, as wide as the window's aspect makes them.
@@ -243,8 +309,7 @@ void MCDisplay::WindowScreenSize(int& width, int& height) const
         pixelHeight = maxHeight;
     }
 
-    width = std::max(pixelWidth, _MinWidth);
-    height = std::max(pixelHeight, _MinHeight);
+    return SDL_Point{std::max(pixelWidth, fit.MinWidth), std::max(pixelHeight, fit.MinHeight)};
 }
 
 void MCDisplay::LargestScreenSize(int& width, int& height) const
@@ -429,6 +494,28 @@ bool MCDisplay::SharpScreen() const
            MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
+namespace
+{
+    /// <summary>
+    /// Whether <paramref name="viewport"/> shows more window pixels than <paramref name="screenWidth"/> x
+    /// <paramref name="screenHeight"/> (scaled up), and then how many.
+    /// </summary>
+    bool ShownScaledUp(const MCViewport& viewport, int screenWidth, int screenHeight, int& width, int& height)
+    {
+        const auto shownWidth = static_cast<int>(std::lround(viewport.W));
+        const auto shownHeight = static_cast<int>(std::lround(viewport.H));
+
+        if (shownWidth <= screenWidth || shownHeight <= screenHeight)
+        {
+            return false;
+        }
+
+        width = shownWidth;
+        height = shownHeight;
+        return true;
+    }
+}
+
 bool MCDisplay::ScaledOutput(int& width, int& height) const
 {
     const bool wholeScreen = _View.x == 0 && _View.y == 0 && _View.w == _Width && _View.h == _Height;
@@ -438,18 +525,12 @@ bool MCDisplay::ScaledOutput(int& width, int& height) const
         return false;
     }
 
-    const MCViewport viewport = ShownViewport();
-    const auto shownWidth = static_cast<int>(std::lround(viewport.W));
-    const auto shownHeight = static_cast<int>(std::lround(viewport.H));
+    return ShownScaledUp(ShownViewport(), _View.w, _View.h, width, height);
+}
 
-    if (shownWidth <= _View.w || shownHeight <= _View.h)
-    {
-        return false;
-    }
-
-    width = shownWidth;
-    height = shownHeight;
-    return true;
+bool MCDisplay::WholeScreenOutput(int& width, int& height) const
+{
+    return _FollowWindow && ShownScaledUp(_Presenter->Viewport(_Width, _Height), _Width, _Height, width, height);
 }
 
 float MCDisplay::UnderlayScale() const
@@ -457,6 +538,13 @@ float MCDisplay::UnderlayScale() const
     int width = 0;
     int height = 0;
     return ScaledOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_View.h) : 1.0f;
+}
+
+float MCDisplay::ScreenScale() const
+{
+    int width = 0;
+    int height = 0;
+    return WholeScreenOutput(width, height) ? static_cast<float>(height) / static_cast<float>(_Height) : 1.0f;
 }
 
 void MCDisplay::PixelScale(float& scaleX, float& scaleY) const

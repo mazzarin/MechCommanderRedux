@@ -206,6 +206,31 @@ TEST_CASE("sensors: a sensor holds every contact in range, past the original's 2
     CHECK_EQ(contacts[249]->SensorSlot(sensor->Id), 0);
 }
 
+/// <summary>
+/// Each mission's sensors stagger their first scans by the sensors alive before them, so a mission played again
+/// scans as soon as the first time. (The port once counted every sensor ever made, so each restart put off the
+/// radar 6.5 s more.)
+/// </summary>
+TEST_CASE("sensors: a mission played again scans as soon as the first time")
+{
+    constexpr size_t missions = 3;
+    std::array<float, missions> firstScan{};
+    std::array<float, missions> lastScan{};
+
+    for (size_t mission = 0; mission < missions; mission++)
+    {
+        ContactWorld world;
+        firstScan[mission] = SensorSystemManager().Sensor(0).NextScanTime;
+        lastScan[mission] = SensorSystemManager().Sensor(MCSensorSystemManager::InitialSensors - 1).NextScanTime;
+    }
+
+    for (size_t mission = 1; mission < missions; mission++)
+    {
+        CHECK_EQ(firstScan[mission], firstScan[0]);
+        CHECK_EQ(lastScan[mission], lastScan[0]);
+    }
+}
+
 TEST_CASE("contacts: the manager hands out contacts lowest id first, reuses freed ones and grows")
 {
     ContactWorld world;

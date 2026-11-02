@@ -4,6 +4,7 @@
 #include "ai/MCMoveSystem.h"
 #include "ai/MCTacticalOrder.h"
 #include "camera/MCCamera.h"
+#include "engine/MCByteFlag.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
@@ -470,4 +471,40 @@ TEST_CASE_ISOLATED("game: mission 3's mechs preload full-size part shapes")
 
     std::cout << std::format("  {} mech types, {} preloaded part shapes\n", trees.size(), shapes);
     CHECK(shapes > 0);
+}
+
+/// <summary>
+/// A scripted reveal's radius is in meters at the mission's scale (its WorldUnitsPerMeter, 5.01 here): mission 3's
+/// lookout on the central hill (LOP2 in 1_3LOP.ABI, 430 m) reaches the two Commandos 16 tiles north. (The port once
+/// took the default 3.34 units a meter, so every such reveal came out two thirds as wide, here inside what the
+/// hilltop already sees.)
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 3's lookout on the central hill reveals the Commandos")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(3));
+    MCTerrain& terrain = *Terrain();
+    terrain.ISVisibleBits->ResetAll(false);
+    // LOP2's setRevealed(1, 430.0, aPoint).
+    terrain.MarkRadiusSeen(MCVector3D(351.0f, 1142.0f, 0.0f), MCVector3D(), 360.0f, 430.0f, 1);
+
+    // The two COM-Ws of MIS0103.fit's Parts 3 and 4, standing at (428, 3110) and (609, 3110).
+    int32_t commandos = 0;
+
+    for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; partId++)
+    {
+        std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+
+        if (mover != nullptr && mover->Alignment == -1 && std::abs(mover->Position.Y - 3110.0f) < 1.0f)
+        {
+            CHECK(mover->IsRevealed() != 0);
+            commandos++;
+        }
+    }
+
+    CHECK_EQ(commandos, 2);
 }

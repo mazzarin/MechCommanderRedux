@@ -547,17 +547,16 @@ namespace
     /// right) took the preferences step to 0x6ea95138 and the folds to 0x097f849e and 0x92debaca (GPU 0x3b586e8e and
     /// 0x9297295d), only there; the run now pins the settings it shows (<see cref="MCRecordedPrefs"/>). The UI
     /// RESOLUTION box (2026-10-18) took the preferences step to 0xd7aa9185 and the folds to 0xcfbe6bb8 and 0xac3d91aa
-    /// (GPU 0x8d317260 and 0xd056cb3d), only there. The CONTROLS button (2026-10-25) took the preferences step to
-    /// 0x733386ba (software and GPU agree). The drop-down boxes lined up with the sliders' labels, wide enough for
-    /// NATIVE (RETINA/HD) (2026-10-25), took the preferences step to 0x43e55f2a (software and GPU agree). The two
-    /// together took the folds to 0xb83606d6 and 0xcd07a54a (GPU 0xb5054b56 and 0x7a383add), re-recorded on the
-    /// recording machine, whose test user folder (and so its load screen) couldn't be reproduced elsewhere. The run now
-    /// pins the saves too, to none (<see cref="MCTestGame::PinnedSaves"/>; 2026-10-31): the main menu's LOAD MISSION is
-    /// off and the load screen's list empty on any machine, whatever saves its install or earlier tests left. That took
-    /// the main menu to 0xe30aef7b, the load screen to 0xe34ed709 and the folds to 0x1fd4afc0 and 0xedd1e312 (GPU
-    /// 0x3742f7d8 and 0xdbecf905). The HD ART, HD AUDIO and HD LIGHTING boxes (hd-lighting), the panel taller for them,
-    /// took the preferences step to 0xade01b1a (software and GPU agree) and the folds to 0x734244c0 and 0xce6b9312 (GPU
-    /// 0xa309cad8 and 0x4592e905).
+    /// (GPU 0x8d317260 and 0xd056cb3d), only there. The drop-down boxes lined up with the sliders' labels, wide enough
+    /// for NATIVE (RETINA/HD), the CONTROLS button and the HD ART box (2026-10-25) took the preferences step to
+    /// 0xa73fbdbc (software and GPU agree). The SCROLL SPEED and HD AUDIO boxes, the panel taller for HD AUDIO
+    /// (personal, 2026-10-27) took it to 0x46079767 (software and GPU agree). The run now pins the saves too,
+    /// to none (<see cref="MCTestGame::PinnedSaves"/>; 2026-10-31): the main menu's LOAD MISSION is off and the load
+    /// screen's list empty on any machine, whatever saves its install or earlier tests left. That took the main menu to
+    /// 0xe30aef7b, the load screen to 0xe34ed709, the preferences step to 0x924ff616 (software and GPU agree) and the
+    /// folds to 0xe4d5afc8 and 0xca197992 (GPU 0xb80a21d0 and 0xf18c3e85). The HD box in place of the HD ART, HD AUDIO
+    /// and HD LIGHTING boxes, the panel shorter (personal, 2026-11-02) took the preferences step to 0x7f8ed0c6 (software
+    /// and GPU agree) and the folds to 0xd54ea188 and 0x6a56c692 (GPU 0xac28e610 and 0xcaada585), only there.
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -640,7 +639,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0xe30aef7bu},
-            {"preferences", [] { ShowPreferences(); }, 0xade01b1au},
+            {"preferences", [] { ShowPreferences(); }, 0x7f8ed0c6u},
             {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
             {"load screen",
              []
@@ -749,8 +748,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0xa309cad8u : 0x734244c0u);
-        CHECK_EQ(presents, gpu ? 0x4592e905u : 0xce6b9312u);
+        CHECK_EQ(frames, gpu ? 0xac28e610u : 0xd54ea188u);
+        CHECK_EQ(presents, gpu ? 0xcaada585u : 0x6a56c692u);
         CheckGpuAlone(gpu);
     }
 }

@@ -2,7 +2,6 @@
 #include "main/MCSystemConfig.h"
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
-#include "engine/MCCraterManager.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
@@ -14,18 +13,12 @@
 #include "main/MCGamePaths.h"
 #include "main/MCGameSession.h"
 #include "main/MCGameStrings.h"
+#include "main/MCHdSettings.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCPresenter.h"
-#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
-#include "sprite/MCHdArt.h"
-#include "sprite/MCParticles.h"
-#include "sprite/MCMechActor.h"
-#include "sprite/MCMechStops.h"
-#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
-#include "sprite/MCWeather.h"
 #include "terrain/MCTerrainTiles.h"
 
 std::string CampaignFile = "campaign";
@@ -201,44 +194,8 @@ void ReadPreferences(MCFitIniFile& file)
     const bool showFps = file.Read<bool>("ShowFps").value_or(false);
     GShowFpsPreference = showFps ? 1 : 0;
     GShowFps = showFps ? 1 : GShowFps;
-    // Port-only: HDArt draws the HD art pack's frames where it has them (sprite/MCHdArt.h).
-    GHdArt = file.Read<bool>("HDArt").value_or(false) ? 1 : 0;
-    // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
-    GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(HdAudioOff), static_cast<int32_t>(HdAudioOff),
-                          static_cast<int32_t>(HdAudioOrchestral));
-    // Port-only: HDLighting lights the world around shots, fires and explosions, at the mission's time of day or at dusk
-    // or night (sprite/MCSceneLights.h).
-    GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(HdLightingOff),
-                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingNight));
-    // Port-only: HDSunShadows draws objects' shadows darkening the ground instead of solid black (sprite/MCSceneLights.h).
-    GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(false) ? 1 : 0;
-    // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
-    GHdClouds = file.Read<bool>("HDClouds").value_or(false) ? 1 : 0;
-    // Port-only: HDSway lets a forest's canopy sway before the wind (sprite/MCSceneLights.h).
-    GHdSway = file.Read<bool>("HDSway").value_or(false) ? 1 : 0;
-    // Port-only: HDRelief lets the sun show the world's relief, the HD ground's from the pack's relief maps
-    // (sprite/MCSceneLights.h).
-    GHdRelief = file.Read<bool>("HDRelief").value_or(false) ? 1 : 0;
-    // Port-only: HDParticles draws flecks, debris, smoke, embers, splashes and wakes, its flecks flying as HDFlecks says;
-    // HDShake lets large artillery strikes and buildings' ends shake the picture (sprite/MCParticles.h).
-    GHdParticles = file.Read<bool>("HDParticles").value_or(false) ? 1 : 0;
-    GHdFlecks =
-        std::clamp(file.Read<int32_t>("HDFlecks").value_or(static_cast<int32_t>(MCParticles::MCFleckStyle::Edge)),
-                   static_cast<int32_t>(MCParticles::MCFleckStyle::Edge),
-                   static_cast<int32_t>(MCParticles::MCFleckStyle::Falling));
-    GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
-    // Port-only: HDWeather shows the missions in their own weather, or every one in rain or a downpour
-    // (sprite/MCWeather.h).
-    GHdWeather = std::clamp(file.Read<int32_t>("HDWeather").value_or(HdWeatherOff), static_cast<int32_t>(HdWeatherOff),
-                            static_cast<int32_t>(HdWeatherDownpour));
-    // Port-only: HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
-    GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
-    // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).
-    GHdTurns = file.Read<bool>("HDTurns").value_or(false) ? 1 : 0;
-    // Port-only: HDStops has a mech stopped mid-stride with its move held up hold its stride (sprite/MCMechActor.h).
-    GHdStops = file.Read<bool>("HDStops").value_or(false) ? 1 : 0;
-    // Port-only (gameplay): MechBraking has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
-    GMechBraking = file.Read<bool>("MechBraking").value_or(false) ? 1 : 0;
+    // Port-only: the HD settings, from HDArt to MechBraking (main/MCHdSettings.h).
+    MCHdSettings::Read(file);
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())
@@ -254,6 +211,14 @@ void ReadPreferences(MCFitIniFile& file)
     // Port-only: the in-mission UI's lines (0 native, else one of UiResolutions).
     const int32_t uiResolution = file.Read<int32_t>("UIResolution").value_or(0);
     GUiResolution = std::ranges::contains(UiResolutions, uiResolution) ? uiResolution : 0;
+
+    // Port-only: the battlefield's scroll speed, in percent of the original's pace (one of ScrollSpeeds, else AUTO).
+    const int32_t scrollSpeed = file.Read<int32_t>("ScrollSpeed").value_or(AutoScrollSpeed);
+    GScrollSpeed = std::ranges::contains(ScrollSpeeds, scrollSpeed) ? scrollSpeed : AutoScrollSpeed;
+
+    // Port-only: the in-mission interface's size in percent (one of InterfaceSizes, else AUTO).
+    const int32_t interfaceSize = file.Read<int32_t>("InterfaceSize").value_or(AutoInterfaceSize);
+    GInterfaceSize = std::ranges::contains(InterfaceSizes, interfaceSize) ? interfaceSize : AutoInterfaceSize;
 
     // Port: the mode is still read, but the screen is the window's size (MCGuiSystem::OpenDisplay).
     switch (file.Read<int32_t>("Resolution").value_or(0))

@@ -40,6 +40,8 @@ namespace
         uint8_t Color = 0;
         /// <summary>The table each pixel is mapped through (LD_TRANSLATE), if any.</summary>
         std::optional<MCColorTable> Table;
+        /// <summary>Port-only: the line's width where it is drawn smooth (MCLineCommand::Width).</summary>
+        float Width = 1.0f;
     };
 
     /// <summary>
@@ -108,6 +110,7 @@ namespace
         command.Fraction = fraction;
         command.Table = paint.Table;
         command.Color = paint.Color;
+        command.Width = paint.Width;
         MCRenderer::For(window).Line(window, command);
     }
 }
@@ -366,6 +369,11 @@ namespace
 int32_t VfxLineDraw(const MCPane& pane, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t color)
 {
     return LineDraw(pane, x0, y0, x1, y1, MCLinePaint{static_cast<uint8_t>(color), std::nullopt});
+}
+
+int32_t VfxLineDrawWide(const MCPane& pane, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t color, float width)
+{
+    return LineDraw(pane, x0, y0, x1, y1, MCLinePaint{static_cast<uint8_t>(color), std::nullopt, width});
 }
 
 int32_t VfxLineTranslate(const MCPane& pane, int32_t x0, int32_t y0, int32_t x1, int32_t y1, MCColorTable table)

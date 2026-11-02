@@ -280,6 +280,11 @@ struct MCLineCommand
     /// <summary>None: every pixel becomes <c>Color</c>; else each is mapped through the table (VfxLineTranslate).</summary>
     std::optional<MCColorTable> Table;
     uint8_t Color;
+    /// <summary>
+    /// Port-only: the line's width in window pixels where it is drawn smooth (the GPU's HD screens; VfxLineDrawWide).
+    /// Its pixels are the original's at any width.
+    /// </summary>
+    float Width = 1.0f;
 };
 
 /// <summary>

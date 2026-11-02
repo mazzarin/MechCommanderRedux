@@ -159,7 +159,7 @@ namespace
     /// <summary>The HD terrain's atlases at most (a big map's tiles fill more than one; shaders/draw.pshader's hdTex2).</summary>
     constexpr uint32_t HdTerrainAtlases = 2;
     /// <summary>A terrain image's ints in the mesh's image buffer (shaders/terrain.vshader's Image).</summary>
-    constexpr size_t TerrainImageInts = 12;
+    constexpr size_t TerrainImageInts = 16;
     /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
     constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
     /// <summary>
@@ -3809,12 +3809,21 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 
     if (smooth && first.has_value())
     {
-        const Quad at = {std::min((*first)[0], last[0]) - 1, std::min((*first)[1], last[1]) - 1,
-                         std::max((*first)[0], last[0]) + 1, std::max((*first)[1], last[1]) + 1};
+        // Out past its ends' pixels' centres by half its width and its edge's ramp (a pixel for the original's).
+        const auto reach = static_cast<int32_t>(std::ceil(std::max(command.Width, 1.0f) / 2.0f + 0.5f));
+        const Quad at = {std::min((*first)[0], last[0]) - reach, std::min((*first)[1], last[1]) - reach,
+                         std::max((*first)[0], last[0]) + reach, std::max((*first)[1], last[1]) + reach};
 
         if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothLine, command.Color, 0, 0))
         {
-            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, _Draws.back().begin() + 12);
+            std::array<int32_t, 20>& draw = _Draws.back();
+            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, draw.begin() + 12);
+
+            // A wider line's half width (shaders/draw.pshader's SmoothShapePixel); 0, the original's, as before.
+            if (command.Width != 1.0f)
+            {
+                draw[17] = std::bit_cast<int32_t>(command.Width / 2.0f);
+            }
         }
     }
 }
@@ -4466,6 +4475,8 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         image[8] = reliefTiles[i] != nullptr ? static_cast<int32_t>(reliefPlaces[i].Atlas + 1) : 0;
         image[9] = static_cast<int32_t>(reliefPlaces[i].X / MCBc7::BlockSide | reliefPlaces[i].Y / MCBc7::BlockSide
                                                                                    << HalfShift);
+        // The width its header gives, which VFX_nTile_draw's test for a tile off the pane reads.
+        image[12] = tile[3];
     }
 
     const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));

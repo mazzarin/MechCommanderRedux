@@ -28,17 +28,36 @@ void CancelPrefs();
 void WritePrefs();
 
 /// <summary>
+/// Port-only: writes the settings as they are now to prefs.cfg (<see cref="WritePrefs"/>' file; the in-mission
+/// interface size keys save through it too).
+/// </summary>
+void SavePrefs();
+
+/// <summary>
+/// Port-only: the interface size (<see cref="GInterfaceSize"/>'s percent) <paramref name="steps"/> choices of
+/// InterfaceSizes on from <paramref name="size"/>, bigger for positive steps, within the choices; a size not among them
+/// counts as the original's.
+/// </summary>
+int SteppedInterfaceSize(int size, int steps);
+
+/// <summary>
+/// Port-only: steps the interface size (<see cref="SteppedInterfaceSize"/>; the in-mission keys) and writes it to
+/// prefs.cfg: AUTO steps on from the size it picks for the display (MCDisplay::AutoInterfaceScaleNow), and a step back
+/// onto that size is AUTO again. The screen takes it at the next frame, as it follows a resized window.
+/// </summary>
+/// <returns>Whether the size changed (not at the end of the choices).</returns>
+bool StepInterfaceSize(int steps);
+
+/// <summary>
 /// Port-only: lays the preferences screen <paramref name="screen"/> out on a panel over its art, with room for more
 /// settings: the brightness slider; the music, radio, sound effects and interface volume sliders; DIFFICULTY as a
 /// drop-down (EASY, REGULAR, HARD; <see cref="GameDifficulty"/>) in place of the original's checks; a RENDERER
 /// drop-down (VULKAN, SOFTWARE; PREFS "Renderer"); a UI RESOLUTION drop-down (NATIVE, 480P .. 1080P; PREFS
-/// "UIResolution", <see cref="GUiResolution"/>); an HD ART drop-down (OFF, ON; PREFS "HDArt", <see cref="GHdArt"/>);
-/// an HD AUDIO drop-down (OFF, ON, and ORCHESTRAL when the pack has orchestral music; PREFS "HDAudio",
-/// <see cref="GHdAudio"/>); and ACCEPT and CANCEL side by
-/// side at the bottom right. The renderer takes effect at the next start, which the
-/// message dialog says when the drop-down picks another renderer than the running one; the UI resolution and HD art at
-/// the next scenario (the message dialog says when HD art is turned on without a pack); HD audio from the next
-/// sound and music track (likewise without a pack).
+/// "UIResolution", <see cref="GUiResolution"/>); a SCROLL SPEED drop-down (AUTO, 1.5X .. 3X; PREFS "ScrollSpeed",
+/// <see cref="GScrollSpeed"/>); an HD box whose OPTIONS button shows the HD OPTIONS page (every HD setting:
+/// MCHdOptionsPanel.h); CONTROLS at the bottom left (MCControlsPanel.h); and ACCEPT and CANCEL side by side at the
+/// bottom right. The renderer takes effect at the next start, which the message dialog says when the drop-down picks
+/// another renderer than the running one; the UI resolution at the next scenario.
 /// </summary>
 void AddPreferencesPanel(MCGenericScreen& screen);
 

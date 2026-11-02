@@ -1,5 +1,8 @@
 #pragma once
 
+class MCGuiObject;
+class MCLogTextButton;
+
 /// <summary>
 /// What the screen tests share: the hash of the screen as shown, screenshots, and mouse and key input sent the way the
 /// game's own input code makes it.
@@ -56,13 +59,28 @@ namespace MCScreenInput
 
     /// <summary>
     /// Presses and lets go of the key <paramref name="scancode"/> as play does: SDL key events (the game's WM_KEYDOWN,
-    /// WM_CHAR and WM_KEYUP), a frame after each.
+    /// WM_CHAR and WM_KEYUP), a frame after each, with <paramref name="mod"/> held.
     /// </summary>
-    void RealKey(SDL_Scancode scancode);
+    void RealKey(SDL_Scancode scancode, SDL_Keymod mod = SDL_KMOD_NONE);
+
+    /// <summary>
+    /// Sends one SDL key event for <paramref name="scancode"/>, down or up, with <paramref name="mod"/> held, as play
+    /// does, then a frame.
+    /// </summary>
+    void RealKeyEvent(SDL_Scancode scancode, bool down, SDL_Keymod mod);
+
+    /// <summary>
+    /// Holds <paramref name="modifier"/> (<paramref name="mod"/>), presses and lets go of <paramref name="scancode"/>,
+    /// then lets go of the modifier, as play does.
+    /// </summary>
+    void RealChord(SDL_Scancode modifier, SDL_Keymod mod, SDL_Scancode scancode);
 
     /// <summary>
     /// Turns the wheel <paramref name="notches"/> notches (positive up, away from the player) at the mouse as play
     /// does: an SDL wheel event, then a frame.
     /// </summary>
     void RealWheel(int32_t notches);
+
+    /// <summary>The text button showing <paramref name="label"/> under <paramref name="parent"/> (at any depth), or null.</summary>
+    std::shared_ptr<MCLogTextButton> FindTextButton(MCGuiObject& parent, std::string_view label);
 }

@@ -289,10 +289,14 @@ enum class MCKeyCommand : int32_t
     SelectVisible = 75,
     /// <summary>Enter (multiplayer): the chat line.</summary>
     Chat = 76,
+    /// <summary>Port-only, alt+=: the next bigger interface size (PREFS "InterfaceSize").</summary>
+    InterfaceSizeUp = 77,
+    /// <summary>Port-only, alt+-: the next smaller interface size.</summary>
+    InterfaceSizeDown = 78,
 };
 
-/// <summary>How many key binding slots there are.</summary>
-inline constexpr size_t NumKeyCommands = 77;
+/// <summary>How many key binding slots there are: the original's 77, then the port's.</summary>
+inline constexpr size_t NumKeyCommands = 79;
 
 /// <summary>The modifier bits of a key binding: the key code is in bits 0-15.</summary>
 inline constexpr uint32_t KeyShift = 0x10000;

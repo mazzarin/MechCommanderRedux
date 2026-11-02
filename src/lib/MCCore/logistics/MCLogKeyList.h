@@ -1,7 +1,7 @@
 #pragma once
 
 #include "iface/MCKeyBindings.h"
-#include "logistics/MCLogObject.h"
+#include "logistics/MCLogScrollList.h"
 
 /// <summary>
 /// Port-only: the CONTROLS screen's list of key bindings. A row per command (<see cref="MCKeyBindings::ControlRows"/>)
@@ -14,9 +14,9 @@
 /// too), and the next key pressed, with the shift, ctrl and alt held, becomes the binding. Shift, ctrl or alt alone
 /// binds when let go without another key. A key another command had moves: that command is left without it, and the
 /// status line says so. A right click clears a key. Keys a command has that differ from the original's show in amber.
-/// The wheel, the up and down keys (while not listening) and the bar at the right scroll the rows.
+/// The wheel, the up and down keys (while not listening) and the bar at the right scroll the rows (<see cref="MCLogScrollList"/>).
 /// </remarks>
-class MCLogKeyList : public MCLogObject
+class MCLogKeyList : public MCLogScrollList
 {
 public:
     /// <summary>A key's place in the list: the row (in <see cref="MCKeyBindings::ControlRows"/>) and the column (0 key, 1 alternate).</summary>
@@ -30,6 +30,8 @@ public:
 
     /// <summary>The height of a row.</summary>
     static constexpr int32_t RowHeight = 11;
+
+    MCLogKeyList() : MCLogScrollList(RowHeight) {}
 
     /// <summary>Calls <see cref="Destroy"/>.</summary>
     ~MCLogKeyList() override;
@@ -50,9 +52,6 @@ public:
 
     /// <summary>The mouse and keys, as the class remarks say.</summary>
     void HandleEvent(MCGuiEvent& event) override;
-
-    /// <summary>The wheel scrolls the rows.</summary>
-    bool MouseWheel(int32_t steps, int32_t xPos, int32_t yPos) override;
 
     /// <summary>The mouse left the list: no key is lit.</summary>
     void Leave() override;
@@ -89,17 +88,12 @@ public:
     /// <summary>The cell listening for a key, if any.</summary>
     std::optional<Cell> Listening() const { return _Listening; }
 
-    /// <summary>Scrolls so the first row shown is <paramref name="row"/> (clamped).</summary>
-    void ScrollTo(int32_t row);
-
-    /// <summary>The first row shown.</summary>
-    int32_t FirstRow() const { return _FirstRow; }
-
-    /// <summary>The rows shown at once.</summary>
-    int32_t VisibleRows();
-
     /// <summary>The status line's text.</summary>
     const std::string& Status() const { return _Status; }
+
+protected:
+    /// <summary>The number of rows (<see cref="MCKeyBindings::ControlRows"/>).</summary>
+    int32_t RowCount() override;
 
 private:
     /// <summary>The bindings the list edits (set by <see cref="Init"/>; fatal before).</summary>
@@ -114,38 +108,14 @@ private:
     /// <summary>Takes <paramref name="keys"/> (DEFAULTS, LAPTOP), saying <paramref name="news"/> on the status line.</summary>
     void UsePreset(const MCKeyBindings::MCKeyTable& keys, std::string_view news);
 
-    /// <summary>The row under the screen y, if it is a shown row.</summary>
-    std::optional<int32_t> RowAt(int32_t yPos);
-
     /// <summary>The left edge of key column <paramref name="column"/>, in the list's pixels.</summary>
     int32_t KeyLeft(int32_t column);
-
-    /// <summary>The top of the scroll bar's track and its height, in the list's pixels.</summary>
-    int32_t TrackTop() const;
-    int32_t TrackHeight();
-
-    /// <summary>The scroll bar's thumb: its top and height in the list's pixels.</summary>
-    std::pair<int32_t, int32_t> Thumb();
-
-    /// <summary>Whether the screen point lies on the scroll bar.</summary>
-    bool OnScrollBar(int32_t xPos, int32_t yPos);
-
-    /// <summary>The row the thumb's top at the list's y <paramref name="thumbTop"/> shows first.</summary>
-    int32_t RowForThumb(int32_t thumbTop);
-
-    /// <summary>Scrolls by the press at the scroll bar's screen y: drags the thumb, or pages toward the press.</summary>
-    void PressScrollBar(int32_t yPos);
-
-    /// <summary>Writes <paramref name="text"/> at (<paramref name="xPos"/>, <paramref name="yPos"/>) in <paramref name="color"/>, cut at <paramref name="maxWidth"/>.</summary>
-    void Write(int32_t xPos, int32_t yPos, std::string_view text, uint8_t color, int32_t maxWidth);
 
     /// <summary>Draws a key cell's box and its key's name.</summary>
     void DrawCell(Cell cell, int32_t top);
 
     /// <summary>The bindings the list edits.</summary>
     MCOptionalRef<MCKeyBindings::MCKeyTable> _Keys;
-    /// <summary>The first row shown.</summary>
-    int32_t _FirstRow = 0;
     /// <summary>The key cell under the mouse, if any.</summary>
     std::optional<Cell> _Hovered;
     /// <summary>The key cell listening for its new key, if any.</summary>
@@ -154,8 +124,6 @@ private:
     std::optional<int16_t> _PendingModifier;
     /// <summary>The key cell that lost its key to the last binding, lit until the next change.</summary>
     std::optional<Cell> _Lost;
-    /// <summary>The thumb is being dragged: the press's offset from the thumb's top.</summary>
-    std::optional<int32_t> _ThumbGrab;
     /// <summary>The status line's text.</summary>
     std::string _Status;
 };

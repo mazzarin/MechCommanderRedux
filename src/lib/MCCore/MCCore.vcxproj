@@ -180,6 +180,7 @@
     <ClCompile Include="logistics\MCFileScrollPane.cpp" />
     <ClCompile Include="logistics\MCGameList.cpp" />
     <ClCompile Include="logistics\MCGenericScreen.cpp" />
+    <ClCompile Include="logistics\MCHdOptionsPanel.cpp" />
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
     <ClCompile Include="logistics\MCLogButton.cpp" />
@@ -194,8 +195,10 @@
     <ClCompile Include="logistics\MCLogLabel.cpp" />
     <ClCompile Include="logistics\MCLogMenus.cpp" />
     <ClCompile Include="logistics\MCLogObject.cpp" />
+    <ClCompile Include="logistics\MCLogOptionList.cpp" />
     <ClCompile Include="logistics\MCLogPort.cpp" />
     <ClCompile Include="logistics\MCLogRows.cpp" />
+    <ClCompile Include="logistics\MCLogScrollList.cpp" />
     <ClCompile Include="logistics\MCLogScrollTextObject.cpp" />
     <ClCompile Include="logistics\MCLogSlider.cpp" />
     <ClCompile Include="logistics\MCLogTextButton.cpp" />
@@ -211,6 +214,7 @@
     <ClCompile Include="logistics\MCPilotPurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCPlayerNameObject.cpp" />
     <ClCompile Include="logistics\MCPreferencesMenu.cpp" />
+    <ClCompile Include="logistics\MCPrefsPage.cpp" />
     <ClCompile Include="logistics\MCPurchaseDlg.cpp" />
     <ClCompile Include="logistics\MCPurchaseScreen.cpp" />
     <ClCompile Include="logistics\MCPurMechList.cpp" />
@@ -237,6 +241,7 @@
     <ClCompile Include="main\MCGamePaths.cpp" />
     <ClCompile Include="main\MCGameSession.cpp" />
     <ClCompile Include="main\MCGameStrings.cpp" />
+    <ClCompile Include="main\MCHdSettings.cpp" />
     <ClCompile Include="main\MCInventoryList.cpp" />
     <ClCompile Include="main\MCLogistics.cpp" />
     <ClCompile Include="main\MCLogisticsCampaign.cpp" />
@@ -595,6 +600,7 @@
     <ClInclude Include="logistics\MCFileScrollPane.h" />
     <ClInclude Include="logistics\MCGameList.h" />
     <ClInclude Include="logistics\MCGenericScreen.h" />
+    <ClInclude Include="logistics\MCHdOptionsPanel.h" />
     <ClInclude Include="logistics\MCInventoryBlock.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />
     <ClInclude Include="logistics\MCLogButton.h" />
@@ -609,8 +615,10 @@
     <ClInclude Include="logistics\MCLogLabel.h" />
     <ClInclude Include="logistics\MCLogMenus.h" />
     <ClInclude Include="logistics\MCLogObject.h" />
+    <ClInclude Include="logistics\MCLogOptionList.h" />
     <ClInclude Include="logistics\MCLogPort.h" />
     <ClInclude Include="logistics\MCLogRows.h" />
+    <ClInclude Include="logistics\MCLogScrollList.h" />
     <ClInclude Include="logistics\MCLogScrollTextObject.h" />
     <ClInclude Include="logistics\MCLogSlider.h" />
     <ClInclude Include="logistics\MCLogTextButton.h" />
@@ -626,6 +634,7 @@
     <ClInclude Include="logistics\MCPilotPurchaseBlock.h" />
     <ClInclude Include="logistics\MCPlayerNameObject.h" />
     <ClInclude Include="logistics\MCPreferencesMenu.h" />
+    <ClInclude Include="logistics\MCPrefsPage.h" />
     <ClInclude Include="logistics\MCPurchaseDlg.h" />
     <ClInclude Include="logistics\MCPurchaseScreen.h" />
     <ClInclude Include="logistics\MCPurMechList.h" />
@@ -653,6 +662,7 @@
     <ClInclude Include="main\MCGamePaths.h" />
     <ClInclude Include="main\MCGameSession.h" />
     <ClInclude Include="main\MCGameStrings.h" />
+    <ClInclude Include="main\MCHdSettings.h" />
     <ClInclude Include="main\MCInventoryList.h" />
     <ClInclude Include="main\MCLogistics.h" />
     <ClInclude Include="main\MCLogisticsShared.h" />

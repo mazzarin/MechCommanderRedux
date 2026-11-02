@@ -168,14 +168,14 @@ auto MCFont::Print(uint8_t letter, MCPane& pane) -> int32_t
         if (stroke[0] == 1)
         {
             // Pixel coordinates, scaled like the letter's size.
-            VfxLineDraw(pane, CurX + ScaledSize(stroke[1]), CurY + ScaledSize(stroke[2]), CurX + ScaledSize(stroke[3]),
-                        CurY + ScaledSize(stroke[4]), Color);
+            VfxLineDrawWide(pane, CurX + ScaledSize(stroke[1]), CurY + ScaledSize(stroke[2]),
+                            CurX + ScaledSize(stroke[3]), CurY + ScaledSize(stroke[4]), Color, StrokeWidth);
         }
         else if (stroke[0] == 2)
         {
             // 1/256ths of the letter's cell.
-            VfxLineDraw(pane, ((stroke[1] * width) >> 8) + CurX, ((stroke[2] * height) >> 8) + CurY,
-                        ((stroke[3] * width) >> 8) + CurX, ((stroke[4] * height) >> 8) + CurY, Color);
+            VfxLineDrawWide(pane, ((stroke[1] * width) >> 8) + CurX, ((stroke[2] * height) >> 8) + CurY,
+                            ((stroke[3] * width) >> 8) + CurX, ((stroke[4] * height) >> 8) + CurY, Color, StrokeWidth);
         }
     }
 

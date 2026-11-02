@@ -1,12 +1,12 @@
 #include "stdafx.h"
 #include "logistics/MCPreferencesMenu.h"
-#include "engine/MCCraterManager.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCControlsPanel.h"
 #include "logistics/MCGenericScreen.h"
+#include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogGroupBox.h"
 #include "logistics/MCLogLabel.h"
@@ -15,18 +15,13 @@
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCRegistrySettings.h"
+#include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
-#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
-#include "sprite/MCHdArt.h"
-#include "sprite/MCParticles.h"
-#include "sprite/MCMechActor.h"
-#include "sprite/MCMechStops.h"
-#include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
-#include "sprite/MCWeather.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
 
@@ -70,20 +65,19 @@ namespace
     };
 
     /// <summary>The panel: the art's panel at its corner, made tall enough for the settings and the buttons.</summary>
-    constexpr MCPrefsPlace PanelPlace{13, 51, 263, 329};
+    constexpr MCPrefsPlace PanelPlace{13, 51, 263, 270};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and HD LIGHTING under
-    /// DIFFICULTY, and HD ART and HD AUDIO under SOUND.
+    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and SCROLL SPEED under
+    /// DIFFICULTY, and HD (its OPTIONS button showing the HD OPTIONS page) under SOUND.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
     constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
     constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 63};
     constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
     constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
-    constexpr MCPrefsPlace HdLightingBoxPlace{132, 186, 120, 50};
-    constexpr MCPrefsPlace HdArtBoxPlace{10, 182, 112, 50};
-    constexpr MCPrefsPlace HdAudioBoxPlace{10, 236, 112, 50};
+    constexpr MCPrefsPlace HdBoxPlace{10, 182, 112, 50};
+    constexpr MCPrefsPlace ScrollSpeedBoxPlace{132, 186, 120, 50};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
     constexpr uint8_t PanelOutlineColor = 0x18;
@@ -129,11 +123,13 @@ namespace
     constexpr int32_t DropDownTop = 21;
     /// <summary>UI RESOLUTION's native choice: its lines follow the screen's scale (GUiResolution).</summary>
     constexpr std::string_view NativeUiResolution = "NATIVE (RETINA/HD)";
+    /// <summary>SCROLL SPEED's choices are factors of the original's speed: "1.5X" is 150 percent.</summary>
+    constexpr double PercentPerFactor = 100.0;
 
     /// <summary>ACCEPT and CANCEL on the panel: side by side at its bottom right, 10 pixels in.</summary>
     constexpr int32_t AcceptLeft = 120;
     constexpr int32_t CancelLeft = 189;
-    constexpr int32_t ButtonsTop = 304;
+    constexpr int32_t ButtonsTop = 246;
     /// <summary>CONTROLS on the panel: at its bottom left, 10 pixels in, in line with ACCEPT and CANCEL.</summary>
     constexpr int32_t ControlsLeft = 10;
 
@@ -141,14 +137,14 @@ namespace
     std::weak_ptr<MCLogSlider> InterfaceSlider;
 
     /// <summary>
-    /// The renderer choice, the UI resolution, the interface volume and HD art when the screen opened (for CancelPrefs).
+    /// The renderer choice, the UI resolution, the interface volume, the scroll speed and the HD settings when the screen
+    /// opened (for CancelPrefs).
     /// </summary>
     int32_t SavedRendererPreference = 0;
     int32_t SavedUiResolution = 0;
     int32_t SavedInterfaceLevel = 0;
-    int32_t SavedHdArt = 0;
-    int32_t SavedHdAudio = 0;
-    int32_t SavedHdLighting = 0;
+    int32_t SavedScrollSpeed = AutoScrollSpeed;
+    std::vector<int32_t> SavedHdSettings = MCHdSettings::Now();
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
@@ -159,26 +155,6 @@ namespace
         if (renderer != GRenderer)
         {
             ShowMenuMessage("The new renderer takes effect when you restart MechCommander.");
-        }
-    }
-
-    /// <summary>The HD ART drop-down chose <paramref name="hdArt"/>: on without a pack says where the pack goes.</summary>
-    void HdArtChanged(int32_t hdArt)
-    {
-        std::error_code error;
-
-        if (hdArt != 0 && !std::filesystem::is_directory(MCHdArt::PackFolder(), error))
-        {
-            ShowMenuMessage("HD ART needs an HD art pack in the HD folder beside your saved games.");
-        }
-    }
-
-    /// <summary>The HD AUDIO drop-down chose <paramref name="hdAudio"/>: on without a pack says where the pack goes.</summary>
-    void HdAudioChanged(int32_t hdAudio)
-    {
-        if (hdAudio != HdAudioOff && !MCHdAudio::PackReadable())
-        {
-            ShowMenuMessage("HD AUDIO needs an HD audio pack in the HD folder beside your saved games.");
         }
     }
 
@@ -334,36 +310,24 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
-    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h), ON at the mission's
-    // own time of day; DUSK dims every mission's world and lights it more, NIGHT darkens it further. From the next frame
-    // on.
-    MCLogGroupBox& hdLighting = AddBox(screen, panel, HdLightingBoxPlace, BoxOutlineColor);
-    AddLabel(screen, hdLighting, "HD LIGHTING", BoxTitleLeft, BoxTitleTop);
-    AddDropDown(screen, hdLighting, GHdLighting,
-                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}, {"NIGHT", HdLightingNight}},
-                nullptr);
+    // HD: the OPTIONS button shows the HD OPTIONS page, every HD setting (MCHdOptionsPanel.h).
+    MCLogGroupBox& hd = AddBox(screen, panel, HdBoxPlace, BoxOutlineColor);
+    AddLabel(screen, hd, "HD", BoxTitleLeft, BoxTitleTop);
+    AddHdOptionsPanel(screen, panel, hd, DropDownLeft, DropDownTop);
 
-    // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
-    MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);
-    AddLabel(screen, hdArt, "HD ART", BoxTitleLeft, BoxTitleTop);
-    AddDropDown(screen, hdArt, GHdArt, {{"OFF", 0}, {"ON", 1}}, HdArtChanged);
+    // SCROLL SPEED: the battlefield's scrolling, at the screen's edges and by the scroll keys: AUTO (the original's pace
+    // across the screen), or a factor of it.
+    MCLogGroupBox& scrollSpeed = AddBox(screen, panel, ScrollSpeedBoxPlace, BoxOutlineColor);
+    AddLabel(screen, scrollSpeed, "SCROLL SPEED", BoxTitleLeft, BoxTitleTop);
+    std::vector<MCLogComboBox::Item> scrollSpeeds;
 
-    // HD AUDIO: the HD audio pack's sounds where it has them (sound/MCHdAudio.h), from the next sound or track on.
-    // ORCHESTRAL only when the pack has orchestral music; without it, ORCHESTRAL plays the stereo music, as ON does.
-    MCLogGroupBox& hdAudio = AddBox(screen, panel, HdAudioBoxPlace, BoxOutlineColor);
-    AddLabel(screen, hdAudio, "HD AUDIO", BoxTitleLeft, BoxTitleTop);
-    std::vector<MCLogComboBox::Item> hdAudioItems = {{"OFF", HdAudioOff}, {"ON", HdAudioOn}};
-
-    if (MCHdAudio::HasOrchestral())
+    for (const int percent : ScrollSpeeds)
     {
-        hdAudioItems.push_back({"ORCHESTRAL", HdAudioOrchestral});
-    }
-    else if (GHdAudio == HdAudioOrchestral)
-    {
-        GHdAudio = HdAudioOn;
+        const std::string factor = std::format("{}X", percent / PercentPerFactor);
+        scrollSpeeds.push_back({percent == AutoScrollSpeed ? std::string("AUTO") : factor, percent});
     }
 
-    AddDropDown(screen, hdAudio, GHdAudio, std::move(hdAudioItems), HdAudioChanged);
+    AddDropDown(screen, scrollSpeed, GScrollSpeed, std::move(scrollSpeeds), nullptr);
 
     MoveOnto(screen, AcceptElement, panel, AcceptLeft, ButtonsTop);
     MoveOnto(screen, CancelElement, panel, CancelLeft, ButtonsTop);
@@ -389,9 +353,7 @@ void ShowPreferences()
     SavedRendererPreference = GRendererPreference;
     SavedUiResolution = GUiResolution;
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
-    SavedHdArt = GHdArt;
-    SavedHdAudio = GHdAudio;
-    SavedHdLighting = GHdLighting;
+    SavedScrollSpeed = GScrollSpeed;
     MCGenericScreen& screen = *logistics->PrefScreen;
     screen.Element<MCLogSlider>(BrightnessSliderElement)->SetCurrentValue(brightness);
     screen.Element<MCLogSlider>(MusicSliderElement)->SetCurrentValue(static_cast<int32_t>(logistics->SavedPrefs3));
@@ -407,8 +369,11 @@ void ShowPreferences()
     DifficultyToggle(0)->Toggled = GameDifficulty == 0;
     DifficultyToggle(1)->Toggled = GameDifficulty == 1;
     DifficultyToggle(2)->Toggled = GameDifficulty != 0 && GameDifficulty != 1;
-    // Port: the preferences panel shows first, and CONTROLS edits the keys as they are.
+    // Port: the preferences panel shows first, CONTROLS edits the keys as they are, and HD OPTIONS starts at its top
+    // (CANCEL puts the HD settings back as it shows them).
     ResetControls();
+    ResetHdOptions();
+    SavedHdSettings = MCHdSettings::Now();
     logistics->MainScreen->ShowGuiWindow(false);
     logistics->SetCurrentScreen(logistics->PrefScreen);
     logistics->PrefScreen->ShowGuiWindow(true);
@@ -428,9 +393,8 @@ void CancelPrefs()
     GameDifficulty = logistics->SavedPrefs6;
     GRendererPreference = SavedRendererPreference;
     GUiResolution = SavedUiResolution;
-    GHdArt = SavedHdArt;
-    GHdAudio = SavedHdAudio;
-    GHdLighting = SavedHdLighting;
+    GScrollSpeed = SavedScrollSpeed;
+    MCHdSettings::Restore(SavedHdSettings);
     Cancel();
 }
 
@@ -438,8 +402,20 @@ void WritePrefs()
 {
     // Port: the keys CONTROLS edited become the player's, and are written after the settings.
     AcceptControls();
+    SavePrefs();
+    Cancel();
+}
+
+void SavePrefs()
+{
     MCFitIniFile prefs;
-    prefs.Create("prefs.cfg");
+
+    if (const int32_t result = prefs.Create("prefs.cfg"); result != 0)
+    {
+        SDL_Log("SavePrefs: cannot create prefs.cfg (%#x); the settings aren't saved", static_cast<uint32_t>(result));
+        return;
+    }
+
     prefs.WriteBlock("MechCommander");
     prefs.WriteIdBoolean("PaletteCycle", GuiSystem().PaletteCycle);
     prefs.WriteIdBoolean("DirectDraw", GFullScreen != 0);
@@ -458,24 +434,39 @@ void WritePrefs()
     prefs.WriteIdBoolean("SoftwareCursor", GSoftwareCursor != 0);
     prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
     prefs.WriteIdLong("UIResolution", GUiResolution);
+    prefs.WriteIdLong("ScrollSpeed", GScrollSpeed);
+    prefs.WriteIdLong("InterfaceSize", GInterfaceSize);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
-    prefs.WriteIdBoolean("HDArt", GHdArt != 0);
-    prefs.WriteIdLong("HDAudio", GHdAudio);
-    prefs.WriteIdLong("HDLighting", GHdLighting);
-    prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
-    prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
-    prefs.WriteIdBoolean("HDSway", GHdSway != 0);
-    prefs.WriteIdBoolean("HDRelief", GHdRelief != 0);
-    prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
-    prefs.WriteIdLong("HDFlecks", GHdFlecks);
-    prefs.WriteIdBoolean("HDShake", GHdShake != 0);
-    prefs.WriteIdLong("HDWeather", GHdWeather);
-    prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
-    prefs.WriteIdBoolean("HDTurns", GHdTurns != 0);
-    prefs.WriteIdBoolean("HDStops", GHdStops != 0);
-    prefs.WriteIdBoolean("MechBraking", GMechBraking != 0);
+    MCHdSettings::Write(prefs);
     MCKeyBindings::WritePrefs(prefs);
-    Cancel();
+}
+
+int SteppedInterfaceSize(int size, int steps)
+{
+    const auto found = std::ranges::find(InterfaceSizes, size);
+    const ptrdiff_t index = found != InterfaceSizes.end() ? std::distance(InterfaceSizes.begin(), found) : 0;
+    const ptrdiff_t last = std::ssize(InterfaceSizes) - 1;
+    return InterfaceSizes[static_cast<size_t>(std::clamp<ptrdiff_t>(index + steps, 0, last))];
+}
+
+bool StepInterfaceSize(int steps)
+{
+    // AUTO steps on from the size it picks for the display, and a step back onto that size is AUTO again.
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    const int autoSize = display != nullptr ? static_cast<int>(std::lround(display->AutoInterfaceScaleNow() *
+                                                                           static_cast<float>(OriginalInterfaceSize)))
+                                            : OriginalInterfaceSize;
+    const int size = GInterfaceSize == AutoInterfaceSize ? autoSize : GInterfaceSize;
+    const int stepped = SteppedInterfaceSize(size, steps);
+
+    if (stepped == size)
+    {
+        return false;
+    }
+
+    GInterfaceSize = stepped == autoSize ? AutoInterfaceSize : stepped;
+    SavePrefs();
+    return true;
 }
 
 void PrefScreenHandleEvent(MCGuiObject&, MCGuiEvent&)

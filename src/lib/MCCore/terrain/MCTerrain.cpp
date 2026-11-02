@@ -9,6 +9,7 @@
 #include "lib/MCFitIniFile.h"
 #include "main/MCGamePaths.h"
 #include "main/MCGameContext.h"
+#include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "object/MCObjectBlockManager.h"
 #include "object/MCForces.h"
@@ -448,7 +449,9 @@ auto MCTerrain::MarkRadiusSeen(const MCVector3D& looker, const MCVector3D& /*loo
         return;
     }
 
-    const float radius = static_cast<float>(static_cast<double>(3.34f) * range * OneOvermetersPerVertex);
+    // Issue #44: the range is in meters at the mission's scale (the original read WorldUnitsPerMeter, not its
+    // default 3.34), or every scripted reveal came out two thirds as wide.
+    const float radius = static_cast<float>(static_cast<double>(WorldUnitsPerMeter) * range * OneOvermetersPerVertex);
     const float fromTop = MapTopLeft3d100.Y - looker.Y;
     const double gridX = std::floor(OneOvermetersPerVertex * (static_cast<double>(looker.X) - MapTopLeft3d100.X));
     const double gridY = std::floor(static_cast<double>(OneOvermetersPerVertex) * fromTop);

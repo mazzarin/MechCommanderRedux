@@ -12556,6 +12556,77 @@ TEST_CASE_ISOLATED("tool: --hd-map-shots pictures the ground across a map")
     }
 }
 
+/// <summary>
+/// Tool: <c>--hd-terrain-layout &lt;folder&gt;</c> writes how mission <c>--mission</c>'s map lays its ground tiles, for
+/// the HD art generator (tools/upscale/make_terrain_pack.py's neighbours): <c>mission_&lt;n&gt;.tsv</c>, a first line
+/// with the ground mesh's steps (across, down and up an elevation level, at the default zoom), then a line a cell drawn
+/// (in the order the GPU draws them, row by row): its top-left vertex (row, column), its tile's pack name
+/// (MCHdArt::TerrainTileName), its hot spot and its corners' elevation levels (top left, top right, bottom right, bottom
+/// left). A cell's tile lies at its vertex's point less the hot spot.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-terrain-layout writes how a map lays its ground tiles")
+{
+    const std::optional<std::string_view> out = MCTest::Option("hd-terrain-layout");
+
+    if (!out.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    int32_t mission = 1;
+
+    if (const std::optional<std::string_view> given = MCTest::Option("mission"); given.has_value())
+    {
+        std::from_chars(given->data(), given->data() + given->size(), mission);
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(mission));
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    RevealAll();
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    const std::optional<MCTerrainMeshSteps> steps = MCTerrainMeshStepsInUse();
+    REQUIRE(mesh != nullptr);
+    REQUIRE(steps.has_value());
+    const std::filesystem::path folder(*out);
+    std::filesystem::create_directories(folder);
+    std::vector<std::string> names(mesh->Tiles.size());
+    std::ranges::transform(mesh->Tiles, names.begin(),
+                           [](const std::vector<uint8_t>& tile) { return MCHdArt::TerrainTileName(tile); });
+    std::ofstream layout(folder / std::format("mission_{}.tsv", mission));
+    layout << std::format("steps\t{}\t{}\t{}\n", steps->Across, steps->Down, steps->Up);
+    constexpr int32_t ElevationBits = 8;
+    constexpr uint32_t ElevationMask = 0xff;
+    size_t cells = 0;
+
+    for (int32_t r = 0; r < mesh->Rows; ++r)
+    {
+        for (int32_t c = 0; c < mesh->Cols; ++c)
+        {
+            const size_t cell = static_cast<size_t>(r) * mesh->Cols + c;
+            const uint32_t tile = mesh->CellTiles[cell];
+
+            if (tile == MCTerrainMesh::NoTile)
+            {
+                continue;
+            }
+
+            const std::vector<uint8_t>& data = mesh->Tiles[tile];
+            const uint32_t e = mesh->CellElevations[cell];
+            layout << std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", mesh->FirstRow + r, mesh->FirstCol + c,
+                                  names[tile], data[0], data[1], e & ElevationMask,
+                                  (e >> ElevationBits) & ElevationMask, (e >> (2 * ElevationBits)) & ElevationMask,
+                                  e >> (3 * ElevationBits));
+            ++cells;
+        }
+    }
+
+    std::cout << std::format("  mission {}: {} cells, {} tiles, steps {} {} {}\n", mission, cells, names.size(),
+                             steps->Across, steps->Down, steps->Up);
+    CHECK(cells > 0);
+}
+
 namespace
 {
     /// <summary>--hd-water's frames by default: five seconds.</summary>
@@ -12574,7 +12645,8 @@ namespace
 /// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
 /// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
 /// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
-/// switches the art as it plays (original, hd, day, dusk: the debug console's art command).
+/// switches the art as it plays (original, hd, day, dusk: the debug console's art command). <c>--hd-water-at
+/// &lt;row&gt;,&lt;column&gt;</c> puts the camera over that tile instead of the shore.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
 {
@@ -12640,6 +12712,15 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
                 bestColumn = column;
             }
         }
+    }
+
+    // Port-only, for the HD art audits: --hd-water-at <row>,<column> parks the camera over that tile instead.
+    if (const std::optional<std::string_view> at = MCTest::Option("hd-water-at"); at.has_value())
+    {
+        const size_t comma = at->find(',');
+        REQUIRE(comma != std::string_view::npos);
+        std::from_chars(at->data(), at->data() + comma, bestRow);
+        std::from_chars(at->data() + comma + 1, at->data() + at->size(), bestColumn);
     }
 
     std::cout << std::format("  the shore: tile ({}, {}), {} of the fewer of water and land around it\n", bestRow,

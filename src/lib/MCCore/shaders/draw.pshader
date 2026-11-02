@@ -801,6 +801,61 @@ float4 HdColourBetween(Input input, float2 shape, int2 original)
     return lerp(top, bottom, f.y);
 }
 
+// How alike an HD colour must be to an original pixel's colour for that pixel's recolouring to count (RecolouredBetween:
+// the spread of a Gaussian over their RGB distance).
+static const float RecolourLikeness = 0.08;
+
+// Port-only: HD colour `color` at `shape` (a place in the original's pixels, centres at .5) recoloured as the original
+// pixels around it show now (a paint scheme's table, today's palette: Corrected), blended between the four around it
+// that have an index: by nearness, as the colour is between its texels, and by how alike the HD colour is to each one's
+// colour as the pack was made, so a paint scheme's colours change where the HD art's edges lie, not at the original's
+// pixel steps; `nearest` (which has one) alone when none of the four counts.
+float3 RecolouredBetween(Input input, float4 color, float2 shape, int2 original, int2 nearest)
+{
+    const float3 own = color.a > 0.0 ? color.rgb / color.a : color.rgb;
+    const float2 at = shape - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const bool table = (input.op.x & TableBefore) != 0;
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float weight = 0.0;
+
+    for (int y = 0; y < 2; y++)
+    {
+        for (int x = 0; x < 2; x++)
+        {
+            const int2 texel = base + int2(x, y);
+            const float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+
+            if (w <= 0.0 || any(texel < int2(0, 0)) || any(texel >= original))
+            {
+                continue;
+            }
+
+            const float4 entry = Fetch(sourceTex, sourceSampler, texel);
+
+            if (!HasIndexIn(entry))
+            {
+                continue;
+            }
+
+            const uint index = Byte(entry.r);
+            const float3 d = own - MadeWith(index);
+            const float alike = w * exp(-dot(d, d) / (2.0 * RecolourLikeness * RecolourLikeness)) + w * 1e-4;
+            sum += alike * Corrected(color.rgb, color.a, index, table ? Table(input.op.z, index) : index);
+            weight += alike;
+        }
+    }
+
+    if (weight > 0.0)
+    {
+        return sum / weight;
+    }
+
+    const uint index = Byte(Fetch(sourceTex, sourceSampler, nearest).r);
+    return Corrected(color.rgb, color.a, index, table ? Table(input.op.z, index) : index);
+}
+
 // An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD
 // texels around it, recoloured as the original pixel under it shows now. A smooth-edged one's (KindHdSmooth) is that
 // colour, unpremultiplied, at HdMaskCoverage's coverage; past the frame's own coverage, where it keeps no colour, the
@@ -864,15 +919,13 @@ Output HdPixelAt(Input input, float2 shape)
         color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
     }
 
-    // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
+    // The colour as the original pixels around it show now: through a paint scheme's table, today's palette, cycle and
     // brightness.
     const float4 entry = Fetch(sourceTex, sourceSampler, texel);
 
     if (HasIndexIn(entry) && (input.op.x & HdAsMade) == 0)
     {
-        const uint index = Byte(entry.r);
-        const uint shown = (input.op.x & TableBefore) != 0 ? Table(input.op.z, index) : index;
-        color.rgb = Corrected(color.rgb, color.a, index, shown);
+        color.rgb = RecolouredBetween(input, color, shape, original, texel);
     }
     else if (!HasIndexIn(entry) && (input.op.x & TableBefore) != 0)
     {

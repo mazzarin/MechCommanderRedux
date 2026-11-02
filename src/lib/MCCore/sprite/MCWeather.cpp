@@ -32,6 +32,7 @@ namespace
     /// heard faintly, as from far above the battle: a downpour 14 dB under the rain loop as levelled (about 25 dB under
     /// the game's sounds as they play), rain about 6 dB under that. A downpour's thunder rolls in about twice a minute,
     /// the nearest at its loudest about 12 dB under the thunder as levelled (its loudest quarter second -12 dBFS).
+    /// Both come and go in showers, a downpour less far (it never stops), rain a little further.
     /// </summary>
     constexpr MCWeather::MCWeatherLook RainLook{.Dark = 0.33f,
                                                 .Grey = 0.2f,
@@ -43,7 +44,8 @@ namespace
                                                 .Sheen = 0.08f,
                                                 .Gloss = 0.25f,
                                                 .Drips = 3.0f,
-                                                .Heard = 0.31f};
+                                                .Heard = 0.31f,
+                                                .Showers = 0.45f};
     constexpr MCWeather::MCWeatherLook DownpourLook{.Dark = 0.4f,
                                                     .Grey = 0.3f,
                                                     .Wet = 0.14f,
@@ -56,7 +58,8 @@ namespace
                                                     .Drips = 8.0f,
                                                     .Heard = 0.45f,
                                                     .Thunder = 2.0f,
-                                                    .ThunderHeard = 0.5f};
+                                                    .ThunderHeard = 0.5f,
+                                                    .Showers = 0.35f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
@@ -271,6 +274,30 @@ namespace
     constexpr float SheetTo = 0.7f;
     constexpr float SheetApartX = 17.3f;
     constexpr float SheetApartY = -9.1f;
+    // The showers (MCWeatherLook::Showers): noise on the game's time (times MCWeatherSettings::ShowerPace), a lattice
+    // point each ShowerLength seconds, two layers, along its own row of the lattice (ShowerRow, chosen for a mission's
+    // first minutes: the rain builds from as made to a burst, eases to a lull and builds again); the noise's middle,
+    // ShowerSpread each way, spans a lull to a burst, eased at both ends. However far the setting takes them, a lull
+    // leaves at least 1 - MostShowers of the rain.
+    constexpr float ShowerLength = 120.0f;
+    constexpr float ShowerRow = 35.0f;
+    constexpr float ShowerApartX = 23.9f;
+    constexpr float ShowerApartY = 7.7f;
+    constexpr float ShowerSpread = 0.35f;
+    constexpr float MostShowers = 0.8f;
+    // How the look follows the showers' rain: the overcast's dark and grey DarkFollow as far as the drops; the drops near
+    // the eye as far, those between BetweenFollow as far (those far from it the rest); heard as loud as the rain's
+    // strength to the power HeardFollow (a channel volume: a lull of 0.65 about 5.6 dB quieter).
+    constexpr float DarkFollow = 0.35f;
+    constexpr float BetweenFollow = 0.5f;
+    constexpr float HeardFollow = 0.75f;
+    // The puddles fill toward how hard the rain falls (1 as made) over PuddleFill seconds of the showers' time, and dry
+    // toward it more slowly, over PuddleDry; taken each PuddleStep seconds. Damp ground, without puddles yet, mirrors
+    // DampSheen of the sky wet ground does.
+    constexpr float PuddleFill = 240.0f;
+    constexpr float PuddleDry = 720.0f;
+    constexpr float PuddleStep = 1.0f;
+    constexpr float DampSheen = 0.4f;
 
     /// <summary>A value between 0 and 1 for a lattice point, the same every frame (composite.pshader's LatticeHash).</summary>
     float LatticeHash(float x, float y)
@@ -496,6 +523,12 @@ namespace
         std::optional<float> Time;
         /// <summary>The puddles' levels for their shares of the ground, measured once (PuddleLevel).</summary>
         std::vector<float> PuddleSamples;
+        /// <summary>
+        /// How far the puddles have spread each PuddleStep seconds of the showers' time from a mission's start (Filled),
+        /// for showers as far as FilledFor; taken as far as asked for.
+        /// </summary>
+        std::vector<float> Filled;
+        float FilledFor = 0.0f;
     };
 
     /// <summary>The weather's one state.</summary>
@@ -582,6 +615,57 @@ namespace
         const auto at =
             static_cast<size_t>(std::clamp(share, 0.0f, 1.0f) * static_cast<float>(state.PuddleSamples.size() - 1));
         return state.PuddleSamples[at];
+    }
+
+    /// <summary>How far showers come and go in <paramref name="kind"/>, as set (0: it falls steadily).</summary>
+    float ShowersOf(const State& state, MCWeatherKind kind)
+    {
+        return std::clamp(MCWeather::LookOf(kind).Showers * state.Settings.Showers, 0.0f, MostShowers);
+    }
+
+    /// <summary>A smooth step from 0 at <paramref name="from"/> to 1 at <paramref name="to"/>.</summary>
+    float SmoothStep(float from, float to, float x)
+    {
+        const float t = std::clamp((x - from) / (to - from), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /// <summary>
+    /// How hard the rain falls at the showers' time <paramref name="time"/> (seconds), showers <paramref name="showers"/>
+    /// far: 1 as made, 1 - showers at a lull's deepest, 1 + showers at a burst's height.
+    /// </summary>
+    float RainAt(float showers, float time)
+    {
+        const float noise = Layered(time / ShowerLength, ShowerRow, ShowerApartX, ShowerApartY);
+        return 1.0f + showers * (2.0f * SmoothStep(0.5f - ShowerSpread, 0.5f + ShowerSpread, noise) - 1.0f);
+    }
+
+    /// <summary>
+    /// How far the puddles have spread at the showers' time <paramref name="time"/> (seconds), showers
+    /// <paramref name="showers"/> far: none at a mission's start, filling toward how hard the rain falls (PuddleFill),
+    /// drying toward it slowly (PuddleDry); between the steps taken, as far as the two round it.
+    /// </summary>
+    float PuddlesAt(State& state, float showers, float time)
+    {
+        if (state.FilledFor != showers || state.Filled.empty())
+        {
+            state.Filled.assign(1, 0.0f);
+            state.FilledFor = showers;
+        }
+
+        const float steps = std::isfinite(time) ? std::max(time, 0.0f) / PuddleStep : 0.0f;
+        const float whole = std::floor(steps);
+        const auto at = static_cast<size_t>(whole);
+
+        while (state.Filled.size() <= at + 1)
+        {
+            const float before = state.Filled.back();
+            const float rain = RainAt(showers, (static_cast<float>(state.Filled.size() - 1) + 0.5f) * PuddleStep);
+            const float over = rain > before ? PuddleFill : PuddleDry;
+            state.Filled.push_back(before + (rain - before) * (1.0f - std::exp(-PuddleStep / over)));
+        }
+
+        return std::lerp(state.Filled[at], state.Filled[at + 1], steps - whole);
     }
 
     /// <summary>A shape's frame's columns, measured once (mirrored when <paramref name="reverse"/>).</summary>
@@ -945,17 +1029,18 @@ namespace
 
     /// <summary>
     /// The drops thrown this frame (<paramref name="step"/> seconds of the game's time) over <paramref name="camera"/>'s
-    /// view, as many as the weather's rate, more where the veil's sheets are thick; those falling where a unit stands
-    /// land on its top.
+    /// view, as many as the weather's rate, more where the veil's sheets are thick (no more at once than MaxDrops, more
+    /// in a shower's <paramref name="burst"/>, MCShowers::Rain); those falling where a unit stands land on its top.
     /// </summary>
-    void Rain(State& state, const MCCamera& camera, const MCWeather::MCWeatherLook& look, float step, float time)
+    void Rain(State& state, const MCCamera& camera, const MCWeather::MCWeatherLook& look, float step, float time,
+              float burst)
     {
         MCDice& dice = state.Dice;
         const float width = camera.HalfWidth * 2.0f;
         const float height = camera.HalfHeight * 2.0f;
         const float area = (width + LandLeft + LandRight) * (height + LandBelow);
         const float rate = look.Drops * state.Settings.Amount * area / (DropsArea * DropsArea) * SheetMost;
-        state.Most = static_cast<size_t>(MaxDrops * area / (DropsArea * DropsArea));
+        state.Most = static_cast<size_t>(MaxDrops * std::max(burst, 1.0f) * area / (DropsArea * DropsArea));
         const int32_t count = dice.Count(rate * step);
 
         for (int32_t i = 0; i < count && state.Drops.size() + state.Splashes.size() < state.Most; ++i)
@@ -1218,6 +1303,48 @@ auto MCWeather::LookOf(MCWeatherKind kind) -> MCWeatherLook
     return {};
 }
 
+auto MCWeather::ShowersAt(MCWeatherKind kind, float time) -> MCShowers
+{
+    State& state = TheState();
+    const float showers = ShowersOf(state, kind);
+
+    if (showers <= 0.0f)
+    {
+        return {};
+    }
+
+    const float showersTime = time * std::max(state.Settings.ShowerPace, 0.0f);
+    return {.Rain = RainAt(showers, showersTime), .Puddles = PuddlesAt(state, showers, showersTime)};
+}
+
+auto MCWeather::LookAt(MCWeatherKind kind, float time) -> MCWeatherLook
+{
+    MCWeatherLook look = LookOf(kind);
+
+    if (ShowersOf(TheState(), kind) <= 0.0f)
+    {
+        return look;
+    }
+
+    const MCShowers showers = ShowersAt(kind, time);
+    const float swing = showers.Rain - 1.0f;
+    look.Dark *= 1.0f + DarkFollow * swing;
+    look.Grey *= 1.0f + DarkFollow * swing;
+    look.Veil *= showers.Rain;
+    look.Drops *= showers.Rain;
+    // The drops near the eye and between follow; those far from it take the rest.
+    const float near = look.Sizes[NearDrop];
+    const float between = look.Sizes[1];
+    look.Sizes[NearDrop] = near * showers.Rain;
+    look.Sizes[1] = between * (1.0f + BetweenFollow * swing);
+    look.Sizes[0] = std::max(look.Sizes[0] + near + between - look.Sizes[NearDrop] - look.Sizes[1], 0.0f);
+    look.Drips *= showers.Rain;
+    look.Heard *= std::pow(showers.Rain, HeardFollow);
+    look.Puddles *= showers.Puddles;
+    look.Sheen *= std::lerp(DampSheen, 1.0f, showers.Puddles);
+    return look;
+}
+
 auto MCWeather::Settings() -> MCWeatherSettings&
 {
     return TheState().Settings;
@@ -1250,7 +1377,7 @@ auto MCWeather::Shown() -> MCWeatherKind
 
 auto MCWeather::ShownLook() -> MCWeatherLook
 {
-    return LookOf(Shown());
+    return LookAt(Shown(), ScenarioTime);
 }
 
 auto MCWeather::Heard() -> float
@@ -1418,7 +1545,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     {
         Move(state, step, camera);
         AgePuddleSteps(state, step);
-        Rain(state, camera, look, step, now);
+        Rain(state, camera, look, step, now, ShowersAt(Shown(), now).Rain);
         Drip(state, look, step);
 
         for (const PendingStep& foot : state.Steps)

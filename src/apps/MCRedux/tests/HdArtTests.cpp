@@ -5089,6 +5089,193 @@ TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast,
 }
 
 /// <summary>
+/// HD weather's showers (MCWeather::ShowersAt, LookAt), over two hours of the game's time: in rain and in a downpour the
+/// rain builds and eases, from lulls to bursts as far as their showers go (a downpour's lull still a downpour), smoothly,
+/// over minutes, the same each time; the look follows it (fewer drops in a lull, fewer near the eye, a thinner veil, a
+/// lighter overcast, quieter), the drops' sizes' shares still whole. The puddles start at none and spread as the rain
+/// falls: they fill while it falls harder than they hold, and dry, slowly, only while it falls less. The pace speeds it
+/// all up alike; without showers, or under a clear sky, the look is as made at any time; the look shown is the look at
+/// the game's time.
+/// </summary>
+TEST_CASE("HD weather: showers come and go over minutes, the same each time, and the puddles spread as the rain falls")
+{
+    struct Restore
+    {
+        MCWeather::MCWeatherSettings Settings = MCWeather::Settings();
+        int Weather = GHdWeather;
+        float Time = ScenarioTime;
+
+        ~Restore()
+        {
+            MCWeather::Settings() = Settings;
+            GHdWeather = Weather;
+            ScenarioTime = Time;
+        }
+    } restore;
+
+    MCWeather::Settings() = {};
+    constexpr int32_t Seconds = 2 * 60 * 60;
+    // A lull and a burst reach this share of the showers' reach; the rain changes at most this share of it a second;
+    // two hours see this many swings from a lull to a burst or back (a lull below half the reach, a burst above).
+    constexpr float Reached = 0.9f;
+    constexpr float Steepest = 0.06f;
+    constexpr int32_t FewestSwings = 8;
+    constexpr int32_t MostSwings = 40;
+    // The puddles' spread after a minute and after ten, and the most they dry in a second.
+    constexpr float FirstMinuteLeast = 0.1f;
+    constexpr float FirstMinuteMost = 0.5f;
+    constexpr float TenMinutesLeast = 0.8f;
+    constexpr float MostDrying = 0.002f;
+    constexpr int32_t Pace = 8;
+    constexpr float Slack = 1e-5f;
+
+    const auto showers = [](MCWeatherKind kind)
+    {
+        std::vector<MCWeather::MCShowers> at;
+
+        for (int32_t second = 0; second <= Seconds; ++second)
+        {
+            at.push_back(MCWeather::ShowersAt(kind, static_cast<float>(second)));
+        }
+
+        return at;
+    };
+
+    const auto same = [](const MCWeather::MCShowers& a, const MCWeather::MCShowers& b)
+    { return a.Rain == b.Rain && a.Puddles == b.Puddles; };
+    const auto sameLook = [](const MCWeather::MCWeatherLook& a, const MCWeather::MCWeatherLook& b)
+    {
+        return std::tie(a.Dark, a.Grey, a.Wet, a.Veil, a.Drops, a.Sizes, a.Puddles, a.Sheen, a.Gloss, a.Drips, a.Heard,
+                        a.Thunder, a.ThunderHeard,
+                        a.Showers) == std::tie(b.Dark, b.Grey, b.Wet, b.Veil, b.Drops, b.Sizes, b.Puddles, b.Sheen,
+                                               b.Gloss, b.Drips, b.Heard, b.Thunder, b.ThunderHeard, b.Showers);
+    };
+
+    for (const MCWeatherKind kind : {MCWeatherKind::Rain, MCWeatherKind::Downpour})
+    {
+        const MCWeather::MCWeatherLook made = MCWeather::LookOf(kind);
+        const float reach = made.Showers;
+        REQUIRE(reach > 0.0f);
+        const std::vector<MCWeather::MCShowers> first = showers(kind);
+        MCWeather::Clear();
+        const std::vector<MCWeather::MCShowers> second = showers(kind);
+        CHECK(std::ranges::equal(first, second, same));
+
+        // The rain: within its reach, reaching both ends, smoothly, over minutes.
+        float least = std::numeric_limits<float>::max();
+        float most = 0.0f;
+        float steepest = 0.0f;
+        size_t lull = 0;
+        size_t burst = 0;
+        int32_t swings = 0;
+        std::optional<bool> inBurst;
+
+        for (size_t t = 0; t < first.size(); ++t)
+        {
+            const float rain = first[t].Rain;
+            lull = rain < first[lull].Rain ? t : lull;
+            burst = rain > first[burst].Rain ? t : burst;
+            least = std::min(least, rain);
+            most = std::max(most, rain);
+            steepest = t > 0 ? std::max(steepest, std::abs(rain - first[t - 1].Rain)) : steepest;
+
+            if (const bool high = rain > 1.0f; std::abs(rain - 1.0f) > 0.5f * reach && inBurst != high)
+            {
+                swings += inBurst.has_value() ? 1 : 0;
+                inBurst = high;
+            }
+        }
+
+        std::cout << std::format(
+            "  {}: rain {:.3f} to {:.3f} as made, at most {:.4f} a second, {} swings in two hours\n",
+            kind == MCWeatherKind::Rain ? "rain" : "downpour", least, most, steepest, swings);
+        CHECK(least >= 1.0f - reach - Slack);
+        CHECK(most <= 1.0f + reach + Slack);
+        CHECK(least <= 1.0f - Reached * reach);
+        CHECK(most >= 1.0f + Reached * reach);
+        CHECK(steepest <= Steepest * reach);
+        CHECK(swings >= FewestSwings);
+        CHECK(swings <= MostSwings);
+
+        // The puddles: none at the start, spreading as the rain falls, drying slowly only in a lull.
+        float driest = 0.0f;
+        bool followed = true;
+
+        for (size_t t = 0; t + 1 < first.size(); ++t)
+        {
+            const float change = first[t + 1].Puddles - first[t].Puddles;
+            const float rain = std::min(first[t].Rain, first[t + 1].Rain);
+            const float lightest = std::max(first[t].Rain, first[t + 1].Rain);
+            followed = followed && (rain <= first[t + 1].Puddles || change >= 0.0f) &&
+                       (lightest >= first[t].Puddles || change <= 0.0f);
+            driest = std::max(driest, -change);
+        }
+
+        std::cout << std::format("  puddles {:.3f} after a minute, {:.3f} after ten, drying at most {:.5f} a second\n",
+                                 first[60].Puddles, first[600].Puddles, driest);
+        CHECK(first.front().Puddles == 0.0f);
+        CHECK(first[60].Puddles >= FirstMinuteLeast);
+        CHECK(first[60].Puddles <= FirstMinuteMost);
+        CHECK(first[600].Puddles >= TenMinutesLeast);
+        CHECK(followed);
+        CHECK(driest > 0.0f);
+        CHECK(driest <= MostDrying);
+        CHECK(std::ranges::all_of(first, [&](const MCWeather::MCShowers& at)
+                                  { return at.Puddles >= 0.0f && at.Puddles <= 1.0f + reach + Slack; }));
+
+        // The look follows: in the deepest lull fewer drops, fewer near, a thinner veil, a lighter overcast, quieter;
+        // the puddles as far as they've spread, the sizes' shares whole.
+        const MCWeather::MCWeatherLook atLull = MCWeather::LookAt(kind, static_cast<float>(lull));
+        const MCWeather::MCWeatherLook atBurst = MCWeather::LookAt(kind, static_cast<float>(burst));
+        CHECK(atLull.Drops < made.Drops);
+        CHECK(atBurst.Drops > made.Drops);
+        CHECK(atLull.Sizes[2] < atBurst.Sizes[2]);
+        CHECK(atLull.Veil < atBurst.Veil);
+        CHECK(atLull.Dark < atBurst.Dark);
+        CHECK(atLull.Grey < atBurst.Grey);
+        CHECK(atLull.Heard < atBurst.Heard);
+        CHECK(atLull.Drips < atBurst.Drips);
+        CHECK(atLull.Puddles == made.Puddles * first[lull].Puddles);
+        CHECK(MCWeather::LookAt(kind, 0.0f).Puddles == 0.0f);
+        CHECK(MCWeather::LookAt(kind, 0.0f).Sheen > 0.0f);
+        CHECK(MCWeather::LookAt(kind, 0.0f).Sheen < made.Sheen);
+
+        for (const MCWeather::MCWeatherLook& look : {atLull, atBurst})
+        {
+            CHECK(std::ranges::all_of(look.Sizes, [](float share) { return share >= 0.0f; }));
+            CHECK(std::abs(look.Sizes[0] + look.Sizes[1] + look.Sizes[2] - 1.0f) <= Slack);
+        }
+
+        // Faster alike: at the pace, a second shows what Pace seconds did.
+        MCWeather::Settings().ShowerPace = static_cast<float>(Pace);
+
+        for (int32_t at = 0; at * Pace <= Seconds; at += 7)
+        {
+            CHECK(same(MCWeather::ShowersAt(kind, static_cast<float>(at)), first[static_cast<size_t>(at * Pace)]));
+        }
+
+        MCWeather::Settings().ShowerPace = 1.0f;
+    }
+
+    // Without showers, or under a clear sky, the look is as made at any time.
+    MCWeather::Settings().Showers = 0.0f;
+
+    for (const float time : {0.0f, 61.0f, 600.5f, 3600.0f})
+    {
+        CHECK(sameLook(MCWeather::LookAt(MCWeatherKind::Downpour, time), MCWeather::LookOf(MCWeatherKind::Downpour)));
+        CHECK(same(MCWeather::ShowersAt(MCWeatherKind::Downpour, time), {}));
+    }
+
+    MCWeather::Settings().Showers = 1.0f;
+    CHECK(sameLook(MCWeather::LookAt(MCWeatherKind::Clear, 600.0f), MCWeather::LookOf(MCWeatherKind::Clear)));
+
+    // The look shown is the look at the game's time.
+    GHdWeather = HdWeatherDownpour;
+    ScenarioTime = 345.0f;
+    CHECK(sameLook(MCWeather::ShownLook(), MCWeather::LookAt(MCWeatherKind::Downpour, ScenarioTime)));
+}
+
+/// <summary>
 /// HD particles' steps (MCParticles::AddStep: a mech's feet, where they print or would), on the screen drawn by the GPU
 /// over mission 1's water, paused: as the game's time goes a foot coming down in the water drawn splashes, droplets and a
 /// ring; one on the land drawn throws nothing; none splash at a strength of 0 (MCParticleLook::Steps) or with the
@@ -6170,7 +6357,10 @@ namespace
     /// <summary>
     /// With <c>--hd-weather &lt;name&gt;[,&lt;amount&gt;]</c>, shows every mission in that weather (GHdWeather: rain,
     /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount); with
-    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder).
+    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder);
+    /// with <c>--hd-showers &lt;strength&gt;[,&lt;pace&gt;]</c>, its showers coming and going that far, 1 as made (0:
+    /// steady rain, its puddles as made from the start; MCWeatherSettings::Showers), that many times as fast
+    /// (MCWeatherSettings::ShowerPace; 8 shows a burst and a lull in a 70-second take).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -6199,8 +6389,22 @@ namespace
             MCWeather::Settings().Thunder = std::strtof(std::string(*thunder).c_str(), nullptr);
         }
 
-        std::cout << std::format("  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud\n",
-                                 given->substr(0, comma), MCWeather::Settings().Amount, MCWeather::Settings().Thunder);
+        if (const std::optional<std::string_view> showers = MCTest::Option("hd-showers"); showers.has_value())
+        {
+            const size_t pace = showers->find(',');
+            MCWeather::Settings().Showers = std::strtof(std::string(showers->substr(0, pace)).c_str(), nullptr);
+
+            if (pace != std::string_view::npos)
+            {
+                MCWeather::Settings().ShowerPace = std::strtof(std::string(showers->substr(pace + 1)).c_str(), nullptr);
+            }
+        }
+
+        std::cout << std::format(
+            "  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud, showers {:.2f} as "
+            "far as made, {:.2f} times as fast\n",
+            given->substr(0, comma), MCWeather::Settings().Amount, MCWeather::Settings().Thunder,
+            MCWeather::Settings().Showers, MCWeather::Settings().ShowerPace);
     }
 
     /// <summary>
@@ -7953,6 +8157,8 @@ TEST_CASE_ISOLATED("game: in a downpour a foot coming down in a puddle sprays an
     GHdLighting = HdLightingOn;
     GHdRelief = 1;
     GHdWeather = HdWeatherDownpour;
+    // The puddles as made from the start (with showers, at a mission's start they have yet to spread).
+    MCWeather::Settings().Showers = 0.0f;
     GamePaused = true;
     MCTestGame::RunFrame(FrameSeconds);
     MCTestGame::RunFrame(FrameSeconds);
@@ -8067,6 +8273,7 @@ TEST_CASE_ISOLATED("game: in a downpour a foot coming down in a puddle sprays an
     CHECK(MCGameContext::Current().Random().State() == dice);
     ScenarioTime = now;
     GHdWeather = HdWeatherOff;
+    MCWeather::Settings().Showers = 1.0f;
     GHdRelief = 0;
     GHdLighting = lightingWas;
     GamePaused = false;
@@ -13962,6 +14169,15 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             std::cout << std::format("  second {}: mix {:.1f} dB, state {:08x}{}\n", (frame + 1) / FramesPerSecond,
                                      10.0 * std::log10(meanSquare + SilenceFloor), MCTestGame::StateHash(),
                                      down ? ", target down" : "");
+
+            // HD weather's showers: how hard the rain falls and how far its puddles have spread (MCWeather::ShowersAt).
+            if (MCWeather::Shown() != MCWeatherKind::Clear)
+            {
+                const MCWeather::MCShowers showers = MCWeather::ShowersAt(MCWeather::Shown(), ScenarioTime);
+                std::cout << std::format("  second {} weather: rain {:.3f} as made, puddles {:.3f} as made\n",
+                                         (frame + 1) / FramesPerSecond, showers.Rain, showers.Puddles);
+            }
+
             secondEnergy = 0.0;
             // The force's health bars, as the game measures them, and where each stands (world units).
             std::string bars;

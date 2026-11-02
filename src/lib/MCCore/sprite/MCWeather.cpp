@@ -30,7 +30,8 @@ namespace
     /// Rain and a downpour as the mock-ups made them (tools/upscale/rain-proto, render_rain2.py and 3), their drops 1.2
     /// times as many: drawn in the game, as many covered 0.85 of the mock-up's pixels (mission 20's road). Their rain is
     /// heard faintly, as from far above the battle: a downpour 14 dB under the rain loop as levelled (about 25 dB under
-    /// the game's sounds as they play), rain about 6 dB under that.
+    /// the game's sounds as they play), rain about 6 dB under that. A downpour's thunder rolls in about twice a minute,
+    /// the nearest at its loudest about 12 dB under the thunder as levelled (its loudest quarter second -12 dBFS).
     /// </summary>
     constexpr MCWeather::MCWeatherLook RainLook{.Dark = 0.33f,
                                                 .Grey = 0.2f,
@@ -53,7 +54,9 @@ namespace
                                                     .Sheen = 0.12f,
                                                     .Gloss = 0.35f,
                                                     .Drips = 8.0f,
-                                                    .Heard = 0.45f};
+                                                    .Heard = 0.45f,
+                                                    .Thunder = 2.0f,
+                                                    .ThunderHeard = 0.5f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
@@ -1252,7 +1255,19 @@ auto MCWeather::ShownLook() -> MCWeatherLook
 
 auto MCWeather::Heard() -> float
 {
-    return MCRenderer::GpuDrawing() == MCGpuDrawing::On ? ShownLook().Heard : 0.0f;
+    return HeardLook().Heard;
+}
+
+auto MCWeather::HeardLook() -> MCWeatherLook
+{
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        return {};
+    }
+
+    MCWeatherLook look = ShownLook();
+    look.ThunderHeard *= Settings().Thunder;
+    return look;
 }
 
 auto MCWeather::Named(std::string_view name) -> std::optional<MCWeatherKind>

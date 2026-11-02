@@ -6162,7 +6162,8 @@ namespace
 
     /// <summary>
     /// With <c>--hd-weather &lt;name&gt;[,&lt;amount&gt;]</c>, shows every mission in that weather (GHdWeather: rain,
-    /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount).
+    /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount); with
+    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -6186,8 +6187,13 @@ namespace
             MCWeather::Settings().Amount = std::strtof(std::string(given->substr(comma + 1)).c_str(), nullptr);
         }
 
-        std::cout << std::format("  weather: {}, {:.2f} as many drops as made\n", given->substr(0, comma),
-                                 MCWeather::Settings().Amount);
+        if (const std::optional<std::string_view> thunder = MCTest::Option("hd-thunder"); thunder.has_value())
+        {
+            MCWeather::Settings().Thunder = std::strtof(std::string(*thunder).c_str(), nullptr);
+        }
+
+        std::cout << std::format("  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud\n",
+                                 given->substr(0, comma), MCWeather::Settings().Amount, MCWeather::Settings().Thunder);
     }
 
     /// <summary>

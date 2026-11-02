@@ -68,6 +68,13 @@ namespace MCWeather
         /// gain that squared): 0 none, 1 the loop as levelled.
         /// </summary>
         float Heard = 0.0f;
+        /// <summary>
+        /// Claps of thunder a minute, on average, rolling in from beyond the view (the HD audio pack's thunder,
+        /// MCSoundSystem::UpdateThunder; 0 none). Heard only: no lightning shows.
+        /// </summary>
+        float Thunder = 0.0f;
+        /// <summary>How loud the nearest thunder is heard, as a channel volume, as <see cref="Heard"/>.</summary>
+        float ThunderHeard = 0.0f;
     };
 
     /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing).</summary>
@@ -80,6 +87,8 @@ namespace MCWeather
         float Amount = 1.0f;
         /// <summary>How big a foot's splash in a puddle is, 1 as made (0: none; the tools' --hd-steps sets it).</summary>
         float Steps = 1.0f;
+        /// <summary>How loud the thunder is heard, 1 as made (0: none; the tools' --hd-thunder sets it).</summary>
+        float Thunder = 1.0f;
     };
 
     /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
@@ -136,6 +145,12 @@ namespace MCWeather
     /// HD weather off, the software renderer).
     /// </summary>
     float Heard();
+
+    /// <summary>
+    /// How the weather shown is heard: its look (<see cref="ShownLook"/>, its thunder as loud as <see
+    /// cref="MCWeatherSettings::Thunder"/> says) while it is drawn, else a clear sky's (nothing heard).
+    /// </summary>
+    MCWeatherLook HeardLook();
 
     /// <summary>The weather named <paramref name="name"/> ("clear", "rain" or "downpour", in any case); none for another.</summary>
     std::optional<MCWeatherKind> Named(std::string_view name);

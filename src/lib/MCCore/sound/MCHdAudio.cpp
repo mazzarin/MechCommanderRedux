@@ -88,6 +88,12 @@ namespace
         return std::filesystem::is_regular_file(path, error) ? std::optional(path) : std::nullopt;
     }
 
+    /// <summary>The pack's weather sound <paramref name="name"/> (in audio/ambience), whatever GHdAudio is, or none.</summary>
+    std::optional<std::filesystem::path> Ambience(std::string_view name)
+    {
+        return Current().Readable ? Existing(MCHdArt::PackFolder() / "audio" / "ambience" / name) : std::nullopt;
+    }
+
     std::string KeyOf(const MCWaveData& parsed)
     {
         uint64_t hash = 14695981039346656037ull;
@@ -173,7 +179,12 @@ std::optional<std::filesystem::path> MCHdAudio::Music(std::string_view original)
 
 std::optional<std::filesystem::path> MCHdAudio::RainLoop()
 {
-    return Current().Readable ? Existing(MCHdArt::PackFolder() / "audio" / "ambience" / "rain.flac") : std::nullopt;
+    return Ambience("rain.flac");
+}
+
+std::optional<std::filesystem::path> MCHdAudio::Thunder()
+{
+    return Ambience("thunder.flac");
 }
 
 std::string MCHdAudio::SampleKey(std::span<const uint8_t> wave)

@@ -453,6 +453,121 @@ TEST_CASE(
     FrameLength = savedFrame;
 }
 
+/// <summary>
+/// HD weather's thunder: the pack's thunder rolls in now and then while claps come, each played once at the effects
+/// volume, never louder than the nearest is heard, one at a time, its waits about the average apart; none while no claps
+/// come. Its dice start again at the purge, so a mission hears the same thunder each time. Without the pack's thunder
+/// there is none till the purge. Only a downpour thunders, and none is heard while none is drawn (here, without the GPU).
+/// </summary>
+TEST_CASE("HD audio: thunder rolls in now and then while claps come, each clap the pack's thunder played once")
+{
+    Fixture fixture;
+    const std::filesystem::path thunder = fixture.Root / "audio/ambience/thunder.flac";
+    Write(thunder, Flac());
+    GHdAudio = HdAudioOff;
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    MCAudio& mixer = SoundRenderer()->Mixer();
+    sound->DigitalMasterVolume = 96;
+    const float savedFrame = FrameLength;
+    // A second a frame: six claps a minute wait 4 to 16 s (0.4 to 1.6 of the average 10 s).
+    FrameLength = 1.0f;
+    constexpr float Claps = 6.0f;
+    constexpr float Heard = 0.5f;
+    constexpr int32_t Seconds = 120;
+    // The thunder's left channel (its right is twice as loud the other way), 16-bit; the 20 ms thunder plays within
+    // a quarter second, however slow.
+    constexpr float ThunderLeft = 1000.0f / 32768.0f;
+    constexpr size_t Frames = 12000;
+    std::vector<float> out(2 * Frames);
+    const float nearest = MCAudio::GainFromHundredthsDb(
+        MCSoundChannel::BufferVolume(static_cast<float>(sound->DigitalMasterVolume) / 128.0f * Heard));
+
+    // A frame's thunder: none, or a clap heard as the thunder is, no louder than the nearest.
+    const auto heardNow = [&]
+    {
+        mixer.Render(out);
+        bool any = false;
+        bool asThunder = true;
+
+        for (size_t frame = 0; frame < Frames; ++frame)
+        {
+            const float left = out[2 * frame];
+            const float right = out[2 * frame + 1];
+            asThunder = asThunder && left >= 0.0f && right <= 0.0f && left <= ThunderLeft * nearest * 1.01f &&
+                        -right <= 2.0f * ThunderLeft * nearest * 1.01f;
+            any = any || left > 0.0f;
+        }
+
+        CHECK(asThunder);
+        return any;
+    };
+
+    // The seconds claps came at, over two minutes.
+    const auto clapsAt = [&](float claps, float heard)
+    {
+        std::vector<int32_t> at;
+
+        for (int32_t second = 0; second < Seconds; ++second)
+        {
+            sound->UpdateThunder(claps, heard);
+            const bool rolling = sound->ThunderRolling();
+            CHECK_EQ(heardNow(), rolling);
+
+            if (rolling)
+            {
+                at.push_back(second);
+            }
+        }
+
+        return at;
+    };
+
+    const std::vector<int32_t> first = clapsAt(Claps, Heard);
+    REQUIRE(first.size() >= 6);
+    CHECK(first.front() >= 3);
+    CHECK(first.front() <= 16);
+
+    for (size_t clap = 1; clap < first.size(); ++clap)
+    {
+        CHECK(first[clap] - first[clap - 1] >= 4);
+        CHECK(first[clap] - first[clap - 1] <= 17);
+    }
+
+    // The roll played out: none rolls till the next clap.
+    sound->UpdateThunder(0.0f, Heard);
+    CHECK(!sound->ThunderRolling());
+
+    // None while no claps come, or none are heard.
+    CHECK(clapsAt(0.0f, Heard).empty());
+    CHECK(clapsAt(Claps, 0.0f).empty());
+
+    // After the purge the dice start again: the same thunder.
+    sound->PurgeSoundSystem();
+    CHECK(clapsAt(Claps, Heard) == first);
+
+    // Without the pack's thunder, none; one put in after isn't looked for till the purge.
+    std::filesystem::remove(thunder);
+    CHECK(clapsAt(Claps, Heard).empty());
+    Write(thunder, Flac());
+    CHECK(clapsAt(Claps, Heard).empty());
+    sound->PurgeSoundSystem();
+    CHECK(clapsAt(Claps, Heard) == first);
+
+    // Only a downpour thunders; nothing is heard while no rain is drawn.
+    CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).Thunder > 0.0f);
+    CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).ThunderHeard > 0.0f);
+    CHECK_EQ(MCWeather::LookOf(MCWeatherKind::Rain).Thunder, 0.0f);
+    CHECK_EQ(MCWeather::LookOf(MCWeatherKind::Clear).Thunder, 0.0f);
+    const int savedWeather = GHdWeather;
+    GHdWeather = HdWeatherDownpour;
+    CHECK_EQ(MCWeather::HeardLook().Thunder, 0.0f);
+    GHdWeather = savedWeather;
+    FrameLength = savedFrame;
+}
+
 TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")
 {
     const auto pack = MCTest::Option("hd-audio-pack");

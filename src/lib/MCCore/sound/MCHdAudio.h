@@ -42,6 +42,8 @@ public:
     /// it is there whatever <see cref="GHdAudio"/> is set to.
     /// </summary>
     static std::optional<std::filesystem::path> RainLoop();
+    /// <summary>The pack's thunder (<c>audio/ambience/thunder.flac</c>), or none; there whatever HD audio is, as the rain loop.</summary>
+    static std::optional<std::filesystem::path> Thunder();
     /// <summary>Canonical FNV-1a key: rate u32, channels u16, bits u16 (little endian), then the original PCM bytes.</summary>
     static std::string SampleKey(std::span<const uint8_t> wave);
     /// <summary>

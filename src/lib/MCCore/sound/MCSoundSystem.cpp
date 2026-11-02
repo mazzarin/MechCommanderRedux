@@ -48,10 +48,68 @@ namespace
     constexpr int32_t MUSIC_BUSY = -0x5445fff2;
     /// <summary>The seconds the rain bed takes to ease from none to a downpour's, and back.</summary>
     constexpr float RainFade = 2.0f;
-    /// <summary>The seconds of the rain loop kept queued ahead of what plays, so a slow frame doesn't run it dry.</summary>
-    constexpr uint32_t RainAheadSeconds = 1;
-    /// <summary>The sample frames read from the rain loop at a time.</summary>
-    constexpr size_t RainChunkFrames = 4096;
+    /// <summary>
+    /// The seconds of a pack sound (the rain loop, thunder) kept queued ahead of what plays, so a slow frame doesn't run
+    /// it dry.
+    /// </summary>
+    constexpr uint32_t PackAheadSeconds = 1;
+    /// <summary>The sample frames read from a pack sound at a time.</summary>
+    constexpr size_t PackChunkFrames = 4096;
+    /// <summary>The thunder's dice's first seed.</summary>
+    constexpr uint32_t ThunderSeed = 0x7b0d3e11u;
+    /// <summary>A clap's wait, as a share of the average wait (a minute over the claps a minute): the least and most.</summary>
+    constexpr float ThunderWaitLeast = 0.4f;
+    constexpr float ThunderWaitMost = 1.6f;
+    constexpr float SecondsAMinute = 60.0f;
+    /// <summary>The nearest clap plays this much faster than the thunder as made, the farthest this much (deeper, longer).</summary>
+    constexpr float ThunderNearSpeed = 1.08f;
+    constexpr float ThunderFarSpeed = 0.8f;
+    /// <summary>How loud the farthest clap plays, of the nearest (a channel volume).</summary>
+    constexpr float ThunderFarLevel = 0.45f;
+    /// <summary>The most a clap is panned to a side, in hundredths of a decibel.</summary>
+    constexpr float ThunderPanMost = 600.0f;
+
+    /// <summary>A throw of <paramref name="dice"/>, from 0 to 1.</summary>
+    float Roll(std::minstd_rand& dice)
+    {
+        constexpr double range = static_cast<double>(std::minstd_rand::max() - std::minstd_rand::min());
+        return static_cast<float>(static_cast<double>(dice() - std::minstd_rand::min()) / range);
+    }
+
+    /// <summary>
+    /// The HD audio pack's sound at <paramref name="path"/> (none: the pack lacks it) opened into <paramref
+    /// name="file"/>, and a stream playing it through <paramref name="mixer"/> at <paramref name="speed"/> times its
+    /// rate (faster: higher); null, the file closed, when there is none or it won't play (logged, as
+    /// <paramref name="what"/>).
+    /// </summary>
+    std::shared_ptr<MCAudioStream> OpenPackSound(MCAudio& mixer, const std::optional<std::filesystem::path>& path,
+                                                 std::string_view what, float speed, std::unique_ptr<MCFlac>& file)
+    {
+        file = path.has_value() ? MCFlac::Open(*path) : nullptr;
+        std::expected<std::shared_ptr<MCAudioStream>, std::string> stream =
+            std::unexpected(file != nullptr ? "it holds no sound" : "not a FLAC file");
+
+        if (file != nullptr && file->Frames() > 0)
+        {
+            MCSoundFormat format = file->Format();
+            format.Rate = static_cast<uint32_t>(std::lround(static_cast<float>(format.Rate) * speed));
+            stream = mixer.CreateStream(format);
+        }
+
+        if (!stream.has_value())
+        {
+            if (path.has_value())
+            {
+                SDL_Log("MCSoundSystem: the %.*s %s won't play: %s", static_cast<int>(what.size()), what.data(),
+                        path->string().c_str(), stream.error().c_str());
+            }
+
+            file.reset();
+            return nullptr;
+        }
+
+        return std::move(*stream);
+    }
 
     /// <summary>A byte volume (0..127) as a channel volume.</summary>
     float ChannelVolume(uint32_t volume)
@@ -167,6 +225,7 @@ int32_t SoundPanPosition(float dx, float dy)
 MCSoundSystem::MCSoundSystem() : _Renderer(MCSoundRenderer::Install(NUM_SOUND_CHANNELS))
 {
     SmackSoundUseDirectSound(_Renderer.MixerReference());
+    _ThunderDice.seed(ThunderSeed);
     _SoundOn = true;
 }
 
@@ -405,6 +464,10 @@ void MCSoundSystem::PurgeSoundSystem()
     StopRain();
     _RainLevel = 0.0f;
     _RainMissing = false;
+    StopThunder();
+    _ThunderWait = -1.0f;
+    _ThunderMissing = false;
+    _ThunderDice.seed(ThunderSeed);
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -703,9 +766,12 @@ void MCSoundSystem::UpdateMusicChoice()
 
 void MCSoundSystem::Update()
 {
-    // Port-only: the rain bed plays whether or not the music does.
+    // Port-only: the rain bed and the thunder play whether or not the music does.
     const bool scenarioRuns = Mission() != nullptr && Mission()->State == MCMissionState::Scenario;
-    UpdateRain(UseSound != 0 && scenarioRuns ? MCWeather::Heard() : 0.0f);
+    const MCWeather::MCWeatherLook heard =
+        UseSound != 0 && scenarioRuns ? MCWeather::HeardLook() : MCWeather::MCWeatherLook{};
+    UpdateRain(heard.Heard);
+    UpdateThunder(heard.Thunder, heard.ThunderHeard);
 
     if (UseSound == 0 || UseMusic == 0)
     {
@@ -827,31 +893,20 @@ void MCSoundSystem::UpdateRain(float heard)
 
     if (_RainStream == nullptr)
     {
-        const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
-        _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
-        auto stream = _RainLoop != nullptr && _RainLoop->Frames() > 0
-                          ? _Renderer.Mixer().CreateStream(_RainLoop->Format())
-                          : std::unexpected(std::string("no rain loop in the HD audio pack"));
+        _RainStream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::RainLoop(), "rain loop", 1.0f, _RainLoop);
 
-        if (!stream.has_value())
+        if (_RainStream == nullptr)
         {
-            if (path.has_value())
-            {
-                SDL_Log("MCSoundSystem: the rain loop %s won't play: %s", path->string().c_str(),
-                        _RainLoop != nullptr ? stream.error().c_str() : "not a FLAC file");
-            }
-
             _RainMissing = true;
             StopRain();
             return;
         }
 
-        _RainStream = std::move(*stream);
-        _RainChunk.resize(RainChunkFrames * _RainLoop->Format().BlockAlign());
+        _RainChunk.resize(PackChunkFrames * _RainLoop->Format().BlockAlign());
     }
 
     _RainStream->SetVolume(MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * _RainLevel));
-    const uint64_t ahead = uint64_t{RainAheadSeconds} * _RainLoop->Format().Rate;
+    const uint64_t ahead = uint64_t{PackAheadSeconds} * _RainLoop->Format().Rate;
     bool fromStart = false;
 
     // Round and round: at the loop's end, from its start again (the loop is made to run on without a seam).
@@ -883,6 +938,87 @@ void MCSoundSystem::StopRain()
 {
     _RainStream.reset();
     _RainLoop.reset();
+}
+
+void MCSoundSystem::UpdateThunder(float claps, float heard)
+{
+    if (claps <= 0.0f || heard <= 0.0f || _ThunderMissing)
+    {
+        _ThunderWait = -1.0f;
+    }
+    else
+    {
+        const float average = SecondsAMinute / claps;
+        const auto nextWait = [&]
+        { return average * std::lerp(ThunderWaitLeast, ThunderWaitMost, Roll(_ThunderDice)); };
+
+        // The first clap waits as the others do.
+        if (_ThunderWait < 0.0f)
+        {
+            _ThunderWait = nextWait();
+        }
+
+        _ThunderWait -= FrameLength;
+
+        if (_ThunderWait <= 0.0f)
+        {
+            _ThunderWait = nextWait();
+
+            // One rolls at a time: a clap due while one rolls doesn't come.
+            if (_ThunderStream == nullptr)
+            {
+                StartThunder(heard);
+            }
+        }
+    }
+
+    if (_ThunderStream == nullptr)
+    {
+        return;
+    }
+
+    _ThunderStream->SetVolume(MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * _ThunderLevel));
+    const uint64_t ahead = uint64_t{PackAheadSeconds} * _Thunder->Format().Rate;
+
+    while (!_ThunderRead && _ThunderStream->QueuedFrames() < ahead)
+    {
+        const size_t read = _Thunder->Read(_ThunderChunk);
+        _ThunderStream->Queue(std::span(_ThunderChunk).first(read));
+        _ThunderRead = read < _ThunderChunk.size();
+    }
+
+    if (_ThunderRead && _ThunderStream->QueuedFrames() == 0)
+    {
+        StopThunder();
+    }
+}
+
+void MCSoundSystem::StartThunder(float heard)
+{
+    // How far off and to which side, thrown first so the dice go on the same whether or not it plays.
+    const float far = Roll(_ThunderDice);
+    const float side = Roll(_ThunderDice);
+    _ThunderStream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::Thunder(), "thunder",
+                                   std::lerp(ThunderNearSpeed, ThunderFarSpeed, far), _Thunder);
+
+    if (_ThunderStream == nullptr)
+    {
+        _ThunderMissing = true;
+        StopThunder();
+        return;
+    }
+
+    _ThunderChunk.resize(PackChunkFrames * _Thunder->Format().BlockAlign());
+    _ThunderRead = false;
+    _ThunderLevel = heard * std::lerp(1.0f, ThunderFarLevel, far);
+    _ThunderStream->SetPan(static_cast<int32_t>(std::lround(std::lerp(-ThunderPanMost, ThunderPanMost, side))));
+}
+
+void MCSoundSystem::StopThunder()
+{
+    _ThunderStream.reset();
+    _Thunder.reset();
+    _ThunderRead = false;
 }
 
 int32_t MCSoundSystem::PlayDigitalMusic(int32_t musicId, bool loop)

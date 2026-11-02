@@ -92,14 +92,14 @@ namespace
     constexpr int32_t GrassGreen = 2;
     /// <summary>
     /// Land drawn in a palette colour at least this saturated (HSL, of VFX's 6-bit components, which run to
-    /// ComponentMost) is soil: the dirt's and the fields' browns and tans (0x2a, 0x2b, 0x4x, 0x9x) are 0.29 and more; the
-    /// rock's, packed earth's and concrete's grey browns (0x2c, 0x2d, 0x8x) 0.26 and less, the roads' greys about 0.
+    /// ComponentMost) is soil: the dirt's and the fields' browns and tans (0x2a, 0x2b, 0x4x, 0x9x) are 0.29 and more;
+    /// the rock's, packed earth's and concrete's grey browns (0x2c, 0x2d, 0x8x) 0.26 and less, the roads' greys none.
     /// </summary>
     constexpr float SoilSaturation = 0.27f;
     constexpr int32_t ComponentMost = 63;
     /// <summary>
-    /// The pixels round a drop's landing point (view pixels right and down of it) whose ground votes on what it lands on,
-    /// the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns. Pixels in
+    /// The pixels round a drop's landing point (view pixels right and down of it) whose ground votes on what it lands
+    /// on, the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns. Pixels in
     /// shadow, no component of their colour reaching ShadowDark (VFX's 6-bit), don't vote: the forest floor's shade is
     /// as dark a grey as a road's asphalt (which, voting for nothing, is hard ground).
     /// </summary>
@@ -198,8 +198,8 @@ namespace
     constexpr size_t NearDrop = 2;
 
     /// <summary>
-    /// The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d); fitting
-    /// the ground, wet soil's dark brown (0x91) and a glint's near white (0x1e).
+    /// The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d);
+    /// fitting the ground, wet soil's dark brown (0x91) and a glint's near white (0x1e).
     /// </summary>
     struct Rgb
     {
@@ -252,13 +252,13 @@ namespace
     constexpr float SecondRingLife = 0.7f;
     constexpr float SecondRingAlpha = 0.8f;
     // Splashes fitting the ground (MCWeatherSettings::Ground; each mark's strength times it, at most whole): off hard
-    // ground HardDroplets more droplets (from a drop that throws any), crisper, HardDropletAlpha strong and fading only to
-    // HardFadeTo; into soil a dark dot (SoakBrown) the size's Soak to each side, lying on the ground, spreading from
+    // ground HardDroplets more droplets (from a drop that throws any), crisper, HardDropletAlpha strong and fading only
+    // to HardFadeTo; into soil a dark dot (SoakBrown) the size's Soak to each side, lying on the ground, spreading from
     // SoakFrom of it over SoakSpread of its life as it soaks in, SoakAlpha strong, holding, then gone by SoakLife; in
-    // grass a soft puff of spray (SplashGrey) the size's Puff to each side, PuffSoftness soft, spreading from PuffFrom of it and
-    // rising PuffRise pixels, PuffAlpha strong, gone in PuffLife; on a flat stretch of a unit's metal top a tick of a
-    // glint (GlintWhite) GlintInset pixels into it, GlintWidth to each side, GlintLength tall and GlintArm of that
-    // across, GlintAlpha strong (a far drop's FarGlint of that), gone in GlintLife (two frames).
+    // grass a soft puff of spray (SplashGrey) the size's Puff to each side, PuffSoftness soft, spreading from PuffFrom
+    // of it and rising PuffRise pixels, PuffAlpha strong, gone in PuffLife; on a flat stretch of a unit's metal top a
+    // tick of a glint (GlintWhite) GlintInset pixels into it, GlintWidth to each side, GlintLength tall and GlintArm of
+    // that across, GlintAlpha strong (a far drop's FarGlint of that), gone in GlintLife (two frames).
     constexpr int32_t HardDroplets = 1;
     constexpr float HardDropletAlpha = 0.8f;
     constexpr float HardFadeTo = 0.75f;
@@ -305,10 +305,10 @@ namespace
     constexpr float FootLeast = 6.0f;
     constexpr float Band = 6.0f;
     /// <summary>
-    /// A drop glints only where it lands on a flat stretch of a unit's top as the unit stands when it lands (it may have
-    /// moved on while the drop fell): within OnTopReach pixels above its top to Band and OnTopReach below it, the columns
-    /// FlatReach to each side drawn, their tops within FlatStep pixels of its, at least FlatInside columns in from its
-    /// sides.
+    /// A drop glints only where it lands on a flat stretch of a unit's top as the unit stands when it lands (it may
+    /// have moved on while the drop fell): within OnTopReach pixels above its top to Band and OnTopReach below it, the
+    /// columns FlatReach to each side drawn, their tops within FlatStep pixels of its, at least FlatInside columns in
+    /// from its sides.
     /// </summary>
     constexpr float OnTopReach = 1.0f;
     constexpr int32_t FlatReach = 2;
@@ -441,8 +441,8 @@ namespace
     };
 
     /// <summary>
-    /// What a splash leaves for a while: a droplet thrown up, a dot, a ring, a drip falling; fitting the ground, a dark dot
-    /// soaking into soil, a puff in grass, a glint on metal.
+    /// What a splash leaves for a while: a droplet thrown up, a dot, a ring, a drip falling; fitting the ground, a dark
+    /// dot soaking into soil, a puff in grass, a glint on metal.
     /// </summary>
     enum class SplashKind : uint8_t
     {
@@ -457,8 +457,8 @@ namespace
 
     /// <summary>
     /// A splash's piece: placed from a world point (X, Y, Z) by view pixels (Across, Up), moving at (VAcross, VUp) and
-    /// falling (Gravity) for Life seconds; a ring growing to Size; drawn in its colour at its strength at Depth, a droplet
-    /// fading to FadeTo of it.
+    /// falling (Gravity) for Life seconds; a ring growing to Size; drawn in its colour at its strength at Depth, a
+    /// droplet fading to FadeTo of it.
     /// </summary>
     struct Splash
     {
@@ -483,7 +483,7 @@ namespace
 
     /// <summary>
     /// Droplets thrown up from a point: how many, how fast out and up (times a splash's usual speeds), from within how many
-    /// view pixels to its sides, within how many seconds of each other, how big and how strong, fading to how much of it.
+    /// view pixels to its sides, within how many seconds of each other, how big, how strong, and fading to how much.
     /// </summary>
     struct DropletThrow
     {
@@ -955,9 +955,9 @@ namespace
     }
 
     /// <summary>
-    /// Whether ground drawn in palette entry <paramref name="drawn"/> (the ground's tile, MCParticles::GroundDrawnAt) at
-    /// world point (x, y, z) is wet: the water drawn, or a puddle (<paramref name="margin"/> inside its level); never under
-    /// a bridge, whose road is drawn over the water.
+    /// Whether ground drawn in palette entry <paramref name="drawn"/> (the ground's tile, MCParticles::GroundDrawnAt)
+    /// at world point (x, y, z) is wet: the water drawn, or a puddle (<paramref name="margin"/> inside its level);
+    /// never under a bridge, whose road is drawn over the water.
     /// </summary>
     bool IsWet(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
                float z, float margin)
@@ -986,18 +986,19 @@ namespace
         {
             const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera, right, down);
 
-            if (!surface.has_value() || MCWeather::GroundOf(*surface) == MCWeather::MCSplashGround::Water)
-            {
-                continue;
-            }
-
-            if (const MCVfxRgb color = GamePalette().Colors()[*surface];
-                std::max({color.R, color.G, color.B}) < ShadowDark)
+            if (!surface.has_value())
             {
                 continue;
             }
 
             const MCWeather::MCSplashGround ground = MCWeather::GroundOf(*surface);
+            const MCVfxRgb color = GamePalette().Colors()[*surface];
+
+            if (ground == MCWeather::MCSplashGround::Water || std::max({color.R, color.G, color.B}) < ShadowDark)
+            {
+                continue;
+            }
+
             first = first.value_or(ground);
             ++votes[static_cast<size_t>(ground)];
         }
@@ -1012,7 +1013,8 @@ namespace
         return static_cast<MCWeather::MCSplashGround>(best);
     }
 
-    /// <summary>A mark of a splash's own (a dot, a soak, a puff, a glint) where <paramref name="drop"/> lands.</summary>
+    /// <summary>A mark of a splash's own (a dot, a soak, a puff, a glint) where <paramref name="drop"/>
+    /// lands.</summary>
     Splash MarkOf(const Drop& drop, SplashKind kind, float size, float life, const Rgb& color, float alpha,
                   int32_t depth)
     {
@@ -1028,9 +1030,9 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="drop"/> landing, its splash fitting the ground as strongly as MCWeatherSettings::Ground says: off
-    /// hard ground, droplets thrown up, crisp; into soil, a dark dot soaking in; in grass, a soft puff; on a unit's metal
-    /// top, a glint and droplets. False at a strength of 0 and in water or a puddle, which splash as ever.
+    /// <paramref name="drop"/> landing, its splash fitting the ground as strongly as MCWeatherSettings::Ground says:
+    /// off hard ground, droplets thrown up, crisp; into soil, a dark dot soaking in; in grass, a soft puff; on a unit's
+    /// metal top, a glint and droplets. False at a strength of 0 and in water or a puddle, which splash as ever.
     /// </summary>
     bool ThrowFitting(State& state, const Drop& drop, MCWeather::MCSplashGround ground, const MCCamera& camera)
     {
@@ -1100,7 +1102,8 @@ namespace
 
     /// <summary>
     /// <paramref name="drop"/> landing: with MCWeatherSettings::Ground, as the ground there takes it (ThrowFitting);
-    /// else a dot where it lands; in water or a puddle, a ring (a near drop's two); on land or a unit, droplets thrown up.
+    /// else a dot where it lands; in water or a puddle, a ring (a near drop's two); on land or a unit, droplets thrown
+    /// up.
     /// </summary>
     void Throw(State& state, const Drop& drop, const MCCamera& camera)
     {
@@ -1215,8 +1218,8 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="drop"/>'s depth in the draw list, where it lands on the ground; or, when it falls where a unit drawn
-    /// this frame stands, on the unit's top, just before its parts.
+    /// <paramref name="drop"/>'s depth in the draw list, where it lands on the ground; or, when it falls where a unit
+    /// drawn this frame stands, on the unit's top, just before its parts.
     /// </summary>
     void LandOnUnits(const State& state, Drop& drop, const MCCamera& camera)
     {

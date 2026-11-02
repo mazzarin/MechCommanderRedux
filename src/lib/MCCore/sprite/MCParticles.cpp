@@ -651,11 +651,11 @@ namespace
     }
 
     /// <summary>
-    /// The palette entry drawn at world point (x, y, z) in <paramref name="camera"/>'s view: the pixel there of the last
-    /// tile its terrain window drew over it (each block's at its top-left corner, row by row, as MCTerrainBlock::Draw);
-    /// with <paramref name="overlays"/>, that of the last overlay drawn over the tiles there (MCTerrainBlock::
-    /// DrawOverlay, after them all) where one covers it; the pixel <paramref name="right"/> and <paramref name="down"/>
-    /// of where the point is drawn. None outside the window's tiles.
+    /// The palette entry drawn at world point (x, y, z) in <paramref name="camera"/>'s view: the pixel there of the
+    /// last tile its terrain window drew over it (each block's at its top-left corner, row by row, as
+    /// MCTerrainBlock::Draw); with <paramref name="overlays"/>, that of the last overlay drawn over the tiles there
+    /// (MCTerrainBlock:: DrawOverlay, after them all) where one covers it; the pixel <paramref name="right"/> and
+    /// <paramref name="down"/> of where the point is drawn. None outside the window's tiles.
     /// </summary>
     std::optional<uint8_t> DrawnAt(float x, float y, float z, const MCCamera& camera, bool overlays, int32_t right = 0,
                                    int32_t down = 0)

@@ -30,10 +30,10 @@ enum class MCWeatherKind : uint8_t
 /// before the wind; no sun: its shadows faint, its relief and the water's glints gone), drops fall slanted before the
 /// wind's gusts and splash where they land as the ground there takes them (MCSplashGround: droplets off rock and roads,
 /// a dark dot soaking into soil, a soft puff in grass, rings on the water drawn and in puddles, a glint on a unit's
-/// metal top when it stands in their way), and water drips off the units. With the HD ground's relief maps (MCSceneLights::
-/// ReliefMapsOn, which tell the ground from what stands on it) the world is wet too: puddles lie in the ground's low
-/// spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten, and a foot coming down in a
-/// puddle sprays it up and the puddle reacts round it. The sky, the sheen and the puddles are the presenter's
+/// metal top when it stands in their way), and water drips off the units. With the HD ground's relief maps
+/// (MCSceneLights::ReliefMapsOn, which tell the ground from what stands on it) the world is wet too: puddles lie in the
+/// ground's low spots (not on grass, which soaks them up), wet ground mirrors the sky, units glisten, and a foot coming
+/// down in a puddle sprays it up and the puddle reacts round it. The sky, the sheen and the puddles are the presenter's
 /// composite's (composite.pshader); the drops are drawn into the world as the particles are (MCParticles::AddMark), so
 /// units nearer the eye cover those falling behind them.
 /// Like the particles, the drops never touch the game: they throw their own dice (never the game's), take nothing from
@@ -83,9 +83,9 @@ namespace MCWeather
 
     /// <summary>
     /// What a drop lands on, which says how it splashes (with MCWeatherSettings::Ground above 0): hard ground (rock,
-    /// roads, concrete, packed earth) throws droplets up, crisply; soil (dirt, ploughed fields) takes it with a dark dot
-    /// as it soaks in, and grass with a soft puff among its blades, neither throwing droplets; water and puddles ring; a
-    /// unit's metal top glints a moment, throwing droplets as hard ground does.
+    /// roads, concrete, packed earth) throws droplets up, crisply; soil (dirt, ploughed fields) takes it with a dark
+    /// dot as it soaks in, and grass with a soft puff among its blades, neither throwing droplets; water and puddles
+    /// ring; a unit's metal top glints a moment, throwing droplets as hard ground does.
     /// </summary>
     enum class MCSplashGround : uint8_t
     {
@@ -230,16 +230,16 @@ namespace MCWeather
     /// <summary>
     /// The ground land drawn in palette entry <paramref name="index"/> is taken for: grass by its green (which the
     /// puddles leave dry too), soil by a brown's strong colour (its saturation: the dirt's and the fields' browns and
-    /// tans), else hard ground (the rock's, the roads', concrete's and packed earth's greys and grey browns); the water's
-    /// colours (MCParticles::IsWaterColor) are water.
+    /// tans), else hard ground (the rock's, the roads', concrete's and packed earth's greys and grey browns); the
+    /// water's colours (MCParticles::IsWaterColor) are water.
     /// </summary>
     MCSplashGround GroundOf(uint8_t index);
 
     /// <summary>
-    /// What a drop landing at world point <paramref name="point"/> (not on a unit) splashes on, as
-    /// <paramref name="camera"/> shows the ground there: water where the water is drawn (not under a bridge) or a puddle
-    /// lies, else what <see cref="GroundOf"/> takes most of the surface drawn round it for (MCParticles::SurfaceDrawnAt:
-    /// the overlays laid on the ground, such as roads, over its tiles; a few pixels round it vote, as the dirt's art is
+    /// What a drop landing at world point <paramref name="point"/> (not on a unit) splashes on, as <paramref
+    /// name="camera"/> shows the ground there: water where the water is drawn (not under a bridge) or a puddle lies,
+    /// else what <see cref="GroundOf"/> takes most of the surface drawn round it for (MCParticles::SurfaceDrawnAt: the
+    /// overlays laid on the ground, such as roads, over its tiles; a few pixels round it vote, as the dirt's art is
     /// speckled with the rock's colours); hard ground where none is drawn.
     /// </summary>
     MCSplashGround GroundAt(const MCVector3D& point, const MCCamera& camera);

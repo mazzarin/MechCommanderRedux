@@ -5090,10 +5090,10 @@ TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast,
 
 /// <summary>
 /// HD weather's splashes fitting the ground (MCWeather::MCWeatherSettings::Ground), on mission 1 drawn by the GPU in a
-/// downpour letting no rain of its own fall, paused, as the game's time goes: a near drop landed (MCWeather::AddDrop) on
-/// hard ground throws droplets up; into soil it soaks, a dark dot, and in grass it puffs, neither throwing any; on the
-/// water drawn it rings; on the player's mech's top it glints, throwing droplets. At a strength of 0 every land and the
-/// mech throw droplets, as the rain first fell. Each shows where it lands (the soak darker, the puff and the glint
+/// downpour letting no rain of its own fall, paused, as the game's time goes: a near drop landed (MCWeather::AddDrop)
+/// on hard ground throws droplets up; into soil it soaks, a dark dot, and in grass it puffs, neither throwing any; on
+/// the water drawn it rings; on the player's mech's top it glints, throwing droplets. At a strength of 0 every land and
+/// the mech throw droplets, as the rain first fell. Each shows where it lands (the soak darker, the puff and the glint
 /// lighter), the same drop splashes the same again, and none of it throws the game's dice.
 /// </summary>
 TEST_CASE_ISOLATED(
@@ -5180,8 +5180,8 @@ TEST_CASE_ISOLATED(
         return found;
     };
 
-    // What a near drop landed at a point splashes into: its pieces at their most over the frames it lasts, and the frame
-    // shown as it lands; the weather's dice started again.
+    // What a near drop landed at a point splashes into: its pieces at their most over the frames it lasts, and the
+    // frame shown as it lands; the weather's dice started again.
     constexpr float Step = 1.0f / 30.0f;
     constexpr int32_t Frames = 20;
     constexpr uint8_t NearDrop = 2;
@@ -6478,9 +6478,9 @@ namespace
     /// <summary>
     /// With <c>--hd-weather &lt;name&gt;[,&lt;amount&gt;]</c>, shows every mission in that weather (GHdWeather: rain,
     /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount); with
-    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder);
-    /// with <c>--hd-splashes &lt;strength&gt;</c>, its drops splashing as the ground takes them that strongly, 1 as made
-    /// (0: every land alike, as the rain first fell; MCWeatherSettings::Ground).
+    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none;
+    /// MCWeatherSettings::Thunder); with <c>--hd-splashes &lt;strength&gt;</c>, its drops splashing as the ground takes
+    /// them that strongly, 1 as made (0: every land alike, as the rain first fell; MCWeatherSettings::Ground).
     /// </summary>
     void WeatherFromOptions()
     {

@@ -3348,7 +3348,7 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
     const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
     const float up = lighting.SunShadowUp;
 
-    if (GHdSunShadows == 0 || up <= 0.0f)
+    if (GHdSunShadows == 0 || up == 0.0f)
     {
         return;
     }
@@ -3372,7 +3372,7 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
     }
 
     // A point h window pixels above the foot (the hot spot's row) casts its shadow right * h right and up * h up of
-    // it; the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
+    // it (down, for a sun beyond the camera's side); the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
     const float right = lighting.SunShadowRight;
     const auto foot = static_cast<float>(top - yMin);
     const float x0 = static_cast<float>(left);

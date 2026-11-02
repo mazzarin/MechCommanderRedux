@@ -65,6 +65,11 @@ namespace
     /// </summary>
     constexpr float PaintedShadowHeight = 30.0f;
     /// <summary>
+    /// Port-only (a tool's turning sun, MCLighting::SunTurnSeconds): its shadows reach at least this far up or down the
+    /// window per pixel of height: a sprite casts its shadow from its outline, which folds flat cast along the rows.
+    /// </summary>
+    constexpr float SunTurnLeastUp = 0.04f;
+    /// <summary>
     /// Night's world light: dimmer than dusk's, the moon's blue (its tint about as bright as white), and the world's
     /// colours paler in it; the lights stronger.
     /// </summary>
@@ -543,6 +548,19 @@ auto MCSceneLights::ShownLighting() -> MCLighting
         }
     }
 
+    if (shown.SunTurnSeconds > 0.0f && shown.SunShadowUp != 0.0f)
+    {
+        // The shadows' way along the ground (a screen height of ground GroundAspect of one), turned by the mission's
+        // time.
+        const float aspect = GroundAspect();
+        const float turn = std::fmod(ScenarioTime / shown.SunTurnSeconds, 1.0f) * 2.0f * std::numbers::pi_v<float>;
+        const float alongX = shown.SunShadowRight * shown.SunTurnLength;
+        const float alongY = shown.SunShadowUp / aspect * shown.SunTurnLength;
+        const float up = (alongX * std::sin(turn) + alongY * std::cos(turn)) * aspect;
+        shown.SunShadowRight = alongX * std::cos(turn) - alongY * std::sin(turn);
+        shown.SunShadowUp = std::copysign(std::max(std::abs(up), SunTurnLeastUp), up);
+    }
+
     // Port-only (HD weather): under the overcast no sun shows the relief, and the objects' shadows are faint.
     if (MCWeather::Shown() != MCWeatherKind::Clear)
     {
@@ -922,18 +940,19 @@ auto MCSceneLights::HeadlightOn(int32_t status) -> bool
 
 auto MCSceneLights::RecastsSunShadows() -> bool
 {
-    return GHdSunShadows != 0 && TimeOfDay() != MCTimeOfDay::Day && MCHdArt::Active() &&
-           MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+    return GHdSunShadows != 0 && (TimeOfDay() != MCTimeOfDay::Day || TheState().Lighting.SunTurnSeconds > 0.0f) &&
+           MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
 }
 
 auto MCSceneLights::SunCasts() -> bool
 {
-    return GHdSunShadows != 0 && ShownLighting().SunShadowUp > 0.0f;
+    return GHdSunShadows != 0 && ShownLighting().SunShadowUp != 0.0f;
 }
 
 auto MCSceneLights::PaintedShadowReach() -> std::array<float, 2>
 {
-    if (!RecastsSunShadows() || !SunCasts())
+    // A turning sun leaves a painted shadow as painted.
+    if (!RecastsSunShadows() || !SunCasts() || TheState().Lighting.SunTurnSeconds > 0.0f)
     {
         return {};
     }

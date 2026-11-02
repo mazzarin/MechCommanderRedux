@@ -6941,6 +6941,34 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sun-turn &lt;seconds&gt;[,&lt;length&gt;]</c>, turns the sun once round the world in that many
+    /// seconds of the mission's time, its shadows that many times as long as the day's (MCLighting::SunTurnSeconds and
+    /// SunTurnLength), every object casting its own: shows the sun's way with sun shadows on.
+    /// </summary>
+    void SunTurnFromOptions()
+    {
+        const std::optional<std::string_view> turn = MCTest::Option("hd-sun-turn");
+
+        if (!turn.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+        const std::string values(*turn);
+        char* rest = nullptr;
+        lighting.SunTurnSeconds = std::strtof(values.c_str(), &rest);
+
+        if (*rest == ',')
+        {
+            lighting.SunTurnLength = std::strtof(rest + 1, nullptr);
+        }
+
+        std::cout << std::format("  sun: once round in {:.0f} s, shadows {:.2f} times the day's\n",
+                                 lighting.SunTurnSeconds, lighting.SunTurnLength);
+    }
+
+    /// <summary>
     /// With <c>--hd-arms original|hit|dropped|thrown|shattered</c>, a blown-off mech arm shows so with HD art (GHdArms, an
     /// MCArmStyle): as the original, as the hit that took it off says (the game's), or always dropped, thrown or
     /// shattered.
@@ -7300,6 +7328,7 @@ namespace
         SunReliefFromOptions();
         ReliefMapsFromOptions();
         SunShadowsFromOptions();
+        SunTurnFromOptions();
         ArmsFromOptions();
         CloudsFromOptions();
         SwayFromOptions();

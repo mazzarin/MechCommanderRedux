@@ -30,8 +30,9 @@ namespace
     /// Rain and a downpour as the mock-ups made them (tools/upscale/rain-proto, render_rain2.py and 3), their drops 1.2
     /// times as many: drawn in the game, as many covered 0.85 of the mock-up's pixels (mission 20's road). Their rain is
     /// heard faintly, as from far above the battle: a downpour 14 dB under the rain loop as levelled (about 25 dB under
-    /// the game's sounds as they play), rain about 6 dB under that. A downpour's thunder rolls in about twice a minute,
-    /// the nearest at its loudest about 12 dB under the thunder as levelled (its loudest quarter second -12 dBFS).
+    /// the game's sounds as they play), rain about 6 dB under that. Lightning strikes a downpour about twice a minute,
+    /// its thunder after it; heard alone, the thunder was lost in the battle (you, 2 Nov: "it's hard to tell the thunder
+    /// sound effect versus anything that's actually happening in the battle ... unless there's lightning").
     /// </summary>
     constexpr MCWeather::MCWeatherLook RainLook{.Dark = 0.33f,
                                                 .Grey = 0.2f,
@@ -55,13 +56,39 @@ namespace
                                                     .Gloss = 0.35f,
                                                     .Drips = 8.0f,
                                                     .Heard = 0.45f,
-                                                    .Thunder = 2.0f,
-                                                    .ThunderHeard = 0.5f};
+                                                    .Strikes = 2.0f,
+                                                    .Flash = 0.6f,
+                                                    .ThunderHeard = 1.0f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
     /// <summary>The drops' dice's first seed (their own: never the game's, nor the particles').</summary>
     constexpr uint32_t DiceSeed = 0x7a1d5eedu;
+    /// <summary>The lightning's dice's first seed (its own, so the rain falls the same with or without it).</summary>
+    constexpr uint32_t StrikeSeed = 0x1b0c7a11u;
+    /// <summary>A strike's wait, as a share of the average wait (a minute over the strikes a minute): least and most.</summary>
+    constexpr float StrikeWaitLeast = 0.4f;
+    constexpr float StrikeWaitMost = 1.6f;
+    constexpr float SecondsAMinute = 60.0f;
+    /// <summary>
+    /// A strike flickers 1 to MaxFlickers times, the first at once and each next FlickerGapLeast to FlickerGapMost
+    /// seconds after, FlickerLeast to FlickerMost as bright as the first; each fades as exp(-age / FlickerFade), the
+    /// strike gone after FlashLife seconds.
+    /// </summary>
+    constexpr int32_t MaxFlickers = 3;
+    constexpr float FlickerGapLeast = 0.07f;
+    constexpr float FlickerGapMost = 0.22f;
+    constexpr float FlickerLeast = 0.35f;
+    constexpr float FlickerMost = 0.8f;
+    constexpr float FlickerFade = 0.06f;
+    constexpr float FlashLife = 0.8f;
+    /// <summary>The farthest strike's flash, of the nearest's.</summary>
+    constexpr float FarFlash = 0.3f;
+    /// <summary>A strike's thunder comes this many seconds after its flash: the nearest's, and the farthest's.</summary>
+    constexpr float ThunderSoonest = 0.3f;
+    constexpr float ThunderLatest = 3.5f;
+    /// <summary>A strike's thunder not taken this many seconds after it came is dropped (the sound off).</summary>
+    constexpr float ThunderStale = 1.0f;
     /// <summary>
     /// The most drops, splashes and drips at once on a square of the view DropsArea pixels a side (a downpour keeps about
     /// 350): past it, no more fall until some have gone.
@@ -329,12 +356,15 @@ namespace
         return Layered(x, y, SheetApartY, SheetApartX);
     }
 
-    /// <summary>The drops' own dice: the same throws in the same order every run.</summary>
+    /// <summary>The weather's own dice: the same throws in the same order every run.</summary>
     class MCDice
     {
     public:
+        /// <summary>Dice thrown from <paramref name="seed"/>.</summary>
+        explicit MCDice(uint32_t seed = DiceSeed) : _Seed(seed), _Engine(seed) {}
+
         /// <summary>Throws from the start again.</summary>
-        void Restart() { _Engine.seed(DiceSeed); }
+        void Restart() { _Engine.seed(_Seed); }
 
         /// <summary>A number in [0, 1), made the same way on every platform (24 of the engine's bits).</summary>
         float Unit() { return static_cast<float>(_Engine() >> 8) * (1.0f / static_cast<float>(1u << 24)); }
@@ -352,7 +382,8 @@ namespace
         int32_t Count(float mean) { return static_cast<int32_t>(std::floor(std::max(mean, 0.0f) + Unit())); }
 
     private:
-        std::mt19937 _Engine{DiceSeed};
+        uint32_t _Seed;
+        std::mt19937 _Engine;
     };
 
     /// <summary>A falling drop: where it lands (the world, its height there), its size and look, how far it has fallen.</summary>
@@ -473,6 +504,26 @@ namespace
     };
 
     /// <summary>
+    /// A lightning strike: the game's time it struck, how far off (0 the nearest, 1 the farthest) and to which side
+    /// (-1 to 1), and its flickers: each one's time after the strike and how bright (0: none).
+    /// </summary>
+    struct Strike
+    {
+        float Time = 0.0f;
+        float Far = 0.0f;
+        float Side = 0.0f;
+        std::array<float, MaxFlickers> At{};
+        std::array<float, MaxFlickers> Bright{};
+    };
+
+    /// <summary>A strike's thunder, due at the game's time Due.</summary>
+    struct PendingThunder
+    {
+        float Due = 0.0f;
+        MCWeather::MCThunderClap Clap;
+    };
+
+    /// <summary>
     /// The weather's state: its settings and the mission's weather; the drops falling and the splashes showing, and the
     /// most there may be (for this frame's view); the units drawn and the feet come down this frame (Draw empties them
     /// each frame); the feet's puddles still reacting (the newest MCWeather::MaxPuddleSteps); the shapes' frames'
@@ -493,6 +544,11 @@ namespace
         std::map<FrameKey, std::optional<PrintShape>> Prints;
         MCDice Dice;
         MCDice StepDice;
+        /// <summary>The lightning: its dice, the game's time till the next strike, the strikes still flashing, their thunder.</summary>
+        MCDice StrikeDice{StrikeSeed};
+        std::optional<float> NextStrike;
+        std::vector<Strike> Strikes;
+        std::vector<PendingThunder> Thunders;
         std::optional<float> Time;
         /// <summary>The puddles' levels for their shares of the ground, measured once (PuddleLevel).</summary>
         std::vector<float> PuddleSamples;
@@ -1200,6 +1256,57 @@ namespace
         state.Time.reset();
         state.Dice.Restart();
         state.StepDice.Restart();
+        state.StrikeDice.Restart();
+        state.NextStrike.reset();
+        state.Strikes.clear();
+        state.Thunders.clear();
+    }
+
+    /// <summary>
+    /// The lightning: a strike about look.Strikes a minute (times the settings'), waits thrown between StrikeWaitLeast
+    /// and StrikeWaitMost of the average, each strike's distance, side and flickers thrown by its own dice and its
+    /// thunder due a moment after; flashes gone and thunder long due are dropped.
+    /// </summary>
+    void Lightning(State& state, const MCWeather::MCWeatherLook& look, float step, float now)
+    {
+        std::erase_if(state.Strikes, [now](const Strike& strike) { return now - strike.Time > FlashLife; });
+        std::erase_if(state.Thunders,
+                      [now](const PendingThunder& thunder) { return now - thunder.Due > ThunderStale; });
+        const float strikes = look.Strikes * state.Settings.Strikes;
+
+        if (strikes <= 0.0f)
+        {
+            state.NextStrike.reset();
+            return;
+        }
+
+        MCDice& dice = state.StrikeDice;
+        const float average = SecondsAMinute / strikes;
+        const auto wait = [&] { return average * dice.Between(StrikeWaitLeast, StrikeWaitMost); };
+        // The first strike waits as the others do.
+        float& next = state.NextStrike.has_value() ? *state.NextStrike : state.NextStrike.emplace(wait());
+        next -= step;
+
+        if (next > 0.0f)
+        {
+            return;
+        }
+
+        next = wait();
+        Strike strike{.Time = now, .Far = dice.Unit(), .Side = dice.Between(-1.0f, 1.0f)};
+        const int32_t flickers = dice.Between(1, MaxFlickers);
+        float at = 0.0f;
+
+        for (int32_t i = 0; i < flickers; ++i)
+        {
+            strike.At[i] = at;
+            strike.Bright[i] = i == 0 ? 1.0f : dice.Between(FlickerLeast, FlickerMost);
+            at += dice.Between(FlickerGapLeast, FlickerGapMost);
+        }
+
+        state.Strikes.push_back(strike);
+        state.Thunders.push_back({.Due = now + std::lerp(ThunderSoonest, ThunderLatest, strike.Far),
+                                  .Clap = {.Far = strike.Far, .Side = strike.Side}});
     }
 }
 
@@ -1268,6 +1375,62 @@ auto MCWeather::HeardLook() -> MCWeatherLook
     MCWeatherLook look = ShownLook();
     look.ThunderHeard *= Settings().Thunder;
     return look;
+}
+
+auto MCWeather::ShownFlash() -> MCFlash
+{
+    const State& state = TheState();
+
+    if (!state.Time.has_value())
+    {
+        return {};
+    }
+
+    MCFlash flash;
+
+    // The brightest strike's light and side.
+    for (const Strike& strike : state.Strikes)
+    {
+        float light = 0.0f;
+
+        for (size_t i = 0; i < strike.At.size(); ++i)
+        {
+            const float age = *state.Time - strike.Time - strike.At[i];
+            light += age >= 0.0f ? strike.Bright[i] * std::exp(-age / FlickerFade) : 0.0f;
+        }
+
+        light = std::min(light, 1.0f) * std::lerp(1.0f, FarFlash, strike.Far);
+
+        if (light > flash.Light)
+        {
+            flash = {.Light = light, .Side = strike.Side};
+        }
+    }
+
+    flash.Light *= ShownLook().Flash * state.Settings.Flash;
+    return flash;
+}
+
+auto MCWeather::TakeThunder() -> std::optional<MCThunderClap>
+{
+    State& state = TheState();
+
+    if (!state.Time.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const auto due = std::ranges::find_if(state.Thunders, [&state](const PendingThunder& thunder)
+                                          { return thunder.Due <= *state.Time; });
+
+    if (due == state.Thunders.end())
+    {
+        return std::nullopt;
+    }
+
+    const MCThunderClap clap = due->Clap;
+    state.Thunders.erase(due);
+    return clap;
 }
 
 auto MCWeather::Named(std::string_view name) -> std::optional<MCWeatherKind>
@@ -1410,6 +1573,9 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         state.Units.clear();
         state.Steps.clear();
         state.PuddleSteps.clear();
+        state.NextStrike.reset();
+        state.Strikes.clear();
+        state.Thunders.clear();
         return;
     }
 
@@ -1420,6 +1586,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         AgePuddleSteps(state, step);
         Rain(state, camera, look, step, now);
         Drip(state, look, step);
+        Lightning(state, look, step, now);
 
         for (const PendingStep& foot : state.Steps)
         {

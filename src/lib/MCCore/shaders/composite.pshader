@@ -126,6 +126,9 @@ cbuffer Composite : register(b0, space3)
     // z, how much of the sky the bright metal of what stands on the ground mirrors; w, the feet's puddles reacting in
     // puddleSteps.
     float4 wetLook;
+    // The lightning (MCWeather::ShownFlash): x, how much it lights the world now (0 none, 1 FlashLight in full); y, the
+    // side of the view it struck on (-1 left to 1 right).
+    float4 flash;
     // One a foot come down in a puddle (MCWeather::ShownPuddleSteps): its ground point (xy, meters, as GroundPointAt),
     // how long ago (z, seconds of the game's time) and how big its splash is (w); then PrintCircles a foot, the circles
     // its footprint's shape is taken as: each one's middle on the ground (xy) and its radius (z, meters).
@@ -962,8 +965,33 @@ float SheetsAt(float2 at)
     return saturate((Layered(p, SheetApart) - SheetFrom) / (SheetTo - SheetFrom));
 }
 
+// Port-only (HD weather's lightning): the light a flash lights the world with at its height, brighter than the day and
+// blue-white; the side it struck on takes FlashSide more of it, the other side as much less.
+static const float3 FlashLight = float3(1.3, 1.36, 1.5);
+static const float FlashSide = 0.35;
+// The least of the world's own light a flash is measured against (the darkest night's is above it).
+static const float LeastAmbient = 0.01;
+
+// How much the lightning lights world texel `texel` now (flash), 0 to 1.
+float LightningAt(float2 texel)
+{
+    if (flash.x <= 0.0)
+    {
+        return 0.0;
+    }
+
+    const float across = 2.0 * texel.x / worldSize.x - 1.0;
+    return saturate(flash.x * (1.0 + FlashSide * flash.y * across));
+}
+
+// The sky's light under the overcast at world texel `texel`: the world's own, dimmed, or the lightning's as it flashes.
+float3 SkyLightAt(float2 texel)
+{
+    return lerp(AmbientLight() * (1.0 - weather.x), FlashLight, LightningAt(texel));
+}
+
 // The world's own light the overcast leaves at a world texel (1 under a clear sky): dimmed and a little blue, and on
-// land, wet, darker still.
+// land, wet, darker still; as the lightning flashes, its light instead.
 float3 OvercastAt(float2 texel)
 {
     if (weather.x <= 0.0 && weather.z <= 0.0)
@@ -972,7 +1000,8 @@ float3 OvercastAt(float2 texel)
     }
 
     const float wet = IsWater(WorldIndexAt(texel)) ? 0.0 : weather.z;
-    return (1.0 - weather.x) * OvercastTint * (1.0 - wet);
+    const float3 overcast = (1.0 - weather.x) * OvercastTint * (1.0 - wet);
+    return lerp(overcast, FlashLight / max(AmbientLight(), LeastAmbient), LightningAt(texel));
 }
 
 // The wet look (wetLook; tools/upscale/rain-proto/render_rain3.py, mock-up 3). The overcast sky as wet things mirror
@@ -1162,8 +1191,8 @@ float3 WetAt(float3 color, float3 art, float2 texel)
         return color;
     }
 
-    const float3 sky = WetSky * WetSkyGain * AmbientLight() * (1.0 - weather.x) *
-                       (SkySheetLow + SkySheetSpan * SheetsAt(GroundPointAt(texel + 0.5)));
+    const float3 sky =
+        WetSky * WetSkyGain * SkyLightAt(texel) * (SkySheetLow + SkySheetSpan * SheetsAt(GroundPointAt(texel + 0.5)));
     float mark;
     const float2 slope = ReliefAt(texel, mark);
 
@@ -1214,7 +1243,7 @@ float3 VeiledAt(float3 color, float2 texel)
     }
 
     const float veil = saturate(weather.w * (VeilLeast + VeilSheets * SheetsAt(GroundPointAt(texel))));
-    return lerp(color, VeilColour * AmbientLight(), veil);
+    return lerp(color, VeilColour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
 }
 
 float4 main(float4 position : SV_Position) : SV_Target

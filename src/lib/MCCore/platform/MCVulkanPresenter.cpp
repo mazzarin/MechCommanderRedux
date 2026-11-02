@@ -73,6 +73,8 @@ namespace
         /// puddles reacting in PuddleSteps.
         /// </summary>
         float WetLook[4] = {};
+        /// <summary>The lightning: how much it lights the world now (0 none) and from which side of the view (-1 to 1).</summary>
+        float Flash[4] = {};
         /// <summary>One a foot's puddle reacting: its ground point (meters), its age (seconds) and its strength.</summary>
         float PuddleSteps[MCWeather::MaxPuddleSteps][4] = {};
         /// <summary>MCWeather::PrintCircles a foot: its footprint's circles, their middles and radii (meters).</summary>
@@ -199,6 +201,9 @@ namespace
             uniforms.Weather[1] = std::clamp(look.Grey, 0.0f, 1.0f);
             uniforms.Weather[2] = std::clamp(look.Wet, 0.0f, 1.0f);
             uniforms.Weather[3] = std::clamp(look.Veil, 0.0f, 1.0f);
+            const MCWeather::MCFlash flash = MCWeather::ShownFlash();
+            uniforms.Flash[0] = std::clamp(flash.Light, 0.0f, 1.0f);
+            uniforms.Flash[1] = std::clamp(flash.Side, -1.0f, 1.0f);
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
             if (MCSceneLights::ReliefMapsOn())

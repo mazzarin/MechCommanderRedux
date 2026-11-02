@@ -4,8 +4,6 @@
 #include "sound/MCRadio.h"
 #include "sound/MCRadioMessage.h"
 
-#include <random>
-
 class MCAudioStream;
 class MCFlac;
 class MCGameObject;
@@ -13,6 +11,11 @@ class MCMechWarrior;
 class MCPacketFile;
 class MCSoundRenderer;
 class MCSoundResource;
+
+namespace MCWeather
+{
+    struct MCThunderClap;
+}
 
 /// <summary>
 /// Sound renderer channels the sound system opens: 16 for effects and speech, 2 for music streams. The channels'
@@ -176,16 +179,16 @@ public:
     /// <summary>How loud the rain bed plays (as <see cref="UpdateRain"/> takes it), eased toward what is heard.</summary>
     float RainLevel() const { return _RainLevel; }
     /// <summary>
-    /// Port-only (HD weather): thunder, the HD audio pack's (MCHdAudio::Thunder), rolling in from beyond the view about
-    /// <paramref name="claps"/> times a minute (MCWeather::MCWeatherLook::Thunder) by the frames' time (FrameLength).
-    /// Each clap plays the thunder once, slower or faster (deeper and farther, or nearer), from one side or the other,
-    /// at the effects volume, as loud as <paramref name="heard"/> (a channel volume) for the nearest; one rolls at a
-    /// time. Its own dice, thrown from their start again at the purge, so a mission hears the same thunder each time it
-    /// is played. None while no claps come (one rolling plays out); without the pack's thunder, none till the purge.
+    /// Port-only (HD weather): thunder, the HD audio pack's (MCHdAudio::Thunder). A lightning strike's
+    /// <paramref name="clap"/> (MCWeather::TakeThunder; null for none this frame) plays the thunder once, slower or
+    /// faster as it struck farther or nearer (deeper and longer, or higher), from its side, at the effects volume, as
+    /// loud as <paramref name="heard"/> (a channel volume) for the nearest and fainter farther off; a clap still rolling
+    /// fades out over ThunderFadeOut seconds of the frames' time (FrameLength) under a newer one. Without the pack's
+    /// thunder, none till the purge.
     /// </summary>
-    void UpdateThunder(float claps, float heard);
-    /// <summary>Whether a clap of thunder is rolling.</summary>
-    bool ThunderRolling() const { return _ThunderStream != nullptr; }
+    void UpdateThunder(float heard, const MCWeather::MCThunderClap* clap);
+    /// <summary>How many claps of thunder are rolling (one fading out under a newer one counts).</summary>
+    size_t ThunderRolls() const { return _ThunderRolls.size(); }
     /// <summary>Streams music <paramref name="musicId"/> ("DMS%d", +25 on the second planet), fading from the stream
     /// playing.</summary>
     /// <returns>0, or -0x5445fff2 when it is already playing or a fade is under way.</returns>
@@ -324,10 +327,23 @@ private:
     void UpdateMusicChoice();
     /// <summary>Stops the rain bed and closes its loop.</summary>
     void StopRain();
-    /// <summary>Starts a clap of thunder as loud as <paramref name="heard"/> at the nearest.</summary>
-    void StartThunder(float heard);
-    /// <summary>Stops the thunder rolling and closes it.</summary>
-    void StopThunder();
+    /// <summary>Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest.</summary>
+    void StartThunder(float heard, const MCWeather::MCThunderClap& clap);
+
+    /// <summary>
+    /// A clap of thunder rolling: the thunder it reads and the stream it plays through, how loud (a channel volume
+    /// before the effects volume), whether it is all queued, and whether it fades out (under a newer clap) and how much
+    /// of it is left (1 to 0).
+    /// </summary>
+    struct MCThunderRoll
+    {
+        std::unique_ptr<MCFlac> File;
+        std::shared_ptr<MCAudioStream> Stream;
+        float Level = 0.0f;
+        bool Read = false;
+        bool Fading = false;
+        float Left = 1.0f;
+    };
 
     /// <summary>The renderer the channels belong to.</summary>
     MCSoundRenderer& _Renderer;
@@ -357,20 +373,10 @@ private:
     float _RainLevel = 0.0f;
     /// <summary>Set once the pack had no rain loop that plays: none is looked for again till the purge.</summary>
     bool _RainMissing = false;
-    /// <summary>The thunder the clap rolling reads (null while none rolls).</summary>
-    std::unique_ptr<MCFlac> _Thunder;
-    /// <summary>The stream the clap rolling plays through (null while none rolls).</summary>
-    std::shared_ptr<MCAudioStream> _ThunderStream;
+    /// <summary>The claps of thunder rolling, oldest first.</summary>
+    std::vector<MCThunderRoll> _ThunderRolls;
     /// <summary>The thunder's PCM read last.</summary>
     std::vector<uint8_t> _ThunderChunk;
-    /// <summary>Set once the clap rolling is all queued.</summary>
-    bool _ThunderRead = false;
-    /// <summary>How loud the clap rolling plays, as a channel volume before the effects volume.</summary>
-    float _ThunderLevel = 0.0f;
-    /// <summary>Seconds till the next clap (below 0: none due, as while no claps come).</summary>
-    float _ThunderWait = -1.0f;
-    /// <summary>The thunder's dice (its own: never the game's).</summary>
-    std::minstd_rand _ThunderDice;
     /// <summary>Set once the pack had no thunder that plays: none is looked for again till the purge.</summary>
     bool _ThunderMissing = false;
 };

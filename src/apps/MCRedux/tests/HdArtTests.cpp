@@ -38,6 +38,7 @@
 #include "main/MCArtModes.h"
 #include "main/MCGameContext.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundSystem.h"
 #include "platform/MCAudio.h"
 #include "gameos/MCSoundRenderer.h"
 #include "main/MCGamePaths.h"
@@ -5089,6 +5090,123 @@ TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast,
 }
 
 /// <summary>
+/// HD weather's lightning, on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface: in a downpour (its strikes made StrikesTimes as often) as the game's time goes the world flashes brighter
+/// than the overcast now and then and dims again; each strike's thunder comes after its flash; the same times show the
+/// same lightning, its dice starting again (MCWeather::Clear), and none of it throws the game's dice. Without its flash
+/// the downpour holds as bright.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: in a downpour lightning lights the world now and then, its thunder after, never touching the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    GamePaused = true;
+    // The sound takes no thunder here: the test does.
+    const int32_t usedSound = UseSound;
+    UseSound = 0;
+    GHdWeather = HdWeatherDownpour;
+    // Strikes about once a second (a downpour's two a minute, 30 times), over 4 seconds of frames.
+    constexpr float StrikesTimes = 30.0f;
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 120;
+    // A flash lights the world's mean brightness at least this much (of 255) over the dimmest frame's.
+    constexpr float Flashed = 8.0f;
+    // Without the flash, the frames' mean brightness strays no more than this (the drops falling).
+    constexpr float Steady = 3.0f;
+    MCWeather::Settings().Strikes = StrikesTimes;
+
+    // Each frame's mean brightness of the world clear of the interface, and the frames a strike's thunder came on.
+    struct Run
+    {
+        std::vector<float> Brightness;
+        std::vector<int32_t> Thunder;
+        int32_t FirstFlash = -1;
+    };
+
+    const auto run = [&](float flash)
+    {
+        MCWeather::Clear();
+        MCWeather::Settings().Flash = flash;
+        Run made;
+
+        for (int32_t frame = 0; frame <= Frames; ++frame)
+        {
+            ScenarioTime = now + Step * static_cast<float>(frame);
+            MCTestGame::RunFrame(FrameSeconds);
+            const auto shown = display->ReadFrame();
+            REQUIRE(shown.has_value());
+            double sum = 0.0;
+            size_t count = 0;
+
+            for (int32_t y = height / 4; y < height; ++y)
+            {
+                for (int32_t x = width / 3; x < width; ++x)
+                {
+                    sum += LumaOf((*shown)[static_cast<size_t>(y) * width + x]);
+                    ++count;
+                }
+            }
+
+            made.Brightness.push_back(static_cast<float>(sum / static_cast<double>(count)));
+
+            if (made.FirstFlash < 0 && MCWeather::ShownFlash().Light > 0.0f)
+            {
+                made.FirstFlash = frame;
+            }
+
+            if (MCWeather::TakeThunder().has_value())
+            {
+                made.Thunder.push_back(frame);
+            }
+        }
+
+        return made;
+    };
+
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    const Run first = run(1.0f);
+    const Run second = run(1.0f);
+    const Run unlit = run(0.0f);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    MCWeather::Settings() = {};
+    GHdWeather = HdWeatherOff;
+    UseSound = usedSound;
+    ScenarioTime = now;
+
+    const auto [dimmest, brightest] = std::ranges::minmax(first.Brightness);
+    const auto [unlitDimmest, unlitBrightest] = std::ranges::minmax(unlit.Brightness);
+    std::cout << std::format(
+        "  lightning: brightness {:.1f} to {:.1f} (no flash {:.1f} to {:.1f}), first flash frame {}, "
+        "{} thunder, the first on frame {}\n",
+        dimmest, brightest, unlitDimmest, unlitBrightest, first.FirstFlash, first.Thunder.size(),
+        first.Thunder.empty() ? -1 : first.Thunder.front());
+    CHECK(brightest > dimmest + Flashed);
+    CHECK(unlitBrightest < unlitDimmest + Steady);
+    CHECK(first.FirstFlash >= 0);
+    REQUIRE(!first.Thunder.empty());
+    CHECK(first.Thunder.front() > first.FirstFlash);
+    CHECK(second.Brightness == first.Brightness);
+    CHECK(second.Thunder == first.Thunder);
+}
+
+/// <summary>
 /// HD particles' steps (MCParticles::AddStep: a mech's feet, where they print or would), on the screen drawn by the GPU
 /// over mission 1's water, paused: as the game's time goes a foot coming down in the water drawn splashes, droplets and a
 /// ring; one on the land drawn throws nothing; none splash at a strength of 0 (MCParticleLook::Steps) or with the
@@ -6170,7 +6288,9 @@ namespace
     /// <summary>
     /// With <c>--hd-weather &lt;name&gt;[,&lt;amount&gt;]</c>, shows every mission in that weather (GHdWeather: rain,
     /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount); with
-    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder).
+    /// <c>--hd-thunder &lt;loudness&gt;</c> too, its thunder that loud, 1 as made (0: none; MCWeatherSettings::Thunder);
+    /// with <c>--hd-lightning &lt;flash&gt;[,&lt;strikes&gt;]</c>, its lightning that bright and that many times as
+    /// often, 1 as made (MCWeatherSettings::Flash and Strikes).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -6199,8 +6319,22 @@ namespace
             MCWeather::Settings().Thunder = std::strtof(std::string(*thunder).c_str(), nullptr);
         }
 
-        std::cout << std::format("  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud\n",
-                                 given->substr(0, comma), MCWeather::Settings().Amount, MCWeather::Settings().Thunder);
+        if (const std::optional<std::string_view> lightning = MCTest::Option("hd-lightning"); lightning.has_value())
+        {
+            const size_t split = lightning->find(',');
+            MCWeather::Settings().Flash = std::strtof(std::string(lightning->substr(0, split)).c_str(), nullptr);
+
+            if (split != std::string_view::npos)
+            {
+                MCWeather::Settings().Strikes = std::strtof(std::string(lightning->substr(split + 1)).c_str(), nullptr);
+            }
+        }
+
+        const MCWeather::MCWeatherSettings& settings = MCWeather::Settings();
+        std::cout << std::format(
+            "  weather: {}, {:.2f} as many drops as made, thunder {:.2f} as loud, lightning {:.2f} "
+            "as bright, {:.2f} as often\n",
+            given->substr(0, comma), settings.Amount, settings.Thunder, settings.Flash, settings.Strikes);
     }
 
     /// <summary>

@@ -69,11 +69,14 @@ namespace MCWeather
         /// </summary>
         float Heard = 0.0f;
         /// <summary>
-        /// Claps of thunder a minute, on average, rolling in from beyond the view (the HD audio pack's thunder,
-        /// MCSoundSystem::UpdateThunder; 0 none). Heard only: no lightning shows.
+        /// Lightning strikes a minute, on average, out of the view (0 none): each lights the world in a flicker
+        /// (<see cref="Flash"/>), and its thunder (the HD audio pack's, MCSoundSystem::UpdateThunder) is heard a moment
+        /// after, the sooner, louder and higher the nearer it struck.
         /// </summary>
-        float Thunder = 0.0f;
-        /// <summary>How loud the nearest thunder is heard, as a channel volume, as <see cref="Heard"/>.</summary>
+        float Strikes = 0.0f;
+        /// <summary>How much the nearest strike's flash lights the world, 0 to 1 (composite.pshader's FlashLight in full).</summary>
+        float Flash = 0.0f;
+        /// <summary>How loud the nearest strike's thunder is heard, as a channel volume, as <see cref="Heard"/>.</summary>
         float ThunderHeard = 0.0f;
     };
 
@@ -89,6 +92,27 @@ namespace MCWeather
         float Steps = 1.0f;
         /// <summary>How loud the thunder is heard, 1 as made (0: none; the tools' --hd-thunder sets it).</summary>
         float Thunder = 1.0f;
+        /// <summary>How brightly lightning flashes, 1 as made (0: none; the tools' --hd-lightning sets it).</summary>
+        float Flash = 1.0f;
+        /// <summary>How often lightning strikes, 1 as made (the tools' --hd-lightning sets it).</summary>
+        float Strikes = 1.0f;
+    };
+
+    /// <summary>A strike's thunder: how far off it struck (0 the nearest, 1 the farthest) and to which side (-1 to 1).</summary>
+    struct MCThunderClap
+    {
+        float Far = 0.0f;
+        float Side = 0.0f;
+    };
+
+    /// <summary>
+    /// The lightning lighting the world: how much (0 none, 1 the nearest strike's whole flash, MCWeatherLook::Flash of
+    /// composite.pshader's FlashLight) and from which side of the view (-1 left to 1 right).
+    /// </summary>
+    struct MCFlash
+    {
+        float Light = 0.0f;
+        float Side = 0.0f;
     };
 
     /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
@@ -151,6 +175,15 @@ namespace MCWeather
     /// cref="MCWeatherSettings::Thunder"/> says) while it is drawn, else a clear sky's (nothing heard).
     /// </summary>
     MCWeatherLook HeardLook();
+
+    /// <summary>The lightning's flash at the game's time the weather was drawn at last (none while none strikes).</summary>
+    MCFlash ShownFlash();
+
+    /// <summary>
+    /// The thunder of a strike whose sound has come (MCWeatherLook::Strikes: a moment after its flash), taken once; none
+    /// while none is due. One not taken soon after it came (the sound off) is dropped.
+    /// </summary>
+    std::optional<MCThunderClap> TakeThunder();
 
     /// <summary>The weather named <paramref name="name"/> ("clear", "rain" or "downpour", in any case); none for another.</summary>
     std::optional<MCWeatherKind> Named(std::string_view name);

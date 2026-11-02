@@ -467,7 +467,7 @@ namespace MCSceneLights
 
     /// <summary>
     /// Where the ground lies in the world window <paramref name="view"/> (as <see cref="Shown"/>, its last finished
-    /// frame's); none when HD lighting and cloud shadows are off or another window was drawn.
+    /// frame's); none when HD lighting, cloud shadows and swaying forests are off or another window was drawn.
     /// </summary>
     std::optional<MCSceneGround> ShownGround(const MCWindow& view);
 

@@ -728,18 +728,32 @@ float3 LivingWater(float3 color, float2 texel, out float glint)
 }
 
 // Port-only (HDSway): a forest's canopy swaying, where the renderer marked it in the index target's alpha (draw.pshader's
-// SwayMark, within SwayMarkNear). Its colour is read from a little way off along the ground, before the water's gusts
-// (GustSize, GustSpeed: the same wind): in a gust its crowns lean SwayLean of sway.x downwind and rock the rest about
-// it, SwayRate times a second, each patch of the canopy (SwayPatch meters) at its own beat, and a little across the wind
-// (SwayAcross); between gusts SwayCalm as far. Leaning, it shows up to sway.y brighter, its leaves turned up to the
-// wind. Where the place read from is no canopy (at the forest's edge) it holds still.
+// SwayMark, within SwayMarkNear). Its colour is read from a little way off along the ground. Gusts sweep over the
+// forest before the wind: noise SwayGustSize meters big (two layers, the finer a third), drifting at SwayGustSpeed,
+// full from the top of SwayGustLevels, calm below its bottom. A gust leans the crowns it passes up to sway.x downwind
+// and tosses them about (SwayToss of sway.x, SwayCalm of that between gusts): the wind's turbulence, carried along
+// with it, as noise SwayTossSize meters big in two layers (the second half as big and as strong), drifting at
+// SwayTossSpeeds, the second SwayTossTurn radians off the wind, so a crown is tossed now one way, now another, and keeps
+// no beat. In a gust the canopy shows up to sway.y
+// brighter, its leaves turned up to the wind. Where the place read from is no canopy (at the forest's edge) it holds
+// still.
 static const float SwayMark = 64.0 / 255.0;
 static const float SwayMarkNear = 16.0 / 255.0;
-static const float SwayLean = 0.4;
-static const float SwayRate = 0.5;
-static const float SwayPatch = 14.0;
-static const float SwayAcross = 0.3;
-static const float SwayCalm = 0.3;
+static const float SwayGustSize = 60.0;
+static const float SwayGustSpeed = 10.0;
+static const float2 SwayGustLevels = float2(0.4, 0.7);
+static const float SwayToss = 0.8;
+static const float SwayCalm = 0.25;
+static const float SwayTossSize = 10.0;
+static const float2 SwayTossSpeeds = float2(9.0, 6.5);
+static const float SwayTossTurn = 0.45;
+// The noise's layers and directions this far apart in it; value noise spreads about this much each side of its middle
+// (scaled up to about 1).
+static const float2 LayerApart = float2(-23.9, 41.7);
+static const float2 AcrossApart = float2(11.7, -5.3);
+static const float NoiseReach = 0.3;
+// The toss's two layers together reach about this far (the second half as far as the first).
+static const float TossLayersReach = 1.5;
 
 bool IsCanopy(float2 texel)
 {
@@ -762,13 +776,22 @@ float2 SwayedAt(float2 texel, out float light)
     const float2 offset = texel + 0.5 - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
     const float time = haze.z;
-    const float gust = lerp(SwayCalm, 1.0, smoothstep(GustLevels.x, GustLevels.y,
-                                                      Noise((at - time * Wind * GustSpeed) / GustSize)));
-    const float beat = TwoPi * (time * SwayRate + Noise(at / SwayPatch));
-    const float rock = sin(beat);
-    const float2 crosswind = float2(-Wind.y, Wind.x);
-    const float2 meters =
-        sway.x * gust * (Wind * (SwayLean + (1.0 - SwayLean) * rock) + crosswind * (SwayAcross * cos(beat)));
+    const float2 gustAt = (at - time * SwayGustSpeed * Wind) / SwayGustSize;
+    const float gust =
+        smoothstep(SwayGustLevels.x, SwayGustLevels.y, (2.0 * Noise(gustAt) + Noise(2.0 * gustAt + LayerApart)) / 3.0);
+    // The toss: each layer a direction from two of its noises (east, north), about its middle.
+    const float2 turned = float2(Wind.x * cos(SwayTossTurn) - Wind.y * sin(SwayTossTurn),
+                                 Wind.x * sin(SwayTossTurn) + Wind.y * cos(SwayTossTurn));
+    const float2 drifts[2] = {Wind * SwayTossSpeeds.x, turned * SwayTossSpeeds.y};
+    float2 toss = float2(0.0, 0.0);
+
+    for (uint i = 0; i < 2; ++i)
+    {
+        const float2 layer = (at - time * drifts[i]) * (1.0 + i) / SwayTossSize + LayerApart * i;
+        toss += (float2(Noise(layer), Noise(layer + AcrossApart)) - 0.5) / (NoiseReach * (1.0 + i));
+    }
+
+    const float2 meters = sway.x * (gust * Wind + SwayToss * lerp(SwayCalm, 1.0, gust) * toss / TossLayersReach);
     // The ground's map inverted: meters east and north to texels.
     const float2 texels = float2(groundAxes.w * meters.x - groundAxes.y * meters.y,
                                  groundAxes.x * meters.y - groundAxes.z * meters.x) /
@@ -781,7 +804,7 @@ float2 SwayedAt(float2 texel, out float light)
         return texel;
     }
 
-    light = 1.0 + sway.y * gust * (0.5 + 0.5 * rock);
+    light = 1.0 + sway.y * gust;
     return swayed;
 }
 

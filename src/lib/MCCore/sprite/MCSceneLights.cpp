@@ -1134,7 +1134,7 @@ auto MCSceneLights::ShownGround(const MCWindow& view) -> std::optional<MCSceneGr
 {
     const State& state = TheState();
 
-    if ((GHdLighting == HdLightingOff && GHdClouds == 0) || state.ShownWindow.lock().get() != &view)
+    if ((GHdLighting == HdLightingOff && GHdClouds == 0 && GHdSway == 0) || state.ShownWindow.lock().get() != &view)
     {
         return std::nullopt;
     }

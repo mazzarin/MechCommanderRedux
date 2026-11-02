@@ -76,7 +76,7 @@ namespace
             .Choices = OffOn,
             .Changed = HdArtChanged},
         Row{.Label = "HD AUDIO",
-            .Description = "THE HD PACK'S MUSIC, EFFECTS AND VOICES (ORCHESTRAL WHEN THE PACK HAS IT).",
+            .Description = "THE HD PACK'S MUSIC, EFFECTS AND VOICES.",
             .Key = "HDAudio",
             .Choices = HdAudioChoices,
             .Changed = HdAudioChanged},

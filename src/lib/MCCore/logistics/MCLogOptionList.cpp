@@ -26,7 +26,7 @@ namespace
     constexpr std::string_view SettingTitle = "SETTING";
 
     /// <summary>The status line's hint, and what it says with the SOFTWARE renderer chosen.</summary>
-    constexpr std::string_view Hint = "CLICK AN OPTION TO CHANGE IT. RIGHT-CLICK TO STEP BACK.";
+    constexpr std::string_view Hint = "CLICK A SETTING FOR ITS NEXT CHOICE, RIGHT-CLICK FOR THE ONE BEFORE.";
     constexpr std::string_view SoftwareHint = "THE SOFTWARE RENDERER DRAWS NONE OF THESE (HD AUDIO STILL PLAYS).";
 
     /// <summary>The sample a change plays.</summary>

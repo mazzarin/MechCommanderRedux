@@ -909,8 +909,9 @@ namespace
 
 /// <summary>
 /// SCROLL SPEED (PREFS "ScrollSpeed") multiplies the battlefield's scrolling, by the scroll keys and at the screen's
-/// edge alike, from the original's pace across the screen (AUTO). At AUTO in the tests' 480 lines, the original's speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's
-/// Scroll Speed (48) halved, as the original did at full size.
+/// edge alike, from the original's pace across the screen (AUTO). At AUTO in the tests' 480 lines, the original's
+/// speed: a 15th of a second at one world pixel per screen pixel scrolls iface.fit's Scroll Speed (48) halved, as the
+/// original did at full size.
 /// </summary>
 TEST_CASE_ISOLATED("game: SCROLL SPEED multiplies the scrolling by the keys and at the screen's edge")
 {

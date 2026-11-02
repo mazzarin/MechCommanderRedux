@@ -115,6 +115,9 @@ public:
     MCDisplay(const MCDisplay&) = delete;
     MCDisplay& operator=(const MCDisplay&) = delete;
 
+    /// <summary>The original's screen's lines (640x480).</summary>
+    static constexpr int OriginalLines = 480;
+
     /// <summary>The SDL window.</summary>
     SDL_Window& Window() const { return *_Window; }
 
@@ -151,8 +154,6 @@ public:
 
     /// <summary>The interface scale that asks for <see cref="AutoInterfaceScale"/>.</summary>
     static constexpr float AutoInterface = 0.0f;
-    /// <summary>The original's screen's lines (640x480), whose proportions AUTO keeps.</summary>
-    static constexpr int OriginalLines = 480;
 
     /// <summary>
     /// The interface scale that keeps a screen of <paramref name="lines"/> lines to the original's proportions: its

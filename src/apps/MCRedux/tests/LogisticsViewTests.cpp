@@ -141,7 +141,7 @@ namespace
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 11 tall at (left, top), 104
     /// wide in the right column and 96 in the left, its list's rows 10 tall from top + 11. DIFFICULTY's field is at
     /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 243) (VULKAN, SOFTWARE), SCROLL SPEED's at (488, 351)
-    /// (1X to 3X).
+    /// (AUTO, 1.5X to 3X).
     /// </summary>
     struct PrefsDropDown
     {
@@ -641,8 +641,9 @@ TEST_CASE_ISOLATED("game: INTERFACE VOLUME sets the interface level, and CANCEL 
 }
 
 /// <summary>
-/// SCROLL SPEED shows the scroll speed when the screen opens (the original's, 1X) and offers 1X to 3X in half steps; a
-/// choice sets the speed, CANCEL puts it back (and the field shows it), and ACCEPT writes it to PREFS "ScrollSpeed".
+/// SCROLL SPEED shows the scroll speed when the screen opens (AUTO, the original's pace) and offers 1.5X to 3X in half
+/// steps besides; a choice sets the speed, CANCEL puts it back (and the field shows it), and ACCEPT writes it to PREFS
+/// "ScrollSpeed".
 /// </summary>
 TEST_CASE_ISOLATED("game: SCROLL SPEED sets the scroll speed, CANCEL puts it back and ACCEPT saves it in PREFS")
 {

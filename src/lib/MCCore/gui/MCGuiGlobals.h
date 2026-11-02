@@ -90,8 +90,8 @@ inline constexpr std::array<int, 5> UiResolutions = {480, 600, 720, 900, 1080};
 /// <summary>
 /// Port-only: how fast the battlefield scrolls, at the screen's edges and by the scroll keys, in percent of the
 /// original's pace across the screen (PREFS "ScrollSpeed", the preferences screen's SCROLL SPEED box): one of
-/// <see cref="ScrollSpeeds"/>. The pace is the original's at 640x480 at any UI resolution and interface size (the
-/// screen's lines over the original's 480 times its speed); <see cref="AutoScrollSpeed"/>, the default, is that pace.
+/// <see cref="ScrollSpeeds"/>. The pace is the original's at 640x480 at any UI resolution (the screen's lines over the
+/// original's 480 times its speed); <see cref="AutoScrollSpeed"/>, the default, is that pace.
 /// </summary>
 extern int GScrollSpeed;
 /// <summary>Port-only: <see cref="GScrollSpeed"/>'s AUTO (the original's pace), its default.</summary>

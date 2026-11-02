@@ -102,6 +102,10 @@ namespace
         const auto numObjectives = static_cast<int32_t>(HomeTeam()->NumObjectives);
         MCFont& font = *LineFont();
         const float strokeWidth = font.StrokeWidth;
+        // The numbers are at the font's double scale (OB-182: the original took whatever scale the font's last user
+        // left, the hover tag's 1.0 among them).
+        font.Scale = 2.0f;
+        font.Scaled = true;
 
         for (int32_t i = 0; i < numObjectives; i++)
         {

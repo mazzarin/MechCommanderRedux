@@ -13,9 +13,7 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
-#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
-#include "platform/MCInput.h"
 
 // The player's key bindings (iface/MCKeyBindings) and the preferences' CONTROLS panel that edits them: the defaults
 // are the original's, every command a player can bind is listed once, the names read back, a key moves from the

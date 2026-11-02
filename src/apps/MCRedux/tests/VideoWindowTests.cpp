@@ -49,11 +49,12 @@ TEST_CASE_ISOLATED("game: the tactical map's video window matches the pre-render
         return hash;
     };
 
-    CHECK_EQ(settle("idle"), 0xe4b58559u);
+    // (Recorded again for OB-182: the map's objective numbers at the font's double scale under the hover tag.)
+    CHECK_EQ(settle("idle"), 0xa9e4a145u);
     map->VideoWindow->SetStar(pilot);
-    CHECK_EQ(settle("speaking"), 0x566829a5u);
+    CHECK_EQ(settle("speaking"), 0x49ccf27du);
     map->VideoWindow->SetStar(nullptr);
     CHECK_EQ(settle("done"), 0xd9566f22u);
     MCTestGame::OnPresent = nullptr;
-    CHECK_EQ(presents, 0x861a964eu);
+    CHECK_EQ(presents, 0x82dbb42au);
 }

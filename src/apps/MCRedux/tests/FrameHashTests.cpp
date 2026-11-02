@@ -5,6 +5,7 @@
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
 #include "color/MCWaterCycle.h"
+#include "engine/MCFont.h"
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiScrollTextObject.h"
 #include "gui/MCGuiSystem.h"
@@ -31,6 +32,8 @@
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
 #include "gui/MCUpdateDisplay.h"
+#include "object/MCForces.h"
+#include "object/MCTeam.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "terrain/MCTerrain.h"
@@ -345,6 +348,84 @@ TEST_CASE_ISOLATED("game: the tactical map draws every page")
 
     // The lance stands still in mission 1, so the map page looks as it did.
     CHECK_EQ(mapAgain, mapPage);
+}
+
+/// <summary>
+/// The map's objective numbers keep their size whatever scale the shared line font was left at: the hover tag leaves
+/// it at 1.0 unscaled, the video window at 2.0 (OB-182, issue #47). With the markers lit, the tactical map looks the
+/// same with the cursor on bare ground (the font left at 2.0, then at 1.0) and on a mech, where the tag draws first.
+/// </summary>
+TEST_CASE_ISOLATED("game: the map's objective numbers keep their size after the hover tag")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    REQUIRE(map->DisplayType == MCTacmapPage::Map);
+
+    // Mission 1 has a pending objective with a position, so the map shows a number.
+    int32_t numbered = 0;
+
+    const std::shared_ptr<MCTeam> home = HomeTeam();
+    REQUIRE(home != nullptr);
+
+    for (int32_t i = 0; i < static_cast<int32_t>(home->NumObjectives); i++)
+    {
+        const MCScenarioObjective& objective = Scenario()->Objectives[home->FirstObjective + i];
+
+        if (objective.Status == 0 && objective.Position[0] != -99.0f && objective.Position[1] != -99.0f &&
+            objective.Position[2] != -99.0f)
+        {
+            numbered++;
+        }
+    }
+
+    REQUIRE(numbered > 0);
+
+    // The cursor at a point for 10 frames, then a short frame with the markers lit and the font left as given; the
+    // hash of the tactical map's part of the screen.
+    auto drawn = [map](std::string_view name, int32_t x, int32_t y, float scale, bool scaled)
+    {
+        SendMouse(7, x, y, false);
+
+        for (int32_t frame = 0; frame < 10; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        MCTacticalMap::MarkersLit = true;
+        MCTacticalMap::MarkerBlinkTime = 0.0f;
+        LineFont()->Scale = scale;
+        LineFont()->Scaled = scaled;
+        MCTestGame::RunFrame(0.001f);
+        SaveShot(std::format("objective numbers {}", name), ScreenHash());
+
+        const MCWindow& screen = ScreenPort()->Bitmap();
+        const int32_t width = screen.XMax + 1;
+        const std::vector<uint8_t> shown = MCInput::Display()->ComposeScreen();
+        uint32_t hash = 0x811c9dc5;
+
+        for (int32_t row = map->GlobalY(); row < map->GlobalY() + map->Height(); row++)
+        {
+            for (int32_t column = map->GlobalX(); column < map->GlobalX() + map->Width(); column++)
+            {
+                hash = (hash ^ shown[static_cast<size_t>(row) * static_cast<size_t>(width) + column]) * 0x01000193;
+            }
+        }
+
+        return hash;
+    };
+
+    REQUIRE(MCInput::Display() != nullptr);
+    const uint32_t ground = drawn("ground", 500, 120, 2.0f, true);
+    const uint32_t groundSmall = drawn("ground, font at 1.0", 500, 120, 1.0f, false);
+    const uint32_t tagged = drawn("tag", 320, 215, 2.0f, true);
+    CHECK_EQ(groundSmall, ground);
+    CHECK_EQ(tagged, ground);
 }
 
 /// <summary>

@@ -437,19 +437,21 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     const auto autoSize = static_cast<int>(
         std::lround(MCDisplay::AutoInterfaceScale(LargeWindowLines) * static_cast<float>(OriginalInterfaceSize)));
     const auto kept = [autoSize](int size) { return size == autoSize ? AutoInterfaceSize : size; };
+    // The size the keys saved in PREFS.
+    const auto savedSize = [&prefsPath]
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        return prefs.Read<int32_t>("InterfaceSize");
+    };
 
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, kept(125));
     CHECK_EQ(display->Height(), 864);
     CHECK_EQ(map->IsHidden(), mapHidden);
-
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        CHECK_EQ(prefs.Read<int32_t>("InterfaceSize"), MCFitResult<int32_t>(kept(125)));
-    }
+    CHECK_EQ(savedSize(), MCFitResult<int32_t>(kept(125)));
 
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
     MCTestGame::RunFrame(1.0f / 15.0f);
@@ -462,7 +464,18 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(display->Height(), std::max(static_cast<int>(std::lround(static_cast<double>(LargeWindowLines) *
                                                                       OriginalInterfaceSize / autoSize)),
-                                         480));
+                                         MCDisplay::OriginalLines));
+
+    // From AUTO the keys step on from its pick, and a step back onto the pick is AUTO again.
+    REQUIRE(autoSize > OriginalInterfaceSize);
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, SteppedInterfaceSize(autoSize, -1));
+    CHECK_EQ(savedSize(), MCFitResult<int32_t>(SteppedInterfaceSize(autoSize, -1)));
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
+    CHECK_EQ(savedSize(), MCFitResult<int32_t>(AutoInterfaceSize));
     GInterfaceSize = OriginalInterfaceSize;
     MCTestGame::RunFrame(1.0f / 15.0f);
 

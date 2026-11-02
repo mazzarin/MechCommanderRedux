@@ -66,8 +66,10 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - UI RESOLUTION's NATIVE setting follows the screen's scale: on a Retina screen or a scaled Windows desktop, the
   in-mission UI is the size it is on a standard screen instead of half that.
 - Alt+= and Alt+- during a mission make the interface (tactical map, command palette, mech bar, unit overlays) bigger
-  or smaller, from 100% to 200% in steps of 25%, without changing how much of the battlefield shows. The size is kept
-  in `PREFS.CFG` (`InterfaceSize`), and the keys can be changed on the CONTROLS screen.
+  or smaller, from 100% to 200% in steps of 25%, without changing how much of the battlefield shows. It starts at AUTO,
+  the size that keeps the original's proportions (the screen's lines over the original's 480: 200% at 1080P), which
+  the keys step on from. The size is kept in `PREFS.CFG` (`InterfaceSize`), and the keys can be changed on the
+  CONTROLS screen.
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
   window.
 - Palette changes appear on the next frame drawn instead of instantly.
@@ -80,8 +82,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   Screen, Mission Control...).
 - Scrolling the battlefield, at the screen's edges or with the scroll keys, keeps its speed at any frame rate. The
   original moved whole pixels each frame and dropped the rest, so the faster the game ran, the slower it scrolled. It
-  crosses the screen at the original's pace at any UI resolution and interface size (SCROLL SPEED's AUTO), or up to
-  three times faster.
+  crosses the screen at the original's pace at any UI resolution (SCROLL SPEED's AUTO), or up to three times faster.
 - An item dragged in the logistics inventory moves with the cursor.
 - The mouse wheel works; the original didn't use it. Over the battlefield, wheel up zooms in and wheel down zooms out,
   a little per notch. Over the tactical map it zooms the map, as its zoom buttons do. Over any list or text with a

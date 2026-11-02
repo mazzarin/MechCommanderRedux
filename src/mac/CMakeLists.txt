@@ -74,6 +74,12 @@ find_library(MC_SPIRV_CROSS_CORE spirv-cross-core REQUIRED)
 add_executable(mc_msl tools/mc_msl.cpp)
 target_include_directories(mc_msl PRIVATE ${MC_SPIRV_CROSS_INCLUDE})
 target_link_libraries(mc_msl PRIVATE ${MC_SPIRV_CROSS_MSL} ${MC_SPIRV_CROSS_GLSL} ${MC_SPIRV_CROSS_CORE})
+# mc_msl runs only here, while building, so it is built for this Mac's macOS rather than the app's oldest: Homebrew
+# builds spirv-cross for the macOS it runs on, and linking it for an older one warns. (The last version flag wins.)
+execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MC_HOST_MACOS OUTPUT_STRIP_TRAILING_WHITESPACE
+                COMMAND_ERROR_IS_FATAL ANY)
+target_compile_options(mc_msl PRIVATE -mmacosx-version-min=${MC_HOST_MACOS})
+target_link_options(mc_msl PRIVATE -mmacosx-version-min=${MC_HOST_MACOS})
 
 set(MC_SHADER_HEADERS)
 

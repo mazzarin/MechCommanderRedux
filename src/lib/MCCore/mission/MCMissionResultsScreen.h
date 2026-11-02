@@ -7,6 +7,18 @@
 class MCGuiPort;
 class MCGuiButton;
 class MCGuiScrollTextObject;
+class MCMechWarrior;
+
+/// <summary>
+/// Port: a pilot line's icon, drawn in place each frame from the pilot's mech bar icon, its frame trimmed (so HD art
+/// shows the pack's pictures of its parts): the pilot, and for a pilot missing (whose icon shows the dead image) the
+/// pilot's own portrait, shown in its place.
+/// </summary>
+struct MCResultsIcon
+{
+    std::weak_ptr<MCMechWarrior> Warrior;
+    MCGuiOwned<MCGuiPort> Portrait;
+};
 
 /// <summary>The steps the single-player results screen counts through, each drawn a line at a time.</summary>
 enum class MCResultsStep : int32_t
@@ -160,12 +172,12 @@ private:
     /// <summary>The resource points the count shows; -1 before the count starts.</summary>
     int32_t _ShownResourcePoints = -1;
     /// <summary>
-    /// Each pilot line's icon picture (frame trimmed), taken when the line comes up (multiplayer: in
-    /// <see cref="Activate"/>); null when the pilot has no icon.
+    /// Each pilot line's icon, taken when the line comes up (multiplayer: in <see cref="Activate"/>); none when the
+    /// pilot has no icon.
     /// </summary>
-    std::vector<MCGuiOwned<MCGuiPort>> _PilotIcons;
-    /// <summary>The multiplayer best pilot's icon picture (taken before the list's, as the original drew it).</summary>
-    MCGuiOwned<MCGuiPort> _BestPilotIcon;
+    std::vector<std::optional<MCResultsIcon>> _PilotIcons;
+    /// <summary>The multiplayer best pilot's icon (taken before the list's, as the original drew it).</summary>
+    std::optional<MCResultsIcon> _BestPilotIcon;
     /// <summary>Which side the multiplayer pilot list shows.</summary>
     bool _MpShowHomeSide = true;
     /// <summary>The multiplayer commanders by kills.</summary>

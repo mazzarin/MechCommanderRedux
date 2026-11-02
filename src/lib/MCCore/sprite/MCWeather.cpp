@@ -99,9 +99,12 @@ namespace
     constexpr int32_t ComponentMost = 63;
     /// <summary>
     /// The pixels round a drop's landing point (view pixels right and down of it) whose ground votes on what it lands on,
-    /// the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns.
+    /// the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns. Pixels in
+    /// shadow, no component of their colour reaching ShadowDark (VFX's 6-bit), don't vote: the forest floor's shade is
+    /// as dark a grey as a road's asphalt (which, voting for nothing, is hard ground).
     /// </summary>
     constexpr std::array<std::pair<int32_t, int32_t>, 5> GroundVotes{{{0, 0}, {-2, -1}, {2, -1}, {-2, 1}, {2, 1}}};
+    constexpr uint8_t ShadowDark = 9;
     /// <summary>The kinds of ground (MCWeather::MCSplashGround's).</summary>
     constexpr size_t GroundKinds = 5;
 
@@ -975,7 +978,7 @@ namespace
             return MCWeather::MCSplashGround::Water;
         }
 
-        // The land's kinds the pixels round it vote for (the water's colours at a shore vote for none).
+        // The land's kinds the pixels round it vote for (the water's colours at a shore vote for none, nor do shadows).
         std::array<int32_t, GroundKinds> votes{};
         std::optional<MCWeather::MCSplashGround> first;
 
@@ -984,6 +987,12 @@ namespace
             const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera, right, down);
 
             if (!surface.has_value() || MCWeather::GroundOf(*surface) == MCWeather::MCSplashGround::Water)
+            {
+                continue;
+            }
+
+            if (const MCVfxRgb color = GamePalette().Colors()[*surface];
+                std::max({color.R, color.G, color.B}) < ShadowDark)
             {
                 continue;
             }

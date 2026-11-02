@@ -84,6 +84,9 @@ namespace
     constexpr float FlashLife = 0.8f;
     /// <summary>The farthest strike's flash, of the nearest's.</summary>
     constexpr float FarFlash = 0.3f;
+    /// <summary>A strike's flash, of the look's: thrown between the lightest and the strongest.</summary>
+    constexpr float StrikeLightest = 0.5f;
+    constexpr float StrikeStrongest = 1.6f;
     /// <summary>A strike's thunder comes this many seconds after its flash: the nearest's, and the farthest's.</summary>
     constexpr float ThunderSoonest = 0.3f;
     constexpr float ThunderLatest = 3.5f;
@@ -504,14 +507,16 @@ namespace
     };
 
     /// <summary>
-    /// A lightning strike: the game's time it struck, how far off (0 the nearest, 1 the farthest) and to which side
-    /// (-1 to 1), and its flickers: each one's time after the strike and how bright (0: none).
+    /// A lightning strike: the game's time it struck, how far off (0 the nearest, 1 the farthest), to which side (-1 to
+    /// 1) and how strong (its flash, of the look's), and its flickers: each one's time after the strike and how bright
+    /// (0: none).
     /// </summary>
     struct Strike
     {
         float Time = 0.0f;
         float Far = 0.0f;
         float Side = 0.0f;
+        float Strength = 1.0f;
         std::array<float, MaxFlickers> At{};
         std::array<float, MaxFlickers> Bright{};
     };
@@ -1264,8 +1269,8 @@ namespace
 
     /// <summary>
     /// The lightning: a strike about look.Strikes a minute (times the settings'), waits thrown between StrikeWaitLeast
-    /// and StrikeWaitMost of the average, each strike's distance, side and flickers thrown by its own dice and its
-    /// thunder due a moment after; flashes gone and thunder long due are dropped.
+    /// and StrikeWaitMost of the average, each strike's distance, side, strength and flickers thrown by its own dice
+    /// and its thunder due a moment after; flashes gone and thunder long due are dropped.
     /// </summary>
     void Lightning(State& state, const MCWeather::MCWeatherLook& look, float step, float now)
     {
@@ -1293,7 +1298,10 @@ namespace
         }
 
         next = wait();
-        Strike strike{.Time = now, .Far = dice.Unit(), .Side = dice.Between(-1.0f, 1.0f)};
+        Strike strike{.Time = now,
+                      .Far = dice.Unit(),
+                      .Side = dice.Between(-1.0f, 1.0f),
+                      .Strength = dice.Between(StrikeLightest, StrikeStrongest)};
         const int32_t flickers = dice.Between(1, MaxFlickers);
         float at = 0.0f;
 
@@ -1399,7 +1407,7 @@ auto MCWeather::ShownFlash() -> MCFlash
             light += age >= 0.0f ? strike.Bright[i] * std::exp(-age / FlickerFade) : 0.0f;
         }
 
-        light = std::min(light, 1.0f) * std::lerp(1.0f, FarFlash, strike.Far);
+        light = std::min(light, 1.0f) * std::lerp(1.0f, FarFlash, strike.Far) * strike.Strength;
 
         if (light > flash.Light)
         {

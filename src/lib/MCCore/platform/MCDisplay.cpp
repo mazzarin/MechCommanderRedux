@@ -633,7 +633,7 @@ std::expected<std::vector<SDL_Color>, std::string> MCDisplay::ReadFrame()
     return _Presenter->ReadFrame(frame);
 }
 
-std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::filesystem::path& path)
+std::expected<MCDisplay::MCShownScreen, std::string> MCDisplay::ReadShownScreen()
 {
     const MCFrame frame = BuildFrame(true);
     auto read = _Presenter->ReadFrame(frame);
@@ -647,18 +647,34 @@ std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::files
     const bool scaled = frame.ScaledOutput();
     const int pitch = scaled ? frame.OutputWidth : frame.Width;
     const SDL_Rect shown = scaled ? SDL_Rect{0, 0, frame.OutputWidth, frame.OutputHeight} : frame.View;
-    SDL_Surface* surface = SDL_CreateSurface(shown.w, shown.h, SDL_PIXELFORMAT_RGBA32);
-
-    if (surface == nullptr)
-    {
-        return std::unexpected(SdlError("SDL_CreateSurface"));
-    }
+    MCShownScreen screen{.Width = shown.w, .Height = shown.h};
+    screen.Pixels.resize(static_cast<size_t>(shown.w) * static_cast<size_t>(shown.h));
 
     for (int y = 0; y < shown.h; ++y)
     {
-        std::memcpy(static_cast<uint8_t*>(surface->pixels) + static_cast<ptrdiff_t>(y) * surface->pitch,
+        std::memcpy(screen.Pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(shown.w),
                     read->data() + static_cast<size_t>(shown.y + y) * pitch + shown.x,
                     static_cast<size_t>(shown.w) * sizeof(SDL_Color));
+    }
+
+    return screen;
+}
+
+std::expected<void, std::string> MCDisplay::SaveShownScreenshot(const std::filesystem::path& path)
+{
+    auto screen = ReadShownScreen();
+
+    if (!screen)
+    {
+        return std::unexpected(screen.error());
+    }
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(screen->Width, screen->Height, SDL_PIXELFORMAT_RGBA32,
+                                                 screen->Pixels.data(), screen->Width * sizeof(SDL_Color));
+
+    if (surface == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateSurfaceFrom"));
     }
 
     const bool saved = SDL_SavePNG(surface, MCFileSystem::ToUtf8(path).c_str());

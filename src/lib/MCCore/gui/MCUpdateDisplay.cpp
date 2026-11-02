@@ -461,6 +461,9 @@ void MouseTimerKill()
     }
 
     MouseTimerRunning = false;
+    // Port-only: the streams' service count starts over, so a caller that ticks the timer itself from here (the tests,
+    // MouseTimerTick) services them on the same ticks however long the real timer ran.
+    SoundTicks = 0;
 }
 
 void MouseTimerTick()

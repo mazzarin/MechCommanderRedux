@@ -64,6 +64,12 @@ MCSensorSystem::MCSensorSystem(int32_t id)
     NumSensorsMade++;
 }
 
+MCSensorSystem::~MCSensorSystem()
+{
+    // Issue #45: as in the original, or each mission played put off the next one's radar 6.5 s more.
+    NumSensorsMade--;
+}
+
 auto MCSensorSystem::SetRange(float newRange) -> void
 {
     Range = newRange;

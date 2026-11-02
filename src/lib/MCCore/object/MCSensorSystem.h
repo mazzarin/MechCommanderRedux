@@ -14,10 +14,12 @@ class MCSensorSystem : public std::enable_shared_from_this<MCSensorSystem>
 {
 public:
     /// <summary>
-    /// Sensor <paramref name="id"/>, with no owner, team or range; staggers its first scan by the sensors made before
+    /// Sensor <paramref name="id"/>, with no owner, team or range; staggers its first scan by the sensors alive before
     /// it (0.1 s each, from 0.25 s); scans every ContactUpdateFrequency seconds.
     /// </summary>
     explicit MCSensorSystem(int32_t id);
+    /// <summary>Counts itself out of <see cref="NumSensorsMade"/>.</summary>
+    ~MCSensorSystem();
     MCSensorSystem(const MCSensorSystem&) = delete;
     MCSensorSystem& operator=(const MCSensorSystem&) = delete;
 
@@ -108,8 +110,8 @@ public:
     /// <summary>Contacts newly sensed, over the mission.</summary>
     int32_t TotalContacts = 0;
 
-    /// <summary>Sensors made in this process: the next one's first scan is staggered by it.</summary>
-    /// <remarks>Original behaviour (OB-144): never counted down, as the original never destroyed its sensors.</remarks>
+    /// <summary>Sensors alive: the next one's first scan is staggered by it.</summary>
+    /// <remarks>As in the original, it counts down as each mission's sensors are destroyed.</remarks>
     static int32_t NumSensorsMade;
 
 private:

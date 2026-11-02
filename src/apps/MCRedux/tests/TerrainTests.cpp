@@ -10,6 +10,7 @@
 #include "lib/MCPacketFile.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
+#include "main/MCMissionGlobals.h"
 #include "object/MCObjectBlockManager.h"
 #include "object/MCObjectSystem.h"
 #include "terrain/MCMapBlockManager.h"
@@ -255,15 +256,26 @@ TEST_CASE("terrain: a looker marks the vertices around it as seen by its own sid
     MCTerrain& view = *land;
     scope.Context().SetTerrain(std::move(land));
 
-    // The radius in vertices is 3.34 times the range over the metres a vertex: 80 m makes 2 vertices.
+    // The radius in vertices is the range in meters times WorldUnitsPerMeter, over the meters a vertex: at the
+    // default 3.34 (no mission loaded), 80 m makes 2 vertices.
     view.MarkRadiusSeen(TinyTerrain::At(8.5f, 6.5f), MCVector3D(), 360.0f, 80.0f, 1);
     CHECK(view.ISVisibleBits->GetFlag(6, 8));
     CHECK(view.ISVisibleBits->GetFlag(6, 9));
     CHECK(view.ISVisibleBits->GetFlag(5, 8));
+    CHECK(!view.ISVisibleBits->GetFlag(6, 11));
     CHECK(!view.ISVisibleBits->GetFlag(6, 12));
     CHECK(!view.ISVisibleBits->GetFlag(10, 8));
     // Who 1 is the Inner Sphere: the Clans saw nothing.
     CHECK(!view.ClanVisibleBits->GetFlag(6, 8));
+
+    // At a mission's scale (5.01, as nearly all of them set it), 80 m makes 3 vertices.
+    const float defaultScale = WorldUnitsPerMeter;
+    WorldUnitsPerMeter = 5.01f;
+    view.MarkRadiusSeen(TinyTerrain::At(8.5f, 6.5f), MCVector3D(), 360.0f, 80.0f, 1);
+    WorldUnitsPerMeter = defaultScale;
+    CHECK(view.ISVisibleBits->GetFlag(6, 11));
+    CHECK(!view.ISVisibleBits->GetFlag(6, 12));
+    CHECK(!view.ISVisibleBits->GetFlag(10, 8));
 
     // Anyone else marks the Clan bits; only full-circle looks count.
     view.MarkRadiusSeen(TinyTerrain::At(2.5f, 12.5f), MCVector3D(), 360.0f, 40.0f, 2);

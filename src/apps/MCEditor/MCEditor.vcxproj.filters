@@ -225,6 +225,7 @@
     <ClInclude Include="MissionRecordSet.h" />
     <ClInclude Include="MissionText.h" />
     <ClInclude Include="MissionTimeOfDay.h" />
+    <ClInclude Include="MissionWeather.h" />
     <ClInclude Include="MoverObject.h" />
     <ClInclude Include="MultiMap.h" />
     <ClInclude Include="MultiView.h" />

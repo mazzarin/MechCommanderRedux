@@ -472,6 +472,7 @@ const char FITABL_SCHEMA[] =
 
 const std::array<FitAblPortColumn, FITABL_PORT_COLUMN_COUNT> FITABL_PORT_COLUMNS = {{
     {"NewMissions", "TimeOfDay", "INTEGER NOT NULL DEFAULT 0"},
+    {"NewMissions", "Weather", "INTEGER NOT NULL DEFAULT 0"},
 }};
 
 const std::array<FitAblTable, FITABL_TABLE_COUNT> FITABL_TABLES = {{

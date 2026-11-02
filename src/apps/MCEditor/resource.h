@@ -241,6 +241,9 @@
 #define ID_MISSION_TIME_OF_DAY_DAY                 32890
 #define ID_MISSION_TIME_OF_DAY_DUSK                32891
 #define ID_MISSION_TIME_OF_DAY_NIGHT               32892
+#define ID_MISSION_WEATHER_CLEAR                   32893
+#define ID_MISSION_WEATHER_RAIN                    32894
+#define ID_MISSION_WEATHER_DOWNPOUR                32895
 
 // Strings
 #define IDS_MECHCOMMANDER                                          1
@@ -459,7 +462,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE 26568
-#define _APS_NEXT_COMMAND_VALUE  32893
+#define _APS_NEXT_COMMAND_VALUE  32896
 #define _APS_NEXT_CONTROL_VALUE  2006
 #define _APS_NEXT_SYMED_VALUE    101
 #endif

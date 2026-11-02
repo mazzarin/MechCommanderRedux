@@ -140,6 +140,21 @@ In the mission's .FIT file this is [Environment]'s st TimeOfDay ("Day", "Dusk" o
 has the details.
 
 
+A mission's weather
+
+New in Redux: Mission > Weather sets a mission in Clear weather, Rain or a Downpour.
+Missions are clear until you change it, as every mission of the original is.
+
+- With WEATHER set to ON (in Preferences, on the HD OPTIONS page), Redux rains on the
+  mission, a downpour harder, with thunder. The player's RAIN and DOWNPOUR choices rain
+  on every mission whatever its own.
+- The weather changes nothing in play, in Redux or in the original game.
+
+In the mission's .FIT file this is [Environment]'s st Weather ("Clear", "Rain" or
+"Downpour"), in the same [Environment] block as a dusk or night mission's TimeOfDay; the
+project's README.md has the details.
+
+
 If something goes wrong
 
 "... isn't a MechCommander Gold folder: it has no SYSTEM.CFG."

@@ -185,6 +185,26 @@ namespace
         return MissionTimeOfDayOf(static_cast<long>(id - ID_MISSION_TIME_OF_DAY_DAY));
     }
 
+    /// <summary>Port-only: the weather a Mission > Weather command, <paramref name="id"/>, sets: clear for another.</summary>
+    const MissionWeather& weatherCommanded(UINT id)
+    {
+        const auto found = std::ranges::find(MISSION_WEATHERS, id, &MissionWeather::command);
+        return found != MISSION_WEATHERS.end() ? *found : MISSION_WEATHERS.front();
+    }
+
+    /// <summary>
+    /// Port-only: sets a mission's setting from the Mission menu (its time of day, its weather) to
+    /// <paramref name="value"/>, and marks <paramref name="document"/> changed if it was another.
+    /// </summary>
+    template <typename Setting> void setMissionSetting(Setting& setting, Setting value, CDocument& document)
+    {
+        if (setting != value)
+        {
+            setting = value;
+            document.SetModifiedFlag(TRUE);
+        }
+    }
+
     /// <summary>The click the views play for some commands (0x0041b8b0): the data path's Data\Sound\button7.wav.</summary>
     void playClickSound()
     {
@@ -935,6 +955,9 @@ ON_UPDATE_COMMAND_UI(ID_ROTATE_BUILDING, &DreditorView::OnUpdateRotateBuilding)
 ON_COMMAND_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT, &DreditorView::OnMissionTimeOfDay)
 ON_UPDATE_COMMAND_UI_RANGE(ID_MISSION_TIME_OF_DAY_DAY, ID_MISSION_TIME_OF_DAY_NIGHT,
                            &DreditorView::OnUpdateMissionTimeOfDay)
+ON_COMMAND_RANGE(MISSION_WEATHER_FIRST_COMMAND, MISSION_WEATHER_LAST_COMMAND, &DreditorView::OnMissionWeather)
+ON_UPDATE_COMMAND_UI_RANGE(MISSION_WEATHER_FIRST_COMMAND, MISSION_WEATHER_LAST_COMMAND,
+                           &DreditorView::OnUpdateMissionWeather)
 END_MESSAGE_MAP()
 
 void DreditorView::OnLButtonDown(UINT nFlags, CPoint point)
@@ -2846,16 +2869,20 @@ void DreditorView::OnUpdateRotateBuilding(CCmdUI* pCmdUI)
 
 void DreditorView::OnMissionTimeOfDay(UINT nID)
 {
-    EditorMap& editorMap = *map();
-
-    if (const MissionTimeOfDay timeOfDay = timeOfDayCommanded(nID); editorMap.timeOfDay != timeOfDay)
-    {
-        editorMap.timeOfDay = timeOfDay;
-        m_pDocument->SetModifiedFlag(TRUE);
-    }
+    setMissionSetting(map()->timeOfDay, timeOfDayCommanded(nID), *m_pDocument);
 }
 
 void DreditorView::OnUpdateMissionTimeOfDay(CCmdUI* pCmdUI)
 {
     pCmdUI->SetRadio(map()->timeOfDay == timeOfDayCommanded(pCmdUI->m_nID) ? TRUE : FALSE);
+}
+
+void DreditorView::OnMissionWeather(UINT nID)
+{
+    setMissionSetting(map()->weather, weatherCommanded(nID).value, *m_pDocument);
+}
+
+void DreditorView::OnUpdateMissionWeather(CCmdUI* pCmdUI)
+{
+    pCmdUI->SetRadio(map()->weather == weatherCommanded(pCmdUI->m_nID).value ? TRUE : FALSE);
 }

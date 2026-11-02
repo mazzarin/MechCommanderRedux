@@ -64,6 +64,8 @@ public:
     long m_ClanArtillerySensor;
     /// <summary>Port-only: the TimeOfDay column (MissionTimeOfDay.h).</summary>
     long m_TimeOfDay;
+    /// <summary>Port-only: the Weather column (MissionWeather.h).</summary>
+    long m_Weather;
 
     /// <summary>The class wizard's database path (unused: the editor gives every recordset its database).</summary>
     CString GetDefaultDBName() override;

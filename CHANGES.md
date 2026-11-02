@@ -157,6 +157,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - The editor finds the game in its own folder, or in the folder given with `--data`.
 - New: **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
   lighting on the game shows the mission darker. See the [README](README.md#a-missions-time-of-day).
+- New: **Mission > Weather** sets a mission in clear weather, rain or a downpour. With HD weather on the game rains on
+  the mission; nothing in play changes. See the [README](README.md#a-missions-weather).
 - A crash writes a stack trace and `MCEditor.dmp` beside the exe instead of showing a dialog.
 
 ---

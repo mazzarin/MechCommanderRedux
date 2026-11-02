@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "FitAbl.h"
 #include "MissionTimeOfDay.h"
+#include "MissionWeather.h"
 
 // FitAbl's .FIT writer (0x11011fb0-0x11026bd0): the mission's settings, drop zones, objectives, warriors, parts,
 // commander groups, trains and elemental carriers, from the mission database.
@@ -140,19 +141,44 @@ namespace
     }
 
     /// <summary>
-    /// Port-only: writes a dusk or night mission's [Environment] block, its TimeOfDay (MCRedux shows it with HD
-    /// lighting on; the original reads no such block). Nothing by day.
+    /// Port-only: writes the mission's [Environment] block (the original reads no such block): its TimeOfDay at dusk or
+    /// night (<paramref name="time"/>; MCRedux shows it with HD lighting on) and its Weather in any but a clear sky
+    /// (<paramref name="weather"/>; shown with HD weather on). One block holds both: MCRedux reads only the first block
+    /// of a name. Nothing by day under a clear sky.
     /// </summary>
-    void writeEnvironment(VbFile& fit, MissionTimeOfDay time, const CString& quote)
+    void writeEnvironment(VbFile& fit, MissionTimeOfDay time, const MissionWeather& weather, const CString& quote)
     {
-        if (time == MissionTimeOfDay::Day)
+        const bool timeSet = time != MissionTimeOfDay::Day;
+        const bool weatherSet = weather.value != MISSION_WEATHER_CLEAR;
+
+        if (!timeSet && !weatherSet)
         {
             return;
         }
 
         fit.Line("[Environment]");
-        fit.Line("st TimeOfDay = " + quote + timeOfDayName(time) + quote);
+
+        if (timeSet)
+        {
+            fit.Line("st TimeOfDay = " + quote + timeOfDayName(time) + quote);
+        }
+
+        if (weatherSet)
+        {
+            fit.Line("st Weather = " + quote + weather.name + quote);
+        }
+
         fit.Line();
+    }
+
+    /// <summary>
+    /// Port-only: the mission's port column <paramref name="column"/> (FITABL_PORT_COLUMNS), or
+    /// <paramref name="unset"/> where it is Null.
+    /// </summary>
+    long portValue(FitAblRecordset& mission, const char* column, long unset)
+    {
+        const COleVariant value = mission[column];
+        return Vb::IsNull(value) ? unset : Vb::CLng(value);
     }
 }
 
@@ -170,10 +196,10 @@ bool FitAbl::writeFitFile(short missionId)
     }
 
     const bool multiplayer = Vb::IsTrue(mission["Multiplayer"]);
-    // Port-only: the time of day the mission is set at (MissionTimeOfDay).
-    const COleVariant timeOfDayValue = mission["TimeOfDay"];
+    // Port-only: the time of day the mission is set at (MissionTimeOfDay) and the weather it is set in (MissionWeather).
     const MissionTimeOfDay timeOfDay =
-        Vb::IsNull(timeOfDayValue) ? MissionTimeOfDay::Day : MissionTimeOfDayOf(Vb::CLng(timeOfDayValue));
+        MissionTimeOfDayOf(portValue(mission, "TimeOfDay", static_cast<long>(MissionTimeOfDay::Day)));
+    const MissionWeather& weather = MissionWeatherOf(portValue(mission, "Weather", MISSION_WEATHER_CLEAR));
     FitAblRecordset assignments(database);
 
     if (Vb::Eq(mission["Multiplayer"], Vb::Boolean(false)))
@@ -356,7 +382,7 @@ bool FitAbl::writeFitFile(short missionId)
     fit.Line("f CycleLength = 0.125");
     writeVisualRanges(fit, timeOfDay);
     fit.Line();
-    writeEnvironment(fit, timeOfDay, quote);
+    writeEnvironment(fit, timeOfDay, weather, quote);
     fit.Line("[Artillery]");
     fit.Text("l NumLargeStrikes = ").Value(mission["ArtilleryLarge"]).EndLine();
     fit.Text("l NumSmallStrikes = ").Value(mission["ArtillerySmall"]).EndLine();

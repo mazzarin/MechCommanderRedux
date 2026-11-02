@@ -486,6 +486,24 @@ private:
                       bool mirrored, const std::optional<Quad>& clip);
 
     /// <summary>
+    /// Port-only (sun shadows): while the shown sun casts farther than the day's (MCSceneLights::PaintedShadowReach:
+    /// dusk), adds the shadow painted into <paramref name="frame"/> (MCHdArt::Frame::PaintedShadow: a forest's, which
+    /// casts none of its own) lengthened as far, its original pixels from window (<paramref name="x"/>,
+    /// <paramref name="y"/>), as dark as MCLighting::SunShadow, within <paramref name="clip"/> (window pixels,
+    /// inclusive). Added before the frame, it lies under it. Nothing for another frame, or by day or night.
+    /// </summary>
+    void AddPaintedShadow(uint16_t surface, const MCHdArt::Frame& frame, int32_t x, int32_t y, const Quad& clip);
+
+    /// <summary>
+    /// Port-only (sun shadows): adds <paramref name="frame"/> (picture <paramref name="picture"/>) as a sun shadow at
+    /// <paramref name="at"/>, each window point read from the frame's original pixels at <paramref name="mapping"/>'s
+    /// affine map of it (u's three terms, then v's), lengthened by <paramref name="reach"/> (draw.pshader's
+    /// LengthenedShadowPixel; 0: cast as it is). Whether it was added.
+    /// </summary>
+    bool AddMappedSunShadow(uint16_t surface, const MCHdArt::Frame& frame, uint32_t picture, const Quad& at,
+                            const std::array<float, 6>& mapping, uint32_t reach);
+
+    /// <summary>
     /// Port-only: adds the smooth colour pass of a game-drawn picture mapped with its key transparent (the fog of war,
     /// KindSmoothMap): its drawn texels' edges rounded at the output's resolution, as a smooth-edged shape's are, from
     /// <paramref name="source"/> (the picture's surface). False when the polygon's vertices lie in a line.

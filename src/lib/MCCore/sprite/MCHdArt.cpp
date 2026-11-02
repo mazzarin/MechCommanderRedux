@@ -529,7 +529,10 @@ namespace
         return found->second;
     }
 
-    /// <summary>A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's.</summary>
+    /// <summary>
+    /// A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's, else
+    /// whether the pack marked one (MCHdArt::Frame::PaintedShadow).
+    /// </summary>
     std::shared_ptr<const MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, const FrameFolder& folder)
     {
         auto made = std::make_shared<MCHdArt::Frame>(std::move(frame));
@@ -538,6 +541,13 @@ namespace
         if (folder.BakedShadows)
         {
             MCHdArt::MarkBakedShadows(*made);
+        }
+        else
+        {
+            for (size_t at = 1; at < made->Indices.size() && !made->PaintedShadow; at += MCHdArt::IndexBytes)
+            {
+                made->PaintedShadow = made->Indices[at] == MCHdArt::BakedShadow;
+            }
         }
 
         return made;

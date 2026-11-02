@@ -85,6 +85,11 @@ namespace MCHdArt
         /// them: a pixel may add light (colour without coverage), and the original's draw blends none of them.
         /// </summary>
         bool Blended = false;
+        /// <summary>
+        /// Port-only (sun shadows): whether its index picture marks a baked shadow (<see cref="BakedShadow"/>) the pack's
+        /// generator found in art that casts no shadow of its own (a forest's), not one MarkBakedShadows marked.
+        /// </summary>
+        bool PaintedShadow = false;
 
         /// <summary>The original's width and height.</summary>
         int32_t OriginalWidth() const { return Width / std::max(Scale, 1); }

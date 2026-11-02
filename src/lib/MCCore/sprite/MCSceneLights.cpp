@@ -57,6 +57,12 @@ namespace
     /// </summary>
     constexpr float DuskSunLength = 2.5f;
     /// <summary>
+    /// Port-only (sun shadows): how tall the trees stand over the shadows painted into a forest's art (MCHdArt::Frame::
+    /// PaintedShadow), in window pixels: their shadows mostly run 12 to 19 pixels across, and the day's sun casts 0.6 of
+    /// a pixel across for each pixel of height.
+    /// </summary>
+    constexpr float PaintedShadowHeight = 30.0f;
+    /// <summary>
     /// Night's world light: dimmer than dusk's, the moon's blue (its tint about as bright as white), and the world's
     /// colours paler in it; the lights stronger.
     /// </summary>
@@ -900,6 +906,19 @@ auto MCSceneLights::RecastsSunShadows() -> bool
 auto MCSceneLights::SunCasts() -> bool
 {
     return GHdSunShadows != 0 && ShownLighting().SunShadowUp > 0.0f;
+}
+
+auto MCSceneLights::PaintedShadowReach() -> std::array<float, 2>
+{
+    if (!RecastsSunShadows() || !SunCasts())
+    {
+        return {};
+    }
+
+    const MCLighting& day = TheState().Lighting;
+    const MCLighting shown = ShownLighting();
+    return {std::max(shown.SunShadowRight - day.SunShadowRight, 0.0f) * PaintedShadowHeight,
+            std::max(shown.SunShadowUp - day.SunShadowUp, 0.0f) * PaintedShadowHeight};
 }
 
 auto MCSceneLights::AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements) -> void

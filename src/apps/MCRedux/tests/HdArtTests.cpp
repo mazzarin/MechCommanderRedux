@@ -3411,11 +3411,13 @@ namespace
     /// <summary>
     /// Writes an object's frame (not holding its blended pixels) as a PNG pair, <paramref name="stem"/>.png and _idx.png:
     /// <paramref name="width"/> x <paramref name="height"/> original pixels, <paramref name="scale"/> HD pixels each,
-    /// opaque where <paramref name="indexAt"/> gives an index, in that index's colour of <paramref name="colors"/>.
+    /// opaque where <paramref name="indexAt"/> gives an index, in that index's colour of <paramref name="colors"/>; the
+    /// pixels <paramref name="marked"/> gives (if any) marked as its baked shadow, as the pack's generator marks a forest's.
     /// </summary>
     void WriteObjectFrame(const std::filesystem::path& stem, int32_t width, int32_t height, int32_t scale,
                           std::span<const SDL_Color, 256> colors,
-                          const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt)
+                          const std::function<std::optional<uint8_t>(int32_t, int32_t)>& indexAt,
+                          const std::function<bool(int32_t, int32_t)>& marked = {})
     {
         std::vector<uint8_t> pixels(static_cast<size_t>(width * scale) * height * scale * BytesPerPixel);
         std::vector<uint8_t> index(pixels.size());
@@ -3428,8 +3430,10 @@ namespace
                 const std::optional<uint8_t> original = indexAt(x / scale, y / scale);
                 const SDL_Color c = colors[original.value_or(0)];
                 const uint8_t alpha = original.has_value() ? HasIndex : uint8_t{0};
+                const uint8_t green =
+                    original.has_value() && marked && marked(x / scale, y / scale) ? MCHdArt::BakedShadow : alpha;
                 std::ranges::copy(std::array{c.r, c.g, c.b, alpha}, pixels.begin() + static_cast<ptrdiff_t>(at));
-                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), alpha, 0, HasIndex},
+                std::ranges::copy(std::array<uint8_t, 4>{original.value_or(0), green, 0, HasIndex},
                                   index.begin() + static_cast<ptrdiff_t>(at));
             }
         }
@@ -3673,6 +3677,153 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
                 CHECK(sameColor(landed, under));
             }
         }
+    }
+
+    GHdLighting = lightingWas;
+    GamePaused = false;
+    GHdSunShadows = 0;
+    lighting = kept;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
+/// Sun shadows over mission 1 drawn by the GPU, paused: a shadow the pack marked in art that casts none of its own (a
+/// shape table's frame, as a forest's edges; MCHdArt::Frame::PaintedShadow) darkens the ground under it by day, and at
+/// dusk too (where an object's is hidden), lengthened as far as the low sun's shadows are: the ground beyond it along
+/// the sun's way darkens, the ground past that reach or below it doesn't. At night it is hidden, as an object's.
+/// </summary>
+TEST_CASE_ISOLATED("game: sun shadows keep a forest's painted shadow at dusk, lengthened as the low sun's")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t body = FullColorIndex(colors);
+
+    // 40 x 24 above its foot: the body in columns 0-7, its painted shadow in the rest.
+    constexpr int32_t Width = 40;
+    constexpr int32_t Height = 24;
+    constexpr int32_t BodyColumns = 8;
+    constexpr int32_t Top = -Height;
+    constexpr uint8_t RowPixels = 2 * Width + 1;
+    constexpr uint8_t RowEnd = 0;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Height; ++row)
+    {
+        rows.push_back(RowPixels);
+
+        for (int32_t column = 0; column < Width; ++column)
+        {
+            rows.push_back(column < BodyColumns ? body : MCHdArt::BakedShadowIndex);
+        }
+
+        rows.push_back(RowEnd);
+    }
+
+    const std::vector<uint8_t> made = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}});
+    MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
+    std::ranges::copy(made, table.Bytes().begin());
+
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_painted_shadow";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
+    std::filesystem::create_directories(folder);
+    constexpr int32_t Scale = 2;
+    WriteObjectFrame(
+        folder / "0", Width, Height, Scale, colors,
+        [&](int32_t column, int32_t) { return column < BodyColumns ? body : MCHdArt::BakedShadowIndex; },
+        [](int32_t column, int32_t) { return column >= BodyColumns; });
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    lighting.SunShadow = Darkness;
+    lighting.SunShadowRight = 1.0f;
+    lighting.SunShadowUp = 1.0f;
+    GHdSunShadows = 1;
+    GamePaused = true;
+    const int lightingWas = GHdLighting;
+
+    // The ground, then the shape drawn on it.
+    const auto drawn = [&]
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto under = display->ReadFrame();
+        REQUIRE(under.has_value());
+        AGShapeDraw(pane, table.Bytes(), 0, x, y);
+        auto over = display->ReadFrame();
+        REQUIRE(over.has_value());
+        return std::pair{std::move(*under), std::move(*over)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto luma = [](SDL_Color color) { return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b; };
+    const auto same = [](SDL_Color a, SDL_Color b)
+    { return std::abs(a.r - b.r) <= 3 && std::abs(a.g - b.g) <= 3 && std::abs(a.b - b.b) <= 3; };
+
+    // Inside the shadow; beyond its top right corner along the sun's way (right and up), within the reach and past it;
+    // and below it.
+    constexpr std::pair<int32_t, int32_t> Inside = {Width - Width / 4, Top + Height / 2};
+    constexpr int32_t Near = 8;
+    constexpr int32_t Far = 80;
+    constexpr std::pair<int32_t, int32_t> Along = {Width - 1 + Near, Top - Near};
+    constexpr std::pair<int32_t, int32_t> Past = {Width - 1 + Far, Top - Far};
+    constexpr std::pair<int32_t, int32_t> Below = {Width - Width / 4, Near};
+
+    for (const int shown : {lightingWas, static_cast<int>(HdLightingDusk), static_cast<int>(HdLightingNight)})
+    {
+        GHdLighting = shown;
+        const bool dusk = shown == HdLightingDusk;
+        const bool night = shown == HdLightingNight;
+        MCTest::Scope timeScope(dusk ? "dusk" : night ? "night" : "day");
+        const std::array<float, 2> reach = MCSceneLights::PaintedShadowReach();
+        CHECK_EQ(reach[0] > static_cast<float>(Near) && reach[1] > static_cast<float>(Near), dusk);
+        CHECK(reach[0] < static_cast<float>(Far));
+        const auto [under, over] = drawn();
+        const auto darkened = [&](std::pair<int32_t, int32_t> place, float atMost)
+        {
+            const SDL_Color ground = at(under, place.first, place.second);
+            return luma(at(over, place.first, place.second)) < luma(ground) * atMost;
+        };
+
+        const auto untouched = [&](std::pair<int32_t, int32_t> place)
+        { return same(at(over, place.first, place.second), at(under, place.first, place.second)); };
+
+        if (night)
+        {
+            CHECK(untouched(Inside));
+        }
+        else
+        {
+            CHECK(darkened(Inside, 1.0f - Darkness * 0.8f));
+        }
+
+        CHECK_EQ(darkened(Along, 1.0f - Darkness * 0.2f), dusk);
+        CHECK(untouched(Past));
+        CHECK(untouched(Below));
     }
 
     GHdLighting = lightingWas;

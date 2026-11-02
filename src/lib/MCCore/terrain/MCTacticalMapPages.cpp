@@ -36,6 +36,8 @@
 #include "object/MCTreeBuildingType.h"
 #include "object/MCForces.h"
 #include "object/MCMechWarrior.h"
+#include "platform/MCDisplay.h"
+#include "platform/MCInput.h"
 #include "terrain/MCTacticalMapLayout.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfx.h"
@@ -66,6 +68,68 @@ namespace
         map.WorldToTacMap(pos, true);
         return {static_cast<int32_t>(std::floor(static_cast<double>(pos.X))) - map.MapPane.X0,
                 static_cast<int32_t>(std::floor(static_cast<double>(pos.Y))) - map.MapPane.Y0};
+    }
+
+    /// <summary>The objectives' dots' colour (white).</summary>
+    constexpr uint8_t ObjectiveDotColor = 0x1f;
+    /// <summary>The objectives' numbers' colour: a pending objective's (yellow).</summary>
+    constexpr uint8_t ObjectiveNumberColor = 0xf2;
+    /// <summary>Port-only: the objectives' numbers' strokes on a sharp screen, in window pixels (the original's 1).</summary>
+    constexpr float ObjectiveNumberWidth = 1.5f;
+    /// <summary>Port-only: their dark outline, a window pixel past the strokes to each side.</summary>
+    constexpr float ObjectiveOutlineWidth = ObjectiveNumberWidth + 2.0f;
+    /// <summary>Port-only: the outline's colour, the grey ramp's black.</summary>
+    constexpr uint8_t ObjectiveOutlineColor = 0x10;
+    /// <summary>Port-only: how much further right an outlined number sits, so its outline clears the dot.</summary>
+    constexpr int32_t ObjectiveOutlineShift = 2;
+
+    /// <summary>
+    /// Port-only: whether the objectives' numbers are drawn bolder with a dark outline: on a sharp screen (HD art on the
+    /// GPU), where lines are drawn smooth. The units' dots are still drawn over them, as the original's.
+    /// </summary>
+    bool OutlineObjectiveNumbers()
+    {
+        const std::shared_ptr<MCDisplay> display = MCInput::Display();
+        return display != nullptr && display->SharpScreen();
+    }
+
+    /// <summary>
+    /// The home side's pending objectives that have a position, while the markers are lit: a numbered dot. With
+    /// <paramref name="outlined"/> (port-only), each number is drawn bolder over a dark outline.
+    /// </summary>
+    void DrawObjectiveMarkers(MCTacticalMap& map, bool outlined)
+    {
+        const auto numObjectives = static_cast<int32_t>(HomeTeam()->NumObjectives);
+        MCFont& font = *LineFont();
+        const float strokeWidth = font.StrokeWidth;
+
+        for (int32_t i = 0; i < numObjectives; i++)
+        {
+            const MCScenarioObjective& objective = Scenario()->Objectives[HomeTeam()->FirstObjective + i];
+
+            if (objective.Position[0] == -99.0f || objective.Position[1] == -99.0f || objective.Position[2] == -99.0f ||
+                objective.Status != 0 || !MCTacticalMap::MarkersLit)
+            {
+                continue;
+            }
+
+            const auto [xPos, yPos] = MapPixel(map, MCVector3D(objective.Position[0], objective.Position[1], 0.0f));
+            AGEllipseFill(map.MapPane, xPos, yPos, 2, 2, ObjectiveDotColor);
+            const std::string number = std::format("{}", i + 1);
+            int32_t numberX = xPos;
+
+            if (outlined)
+            {
+                numberX += ObjectiveOutlineShift;
+                font.StrokeWidth = ObjectiveOutlineWidth;
+                font.Print(numberX, yPos, number, ObjectiveOutlineColor, map.MapPane);
+                font.StrokeWidth = ObjectiveNumberWidth;
+            }
+
+            // The pending objective's colour (the status is 0 here).
+            font.Print(numberX, yPos, number, ObjectiveNumberColor, map.MapPane);
+            font.StrokeWidth = strokeWidth;
+        }
     }
 
     /// <summary>
@@ -452,23 +516,7 @@ auto MCTacticalMap::DrawObjects() -> void
     // original did both here.)
 
     // The home side's pending objectives that have a position: a numbered dot.
-    const auto numObjectives = static_cast<int32_t>(HomeTeam()->NumObjectives);
-
-    for (int32_t i = 0; i < numObjectives; i++)
-    {
-        const MCScenarioObjective& objective = Scenario()->Objectives[HomeTeam()->FirstObjective + i];
-
-        if (objective.Position[0] == -99.0f || objective.Position[1] == -99.0f || objective.Position[2] == -99.0f ||
-            objective.Status != 0 || !MarkersLit)
-        {
-            continue;
-        }
-
-        const auto [xPos, yPos] = MapPixel(*this, MCVector3D(objective.Position[0], objective.Position[1], 0.0f));
-        AGEllipseFill(MapPane, xPos, yPos, 2, 2, 0x1f);
-        // The pending objective's colour (the status is 0 here).
-        LineFont()->Print(xPos, yPos, std::format("{}", i + 1), 0xf2, MapPane);
-    }
+    DrawObjectiveMarkers(*this, OutlineObjectiveNumbers());
 
     // The sensor contacts: a dot (dark when not identified), and with the ranges on, the unit's sensor range.
     const int32_t homeAlignment = HomeTeam()->Alignment;

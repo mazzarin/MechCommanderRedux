@@ -3800,12 +3800,21 @@ void MCVulkanRenderer::Line(MCWindow& target, const MCLineCommand& command)
 
     if (smooth && first.has_value())
     {
-        const Quad at = {std::min((*first)[0], last[0]) - 1, std::min((*first)[1], last[1]) - 1,
-                         std::max((*first)[0], last[0]) + 1, std::max((*first)[1], last[1]) + 1};
+        // Out past its ends' pixels' centres by half its width and its edge's ramp (a pixel for the original's).
+        const auto reach = static_cast<int32_t>(std::ceil(std::max(command.Width, 1.0f) / 2.0f + 0.5f));
+        const Quad at = {std::min((*first)[0], last[0]) - reach, std::min((*first)[1], last[1]) - reach,
+                         std::max((*first)[0], last[0]) + reach, std::max((*first)[1], last[1]) + reach};
 
         if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothLine, command.Color, 0, 0))
         {
-            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, _Draws.back().begin() + 12);
+            std::array<int32_t, 20>& draw = _Draws.back();
+            std::ranges::copy(std::array{(*first)[0], (*first)[1], last[0], last[1]}, draw.begin() + 12);
+
+            // A wider line's half width (shaders/draw.pshader's SmoothShapePixel); 0, the original's, as before.
+            if (command.Width != 1.0f)
+            {
+                draw[17] = std::bit_cast<int32_t>(command.Width / 2.0f);
+            }
         }
     }
 }

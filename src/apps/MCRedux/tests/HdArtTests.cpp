@@ -18390,3 +18390,142 @@ TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle roun
     hdArt.reset();
     std::filesystem::remove_all(scratch);
 }
+
+/// <summary>
+/// A mech's legs turning cast their turn middle's sun shadow, where the middle lies: on the screen, drawn by the GPU
+/// over mission 1, paused, a 4 x 4 frame standing 12 to 9 rows above its foot, cast a pixel right for every pixel above
+/// it, darkens the ground where its middle's column 1 (2 columns before the frame's, mirrored after) lands only in the
+/// scope of the middle; without it that ground stays as it was.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech's legs turning cast their turn middle's sun shadow")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // One frame of 4 x 4 opaque pixels standing above its foot; its middle 7 x 4, the frame 3 columns in.
+    constexpr int32_t Side = 4;
+    constexpr int32_t Shift = 3;
+    constexpr int32_t Together = Side + Shift;
+    constexpr int32_t Top = -12;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Side; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(Side), opaque, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table = FramesTable(std::array{TableFrame{0, Top, Side, Side, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+
+    constexpr int32_t Scale = 2;
+    constexpr SDL_Color Red = {200, 0, 0, 255};
+    constexpr SDL_Color Blue = {0, 0, 200, 255};
+    const auto everywhere = [&](int32_t, int32_t) { return std::optional<uint8_t>(opaque); };
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_turn_shadow";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::MechShapeKey key{"legs90", 1, 0};
+    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+    std::filesystem::create_directories(folder);
+    WriteSteppedFrame(folder / "0", Side, Side, Scale, Red, everywhere);
+    WriteSteppedFrame(folder / "0_turn", Together, Side, Scale, Blue, everywhere);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    lighting.SunShadow = Darkness;
+    lighting.SunShadowRight = 1.0f;
+    lighting.SunShadowUp = 1.0f;
+    GHdSunShadows = 1;
+    GamePaused = true;
+
+    // The ground, then the frame drawn on it as its sun shadow, as it is or mirrored, in the scope of an in-between.
+    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto under = display->ReadFrame();
+        REQUIRE(under.has_value());
+        {
+            const MCRenderer::SunShadowScope cast(true);
+            const MCRenderer::InBetweenScope scope(inBetween);
+
+            if (mirrored)
+            {
+                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto over = display->ReadFrame();
+        REQUIRE(over.has_value());
+        return std::pair{std::move(*under), std::move(*over)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 3; };
+    const auto darkened = [&](SDL_Color actual, SDL_Color under, float kept)
+    {
+        return near(actual.r, static_cast<int32_t>(std::lround(under.r * kept))) &&
+               near(actual.g, static_cast<int32_t>(std::lround(under.g * kept))) &&
+               near(actual.b, static_cast<int32_t>(std::lround(under.b * kept)));
+    };
+
+    // The middle's column 1 stands at -2 (mirrored, at 2); a row h above the foot lands h pixels right of it, where no
+    // column of the frame lands, nor its smooth edge.
+    const MCInBetweenBounds bounds{Shift, 0, Together, Side};
+    constexpr int32_t MiddleColumn = 1;
+
+    for (const bool mirrored : {false, true})
+    {
+        for (const bool middle : {false, true})
+        {
+            const std::optional<MCInBetween> inBetween =
+                middle ? std::optional(MCInBetween{0, 0, TurnStep, bounds}) : std::nullopt;
+            const auto [under, over] = drawn(mirrored, inBetween);
+
+            for (int32_t row = Top + 1; row < Top + Side - 1; ++row)
+            {
+                const int32_t stands = mirrored ? Shift - MiddleColumn : MiddleColumn - Shift;
+                const int32_t lands = stands - row;
+                MCTest::Scope scope(std::format("{}, {}, row {}: column {}", mirrored ? "mirrored" : "as is",
+                                                middle ? "its middle" : "no middle", row, lands));
+                CHECK(darkened(at(over, lands, row), at(under, lands, row), middle ? 1.0f - Darkness : 1.0f));
+            }
+        }
+    }
+
+    lighting = kept;
+    GHdSunShadows = 0;
+    GamePaused = false;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+}

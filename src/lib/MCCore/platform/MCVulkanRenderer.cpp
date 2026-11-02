@@ -3336,13 +3336,26 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
 
     const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
     const int32_t yMin = MCRead32(header, ShapeYMinAt);
-    const int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
-    const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
-    const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
+    int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
+    int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
+    std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
 
     if (frame == nullptr)
     {
         return;
+    }
+
+    const auto foot = static_cast<float>(top - yMin);
+
+    // A mech's legs drawn as their turn middle (HDTurns) cast the middle, where the draw places it (as Shape and
+    // ShapeBlit do: mirrored, the middle's last column comes first).
+    if (const std::optional<HdInBetweenFrame> inBetween = HdInBetween(table, shapeNum, *frame); inBetween.has_value())
+    {
+        left = mirrored ? left + width - inBetween->Width + inBetween->FrameX : left - inBetween->FrameX;
+        top -= inBetween->FrameY;
+        width = inBetween->Width;
+        height = inBetween->Height;
+        frame = inBetween->Frame;
     }
 
     const std::optional<uint32_t> picture = HdPictureOf(*frame);
@@ -3355,7 +3368,6 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
     // A point h window pixels above the foot (the hot spot's row) casts its shadow right * h right and up * h up of
     // it; the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
     const float right = lighting.SunShadowRight;
-    const auto foot = static_cast<float>(top - yMin);
     const float x0 = static_cast<float>(left);
     const float y0 = static_cast<float>(top);
     const float step = mirrored ? -1.0f : 1.0f;

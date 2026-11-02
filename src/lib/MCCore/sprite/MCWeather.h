@@ -78,12 +78,18 @@ namespace MCWeather
         float Flash = 0.0f;
         /// <summary>How loud the nearest strike's thunder is heard, as a channel volume, as <see cref="Heard"/>.</summary>
         float ThunderHeard = 0.0f;
+        /// <summary>
+        /// How far its showers come and go (0: it falls steadily): through a mission the rain builds and eases over
+        /// minutes, in a lull falling this share of its drops fewer, in a burst this share more (the rest of its look
+        /// following, see <see cref="LookAt"/>); its puddles spread as it falls, from none at a mission's start.
+        /// </summary>
+        float Showers = 0.0f;
     };
 
-    /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing).</summary>
+    /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing), steadily (its showers left out).</summary>
     MCWeatherLook LookOf(MCWeatherKind kind);
 
-    /// <summary>How the weather shows beyond its look (the tools' --hd-weather sets it).</summary>
+    /// <summary>How the weather shows beyond its look (the tools' --hd-weather and --hd-showers set it).</summary>
     struct MCWeatherSettings
     {
         /// <summary>How many drops fall, 1 as made (0.5: half as many).</summary>
@@ -96,6 +102,13 @@ namespace MCWeather
         float Flash = 1.0f;
         /// <summary>How often lightning strikes, 1 as made (the tools' --hd-lightning sets it).</summary>
         float Strikes = 1.0f;
+        /// <summary>
+        /// How far the showers come and go (MCWeatherLook::Showers), 1 as made (0: the rain falls steadily, its puddles
+        /// as made from the start).
+        /// </summary>
+        float Showers = 1.0f;
+        /// <summary>How fast the showers come and go and the puddles spread, 1 as made (8: eight times as fast).</summary>
+        float ShowerPace = 1.0f;
     };
 
     /// <summary>A strike's thunder: how far off it struck (0 the nearest, 1 the farthest) and to which side (-1 to 1).</summary>
@@ -114,6 +127,32 @@ namespace MCWeather
         float Light = 0.0f;
         float Side = 0.0f;
     };
+
+    /// <summary>
+    /// A weather's showers at a moment: how hard its rain falls (1 as made; less in a lull, more in a burst) and how far
+    /// its puddles have spread (0 none, at a mission's start; 1 as made).
+    /// </summary>
+    struct MCShowers
+    {
+        float Rain = 1.0f;
+        float Puddles = 1.0f;
+    };
+
+    /// <summary>
+    /// <paramref name="kind"/>'s showers at the game's time <paramref name="time"/> (ScenarioTime): the rain building
+    /// and easing by its own noise on the game's time (never the game's dice), the same every time a mission is played;
+    /// the puddles filling toward how hard it falls, and drying slowly in a lull. Steady (as made) for a weather without
+    /// showers, or with MCWeatherSettings::Showers 0.
+    /// </summary>
+    MCShowers ShowersAt(MCWeatherKind kind, float time);
+
+    /// <summary>
+    /// How <paramref name="kind"/> shows at the game's time <paramref name="time"/>: as made (<see cref="LookOf"/>),
+    /// its showers' rain (<see cref="ShowersAt"/>) setting how many drops fall, how many of them near the eye, how
+    /// thick the veil is, how dark and grey the overcast (less), how much drips and how loud it is heard; its puddles
+    /// how much of the ground they lie on and how much wet ground mirrors the sky (damp ground less).
+    /// </summary>
+    MCWeatherLook LookAt(MCWeatherKind kind, float time);
 
     /// <summary>The most feet's puddles the composite shows reacting at once, the newest (its MaxPuddleSteps).</summary>
     constexpr size_t MaxPuddleSteps = 8;
@@ -161,7 +200,7 @@ namespace MCWeather
     /// </summary>
     MCWeatherKind Shown();
 
-    /// <summary>How the weather shown looks (<see cref="LookOf"/> of <see cref="Shown"/>).</summary>
+    /// <summary>How the weather shown looks now (<see cref="LookAt"/> of <see cref="Shown"/>, at ScenarioTime).</summary>
     MCWeatherLook ShownLook();
 
     /// <summary>

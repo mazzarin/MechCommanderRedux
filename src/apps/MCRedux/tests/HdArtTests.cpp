@@ -2298,8 +2298,8 @@ TEST_CASE_ISOLATED("game: HD art keeps the original's palette indices")
 namespace
 {
     /// <summary>
-    /// The object nearest the player's mech in mission 1 that <paramref name="wanted"/> picks (it has an appearance):
-    /// from the movers' part table and from the object lists.
+    /// The object nearest the player's mech in the mission that <paramref name="wanted"/> picks (it has an appearance):
+    /// from the movers' part table (those that have entered the mission) and from the object lists.
     /// </summary>
     std::shared_ptr<MCGameObject> NearestObject(const std::function<bool(MCBaseObject&)>& wanted)
     {
@@ -2327,9 +2327,15 @@ namespace
             }
         };
 
+        // The part table also holds the movers the script has yet to bring in (mission 5's nearest vehicle): they have
+        // no tile in the object map, so the camera can't follow them (MCMover::IsRevealed reads its tile).
         for (int32_t partId = MCMover::FirstPartId; partId < MCMover::EndPartId; partId++)
         {
-            consider(GetMoverFromPartId(partId));
+            if (const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
+                mover != nullptr && mover->GetExists() != 0)
+            {
+                consider(mover);
+            }
         }
 
         for (const std::shared_ptr<MCObjectList>& list : ObjectList()->Lists())
@@ -2343,7 +2349,7 @@ namespace
         return nearest;
     }
 
-    /// <summary>The object of <paramref name="objectClass"/> nearest the player's mech in mission 1.</summary>
+    /// <summary>The object of <paramref name="objectClass"/> nearest the player's mech in the mission.</summary>
     std::shared_ptr<MCGameObject> NearestObject(MCObjectClass objectClass)
     {
         return NearestObject([objectClass](const MCBaseObject& object) { return object.ObjectClass == objectClass; });
@@ -2579,6 +2585,29 @@ TEST_CASE_ISOLATED("game: HD art keeps a vehicle's and a building's palette indi
 TEST_CASE_ISOLATED("game: HD art keeps a translucent object's palette indices")
 {
     CheckIndicesKept(SecondMissionSubjects);
+}
+
+/// <summary>
+/// The object tests' and tools' nearest vehicle is one in the mission, which the camera can follow: in mission 5 the
+/// part table's nearest is one the script has yet to bring in (--hd-pack-objects crashed on it).
+/// </summary>
+TEST_CASE_ISOLATED("game: the object tests' nearest vehicle is one the camera can follow")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr int32_t WaitingVehicleMission = 5;
+    REQUIRE(MCTestGame::StartMission(WaitingVehicleMission));
+    const std::shared_ptr<MCGameObject> vehicle = NearestSubject(HdSubject::Vehicle);
+    REQUIRE(vehicle != nullptr);
+    REQUIRE(vehicle->GetExists() != 0);
+    CHECK(vehicle->GetObjPosition() != nullptr);
+    RevealAll();
+    Eye()->ChangeTarget(vehicle, true);
+    MCTestGame::RunFrame(FrameSeconds);
+    CHECK(LockObject(Eye()->TargetObject) == vehicle);
 }
 
 namespace

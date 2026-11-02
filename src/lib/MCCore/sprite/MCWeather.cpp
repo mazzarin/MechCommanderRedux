@@ -126,12 +126,30 @@ namespace
     /// (VFX's 6-bit components) is grass.
     /// </summary>
     constexpr int32_t GrassGreen = 2;
+    /// <summary>
+    /// Land drawn in a palette colour at least this saturated (HSL, of VFX's 6-bit components, which run to
+    /// ComponentMost) is soil: the dirt's and the fields' browns and tans (0x2a, 0x2b, 0x4x, 0x9x) are 0.29 and more;
+    /// the rock's, packed earth's and concrete's grey browns (0x2c, 0x2d, 0x8x) 0.26 and less, the roads' greys none.
+    /// </summary>
+    constexpr float SoilSaturation = 0.27f;
+    constexpr int32_t ComponentMost = 63;
+    /// <summary>
+    /// The pixels round a drop's landing point (view pixels right and down of it) whose ground votes on what it lands
+    /// on, the landing point's first (it wins a tie): the dirt's art is speckled with the rock's grey browns. Pixels in
+    /// shadow, no component of their colour reaching ShadowDark (VFX's 6-bit), don't vote: the forest floor's shade is
+    /// as dark a grey as a road's asphalt (which, voting for nothing, is hard ground).
+    /// </summary>
+    constexpr std::array<std::pair<int32_t, int32_t>, 5> GroundVotes{{{0, 0}, {-2, -1}, {2, -1}, {-2, 1}, {2, 1}}};
+    constexpr uint8_t ShadowDark = 9;
+    /// <summary>The kinds of ground (MCWeather::MCSplashGround's).</summary>
+    constexpr size_t GroundKinds = 5;
 
     /// <summary>
     /// A drop's size, as near the eye it falls (a top-down view: the nearer, the higher): how far it falls on screen and
     /// how fast (view pixels), its streak's length, its strength, its width (the draw rounds it to whole pixels of the
     /// output: 1, 2 or 3 at the closest zoom) and its brightest tip; its splash on land (droplets thrown up, as far as
-    /// Throw, and a dot) and in water (a ring that wide, lasting that long, that strong).
+    /// Throw, and a dot) and in water (a ring that wide, lasting that long, that strong); fitting the ground
+    /// (MCWeatherSettings::Ground), a dark dot that wide soaking into soil and a puff that wide in grass.
     /// </summary>
     struct DropSize
     {
@@ -152,6 +170,8 @@ namespace
         float Ring = 0.0f;
         float RingLife = 0.0f;
         float RingAlpha = 0.0f;
+        float Soak = 0.0f;
+        float Puff = 0.0f;
     };
 
     /// <summary>Far, between and near (MCWeatherLook::Sizes), as mock-up 2 drew them at a zoom of 2.25.</summary>
@@ -169,7 +189,9 @@ namespace
          .Dot = 0.45f,
          .Ring = 1.8f,
          .RingLife = 0.3f,
-         .RingAlpha = 0.35f},
+         .RingAlpha = 0.35f,
+         .Soak = 0.8f,
+         .Puff = 1.0f},
         {.FallLow = 33.0f,
          .FallHigh = 62.0f,
          .SpeedLow = 310.0f,
@@ -186,7 +208,9 @@ namespace
          .Dot = 0.9f,
          .Ring = 3.6f,
          .RingLife = 0.45f,
-         .RingAlpha = 0.5f},
+         .RingAlpha = 0.5f,
+         .Soak = 1.2f,
+         .Puff = 1.5f},
         {.FallLow = 67.0f,
          .FallHigh = 115.0f,
          .SpeedLow = 420.0f,
@@ -203,11 +227,16 @@ namespace
          .Dot = 0.9f,
          .Ring = 5.3f,
          .RingLife = 0.6f,
-         .RingAlpha = 0.6f},
+         .RingAlpha = 0.6f,
+         .Soak = 1.6f,
+         .Puff = 2.1f},
     }};
     constexpr size_t NearDrop = 2;
 
-    /// <summary>The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d).</summary>
+    /// <summary>
+    /// The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d);
+    /// fitting the ground, wet soil's dark brown (0x91) and a glint's near white (0x1e).
+    /// </summary>
     struct Rgb
     {
         float Red = 0.0f;
@@ -220,6 +249,8 @@ namespace
     constexpr Rgb PalestBlue{168.0f / 255.0f, 192.0f / 255.0f, 216.0f / 255.0f};
     constexpr Rgb SplashGrey{200.0f / 255.0f, 200.0f / 255.0f, 200.0f / 255.0f};
     constexpr Rgb PaleGrey{220.0f / 255.0f, 220.0f / 255.0f, 220.0f / 255.0f};
+    constexpr Rgb SoakBrown{44.0f / 255.0f, 24.0f / 255.0f, 0.0f};
+    constexpr Rgb GlintWhite{236.0f / 255.0f, 236.0f / 255.0f, 236.0f / 255.0f};
 
     /// <summary>
     /// The wind's gusts: each drop's slant (view pixels across, downwind, for each it falls) is the gusts' where and when
@@ -256,6 +287,33 @@ namespace
     constexpr float SecondRingShare = 0.55f;
     constexpr float SecondRingLife = 0.7f;
     constexpr float SecondRingAlpha = 0.8f;
+    // Splashes fitting the ground (MCWeatherSettings::Ground; each mark's strength times it, at most whole): off hard
+    // ground HardDroplets more droplets (from a drop that throws any), crisper, HardDropletAlpha strong and fading only
+    // to HardFadeTo; into soil a dark dot (SoakBrown) the size's Soak to each side, lying on the ground, spreading from
+    // SoakFrom of it over SoakSpread of its life as it soaks in, SoakAlpha strong, holding, then gone by SoakLife; in
+    // grass a soft puff of spray (SplashGrey) the size's Puff to each side, PuffSoftness soft, spreading from PuffFrom
+    // of it and rising PuffRise pixels, PuffAlpha strong, gone in PuffLife; on a flat stretch of a unit's metal top a
+    // tick of a glint (GlintWhite) GlintInset pixels into it, GlintWidth to each side, GlintLength tall and GlintArm of
+    // that across, GlintAlpha strong (a far drop's FarGlint of that), gone in GlintLife (two frames).
+    constexpr int32_t HardDroplets = 1;
+    constexpr float HardDropletAlpha = 0.8f;
+    constexpr float HardFadeTo = 0.75f;
+    constexpr float SoakFrom = 0.5f;
+    constexpr float SoakSpread = 0.3f;
+    constexpr float SoakAlpha = 0.5f;
+    constexpr float SoakLife = 0.5f;
+    constexpr float PuffSoftness = 0.35f;
+    constexpr float PuffFrom = 0.5f;
+    constexpr float PuffRise = 1.5f;
+    constexpr float PuffAlpha = 0.5f;
+    constexpr float PuffLife = 0.2f;
+    constexpr float GlintWidth = 0.35f;
+    constexpr float GlintLength = 1.0f;
+    constexpr float GlintArm = 0.6f;
+    constexpr float GlintAlpha = 0.6f;
+    constexpr float GlintInset = 1.5f;
+    constexpr float FarGlint = 0.6f;
+    constexpr float GlintLife = 0.07f;
     // A foot coming down in a puddle (MCWeather::AddStep): a spray of StepDroplets droplets StepDropletSize to each side
     // of their middle, StepDropletAlpha strong, from within StepSpread pixels of it and StepStagger seconds of each
     // other, thrown StepOut times a splash's usual speeds out and StepUp times up (as high as a mech's shins); and the
@@ -282,6 +340,16 @@ namespace
     constexpr float FootDepth = 0.3f;
     constexpr float FootLeast = 6.0f;
     constexpr float Band = 6.0f;
+    /// <summary>
+    /// A drop glints only where it lands on a flat stretch of a unit's top as the unit stands when it lands (it may
+    /// have moved on while the drop fell): within OnTopReach pixels above its top to Band and OnTopReach below it, the
+    /// columns FlatReach to each side drawn, their tops within FlatStep pixels of its, at least FlatInside columns in
+    /// from its sides.
+    /// </summary>
+    constexpr float OnTopReach = 1.0f;
+    constexpr int32_t FlatReach = 2;
+    constexpr float FlatStep = 2.0f;
+    constexpr int32_t FlatInside = 5;
     constexpr int32_t DripAbove = 4;
     constexpr float DripSize = 0.5f * MockPixel;
     constexpr float DripLength = MockPixel;
@@ -462,18 +530,25 @@ namespace
         int32_t Depth = 0;
     };
 
-    /// <summary>What a splash leaves for a while: a droplet thrown up, a dot, a ring, a drip falling.</summary>
+    /// <summary>
+    /// What a splash leaves for a while: a droplet thrown up, a dot, a ring, a drip falling; fitting the ground, a dark
+    /// dot soaking into soil, a puff in grass, a glint on metal.
+    /// </summary>
     enum class SplashKind : uint8_t
     {
         Droplet,
         Dot,
         Ring,
         Drip,
+        Soak,
+        Puff,
+        Glint,
     };
 
     /// <summary>
     /// A splash's piece: placed from a world point (X, Y, Z) by view pixels (Across, Up), moving at (VAcross, VUp) and
-    /// falling (Gravity) for Life seconds; a ring growing to Size; drawn in its colour at its strength at Depth.
+    /// falling (Gravity) for Life seconds; a ring growing to Size; drawn in its colour at its strength at Depth, a
+    /// droplet fading to FadeTo of it.
     /// </summary>
     struct Splash
     {
@@ -492,12 +567,13 @@ namespace
         float Life = 0.0f;
         Rgb Color;
         float Alpha = 0.0f;
+        float FadeTo = DropletFadeTo;
         int32_t Depth = 0;
     };
 
     /// <summary>
     /// Droplets thrown up from a point: how many, how fast out and up (times a splash's usual speeds), from within how many
-    /// view pixels to its sides, within how many seconds of each other, how big and how strong.
+    /// view pixels to its sides, within how many seconds of each other, how big, how strong, and fading to how much.
     /// </summary>
     struct DropletThrow
     {
@@ -508,6 +584,14 @@ namespace
         float Stagger = 0.0f;
         float Size = 0.0f;
         float Alpha = DropletAlpha;
+        float FadeTo = DropletFadeTo;
+    };
+
+    /// <summary>A drop the tools or tests land (MCWeather::AddDrop): where, and its size.</summary>
+    struct PendingDrop
+    {
+        MCVector3D Point;
+        uint8_t Size = 0;
     };
 
     /// <summary>A foot coming down this frame (MCWeather::AddStep): where, and its footprint's shape table and frame.</summary>
@@ -586,10 +670,11 @@ namespace
 
     /// <summary>
     /// The weather's state: its settings and the mission's weather; the drops falling and the splashes showing, and the
-    /// most there may be (for this frame's view); the units drawn and the feet come down this frame (Draw empties them
-    /// each frame); the feet's puddles still reacting (the newest MCWeather::MaxPuddleSteps); the shapes' frames'
-    /// columns and footprints' shapes measured so far (kept for the mission); the dice, the rain's and the feet's (so the
-    /// rain falls the same whoever steps in it); the game's time the last frame was drawn at.
+    /// most there may be (for this frame's view); the units drawn, the feet come down and the drops landed by the tools
+    /// this frame (Draw empties them each frame); the feet's puddles still reacting (the newest
+    /// MCWeather::MaxPuddleSteps); the shapes' frames' columns and footprints' shapes measured so far (kept for the
+    /// mission); the dice, the rain's, its splashes' and the feet's (so the rain falls the same whoever steps in it and
+    /// however its splashes fit the ground); the game's time the last frame was drawn at.
     /// </summary>
     struct State
     {
@@ -600,10 +685,12 @@ namespace
         size_t Most = 0;
         std::vector<StandingUnit> Units;
         std::vector<PendingStep> Steps;
+        std::vector<PendingDrop> Landing;
         std::vector<MCWeather::MCPuddleStep> PuddleSteps;
         std::map<FrameKey, FrameColumns> Frames;
         std::map<FrameKey, std::optional<PrintShape>> Prints;
         MCDice Dice;
+        MCDice SplashDice;
         MCDice StepDice;
         /// <summary>The lightning: its dice, the game's time till the next strike, the strikes still flashing, their thunder.</summary>
         MCDice StrikeDice{StrikeSeed};
@@ -932,6 +1019,50 @@ namespace
         return &circles;
     }
 
+    /// <summary>
+    /// Whether <paramref name="unit"/>'s top at its column <paramref name="column"/> is a flat stretch: FlatInside
+    /// columns in from its sides, the columns FlatReach to each side drawn, their tops within FlatStep of its (not its
+    /// outline's edge, nor an aerial).
+    /// </summary>
+    bool FlatAt(const StandingUnit& unit, int32_t column)
+    {
+        if (column < FlatInside || static_cast<size_t>(column + FlatInside) >= unit.Top.size())
+        {
+            return false;
+        }
+
+        const float top = unit.Top[static_cast<size_t>(column)];
+        const auto near = [&](int32_t at)
+        {
+            return at >= 0 && static_cast<size_t>(at) < unit.Top.size() &&
+                   std::abs(unit.Top[static_cast<size_t>(at)] - top) <= FlatStep;
+        };
+
+        return near(column - FlatReach) && near(column + FlatReach);
+    }
+
+    /// <summary>
+    /// Whether a drop landing at view point (x, y) lands on a flat stretch of one of <paramref name="units"/>' tops
+    /// (FlatAt), where a glint shows.
+    /// </summary>
+    bool OnFlatTop(std::span<const StandingUnit> units, float x, float y)
+    {
+        return std::ranges::any_of(units,
+                                   [&](const StandingUnit& unit)
+                                   {
+                                       const auto column = static_cast<int32_t>(std::floor(x)) - unit.Left;
+
+                                       if (column < 0 || static_cast<size_t>(column) >= unit.Top.size())
+                                       {
+                                           return false;
+                                       }
+
+                                       const float top = unit.Top[static_cast<size_t>(column)];
+                                       return y >= top - OnTopReach && y <= top + Band + OnTopReach &&
+                                              FlatAt(unit, column);
+                                   });
+    }
+
     /// <summary>Where on <paramref name="unit"/> a drop meant for the ground at view point (x, y) lands, or none.</summary>
     std::optional<float> HitOn(const StandingUnit& unit, float x, float y)
     {
@@ -1008,6 +1139,7 @@ namespace
                                       .Age = -late,
                                       .Color = pale ? PaleGrey : PalestBlue,
                                       .Alpha = thrown.Alpha,
+                                      .FadeTo = thrown.FadeTo,
                                       .Depth = depth});
             Splash& droplet = state.Splashes.back();
             droplet.Life = 2.0f * droplet.VUp / Gravity;
@@ -1015,30 +1147,172 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="drop"/> landing: a dot where it lands; in water or a puddle, a ring (a near drop's two); on land
-    /// or a unit, droplets thrown up.
+    /// Whether ground drawn in palette entry <paramref name="drawn"/> (the ground's tile, MCParticles::GroundDrawnAt)
+    /// at world point (x, y, z) is wet: the water drawn, or a puddle (<paramref name="margin"/> inside its level);
+    /// never under a bridge, whose road is drawn over the water.
+    /// </summary>
+    bool IsWet(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
+               float z, float margin)
+    {
+        return !MCParticles::BridgedAt(x, y) && (InPuddle(state, look, drawn, x, y, z, margin) ||
+                                                 (drawn.has_value() && MCParticles::IsWaterColor(*drawn)));
+    }
+
+    /// <summary>
+    /// What a drop landing at world point (x, y, z), not on a unit, splashes on (MCWeather::GroundAt), as
+    /// <paramref name="camera"/> shows it.
+    /// </summary>
+    MCWeather::MCSplashGround GroundUnder(State& state, const MCWeather::MCWeatherLook& look, float x, float y, float z,
+                                          const MCCamera& camera)
+    {
+        if (IsWet(state, look, MCParticles::GroundDrawnAt(x, y, z, camera), x, y, z, PuddleMargin))
+        {
+            return MCWeather::MCSplashGround::Water;
+        }
+
+        // The land's kinds the pixels round it vote for (the water's colours at a shore vote for none, nor do shadows).
+        std::array<int32_t, GroundKinds> votes{};
+        std::optional<MCWeather::MCSplashGround> first;
+
+        for (const auto& [right, down] : GroundVotes)
+        {
+            const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera, right, down);
+
+            if (!surface.has_value())
+            {
+                continue;
+            }
+
+            const MCWeather::MCSplashGround ground = MCWeather::GroundOf(*surface);
+            const MCVfxRgb color = GamePalette().Colors()[*surface];
+
+            if (ground == MCWeather::MCSplashGround::Water || std::max({color.R, color.G, color.B}) < ShadowDark)
+            {
+                continue;
+            }
+
+            first = first.value_or(ground);
+            ++votes[static_cast<size_t>(ground)];
+        }
+
+        auto best = static_cast<size_t>(first.value_or(MCWeather::MCSplashGround::Hard));
+
+        for (size_t kind = 0; kind < votes.size(); ++kind)
+        {
+            best = votes[kind] > votes[best] ? kind : best;
+        }
+
+        return static_cast<MCWeather::MCSplashGround>(best);
+    }
+
+    /// <summary>A mark of a splash's own (a dot, a soak, a puff, a glint) where <paramref name="drop"/>
+    /// lands.</summary>
+    Splash MarkOf(const Drop& drop, SplashKind kind, float size, float life, const Rgb& color, float alpha,
+                  int32_t depth)
+    {
+        return {.Kind = kind,
+                .X = drop.X,
+                .Y = drop.Y,
+                .Z = drop.Z,
+                .Size = size,
+                .Life = life,
+                .Color = color,
+                .Alpha = std::min(alpha, 1.0f),
+                .Depth = depth};
+    }
+
+    /// <summary>
+    /// <paramref name="drop"/> landing, its splash fitting the ground as strongly as MCWeatherSettings::Ground says:
+    /// off hard ground, droplets thrown up, crisp; into soil, a dark dot soaking in; in grass, a soft puff; on a unit's
+    /// metal top, a glint and droplets. False at a strength of 0 and in water or a puddle, which splash as ever.
+    /// </summary>
+    bool ThrowFitting(State& state, const Drop& drop, MCWeather::MCSplashGround ground, const MCCamera& camera)
+    {
+        const float strength = std::max(state.Settings.Ground, 0.0f);
+
+        if (strength <= 0.0f || ground == MCWeather::MCSplashGround::Water)
+        {
+            return false;
+        }
+
+        const DropSize& size = DropSizes[drop.Size];
+        MCDice& dice = state.SplashDice;
+        const int32_t count = size.DropletsHigh > 0 ? dice.Between(size.DropletsLow, size.DropletsHigh) : 0;
+        DropletThrow thrown{.Count = count,
+                            .Out = size.Throw,
+                            .Up = size.Throw,
+                            .Size = drop.Size == NearDrop ? 2.0f * DropletSize : DropletSize};
+
+        switch (ground)
+        {
+            case MCWeather::MCSplashGround::Soil:
+            {
+                state.Splashes.push_back(MarkOf(drop, SplashKind::Soak, size.Soak, SoakLife, SoakBrown,
+                                                SoakAlpha * strength, GroundDepthFixup + drop.Depth));
+                return true;
+            }
+
+            case MCWeather::MCSplashGround::Grass:
+            {
+                state.Splashes.push_back(
+                    MarkOf(drop, SplashKind::Puff, size.Puff, PuffLife, SplashGrey, PuffAlpha * strength, drop.Depth));
+                return true;
+            }
+
+            case MCWeather::MCSplashGround::Metal:
+            {
+                if (const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera); OnFlatTop(state.Units, at.X, at.Y))
+                {
+                    const float far = drop.Size == 0 ? FarGlint : 1.0f;
+                    Splash& glint =
+                        state.Splashes.emplace_back(MarkOf(drop, SplashKind::Glint, GlintWidth, GlintLife, GlintWhite,
+                                                           GlintAlpha * far * strength, drop.Depth));
+                    glint.Up = -GlintInset;
+                }
+
+                break;
+            }
+
+            case MCWeather::MCSplashGround::Hard:
+            {
+                state.Splashes.push_back(
+                    MarkOf(drop, SplashKind::Dot, size.Dot * 0.5f, DotLife, SplashGrey, DotAlpha, drop.Depth));
+                thrown.Count += count > 0 ? HardDroplets : 0;
+                thrown.Alpha = HardDropletAlpha * strength;
+                thrown.FadeTo = HardFadeTo;
+                break;
+            }
+
+            case MCWeather::MCSplashGround::Water:
+                break;
+        }
+
+        thrown.Alpha = std::min(thrown.Alpha, 1.0f);
+        Droplets(state, dice, drop.X, drop.Y, drop.Z, thrown, drop.Depth);
+        return true;
+    }
+
+    /// <summary>
+    /// <paramref name="drop"/> landing: with MCWeatherSettings::Ground, as the ground there takes it (ThrowFitting);
+    /// else a dot where it lands; in water or a puddle, a ring (a near drop's two); on land or a unit, droplets thrown
+    /// up.
     /// </summary>
     void Throw(State& state, const Drop& drop, const MCCamera& camera)
     {
         const DropSize& size = DropSizes[drop.Size];
-        MCDice& dice = state.Dice;
+        MCDice& dice = state.SplashDice;
         const MCWeather::MCWeatherLook look = MCWeather::ShownLook();
-        const std::optional<uint8_t> drawn =
-            drop.OnUnit ? std::nullopt : MCParticles::GroundDrawnAt(drop.X, drop.Y, drop.Z, camera);
-        // A bridge's road is drawn over the water (the ground drawn under it).
-        const bool wet = !MCParticles::BridgedAt(drop.X, drop.Y) &&
-                         (InPuddle(state, look, drawn, drop.X, drop.Y, drop.Z, PuddleMargin) ||
-                          (drawn.has_value() && MCParticles::IsWaterColor(*drawn)));
-        Splash dot{.Kind = SplashKind::Dot,
-                   .X = drop.X,
-                   .Y = drop.Y,
-                   .Z = drop.Z,
-                   .Size = size.Dot * 0.5f,
-                   .Life = DotLife,
-                   .Color = wet ? PalestBlue : SplashGrey,
-                   .Alpha = DotAlpha,
-                   .Depth = drop.Depth};
-        state.Splashes.push_back(dot);
+        const MCWeather::MCSplashGround ground =
+            drop.OnUnit ? MCWeather::MCSplashGround::Metal : GroundUnder(state, look, drop.X, drop.Y, drop.Z, camera);
+
+        if (ThrowFitting(state, drop, ground, camera))
+        {
+            return;
+        }
+
+        const bool wet = ground == MCWeather::MCSplashGround::Water;
+        state.Splashes.push_back(MarkOf(drop, SplashKind::Dot, size.Dot * 0.5f, DotLife, wet ? PalestBlue : SplashGrey,
+                                        DotAlpha, drop.Depth));
 
         if (wet)
         {
@@ -1136,6 +1410,38 @@ namespace
     }
 
     /// <summary>
+    /// <paramref name="drop"/>'s depth in the draw list, where it lands on the ground; or, when it falls where a unit
+    /// drawn this frame stands, on the unit's top, just before its parts.
+    /// </summary>
+    void LandOnUnits(const State& state, Drop& drop, const MCCamera& camera)
+    {
+        const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera);
+        drop.Depth = -static_cast<int32_t>(std::floor(at.Y));
+
+        for (const StandingUnit& unit : state.Units)
+        {
+            if (const std::optional<float> top = HitOn(unit, at.X, at.Y); top.has_value())
+            {
+                drop.OnUnit = true;
+                drop.Z += at.Y - *top;
+                drop.Depth = unit.Depth - 1;
+                return;
+            }
+        }
+    }
+
+    /// <summary>The drops the tools and tests landed this frame (MCWeather::AddDrop), splashing at once.</summary>
+    void Land(State& state, const MCCamera& camera)
+    {
+        for (const PendingDrop& pending : state.Landing)
+        {
+            Drop drop{.X = pending.Point.X, .Y = pending.Point.Y, .Z = pending.Point.Z, .Size = pending.Size};
+            LandOnUnits(state, drop, camera);
+            Throw(state, drop, camera);
+        }
+    }
+
+    /// <summary>
     /// The drops thrown this frame (<paramref name="step"/> seconds of the game's time) over <paramref name="camera"/>'s
     /// view, as many as the weather's rate, more where the veil's sheets are thick (no more at once than MaxDrops, more
     /// in a shower's <paramref name="burst"/>, MCShowers::Rain); those falling where a unit stands land on its top.
@@ -1185,20 +1491,7 @@ namespace
                       .Alpha = dice.Between(size.AlphaLow, size.AlphaHigh),
                       .Slant = WindLow + (WindHigh - WindLow) * GustAt(east, north, time) +
                                dice.Between(-WindJitter, WindJitter)};
-            const MCVector2D at = Project(ground.X, ground.Y, ground.Z, camera);
-            drop.Depth = -static_cast<int32_t>(std::floor(at.Y));
-
-            for (const StandingUnit& unit : state.Units)
-            {
-                if (const std::optional<float> top = HitOn(unit, at.X, at.Y); top.has_value())
-                {
-                    drop.OnUnit = true;
-                    drop.Z = ground.Z + (at.Y - *top);
-                    drop.Depth = unit.Depth - 1;
-                    break;
-                }
-            }
-
+            LandOnUnits(state, drop, camera);
             state.Drops.push_back(drop);
         }
     }
@@ -1377,9 +1670,31 @@ namespace
                 {
                     command.X0 += splash.VAcross * splash.Age;
                     command.Y0 -= splash.VUp * splash.Age - 0.5f * Gravity * splash.Age * splash.Age;
-                    alpha *= std::lerp(1.0f, DropletFadeTo, age);
+                    alpha *= std::lerp(1.0f, splash.FadeTo, age);
                     break;
                 }
+
+                case SplashKind::Soak:
+                {
+                    // Lying on the ground, spreading a little as it soaks in, then drying away.
+                    command.Radius = splash.Size * std::lerp(SoakFrom, 1.0f, std::min(age / SoakSpread, 1.0f));
+                    command.Aspect = MCSceneLights::GroundAspect();
+                    alpha *= 1.0f - age * age;
+                    break;
+                }
+
+                case SplashKind::Puff:
+                {
+                    command.Radius = splash.Size * std::lerp(PuffFrom, 1.0f, std::sqrt(age));
+                    command.Y0 -= PuffRise * age;
+                    command.Style = MCParticleStyle::Soft;
+                    command.Softness = PuffSoftness;
+                    alpha *= 1.0f - age;
+                    break;
+                }
+
+                case SplashKind::Glint:
+                    break;
 
                 case SplashKind::Dot:
                     break;
@@ -1400,8 +1715,11 @@ namespace
                 }
             }
 
+            // A drip a short streak falling, a glint a tick standing up.
             command.X1 = command.X0;
-            command.Y1 = splash.Kind == SplashKind::Drip ? command.Y0 - DripLength : command.Y0;
+            command.Y1 = splash.Kind == SplashKind::Drip    ? command.Y0 - DripLength
+                         : splash.Kind == SplashKind::Glint ? command.Y0 - GlintLength
+                                                            : command.Y0;
             SetColor(command, NoPalerThan(splash.Color, palest), alpha);
 
             // A droplet or a drip in the air (a dot and a ring lie on the ground, which the lights light).
@@ -1412,6 +1730,17 @@ namespace
             }
 
             Mark(camera, command, splash.Depth);
+
+            // A glint's arm across its tick, through its middle.
+            if (splash.Kind == SplashKind::Glint)
+            {
+                const float arm = 0.5f * GlintLength * GlintArm;
+                command.Y0 -= 0.5f * GlintLength;
+                command.Y1 = command.Y0;
+                command.X0 -= arm;
+                command.X1 += arm;
+                Mark(camera, command, splash.Depth);
+            }
         }
     }
 
@@ -1460,6 +1789,7 @@ namespace
         state.Prints.clear();
         state.Time.reset();
         state.Dice.Restart();
+        state.SplashDice.Restart();
         state.StepDice.Restart();
         state.StrikeDice.Restart();
         state.NextStrike.reset();
@@ -1825,6 +2155,75 @@ auto MCWeather::PuddleAt(const MCVector3D& point, const MCCamera& camera) -> boo
                     point.Y, point.Z, StepMargin);
 }
 
+auto MCWeather::GroundOf(uint8_t index) -> MCSplashGround
+{
+    if (MCParticles::IsWaterColor(index))
+    {
+        return MCSplashGround::Water;
+    }
+
+    if (IsGrassIndex(index))
+    {
+        return MCSplashGround::Grass;
+    }
+
+    // HSL's saturation: the colour's spread over its lightness's most (its sum's, or what it lacks of white's).
+    const MCVfxRgb color = GamePalette().Colors()[index];
+    const int32_t most = std::max({color.R, color.G, color.B});
+    const int32_t least = std::min({color.R, color.G, color.B});
+    const int32_t span = std::min(most + least, 2 * ComponentMost - most - least);
+    const float saturation = span > 0 ? static_cast<float>(most - least) / static_cast<float>(span) : 0.0f;
+    return saturation >= SoilSaturation ? MCSplashGround::Soil : MCSplashGround::Hard;
+}
+
+auto MCWeather::GroundAt(const MCVector3D& point, const MCCamera& camera) -> MCSplashGround
+{
+    return GroundUnder(TheState(), ShownLook(), point.X, point.Y, point.Z, camera);
+}
+
+auto MCWeather::AddDrop(const MCVector3D& point, uint8_t size) -> void
+{
+    if (Shown() != MCWeatherKind::Clear)
+    {
+        TheState().Landing.push_back({point, std::min<uint8_t>(size, static_cast<uint8_t>(DropSizes.size() - 1))});
+    }
+}
+
+auto MCWeather::Pieces() -> MCSplashPieces
+{
+    MCSplashPieces pieces;
+
+    for (const Splash& splash : TheState().Splashes)
+    {
+        switch (splash.Kind)
+        {
+            case SplashKind::Droplet:
+                ++pieces.Droplets;
+                break;
+            case SplashKind::Dot:
+                ++pieces.Dots;
+                break;
+            case SplashKind::Ring:
+                ++pieces.Rings;
+                break;
+            case SplashKind::Drip:
+                ++pieces.Drips;
+                break;
+            case SplashKind::Soak:
+                ++pieces.Soaks;
+                break;
+            case SplashKind::Puff:
+                ++pieces.Puffs;
+                break;
+            case SplashKind::Glint:
+                ++pieces.Glints;
+                break;
+        }
+    }
+
+    return pieces;
+}
+
 auto MCWeather::ShownPuddleSteps() -> std::span<const MCPuddleStep>
 {
     return TheState().PuddleSteps;
@@ -1851,6 +2250,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         state.Splashes.clear();
         state.Units.clear();
         state.Steps.clear();
+        state.Landing.clear();
         state.PuddleSteps.clear();
         state.NextStrike.reset();
         state.Strikes.clear();
@@ -1871,10 +2271,13 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         {
             Step(state, foot, camera);
         }
+
+        Land(state, camera);
     }
 
     state.Units.clear();
     state.Steps.clear();
+    state.Landing.clear();
     // Port-only (HD lighting): the drops catch the lights they fall past; at dusk and night, the splashes stay dim.
     Catching catching{.Gain = CatchGain(), .Aspect = MCSceneLights::GroundAspect()};
 

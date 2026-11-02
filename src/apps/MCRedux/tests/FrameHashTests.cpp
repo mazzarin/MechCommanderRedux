@@ -640,7 +640,7 @@ namespace
     /// and GPU agree) and the folds to 0xd54ea188 and 0x6a56c692 (GPU 0xac28e610 and 0xcaada585), only there. The
     /// INTERFACE SIZE box, the right column's boxes 42 lines tall, the HD box level with SCROLL SPEED, SOUND's box in
     /// line with RENDERER's and the text buttons in the art's lettering (personal, 2026-11-02) took the preferences
-    /// step to PREFSHASH (software and GPU agree) and the folds to SWFOLD1 and SWFOLD2 (GPU GPUFOLD1 and GPUFOLD2).
+    /// step to 0x1366f9ea (software and GPU agree) and the folds to 0x9a2c0b40 and 0xee685b12 (GPU 0x7c367c58 and 0xba21a105).
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -723,7 +723,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0xe30aef7bu},
-            {"preferences", [] { ShowPreferences(); }, 0x7a62bb6du},
+            {"preferences", [] { ShowPreferences(); }, 0x1366f9eau},
             {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
             {"load screen",
              []
@@ -832,8 +832,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0x9856ff72u : 0x356861aau);
-        CHECK_EQ(presents, gpu ? 0xfb801225u : 0xacf837b2u);
+        CHECK_EQ(frames, gpu ? 0x7c367c58u : 0x9a2c0b40u);
+        CHECK_EQ(presents, gpu ? 0xba21a105u : 0xee685b12u);
         CheckGpuAlone(gpu);
     }
 }

@@ -28,7 +28,9 @@ namespace
 
     /// <summary>
     /// Rain and a downpour as the mock-ups made them (tools/upscale/rain-proto, render_rain2.py and 3), their drops 1.2
-    /// times as many: drawn in the game, as many covered 0.85 of the mock-up's pixels (mission 20's road).
+    /// times as many: drawn in the game, as many covered 0.85 of the mock-up's pixels (mission 20's road). Their rain is
+    /// heard faintly, as from far above the battle: a downpour 14 dB under the rain loop as levelled (about 25 dB under
+    /// the game's sounds as they play), rain about 6 dB under that.
     /// </summary>
     constexpr MCWeather::MCWeatherLook RainLook{.Dark = 0.33f,
                                                 .Grey = 0.2f,
@@ -39,7 +41,8 @@ namespace
                                                 .Puddles = 0.06f,
                                                 .Sheen = 0.08f,
                                                 .Gloss = 0.25f,
-                                                .Drips = 3.0f};
+                                                .Drips = 3.0f,
+                                                .Heard = 0.31f};
     constexpr MCWeather::MCWeatherLook DownpourLook{.Dark = 0.4f,
                                                     .Grey = 0.3f,
                                                     .Wet = 0.14f,
@@ -49,7 +52,8 @@ namespace
                                                     .Puddles = 0.13f,
                                                     .Sheen = 0.12f,
                                                     .Gloss = 0.35f,
-                                                    .Drips = 8.0f};
+                                                    .Drips = 8.0f,
+                                                    .Heard = 0.45f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
@@ -1244,6 +1248,11 @@ auto MCWeather::Shown() -> MCWeatherKind
 auto MCWeather::ShownLook() -> MCWeatherLook
 {
     return LookOf(Shown());
+}
+
+auto MCWeather::Heard() -> float
+{
+    return MCRenderer::GpuDrawing() == MCGpuDrawing::On ? ShownLook().Heard : 0.0f;
 }
 
 auto MCWeather::Named(std::string_view name) -> std::optional<MCWeatherKind>

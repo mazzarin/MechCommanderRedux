@@ -2,6 +2,7 @@
 #include "sound/MCSoundSystem.h"
 #include "ai/MCMoveGeometry.h"
 #include "camera/MCCamera.h"
+#include "gameos/MCSoundChannel.h"
 #include "gameos/MCSoundRenderer.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "lib/MCDice.h"
@@ -18,7 +19,10 @@
 #include "mission/MCScenario.h"
 #include "object/MCBigGameObject.h"
 #include "object/MCMechWarrior.h"
+#include "platform/MCFlac.h"
 #include "platform/MCSmacker.h"
+#include "sound/MCHdAudio.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
 
@@ -42,6 +46,12 @@ namespace
     constexpr int32_t SECOND_PLANET_MUSIC = 0x19;
     /// <summary>What PlayDigitalMusic returns when it can't start the music now.</summary>
     constexpr int32_t MUSIC_BUSY = -0x5445fff2;
+    /// <summary>The seconds the rain bed takes to ease from none to a downpour's, and back.</summary>
+    constexpr float RainFade = 2.0f;
+    /// <summary>The seconds of the rain loop kept queued ahead of what plays, so a slow frame doesn't run it dry.</summary>
+    constexpr uint32_t RainAheadSeconds = 1;
+    /// <summary>The sample frames read from the rain loop at a time.</summary>
+    constexpr size_t RainChunkFrames = 4096;
 
     /// <summary>A byte volume (0..127) as a channel volume.</summary>
     float ChannelVolume(uint32_t volume)
@@ -392,6 +402,9 @@ void MCSoundSystem::PurgeSoundSystem()
     FriendlyDestroyed = 0;
     EnemyDestroyed = 0;
     CurrentMusicId = -1;
+    StopRain();
+    _RainLevel = 0.0f;
+    _RainMissing = false;
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -690,6 +703,10 @@ void MCSoundSystem::UpdateMusicChoice()
 
 void MCSoundSystem::Update()
 {
+    // Port-only: the rain bed plays whether or not the music does.
+    const bool scenarioRuns = Mission() != nullptr && Mission()->State == MCMissionState::Scenario;
+    UpdateRain(UseSound != 0 && scenarioRuns ? MCWeather::Heard() : 0.0f);
+
     if (UseSound == 0 || UseMusic == 0)
     {
         return;
@@ -795,6 +812,77 @@ void MCSoundSystem::Update()
             FreeChannelResource(channel);
         }
     }
+}
+
+void MCSoundSystem::UpdateRain(float heard)
+{
+    const float step = FrameLength / RainFade;
+    _RainLevel = heard > _RainLevel ? std::min(heard, _RainLevel + step) : std::max(heard, _RainLevel - step);
+
+    if (_RainLevel <= 0.0f || _RainMissing)
+    {
+        StopRain();
+        return;
+    }
+
+    if (_RainStream == nullptr)
+    {
+        const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
+        _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
+        auto stream = _RainLoop != nullptr && _RainLoop->Frames() > 0
+                          ? _Renderer.Mixer().CreateStream(_RainLoop->Format())
+                          : std::unexpected(std::string("no rain loop in the HD audio pack"));
+
+        if (!stream.has_value())
+        {
+            if (path.has_value())
+            {
+                SDL_Log("MCSoundSystem: the rain loop %s won't play: %s", path->string().c_str(),
+                        _RainLoop != nullptr ? stream.error().c_str() : "not a FLAC file");
+            }
+
+            _RainMissing = true;
+            StopRain();
+            return;
+        }
+
+        _RainStream = std::move(*stream);
+        _RainChunk.resize(RainChunkFrames * _RainLoop->Format().BlockAlign());
+    }
+
+    _RainStream->SetVolume(MCSoundChannel::BufferVolume(ChannelVolume(DigitalMasterVolume) * _RainLevel));
+    const uint64_t ahead = uint64_t{RainAheadSeconds} * _RainLoop->Format().Rate;
+    bool fromStart = false;
+
+    // Round and round: at the loop's end, from its start again (the loop is made to run on without a seam).
+    while (_RainStream->QueuedFrames() < ahead)
+    {
+        const size_t read = _RainLoop->Read(_RainChunk);
+        _RainStream->Queue(std::span(_RainChunk).first(read));
+
+        if (read == _RainChunk.size())
+        {
+            fromStart = false;
+            continue;
+        }
+
+        // Nothing read from its start, or no way back to it: a file cut short.
+        if ((read == 0 && fromStart) || !_RainLoop->Seek(0))
+        {
+            SDL_Log("MCSoundSystem: the rain loop stopped reading; no rain heard till the mission ends");
+            _RainMissing = true;
+            StopRain();
+            return;
+        }
+
+        fromStart = true;
+    }
+}
+
+void MCSoundSystem::StopRain()
+{
+    _RainStream.reset();
+    _RainLoop.reset();
 }
 
 int32_t MCSoundSystem::PlayDigitalMusic(int32_t musicId, bool loop)

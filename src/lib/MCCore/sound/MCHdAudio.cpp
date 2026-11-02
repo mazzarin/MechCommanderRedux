@@ -171,6 +171,11 @@ std::optional<std::filesystem::path> MCHdAudio::Music(std::string_view original)
     return Existing(root / "stereo" / (name + ".flac"));
 }
 
+std::optional<std::filesystem::path> MCHdAudio::RainLoop()
+{
+    return Current().Readable ? Existing(MCHdArt::PackFolder() / "audio" / "ambience" / "rain.flac") : std::nullopt;
+}
+
 std::string MCHdAudio::SampleKey(std::span<const uint8_t> wave)
 {
     const auto parsed = MCAudio::ParseWave(wave);

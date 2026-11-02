@@ -4,6 +4,8 @@
 #include "sound/MCRadio.h"
 #include "sound/MCRadioMessage.h"
 
+class MCAudioStream;
+class MCFlac;
 class MCGameObject;
 class MCMechWarrior;
 class MCPacketFile;
@@ -158,9 +160,19 @@ public:
     void StopStaticNoise();
     /// <summary>
     /// Per frame: fades out stopped channels, plays the next radio fragment or message, cross-fades and picks the
-    /// music from ABL requests and the combat state.
+    /// music from ABL requests and the combat state. Port-only: the rain bed, as loud as the rain shown is heard while
+    /// a scenario runs (MCWeather::Heard).
     /// </summary>
     void Update();
+    /// <summary>
+    /// Port-only (HD weather): the rain bed, the HD audio pack's rain loop (MCHdAudio::RainLoop) streamed round and
+    /// round at the effects volume, easing to <paramref name="heard"/> (MCWeather::MCWeatherLook::Heard, a channel
+    /// volume) over RainFade seconds of the frames' time (FrameLength), and stopped at none. Without the pack's loop
+    /// (or with one that won't play) there is none till the purge.
+    /// </summary>
+    void UpdateRain(float heard);
+    /// <summary>How loud the rain bed plays (as <see cref="UpdateRain"/> takes it), eased toward what is heard.</summary>
+    float RainLevel() const { return _RainLevel; }
     /// <summary>Streams music <paramref name="musicId"/> ("DMS%d", +25 on the second planet), fading from the stream
     /// playing.</summary>
     /// <returns>0, or -0x5445fff2 when it is already playing or a fade is under way.</returns>
@@ -297,6 +309,8 @@ private:
     void UpdateRadio();
     /// <summary>Update's music choice from the combat state.</summary>
     void UpdateMusicChoice();
+    /// <summary>Stops the rain bed and closes its loop.</summary>
+    void StopRain();
 
     /// <summary>The renderer the channels belong to.</summary>
     MCSoundRenderer& _Renderer;
@@ -316,6 +330,16 @@ private:
     std::vector<std::shared_ptr<MCRadio>> _Radios;
     /// <summary>The music state Update keeps (by <see cref="MCMusicState"/>).</summary>
     std::array<bool, 8> _MusicState{};
+    /// <summary>The rain loop the rain bed reads (null while it plays none).</summary>
+    std::unique_ptr<MCFlac> _RainLoop;
+    /// <summary>The stream the rain bed plays through (null while it plays none).</summary>
+    std::shared_ptr<MCAudioStream> _RainStream;
+    /// <summary>The rain loop's PCM read last.</summary>
+    std::vector<uint8_t> _RainChunk;
+    /// <summary>How loud the rain bed plays (<see cref="RainLevel"/>).</summary>
+    float _RainLevel = 0.0f;
+    /// <summary>Set once the pack had no rain loop that plays: none is looked for again till the purge.</summary>
+    bool _RainMissing = false;
 };
 
 /// <summary>The current context's sound system (null before UserInit makes it); the caller keeps it as its pin.</summary>

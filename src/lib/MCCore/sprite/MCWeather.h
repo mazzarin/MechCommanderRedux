@@ -63,6 +63,11 @@ namespace MCWeather
         float Gloss = 0.0f;
         /// <summary>Drips a second falling from a unit's lower edges.</summary>
         float Drips = 0.0f;
+        /// <summary>
+        /// How loud its rain is heard (the HD audio pack's rain loop, MCSoundSystem::UpdateRain), as a channel volume (its
+        /// gain that squared): 0 none, 1 the loop as levelled.
+        /// </summary>
+        float Heard = 0.0f;
     };
 
     /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing).</summary>
@@ -125,6 +130,12 @@ namespace MCWeather
 
     /// <summary>How the weather shown looks (<see cref="LookOf"/> of <see cref="Shown"/>).</summary>
     MCWeatherLook ShownLook();
+
+    /// <summary>
+    /// How loud the rain shown is heard (<see cref="MCWeatherLook::Heard"/>): none while none is drawn (a clear sky,
+    /// HD weather off, the software renderer).
+    /// </summary>
+    float Heard();
 
     /// <summary>The weather named <paramref name="name"/> ("clear", "rain" or "downpour", in any case); none for another.</summary>
     std::optional<MCWeatherKind> Named(std::string_view name);

@@ -1,13 +1,17 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "fakes/MCNullAudioDevice.h"
+#include "gameos/MCSoundChannel.h"
 #include "gameos/MCSoundRenderer.h"
 #include "gameos/MCSoundResource.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGameContext.h"
+#include "main/MCMissionGlobals.h"
 #include "platform/MCFlac.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCWeather.h"
 
 namespace
 {
@@ -350,6 +354,103 @@ TEST_CASE("HD audio: HD music streams through a sound channel's ring, looping")
     renderer.Stop(1);
     renderer.DestroyResource(*music);
     MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// HD weather's rain bed: the pack's rain loop plays round and round, never running dry, at the effects volume as loud
+/// as the rain is heard, easing in and out over the frames' time; whatever HD audio is set to, as the rain is an option
+/// of its own. Without the pack's loop there is none till the purge. A downpour is heard louder than rain, and no rain
+/// at all while none is drawn (here, without the GPU).
+/// </summary>
+TEST_CASE(
+    "HD audio: the rain bed streams the pack's rain loop round and round at the effects volume, easing in and out")
+{
+    Fixture fixture;
+    const std::filesystem::path loop = fixture.Root / "audio/ambience/rain.flac";
+    Write(loop, Flac());
+    GHdAudio = HdAudioOff;
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    MCAudio& mixer = SoundRenderer()->Mixer();
+    sound->DigitalMasterVolume = 96;
+    const float savedFrame = FrameLength;
+    // A quarter of the way a frame (RainFade is 2 s).
+    FrameLength = 0.5f;
+    // The loop's left channel (its right is twice as loud the other way), 16-bit.
+    constexpr float LoopLeft = 1000.0f / 32768.0f;
+    constexpr size_t Frames = 12000;
+    std::vector<float> out(2 * Frames);
+
+    // As loud as the effects volume and the level make a channel, every frame: the 20 ms loop came round many times.
+    const auto heardAt = [&](float level)
+    {
+        const float gain = MCAudio::GainFromHundredthsDb(
+            MCSoundChannel::BufferVolume(static_cast<float>(sound->DigitalMasterVolume) / 128.0f * level));
+        mixer.Render(out);
+        size_t right = 0;
+
+        for (size_t frame = 0; frame < Frames; ++frame)
+        {
+            right += std::abs(out[2 * frame] - LoopLeft * gain) <= LoopLeft * gain * 0.01f &&
+                     std::abs(out[2 * frame + 1] + 2.0f * out[2 * frame]) <= LoopLeft * gain * 0.01f;
+        }
+
+        return right == Frames;
+    };
+
+    const auto silent = [&]
+    {
+        mixer.Render(out);
+        return std::ranges::all_of(out, [](float sample) { return sample == 0.0f; });
+    };
+
+    for (const float level : {0.25f, 0.5f, 0.75f, 1.0f, 1.0f})
+    {
+        sound->UpdateRain(1.0f);
+        CHECK_EQ(sound->RainLevel(), level);
+        CHECK(heardAt(level));
+    }
+
+    // Easing out to none, and stopped there.
+    sound->UpdateRain(0.0f);
+    CHECK_EQ(sound->RainLevel(), 0.75f);
+    CHECK(heardAt(0.75f));
+
+    for (int32_t frame = 0; frame < 3; ++frame)
+    {
+        sound->UpdateRain(0.0f);
+    }
+
+    CHECK_EQ(sound->RainLevel(), 0.0f);
+    CHECK(silent());
+
+    // Outside a scenario Update hears none: it eases the rain out.
+    sound->UpdateRain(1.0f);
+    sound->Update();
+    CHECK_EQ(sound->RainLevel(), 0.0f);
+
+    // Without the pack's loop, none; one put in after isn't looked for till the purge (a mission's end).
+    std::filesystem::remove(loop);
+    sound->UpdateRain(1.0f);
+    CHECK(silent());
+    Write(loop, Flac());
+    sound->UpdateRain(1.0f);
+    CHECK(silent());
+    sound->PurgeSoundSystem();
+    CHECK_EQ(sound->RainLevel(), 0.0f);
+    sound->UpdateRain(1.0f);
+    CHECK(heardAt(0.25f));
+
+    // A downpour is heard louder than rain, and a clear sky not at all; nothing is heard while no rain is drawn.
+    CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).Heard > MCWeather::LookOf(MCWeatherKind::Rain).Heard);
+    CHECK_EQ(MCWeather::LookOf(MCWeatherKind::Clear).Heard, 0.0f);
+    const int savedWeather = GHdWeather;
+    GHdWeather = HdWeatherDownpour;
+    CHECK_EQ(MCWeather::Heard(), 0.0f);
+    GHdWeather = savedWeather;
+    FrameLength = savedFrame;
 }
 
 TEST_CASE("tool: --hd-audio-pack verifies every generated music, effect and voice against the game's reader")

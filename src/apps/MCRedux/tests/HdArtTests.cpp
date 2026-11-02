@@ -7672,6 +7672,46 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// Port-only (HD weather's puddles, kept off cliffs): the ground mesh carries how many of each cell's movement cells
+/// can't be entered, as the map has them (none off the map), and the map has ground none of which can be.
+/// </summary>
+TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter, so the rain's puddles keep off cliffs")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    MCTestGame::RunFrame(FrameSeconds);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    REQUIRE_EQ(mesh->CellBlocked.size(), mesh->CellTiles.size());
+    const MCScenarioMap& map = GameMap();
+    constexpr uint32_t AllCells = MapCellDim * MapCellDim;
+    size_t matching = 0;
+    size_t walledOff = 0;
+
+    for (int32_t r = 0; r < mesh->Rows; ++r)
+    {
+        for (int32_t c = 0; c < mesh->Cols; ++c)
+        {
+            const int32_t row = mesh->FirstRow + r;
+            const int32_t col = mesh->FirstCol + c;
+            const uint32_t blocked = map.OnMap(row, col) ? map.TileAt(row, col).BlockedCells() : 0;
+            const uint8_t carried = mesh->CellBlocked[static_cast<size_t>(r) * mesh->Cols + c];
+            matching += carried == blocked ? 1 : 0;
+            walledOff += carried == AllCells ? 1 : 0;
+        }
+    }
+
+    CHECK_EQ(matching, mesh->CellBlocked.size());
+    CHECK(walledOff > 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 /// <summary>HD terrain changes only the colours: in mirror mode every palette index stays the software renderer's.</summary>
 TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 {

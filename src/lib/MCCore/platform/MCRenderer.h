@@ -422,6 +422,11 @@ struct MCTerrainMesh
     std::vector<uint32_t> CellTiles;
     /// <summary>Per cell: its corners' elevation levels, a byte each (top left, top right, bottom right, bottom left).</summary>
     std::vector<uint32_t> CellElevations;
+    /// <summary>
+    /// Per cell (port-only): how many of its map tile's movement cells can't be entered (MCMapTile::BlockedCells; 0 off
+    /// the map), so HD weather keeps puddles off the cliffs.
+    /// </summary>
+    std::vector<uint8_t> CellBlocked;
     /// <summary>The tiles' data (vfx/vfxtile.cpp's format), copied.</summary>
     std::vector<std::vector<uint8_t>> Tiles;
 

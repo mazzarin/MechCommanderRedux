@@ -48,6 +48,11 @@ auto GameMap() -> MCScenarioMap&
     return *System().Map;
 }
 
+auto LoadedGameMap() -> const MCScenarioMap*
+{
+    return MCGameContext::Current().HasMoveSystem() ? System().Map.get() : nullptr;
+}
+
 auto GameObjectMap() -> MCObjectMap&
 {
     SDL_assert(System().ObjectMap != nullptr);

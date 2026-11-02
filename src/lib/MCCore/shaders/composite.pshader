@@ -1044,6 +1044,13 @@ static const float PuddleMirror = 0.28;
 static const float EdgeMirror = 0.2;
 static const float RimDark = 0.9;
 static const float PuddleNear = 0.08;
+// None on cliffs: the field CliffDry higher where BlockedDryFrom to BlockedDryTo of the ground's map tile can't be
+// entered (the share in the index target's alpha, BlockedMarkSpan below 1 where none can: draw.pshader's), as the
+// cliffs between high and low ground can't (the map's heights tell them poorly from rolling ground).
+static const float BlockedMarkSpan = 0.25;
+static const float BlockedDryFrom = 0.4;
+static const float BlockedDryTo = 0.7;
+static const float CliffDry = 1.0;
 // What stands on the ground: its bright metal (brighter than BrightMetal, as drawn, and no greener than MetalGreen past
 // its red or blue: not leaves) glosses with wetLook.z of the sky; the rest is UnitWet as bright.
 static const float BrightMetal = 0.4;
@@ -1085,10 +1092,19 @@ float Greenness(float3 color)
     return color.g - max(color.r, color.b);
 }
 
+// The share of the ground's map tile that can't be entered at a world texel, from the index target's alpha there
+// (`mark`, above GroundMark).
+float BlockedShare(float mark)
+{
+    return saturate((1.0 - mark) / BlockedMarkSpan);
+}
+
 // The puddles' field at a world texel: below wetLook.y, a puddle (on ground).
 float PuddleFieldAt(float2 texel)
 {
     float mark;
+    ReliefAt(texel, mark);
+    const float cliff = CliffDry * smoothstep(BlockedDryFrom, BlockedDryTo, BlockedShare(mark));
     const float2 east = ReliefAt(texel + float2(DipSpan, 0.0), mark);
     const float2 west = ReliefAt(texel - float2(DipSpan, 0.0), mark);
     const float2 south = ReliefAt(texel + float2(0.0, DipSpan), mark);
@@ -1100,7 +1116,7 @@ float PuddleFieldAt(float2 texel)
                          Greenness(WorldAt(texel - float2(0.0, DipSpan)))) /
                         5.0;
     return Layered(GroundPointAt(texel + 0.5) / PuddleSize, PuddleApart) - DipWeight * spread +
-           GrassDry * smoothstep(GrassFrom, GrassTo, green);
+           GrassDry * smoothstep(GrassFrom, GrassTo, green) + cliff;
 }
 
 // Whether a puddle lies at a world texel.

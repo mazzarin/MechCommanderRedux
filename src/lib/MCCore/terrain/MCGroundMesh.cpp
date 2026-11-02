@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "terrain/MCGroundMesh.h"
+#include "ai/MCMoveSystem.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
 #include "object/MCElemental.h"
@@ -94,6 +95,8 @@ namespace
         mesh.Rows = side - 1;
         mesh.CellTiles.resize(static_cast<size_t>(mesh.Cols) * mesh.Rows);
         mesh.CellElevations.resize(mesh.CellTiles.size());
+        mesh.CellBlocked.resize(mesh.CellTiles.size());
+        const MCScenarioMap* const map = LoadedGameMap();
         std::unordered_map<int32_t, uint32_t> tiles;
 
         for (int32_t r = 0; r < mesh.Rows; ++r)
@@ -106,6 +109,11 @@ namespace
                                             static_cast<uint32_t>(built->Elevations[at + 1]) << 8 |
                                             static_cast<uint32_t>(built->Elevations[at + side + 1]) << 16 |
                                             static_cast<uint32_t>(built->Elevations[at + side]) << 24;
+
+                if (map != nullptr && map->OnMap(r - ring, c - ring))
+                {
+                    mesh.CellBlocked[cell] = static_cast<uint8_t>(map->TileAt(r - ring, c - ring).BlockedCells());
+                }
 
                 // The tile MCTerrainBlock::Draw would draw: none for a negative number or a tile that can't be read.
                 const int32_t textureData = built->Textures[at];

@@ -160,6 +160,8 @@ namespace
     constexpr uint32_t HdTerrainAtlases = 2;
     /// <summary>A terrain image's ints in the mesh's image buffer (shaders/terrain.vshader's Image).</summary>
     constexpr size_t TerrainImageInts = 16;
+    /// <summary>A terrain cell's ints in the mesh's cell buffer (shaders/terrain.vshader's cells: a uint4).</summary>
+    constexpr size_t TerrainCellInts = 4;
     /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
     constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
     /// <summary>
@@ -4270,16 +4272,18 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         static_cast<uint32_t>(std::bit_ceil(static_cast<uint32_t>(std::max(shelfY + shelfHeight, 1))));
     SDL_GPUBufferCreateInfo cellsInfo{};
     cellsInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-    cellsInfo.size = static_cast<uint32_t>(mesh.CellTiles.size() * 8);
+    cellsInfo.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
     SDL_GPUBufferCreateInfo imagesInfo{};
     imagesInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     imagesInfo.size = static_cast<uint32_t>(std::max<size_t>(places.size(), 1) * TerrainImageInts * sizeof(int32_t));
 
     if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
-        mesh.CellElevations.size() != mesh.CellTiles.size())
+        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
     {
-        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles and {} elevations",
-                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size()));
+        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
+                                           "blocked counts",
+                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
+                                           mesh.CellBlocked.size()));
     }
 
     if (atlasHeight > 16384)
@@ -4483,8 +4487,10 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
     for (size_t i = 0; i < mesh.CellTiles.size(); ++i)
     {
-        cells[i * 2] = mesh.CellTiles[i];
-        cells[i * 2 + 1] = mesh.CellElevations[i];
+        cells[i * TerrainCellInts] = mesh.CellTiles[i];
+        cells[i * TerrainCellInts + 1] = mesh.CellElevations[i];
+        cells[i * TerrainCellInts + 2] = mesh.CellBlocked[i];
+        cells[i * TerrainCellInts + 3] = 0;
     }
 
     _TerrainMesh.Usable = true;

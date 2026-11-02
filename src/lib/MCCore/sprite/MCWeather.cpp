@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCWeather.h"
+#include "ai/MCMoveSystem.h"
+#include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
 #include "color/MCPalette.h"
 #include "lib/MCFitIniFile.h"
@@ -293,6 +295,9 @@ namespace
     constexpr float PuddleMargin = 0.02f;
     constexpr int32_t LevelSamples = 96;
     constexpr float LevelStep = 7.3f;
+    // Nor are there puddles where BlockedDryFrom of the ground's map tile or more can't be entered: cliffs
+    // (composite.pshader's).
+    constexpr float BlockedDryFrom = 0.4f;
     // The veil's sheets (composite.pshader's SheetsAt): noise SheetSize meters big drifting downwind at SheetSpeed,
     // two layers, thick from SheetFrom of it to SheetTo.
     constexpr float SheetSize = 70.0f;
@@ -616,6 +621,23 @@ namespace
         return {x - lift, y + lift};
     }
 
+    /// <summary>The share of the map tile at world point (x, y) that can't be entered (0 off the map or with
+    /// none).</summary>
+    float BlockedShare(float x, float y)
+    {
+        const MCScenarioMap* const map = LoadedGameMap();
+        int32_t tileR = 0;
+        int32_t tileC = 0;
+        MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), tileR, tileC);
+
+        if (map == nullptr || !map->OnMap(tileR, tileC))
+        {
+            return 0.0f;
+        }
+
+        return static_cast<float>(map->TileAt(tileR, tileC).BlockedCells()) / (MapCellDim * MapCellDim);
+    }
+
     /// <summary>The puddles' level that leaves <paramref name="share"/> of the ground under them (composite.pshader's).</summary>
     float PuddleLevel(State& state, float share)
     {
@@ -821,12 +843,13 @@ namespace
     /// <summary>
     /// Whether ground drawn in palette entry <paramref name="drawn"/> at world point (x, y, z) lies in a puddle,
     /// <paramref name="margin"/> inside its level: where the composite lays them, with the wet look (the relief maps),
-    /// not on grass.
+    /// not on grass nor cliffs.
     /// </summary>
     bool InPuddle(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
                   float z, float margin)
     {
-        if (!drawn.has_value() || IsGrassIndex(*drawn) || look.Puddles <= 0.0f || !MCSceneLights::ReliefMapsOn())
+        if (!drawn.has_value() || IsGrassIndex(*drawn) || look.Puddles <= 0.0f || !MCSceneLights::ReliefMapsOn() ||
+            BlockedShare(x, y) >= BlockedDryFrom)
         {
             return false;
         }

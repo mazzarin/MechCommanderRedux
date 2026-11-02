@@ -32,7 +32,8 @@ namespace
     /// heard faintly, as from far above the battle: a downpour 14 dB under the rain loop as levelled (about 25 dB under
     /// the game's sounds as they play), rain about 6 dB under that. A downpour's thunder rolls in about twice a minute,
     /// the nearest at its loudest about 12 dB under the thunder as levelled (its loudest quarter second -12 dBFS).
-    /// Both come and go in showers, a downpour less far (it never stops), rain a little further.
+    /// Both come and go in showers: a downpour's lulls as light as rain, its bursts 1.6 times as heavy; rain's lulls a
+    /// drizzle.
     /// </summary>
     constexpr MCWeather::MCWeatherLook RainLook{.Dark = 0.33f,
                                                 .Grey = 0.2f,
@@ -45,7 +46,7 @@ namespace
                                                 .Gloss = 0.25f,
                                                 .Drips = 3.0f,
                                                 .Heard = 0.31f,
-                                                .Showers = 0.45f};
+                                                .Showers = 0.7f};
     constexpr MCWeather::MCWeatherLook DownpourLook{.Dark = 0.4f,
                                                     .Grey = 0.3f,
                                                     .Wet = 0.14f,
@@ -59,7 +60,7 @@ namespace
                                                     .Heard = 0.45f,
                                                     .Thunder = 2.0f,
                                                     .ThunderHeard = 0.5f,
-                                                    .Showers = 0.35f};
+                                                    .Showers = 0.6f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
@@ -288,10 +289,11 @@ namespace
     // How the look follows the showers' rain: the overcast's dark and grey DarkFollow as far as the drops (enough that a
     // lull shows lighter, and a burst darker, though the drops and the veil, lighter than the ground, follow too); the
     // drops near the eye as far, those between BetweenFollow as far (those far from it the rest); heard as loud as the
-    // rain's strength to the power HeardFollow (a channel volume: a lull of 0.65 about 5.6 dB quieter).
+    // rain's strength to the power HeardFollow (a channel volume: a lull of 0.4 about 8 dB quieter, a burst of 1.6 about
+    // 4 dB louder).
     constexpr float DarkFollow = 0.75f;
     constexpr float BetweenFollow = 0.5f;
-    constexpr float HeardFollow = 0.75f;
+    constexpr float HeardFollow = 0.5f;
     // The puddles fill toward how hard the rain falls (1 as made) over PuddleFill seconds of the showers' time, and dry
     // toward it more slowly, over PuddleDry; taken each PuddleStep seconds. Damp ground, without puddles yet, mirrors
     // DampSheen of the sky wet ground does.

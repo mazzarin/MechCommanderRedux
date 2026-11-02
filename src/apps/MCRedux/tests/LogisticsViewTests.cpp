@@ -140,7 +140,7 @@ namespace
     /// <summary>
     /// The preferences screen's drop-downs, as AddPreferencesPanel places them: each field 11 tall at (left, top), 104
     /// wide in the right column and 96 in the left, its list's rows 10 tall from top + 11. DIFFICULTY's field is at
-    /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 243) (VULKAN, SOFTWARE), SCROLL SPEED's at (488, 351)
+    /// (488, 176) (EASY, REGULAR, HARD), RENDERER's at (488, 222) (VULKAN, SOFTWARE), SCROLL SPEED's at (488, 360)
     /// (AUTO, 1.5X to 3X).
     /// </summary>
     struct PrefsDropDown
@@ -154,8 +154,8 @@ namespace
     };
 
     constexpr PrefsDropDown DifficultyDropDown{176};
-    constexpr PrefsDropDown RendererDropDown{243};
-    constexpr PrefsDropDown ScrollSpeedDropDown{351};
+    constexpr PrefsDropDown RendererDropDown{222};
+    constexpr PrefsDropDown ScrollSpeedDropDown{360};
 
     /// <summary>Runs five frames: a click lands and the screen settles.</summary>
     void RunFrames()

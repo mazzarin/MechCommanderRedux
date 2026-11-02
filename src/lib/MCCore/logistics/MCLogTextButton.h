@@ -5,8 +5,10 @@
 /// <summary>
 /// Port-only: a logistics push button for a word the art has no button for (the preferences' CONTROLS, DEFAULTS and
 /// DONE). Its pictures are the art's ACCEPT button's (bh_accept.tga up and lit, bg_accept.tga pressed, bn_accept.tga
-/// grayed) with ACCEPT wiped from the face and the label written in its place, dark on the face, light pressed and
-/// faint grayed, as the art's words are. It sounds as the screens' buttons do.
+/// grayed) with ACCEPT wiped from the face and the label written in its place in the art's own lettering: letters cut
+/// from the words of the art's other buttons of that size, F made from E. A word with a letter none of them writes (H,
+/// Q, W, Z) is written in the white font instead, dark on the face, light pressed and faint grayed, as the art's words
+/// are. It sounds as the screens' buttons do.
 /// </summary>
 class MCLogTextButton : public MCLogButton
 {

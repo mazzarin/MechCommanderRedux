@@ -118,6 +118,12 @@ namespace MCParticles
     /// </summary>
     void Draw(const MCCamera& camera);
 
+    /// <summary>
+    /// Whether the ground drawn at world (<paramref name="x"/>, <paramref name="y"/>) in the main view is the water's,
+    /// with no bridge over it.
+    /// </summary>
+    bool WaterAt(float x, float y);
+
     /// <summary>Drops every particle and shake, and throws the dice from their start again (a mission's start).</summary>
     void Clear();
 

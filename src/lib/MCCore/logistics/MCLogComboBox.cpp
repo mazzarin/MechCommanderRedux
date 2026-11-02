@@ -144,6 +144,14 @@ auto MCLogComboBox::Selected() const -> int32_t
     return -1;
 }
 
+auto MCLogComboBox::SetLabel(size_t index, std::string label) -> void
+{
+    if (index < _Items.size())
+    {
+        _Items[index].Label = std::move(label);
+    }
+}
+
 auto MCLogComboBox::VisibleRows() const -> int32_t
 {
     return std::min(static_cast<int32_t>(_Items.size()), MaxRows);

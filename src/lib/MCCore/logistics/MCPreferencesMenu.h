@@ -42,7 +42,7 @@ int SteppedInterfaceSize(int size, int steps);
 
 /// <summary>
 /// Port-only: steps the interface size (<see cref="SteppedInterfaceSize"/>; the in-mission keys) and writes it to
-/// prefs.cfg: AUTO steps on from the size it picks for the display (MCDisplay::AutoInterfaceScaleNow), and a step back
+/// prefs.cfg: AUTO steps on from the size it picks for the display (MCGuiSystem::AutoInterfaceSizeNow), and a step back
 /// onto that size is AUTO again. The screen takes it at the next frame, as it follows a resized window.
 /// </summary>
 /// <returns>Whether the size changed (not at the end of the choices).</returns>

@@ -5,7 +5,10 @@
 #include "camera/MCCamera.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCLogComboBox.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
@@ -349,6 +352,76 @@ namespace
         MCInput::HandleEvent(event);
         MCTestGame::RunFrame(1.0f / 15.0f);
     }
+
+    /// <summary>The tests' user folder's PREFS, which the game reads over the install's.</summary>
+    std::filesystem::path UserPrefsPath()
+    {
+        return MCFileSystem::UserRoot() / "prefs.cfg";
+    }
+
+    /// <summary>The interface size saved in PREFS.</summary>
+    MCFitResult<int32_t> SavedInterfaceSize()
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(UserPrefsPath().string()), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        return prefs.Read<int32_t>("InterfaceSize");
+    }
+
+    /// <summary>
+    /// The tests' user folder's PREFS as it was when made, put back when it goes (later tests read it): a PREFS
+    /// written meanwhile is removed if there was none.
+    /// </summary>
+    class MCKeptPrefs
+    {
+    public:
+        MCKeptPrefs()
+        {
+            if (std::ifstream file(UserPrefsPath(), std::ios::binary); file)
+            {
+                _Kept = std::string(std::istreambuf_iterator<char>(file), {});
+            }
+        }
+
+        ~MCKeptPrefs()
+        {
+            if (_Kept)
+            {
+                std::ofstream(UserPrefsPath(), std::ios::binary) << *_Kept;
+            }
+            else
+            {
+                std::filesystem::remove(UserPrefsPath());
+            }
+        }
+
+        MCKeptPrefs(const MCKeptPrefs&) = delete;
+        MCKeptPrefs& operator=(const MCKeptPrefs&) = delete;
+
+    private:
+        std::optional<std::string> _Kept;
+    };
+
+    /// <summary>The drop-down under <paramref name="parent"/> (at any depth) that offers <paramref name="label"/>.</summary>
+    std::shared_ptr<MCLogComboBox> FindDropDownOffering(MCGuiObject& parent, std::string_view label)
+    {
+        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
+        {
+            if (auto combo = std::dynamic_pointer_cast<MCLogComboBox>(child);
+                combo != nullptr && std::ranges::contains(combo->Items(), label, [](const MCLogComboBox::Item& item)
+                                                          { return std::string_view(item.Label); }))
+            {
+                return combo;
+            }
+
+            if (std::shared_ptr<MCLogComboBox> found = FindDropDownOffering(*child, label); found != nullptr)
+            {
+                return found;
+            }
+        }
+
+        return nullptr;
+    }
 }
 
 /// <summary>
@@ -420,14 +493,8 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     }
 
     REQUIRE(StartInLargeWindow());
-    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
-    std::optional<std::string> savedPrefs;
-
-    if (std::ifstream file(prefsPath, std::ios::binary); file)
-    {
-        savedPrefs = std::string(std::istreambuf_iterator<char>(file), {});
-    }
-
+    const MCKeptPrefs keptPrefs;
+    const std::filesystem::path prefsPath = UserPrefsPath();
     const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
     const std::shared_ptr<MCTacticalMap> map = TacticalMap();
     REQUIRE(map != nullptr);
@@ -437,21 +504,13 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     const auto autoSize = static_cast<int>(
         std::lround(MCDisplay::AutoInterfaceScale(LargeWindowLines) * static_cast<float>(OriginalInterfaceSize)));
     const auto kept = [autoSize](int size) { return size == autoSize ? AutoInterfaceSize : size; };
-    // The size the keys saved in PREFS.
-    const auto savedSize = [&prefsPath]
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(prefsPath.string()), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        return prefs.Read<int32_t>("InterfaceSize");
-    };
 
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, kept(125));
     CHECK_EQ(display->Height(), 864);
     CHECK_EQ(map->IsHidden(), mapHidden);
-    CHECK_EQ(savedSize(), MCFitResult<int32_t>(kept(125)));
+    CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(kept(125)));
 
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
     MCTestGame::RunFrame(1.0f / 15.0f);
@@ -471,11 +530,11 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_MINUS);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, SteppedInterfaceSize(autoSize, -1));
-    CHECK_EQ(savedSize(), MCFitResult<int32_t>(SteppedInterfaceSize(autoSize, -1)));
+    CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(SteppedInterfaceSize(autoSize, -1)));
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
-    CHECK_EQ(savedSize(), MCFitResult<int32_t>(AutoInterfaceSize));
+    CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(AutoInterfaceSize));
     GInterfaceSize = OriginalInterfaceSize;
     MCTestGame::RunFrame(1.0f / 15.0f);
 
@@ -504,16 +563,112 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
         ReadPreferences(prefs);
         CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
     }
+}
 
-    // The test user folder as it was: later tests read its PREFS.
-    if (savedPrefs)
+/// <summary>
+/// The preferences screen's INTERFACE SIZE offers AUTO, labelled with the size it picks at the UI RESOLUTION chosen,
+/// and 100% to 200%: a choice sets the interface size, CANCEL puts it back, and ACCEPT saves it in PREFS. The next
+/// mission draws its interface at it: 150% of 1080P is 720 lines.
+/// </summary>
+TEST_CASE_ISOLATED("game: INTERFACE SIZE on the preferences screen is saved in PREFS and sizes the next mission")
+{
+    if (!MCTestGame::Available())
     {
-        std::ofstream(prefsPath, std::ios::binary) << *savedPrefs;
+        return;
     }
-    else
+
+    MCTestGame::BootInLargeWindow(LargeWindowLines, OriginalInterfaceSize);
+    REQUIRE(MCTestGame::StartLogistics());
+    const MCKeptPrefs keptPrefs;
+    constexpr int ChosenSize = 150;
+
+    const auto frames = []
     {
-        std::filesystem::remove(prefsPath);
+        for (int32_t frame = 0; frame < 5; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    };
+
+    ShowPreferences();
+    frames();
+    const std::shared_ptr<MCLogComboBox> dropDown =
+        FindDropDownOffering(*GlobalLog()->PrefScreen, std::format("{}%", ChosenSize));
+    REQUIRE(dropDown != nullptr);
+    const std::vector<MCLogComboBox::Item>& items = dropDown->Items();
+    REQUIRE_EQ(items.size(), InterfaceSizes.size() + 1);
+    CHECK_EQ(items[0].Value, AutoInterfaceSize);
+
+    for (size_t i = 0; i < InterfaceSizes.size(); i++)
+    {
+        CHECK(items[i + 1].Label == std::format("{}%", InterfaceSizes[i]));
+        CHECK_EQ(items[i + 1].Value, InterfaceSizes[i]);
     }
+
+    // AUTO says the size it picks at the UI RESOLUTION chosen: 200% at 1080P.
+    const auto autoLabel = [](int lines)
+    {
+        return std::format("AUTO ({}%)", std::lround(MCDisplay::AutoInterfaceScale(lines) *
+                                                     static_cast<float>(OriginalInterfaceSize)));
+    };
+
+    CHECK(items[0].Label == autoLabel(LargeWindowLines));
+
+    // The field shows the size as it is; a click on a drop-down's field opens its list, a click on a row chooses it.
+    const auto shown = [&] { return items[static_cast<size_t>(dropDown->Selected())].Value; };
+    CHECK_EQ(shown(), OriginalInterfaceSize);
+    const auto choose = [&](MCLogComboBox& combo, int32_t value)
+    {
+        const std::vector<MCLogComboBox::Item>& choices = combo.Items();
+        const auto row = static_cast<int32_t>(
+            std::distance(choices.begin(), std::ranges::find(choices, value, &MCLogComboBox::Item::Value)));
+        REQUIRE(row < std::ssize(choices));
+        const int32_t middleX = combo.GlobalX() + combo.Width() / 2;
+        MCScreenInput::Click(middleX, combo.GlobalY() + MCLogComboBox::FieldHeight / 2);
+        frames();
+        REQUIRE(combo.IsOpen());
+        MCScreenInput::SaveShot(std::format("prefs choosing {}", value), MCScreenInput::ScreenHash());
+        MCScreenInput::Click(middleX, combo.GlobalY() + MCLogComboBox::FieldHeight + row * MCLogComboBox::RowHeight +
+                                          MCLogComboBox::RowHeight / 2);
+        frames();
+        CHECK(!combo.IsOpen());
+    };
+
+    // UI RESOLUTION 720P: AUTO is 150% there.
+    constexpr int OtherLines = 720;
+    const std::shared_ptr<MCLogComboBox> uiResolution =
+        FindDropDownOffering(*GlobalLog()->PrefScreen, std::format("{}P", OtherLines));
+    REQUIRE(uiResolution != nullptr);
+    choose(*uiResolution, OtherLines);
+    CHECK_EQ(GUiResolution, OtherLines);
+    CHECK(items[0].Label == autoLabel(OtherLines));
+
+    choose(*dropDown, ChosenSize);
+    CHECK_EQ(GInterfaceSize, ChosenSize);
+    CHECK_EQ(shown(), ChosenSize);
+    CancelPrefs();
+    frames();
+    CHECK_EQ(GInterfaceSize, OriginalInterfaceSize);
+    CHECK_EQ(GUiResolution, LargeWindowLines);
+
+    ShowPreferences();
+    frames();
+    CHECK_EQ(shown(), OriginalInterfaceSize);
+    CHECK(items[0].Label == autoLabel(LargeWindowLines));
+    choose(*dropDown, ChosenSize);
+    WritePrefs();
+    frames();
+    CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(ChosenSize));
+
+    // The next mission: the screen has that many times fewer lines than UI RESOLUTION's, at the window's aspect.
+    const MCTestGame::SaveGameCleanup saves;
+    REQUIRE(MCTestGame::StartCampaignMission());
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    REQUIRE(display != nullptr);
+    const int lines = LargeWindowLines * OriginalInterfaceSize / ChosenSize;
+    CHECK_EQ(display->Height(), lines);
+    CHECK_EQ(display->Width(), lines * MCTestGame::LargeWindowWidth / MCTestGame::LargeWindowHeight);
+    CHECK_EQ(GuiSystem().Height(), lines);
 }
 
 /// <summary>The renderer's name in PREFS "Renderer" and on the command line (-renderer), any case.</summary>

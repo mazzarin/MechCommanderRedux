@@ -164,9 +164,11 @@ public:
 
     /// <summary>
     /// AUTO's interface scale (<see cref="AutoInterfaceScale"/>) for the window as it is now, whatever scale is set (1
-    /// when it has no size).
+    /// when it has no size), with the screen no taller than <paramref name="maxHeight"/> (0: as tall as the window)
+    /// and, with <paramref name="followDisplayScale"/>, the window in points: the limits <see cref="SetMaxHeight"/> and
+    /// <see cref="SetFollowDisplayScale"/> would set.
     /// </summary>
-    float AutoInterfaceScaleNow() const;
+    float AutoInterfaceScaleNow(int maxHeight, bool followDisplayScale) const;
 
     /// <summary>
     /// Sets the tallest a window-following screen gets (0: as tall as the window), from the next

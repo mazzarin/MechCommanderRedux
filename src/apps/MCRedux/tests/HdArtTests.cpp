@@ -49,6 +49,7 @@
 #include "object/MCBattleMechType.h"
 #include "object/MCBullet.h"
 #include "object/MCCommander.h"
+#include "object/MCDebris.h"
 #include "object/MCExplosion.h"
 #include "object/MCForces.h"
 #include "object/MCGroundVehicleGameSystem.h"
@@ -6940,6 +6941,27 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-arms original|hit|dropped|thrown|shattered</c>, a blown-off mech arm shows so with HD art (GHdArms, an
+    /// MCArmStyle): as the original, as the hit that took it off says (the game's), or always dropped, thrown or
+    /// shattered.
+    /// </summary>
+    void ArmsFromOptions()
+    {
+        const std::optional<std::string_view> style = MCTest::Option("hd-arms");
+
+        if (!style.has_value())
+        {
+            return;
+        }
+
+        constexpr std::array<std::string_view, 5> Styles = {"original", "hit", "dropped", "thrown", "shattered"};
+        const auto found = std::ranges::find(Styles, *style);
+        REQUIRE(found != Styles.end());
+        GHdArms = static_cast<MCArmStyle>(found - Styles.begin());
+        std::cout << std::format("  arms: {}\n", *style);
+    }
+
+    /// <summary>
     /// With <c>--hd-clouds &lt;darkness&gt;[,&lt;cover&gt;[,&lt;size&gt;[,&lt;speed&gt;]]]</c>, turns cloud shadows on
     /// (GHdClouds): they take that much of the world's own light, over that share of the ground, that big (meters) and
     /// drifting that fast (meters a second); each left out keeps MCSceneLights::MCLighting's.
@@ -7278,6 +7300,7 @@ namespace
         SunReliefFromOptions();
         ReliefMapsFromOptions();
         SunShadowsFromOptions();
+        ArmsFromOptions();
         CloudsFromOptions();
         SwayFromOptions();
         ParticlesFromOptions();
@@ -7909,8 +7932,10 @@ namespace
 /// out the same every time, so the two runs' pictures differ only in how the effects are drawn. <c>--window</c> as
 /// --hd-pack's. With <c>--hd-effects-video &lt;n&gt;</c>, each plays n frames at 60 a second, every one shot
 /// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
-/// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
-/// tumbling at 7 frames a second as it flies. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
+/// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named): with
+/// HD art torn off and dropped (no hit takes them off), or as <c>--hd-arms</c> says; with <c>--hd-original 1</c> each
+/// tumbling at 7 frames a second as it flies. <c>--hd-effects-zoom &lt;lines&gt;</c> zooms
+/// the view to that many lines. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
 /// each plays (original, hd, day, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
@@ -7954,6 +7979,12 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
     const bool video = videoFrames > 0;
     const std::map<int32_t, MCArtMode> artModes = ArtModesFromOptions();
 
+    if (const std::optional<std::string_view> zoom = MCTest::Option("hd-effects-zoom"); zoom.has_value())
+    {
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCFixedZoomHeight = std::strtof(std::string(*zoom).c_str(), nullptr);
+    }
+
     // Plays the effect just set off, shooting its frames as <name>_<frame>.
     const auto play = [&](std::string_view name)
     {
@@ -7983,6 +8014,7 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         mech->LeftArmBlownThisFrame = true;
         mech->RightArmBlownThisFrame = true;
         play("arms");
+        MCFixedZoomHeight = 0.0f;
         return;
     }
 
@@ -7996,6 +8028,8 @@ TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside 
         CreateExplosion(*type, at, 0.0f, 0.0f);
         play(name);
     }
+
+    MCFixedZoomHeight = 0.0f;
 }
 
 namespace

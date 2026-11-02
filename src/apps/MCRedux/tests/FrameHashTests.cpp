@@ -637,7 +637,10 @@ namespace
     /// 0xe30aef7b, the load screen to 0xe34ed709, the preferences step to 0x924ff616 (software and GPU agree) and the
     /// folds to 0xe4d5afc8 and 0xca197992 (GPU 0xb80a21d0 and 0xf18c3e85). The HD box in place of the HD ART, HD AUDIO
     /// and HD LIGHTING boxes, the panel shorter (personal, 2026-11-02) took the preferences step to 0x7f8ed0c6 (software
-    /// and GPU agree) and the folds to 0xd54ea188 and 0x6a56c692 (GPU 0xac28e610 and 0xcaada585), only there.
+    /// and GPU agree) and the folds to 0xd54ea188 and 0x6a56c692 (GPU 0xac28e610 and 0xcaada585), only there. The
+    /// INTERFACE SIZE box, the right column's boxes 42 lines tall, the HD box level with SCROLL SPEED, SOUND's box in
+    /// line with RENDERER's and the text buttons in the art's lettering (personal, 2026-11-02) took the preferences
+    /// step to 0x1366f9ea (software and GPU agree) and the folds to 0x9a2c0b40 and 0xee685b12 (GPU 0x7c367c58 and 0xba21a105).
     /// </remarks>
     void LogisticsFrames(bool gpu)
     {
@@ -720,7 +723,7 @@ namespace
 
         const Step steps[] = {
             {"main menu", [] {}, 0xe30aef7bu},
-            {"preferences", [] { ShowPreferences(); }, 0x7f8ed0c6u},
+            {"preferences", [] { ShowPreferences(); }, 0x1366f9eau},
             {"main menu after preferences", [] { CancelPrefs(); }, 0xe30aef7bu},
             {"load screen",
              []
@@ -829,8 +832,8 @@ namespace
 
         MCTestGame::OnPresent = nullptr;
         SaveShot("logistics every frame", frames);
-        CHECK_EQ(frames, gpu ? 0xac28e610u : 0xd54ea188u);
-        CHECK_EQ(presents, gpu ? 0xcaada585u : 0x6a56c692u);
+        CHECK_EQ(frames, gpu ? 0x7c367c58u : 0x9a2c0b40u);
+        CHECK_EQ(presents, gpu ? 0xba21a105u : 0xee685b12u);
         CheckGpuAlone(gpu);
     }
 }

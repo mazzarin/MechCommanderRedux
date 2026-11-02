@@ -3,6 +3,7 @@
 #include "ai/MCMoveSystem.h"
 #include "ai/MCScenarioMap.h"
 #include "camera/MCCamera.h"
+#include "camera/MCCameraList.h"
 #include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
@@ -1763,6 +1764,12 @@ auto MCParticles::AddStep(const MCVector3D& foot, float halfWidth) -> void
     {
         TheState().Steps.push_back({foot.X, foot.Y, foot.Z, halfWidth});
     }
+}
+
+auto MCParticles::WaterAt(float x, float y) -> bool
+{
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    return camera != nullptr && IsWater(x, y, GroundUnder(x, y), *camera);
 }
 
 auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> void

@@ -210,6 +210,12 @@ public:
     bool LeftArmBlownThisFrame = false;
     /// <summary>Set when the right arm is destroyed; the control turns it into MechControlData::blowRightArm.</summary>
     bool RightArmBlownThisFrame = false;
+    /// <summary>
+    /// Port-only (HD art's arms): how far past what the right and left arms had left the hits that took them off went, a share
+    /// of each arm's whole structure (0: gone with its side torso, to a critical, or not yet): MCDebris::StyleOfBlow.
+    /// </summary>
+    float RightArmBlow = 0.0f;
+    float LeftArmBlow = 0.0f;
     /// <summary>The footprint of the gesture's second step (hot spot packet slot 4) is down; the walking gestures
     /// re-arm it once past that frame.</summary>
     bool SecondStepPrinted = false;

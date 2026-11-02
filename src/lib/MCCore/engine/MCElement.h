@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sprite/MCInBetween.h"
+#include "sprite/MCSpriteTurn.h"
 
 /// <summary>
 /// Something to draw this frame: a line, a shape, a polygon, a string... Appearances, the terrain and the interface
@@ -38,4 +39,9 @@ public:
     /// <see cref="MCRenderer::SunShadowScope"/>.
     /// </summary>
     bool SunShadow = false;
+    /// <summary>
+    /// Port-only (HD art): the element's shape is drawn turned (a blown-off arm's), in a
+    /// <see cref="MCRenderer::TurnScope"/>.
+    /// </summary>
+    std::optional<MCSpriteTurn> Turn;
 };

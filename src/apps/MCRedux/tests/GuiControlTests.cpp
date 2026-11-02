@@ -176,6 +176,41 @@ namespace
 
         return lines;
     }
+
+    /// <summary>
+    /// Counts the failed asserts SDL logs while it lives (MCFatal's Assert), keeping them out of the log (the test
+    /// expects them); every other line is passed on.
+    /// </summary>
+    struct AssertCounter
+    {
+        AssertCounter()
+        {
+            SDL_GetLogOutputFunction(&Original, &OriginalData);
+            SDL_SetLogOutputFunction(Count, this);
+        }
+
+        ~AssertCounter() { SDL_SetLogOutputFunction(Original, OriginalData); }
+
+        AssertCounter(const AssertCounter&) = delete;
+        AssertCounter& operator=(const AssertCounter&) = delete;
+
+        static void SDLCALL Count(void* data, int category, SDL_LogPriority priority, const char* message)
+        {
+            auto& counter = *static_cast<AssertCounter*>(data);
+
+            if (std::string_view(message).starts_with("Assert failed"))
+            {
+                counter.Failed++;
+                return;
+            }
+
+            counter.Original(counter.OriginalData, category, priority, message);
+        }
+
+        SDL_LogOutputFunction Original = nullptr;
+        void* OriginalData = nullptr;
+        int32_t Failed = 0;
+    };
 }
 
 // Text fields
@@ -426,6 +461,41 @@ TEST_CASE("gui: a menu's items keep their letters and data when one before them 
 
     CHECK_EQ(menu->NumItems(), 43);
     CHECK_EQ(menu->Items[42].Text.size(), 50u);
+}
+
+// Children
+
+/// <summary>
+/// An object let go with the children it keeps (a button bar's buttons) reports none left: they go with it, too late to
+/// leave its list, so their entries there are expired. A child someone else still keeps is reported.
+/// </summary>
+TEST_CASE("gui: an object let go with its own children reports none left, but reports a child still kept")
+{
+    ControlScreen screen;
+    const AssertCounter asserts;
+
+    {
+        auto bar = Make<MCGuiWindowBar>(0, 0, 10, 10);
+
+        for (int32_t i = 0; i < 3; i++)
+        {
+            auto button = MCMakeGui<MCGuiButton>();
+            button->Init(0, 0, 4, 4, {});
+            bar->AddButton(std::move(button));
+        }
+
+        REQUIRE_EQ(bar->NumberOfChildren(), 3);
+    }
+
+    CHECK_EQ(asserts.Failed, 0);
+    std::shared_ptr<MCGuiObject> kept;
+
+    {
+        auto parent = Make<MCTypeRecorder>(0, 0, 10, 10);
+        kept = Make<MCGuiTextObject>(0, 0, 4, 4, parent);
+    }
+
+    CHECK(asserts.Failed > 0);
 }
 
 // Button bars

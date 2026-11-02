@@ -1044,6 +1044,18 @@ Output HdMapPixel(Input input, int2 target)
         discard;
     }
 
+    // Port-only: a piece of the picture alone (a shattered arm's, MCSpriteTurn::Piece): op.w's bytes its left, top,
+    // right and bottom, each past the last, in original pixels; 0: all of it.
+    if (input.op.w != 0u)
+    {
+        const float4 piece = float4(input.op.w & 255u, (input.op.w >> 8) & 255u, (input.op.w >> 16) & 255u, input.op.w >> 24);
+
+        if (any(picture < piece.xy) || any(picture >= piece.zw))
+        {
+            discard;
+        }
+    }
+
     return HdPixelAt(input, picture);
 }
 

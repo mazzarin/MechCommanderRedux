@@ -30,6 +30,9 @@ struct Image
     // Port-only (HD lighting's relief maps): x the relief atlas with its relief map (1 or 2; 0 none), y its place there
     // as hot.w's; zw unused.
     int4 relief;
+    // x: the tile's width as its header gives it (a retail tile's pixels reach a column past it, so atlas.z can be one
+    // more); yzw unused.
+    int4 header;
 };
 
 // The fog of war's flags (red: 0xff where the home side sees the vertex).
@@ -165,6 +168,14 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     const bool seamPass = pane.z != 0;
     const int reach = seamPass ? SeamReach : 0;
     const int2 at = pane.xy + topLeft - image.hot.xy;
+
+    // VFX_nTile_draw counts a tile as off the pane when its header's box ends left of it, so a retail tile whose last
+    // column (one past that box) falls on the pane's first isn't drawn there.
+    if (!seamPass && at.x <= clip.x - image.header.x)
+    {
+        return Nothing();
+    }
+
     const int4 box = int4(at - reach, at + image.atlas.zw - 1 + reach);
     const int4 cut = int4(max(box.xy, clip.xy), min(box.zw, clip.zw));
 

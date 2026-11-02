@@ -28,6 +28,7 @@
 #include "platform/MCSmacker.h"
 #include "platform/MCVulkanRenderer.h"
 #include "terrain/MCTerrain.h"
+#include "terrain/MCTerrainWindow.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -223,6 +224,60 @@ TEST_CASE_ISOLATED("game: the GPU draws mission 1's map edges as the software re
             CHECK_EQ(renderer->TerrainLayersDrawn() - layers, 4);
         }
     }
+}
+
+/// <summary>
+/// Mirror mode on mission 1 with the camera moving across half a pixel a frame, until the ground has stood at every
+/// offset against the view's left edge: VFX_nTile_draw counts a tile as off the pane when its header's box ends left
+/// of the pane, though a retail tile's pixels reach a column past that box, and the GPU's ground leaves out the same
+/// tiles.
+/// </summary>
+TEST_CASE_ISOLATED("game: the GPU draws the ground at the view's left edge as the software renderer does")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Mirror);
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCVulkanRenderer> renderer = MirrorRenderer();
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // A grid row's vertices stand stepX pixels apart, so the ground's offset across is any vertex's x modulo stepX.
+    const auto offset = []
+    {
+        const std::shared_ptr<MCTerrainWindow> window = Eye()->TerrainWindow.lock();
+        REQUIRE(window != nullptr);
+        const int32_t stepX = window->Vertices[1].Px - window->Vertices[0].Px;
+        REQUIRE(stepX > 0);
+        return std::pair(stepX, (window->Vertices[0].Px % stepX + stepX) % stepX);
+    };
+
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    const int32_t stepX = offset().first;
+    // East and north alike move the view straight across (MCTerrain::ProjectTerrain).
+    const float halfPixel = 0.5f / (2.0f * MCTerrain::ProjectionCos);
+    const MCVector3D start = Eye()->GetPosition();
+    std::set<int32_t> offsets;
+    renderer->ResetMirror();
+
+    for (int32_t frame = 0; frame < 2 * stepX; frame++)
+    {
+        MCVector3D position = start;
+        position.X += static_cast<float>(frame) * halfPixel;
+        position.Y += static_cast<float>(frame) * halfPixel;
+        Eye()->SetPosition(position);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+        offsets.insert(offset().second);
+    }
+
+    CHECK_EQ(offsets.size(), static_cast<size_t>(stepX));
+    CheckMirror(*renderer);
 }
 
 /// <summary>

@@ -110,7 +110,8 @@ auto MCGuiObject::DestroyObject() -> void
     IconAnimation.reset();
     WindowAnimation.reset();
     DropTargets.clear();
-    Assert(ChildList.empty(), 0, " Number of Children NOT Zero ");
+    // A child destroyed with this object (its member) can't reach it to leave its list, so its entry stays, expired.
+    Assert(std::ranges::all_of(ChildList, &std::weak_ptr<MCGuiObject>::expired), 0, " Number of Children NOT Zero ");
     LeaveParent();
     Animating = false;
 

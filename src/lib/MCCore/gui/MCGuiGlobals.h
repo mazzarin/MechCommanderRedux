@@ -101,8 +101,8 @@ inline constexpr int OriginalScrollSpeed = 100;
 /// <summary>Port-only: the choices of <see cref="GScrollSpeed"/>, AUTO first.</summary>
 inline constexpr std::array<int, 5> ScrollSpeeds = {AutoScrollSpeed, 150, 200, 250, 300};
 /// <summary>
-/// Port-only: the in-mission interface's size in percent (PREFS "InterfaceSize", which alt+= and alt+- step and save in
-/// a mission): one of <see cref="InterfaceSizes"/>. The screen gets that many times fewer lines than UI RESOLUTION
+/// Port-only: the in-mission interface's size in percent (PREFS "InterfaceSize", the preferences screen's INTERFACE
+/// SIZE, which alt+= and alt+- step and save in a mission): one of <see cref="InterfaceSizes"/>. The screen gets that many times fewer lines than UI RESOLUTION
 /// gives it (480 at the fewest), so the tactical map, the command palette, the mech bar and the unit overlays, drawn at
 /// fixed sizes, are that much bigger; the world view keeps the window's pixels and shows as much of the battlefield. It
 /// takes effect at once, as a window resize does. <see cref="AutoInterfaceSize"/> (the default) picks the choice that

@@ -70,6 +70,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   the size that keeps the original's proportions (the screen's lines over the original's 480: 200% at 1080P), which
   the keys step on from. The size is kept in `PREFS.CFG` (`InterfaceSize`), and the keys can be changed on the
   CONTROLS screen.
+- The Preferences screen's INTERFACE SIZE sets the same size (AUTO, or 100% to 200%) for the next mission. AUTO
+  shows the size it picks for the window, e.g. AUTO (200%).
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
   window.
 - Palette changes appear on the next frame drawn instead of instantly.
@@ -105,6 +107,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   - power up and down on P and Shift+P, and eject on Shift+E;
   - zoom on = and -;
   - hold Ctrl, R or H to force an order, a run or a jump.
+- The CONTROLS, DEFAULTS, LAPTOP and DONE buttons are lettered as the game's own buttons are.
 - The system's input methods (an IME, or macOS's accent menu on a held letter) work in text fields only, so they no
   longer hold back or swallow mission keys.
 

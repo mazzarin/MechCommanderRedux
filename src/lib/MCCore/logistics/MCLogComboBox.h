@@ -72,6 +72,9 @@ public:
     /// <summary>The items.</summary>
     const std::vector<Item>& Items() const { return _Items; }
 
+    /// <summary>Shows item <paramref name="index"/> as <paramref name="label"/> from now on (none past the last).</summary>
+    void SetLabel(size_t index, std::string label);
+
     /// <summary>Opens the list: the lit row is the current choice; the control comes in front and takes the mouse.</summary>
     void Open();
 

@@ -236,6 +236,15 @@ auto MCGuiSystem::FollowWindowSize() -> bool
     return true;
 }
 
+auto MCGuiSystem::AutoInterfaceSizeNow() const -> int
+{
+    // The limits FollowWindowSize gives the display, from the settings as they are now (the preferences screen may
+    // have just changed UI RESOLUTION).
+    const float scale =
+        _Display != nullptr ? _Display->AutoInterfaceScaleNow(MaxScreenHeight(), GUiResolution == 0) : 1.0f;
+    return static_cast<int>(std::lround(scale * static_cast<float>(OriginalInterfaceSize)));
+}
+
 auto MCFollowWindowSize() -> bool
 {
     return HasGuiSystem() && GuiSystem().FollowWindowSize();

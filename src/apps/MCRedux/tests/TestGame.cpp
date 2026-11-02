@@ -12,6 +12,7 @@
 #include "logistics/MCLogComboBox.h"
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCLogSlider.h"
+#include "logistics/MCMainMenu.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
@@ -23,6 +24,8 @@
 #include "object/MCBattleMech.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCSystemConfig.h"
+#include "main/MCLogMech.h"
+#include "main/MCLogMechList.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
@@ -155,6 +158,44 @@ namespace MCTestGame
         {
             std::cout << "  can't remove the pinned saves' folder: " << error.message() << "\n";
         }
+    }
+
+    SaveGameCleanup::SaveGameCleanup() : _Folder(UserFolder() / "data" / "savegame")
+    {
+        for (const std::filesystem::path& file : Files())
+        {
+            _Before.insert(file);
+        }
+    }
+
+    SaveGameCleanup::~SaveGameCleanup()
+    {
+        for (const std::filesystem::path& file : Files())
+        {
+            std::error_code error;
+
+            if (!_Before.contains(file) && !std::filesystem::remove(file, error) && error)
+            {
+                std::cout << "  can't remove the save " << file.string() << ": " << error.message() << "\n";
+            }
+        }
+    }
+
+    std::vector<std::filesystem::path> SaveGameCleanup::Files() const
+    {
+        std::vector<std::filesystem::path> files;
+        // No save folder yet (before the game first saves) is no files.
+        std::error_code error;
+
+        for (const auto& entry : std::filesystem::directory_iterator(_Folder, error))
+        {
+            if (entry.is_regular_file())
+            {
+                files.push_back(entry.path());
+            }
+        }
+
+        return files;
     }
 
     namespace
@@ -425,6 +466,48 @@ namespace MCTestGame
         }
 
         std::cout << "  logistics never came up (mission state " << std::to_underlying(Mission()->State) << ")\n";
+        return false;
+    }
+
+    bool StartCampaignMission()
+    {
+        // Two seconds settle a screen change's wipe.
+        const auto settle = []
+        {
+            for (int32_t frame = 0; frame < 30; frame++)
+            {
+                RunFrame(1.0f / 15.0f);
+            }
+        };
+
+        settle();
+        NewCampaign();
+        settle();
+        {
+            // Pinned only for the set-up: starting the scenario takes logistics down.
+            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+            REQUIRE_EQ(logistics->CurrentMission, 0);
+            REQUIRE_EQ(Mission()->CurrentScenario, 0);
+            std::shared_ptr<MCLogMech> mech;
+            REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
+            logistics->DeploySlots[0][0].Unit = 0;
+            mech->Deployed = true;
+        }
+
+        Mission()->StartScenario(Mission()->Scenarios[0]);
+
+        for (int32_t frame = 0; frame < 3000; frame++)
+        {
+            RunFrame(1.0f / 15.0f);
+
+            if (Mission()->State == MCMissionState::Scenario && Scenario() != nullptr && !Scenario()->StartingUp)
+            {
+                return true;
+            }
+        }
+
+        std::cout << "  the campaign's scenario never started (mission state " << std::to_underlying(Mission()->State)
+                  << ")\n";
         return false;
     }
 

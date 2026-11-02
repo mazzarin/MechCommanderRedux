@@ -353,58 +353,6 @@ TEST_CASE("game session: KillTheGame unwinds with its exit code")
 
 namespace
 {
-    /// <summary>
-    /// Deletes the save games written while it lives (a finished mission saves the campaign), which would otherwise
-    /// pile up in the test user folder.
-    /// </summary>
-    class SaveGameCleanup
-    {
-    public:
-        SaveGameCleanup() : _Folder(MCTestGame::UserFolder() / "data" / "savegame")
-        {
-            for (const std::filesystem::path& file : Files())
-            {
-                _Before.insert(file);
-            }
-        }
-
-        ~SaveGameCleanup()
-        {
-            for (const std::filesystem::path& file : Files())
-            {
-                if (!_Before.contains(file))
-                {
-                    std::error_code error;
-                    std::filesystem::remove(file, error);
-                }
-            }
-        }
-
-        SaveGameCleanup(const SaveGameCleanup&) = delete;
-        SaveGameCleanup& operator=(const SaveGameCleanup&) = delete;
-
-    private:
-        /// <summary>The files directly in the save folder.</summary>
-        std::vector<std::filesystem::path> Files() const
-        {
-            std::vector<std::filesystem::path> files;
-            std::error_code error;
-
-            for (const auto& entry : std::filesystem::directory_iterator(_Folder, error))
-            {
-                if (entry.is_regular_file())
-                {
-                    files.push_back(entry.path());
-                }
-            }
-
-            return files;
-        }
-
-        std::filesystem::path _Folder;
-        std::set<std::filesystem::path> _Before;
-    };
-
     /// <summary>Runs the game for <paramref name="frames"/> frames of a fifteenth of a second.</summary>
     void RunFrames(int32_t frames)
     {
@@ -425,34 +373,7 @@ namespace
             return false;
         }
 
-        RunFrames(30);
-        NewCampaign();
-        RunFrames(30);
-        {
-            // Pinned only for the set-up: starting the scenario takes logistics down.
-            const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-            REQUIRE_EQ(logistics->CurrentMission, 0);
-            REQUIRE_EQ(Mission()->CurrentScenario, 0);
-            std::shared_ptr<MCLogMech> mech;
-            REQUIRE_EQ(logistics->ForceMechList->GetMechInfo(0, mech), 0);
-            logistics->DeploySlots[0][0].Unit = 0;
-            mech->Deployed = true;
-        }
-
-        Mission()->StartScenario(Mission()->Scenarios[0]);
-
-        for (int32_t frame = 0; frame < 3000; frame++)
-        {
-            MCTestGame::RunFrame(1.0f / 15.0f);
-
-            if (Mission()->State == MCMissionState::Scenario && Scenario() != nullptr && !Scenario()->StartingUp)
-            {
-                break;
-            }
-        }
-
-        REQUIRE(Scenario() != nullptr);
-        REQUIRE(!Scenario()->StartingUp);
+        REQUIRE(MCTestGame::StartCampaignMission());
         ScenarioResult = result;
         Mission()->EndScenarioRequested = -1;
 
@@ -476,7 +397,7 @@ TEST_CASE_ISOLATED("game: winning a campaign mission moves the campaign on to th
         return;
     }
 
-    SaveGameCleanup saves;
+    const MCTestGame::SaveGameCleanup saves;
     REQUIRE(PlayFirstMission(5));
     CHECK(Scenario() == nullptr);
     CHECK(Mission()->State == MCMissionState::Logistics);
@@ -494,7 +415,7 @@ TEST_CASE_ISOLATED("game: losing a campaign mission replays it")
         return;
     }
 
-    SaveGameCleanup saves;
+    const MCTestGame::SaveGameCleanup saves;
     REQUIRE(PlayFirstMission(2));
     CHECK(Scenario() == nullptr);
     CHECK(Mission()->State == MCMissionState::Logistics);

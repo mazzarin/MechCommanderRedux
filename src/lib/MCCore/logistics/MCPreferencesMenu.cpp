@@ -68,16 +68,19 @@ namespace
     constexpr MCPrefsPlace PanelPlace{13, 51, 263, 270};
 
     /// <summary>
-    /// The boxes on the panel: the art's (SOUND one row taller), then RENDERER, UI RESOLUTION and SCROLL SPEED under
-    /// DIFFICULTY, and HD (its OPTIONS button showing the HD OPTIONS page) under SOUND.
+    /// The boxes on the panel: the art's (SOUND one row taller, its top in line with RENDERER's), then RENDERER, UI
+    /// RESOLUTION, INTERFACE SIZE and SCROLL SPEED under DIFFICULTY, each drop-down's box as far round it as
+    /// BRIGHTNESS's round its slider, and HD (its OPTIONS button showing the HD OPTIONS page) under SOUND, level with
+    /// SCROLL SPEED.
     /// </summary>
     constexpr MCPrefsPlace BrightnessBoxPlace{10, 11, 112, 38};
-    constexpr MCPrefsPlace SoundBoxPlace{10, 59, 112, 113};
-    constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 63};
-    constexpr MCPrefsPlace RendererBoxPlace{132, 78, 120, 50};
-    constexpr MCPrefsPlace UiResolutionBoxPlace{132, 132, 120, 50};
-    constexpr MCPrefsPlace HdBoxPlace{10, 182, 112, 50};
-    constexpr MCPrefsPlace ScrollSpeedBoxPlace{132, 186, 120, 50};
+    constexpr MCPrefsPlace SoundBoxPlace{10, 57, 112, 115};
+    constexpr MCPrefsPlace DifficultyBoxPlace{132, 11, 120, 42};
+    constexpr MCPrefsPlace RendererBoxPlace{132, 57, 120, 42};
+    constexpr MCPrefsPlace UiResolutionBoxPlace{132, 103, 120, 42};
+    constexpr MCPrefsPlace InterfaceSizeBoxPlace{132, 149, 120, 42};
+    constexpr MCPrefsPlace ScrollSpeedBoxPlace{132, 195, 120, 42};
+    constexpr MCPrefsPlace HdBoxPlace{10, 195, 112, 42};
 
     /// <summary>The panel's outline (the art's panel's grey) and every box's fill (black).</summary>
     constexpr uint8_t PanelOutlineColor = 0x18;
@@ -96,10 +99,10 @@ namespace
     constexpr int32_t SliderLabelLeft = 7;
     constexpr int32_t SliderLeft = 6;
     constexpr MCPrefsSliderRow BrightnessRow{"SCREEN BRIGHTNESS", 9, 20};
-    constexpr MCPrefsSliderRow MusicRow{"MUSIC VOLUME", 9, 19};
-    constexpr MCPrefsSliderRow RadioRow{"RADIO MESSAGE VOLUME", 35, 45};
-    constexpr MCPrefsSliderRow FxRow{"SOUND FX VOLUME", 62, 72};
-    constexpr MCPrefsSliderRow InterfaceRow{"INTERFACE VOLUME", 88, 98};
+    constexpr MCPrefsSliderRow MusicRow{"MUSIC VOLUME", 11, 21};
+    constexpr MCPrefsSliderRow RadioRow{"RADIO MESSAGE VOLUME", 37, 47};
+    constexpr MCPrefsSliderRow FxRow{"SOUND FX VOLUME", 64, 74};
+    constexpr MCPrefsSliderRow InterfaceRow{"INTERFACE VOLUME", 90, 100};
 
     /// <summary>
     /// A slider's track in the art (the brightness one, with the black rows above and below it that the thumb covers),
@@ -123,6 +126,8 @@ namespace
     constexpr int32_t DropDownTop = 21;
     /// <summary>UI RESOLUTION's native choice: its lines follow the screen's scale (GUiResolution).</summary>
     constexpr std::string_view NativeUiResolution = "NATIVE (RETINA/HD)";
+    /// <summary>SCROLL SPEED's and INTERFACE SIZE's AUTO choice.</summary>
+    constexpr std::string_view AutoChoice = "AUTO";
     /// <summary>SCROLL SPEED's choices are factors of the original's speed: "1.5X" is 150 percent.</summary>
     constexpr double PercentPerFactor = 100.0;
 
@@ -135,19 +140,42 @@ namespace
 
     /// <summary>The INTERFACE VOLUME slider (the screen owns it).</summary>
     std::weak_ptr<MCLogSlider> InterfaceSlider;
+    /// <summary>The INTERFACE SIZE drop-down (the screen owns it), and its AUTO item's index.</summary>
+    std::weak_ptr<MCLogComboBox> InterfaceSizeDropDown;
+    constexpr size_t AutoInterfaceSizeItem = 0;
 
     /// <summary>
-    /// The renderer choice, the UI resolution, the interface volume, the scroll speed and the HD settings when the screen
-    /// opened (for CancelPrefs).
+    /// The renderer choice, the UI resolution, the interface size, the interface volume, the scroll speed and the HD
+    /// settings when the screen opened (for CancelPrefs).
     /// </summary>
     int32_t SavedRendererPreference = 0;
     int32_t SavedUiResolution = 0;
+    int32_t SavedInterfaceSize = AutoInterfaceSize;
     int32_t SavedInterfaceLevel = 0;
     int32_t SavedScrollSpeed = AutoScrollSpeed;
     std::vector<int32_t> SavedHdSettings = MCHdSettings::Now();
 
     /// <summary>The click INTERFACE VOLUME plays at its new level.</summary>
     constexpr uint32_t InterfacePreviewSample = 0x10;
+
+    /// <summary>
+    /// INTERFACE SIZE's AUTO says the size it picks for the window at the UI RESOLUTION chosen, "AUTO (200%)", so the
+    /// sizes around it can be told apart.
+    /// </summary>
+    void LabelAutoInterfaceSize()
+    {
+        if (const std::shared_ptr<MCLogComboBox> dropDown = InterfaceSizeDropDown.lock(); dropDown != nullptr)
+        {
+            dropDown->SetLabel(AutoInterfaceSizeItem,
+                               std::format("{} ({}%)", AutoChoice, GuiSystem().AutoInterfaceSizeNow()));
+        }
+    }
+
+    /// <summary>UI RESOLUTION chose other lines: AUTO's interface size follows them.</summary>
+    void UiResolutionChanged(int32_t)
+    {
+        LabelAutoInterfaceSize();
+    }
 
     /// <summary>The RENDERER drop-down chose <paramref name="renderer"/>: another one than this run's needs a restart.</summary>
     void RendererChanged(int32_t renderer)
@@ -207,15 +235,18 @@ namespace
         PlaceSlider(screen, box, *screen.Element<MCLogSlider>(element), row, std::move(art));
     }
 
-    /// <summary>Adds a drop-down editing <paramref name="setting"/> in <paramref name="box"/>.</summary>
-    void AddDropDown(MCGenericScreen& screen, MCGuiObject& box, int32_t& setting,
-                     std::vector<MCLogComboBox::Item> items, std::function<void(int32_t value)> changed)
+    /// <summary>Adds a drop-down editing <paramref name="setting"/> in <paramref name="box"/> (the screen owns it).</summary>
+    std::weak_ptr<MCLogComboBox> AddDropDown(MCGenericScreen& screen, MCGuiObject& box, int32_t& setting,
+                                             std::vector<MCLogComboBox::Item> items,
+                                             std::function<void(int32_t value)> changed)
     {
         auto dropDown = MCMakeGui<MCLogComboBox>();
         dropDown->Init(DropDownLeft, DropDownTop, box.Width() - 2 * DropDownLeft, setting, std::move(items),
                        std::move(changed));
         dropDown->ShowGuiWindow(true);
+        std::weak_ptr<MCLogComboBox> added = dropDown;
         screen.AdoptChildOf(box, std::move(dropDown));
+        return added;
     }
 
     /// <summary>Difficulty toggle <paramref name="index"/> (0 easy, 1 regular, 2 hard) of the preferences screen.</summary>
@@ -308,7 +339,20 @@ void AddPreferencesPanel(MCGenericScreen& screen)
         uiResolutions.push_back({std::format("{}P", lines), lines});
     }
 
-    AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
+    AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), UiResolutionChanged);
+
+    // INTERFACE SIZE: the in-mission interface's size, from the next scenario on (alt+= and alt+- step it in one):
+    // AUTO (the original's proportions, labelled with its size when the screen opens), or a percent of the original's.
+    MCLogGroupBox& interfaceSize = AddBox(screen, panel, InterfaceSizeBoxPlace, BoxOutlineColor);
+    AddLabel(screen, interfaceSize, "INTERFACE SIZE", BoxTitleLeft, BoxTitleTop);
+    std::vector<MCLogComboBox::Item> interfaceSizes = {{std::string(AutoChoice), AutoInterfaceSize}};
+
+    for (const int percent : InterfaceSizes)
+    {
+        interfaceSizes.push_back({std::format("{}%", percent), percent});
+    }
+
+    InterfaceSizeDropDown = AddDropDown(screen, interfaceSize, GInterfaceSize, std::move(interfaceSizes), nullptr);
 
     // HD: the OPTIONS button shows the HD OPTIONS page, every HD setting (MCHdOptionsPanel.h).
     MCLogGroupBox& hd = AddBox(screen, panel, HdBoxPlace, BoxOutlineColor);
@@ -324,7 +368,7 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     for (const int percent : ScrollSpeeds)
     {
         const std::string factor = std::format("{}X", percent / PercentPerFactor);
-        scrollSpeeds.push_back({percent == AutoScrollSpeed ? std::string("AUTO") : factor, percent});
+        scrollSpeeds.push_back({percent == AutoScrollSpeed ? std::string(AutoChoice) : factor, percent});
     }
 
     AddDropDown(screen, scrollSpeed, GScrollSpeed, std::move(scrollSpeeds), nullptr);
@@ -352,6 +396,7 @@ void ShowPreferences()
     logistics->SavedPrefs6 = GameDifficulty;
     SavedRendererPreference = GRendererPreference;
     SavedUiResolution = GUiResolution;
+    SavedInterfaceSize = GInterfaceSize;
     SavedInterfaceLevel = SoundSystem()->InterfaceLevel;
     SavedScrollSpeed = GScrollSpeed;
     MCGenericScreen& screen = *logistics->PrefScreen;
@@ -364,6 +409,8 @@ void ShowPreferences()
     {
         interfaceSlider->SetCurrentValue(SavedInterfaceLevel);
     }
+
+    LabelAutoInterfaceSize();
 
     // A difficulty past regular lights hard.
     DifficultyToggle(0)->Toggled = GameDifficulty == 0;
@@ -393,6 +440,7 @@ void CancelPrefs()
     GameDifficulty = logistics->SavedPrefs6;
     GRendererPreference = SavedRendererPreference;
     GUiResolution = SavedUiResolution;
+    GInterfaceSize = SavedInterfaceSize;
     GScrollSpeed = SavedScrollSpeed;
     MCHdSettings::Restore(SavedHdSettings);
     Cancel();
@@ -452,10 +500,7 @@ int SteppedInterfaceSize(int size, int steps)
 bool StepInterfaceSize(int steps)
 {
     // AUTO steps on from the size it picks for the display, and a step back onto that size is AUTO again.
-    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
-    const int autoSize = display != nullptr ? static_cast<int>(std::lround(display->AutoInterfaceScaleNow() *
-                                                                           static_cast<float>(OriginalInterfaceSize)))
-                                            : OriginalInterfaceSize;
+    const int autoSize = GuiSystem().AutoInterfaceSizeNow();
     const int size = GInterfaceSize == AutoInterfaceSize ? autoSize : GInterfaceSize;
     const int stepped = SteppedInterfaceSize(size, steps);
 

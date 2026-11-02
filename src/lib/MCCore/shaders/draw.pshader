@@ -533,19 +533,41 @@ float ShapeCoverage(Input input, int2 target, inout uint value)
     return SmoothCoverage(input, ShapePlace(input, target), value);
 }
 
-// Whether texel `texel` of the terrain's atlas is one a tile draws (inside its place, low..high), and its value.
-bool TileTexel(int2 texel, int2 low, int2 high, out uint value)
-{
-    value = 0;
+// Port-only: the seam pass's patch, the 4 x 4 of a tile's texels its B-spline reads from a base texel (PatchBefore
+// before it across and down), as a mask: a bit for each texel that is one of the tile's pixels, PatchSide to a row from
+// the top left.
+static const int PatchSide = 4;
+static const int PatchBefore = 1;
+static const uint PatchRow = (1u << PatchSide) - 1u;
 
-    if (any(texel < low) || any(texel > high))
+// The patch from `base` in a tile whose place in the atlas is low..high, from the runs of its rows (a tile's row is one
+// run) in the column past its place: red the first column drawn, green the last (MCVulkanRenderer's WriteTileRuns).
+uint PatchMask(int2 base, int2 low, int2 high)
+{
+    const int left = base.x - PatchBefore;
+    uint mask = 0;
+
+    for (int down = 0; down < PatchSide; down++)
     {
-        return false;
+        const int row = base.y - PatchBefore + down;
+
+        if (row < low.y || row > high.y)
+        {
+            continue;
+        }
+
+        // The patch's columns from the run's first to its last, if any.
+        const float4 run = FetchSource(int2(high.x + 1, row));
+        const int from = max(low.x + (int)Byte(run.r) - left, 0);
+        const int to = min(low.x + (int)Byte(run.g) - left, PatchSide - 1);
+
+        if (from <= to)
+        {
+            mask |= ((PatchRow >> (PatchSide - 1 - to)) & (PatchRow << from)) << (down * PatchSide);
+        }
     }
 
-    const float4 sample = FetchSource(texel);
-    value = Byte(sample.r);
-    return Byte(sample.g) != 0;
+    return mask;
 }
 
 // Port-only: a terrain tile's seam pass (KindTerrainSeam, terrain.vshader): with HD ground, every tile is drawn again
@@ -553,8 +575,9 @@ bool TileTexel(int2 texel, int2 low, int2 high, out uint value)
 // walk.zw, its size span.xy): its colour at the B-spline's coverage of its own pixels (SmoothCoverage's 4 x 4, not
 // ramped). Each tile was upscaled on its own, so where two meet their HD colours would change at the original's pixel
 // steps; so each fades into the tiles drawn before it across a smooth seam, as the original's painter's order lays them
-// (a tile's coverage is whole inside it, where it shows as the first pass drew it). The colour is the first pass's for
-// the nearest of its pixels: the fill, or its HD colour (else its own) through the haze's table. Premultiplied.
+// (a tile's coverage is whole inside it; but tiles overlap, so a later tile's edge fades over this one's colour). The
+// colour is the first pass's for the nearest of its pixels: the fill, or its HD colour (else its own) through the haze's
+// table. Premultiplied. Which of the 4 x 4 are the tile's pixels comes from one texel, the atlas's PatchMask.
 Output TerrainSeamPixel(Input input, int2 target)
 {
     const int2 low = int2(input.walk.zw);
@@ -562,32 +585,39 @@ Output TerrainSeamPixel(Input input, int2 target)
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float2 at = float2(input.source.xy) + (window - float2(input.rect.xy)) - 0.5;
     const int2 base = int2(floor(at));
+    const uint drawn = PatchMask(base, low, high);
+
+    if (drawn == 0)
+    {
+        discard;
+    }
+
     const float2 f = at - float2(base);
     const float4 wx = BSplineWeights(f.x);
     const float4 wy = BSplineWeights(f.y);
     float coverage = 0.0;
     float nearest = 1e9;
-    uint original = 0;
+    int2 nearestTexel = base;
 
-    for (int y = 0; y < 4; y++)
+    for (int y = 0; y < PatchSide; y++)
     {
-        for (int x = 0; x < 4; x++)
+        for (int x = 0; x < PatchSide; x++)
         {
-            uint value;
+            const int2 texel = base + int2(x - PatchBefore, y - PatchBefore);
 
-            if (!TileTexel(base + int2(x - 1, y - 1), low, high, value))
+            if ((drawn & 1u << (y * PatchSide + x)) == 0)
             {
                 continue;
             }
 
             coverage += wx[x] * wy[y];
-            const float2 d = float2(x - 1, y - 1) - f;
+            const float2 d = float2(x - PatchBefore, y - PatchBefore) - f;
             const float distance = dot(d, d);
 
             if (distance < nearest)
             {
                 nearest = distance;
-                original = value;
+                nearestTexel = texel;
             }
         }
     }
@@ -597,6 +627,7 @@ Output TerrainSeamPixel(Input input, int2 target)
         discard;
     }
 
+    const uint original = Byte(FetchSource(nearestTexel).r);
     const uint flags = input.op.x;
     float3 colour;
 

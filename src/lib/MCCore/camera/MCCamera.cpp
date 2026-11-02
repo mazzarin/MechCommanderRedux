@@ -24,6 +24,7 @@
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCParticles.h"
+#include "sprite/MCWeather.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCMapBlockManager.h"
@@ -708,6 +709,8 @@ auto MCCamera::Render() -> void
     ObjectList()->Render();
     // Port-only (HD particles): what flies about the battle, moved on to the game's time.
     MCParticles::Draw(*this);
+    // Port-only (HD weather): the rain, moved on to the game's time.
+    MCWeather::Draw(*this);
     MCSceneLights::AddShadows();
     ElementList().Sort();
     ElementList().Draw();

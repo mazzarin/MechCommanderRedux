@@ -26,6 +26,7 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCWeather.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
 
@@ -468,6 +469,7 @@ void WritePrefs()
     prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
     prefs.WriteIdLong("HDFlecks", GHdFlecks);
     prefs.WriteIdBoolean("HDShake", GHdShake != 0);
+    prefs.WriteIdLong("HDWeather", GHdWeather);
     prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
     prefs.WriteIdBoolean("HDTurns", GHdTurns != 0);
     prefs.WriteIdBoolean("HDStops", GHdStops != 0);

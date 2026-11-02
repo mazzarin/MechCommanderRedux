@@ -1115,13 +1115,137 @@ Output SmoothShapePixel(Input input, int2 target, uint kind)
     return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
 }
 
+// Port-only (HD weather): a particle's style (source.x, MCParticleStyle) and a raindrop's tip (asfloat(source.y)).
+static const int ParticleHard = 1;
+static const int ParticleRainStreak = 2;
+// A raindrop's columns brighten leftward by the palette's water ramp's step (0x5d to 0x5e to 0x5f), two steps at most;
+// a drop of fewer than RainFullColumns columns has its tail a step darker.
+static const float RainRampStep = 1.16;
+static const float RainRampMost = 1.355;
+static const int RainFullColumns = 3;
+// A raindrop's steps from its tail: the share of its length each ends at and its strength (a mild fade: a strong one
+// makes comets, the sparks' look).
+static const float RainTailEnd = 0.25;
+static const float RainTailStrength = 0.6;
+static const float RainMiddleEnd = 0.6;
+static const float RainMiddleStrength = 0.85;
+
+// A particle's premultiplied colour (op.y: a byte a component, from red up).
+float4 ParticleColor(Input input)
+{
+    const uint packed = input.op.y;
+    return float4(float(packed & 255u), float((packed >> 8) & 255u), float((packed >> 16) & 255u),
+                  float(packed >> 24)) /
+           255.0;
+}
+
+// Port-only (HD weather): a raindrop's colour at drawn pixel `target` (MCParticleStyle::RainStreak): falling from its
+// tail, window asfloat(span.xy), to its head, asfloat(span.zw), in columns of whole drawn pixels (twice asfloat(walk.x)
+// across, rounded, at least one), each row's under the streak's middle there; the left ones brighter, its tail fainter
+// and darker, the last asfloat(source.y) window pixels of its head brightest.
+Output RainStreakPixel(Input input, int2 target, float4 color)
+{
+    const float2 drawn = float2(scale.zw) / float2(scale.xy);
+    const float2 tail = asfloat(input.span.xy) * drawn;
+    const float2 head = asfloat(input.span.zw) * drawn;
+    const float2 at = float2(target) + 0.5;
+    const float height = head.y - tail.y;
+
+    if (height <= 0.0 || at.y < tail.y || at.y > head.y)
+    {
+        discard;
+    }
+
+    const float along = (at.y - tail.y) / height;
+    const int columns = max(1, (int)round(2.0 * asfloat(input.walk.x) * drawn.x));
+    const int column = target.x - (int)floor(lerp(tail.x, head.x, along) - 0.5 * (float)columns + 0.5);
+
+    if (column < 0 || column >= columns)
+    {
+        discard;
+    }
+
+    float shade = min(pow(RainRampStep, (float)(columns - 1 - column)), RainRampMost);
+    float strength = 1.0;
+
+    if (head.y - at.y < asfloat(input.source.y) * drawn.y && column < max(columns - 1, 1))
+    {
+        shade = min(pow(RainRampStep, (float)columns), RainRampMost);
+    }
+    else if (along < RainTailEnd)
+    {
+        strength = RainTailStrength;
+        shade = columns < RainFullColumns ? 1.0 / RainRampStep : 1.0;
+    }
+    else if (along < RainMiddleEnd)
+    {
+        strength = RainMiddleStrength;
+    }
+
+    return Blended(float4(color.rgb * shade, color.a) * strength);
+}
+
+// Port-only (HD weather): a hard particle's colour at drawn pixel `target` (MCParticleStyle::Hard), on whole drawn
+// pixels as the art's own: a streak's every point a square of them (twice asfloat(walk.x) window pixels across,
+// rounded, at least one), its ends on their grid; or, with asfloat(walk.w) above 0, a ring a pixel wide round
+// asfloat(span.xy), asfloat(walk.x) across and asfloat(walk.y) of that down.
+Output HardParticlePixel(Input input, int2 target, float4 color)
+{
+    const float2 drawn = float2(scale.zw) / float2(scale.xy);
+    const float2 at = float2(target) + 0.5;
+    const float size = asfloat(input.walk.x) * drawn.x;
+    bool covered;
+
+    if (asfloat(input.walk.w) > 0.0)
+    {
+        const float2 middle = floor(asfloat(input.span.xy) * drawn) + 0.5;
+        const float2 radii = max(float2(size, size * asfloat(input.walk.y)), 0.5);
+        const float2 p = (at - middle) / radii;
+        // The implicit ellipse's value over its gradient's length: about the distance from it.
+        covered = abs(dot(p, p) - 1.0) / max(length(2.0 * p / radii), 1e-4) <= 0.5;
+    }
+    else
+    {
+        const float side = max(round(2.0 * size), 1.0);
+        // An odd square's middle on a pixel's centre, an even one's on a corner.
+        const float grid = fmod(side, 2.0) == 1.0 ? 0.5 : 0.0;
+        const float2 a = floor(asfloat(input.span.xy) * drawn - grid + 0.5) + grid;
+        const float2 b = floor(asfloat(input.span.zw) * drawn - grid + 0.5) + grid;
+        const float2 ab = b - a;
+        const float length2 = dot(ab, ab);
+        const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
+        const float2 off = abs(at - (a + t * ab));
+        covered = max(off.x, off.y) < 0.5 * side;
+    }
+
+    if (!covered)
+    {
+        discard;
+    }
+
+    return Blended(color);
+}
+
 // Port-only (HD particles): a particle's colour at drawn pixel `target` (MCParticleCommand): a streak from window
 // asfloat(span.xy) to asfloat(span.zw), asfloat(walk.x) pixels to each side, a distance down the screen asfloat(walk.y)
 // of one across, its edge softened over asfloat(walk.z) of that; or, with asfloat(walk.w) above 0, a ring that many
 // pixels to each side of that edge. op.y holds its premultiplied colour, a byte a component from red up. Its edge is
-// smooth over a drawn pixel at least. Premultiplied, through the blend pipeline.
+// smooth over a drawn pixel at least, unless its style (source.x) draws it hard or as a raindrop. Premultiplied, through
+// the blend pipeline.
 Output ParticlePixel(Input input, int2 target)
 {
+    const float4 color = ParticleColor(input);
+
+    if (input.source.x == ParticleRainStreak)
+    {
+        return RainStreakPixel(input, target, color);
+    }
+
+    if (input.source.x == ParticleHard)
+    {
+        return HardParticlePixel(input, target, color);
+    }
+
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
     const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
     // Distances down the screen as the ground's across.
@@ -1145,10 +1269,6 @@ Output ParticlePixel(Input input, int2 target)
         discard;
     }
 
-    const uint packed = input.op.y;
-    const float4 color =
-        float4(float(packed & 255u), float((packed >> 8) & 255u), float((packed >> 16) & 255u), float(packed >> 24)) /
-        255.0;
     return Blended(color * coverage);
 }
 

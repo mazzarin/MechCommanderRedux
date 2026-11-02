@@ -4,6 +4,7 @@
 #include <cstdint>
 
 class MCCamera;
+class MCVector2D;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCParticleCommand;
@@ -111,6 +112,18 @@ namespace MCParticles
 
     /// <summary>How many particles there are.</summary>
     size_t Count();
+
+    /// <summary>
+    /// World point (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) in <paramref name="camera"/>'s view,
+    /// as ProjectToScreen puts it but to the pixel's fraction (the particles' own placing, for MCWeather's drops).
+    /// </summary>
+    MCVector2D ViewPoint(float x, float y, float z, const MCCamera& camera);
+
+    /// <summary>The ground's height at world point (<paramref name="x"/>, <paramref name="y"/>) (0 without a terrain).</summary>
+    float GroundAt(float x, float y);
+
+    /// <summary>Whether the map's tile at world point (<paramref name="x"/>, <paramref name="y"/>) is water.</summary>
+    bool WaterAt(float x, float y);
 
     /// <summary>How many of them are flecks.</summary>
     size_t FleckCount();

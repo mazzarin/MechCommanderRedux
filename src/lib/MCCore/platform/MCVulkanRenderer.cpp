@@ -3902,6 +3902,9 @@ void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& comma
         std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
                                           command.Aspect, command.Softness, command.Ring},
                                draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+        // Its style and a raindrop's tip in the source's slots, which a particle has none of.
+        draw[4] = static_cast<int32_t>(command.Style);
+        draw[5] = std::bit_cast<int32_t>(command.Tip);
     }
 }
 

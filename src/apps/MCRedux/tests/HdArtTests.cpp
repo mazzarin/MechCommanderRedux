@@ -78,6 +78,7 @@
 #include "sprite/MCVfxAppearance.h"
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCVfxBuildingAppearanceType.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
@@ -4927,6 +4928,131 @@ TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game'
 }
 
 /// <summary>
+/// HD weather (GHdWeather), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface: off, nothing falls. In rain, as the game's time goes on drops fall over the view and splash, under an
+/// overcast that darkens the world; while the game's time holds, they hold; the same times show the same rain, its dice
+/// starting again (MCWeather::Clear), and none of it throws the game's dice. Off again, the world shows as drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: rain falls as the game's time goes, under an overcast, and never touches the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    GamePaused = true;
+    // A frame's step of the game's time, and the frames the rain falls for before it's looked at.
+    constexpr float Step = 1.0f / 30.0f;
+    constexpr int32_t Frames = 30;
+    // Under the rain's overcast the world's middle brightness is at most this share of the clear sky's.
+    constexpr float Overcast = 0.85f;
+
+    const auto shown = [&](float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    // The rain's last frame, the same time drawn again, and how many drops and splashes there were.
+    struct Run
+    {
+        std::vector<SDL_Color> Last;
+        std::vector<SDL_Color> Held;
+        size_t Count = 0;
+    };
+
+    const auto run = [&](int weather)
+    {
+        GHdWeather = weather;
+        MCWeather::Clear();
+        Run made;
+
+        for (int32_t frame = 0; frame <= Frames; ++frame)
+        {
+            made.Last = shown(now + Step * static_cast<float>(frame));
+        }
+
+        made.Count = MCWeather::Count();
+        made.Held = shown(now + Step * static_cast<float>(Frames));
+        return made;
+    };
+
+    // Clear, then rain twice, then clear again; the game paused, nothing else throws its dice.
+    const Run clear = run(HdWeatherOff);
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    const Run first = run(HdWeatherRain);
+    const Run second = run(HdWeatherRain);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    const Run after = run(HdWeatherOff);
+    ScenarioTime = now;
+    SaveShownFrame(clear.Last, width, height, "weather_clear");
+    SaveShownFrame(first.Last, width, height, "weather_rain");
+
+    // The world clear of the interface (as the particles' test).
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    size_t changed = 0;
+    size_t moved = 0;
+    size_t unlike = 0;
+    size_t leftOver = 0;
+    std::vector<float> clearLumas;
+    std::vector<float> rainLumas;
+
+    for (int32_t y = top; y < height; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            changed += SameColor(first.Last[i], clear.Last[i]) ? 0 : 1;
+            moved += SameColor(first.Held[i], first.Last[i]) ? 0 : 1;
+            unlike += SameColor(first.Last[i], second.Last[i]) ? 0 : 1;
+            leftOver += SameColor(after.Last[i], clear.Last[i]) ? 0 : 1;
+            clearLumas.push_back(LumaOf(clear.Last[i]));
+            rainLumas.push_back(LumaOf(first.Last[i]));
+        }
+    }
+
+    const auto median = [](std::vector<float>& lumas)
+    {
+        std::ranges::nth_element(lumas, lumas.begin() + static_cast<std::ptrdiff_t>(lumas.size() / 2));
+        return lumas[lumas.size() / 2];
+    };
+
+    const float clearMedian = median(clearLumas);
+    const float rainMedian = median(rainLumas);
+    std::cout << std::format(
+        "  rain: {} drops and splashes, {} pixels changed, middle brightness {:.1f} (clear {:.1f}); "
+        "{} moved while the time held, {} unlike the second time, {} left once clear\n",
+        first.Count, changed, rainMedian, clearMedian, moved, unlike, leftOver);
+    CHECK(clear.Count == 0);
+    CHECK(first.Count > 0);
+    CHECK(changed > 0);
+    CHECK(rainMedian < Overcast * clearMedian);
+    CHECK(moved == 0);
+    CHECK(second.Count == first.Count);
+    CHECK(unlike == 0);
+    CHECK(after.Count == 0);
+    CHECK(leftOver == 0);
+}
+
+/// <summary>
 /// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a burst that shakes (a
 /// large artillery strike's, a building's end) in the view's middle moves the world shown, all of it the same whole
 /// pixels, the way the shake says; a big one that doesn't (a unit's end) leaves it be, and once the shake has died away
@@ -5865,6 +5991,36 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-weather &lt;name&gt;[,&lt;amount&gt;]</c>, shows every mission in that weather (GHdWeather: rain,
+    /// downpour, or clear), that many drops falling as made (MCWeather::MCWeatherSettings::Amount).
+    /// </summary>
+    void WeatherFromOptions()
+    {
+        const std::optional<std::string_view> given = MCTest::Option("hd-weather");
+
+        if (!given.has_value())
+        {
+            return;
+        }
+
+        const size_t comma = given->find(',');
+        const std::optional<MCWeatherKind> weather = MCWeather::Named(given->substr(0, comma));
+        REQUIRE(weather.has_value());
+        GHdWeather = *weather == MCWeatherKind::Downpour ? HdWeatherDownpour
+                     : *weather == MCWeatherKind::Rain   ? HdWeatherRain
+                                                         : HdWeatherOff;
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        if (comma != std::string_view::npos)
+        {
+            MCWeather::Settings().Amount = std::strtof(std::string(given->substr(comma + 1)).c_str(), nullptr);
+        }
+
+        std::cout << std::format("  weather: {}, {:.2f} as many drops as made\n", given->substr(0, comma),
+                                 MCWeather::Settings().Amount);
+    }
+
+    /// <summary>
     /// With <c>--hd-air-beams &lt;strength&gt;</c>, the spotlights' beams show in the air that much
     /// (MCLighting::AirBeams).
     /// </summary>
@@ -5993,6 +6149,7 @@ namespace
         CloudsFromOptions();
         SwayFromOptions();
         ParticlesFromOptions();
+        WeatherFromOptions();
         FootprintsFromOptions();
         TurnsFromOptions();
         StopsFromOptions();

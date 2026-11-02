@@ -17,6 +17,7 @@
 #include "sprite/MCParticles.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
@@ -71,6 +72,8 @@ namespace
     constexpr std::array<float, 3> NightTint{0.78f, 0.95f, 1.45f};
     constexpr float NightGrey = 0.5f;
     constexpr float NightStrength = 1.5f;
+    /// <summary>Port-only (HD weather): under the overcast, the objects' shadows take this share of their sunny light.</summary>
+    constexpr float OvercastSunShadow = 0.4f;
     /// <summary>
     /// A unit's headlight at night, a spotlight from its lamp (the window's pixels, along the ground): its beam's middle
     /// meets the ground this far ahead of the ground under the lamp, whatever the lamp's height (a higher lamp tips its
@@ -526,6 +529,13 @@ auto MCSceneLights::ShownLighting() -> MCLighting
             shown.SunShadowUp = 0.0f;
             break;
         }
+    }
+
+    // Port-only (HD weather): under the overcast no sun shows the relief, and the objects' shadows are faint.
+    if (MCWeather::Shown() != MCWeatherKind::Clear)
+    {
+        shown.SunRelief = 0.0f;
+        shown.SunShadow *= OvercastSunShadow;
     }
 
     return shown;
@@ -1134,7 +1144,9 @@ auto MCSceneLights::ShownGround(const MCWindow& view) -> std::optional<MCSceneGr
 {
     const State& state = TheState();
 
-    if ((GHdLighting == HdLightingOff && GHdClouds == 0 && GHdSway == 0) || state.ShownWindow.lock().get() != &view)
+    if ((GHdLighting == HdLightingOff && GHdClouds == 0 && GHdSway == 0 &&
+         MCWeather::Shown() == MCWeatherKind::Clear) ||
+        state.ShownWindow.lock().get() != &view)
     {
         return std::nullopt;
     }

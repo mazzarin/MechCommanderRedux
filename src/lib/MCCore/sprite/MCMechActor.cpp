@@ -28,6 +28,7 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -1579,6 +1580,23 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
         ElementList().OpenGroup(partsDepth, true);
     }
+
+    // Port-only (HD weather): the parts as drawn, which the rain lands on and drips off.
+    std::array<MCSceneLights::MCSunShadowPart, MechPartCount> wetParts{};
+    size_t wetCount = 0;
+
+    for (int32_t i = 0; i < MechPartCount; i++)
+    {
+        const MCMechPart part = PartOrder[i];
+
+        if (shapes[part] != nullptr && drawnShape[part] != nullptr)
+        {
+            wetParts[wetCount++] = {
+                drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y, drawnFrame[part], drawnReverse[part], 1};
+        }
+    }
+
+    MCWeather::AddUnit(std::span(wetParts.data(), wetCount), mech->Position, ScreenPos.X, ScreenPos.Y, partsDepth);
 
     // Selection: -1 and 1 draw the bars; 3 white brackets; anything else the alignment's brackets.
     const int32_t selected = mech->Selected;

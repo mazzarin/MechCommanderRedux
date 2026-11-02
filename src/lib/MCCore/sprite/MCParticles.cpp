@@ -1628,6 +1628,21 @@ auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> vo
     ElementList().Add(ElementList().Make<MCParticleElement>(command, depth));
 }
 
+auto MCParticles::ViewPoint(float x, float y, float z, const MCCamera& camera) -> MCVector2D
+{
+    return Project(x, y, z, camera);
+}
+
+auto MCParticles::GroundAt(float x, float y) -> float
+{
+    return GroundUnder(x, y);
+}
+
+auto MCParticles::WaterAt(float x, float y) -> bool
+{
+    return IsWater(x, y);
+}
+
 auto MCParticles::Draw(const MCCamera& camera) -> void
 {
     State& state = TheState();

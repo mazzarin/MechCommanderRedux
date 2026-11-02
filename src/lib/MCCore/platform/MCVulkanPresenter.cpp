@@ -4,6 +4,7 @@
 #include "platform/MCVulkanShaders.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 #include "vfx/MCVfx.h"
 
 namespace
@@ -65,6 +66,10 @@ namespace
         float ReliefLook[4] = {};
         /// <summary>How far a forest's canopy sways at the height of a gust (meters, 0 none), and how much brighter.</summary>
         float Sway[4] = {};
+        /// <summary>The weather's overcast, its colours' grey, wet land's darkening and its veil (0: a clear sky).</summary>
+        float Weather[4] = {};
+        /// <summary>The wet look: how much sky wet ground mirrors, the puddles' level and the bright metal's gloss.</summary>
+        float WetLook[4] = {};
         /// <summary>One a fire: its flames' centre, and how far to each side and above it the air shimmers.</summary>
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
@@ -176,7 +181,31 @@ namespace
         uniforms.Ground[0] = ground.OriginX * across;
         uniforms.Ground[1] = ground.OriginY * down;
 
-        if (!flat && GHdClouds != 0)
+        // Port-only (HD weather): the overcast, its veil and the wet look, with the drops (the GPU's drawing alone).
+        const bool weather =
+            !flat && MCWeather::Shown() != MCWeatherKind::Clear && MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+
+        if (weather)
+        {
+            const MCWeather::MCWeatherLook look = MCWeather::ShownLook();
+            uniforms.Weather[0] = std::clamp(look.Dark, 0.0f, 1.0f);
+            uniforms.Weather[1] = std::clamp(look.Grey, 0.0f, 1.0f);
+            uniforms.Weather[2] = std::clamp(look.Wet, 0.0f, 1.0f);
+            uniforms.Weather[3] = std::clamp(look.Veil, 0.0f, 1.0f);
+
+            // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
+            if (MCSceneLights::ReliefMapsOn())
+            {
+                uniforms.WetLook[0] = std::clamp(look.Sheen, 0.0f, 1.0f);
+                uniforms.WetLook[1] = MCWeather::PuddleLevel(look.Puddles);
+                uniforms.WetLook[2] = std::clamp(look.Gloss, 0.0f, 1.0f);
+            }
+
+            uniforms.AmbientLook[3] = 1.0f - (1.0f - uniforms.AmbientLook[3]) * (1.0f - uniforms.Weather[1]);
+        }
+
+        // The overcast hides the clouds' shadows.
+        if (!flat && GHdClouds != 0 && !weather)
         {
             uniforms.Clouds[0] = std::clamp(lighting.Clouds, 0.0f, 1.0f);
             uniforms.Clouds[1] = std::clamp(lighting.CloudCover, 0.0f, 1.0f);

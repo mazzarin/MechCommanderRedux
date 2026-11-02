@@ -25,6 +25,7 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrainTiles.h"
 
 std::string CampaignFile = "campaign";
@@ -226,6 +227,10 @@ void ReadPreferences(MCFitIniFile& file)
                    static_cast<int32_t>(MCParticles::MCFleckStyle::Edge),
                    static_cast<int32_t>(MCParticles::MCFleckStyle::Falling));
     GHdShake = file.Read<bool>("HDShake").value_or(false) ? 1 : 0;
+    // Port-only: HDWeather shows the missions in their own weather, or every one in rain or a downpour
+    // (sprite/MCWeather.h).
+    GHdWeather = std::clamp(file.Read<int32_t>("HDWeather").value_or(HdWeatherOff), static_cast<int32_t>(HdWeatherOff),
+                            static_cast<int32_t>(HdWeatherDownpour));
     // Port-only: HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
     GHdFootprints = file.Read<bool>("HDFootprints").value_or(false) ? 1 : 0;
     // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).

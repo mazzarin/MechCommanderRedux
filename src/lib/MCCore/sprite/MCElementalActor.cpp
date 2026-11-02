@@ -11,6 +11,7 @@
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -195,6 +196,8 @@ auto MCElementalActor::Render(int32_t depthFixup) -> int32_t
     // Port-only (sun shadows): its own shadow at dusk.
     const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame};
     MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
+    // Port-only (HD weather): it takes the rain.
+    MCWeather::AddUnit(std::span(&part, 1), obj->Position, ScreenPos.X, ScreenPos.Y, depth);
 
     // Selection: -1 and 1 draw the bars (none for elementals), 2 the brackets in the owner's alignment colour.
     const int32_t selected = obj->Selected;

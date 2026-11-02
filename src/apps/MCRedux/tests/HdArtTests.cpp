@@ -10097,7 +10097,7 @@ namespace
     constexpr int32_t PlayerMechs = 12;
 
     /// <summary>The player's mech in place <paramref name="place"/> of the force (fallen or not), or none.</summary>
-    std::shared_ptr<MCMover> PlayerMech(int32_t place)
+    std::shared_ptr<MCMover> ForceMech(int32_t place)
     {
         return place >= 0 && place < PlayerMechs ? GetMoverFromPartId(PlayerMechPartId + place) : nullptr;
     }
@@ -11357,7 +11357,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& run : runs)
         {
-            const std::shared_ptr<MCMover> mech = PlayerMech(run.Mech);
+            const std::shared_ptr<MCMover> mech = ForceMech(run.Mech);
 
             if (mech != nullptr && mech->IsDisabled() == 0 && frame >= run.Frame && frame < run.Frame + RunFrames &&
                 !crippledAt.contains(mech->PartId))
@@ -11698,7 +11698,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& alpha : alphas)
         {
-            if (const std::shared_ptr<MCMover> mech = PlayerMech(alpha.Mech);
+            if (const std::shared_ptr<MCMover> mech = ForceMech(alpha.Mech);
                 mech != nullptr && frame >= AlphaHoldFrom(alpha) && frame < alpha.Frame)
             {
                 holding.insert(mech->PartId);
@@ -11959,7 +11959,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& camera : cameras)
         {
-            since = camera.Frame <= frame && PlayerMech(camera.Mech) != nullptr ? camera.Frame : since;
+            since = camera.Frame <= frame && ForceMech(camera.Mech) != nullptr ? camera.Frame : since;
         }
 
         return since;
@@ -11973,9 +11973,9 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& camera : cameras)
         {
-            if (camera.Frame <= frame && PlayerMech(camera.Mech) != nullptr)
+            if (camera.Frame <= frame && ForceMech(camera.Mech) != nullptr)
             {
-                followed = PlayerMech(camera.Mech);
+                followed = ForceMech(camera.Mech);
             }
         }
 
@@ -12008,7 +12008,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         for (const MCShowcaseEvent& loss : losses)
         {
-            const std::shared_ptr<MCMover> mover = PlayerMech(loss.Mech);
+            const std::shared_ptr<MCMover> mover = ForceMech(loss.Mech);
 
             if (mover == nullptr || mover->IsDisabled() != 0 || mover->ObjectClass != MCObjectClass::BattleMech)
             {
@@ -12059,7 +12059,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
             for (size_t i = 0; i < wears.size(); ++i)
             {
-                const std::shared_ptr<MCMover> mech = PlayerMech(wears[i].Mech);
+                const std::shared_ptr<MCMover> mech = ForceMech(wears[i].Mech);
                 std::vector<std::shared_ptr<MCMover>>& shooters = wearSent[i];
 
                 if (mech == nullptr || mech->IsDisabled() != 0 || frame < wears[i].Frame ||
@@ -12083,7 +12083,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
             for (const auto& [until, i] : worns)
             {
-                const std::shared_ptr<MCMover> mech = PlayerMech(wears[i].Mech);
+                const std::shared_ptr<MCMover> mech = ForceMech(wears[i].Mech);
                 std::vector<std::shared_ptr<MCMover>>& shooters = wearSent[i];
 
                 for (const std::shared_ptr<MCMover>& enemy : EnemyMechsByDistance(*mech))
@@ -12114,7 +12114,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         for (size_t i = 0; i < wears.size(); ++i)
         {
             const MCShowcaseEvent& wear = wears[i];
-            const std::shared_ptr<MCMover> mech = PlayerMech(wear.Mech);
+            const std::shared_ptr<MCMover> mech = ForceMech(wear.Mech);
 
             if (mech == nullptr || mech->IsDisabled() != 0 || frame < wear.Frame || frame >= WearUntil(wear) ||
                 mech->GetTotalEffectiveness() <= WearBar(wear, frame))
@@ -12166,7 +12166,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // Those running, ordered on every second.
         for (const MCShowcaseEvent& run : runs)
         {
-            if (const std::shared_ptr<MCMover> mech = PlayerMech(run.Mech);
+            if (const std::shared_ptr<MCMover> mech = ForceMech(run.Mech);
                 mech != nullptr && running.contains(mech->PartId) && (frame - run.Frame) % RetreatFrames == 0)
             {
                 RetreatFrom(*mech, RetreatDistance);
@@ -12186,7 +12186,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             close = event.Frame <= frame ? &event : close;
         }
 
-        std::shared_ptr<MCMover> closeOn = close != nullptr ? PlayerMech(close->Mech) : nullptr;
+        std::shared_ptr<MCMover> closeOn = close != nullptr ? ForceMech(close->Mech) : nullptr;
         closeOn = closeOn != nullptr && closeOn->IsDisabled() == 0 ? closeOn : followed;
         const bool closing =
             close != nullptr && closeNames.has_value() && closeOn != nullptr && closeOn->IsDisabled() == 0;
@@ -12223,7 +12223,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             // The weapons of those near it readied at once when it starts, so they fire together (missiles can't
             // fire inside their minimum range, so not only those).
-            if (const std::shared_ptr<MCMover> mech = PlayerMech(volley.Mech);
+            if (const std::shared_ptr<MCMover> mech = ForceMech(volley.Mech);
                 mech != nullptr && mech->IsDisabled() == 0 && frame >= volley.Frame &&
                 frame < volley.Frame + VolleyFrames)
             {
@@ -12279,7 +12279,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                     // once that one runs in (every weapon fires there: none inside its minimum range).
                     for (const MCShowcaseEvent& alpha : alphas)
                     {
-                        const std::shared_ptr<MCMover> striker = PlayerMech(alpha.Mech);
+                        const std::shared_ptr<MCMover> striker = ForceMech(alpha.Mech);
 
                         if (striker == nullptr || striker->IsDisabled() != 0 || frame < AlphaHoldFrom(alpha) ||
                             frame >= alpha.Frame)
@@ -12486,7 +12486,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // A death from above: the mech jumps at the enemy mech nearest it that is far enough to jump at.
         for (const MCShowcaseEvent& dfa : dfas)
         {
-            const std::shared_ptr<MCMover> mech = PlayerMech(dfa.Mech);
+            const std::shared_ptr<MCMover> mech = ForceMech(dfa.Mech);
 
             if (frame != dfa.Frame || mech == nullptr || mech->IsDisabled() != 0)
             {
@@ -12538,7 +12538,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         if (const auto called = std::ranges::find(incoming, frame, &MCShowcaseEvent::Frame);
             called != incoming.end() && !lance.empty())
         {
-            const std::shared_ptr<MCMover> named = called->Mech >= 0 ? PlayerMech(called->Mech) : nullptr;
+            const std::shared_ptr<MCMover> named = called->Mech >= 0 ? ForceMech(called->Mech) : nullptr;
             under = named != nullptr && named->IsDisabled() == 0 ? named : lance.front();
         }
 
@@ -12603,7 +12603,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // The forests nearest the mech set alight: the game's own fire, and its smoke all around the mech.
         for (const MCShowcaseEvent& smoke : smokes)
         {
-            const std::shared_ptr<MCMover> mover = PlayerMech(smoke.Mech);
+            const std::shared_ptr<MCMover> mover = ForceMech(smoke.Mech);
 
             if (frame != smoke.Frame || mover == nullptr || mover->IsDisabled() != 0)
             {
@@ -12670,7 +12670,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         {
             const int32_t lead = mines[first].What.empty() ? MineWalkFrames : std::stoi(mines[first].What);
 
-            if (const std::shared_ptr<MCMover> mech = PlayerMech(mines[first].Mech);
+            if (const std::shared_ptr<MCMover> mech = ForceMech(mines[first].Mech);
                 frame == mines[first].Frame - lead && mech != nullptr && mech->IsDisabled() == 0)
             {
                 MCVector3D at = mech->GetPosition();
@@ -12702,7 +12702,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // A mine under the mech as it steps onto that ground: a step ahead of it, left and right in turn.
         for (size_t index = 0; index < mines.size(); ++index)
         {
-            if (const std::shared_ptr<MCMover> mech = PlayerMech(mines[index].Mech);
+            if (const std::shared_ptr<MCMover> mech = ForceMech(mines[index].Mech);
                 frame == mines[index].Frame && mech != nullptr && mech->IsDisabled() == 0)
             {
                 const auto walk = mineWalks.find(mech->PartId);
@@ -12724,7 +12724,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // ready (the pilot fires each one as it comes ready, so they never go together otherwise).
         for (const MCShowcaseEvent& alpha : alphas)
         {
-            const std::shared_ptr<MCMover> mech = PlayerMech(alpha.Mech);
+            const std::shared_ptr<MCMover> mech = ForceMech(alpha.Mech);
 
             if (mech == nullptr || mech->IsDisabled() != 0)
             {
@@ -12942,7 +12942,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         // named (the camera's) that the player's mechs reach, fired at first.
         for (const MCShowcaseEvent& destroy : destroys)
         {
-            const std::shared_ptr<MCMover> named = destroy.Mech >= 0 ? PlayerMech(destroy.Mech) : nullptr;
+            const std::shared_ptr<MCMover> named = destroy.Mech >= 0 ? ForceMech(destroy.Mech) : nullptr;
             const std::shared_ptr<MCMover> near = named != nullptr && named->IsDisabled() == 0 ? named : followed;
 
             if (frame == destroy.Frame - FireLeadFrames && near != nullptr)
@@ -13033,7 +13033,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
                         [&](const auto& staged)
                         {
                             const char kind = std::get<2>(staged);
-                            return (kind == 'd' || kind == 'e') && PlayerMech(std::get<1>(staged)) == mover;
+                            return (kind == 'd' || kind == 'e') && ForceMech(std::get<1>(staged)) == mover;
                         }))
                 {
                     std::string broken;
@@ -13176,7 +13176,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
             for (const MCShowcaseEvent& alpha : alphas)
             {
-                if (const std::shared_ptr<MCMover> striker = PlayerMech(alpha.Mech);
+                if (const std::shared_ptr<MCMover> striker = ForceMech(alpha.Mech);
                     striker != nullptr && frame >= alpha.Frame - StrikeKeepFrames && frame < alpha.Frame)
                 {
                     holding.insert(striker->PartId);

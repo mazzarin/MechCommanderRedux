@@ -24,6 +24,7 @@
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCSplashScreen.h"
+#include "main/MCArtModes.h"
 
 int32_t GameDifficulty = 1;
 bool Only45Pixel = false;
@@ -339,6 +340,9 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 void ShowPreferences()
 {
     EnsureRegistryVersion();
+    // Port: an art mode the debug console showed is for the run only (MCArtModes.h): the screen shows and saves the
+    // player's own HD ART and HD LIGHTING.
+    EndArtMode();
 
     // The settings as they are, for CancelPrefs.
     std::shared_ptr<MCLogistics> logistics = GlobalLog();

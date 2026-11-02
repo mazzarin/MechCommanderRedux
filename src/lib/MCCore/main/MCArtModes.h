@@ -4,7 +4,8 @@
 /// Port-only: an art mode, the art the game shows as one choice a developer switches while the game runs (the debug
 /// console's <c>art</c> command; the picture tools' <c>--hd-art-modes</c>, for recordings): a pair of the player's HD
 /// ART and HD LIGHTING settings (<see cref="GHdArt"/>, <see cref="GHdLighting"/>). Switching sets them for the run
-/// without saving them; the next frame drawn shows the mode.
+/// without saving them; the next frame drawn shows the mode, and opening the preferences ends it
+/// (<see cref="EndArtMode"/>).
 /// </summary>
 struct MCArtMode
 {
@@ -31,6 +32,12 @@ std::optional<MCArtMode> ArtModeNamed(std::string_view name);
 /// </summary>
 /// <returns>Nothing, or why nothing changed: the mode draws HD art and there is no pack it can draw from.</returns>
 std::expected<void, std::string> ShowArtMode(const MCArtMode& mode);
+
+/// <summary>
+/// Ends the mode <see cref="ShowArtMode"/> showed, if one is: HD ART and HD LIGHTING back to the player's own, so the
+/// preferences screen shows and saves theirs, never the mode's.
+/// </summary>
+void EndArtMode();
 
 /// <summary>
 /// Ties every shape loaded so far to the HD art pack, as loading it with HD art on would have: the sprite cache's, the

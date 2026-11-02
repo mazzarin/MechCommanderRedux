@@ -285,10 +285,11 @@ namespace
     constexpr float ShowerApartY = 7.7f;
     constexpr float ShowerSpread = 0.35f;
     constexpr float MostShowers = 0.8f;
-    // How the look follows the showers' rain: the overcast's dark and grey DarkFollow as far as the drops; the drops near
-    // the eye as far, those between BetweenFollow as far (those far from it the rest); heard as loud as the rain's
-    // strength to the power HeardFollow (a channel volume: a lull of 0.65 about 5.6 dB quieter).
-    constexpr float DarkFollow = 0.35f;
+    // How the look follows the showers' rain: the overcast's dark and grey DarkFollow as far as the drops (enough that a
+    // lull shows lighter, and a burst darker, though the drops and the veil, lighter than the ground, follow too); the
+    // drops near the eye as far, those between BetweenFollow as far (those far from it the rest); heard as loud as the
+    // rain's strength to the power HeardFollow (a channel volume: a lull of 0.65 about 5.6 dB quieter).
+    constexpr float DarkFollow = 0.75f;
     constexpr float BetweenFollow = 0.5f;
     constexpr float HeardFollow = 0.75f;
     // The puddles fill toward how hard the rain falls (1 as made) over PuddleFill seconds of the showers' time, and dry

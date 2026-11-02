@@ -340,7 +340,10 @@ private:
         bool IndexOnly = false;
         /// <summary>Port-only: whether the draws are shadows (HD lighting), taking the colours' alpha down alone.</summary>
         bool Shadow = false;
-        /// <summary>Port-only (HDSway): whether the draws are a forest's, its HD frame marking the sway alone.</summary>
+        /// <summary>
+        /// Port-only: whether the draws write the indices' alpha alone (HDSway: a forest's HD frame marking the sway;
+        /// with IndexOnly, an HD frame's mark pass: HdMarks::Standing).
+        /// </summary>
         bool Marks = false;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
@@ -481,6 +484,18 @@ private:
     };
 
     /// <summary>
+    /// Port-only: what an HD art frame's draw tells the composite besides its colours: nothing (the original's indices,
+    /// which its draw writes, tell it), or that something stands on the ground wherever the frame shows, its smooth
+    /// edge past the original's pixels too (a unit's or an object's frame: the index target's alpha, draw.pshader's
+    /// mark pass), the indices left the original's.
+    /// </summary>
+    enum class HdMarks : uint8_t
+    {
+        None,
+        Standing,
+    };
+
+    /// <summary>
     /// Port-only: whether <paramref name="surface"/> shows what is drawn from the original at the output's resolution:
     /// HD art is on and the surface is drawn at more pixels than its window has.
     /// </summary>
@@ -557,11 +572,13 @@ private:
     /// shape's pixel <paramref name="from"/> (its first pixel and steps, in the shape's bounds) at the frame's scale,
     /// recoloured by <paramref name="table"/> as the original's pixels would be, its colours as
     /// <paramref name="colours"/> says; a keyed copy (<paramref name="key"/>) leaves out the original's pixels of the
-    /// key; its edges as <paramref name="edges"/> says. False when the frame can't be put on the GPU.
+    /// key; its edges as <paramref name="edges"/> says; marked as <paramref name="marks"/> says (an effect's frame and a
+    /// forest's mark nothing: an effect's blended pixels leave the ground under them, a forest's frame marks its sway).
+    /// False when the frame can't be put on the GPU.
     /// </summary>
     bool AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
                const std::optional<MCColorTable>& table, std::optional<uint8_t> key = std::nullopt,
-               HdColours colours = HdColours::Corrected, HdEdges edges = HdEdges::Frame);
+               HdColours colours = HdColours::Corrected, HdEdges edges = HdEdges::Frame, HdMarks marks = HdMarks::None);
 
     /// <summary>
     /// Port-only: the HD art pack's copy of <paramref name="window"/>'s picture (a menu's art), looked for once each
@@ -795,6 +812,8 @@ private:
     MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
     /// <summary>Port-only (HDSway): a forest's HD frame, blended, writing the sway mark (the indices' alpha) alone.</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _BlendMarks;
+    /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexMarks;
     /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;

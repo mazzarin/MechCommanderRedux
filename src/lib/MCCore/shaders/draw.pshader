@@ -182,7 +182,8 @@ static const uint Particle = 1u << 23;
 // Port-only (HDSway): a draw of a forest's canopy (MCVulkanRenderer's Sways): its index pass sets its pixels' alpha in
 // the index target to SwayMark, which the composite sways (composite.pshader's SwayedAt; the relief maps' alpha is 1);
 // its HD frame, drawn after, sets it again, 0 on its painted shadow, which shows the ground under it (the frame's
-// pipeline writes nothing else of the indices). The renderer's IndexOnly marks an index pass.
+// pipeline writes nothing else of the indices). The renderer's IndexOnly marks an index pass (an HD frame's: its mark
+// pass, StandingMark).
 static const uint Sways = 1u << 24;
 static const uint IndexOnly = 1u << 15;
 static const float SwayMark = 64.0 / 255.0;
@@ -195,6 +196,12 @@ static const float SpriteEdgeLow = 0.2;
 static const float SpriteEdgeHigh = 0.6;
 // An HD frame's alpha at an original pixel's centre over this, the original draws the pixel (KindHdSmooth).
 static const float HdMaskAlpha = 0.5;
+// Port-only: a unit's or an object's HD frame's mark pass (the renderer's IndexOnly on an HD frame's draw, through a
+// pipeline writing the indices' alpha alone) sets the alpha to StandingMark (the composite's: something stands on the
+// ground, as the original's pixels' indices have it) wherever the frame covers at least StandingCoverage of a pixel, so
+// that its smooth edge past the original's pixels, whose indices stay the ground's, reads as the frame's too.
+static const float StandingMark = 0.0;
+static const float StandingCoverage = 0.1;
 // A shadow is full across this much of its width, softening to nothing at its edge (KindShadow).
 static const float ShadowCore = 0.35;
 // An HD frame's colour where its alpha is under this is drawn more and more as its nearest drawn pixel's (KindHdSmooth:
@@ -932,6 +939,19 @@ Output HdPixelAt(Input input, float2 shape)
     {
         const float baked = BakedShadowAt(original, shape);
         color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
+    }
+
+    // The frame's mark pass: something stands on the ground wherever it shows.
+    if ((input.op.x & IndexOnly) != 0)
+    {
+        if (color.a < StandingCoverage)
+        {
+            discard;
+        }
+
+        Output marked = Blended(float4(0.0, 0.0, 0.0, 0.0));
+        marked.index.a = StandingMark;
+        return marked;
     }
 
     // The colour as the original pixels around it show now: through a paint scheme's table, today's palette, cycle and

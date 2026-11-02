@@ -5781,6 +5781,34 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-sun-turn &lt;seconds&gt;[,&lt;length&gt;]</c>, turns the sun once round the world in that many
+    /// seconds of the mission's time, its shadows that many times as long as the day's (MCLighting::SunTurnSeconds and
+    /// SunTurnLength), every object casting its own: shows the sun's way with sun shadows on.
+    /// </summary>
+    void SunTurnFromOptions()
+    {
+        const std::optional<std::string_view> turn = MCTest::Option("hd-sun-turn");
+
+        if (!turn.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+        const std::string values(*turn);
+        char* rest = nullptr;
+        lighting.SunTurnSeconds = std::strtof(values.c_str(), &rest);
+
+        if (*rest == ',')
+        {
+            lighting.SunTurnLength = std::strtof(rest + 1, nullptr);
+        }
+
+        std::cout << std::format("  sun: once round in {:.0f} s, shadows {:.2f} times the day's\n",
+                                 lighting.SunTurnSeconds, lighting.SunTurnLength);
+    }
+
+    /// <summary>
     /// With <c>--hd-clouds &lt;darkness&gt;[,&lt;cover&gt;[,&lt;size&gt;[,&lt;speed&gt;]]]</c>, turns cloud shadows on
     /// (GHdClouds): they take that much of the world's own light, over that share of the ground, that big (meters) and
     /// drifting that fast (meters a second); each left out keeps MCSceneLights::MCLighting's.
@@ -6030,6 +6058,7 @@ namespace
         SunReliefFromOptions();
         ReliefMapsFromOptions();
         SunShadowsFromOptions();
+        SunTurnFromOptions();
         CloudsFromOptions();
         SwayFromOptions();
         ParticlesFromOptions();

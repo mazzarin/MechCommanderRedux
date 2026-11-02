@@ -163,6 +163,14 @@ namespace MCSceneLights
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
         /// <summary>
+        /// With sun shadows on: a tool's sun (--hd-sun-turn) that goes once round the world in this many seconds of the
+        /// mission's time, from the day's way, every object casting its own shadow (<see cref="RecastsSunShadows"/>); 0
+        /// keeps it still, as the game does.
+        /// </summary>
+        float SunTurnSeconds = 0.0f;
+        /// <summary>With the sun turning: its shadows this many times as long as the day's.</summary>
+        float SunTurnLength = 1.0f;
+        /// <summary>
         /// With relief on (<see cref="GHdRelief"/>): how much the sun shows the world's relief (its own shading taken
         /// for height, as <see cref="Facing"/>'s, or the HD ground's relief maps): a surface facing the sun takes more
         /// of the world's own light and one facing away less, the more the lower the sun (its shadows' way and length,
@@ -411,7 +419,8 @@ namespace MCSceneLights
     /// <summary>
     /// Port-only: whether the objects' shadows baked into their art, which fall the way the day's sun does, are hidden,
     /// every object and unit casting its own the sun's way instead (<see cref="AddRecastShadows"/>): with sun shadows on
-    /// (GHdSunShadows) and HD art drawn by the GPU, at dusk (the sun low, the shadows longer) and night (no sun).
+    /// (GHdSunShadows) and HD art drawn by the GPU, at dusk (the sun low, the shadows longer) and night (no sun), and
+    /// while a tool's sun turns (MCLighting::SunTurnSeconds).
     /// </summary>
     bool RecastsSunShadows();
 

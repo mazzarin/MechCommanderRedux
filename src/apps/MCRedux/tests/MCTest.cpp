@@ -177,26 +177,23 @@ namespace
         return joinErrors ? command + " 2>&1" : command;
     }
 
-    /// <summary>Runs an isolated test in a process of its own (<see cref="IsolatedCommand"/>).</summary>
-    /// <returns>Whether it passed (the child exited 0).</returns>
-    bool RunIsolated(std::string_view program, const MCTest::TestCase& test)
+    /// <summary>Whether a command's output is printed as it comes, as well as kept.</summary>
+    enum class Echo : uint8_t
     {
-        const std::string command = IsolatedCommand(program, test, std::nullopt, false);
+        No,
+        Yes,
+    };
+
+    /// <summary>
+    /// Runs <paramref name="command"/> (UTF-8), keeping what it prints, and printing it as it comes when
+    /// <paramref name="echo"/> says.
+    /// </summary>
+    /// <returns>Whether it exited 0, and its output (or why it couldn't start).</returns>
+    std::pair<bool, std::string> RunCaptured(const std::string& command, Echo echo)
+    {
         std::cout << std::flush;
 #ifdef _WIN32
-        // The wide call keeps every character of the UTF-8 command; system would read it in the ANSI code page.
-        return _wsystem(MCFileSystem::FromUtf8(command).c_str()) == 0;
-#else
-        return std::system(command.c_str()) == 0;
-#endif
-    }
-
-    /// <summary>Runs <paramref name="command"/> (UTF-8), keeping what it prints.</summary>
-    /// <returns>Whether it exited 0, and its output (or why it couldn't start).</returns>
-    std::pair<bool, std::string> RunCaptured(const std::string& command)
-    {
-#ifdef _WIN32
-        // Wide, as RunIsolated's call.
+        // The wide call keeps every character of the UTF-8 command; popen would read it in the ANSI code page.
         FILE* pipe = _wpopen(MCFileSystem::FromUtf8(command).c_str(), L"r");
 #else
         FILE* pipe = popen(command.c_str(), "r");
@@ -214,6 +211,11 @@ namespace
         for (size_t read = 0; (read = std::fread(chunk.data(), 1, chunk.size(), pipe)) > 0;)
         {
             output.append(chunk.data(), read);
+
+            if (echo == Echo::Yes)
+            {
+                std::cout.write(chunk.data(), static_cast<std::streamsize>(read)) << std::flush;
+            }
         }
 
 #ifdef _WIN32
@@ -224,12 +226,63 @@ namespace
         return {status == 0, std::move(output)};
     }
 
+    /// <summary>The words between the numbers of the summary a run prints last (main's), read back from an isolated
+    /// test's output.</summary>
+    constexpr std::string_view TestsPassedWords = " tests passed, ";
+    constexpr std::string_view ChecksPassedWords = " checks passed, ";
+    constexpr std::string_view FailedWords = " failed (";
+
+    /// <summary>An isolated test's run: whether it passed, and its checks passed and failed.</summary>
+    struct IsolatedRun
+    {
+        bool Passed = false;
+        size_t Passes = 0;
+        size_t Failures = 0;
+    };
+
+    /// <summary>
+    /// An isolated test's run, from whether its process exited 0 and its output: the checks its summary counts (the last
+    /// in the output). One that failed counts a check failed at least, as one that crashed before its summary does.
+    /// </summary>
+    IsolatedRun RunOf(bool passed, std::string_view output)
+    {
+        IsolatedRun run{.Passed = passed};
+        const size_t summary = output.rfind(TestsPassedWords);
+        std::string_view rest = summary == std::string_view::npos ? std::string_view() : output.substr(summary);
+        // The number after `words` in what's left, if they come next, leaving what follows it.
+        const auto numberAfter = [&](std::string_view words, size_t& number)
+        {
+            if (!rest.starts_with(words))
+            {
+                return false;
+            }
+
+            rest.remove_prefix(words.size());
+            const auto [end, error] = std::from_chars(rest.data(), rest.data() + rest.size(), number);
+            rest.remove_prefix(static_cast<size_t>(end - rest.data()));
+            return error == std::errc();
+        };
+
+        size_t passes = 0;
+        size_t failures = 0;
+
+        if (numberAfter(TestsPassedWords, passes) && numberAfter(ChecksPassedWords, failures) &&
+            rest.starts_with(FailedWords))
+        {
+            run.Passes = passes;
+            run.Failures = failures;
+        }
+
+        run.Failures = passed ? run.Failures : std::max<size_t>(run.Failures, 1);
+        return run;
+    }
+
     /// <summary>
     /// Runs <paramref name="tests"/> (isolated ones), <paramref name="jobs"/> at a time, each worker's in a temporary
     /// folder of its own under this run's, printing each one's output whole as it ends.
     /// </summary>
-    /// <returns>The tests that failed, or why the workers' folders can't be made.</returns>
-    std::expected<std::vector<std::reference_wrapper<const MCTest::TestCase>>, std::string> RunIsolatedAtOnce(
+    /// <returns>Each test's run, in their order, or why the workers' folders can't be made.</returns>
+    std::expected<std::vector<IsolatedRun>, std::string> RunIsolatedAtOnce(
         std::string_view program, std::span<const std::reference_wrapper<const MCTest::TestCase>> tests, int32_t jobs)
     {
         std::vector<std::filesystem::path> folders;
@@ -254,7 +307,7 @@ namespace
             folders.push_back(folder);
         }
 
-        std::vector<std::reference_wrapper<const MCTest::TestCase>> failed;
+        std::vector<IsolatedRun> runs(tests.size());
         std::atomic<size_t> next = 0;
         std::mutex lock;
         const auto work = [&](const std::filesystem::path& folder)
@@ -262,14 +315,10 @@ namespace
             for (size_t i = next++; i < tests.size(); i = next++)
             {
                 const MCTest::TestCase& test = tests[i];
-                const auto [passed, output] = RunCaptured(IsolatedCommand(program, test, folder, true));
+                const auto [passed, output] = RunCaptured(IsolatedCommand(program, test, folder, true), Echo::No);
+                runs[i] = RunOf(passed, output);
                 const std::scoped_lock guard(lock);
                 std::cout << "[ PROC ] " << test.Name << "\n" << output << std::flush;
-
-                if (!passed)
-                {
-                    failed.emplace_back(test);
-                }
             }
         };
 
@@ -285,7 +334,7 @@ namespace
             worker.join();
         }
 
-        return failed;
+        return runs;
     }
 
     /// <summary>
@@ -409,6 +458,17 @@ int main(int argc, char** argv)
     std::vector<std::reference_wrapper<const MCTest::TestCase>> failed;
     std::vector<std::reference_wrapper<const MCTest::TestCase>> atOnce;
     const auto runStart = std::chrono::steady_clock::now();
+    // An isolated test's checks and result, counted in this run's.
+    const auto count = [&](const MCTest::TestCase& test, const IsolatedRun& run)
+    {
+        state.Passes += run.Passes;
+        state.Failures += run.Failures;
+
+        if (!run.Passed)
+        {
+            failed.emplace_back(test);
+        }
+    };
 
     for (const MCTest::TestCase& test : selected)
     {
@@ -421,13 +481,9 @@ int main(int argc, char** argv)
         if (test.Isolated && !only)
         {
             std::cout << "[ PROC ] " << test.Name << std::endl;
-
-            if (!RunIsolated(arguments[0], test))
-            {
-                ++state.Failures;
-                failed.emplace_back(test);
-            }
-
+            const auto [passed, output] =
+                RunCaptured(IsolatedCommand(arguments[0], test, std::nullopt, true), Echo::Yes);
+            count(test, RunOf(passed, output));
             continue;
         }
 
@@ -468,23 +524,25 @@ int main(int argc, char** argv)
 
     if (!atOnce.empty())
     {
-        auto isolatedFailed = RunIsolatedAtOnce(arguments[0], atOnce, jobs);
+        const auto runs = RunIsolatedAtOnce(arguments[0], atOnce, jobs);
 
-        if (!isolatedFailed)
+        if (!runs)
         {
-            std::cerr << isolatedFailed.error() << "\n";
+            std::cerr << runs.error() << "\n";
             return 1;
         }
 
-        state.Failures += isolatedFailed->size();
-        failed.insert(failed.end(), isolatedFailed->begin(), isolatedFailed->end());
+        for (size_t i = 0; i < atOnce.size(); ++i)
+        {
+            count(atOnce[i], (*runs)[i]);
+        }
     }
 
     const auto totalMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - runStart).count();
     std::cout << "\n"
-              << selected.size() - failed.size() << " of " << selected.size() << " tests passed, " << state.Passes
-              << " checks passed, " << state.Failures << " failed (" << totalMs << " ms)\n";
+              << selected.size() - failed.size() << " of " << selected.size() << TestsPassedWords << state.Passes
+              << ChecksPassedWords << state.Failures << FailedWords << totalMs << " ms)\n";
 
     for (const MCTest::TestCase& test : failed)
     {

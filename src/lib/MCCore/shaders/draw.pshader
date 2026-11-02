@@ -62,6 +62,12 @@ SamplerState hdSampler : register(s5, space2);
 // The terrain's second HD atlas (a big map's tiles past the first's), else hdTex again.
 Texture2D<float4> hdTex2 : register(t6, space2);
 SamplerState hdSampler2 : register(s6, space2);
+// Port-only (HD lighting's relief maps): the terrain's relief atlases (BC5: a tile's slopes, MCHdArt's relief maps), else
+// the palette.
+Texture2D<float4> reliefTex : register(t7, space2);
+SamplerState reliefSampler : register(s7, space2);
+Texture2D<float4> reliefTex2 : register(t8, space2);
+SamplerState reliefSampler2 : register(s8, space2);
 
 cbuffer Frame : register(b0, space3)
 {
@@ -74,7 +80,8 @@ cbuffer Frame : register(b0, space3)
     int4 cycle;
     uint4 cycleSources[2];
     // Port-only (HD lighting): x how strong a light's glow (Glow) shows, 1 as the original drew it; y with sun shadows
-    // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black).
+    // on (GHdSunShadows), how much of the light under it an object's baked shadow takes away (0: off, solid black); z 1
+    // when the objects' baked shadows are hidden, each casting its own (MCSceneLights::RecastsSunShadows).
     float4 look;
 };
 
@@ -139,6 +146,14 @@ static const uint GivenAlpha = 1u << 14;
 // A terrain tile's colours from the HD art pack: op.w the scale, walk the tile's place in the atlas (x, y, w, h).
 // (Bit 15 is the renderer's IndexOnly.)
 static const uint HdColors = 1u << 16;
+// With HdColors, op.w holds the HD scale in its low bits, then the tile's relief map's scale (0: none) and its place in
+// its atlas in whole blocks (terrain.vshader).
+static const uint HdScaleMask = 15u;
+static const uint ReliefScaleShift = 4;
+static const uint ReliefXShift = 8;
+static const uint ReliefYShift = 20;
+static const uint ReliefPlaceMask = 0xfffu;
+static const int BlockSide = 4;
 // A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
 // walk its place in the source (x0, y0, x1, y1).
 static const uint SmoothEdges = 1u << 17;
@@ -153,6 +168,8 @@ static const uint HdLight = 1u << 21;
 // Port-only (sun shadows): an HD art frame drawn as a unit's shadow (KindHdMap, its map the sun's shear): black at its
 // coverage, as dark as look.y.
 static const uint SunShadowDraw = 1u << 22;
+// Port-only (HD particles): a KindSmoothEllipse draw that is a particle (MCParticleCommand: ParticlePixel).
+static const uint Particle = 1u << 23;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -311,14 +328,20 @@ float3 HdAtlasTexel(int2 texel, int2 low, int2 high, int atlas)
     return atlas == 0 ? Fetch(hdTex, hdSampler, at).rgb : Fetch(hdTex2, hdSampler2, at).rgb;
 }
 
+// Where drawn pixel `target` lies in its terrain tile (terrain.vshader): in the tile's original pixels.
+float2 TileLocal(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    return float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
+}
+
 // A terrain tile's HD colour at drawn pixel `target` (terrain.vshader): op.w the HD scale, walk.xy the tile's HD place
 // and walk.zw its place in the atlas (the source's), span.xy its size and span.z its HD atlas; the index is `value`
 // (original, through the haze's table), the HD colour the one made from `original`'s.
 float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
 {
-    const int hdScale = (int)input.op.w;
-    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
-    const float2 local = float2(input.source.xy) + (window - float2(input.rect.xy)) - float2(input.walk.zw);
+    const int hdScale = (int)(input.op.w & HdScaleMask);
+    const float2 local = TileLocal(input, target);
     const int2 low = int2(input.walk.xy);
     const int2 high = low + input.span.xy * hdScale - 1;
     const int atlas = input.span.z;
@@ -332,12 +355,47 @@ float3 HdTerrainColour(Input input, int2 target, uint original, uint value)
     return Corrected(lerp(top, bottom, f.y), 1.0, original, value);
 }
 
-// A terrain tile's pixel in HD colours (HdTerrainColour), and its index.
+// Port-only (HD lighting's relief maps): a relief atlas's slopes at a texel (span.w: 1 reliefTex, 2 reliefTex2), kept
+// inside the tile's place (low, high).
+float2 ReliefTexel(int2 texel, int2 low, int2 high, int atlas)
+{
+    const int2 at = clamp(texel, low, high);
+    return atlas == 1 ? Fetch(reliefTex, reliefSampler, at).rg : Fetch(reliefTex2, reliefSampler2, at).rg;
+}
+
+// A terrain tile's relief map at drawn pixel `target`: its slopes as stored (128 / 255 flat), filtered between its
+// texels; op.w holds its scale and place, span.w its atlas.
+float2 ReliefAt(Input input, int2 target)
+{
+    const uint fields = input.op.w;
+    const int reliefScale = (int)((fields >> ReliefScaleShift) & HdScaleMask);
+    const int2 low =
+        int2((fields >> ReliefXShift) & ReliefPlaceMask, (fields >> ReliefYShift) & ReliefPlaceMask) * BlockSide;
+    const int2 high = low + input.span.xy * reliefScale - 1;
+    const int atlas = input.span.w;
+    const float2 at = float2(low) + TileLocal(input, target) * (float)reliefScale - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const float2 top =
+        lerp(ReliefTexel(base, low, high, atlas), ReliefTexel(base + int2(1, 0), low, high, atlas), f.x);
+    const float2 bottom =
+        lerp(ReliefTexel(base + int2(0, 1), low, high, atlas), ReliefTexel(base + int2(1, 1), low, high, atlas), f.x);
+    return lerp(top, bottom, f.y);
+}
+
+// A terrain tile's pixel in HD colours (HdTerrainColour), and its index; port-only, with its relief map's slopes beside
+// the index (G, B) and A set where it has one (the composite's SlopeAt).
 Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 {
     Output output;
     output.color = float4(HdTerrainColour(input, target, original, value), 1.0);
     output.index = float4((float)value / 255.0, 0.0, 0.0, 0.0);
+
+    if (input.span.w != 0)
+    {
+        output.index.yzw = float3(ReliefAt(input, target), 1.0);
+    }
+
     return output;
 }
 
@@ -760,15 +818,18 @@ Output HdPixelAt(Input input, float2 shape)
         discard;
     }
 
+    // A frame cast as a sun shadow casts its body, not the shadow baked beside it.
     if ((input.op.x & SunShadowDraw) != 0)
     {
-        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a));
+        return Blended(float4(0.0, 0.0, 0.0, look.y * color.a * (1.0 - BakedShadowAt(original, shape))));
     }
 
-    // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it.
+    // Port-only (sun shadows): an object's baked shadow darkens what lies under it by look.y instead of covering it, or
+    // (look.z) is hidden, the object casting its own.
     if (look.y > 0.0 && (input.op.x & HdLight) == 0)
     {
-        color = lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), BakedShadowAt(original, shape));
+        const float baked = BakedShadowAt(original, shape);
+        color = look.z > 0.0 ? color * (1.0 - baked) : lerp(color, float4(0.0, 0.0, 0.0, look.y * color.a), baked);
     }
 
     // The colour as the original pixel under it shows now: through a paint scheme's table, today's palette, cycle and
@@ -963,6 +1024,43 @@ Output SmoothShapePixel(Input input, int2 target, uint kind)
     }
 
     return Blended(float4(Shown(input.op.y & 255u), 1.0) * coverage);
+}
+
+// Port-only (HD particles): a particle's colour at drawn pixel `target` (MCParticleCommand): a streak from window
+// asfloat(span.xy) to asfloat(span.zw), asfloat(walk.x) pixels to each side, a distance down the screen asfloat(walk.y)
+// of one across, its edge softened over asfloat(walk.z) of that; or, with asfloat(walk.w) above 0, a ring that many
+// pixels to each side of that edge. op.y holds its premultiplied colour, a byte a component from red up. Its edge is
+// smooth over a drawn pixel at least. Premultiplied, through the blend pipeline.
+Output ParticlePixel(Input input, int2 target)
+{
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float ramp = max((float)scale.x / (float)scale.z, (float)scale.y / (float)scale.w);
+    // Distances down the screen as the ground's across.
+    const float2 squash = float2(1.0, 1.0 / max(asfloat(input.walk.y), 1e-3));
+    const float2 a = asfloat(input.span.xy) * squash;
+    const float2 ab = asfloat(input.span.zw) * squash - a;
+    const float2 at = window * squash;
+    const float length2 = dot(ab, ab);
+    const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
+    const float radius = asfloat(input.walk.x);
+    const float ring = asfloat(input.walk.w);
+    const float off = length(at - (a + t * ab));
+    const float distance = ring > 0.0 ? abs(off - radius) : off;
+    const float edge = ring > 0.0 ? ring : radius;
+    // Whole out to where its soft edge starts, nothing past its edge.
+    const float inner = edge * (1.0 - saturate(asfloat(input.walk.z)));
+    const float coverage = 1.0 - smoothstep(inner - 0.5 * ramp, edge + 0.5 * ramp, distance);
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    const uint packed = input.op.y;
+    const float4 color =
+        float4(float(packed & 255u), float((packed >> 8) & 255u), float((packed >> 16) & 255u), float(packed >> 24)) /
+        255.0;
+    return Blended(color * coverage);
 }
 
 // A smooth polygon's corner `i` (window pixels; source holds x in the low 16 bits, y in the high, signed).
@@ -1168,6 +1266,11 @@ Output DrawnOutput(Input input)
     if (kind == KindSharpGlyph)
     {
         return SharpGlyphPixel(input, target);
+    }
+
+    if (kind == KindSmoothEllipse && (flags & Particle) != 0)
+    {
+        return ParticlePixel(input, target);
     }
 
     if (kind == KindSmoothLine || kind == KindSmoothEllipse)

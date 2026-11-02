@@ -1,11 +1,16 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
+#include <vector>
 
 class MCAppearance;
+class MCFitIniFile;
+class MCFrameOfRef;
 class MCVector3D;
 class MCVfxAppearance;
 struct MCPane;
@@ -32,6 +37,16 @@ struct MCSceneLight
     float Red = 0.0f;
     float Green = 0.0f;
     float Blue = 0.0f;
+    /// <summary>
+    /// A spotlight (a unit's headlight), its lamp <see cref="Height"/> above (X0, Y0): its aim, from there to where its
+    /// beam's middle meets the ground, in the window's pixels. It lights the ground where its beam meets it, falling off
+    /// as the square of the distance from the lamp; its colour is its light where its beam's middle meets the ground.
+    /// (0, 0): a light that shines every way.
+    /// </summary>
+    float SpotX = 0.0f;
+    float SpotY = 0.0f;
+    /// <summary>A spotlight's beam: the cosine of the angle off its middle at which it has faded out (half its width).</summary>
+    float SpotCos = 0.0f;
 };
 
 /// <summary>Port-only (HD lighting): the air over a fire, which shimmers (composite.pshader's heat haze).</summary>
@@ -58,6 +73,17 @@ struct MCSceneGround
     float EastY = 0.0f;
     float NorthX = 0.0f;
     float NorthY = 0.0f;
+};
+
+/// <summary>
+/// Port-only (HD lighting): the time of day a mission is set at (a map maker's choice, its scenario file's
+/// [Environment] TimeOfDay; see MCSceneLights::ReadTimeOfDay). The original's missions are all by day.
+/// </summary>
+enum class MCTimeOfDay : uint8_t
+{
+    Day,
+    Dusk,
+    Night,
 };
 
 namespace MCSceneLights
@@ -130,18 +156,90 @@ namespace MCSceneLights
         /// </summary>
         float SunShadow = 0.55f;
         /// <summary>
-        /// With sun shadows on: where a unit's shadow falls (the original's objects' baked shadows' way, measured on its
-        /// trees), per window pixel a point of it stands above its foot: this many pixels right, and this many up.
+        /// With sun shadows on: where a unit's shadow falls by day (the original's objects' baked shadows' way, measured
+        /// on its trees), per window pixel a point of it stands above its foot: this many pixels right, and this many
+        /// up. At dusk the sun is lower, the shadows longer; at night there is none (<see cref="ShownLighting"/>).
         /// </summary>
         float SunShadowRight = 0.6f;
         float SunShadowUp = 0.25f;
+        /// <summary>
+        /// With relief on (<see cref="GHdRelief"/>): how much the sun shows the world's relief (its own shading taken
+        /// for height, as <see cref="Facing"/>'s, or the HD ground's relief maps): a surface facing the sun takes more
+        /// of the world's own light and one facing away less, the more the lower the sun (its shadows' way and length,
+        /// <see cref="SunShadowRight"/> and Up; none at night), 0 to 1 (0: lit as flat ground, as drawn; 1: as much as
+        /// that sun would).
+        /// </summary>
+        float SunRelief = 0.75f;
+        /// <summary>
+        /// With relief on: how steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's
+        /// bumps for the lights and the sun, where it has them: its slopes times this (0: the ground is lit by its
+        /// brightness, as the rest; 3 about matches the brightness relief's strength).
+        /// </summary>
+        float ReliefMaps = 3.0f;
+        /// <summary>
+        /// With cloud shadows on (<see cref="GHdClouds"/>): how much of the world's own light a cloud's shadow takes
+        /// away, 0 to 1 (a light's own bright pixels and the lights' light keep theirs).
+        /// </summary>
+        float Clouds = 0.3f;
+        /// <summary>With cloud shadows on: the share of the ground under the clouds, 0 to 1.</summary>
+        float CloudCover = 0.4f;
+        /// <summary>With cloud shadows on: how big the clouds are (a cloud and the gap beside it, about), in meters.</summary>
+        float CloudSize = 300.0f;
+        /// <summary>With cloud shadows on: how fast they drift before the wind, in meters a second of the game's time.</summary>
+        float CloudSpeed = 15.0f;
+        /// <summary>The colour of the world's own light, times <see cref="Ambient"/> (white by day; night's is blue).</summary>
+        std::array<float, 3> AmbientTint{1.0f, 1.0f, 1.0f};
+        /// <summary>
+        /// How much of their colour the world's own colours lose in its light, 0 to 1 (0 by day): at night the eye sees
+        /// little colour but where a light shines.
+        /// </summary>
+        float AmbientGrey = 0.0f;
+        /// <summary>
+        /// How much a spotlight's beam shows in the air, from its lamp to where it meets the ground (headlights in a
+        /// haze, at night), 0 to 1 of its light there (0: only the ground it lights shows).
+        /// </summary>
+        float AirBeams = 0.35f;
     };
 
-    /// <summary>The settings the next frames are shown with (the tools set them; DUSK takes its own, see Shown).</summary>
+    /// <summary>The settings the next frames are shown with (the tools set them; a time of day takes its own, see Shown).</summary>
     MCLighting& Lighting();
 
-    /// <summary>The settings the frames are shown with: <see cref="Lighting"/>'s, at DUSK its strength and dimming.</summary>
+    /// <summary>
+    /// Whether the HD ground takes the HD art pack's relief maps: HD art, HD lighting and relief (GHdRelief) on,
+    /// MCLighting::ReliefMaps above 0.
+    /// </summary>
+    bool ReliefMapsOn();
+
+    /// <summary>
+    /// The settings the frames are shown with: <see cref="Lighting"/>'s, at dusk and at night (<see cref="TimeOfDay"/>)
+    /// with that time's world light and lights' strength.
+    /// </summary>
     MCLighting ShownLighting();
+
+    /// <summary>
+    /// Sets the time of day of the mission being played (MCScenario::Load: its scenario file's, see
+    /// <see cref="ReadTimeOfDay"/>; the tools' --hd-time-of-day).
+    /// </summary>
+    void SetMissionTime(MCTimeOfDay time);
+
+    /// <summary>The time of day of the mission being played (day until one is set).</summary>
+    MCTimeOfDay MissionTime();
+
+    /// <summary>
+    /// The time of day the world is shown at: with HD lighting off, day (as drawn); at HD LIGHTING's DUSK or NIGHT, that;
+    /// else the mission's own (<see cref="MissionTime"/>).
+    /// </summary>
+    MCTimeOfDay TimeOfDay();
+
+    /// <summary>The time of day named <paramref name="name"/> ("day", "dusk" or "night", in any case); none for another.</summary>
+    std::optional<MCTimeOfDay> TimeOfDayNamed(std::string_view name);
+
+    /// <summary>
+    /// The time of day a scenario file (<paramref name="file"/>) sets its mission at: its block "Environment"'s string
+    /// "TimeOfDay" (Day, Dusk or Night), day without one, as the original's missions are. The original game reads
+    /// neither, so a mission that sets it plays there as ever, by day.
+    /// </summary>
+    MCTimeOfDay ReadTimeOfDay(MCFitIniFile& file);
 
     /// <summary>
     /// Starts the lights of the world drawn into <paramref name="pane"/> (MCCamera::Render, as its draw list starts).
@@ -168,6 +266,67 @@ namespace MCSceneLights
     /// </summary>
     void AddGlow(const MCVfxAppearance& appearance, const MCVector3D& position, MCGlowPixels pixels);
 
+    /// <summary>A frame's lit pixels: their centre (from its hot spot, weighted by their light), mean light and count.</summary>
+    struct MCGlowMeasure
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        std::array<float, 3> Color{};
+        int32_t Pixels = 0;
+    };
+
+    /// <summary>
+    /// The <paramref name="pixels"/> of the frame <paramref name="appearance"/> last drew (its Render), as
+    /// <see cref="AddGlow"/> measures its light (with HD lighting on or off); none when it drew no such pixels.
+    /// </summary>
+    std::optional<MCGlowMeasure> MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels);
+
+    /// <summary>
+    /// The <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/>, as
+    /// <see cref="MeasureDrawn"/>'s; none for a table that isn't a VFX shape table or a frame without such pixels.
+    /// </summary>
+    std::optional<MCGlowMeasure> MeasureFrame(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>A colour a frame's pixels are drawn in (its light, as a glow's), and how many of them are.</summary>
+    struct MCGlowColor
+    {
+        std::array<float, 3> Color{};
+        int32_t Pixels = 0;
+    };
+
+    /// <summary>
+    /// The colours of the <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/>
+    /// (those <see cref="MeasureFrame"/> measures), in palette order; none for a table that isn't a VFX shape table.
+    /// </summary>
+    std::vector<MCGlowColor> FrameColors(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>A pixel of a frame: where it is from the frame's hot spot (in its pixels, down the screen), and its light.</summary>
+    struct MCGlowPixel
+    {
+        int32_t X = 0;
+        int32_t Y = 0;
+        std::array<float, 3> Color{};
+    };
+
+    /// <summary>
+    /// The <paramref name="pixels"/> of frame <paramref name="frame"/> of <paramref name="shapeTable"/> on their
+    /// outline (beside a pixel that isn't one of them); none for a table that isn't a VFX shape table.
+    /// </summary>
+    std::vector<MCGlowPixel> FrameOutline(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels);
+
+    /// <summary>A shape table's frame.</summary>
+    struct MCTableFrame
+    {
+        std::span<const uint8_t> Table;
+        int32_t Frame = 0;
+    };
+
+    /// <summary>
+    /// The frame <paramref name="appearance"/> last drew (its Render), as <see cref="MeasureDrawn"/> measures it; none when
+    /// it drew none of a VFX shape table. Its table is the appearance's shape's, for as long as it keeps it.
+    /// </summary>
+    std::optional<MCTableFrame> DrawnFrame(const MCVfxAppearance& appearance);
+
     /// <summary>
     /// The light of a beam from (<paramref name="x0"/>, <paramref name="y0"/>) to (<paramref name="x1"/>,
     /// <paramref name="y1"/>), <paramref name="width"/> pixels to each side, in palette colour
@@ -181,6 +340,13 @@ namespace MCSceneLights
     /// </summary>
     void AddShapeBeam(float x0, float y0, float x1, float y1, float width, std::span<const uint8_t> shapeTable,
                       int32_t frame);
+
+    /// <summary>
+    /// The way the wind blows, a unit direction east (and north) on the ground: the water's waves roll and the clouds
+    /// drift before it (composite.pshader's Wind).
+    /// </summary>
+    inline constexpr float WindEast = 0.9285f;
+    inline constexpr float WindNorth = 0.3714f;
 
     /// <summary>How long a gun's muzzle flash lasts, in seconds of the game's time.</summary>
     inline constexpr float MuzzleFlashSeconds = 0.15f;
@@ -197,6 +363,58 @@ namespace MCSceneLights
     /// placed itself on the screen (its bounds, its owner's place), its owner at <paramref name="position"/>.
     /// </summary>
     void AddCaster(const MCAppearance& appearance, const MCVector3D& position);
+
+    /// <summary>
+    /// At night (<see cref="TimeOfDay"/>), a unit's headlight (a mech's, a vehicle's): a warm spotlight on the ground
+    /// ahead of it, widening as it goes. <paramref name="appearance"/> as it last placed itself on the screen, its owner
+    /// at <paramref name="position"/>, facing as <paramref name="frame"/> does (MCMover::Frame) turned
+    /// <paramref name="turn"/> degrees counterclockwise (a mech's torso's, MCBattleMech::TorsoRotation). Its lamp at
+    /// <paramref name="lamp"/> in the world (a mech's cockpit), a small light drawn just over the unit (its parts' draw
+    /// list group, <paramref name="depthFixup"/> less its screen height) and hidden as it faces away, its beam tipped
+    /// down from its height to meet the ground ahead; with none (a vehicle's: the art has no point for it), a low lamp
+    /// at its feet, not drawn.
+    /// </summary>
+    void AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame, float turn,
+                      const std::optional<MCVector3D>& lamp, int32_t depthFixup);
+
+    /// <summary>
+    /// Whether a unit whose status (MCGameObject::Status) is <paramref name="status"/> has its headlight on: running (0)
+    /// or starting up (3); not disabled (1), destroyed (2), shutting down (4) or shut down (5).
+    /// </summary>
+    bool HeadlightOn(int32_t status);
+
+    /// <summary>
+    /// Port-only (sun shadows): a frame of an object or a unit cast as its sun shadow (<see cref="AddRecastShadows"/>):
+    /// frame <c>Frame</c> of shape table <c>Frames</c>, placed as its own draw (MCVfxElement's x, y, reverse and
+    /// scale).
+    /// </summary>
+    struct MCSunShadowPart
+    {
+        std::span<const uint8_t> Frames;
+        float X = 0.0f;
+        float Y = 0.0f;
+        int32_t Frame = 0;
+        int32_t Reverse = 0;
+        int32_t Scale = 1;
+    };
+
+    /// <summary>
+    /// Port-only: whether the objects' shadows baked into their art, which fall the way the day's sun does, are hidden,
+    /// every object and unit casting its own the sun's way instead (<see cref="AddRecastShadows"/>): with sun shadows on
+    /// (GHdSunShadows) and HD art drawn by the GPU, at dusk (the sun low, the shadows longer) and night (no sun).
+    /// </summary>
+    bool RecastsSunShadows();
+
+    /// <summary>Port-only: whether sun shadows are on and the sun casts any (not at night).</summary>
+    bool SunCasts();
+
+    /// <summary>
+    /// Port-only: while the objects re-cast their sun shadows and the sun casts any (<see cref="RecastsSunShadows"/>,
+    /// <see cref="SunCasts"/>), adds <paramref name="parts"/> as one object's or unit's sun shadow
+    /// (MCElement::SunShadow) in the shadows' group, then opens the caller's group again (<paramref name="depth"/> and
+    /// <paramref name="sortElements"/>, as MCElementBuffer::OpenGroup takes them). Nothing otherwise.
+    /// </summary>
+    void AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements);
 
     /// <summary>
     /// Adds the units' shadows from the frame's lights to the draw list (MCCamera::Render, once the objects have added
@@ -232,7 +450,7 @@ namespace MCSceneLights
 
     /// <summary>
     /// Where the ground lies in the world window <paramref name="view"/> (as <see cref="Shown"/>, its last finished
-    /// frame's); none when HD lighting is off or another window was drawn.
+    /// frame's); none when HD lighting and cloud shadows are off or another window was drawn.
     /// </summary>
     std::optional<MCSceneGround> ShownGround(const MCWindow& view);
 
@@ -247,8 +465,10 @@ namespace MCSceneLights
 }
 
 /// <summary>
-/// Port-only: PREFS "HDLighting": 0 draws the world as the original did; 1 lights it around shots, fires and explosions;
-/// 2 the same at dusk, the world dimmed and the lights stronger. Off by default.
+/// Port-only: PREFS "HDLighting": 0 draws the world as the original did; 1 lights it around shots, fires and explosions,
+/// at the mission's time of day (MCSceneLights::MissionTime: by day, but for a mission set at dusk or night); 2 the same,
+/// every mission at dusk (the world dimmed, the lights stronger); 3 every mission at night (darker, its light blue and
+/// its colours paler, the lights stronger still). Off by default.
 /// </summary>
 extern int GHdLighting;
 
@@ -258,10 +478,24 @@ extern int GHdLighting;
 /// </summary>
 extern int GHdSunShadows;
 
+/// <summary>
+/// Port-only: PREFS "HDClouds": 1 lets the shadows of clouds drift over the world before the wind (MCLighting::Clouds;
+/// the presenter's composite, composite.pshader's CloudsAt); 0 shows none, as the original. Off by default.
+/// </summary>
+extern int GHdClouds;
+
+/// <summary>
+/// Port-only: PREFS "HDRelief": with HD lighting on, 1 lets the sun show the world's relief (MCLighting::SunRelief)
+/// and lights the HD ground by the HD art pack's relief maps where it has them (MCLighting::ReliefMaps); 0 lights the
+/// world by day as flat ground and the HD ground's bumps by its brightness. Off by default.
+/// </summary>
+extern int GHdRelief;
+
 /// <summary>GHdLighting's values.</summary>
 enum MCHdLightingSetting : int
 {
     HdLightingOff = 0,
     HdLightingOn = 1,
     HdLightingDusk = 2,
+    HdLightingNight = 3,
 };

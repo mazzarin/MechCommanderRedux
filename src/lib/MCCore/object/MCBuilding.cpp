@@ -575,7 +575,8 @@ auto MCBuilding::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultiplayChu
             FireObject->AddTimeLeftToBurn(2.0f);
         }
 
-        type.CreateExplosion(Position, ExplDamage, ExplRadius);
+        // Port-only (HD shake): its end shakes the picture.
+        type.CreateExplosion(Position, ExplDamage, ExplRadius, MCBlastShake::Shakes);
         Status = 2;
 
         if (IsCaptured() != 0)

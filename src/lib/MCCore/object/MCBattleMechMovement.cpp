@@ -50,6 +50,7 @@
 #include "sound/MCSoundSystem.h"
 #include "terrain/MCTerrain.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "object/MCObjectTypeManager.h"
 #include "object/MCWeaponChunkDebug.h"
 #include "object/MCWeaponShotInfo.h"
@@ -787,7 +788,7 @@ auto MCBattleMech::UpdateMovePath(char& newRotate, char& newThrottleSetting, flo
     LastValidPosition = destination;
     const auto distance = static_cast<float>(DistanceFrom(destination));
     const int32_t numSteps = path.NumSteps;
-    const float margin = step == numSteps - 1 ? MoveMarginOfError[1] : MoveMarginOfError[0];
+    const float margin = step == numSteps - 1 ? LastStepMargin() : MoveMarginOfError[0];
 
     if (margin <= distance)
     {
@@ -996,6 +997,139 @@ auto MCBattleMech::SetNextMovePath(char& newThrottleSetting, int32_t& newGesture
 
     warrior->ClearMoveOrders();
     newGestureStateGoal = 1;
+}
+
+namespace
+{
+    /// <summary>Port-only: whether this is a multiplayer client, whose paths are the server's latest steps.</summary>
+    auto MultiPlayerClient() -> bool
+    {
+        return MultiPlayer() != nullptr && MultiPlayer()->IsServer == 0;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking, HDStops): whether <paramref name="warrior"/>'s move goes on past <paramref name="path"/>'s
+    /// end: a next leg of a global path, a next path, or a queued way point to go on to.
+    /// </summary>
+    auto MoveGoesOn(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
+    {
+        const MCMoveOrders& orders = warrior.MoveOrders;
+
+        if (orders.PathType == 2 && path.GlobalStep < orders.NumGlobalSteps - 1)
+        {
+            return true;
+        }
+
+        if (orders.Path[1] != nullptr && orders.Path[1]->NumStepsWhenNotPaused > 0)
+        {
+            return true;
+        }
+
+        MCVector3D nextPoint;
+        return warrior.GetNextWayPoint(nextPoint, 0) != 0;
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): whether <paramref name="warrior"/>'s move ends where its path does: no jump left on the
+    /// way, and (but on a multiplayer client) it goes on no further (<see cref="MoveGoesOn"/>).
+    /// </summary>
+    auto MoveEndsHere(const MCMechWarrior& warrior, const MCMovePath& path) -> bool
+    {
+        for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
+        {
+            if (static_cast<int8_t>(path.StepList[static_cast<size_t>(step)].Direction) > 7)
+            {
+                return false;
+            }
+        }
+
+        return MultiPlayerClient() || !MoveGoesOn(warrior, path);
+    }
+
+    /// <summary>
+    /// Port-only (MechBraking): the metres from <paramref name="position"/> along <paramref name="path"/>'s steps left to
+    /// its end, as walked (from step to step; the steps' own distances to the goal count cells).
+    /// </summary>
+    auto WalkLeft(const MCMovePath& path, const MCVector3D& position) -> float
+    {
+        double units = 0.0;
+        MCVector3D from = position;
+
+        for (int32_t step = path.CurStep; step < path.NumSteps; ++step)
+        {
+            const MCVector3D& to = path.StepList[static_cast<size_t>(step)].Destination;
+            units += std::hypot(static_cast<double>(to.X) - from.X, static_cast<double>(to.Y) - from.Y);
+            from = to;
+        }
+
+        return static_cast<float>(units * MetersPerWorldUnit);
+    }
+} // namespace
+
+auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
+{
+    auto& actor = static_cast<MCMechActor&>(*Appearance);
+    std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
+    const MCMovePath& path = warrior->GetMovePath();
+    const bool moving = path.NumSteps > 0 && path.CurStep < path.NumSteps;
+    // Only a stride the mover keeps going is fitted to a stop (not one it limps, jumps or halts).
+    const bool keepsGoing = newGestureStateGoal == MCStopState::Walk || newGestureStateGoal == MCStopState::Run;
+    std::optional<float> metresLeft;
+
+    // The move ends where the original would stop it: within its last step's margin of error (metres) of the end.
+    if (moving && (keepsGoing || actor.PlannedStop) && MoveEndsHere(*warrior, path))
+    {
+        metresLeft = WalkLeft(path, Position) - MoveMarginOfError[1];
+    }
+
+    if (actor.FitStop(metresLeft))
+    {
+        newGestureStateGoal = MCStopState::Stand;
+    }
+}
+
+auto MCBattleMech::LastStepMargin() const -> float
+{
+    // Port-only (MechBraking): a mech braking to a halt there counts as there within the slack its stop ends in.
+    const auto* actor = static_cast<const MCMechActor*>(Appearance.get());
+
+    if (actor != nullptr && actor->PlannedStop)
+    {
+        return MoveMarginOfError[1] + BrakeArrivalSlack;
+    }
+
+    return MoveMarginOfError[1];
+}
+
+auto MCBattleMech::MoveHeldUp() const -> bool
+{
+    const std::shared_ptr<MCMechWarrior> warrior = Pilot.lock();
+
+    // A multiplayer client's path is the server's latest steps: it can't tell a mech held up from one there.
+    if (MultiPlayerClient())
+    {
+        return true;
+    }
+
+    if (warrior == nullptr)
+    {
+        return false;
+    }
+
+    // Read as it stands: GetMovePath would swap in the next leg.
+    const MCMovePath* path = warrior->MoveOrders.Path[0].get();
+
+    if (path != nullptr && path->CurStep < path->NumStepsWhenNotPaused)
+    {
+        return true;
+    }
+
+    if (warrior->MovePathRequest.lock() != nullptr)
+    {
+        return true;
+    }
+
+    return path != nullptr && MoveGoesOn(*warrior, *path);
 }
 
 auto MCBattleMech::UpdateTorso(float newRotatePerSec) -> void
@@ -1263,6 +1397,8 @@ auto MCBattleMech::UpdateMovement() -> void
     {
         SetNextMovePath(newThrottleSetting, newGestureStateGoal);
     }
+
+    PlanStop(newGestureStateGoal);
 
     if (newMoveState != MCMoveState::NoChange)
     {

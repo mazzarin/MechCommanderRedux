@@ -17,6 +17,7 @@
 #include "object/MCTerrainObjectType.h"
 #include "object/MCTree.h"
 #include "object/MCTreeType.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -39,7 +40,7 @@ namespace
                 return true;
             }
             case MCObjectClass::TerrainObject:
-            case static_cast<MCObjectClass>(0x17): // No class sets 0x17; the original reads the same offsets.
+            case MCObjectClass::Unused17: // No class sets it; the original reads the same offsets.
             {
                 offsetX = static_cast<MCTerrainObject&>(obj).PixelOffsetX;
                 offsetY = static_cast<MCTerrainObject&>(obj).PixelOffsetY;
@@ -176,8 +177,9 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
 
     int32_t offsetX = 0;
     int32_t offsetY = 0;
+    const bool placed = PixelOffset(*obj, offsetX, offsetY);
 
-    if (PixelOffset(*obj, offsetX, offsetY))
+    if (placed)
     {
         ScreenPos.X = static_cast<float>(offsetX) + ScreenPos.X;
         ScreenPos.Y = static_cast<float>(offsetY) + ScreenPos.Y;
@@ -199,6 +201,14 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
                                                    static_cast<int32_t>(ScreenPos.Y), CurrentFrame, hazeTable);
             element.Glow = Glow;
             ElementList().Add(element);
+
+            // Port-only (sun shadows): a terrain-placed object (a swaying tree) casts its animation's first shape, its
+            // whole outline (the delta frames only change it), as its own shadow at dusk.
+            if (placed)
+            {
+                const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, 0};
+                MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
+            }
         }
     }
     else if (shape != nullptr && !shape->FrameList().empty())
@@ -210,6 +220,14 @@ auto MCVfxAppearance::Render(int32_t depthFixup) -> int32_t
         element.Glow = Glow;
         element.InBetween = InBetween();
         ElementList().Add(element);
+
+        // Port-only (sun shadows): a terrain-placed object (not an effect) casts its own shadow at dusk.
+        if (placed)
+        {
+            const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y,
+                                                      CurrentFrame,       0,           type.Scaled ? 1 : 0};
+            MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
+        }
     }
 
     if (obj->Selected == 1 || obj->GetNumAttackers() > 0)

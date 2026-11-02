@@ -38,6 +38,7 @@ for how to set it up. To see what changed in each version, or to download an old
     - [What You Need](#what-you-need)
     - [Setting Up the Editor](#setting-up-the-editor)
     - [What the Editor Changes in Your Game Folder](#what-the-editor-changes-in-your-game-folder)
+    - [A Mission's Time of Day](#a-missions-time-of-day)
     - [Editor Command-Line Options](#editor-command-line-options)
     - [Troubleshooting the Editor](#troubleshooting-the-editor)
   - [Building](#building)
@@ -241,6 +242,35 @@ before you start making missions.
 The first time the editor opens its mission database, it converts `Teditor\FitAbl.mdb` (the original's Microsoft
 Access file) into a new file, `FitAbl.db`, next to it, and uses that from then on. The original `FitAbl.mdb` is left
 untouched.
+
+### A Mission's Time of Day
+
+New in Redux: **Mission > Time of Day** sets a mission at **Day**, **Dusk** or **Night**. Missions are set by day
+until you change it, as every mission of the original is.
+
+- **Sight.** At dusk units see 80% as far as by day, at night 60%. This works in the original game too.
+- **Look.** With **HD LIGHTING** set to **ON** (in Preferences), Redux shows a dusk mission darker, and a night one
+  dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their own time
+  whatever the mission's. The original game shows every mission by day.
+
+For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
+
+```
+[GameScale]
+...
+l[256] VisualRangeTable =
+	2,2,2,2,2,2,2,2,5,5,6,6,8,8,10,10,
+	...
+
+[Environment]
+st TimeOfDay = "Night"
+```
+
+- `VisualRangeTable` replaces, for this mission, the game system's (`data\missions\gamesys.fit`): how many tiles a
+  unit sees around it, by the height level of the ground under it. Write all 256 entries; the original game reads a
+  shorter table on past its end.
+- `[Environment]`'s `TimeOfDay` is `Day`, `Dusk` or `Night` (in any case). Without it, or with any other name, the
+  mission is by day. The original game skips the block.
 
 ### Editor Command-Line Options
 

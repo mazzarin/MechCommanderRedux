@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
@@ -21,6 +22,9 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "vfx/MCVfxFunctions.h"
@@ -342,12 +346,14 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     AddDropDown(screen, uiResolution, GUiResolution, std::move(uiResolutions), nullptr);
 
-    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h); DUSK dims the world
-    // and lights it more. From the next frame on.
+    // HD LIGHTING: shots, fires and explosions light the world around them (sprite/MCSceneLights.h), ON at the mission's
+    // own time of day; DUSK dims every mission's world and lights it more, NIGHT darkens it further. From the next frame
+    // on.
     MCLogGroupBox& hdLighting = AddBox(screen, panel, HdLightingBoxPlace, BoxOutlineColor);
     AddLabel(screen, hdLighting, "HD LIGHTING", BoxTitleLeft, BoxTitleTop);
     AddDropDown(screen, hdLighting, GHdLighting,
-                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}}, nullptr);
+                {{"OFF", HdLightingOff}, {"ON", HdLightingOn}, {"DUSK", HdLightingDusk}, {"NIGHT", HdLightingNight}},
+                nullptr);
 
     // HD ART: the HD art pack's frames where it has them (sprite/MCHdArt.h), for the shapes loaded from then on.
     MCLogGroupBox& hdArt = AddBox(screen, panel, HdArtBoxPlace, BoxOutlineColor);
@@ -499,6 +505,15 @@ void SavePrefs()
     prefs.WriteIdLong("HDAudio", GHdAudio);
     prefs.WriteIdLong("HDLighting", GHdLighting);
     prefs.WriteIdBoolean("HDSunShadows", GHdSunShadows != 0);
+    prefs.WriteIdBoolean("HDClouds", GHdClouds != 0);
+    prefs.WriteIdBoolean("HDRelief", GHdRelief != 0);
+    prefs.WriteIdBoolean("HDParticles", GHdParticles != 0);
+    prefs.WriteIdLong("HDFlecks", GHdFlecks);
+    prefs.WriteIdBoolean("HDShake", GHdShake != 0);
+    prefs.WriteIdBoolean("HDFootprints", GHdFootprints != 0);
+    prefs.WriteIdBoolean("HDTurns", GHdTurns != 0);
+    prefs.WriteIdBoolean("HDStops", GHdStops != 0);
+    prefs.WriteIdBoolean("MechBraking", GMechBraking != 0);
     MCKeyBindings::WritePrefs(prefs);
 }
 

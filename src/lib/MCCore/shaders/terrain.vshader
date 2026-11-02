@@ -27,6 +27,9 @@ struct Image
     // The tile's hot spot (xy: subtracted from the draw position); z: the HD atlas with its colours (1 or 2; 0 none), w
     // its place there in whole 4 x 4 blocks (x the low 16 bits, y the high).
     int4 hot;
+    // Port-only (HD lighting's relief maps): x the relief atlas with its relief map (1 or 2; 0 none), y its place there
+    // as hot.w's; zw unused.
+    int4 relief;
 };
 
 // The fog of war's flags (red: 0xff where the home side sees the vertex).
@@ -55,7 +58,7 @@ cbuffer Terrain : register(b0, space1)
     int4 clip;
     // x: everything filled; y, z, w: the table rows for one, two and three corners seen.
     uint4 haze;
-    // The pane's corner in the window (xy); z: 1 in the seam pass.
+    // The pane's corner in the window (xy); z: 1 in the seam pass; w: the relief atlases' scale (0: none).
     int4 pane;
 };
 
@@ -77,6 +80,11 @@ static const float2 quad[6] = {
 // draw.pshader's kinds and flags.
 static const uint KindTexture = 2;
 static const uint KindTerrainSeam = 15;
+// draw.pshader's HD terrain fields in op.w: the HD scale in the low bits, then the relief map's scale and its place in
+// whole blocks (x, y).
+static const uint ReliefScaleShift = 4;
+static const uint ReliefXShift = 8;
+static const uint ReliefYShift = 20;
 static const uint TableBefore = 1u << 7;
 static const uint UseColor = 1u << 10;
 static const uint HdColors = 1u << 16;
@@ -211,11 +219,17 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)
     {
-        // The tile's HD place (walk.xy), its place in the atlas (walk.zw), its size and HD atlas (span.xyz).
+        // The tile's HD place (walk.xy), its place in the atlas (walk.zw), its size and HD atlas (span.xyz); its relief
+        // map's atlas (span.w), and its scale and place in op.w's bits above the HD scale.
         const uint packed = (uint)image.hot.w;
-        output.op = uint4(flags | HdColors, color, before, (uint)mesh.y);
+        const uint relief = pane.w != 0 ? (uint)image.relief.x : 0u;
+        const uint reliefAt = (uint)image.relief.y;
+        const uint fields = relief != 0 ? (uint)mesh.y | (uint)pane.w << ReliefScaleShift |
+                                              (reliefAt & 0xffffu) << ReliefXShift | (reliefAt >> 16) << ReliefYShift
+                                        : (uint)mesh.y;
+        output.op = uint4(flags | HdColors, color, before, fields);
         output.walk = uint4((packed & 0xffffu) * 4u, (packed >> 16) * 4u, (uint)image.atlas.x, (uint)image.atlas.y);
-        output.span = int4(image.atlas.zw, image.hot.z - 1, 0);
+        output.span = int4(image.atlas.zw, image.hot.z - 1, (int)relief);
     }
 
     return output;

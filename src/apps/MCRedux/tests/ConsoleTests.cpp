@@ -184,8 +184,9 @@ TEST_CASE_ISOLATED("game: keys go through text input only while a text field has
 /// <summary>
 /// The console's art command switches the art from the next frame: over mission 1 drawn by the GPU, paused so frames
 /// repeat, with no pack "art hd" is refused and changes nothing; with a pack "art dusk" turns HD art and dusk lighting
-/// on (the next frame darker) and ties the shapes loaded before to the pack, "art lit" lights it as by day, "art hd"
-/// only draws HD art, and "art original" shows the frame exactly as it was before any switch.
+/// on (the next frame darker) and ties the shapes loaded before to the pack, "art night" darkens it further, "art lit"
+/// lights it as by day, "art hd" only draws HD art, and "art original" shows the frame exactly as it was before any
+/// switch.
 /// </summary>
 TEST_CASE_ISOLATED("game: the debug console's art command switches the art from the next frame")
 {
@@ -222,8 +223,8 @@ TEST_CASE_ISOLATED("game: the debug console's art command switches the art from 
     CHECK_EQ(DifferentPixels(frame(), original), size_t{0});
 
     // Wrong lines, and HD art with no pack.
-    CHECK_EQ(RunConsoleCommand("art").error_or(""), std::string("usage: art original|hd|lit|dusk"));
-    CHECK(!RunConsoleCommand("art night").has_value());
+    CHECK_EQ(RunConsoleCommand("art").error_or(""), std::string("usage: art original|hd|lit|dusk|night"));
+    CHECK(!RunConsoleCommand("art noon").has_value());
     CHECK(!RunConsoleCommand("art hd").has_value());
     CHECK_EQ(GHdArt, 0);
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
@@ -248,6 +249,12 @@ TEST_CASE_ISOLATED("game: the debug console's art command switches the art from 
     const std::vector<SDL_Color> dusk = frame();
     std::cout << std::format("  brightness: {:.1f} original, {:.1f} at dusk\n", Brightness(original), Brightness(dusk));
     CHECK(Brightness(dusk) < Brightness(original));
+
+    REQUIRE_EQ(RunConsoleCommand("art night").error_or(""), std::string());
+    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
+    const float night = Brightness(frame());
+    std::cout << std::format("  brightness: {:.1f} at night\n", night);
+    CHECK(night < Brightness(dusk));
 
     REQUIRE_EQ(RunConsoleCommand("art lit").error_or(""), std::string());
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOn));

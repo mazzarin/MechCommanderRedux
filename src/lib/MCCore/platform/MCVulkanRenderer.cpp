@@ -103,6 +103,11 @@ namespace
     constexpr uint32_t HdLight = 1u << 21;
     /// <summary>Port-only (sun shadows): an HD art frame drawn as a unit's shadow (AddSunShadow).</summary>
     constexpr uint32_t SunShadowDraw = 1u << 22;
+    /// <summary>
+    /// Port-only (HD particles): a KindSmoothEllipse draw that is a particle (MCParticleCommand), not an ellipse's colour
+    /// pass (shaders/draw.pshader's ParticlePixel).
+    /// </summary>
+    constexpr uint32_t ParticleDraw = 1u << 23;
 
     /// <summary>An atlas page's width and height.</summary>
     constexpr int32_t PageSize = 2048;
@@ -114,14 +119,21 @@ namespace
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
     /// <summary>The same for the HD art frames on the GPU.</summary>
     constexpr size_t HdPictureBudget = 512 * 1024 * 1024;
-    /// <summary>The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4).</summary>
+    /// <summary>
+    /// The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4; BC5's, a
+    /// relief map's, as many).
+    /// </summary>
     constexpr uint32_t HdRgbaBytes = 4;
     constexpr uint32_t HdBc7Bytes = 1;
     /// <summary>
-    /// draw.pshader's textures: the source, the tables, the alpha colours, the fits, the palette and the HD colours (an
-    /// HD art frame's, or the terrain's; the palette where a draw has none).
+    /// draw.pshader's textures: the source, the tables, the alpha colours, the fits, the palette, the HD colours (an
+    /// HD art frame's, or the terrain's two atlases) and the terrain's relief maps (two atlases); the palette where a
+    /// draw has none.
     /// </summary>
-    constexpr uint32_t DrawSamplers = 7;
+    constexpr uint32_t DrawSamplers = 9;
+    /// <summary>The surfaces' index targets (Surface::Index): RGBA8, the palette index in R.</summary>
+    constexpr SDL_GPUTextureFormat IndexFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    constexpr uint32_t IndexPixelBytes = 4;
     /// <summary>
     /// The palette texture's rows: the colours shown, then the ones the HD art pack was made from (the shown ones when
     /// there is none), which draw.pshader corrects HD colours by.
@@ -131,6 +143,8 @@ namespace
     constexpr uint32_t MaxHdAtlasSide = 16384;
     /// <summary>The HD terrain's atlases at most (a big map's tiles fill more than one; shaders/draw.pshader's hdTex2).</summary>
     constexpr uint32_t HdTerrainAtlases = 2;
+    /// <summary>A terrain image's ints in the mesh's image buffer (shaders/terrain.vshader's Image).</summary>
+    constexpr size_t TerrainImageInts = 12;
     /// <summary>The bytes the glyphs redrawn sharp may take on the GPU (each a few kilobytes; RGBA8).</summary>
     constexpr size_t SharpGlyphBudget = 32 * 1024 * 1024;
     /// <summary>
@@ -491,6 +505,68 @@ namespace
         const auto wy = static_cast<size_t>((2 * (y - shown.Y0) + 1) * worldHeight / (2 * shownHeight));
         return world[wy * static_cast<size_t>(worldWidth) + wx];
     }
+
+    /// <summary>An HD frame's place in one of the terrain's HD atlases (or relief atlases), on a block's corner.</summary>
+    struct HdPlace
+    {
+        uint32_t X = 0;
+        uint32_t Y = 0;
+        uint32_t Atlas = 0;
+    };
+
+    /// <summary>
+    /// Places <paramref name="frames"/> (null: none) in shelves across up to HdTerrainAtlases atlases MaxHdAtlasSide
+    /// wide (the GPUs' largest texture; a big map's tiles need more than one), each on whole blocks, into
+    /// <paramref name="places"/>; gives each atlas's height, or none when they don't fit.
+    /// </summary>
+    std::optional<std::array<uint32_t, HdTerrainAtlases>> ShelveHdFrames(
+        std::span<const std::shared_ptr<const MCHdArt::Frame>> frames, std::vector<HdPlace>& places)
+    {
+        places.assign(frames.size(), HdPlace{});
+        std::array<uint32_t, HdTerrainAtlases> heights{};
+        uint32_t atlas = 0;
+        uint32_t x = 0;
+        uint32_t y = 0;
+        uint32_t rowHeight = 0;
+
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            if (frames[i] == nullptr)
+            {
+                continue;
+            }
+
+            const auto width = static_cast<uint32_t>(MCBc7::Padded(frames[i]->Width));
+            const auto height = static_cast<uint32_t>(MCBc7::Padded(frames[i]->Height));
+
+            if (x + width > MaxHdAtlasSide)
+            {
+                y += rowHeight;
+                x = 0;
+                rowHeight = 0;
+            }
+
+            if (y + height > MaxHdAtlasSide)
+            {
+                ++atlas;
+                x = 0;
+                y = 0;
+                rowHeight = 0;
+            }
+
+            if (atlas >= HdTerrainAtlases || width > MaxHdAtlasSide)
+            {
+                return std::nullopt;
+            }
+
+            places[i] = HdPlace{x, y, atlas};
+            x += width;
+            rowHeight = std::max(rowHeight, height);
+            heights[atlas] = std::max(heights[atlas], y + rowHeight);
+        }
+
+        return heights;
+    }
 }
 
 std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::Create(
@@ -533,7 +609,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     {
         SDL_GPUColorTargetDescription targets[2]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        targets[1].format = SDL_GPU_TEXTUREFORMAT_R8_UNORM;
+        targets[1].format = IndexFormat;
 
         if (indexOnly)
         {
@@ -1930,13 +2006,37 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
     return found->second.has_value() ? MCHdArt::FindShape(*found->second, frame, width, height, step) : nullptr;
 }
 
-auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum) -> std::optional<HdInBetweenFrame>
+auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shapeNum, const MCHdArt::Frame& hd)
+    -> std::optional<HdInBetweenFrame>
 {
     const std::optional<MCInBetween>& inBetween = MCRenderer::DrawingInBetween();
     const int32_t count = VfxShapeCount(table);
 
     if (!inBetween.has_value() || inBetween->Frame != shapeNum || shapeNum < 0 || shapeNum >= count ||
         inBetween->Next < 0 || inBetween->Next >= count)
+    {
+        return std::nullopt;
+    }
+
+    const auto shown = [this](HdInBetweenFrame found) -> std::optional<HdInBetweenFrame>
+    {
+        if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
+        {
+            return std::nullopt;
+        }
+
+        return found;
+    };
+
+    // A mech's legs' turn middle: where it lies, the draw says.
+    if (const std::optional<MCInBetweenBounds>& bounds = inBetween->Bounds; bounds.has_value())
+    {
+        return shown(HdInBetweenFrame{HdShape(table, shapeNum, bounds->Width, bounds->Height, inBetween->Step),
+                                      bounds->FrameX, bounds->FrameY, bounds->Width, bounds->Height});
+    }
+
+    // An effect's in-between: its frame holds its blended pixels.
+    if (!hd.Blended)
     {
         return std::nullopt;
     }
@@ -1962,16 +2062,9 @@ auto MCVulkanRenderer::HdInBetween(std::span<const uint8_t> table, int32_t shape
         return std::nullopt;
     }
 
-    HdInBetweenFrame found{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
-                           MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin, xMax - xMin + 1,
-                           yMax - yMin + 1};
-
-    if (found.Frame == nullptr || !HdPictureOf(*found.Frame).has_value())
-    {
-        return std::nullopt;
-    }
-
-    return found;
+    return shown(HdInBetweenFrame{HdShape(table, shapeNum, xMax - xMin + 1, yMax - yMin + 1, inBetween->Step),
+                                  MCRead32(frame, ShapeXMinAt) - xMin, MCRead32(frame, ShapeYMinAt) - yMin,
+                                  xMax - xMin + 1, yMax - yMin + 1});
 }
 
 auto MCVulkanRenderer::BlitPlace(const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
@@ -2160,14 +2253,14 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, true, true);
         }
 
-        // An effect's frame part of the way to its next shows the pack's in-between instead, over the two frames'
-        // bounds, when the transform draws its whole frame at full size (no clipping to follow): mirrored, the
-        // in-between's last column comes first.
+        // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+        // instead, over the two frames' bounds, when the transform draws its whole frame at full size (no clipping to
+        // follow): mirrored, the in-between's last column comes first.
         const auto& [at, from] = *place;
         const bool whole = command.Blit.FullSize && command.Blit.Columns == width && command.Blit.Rows == height &&
                            from[1] == 0 && from[3] == 1 && (from[2] == 1 ? from[0] == 0 : from[0] == width - 1);
         const std::optional<HdInBetweenFrame> inBetween =
-            hd->Blended && whole ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            whole ? HdInBetween(command.ShapeTable, command.ShapeNum, *hd) : std::nullopt;
         bool drawn = false;
 
         if (inBetween.has_value())
@@ -2706,10 +2799,10 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
-            // An effect's frame part of the way to its next shows the pack's in-between there instead (over the two
-            // frames' bounds, clipped as the command's rows and columns), over the frame's own indices.
-            const std::optional<HdInBetweenFrame> inBetween =
-                hd->Blended ? HdInBetween(command.ShapeTable, command.ShapeNum) : std::nullopt;
+            // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
+            // there instead (over the two frames' bounds, clipped as the command's rows and columns; widened as the
+            // frame for smooth edges), over the frame's own indices.
+            const std::optional<HdInBetweenFrame> inBetween = HdInBetween(command.ShapeTable, command.ShapeNum, *hd);
             bool drawn = false;
 
             if (inBetween.has_value())
@@ -2720,10 +2813,14 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                 const int32_t top = std::max(betweenY, command.ClipTop);
                 const int32_t right = std::min(betweenX + inBetween->Width - 1, command.Hi);
                 const int32_t bottom = std::min(betweenY + inBetween->Height - 1, command.ClipBottom);
+                const HdEdges betweenEdges = HdEdgesOf(*inBetween->Frame, command.ShapeTable);
+                const Quad betweenAt = {left, top, right, bottom};
+                const Quad betweenFrom = {left - betweenX, top - betweenY, 1, 1};
+                const auto [placedAt, placedFrom] = betweenEdges == HdEdges::Smooth ? widened(betweenAt, betweenFrom)
+                                                                                    : std::pair{betweenAt, betweenFrom};
                 drawn = left <= right && top <= bottom &&
-                        AddHd(surface, *inBetween->Frame, Quad{left, top, right, bottom},
-                              Quad{left - betweenX, top - betweenY, 1, 1}, command.Table, std::nullopt,
-                              HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+                        AddHd(surface, *inBetween->Frame, placedAt, placedFrom, command.Table, std::nullopt,
+                              HdColours::Corrected, betweenEdges);
             }
 
             if (!drawn)
@@ -3689,6 +3786,29 @@ void MCVulkanRenderer::Shadow(MCWindow& target, const MCShadowCommand& command)
     }
 }
 
+void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& command)
+{
+    const AuditScope audit(*this, "Particle", target);
+    const uint16_t surface = SurfaceFor(target);
+    // Its box: its ends and its edge (a ring's outer one), and a pixel for the smooth edge.
+    const float across = command.Radius + std::max(command.Ring, 0.0f) + 1.0f;
+    const float down = across * command.Aspect + 1.0f;
+    const Quad at = {static_cast<int32_t>(std::floor(std::min(command.X0, command.X1) - across)),
+                     static_cast<int32_t>(std::floor(std::min(command.Y0, command.Y1) - down)),
+                     static_cast<int32_t>(std::ceil(std::max(command.X0, command.X1) + across)),
+                     static_cast<int32_t>(std::ceil(std::max(command.Y0, command.Y1) + down))};
+    const uint32_t color = static_cast<uint32_t>(command.Red) | static_cast<uint32_t>(command.Green) << 8 |
+                           static_cast<uint32_t>(command.Blue) << 16 | static_cast<uint32_t>(command.Alpha) << 24;
+
+    if (Add(surface, SourceKind::None, 0, at, std::nullopt, KindSmoothEllipse | ParticleDraw, color, 0, 0))
+    {
+        std::array<int32_t, 20>& draw = _Draws.back();
+        std::ranges::transform(std::array{command.X0, command.Y0, command.X1, command.Y1, command.Radius,
+                                          command.Aspect, command.Softness, command.Ring},
+                               draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    }
+}
+
 void MCVulkanRenderer::StatusBar(MCWindow& target, const MCStatusBarCommand& command)
 {
     const AuditScope audit(*this, "StatusBar", target);
@@ -3874,7 +3994,8 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const uint16_t surface = SurfaceFor(target);
     const uint16_t fog = SurfaceFor(frame.Fog->get());
 
-    if (_TerrainMesh.Version != mesh.Version || _TerrainMesh.HdPack != HdPackInUse())
+    if (_TerrainMesh.Version != mesh.Version || _TerrainMesh.HdPack != HdPackInUse() ||
+        _TerrainMesh.Relief != ReliefMapsInUse())
     {
         if (auto uploaded = UploadTerrainMesh(mesh); !uploaded)
         {
@@ -3947,6 +4068,8 @@ void MCVulkanRenderer::ReleaseTerrainMesh()
     Release(_TerrainMesh.Atlas);
     Release(_TerrainMesh.HdAtlas);
     Release(_TerrainMesh.HdAtlas2);
+    Release(_TerrainMesh.ReliefAtlas);
+    Release(_TerrainMesh.ReliefAtlas2);
     _TerrainMesh = TerrainMeshState{};
 }
 
@@ -4033,7 +4156,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     cellsInfo.size = static_cast<uint32_t>(mesh.CellTiles.size() * 8);
     SDL_GPUBufferCreateInfo imagesInfo{};
     imagesInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-    imagesInfo.size = static_cast<uint32_t>(std::max<size_t>(places.size(), 1) * 32);
+    imagesInfo.size = static_cast<uint32_t>(std::max<size_t>(places.size(), 1) * TerrainImageInts * sizeof(int32_t));
 
     if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
         mesh.CellElevations.size() != mesh.CellTiles.size())
@@ -4065,82 +4188,52 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         return std::unexpected(SdlError("SDL_CreateGPUBuffer(terrain)"));
     }
 
-    // Port-only: the HD tiles in shelves of their own across up to two atlases MaxHdAtlasSide wide (the GPUs' largest
-    // texture; a big map's tiles need more than one), each place on whole BC7 blocks.
-    struct HdPlace
+    // Port-only: the HD tiles in shelves of their own across up to two atlases (ShelveHdFrames), each place on whole
+    // BC7 blocks.
+    for (size_t i = 0; i < hdTiles.size(); ++i)
     {
-        uint32_t X = 0;
-        uint32_t Y = 0;
-        uint32_t Atlas = 0;
-    };
-
-    std::vector<HdPlace> hdPlaces(mesh.Tiles.size());
-    std::array<uint32_t, HdTerrainAtlases> hdHeights{};
-
-    if (hdScale != 0)
-    {
-        uint32_t atlas = 0;
-        uint32_t x = 0;
-        uint32_t y = 0;
-        uint32_t rowHeight = 0;
-
-        for (size_t i = 0; i < hdTiles.size() && hdScale != 0; ++i)
-        {
-            if (hdTiles[i] == nullptr || places[i].Width == 0)
-            {
-                continue;
-            }
-
-            const auto width = static_cast<uint32_t>(MCBc7::Padded(hdTiles[i]->Width));
-            const auto height = static_cast<uint32_t>(MCBc7::Padded(hdTiles[i]->Height));
-
-            if (x + width > MaxHdAtlasSide)
-            {
-                y += rowHeight;
-                x = 0;
-                rowHeight = 0;
-            }
-
-            if (y + height > MaxHdAtlasSide)
-            {
-                ++atlas;
-                x = 0;
-                y = 0;
-                rowHeight = 0;
-            }
-
-            if (atlas >= HdTerrainAtlases || width > MaxHdAtlasSide)
-            {
-                SDL_Log(
-                    "MCVulkanRenderer: the HD terrain is off for this map: its tiles need more than %u %ux%u atlases",
-                    HdTerrainAtlases, MaxHdAtlasSide, MaxHdAtlasSide);
-                hdScale = 0;
-                break;
-            }
-
-            hdPlaces[i] = HdPlace{x, y, atlas};
-            x += width;
-            rowHeight = std::max(rowHeight, height);
-            hdHeights[atlas] = std::max(hdHeights[atlas], y + rowHeight);
-        }
+        hdTiles[i] = places[i].Width != 0 ? hdTiles[i] : nullptr;
     }
 
-    if (hdScale != 0)
+    // The atlases a set of frames is shelved across, made in their format; or why there are none.
+    const auto shelve = [this](std::span<const std::shared_ptr<const MCHdArt::Frame>> frames,
+                               std::array<Texture*, HdTerrainAtlases> atlases, SDL_GPUTextureFormat format,
+                               std::vector<HdPlace>& shelved) -> std::expected<void, std::string>
     {
-        std::array<Texture*, HdTerrainAtlases> atlases = {&_TerrainMesh.HdAtlas, &_TerrainMesh.HdAtlas2};
+        const std::optional<std::array<uint32_t, HdTerrainAtlases>> heights = ShelveHdFrames(frames, shelved);
 
-        for (size_t atlas = 0; atlas < atlases.size() && hdScale != 0; ++atlas)
+        if (!heights)
         {
-            if (hdHeights[atlas] == 0)
+            return std::unexpected(std::format("its tiles need more than {} {}x{} atlases", HdTerrainAtlases,
+                                               MaxHdAtlasSide, MaxHdAtlasSide));
+        }
+
+        for (size_t atlas = 0; atlas < atlases.size(); ++atlas)
+        {
+            if ((*heights)[atlas] == 0)
             {
                 continue;
             }
 
-            if (auto made = MakeHdTerrainAtlas(*atlases[atlas], hdHeights[atlas]); !made)
+            if (auto made = MakeHdTerrainAtlas(*atlases[atlas], (*heights)[atlas], format); !made)
             {
-                SDL_Log("MCVulkanRenderer: the HD terrain is off for this map: %s", made.error().c_str());
-                hdScale = 0;
+                return made;
             }
+        }
+
+        return {};
+    };
+
+    std::vector<HdPlace> hdPlaces;
+
+    if (hdScale != 0)
+    {
+        if (auto made = shelve(hdTiles, {&_TerrainMesh.HdAtlas, &_TerrainMesh.HdAtlas2},
+                               SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, hdPlaces);
+            !made)
+        {
+            SDL_Log("MCVulkanRenderer: the HD terrain is off for this map: %s", made.error().c_str());
+            hdScale = 0;
         }
     }
 
@@ -4149,7 +4242,61 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         std::ranges::fill(hdTiles, nullptr);
     }
 
+    hdPlaces.resize(mesh.Tiles.size());
     _TerrainMesh.HdScale = hdScale;
+
+    // Port-only (HD lighting's relief maps): the HD tiles' relief maps (all at one scale), shelved the same way in BC5
+    // atlases of their own; a tile without one is lit by its brightness.
+    std::vector<std::shared_ptr<const MCHdArt::Frame>> reliefTiles(mesh.Tiles.size());
+    std::vector<HdPlace> reliefPlaces;
+    int32_t reliefScale = 0;
+    _TerrainMesh.Relief = ReliefMapsInUse();
+
+    for (size_t i = 0; i < hdTiles.size() && _TerrainMesh.Relief; ++i)
+    {
+        if (hdTiles[i] != nullptr)
+        {
+            const std::span<const uint8_t> tile = mesh.Tiles[i];
+
+            if (auto frame = MCHdArt::FindTerrainRelief(tile, places[i].Width, tile[2]);
+                frame != nullptr && frame->Format == MCHdArt::ColorFormat::Bc5 &&
+                (reliefScale == 0 || frame->Scale == reliefScale))
+            {
+                reliefScale = frame->Scale;
+                reliefTiles[i] = std::move(frame);
+            }
+        }
+    }
+
+    if (reliefScale != 0)
+    {
+        if (auto made = shelve(reliefTiles, {&_TerrainMesh.ReliefAtlas, &_TerrainMesh.ReliefAtlas2},
+                               SDL_GPU_TEXTUREFORMAT_BC5_RG_UNORM, reliefPlaces);
+            !made)
+        {
+            SDL_Log("MCVulkanRenderer: the relief maps are off for this map: %s", made.error().c_str());
+            Release(_TerrainMesh.ReliefAtlas);
+            Release(_TerrainMesh.ReliefAtlas2);
+            reliefScale = 0;
+        }
+    }
+
+    if (reliefScale == 0)
+    {
+        std::ranges::fill(reliefTiles, nullptr);
+    }
+
+    reliefPlaces.resize(mesh.Tiles.size());
+    _TerrainMesh.ReliefScale = reliefScale;
+
+    if (reliefScale != 0)
+    {
+        SDL_Log(
+            "MCVulkanRenderer: relief maps: %zu of %zu tiles at %dx, BC5 atlases %ux%u and %ux%u",
+            static_cast<size_t>(std::ranges::count_if(reliefTiles, [](const auto& tile) { return tile != nullptr; })),
+            mesh.Tiles.size(), reliefScale, _TerrainMesh.ReliefAtlas.Width, _TerrainMesh.ReliefAtlas.Height,
+            _TerrainMesh.ReliefAtlas2.Width, _TerrainMesh.ReliefAtlas2.Height);
+    }
 
     if (hdScale != 0)
     {
@@ -4172,6 +4319,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                          hdPlaces[i].X, hdPlaces[i].Y);
         }
 
+        if (place.Width != 0 && reliefTiles[i] != nullptr)
+        {
+            UploadHdTile(reliefPlaces[i].Atlas == 0 ? _TerrainMesh.ReliefAtlas : _TerrainMesh.ReliefAtlas2,
+                         *reliefTiles[i], reliefPlaces[i].X, reliefPlaces[i].Y);
+        }
+
         if (place.Width != 0)
         {
             DecodeTile(mesh.Tiles[i], place.Width,
@@ -4189,7 +4342,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     for (size_t i = 0; i < places.size(); ++i)
     {
         const std::vector<uint8_t>& tile = mesh.Tiles[i];
-        const std::span<int32_t> image = images.subspan(i * 8, 8);
+        const std::span<int32_t> image = images.subspan(i * TerrainImageInts, TerrainImageInts);
         image[0] = places[i].X;
         image[1] = places[i].Y;
         image[2] = places[i].Width;
@@ -4201,6 +4354,10 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         image[6] = hdTiles[i] != nullptr ? static_cast<int32_t>(hdPlaces[i].Atlas + 1) : 0;
         image[7] =
             static_cast<int32_t>(hdPlaces[i].X / MCBc7::BlockSide | hdPlaces[i].Y / MCBc7::BlockSide << HalfShift);
+        // Port-only: its relief map's atlas (1 or 2; 0 none) and place there, as the HD tile's.
+        image[8] = reliefTiles[i] != nullptr ? static_cast<int32_t>(reliefPlaces[i].Atlas + 1) : 0;
+        image[9] = static_cast<int32_t>(reliefPlaces[i].X / MCBc7::BlockSide | reliefPlaces[i].Y / MCBc7::BlockSide
+                                                                                   << HalfShift);
     }
 
     const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));
@@ -4220,22 +4377,33 @@ uint64_t MCVulkanRenderer::HdPackInUse()
     return MCHdArt::Active() ? MCHdArt::PackVersion() : 0;
 }
 
-std::expected<void, std::string> MCVulkanRenderer::MakeHdTerrainAtlas(Texture& atlas, uint32_t height)
+std::expected<void, std::string> MCVulkanRenderer::MakeHdTerrainAtlas(Texture& atlas, uint32_t height,
+                                                                      SDL_GPUTextureFormat format)
 {
-    if (!_Bc7.has_value())
+    if (format == SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM && !_Bc7.has_value())
     {
         _Bc7 = SDL_GPUTextureSupportsFormat(_Device.get(), SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
                                             SDL_GPU_TEXTUREUSAGE_SAMPLER);
     }
 
-    // An RGBA8 atlas would take four times the memory: without BC7, the ground stays the original's.
-    if (!*_Bc7)
+    // An RGBA8 atlas would take four times the memory: without BC7, the ground stays the original's (and without BC5,
+    // it's lit by its brightness).
+    const bool sampled =
+        format == SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM
+            ? *_Bc7
+            : SDL_GPUTextureSupportsFormat(_Device.get(), format, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+
+    if (!sampled)
     {
-        return std::unexpected(std::string("the GPU doesn't sample BC7"));
+        return std::unexpected(std::format("the GPU doesn't sample its format ({})", static_cast<int>(format)));
     }
 
-    return EnsureTexture(atlas, SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, MaxHdAtlasSide,
-                         height);
+    return EnsureTexture(atlas, format, SDL_GPU_TEXTUREUSAGE_SAMPLER, MaxHdAtlasSide, height);
+}
+
+bool MCVulkanRenderer::ReliefMapsInUse()
+{
+    return MCSceneLights::ReliefMapsOn();
 }
 
 void MCVulkanRenderer::UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y)
@@ -4245,7 +4413,7 @@ void MCVulkanRenderer::UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame,
     std::vector<uint8_t> encoded;
     std::span<const uint8_t> blocks = frame.Colors;
 
-    if (frame.Format != MCHdArt::ColorFormat::Bc7)
+    if (frame.Format == MCHdArt::ColorFormat::Rgba8)
     {
         encoded = MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
         blocks = encoded;
@@ -4308,6 +4476,7 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Haze[3] = draw.HazeRows[2];
     uniforms.Pane[0] = frame.PaneX;
     uniforms.Pane[1] = frame.PaneY;
+    uniforms.Pane[3] = _TerrainMesh.ReliefAtlas.Handle != nullptr ? _TerrainMesh.ReliefScale : 0;
 
     SDL_BindGPUGraphicsPipeline(&pass, _TerrainPipeline.get());
     const SDL_GPUTextureSamplerBinding fogBinding{fog.Index.Handle.get(), _Nearest.get()};
@@ -4318,6 +4487,11 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
         _TerrainMesh.HdAtlas.Handle != nullptr ? _TerrainMesh.HdAtlas.Handle.get() : _PaletteTexture.Handle.get();
     SDL_GPUTexture* const hdAtlas2 =
         _TerrainMesh.HdAtlas2.Handle != nullptr ? _TerrainMesh.HdAtlas2.Handle.get() : hdAtlas;
+    SDL_GPUTexture* const reliefAtlas = _TerrainMesh.ReliefAtlas.Handle != nullptr
+                                            ? _TerrainMesh.ReliefAtlas.Handle.get()
+                                            : _PaletteTexture.Handle.get();
+    SDL_GPUTexture* const reliefAtlas2 =
+        _TerrainMesh.ReliefAtlas2.Handle != nullptr ? _TerrainMesh.ReliefAtlas2.Handle.get() : reliefAtlas;
     const SDL_GPUTextureSamplerBinding bindings[DrawSamplers] = {
         {_TerrainMesh.Atlas.Handle.get(), _Nearest.get()},
         {_TableTexture.Handle.get(), _Nearest.get()},
@@ -4326,6 +4500,8 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
         {_PaletteTexture.Handle.get(), _Nearest.get()},
         {hdAtlas, _Nearest.get()},
         {hdAtlas2, _Nearest.get()},
+        {reliefAtlas, _Nearest.get()},
+        {reliefAtlas2, _Nearest.get()},
     };
 
     SDL_BindGPUFragmentSamplers(&pass, 0, bindings, DrawSamplers);
@@ -4445,12 +4621,11 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
 {
     constexpr SDL_GPUTextureUsageFlags target = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 
-    for (auto made :
-         {EnsureTexture(surface.Target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target, surface.DrawnWidth,
-                        surface.DrawnHeight),
-          EnsureTexture(surface.Index, SDL_GPU_TEXTUREFORMAT_R8_UNORM, target, surface.DrawnWidth, surface.DrawnHeight),
-          EnsureTexture(surface.Copy, SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_SAMPLER, surface.DrawnWidth,
-                        surface.DrawnHeight)})
+    for (auto made : {EnsureTexture(surface.Target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, target, surface.DrawnWidth,
+                                    surface.DrawnHeight),
+                      EnsureTexture(surface.Index, IndexFormat, target, surface.DrawnWidth, surface.DrawnHeight),
+                      EnsureTexture(surface.Copy, IndexFormat, SDL_GPU_TEXTUREUSAGE_SAMPLER, surface.DrawnWidth,
+                                    surface.DrawnHeight)})
     {
         if (!made)
         {
@@ -4807,6 +4982,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                 GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
             passFrame.Look[1] =
                 GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
+            passFrame.Look[2] = MCSceneLights::RecastsSunShadows() ? 1.0f : 0.0f;
         }
 
         if (record.TerrainDraw >= 0)
@@ -4898,6 +5074,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {_PaletteTexture.Handle.get(), _Nearest.get()},
             {hdColors, _Nearest.get()},
             {hdColors, _Nearest.get()},
+            {_PaletteTexture.Handle.get(), _Nearest.get()},
+            {_PaletteTexture.Handle.get(), _Nearest.get()},
         };
 
         SDL_BindGPUGraphicsPipeline(pass, record.Shadow      ? _ShadowPipeline.get()
@@ -5154,7 +5332,7 @@ auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Sur
     for (const Surface& surface : surfaces)
     {
         offsets.push_back(total);
-        total += (surface.Index.Width * surface.Index.Height + 3) & ~3u;
+        total += surface.Index.Width * surface.Index.Height * IndexPixelBytes;
     }
 
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(_Device.get());
@@ -5216,10 +5394,16 @@ auto MCVulkanRenderer::Download(std::span<const std::reference_wrapper<const Sur
 
     for (size_t i = 0; i < surfaces.size(); ++i)
     {
+        // The palette indices: each pixel's R.
         const Surface& surface = surfaces[i];
         const size_t size = static_cast<size_t>(surface.Index.Width) * surface.Index.Height;
-        const std::span<const uint8_t> surfacePixels = mapped.subspan(offsets[i], size);
-        pixels[i].assign(surfacePixels.begin(), surfacePixels.end());
+        const std::span<const uint8_t> surfacePixels = mapped.subspan(offsets[i], size * IndexPixelBytes);
+        pixels[i].resize(size);
+
+        for (size_t pixel = 0; pixel < size; ++pixel)
+        {
+            pixels[i][pixel] = surfacePixels[pixel * IndexPixelBytes];
+        }
     }
 
     SDL_UnmapGPUTransferBuffer(_Device.get(), buffer);

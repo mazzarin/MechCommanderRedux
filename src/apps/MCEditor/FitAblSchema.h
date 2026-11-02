@@ -27,8 +27,27 @@ struct FitAblColumnType
 /// <summary>The number of columns in <see cref="FITABL_COLUMN_TYPES"/>.</summary>
 inline constexpr size_t FITABL_COLUMN_TYPE_COUNT = 18;
 
+/// <summary>A column of the port's own, beyond FitAbl.mdb's: added to a database that lacks it as it opens.</summary>
+struct FitAblPortColumn
+{
+    /// <summary>The table's name.</summary>
+    const char* table;
+    /// <summary>The column's name.</summary>
+    const char* column;
+    /// <summary>Its type and default, as ALTER TABLE ... ADD COLUMN takes them.</summary>
+    const char* definition;
+};
+
+/// <summary>The number of columns in <see cref="FITABL_PORT_COLUMNS"/>.</summary>
+inline constexpr size_t FITABL_PORT_COLUMN_COUNT = 1;
+
 /// <summary>The SQL that creates the mission database's tables and indexes.</summary>
 extern const char FITABL_SCHEMA[];
+/// <summary>
+/// The port's own columns: NewMissions' TimeOfDay (MissionTimeOfDay.h). Not in FITABL_SCHEMA, which
+/// is FitAbl.mdb's: DaoDatabase::Open adds them.
+/// </summary>
+extern const std::array<FitAblPortColumn, FITABL_PORT_COLUMN_COUNT> FITABL_PORT_COLUMNS;
 /// <summary>The tables, parents before the tables whose foreign keys refer to them.</summary>
 extern const std::array<FitAblTable, FITABL_TABLE_COUNT> FITABL_TABLES;
 /// <summary>

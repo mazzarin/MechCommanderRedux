@@ -200,6 +200,7 @@ bool MultiMap::saveMission(DaoDatabase& database, CString& name)
     mission.m_ClanArtilleryLarge = team2.artilleryLarge;
     mission.m_ClanArtillerySensor = team2.artillerySensor;
     mission.m_Planet = tileSetStringOffset == GTILES_OFFSET ? "Garotte" : "PortArthur";
+    mission.m_TimeOfDay = static_cast<long>(timeOfDay);
     mission.Update();
     mission.FindLast(filter);
     const long missionId = mission.m_MissionID;
@@ -306,6 +307,7 @@ bool MultiMap::loadMission(DaoDatabase& database, const CString& name)
     team2.artilleryLarge = mission.m_ClanArtilleryLarge;
     team2.artillerySensor = mission.m_ClanArtillerySensor;
     team2.artillerySmall = mission.m_ClanArtillerySmall;
+    timeOfDay = MissionTimeOfDayOf(mission.m_TimeOfDay);
     const long missionId = mission.m_MissionID;
     mission.Close();
     const CString savePath = dataPath() + "\\Data\\Savegame\\" + name + ".mpk";

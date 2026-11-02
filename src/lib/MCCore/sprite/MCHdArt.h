@@ -17,7 +17,9 @@ class MCShape;
 /// integer scale, RGBA with straight alpha, with <c>&lt;frame&gt;_idx.png</c> beside it giving each pixel the
 /// original's palette index (red) and whether it has one (green). The indices let a paint scheme's fade table recolour
 /// the HD pixels it would have recoloured. A frame that holds a translucent shape's blended pixels too (an effect's,
-/// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255.</para>
+/// <see cref="Frame::Blended"/>) has premultiplied colours instead, and its index picture's blue is 255. A legs
+/// frame's turn middles (HDTurns: halfway to a neighbouring facing) lie beside it as <c>&lt;frame&gt;_turn</c> and
+/// <c>&lt;frame&gt;_turnm</c> (sprite/MCInBetween.h's TurnStep, TurnMirroredStep).</para>
 /// <para>Pictures (the menus' and logistics' art) are <c>menus/&lt;hash&gt;.hdf</c> (or a PNG pair) likewise, named by
 /// their pixels' hash (<see cref="PictureHash"/>).</para>
 /// <para>Every other appearance's shapes (vehicles, Elementals, buildings, trees, terrain objects...) come from its own
@@ -34,6 +36,9 @@ class MCShape;
 /// original tile's pixels; their alpha is unused. A terrain overlay's (a fast shape over the ground: roads, rivers'
 /// banks, rubble, mines) are <c>overlays/&lt;key&gt;.hdf</c> (named as tiles are), with their alpha; a translucent
 /// one's hold its blended pixels.</para>
+/// <para>A terrain tile's relief map is <c>relief/&lt;key&gt;.hdf</c> (named as its tile), BC5 at its own scale and
+/// without indices: each pixel's slope, its height's rise a pixel right (R) and a pixel down the picture (G), 128 flat
+/// and each step above or below it a 127th of a pixel's rise or fall (<see cref="ReliefFlat"/>).</para>
 /// <para>A movie's HD frames are <c>movies/&lt;NAME&gt;.ivf</c> (the Smacker file's name, upper-case): AV1, frame for
 /// frame the original's, which keeps playing for its sound, timing and palette (<see cref="FindMovie"/>).</para>
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
@@ -50,6 +55,11 @@ namespace MCHdArt
         Rgba8,
         /// <summary>BC7 blocks (sprite/MCBc7.h) for the size padded to whole blocks, block row by block row.</summary>
         Bc7,
+        /// <summary>
+        /// BC5 blocks (two channels, a BC4 block each), laid out as Bc7's: a ground tile's relief map
+        /// (<see cref="FindTerrainRelief"/>).
+        /// </summary>
+        Bc5,
     };
 
     /// <summary>An HD frame as the GPU takes it.</summary>
@@ -108,9 +118,10 @@ namespace MCHdArt
 
     /// <summary>
     /// A frame as a <c>.hdf</c> file: <c>MCHD</c>, version (u16), colour format (u8, 1 = BC7, 2 = BC7 holding a
-    /// translucent shape's blended pixels too, which older builds leave to the original), scale (u8), the
-    /// original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when the frame
-    /// holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size). Little-endian.
+    /// translucent shape's blended pixels too, which older builds leave to the original, 3 = BC5, a relief map), scale
+    /// (u8), the original's width and height (u16 each), the colours' bytes (u32), the colours (BC7, encoded here when
+    /// the frame holds RGBA8, as <paramref name="options"/> say), then the indices (R8G8 at the original's size; none
+    /// in a relief map). Little-endian.
     /// </summary>
     std::vector<uint8_t> EncodeHdf(const Frame& frame, const MCBc7::MCBc7Options& options = {});
 
@@ -290,6 +301,15 @@ namespace MCHdArt
     /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindTerrainTile(std::span<const uint8_t> tile, int32_t width, int32_t height);
+
+    /// <summary>A relief map's byte for flat ground; a byte stands for a rise of (byte - this) / 127 of a pixel.</summary>
+    inline constexpr int32_t ReliefFlat = 128;
+
+    /// <summary>
+    /// Terrain tile <paramref name="tile"/>'s relief map (its bounds <paramref name="width"/> x
+    /// <paramref name="height"/>), read from the pack the first time; null when HD art is off or the pack has none.
+    /// </summary>
+    std::shared_ptr<const Frame> FindTerrainRelief(std::span<const uint8_t> tile, int32_t width, int32_t height);
 
     /// <summary>
     /// The HD copy of terrain overlay <paramref name="shape"/> (a fast shape's bytes, <see cref="FastShapeSize"/>; its

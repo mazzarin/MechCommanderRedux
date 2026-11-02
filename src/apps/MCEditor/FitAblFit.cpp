@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "FitAbl.h"
+#include "MissionTimeOfDay.h"
 
 // FitAbl's .FIT writer (0x11011fb0-0x11026bd0): the mission's settings, drop zones, objectives, warriors, parts,
 // commander groups, trains and elemental carriers, from the mission database.
@@ -89,6 +90,70 @@ namespace
     {
         return Vb::CStr(Vb::Cat(literal(prefix), value));
     }
+
+    /// <summary>How many of the VisualRangeTable's entries a line of the .FIT holds.</summary>
+    inline constexpr int32_t VISUAL_RANGES_PER_LINE = 16;
+
+    /// <summary>Port-only: the name the .FIT's [Environment] TimeOfDay gives <paramref name="time"/> (MCRedux reads it).</summary>
+    const char* timeOfDayName(MissionTimeOfDay time)
+    {
+        switch (time)
+        {
+            case MissionTimeOfDay::Dusk:
+                return "Dusk";
+            case MissionTimeOfDay::Night:
+                return "Night";
+            default:
+                return "Day";
+        }
+    }
+
+    /// <summary>
+    /// Port-only: writes a dusk or night mission's (<paramref name="time"/>) sight into its [GameScale]: every level's
+    /// MissionVisualRange (the original reads a shorter table on past its end), which the original honours too.
+    /// Nothing by day: the game system's stands.
+    /// </summary>
+    void writeVisualRanges(VbFile& fit, MissionTimeOfDay time)
+    {
+        if (time == MissionTimeOfDay::Day)
+        {
+            return;
+        }
+
+        CString line;
+        line.Format("l[%d] VisualRangeTable =", VISUAL_RANGE_LEVELS);
+        fit.Line(line);
+
+        for (int32_t first = 0; first < VISUAL_RANGE_LEVELS; first += VISUAL_RANGES_PER_LINE)
+        {
+            line = "\t";
+
+            for (int32_t level = first; level < first + VISUAL_RANGES_PER_LINE; ++level)
+            {
+                CString entry;
+                entry.Format(level + 1 < VISUAL_RANGE_LEVELS ? "%d," : "%d", MissionVisualRange(level, time));
+                line += entry;
+            }
+
+            fit.Line(line);
+        }
+    }
+
+    /// <summary>
+    /// Port-only: writes a dusk or night mission's [Environment] block, its TimeOfDay (MCRedux shows it with HD
+    /// lighting on; the original reads no such block). Nothing by day.
+    /// </summary>
+    void writeEnvironment(VbFile& fit, MissionTimeOfDay time, const CString& quote)
+    {
+        if (time == MissionTimeOfDay::Day)
+        {
+            return;
+        }
+
+        fit.Line("[Environment]");
+        fit.Line("st TimeOfDay = " + quote + timeOfDayName(time) + quote);
+        fit.Line();
+    }
 }
 
 bool FitAbl::writeFitFile(short missionId)
@@ -105,6 +170,10 @@ bool FitAbl::writeFitFile(short missionId)
     }
 
     const bool multiplayer = Vb::IsTrue(mission["Multiplayer"]);
+    // Port-only: the time of day the mission is set at (MissionTimeOfDay).
+    const COleVariant timeOfDayValue = mission["TimeOfDay"];
+    const MissionTimeOfDay timeOfDay =
+        Vb::IsNull(timeOfDayValue) ? MissionTimeOfDay::Day : MissionTimeOfDayOf(Vb::CLng(timeOfDayValue));
     FitAblRecordset assignments(database);
 
     if (Vb::Eq(mission["Multiplayer"], Vb::Boolean(false)))
@@ -285,7 +354,9 @@ bool FitAbl::writeFitFile(short missionId)
     fit.Line("f MetersPerWorldUnit = 0.2");
     fit.Line("ul Duration = 60");
     fit.Line("f CycleLength = 0.125");
+    writeVisualRanges(fit, timeOfDay);
     fit.Line();
+    writeEnvironment(fit, timeOfDay, quote);
     fit.Line("[Artillery]");
     fit.Text("l NumLargeStrikes = ").Value(mission["ArtilleryLarge"]).EndLine();
     fit.Text("l NumSmallStrikes = ").Value(mission["ArtillerySmall"]).EndLine();

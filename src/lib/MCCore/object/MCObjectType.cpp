@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "object/MCObjectType.h"
 #include "lib/MCFitIniFile.h"
+#include "object/MCExplosion.h"
 #include "object/MCGameObject.h"
 #include "object/MCObjectSystem.h"
 
@@ -85,7 +86,7 @@ auto MCObjectType::Init(MCFitIniFile& typeFile) -> int32_t
     return 0;
 }
 
-auto MCObjectType::CreateExplosion(MCVector3D& position, float damage, float radius) const -> void
+auto MCObjectType::CreateExplosion(MCVector3D& position, float damage, float radius, MCBlastShake shake) const -> void
 {
     if (ExplosionObject == -1)
     {
@@ -105,6 +106,11 @@ auto MCObjectType::CreateExplosion(MCVector3D& position, float damage, float rad
     {
         explosion->SetExplRad(radius);
         explosion->SetExplDmg(damage);
+    }
+
+    if (const auto blast = std::dynamic_pointer_cast<MCExplosion>(explosion); blast != nullptr)
+    {
+        blast->Shakes = shake == MCBlastShake::Shakes;
     }
 
     AddToDefaultList(std::move(explosion));

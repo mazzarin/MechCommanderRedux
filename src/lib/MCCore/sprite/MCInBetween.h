@@ -24,15 +24,39 @@ inline int32_t InBetweenSteps(float frameRate)
 }
 
 /// <summary>
+/// Port-only (HDTurns): the steps that name a mech's legs frame's turn middles in the HD art pack, frames halfway to a
+/// neighbouring stored facing (tools/upscale/make_turn_middles.py, MCSpriteTree::TurnMiddle): <c>&lt;frame&gt;_turn</c>
+/// halfway to the next facing (the last facing's: to its own mirror, straight back), and <c>&lt;frame&gt;_turnm</c> (the
+/// first facing's only) halfway to the next facing mirrored. Above any step an effect's in-between has.
+/// </summary>
+inline constexpr int32_t TurnStep = 0x100;
+inline constexpr int32_t TurnMirroredStep = 0x101;
+
+/// <summary>
+/// Port-only (HDTurns): where a turn middle lies round the frame it is drawn over: the frame's first column and row
+/// within the middle's bounds, and the bounds' size (original pixels; the frame's and its neighbour's together).
+/// </summary>
+struct MCInBetweenBounds
+{
+    int32_t FrameX = 0;
+    int32_t FrameY = 0;
+    int32_t Width = 0;
+    int32_t Height = 0;
+};
+
+/// <summary>
 /// Port-only (HD art): an effect's frame drawn part of the way toward the next one its animation shows, as the HD art
 /// pack's in-between <see cref="Step"/> (1 to <see cref="InBetweenSteps"/> - 1) of frame <see cref="Frame"/> toward
-/// frame <see cref="Next"/> (the frame after it, or, once the animation has looped, the first after the last).
+/// frame <see cref="Next"/> (the frame after it, or, once the animation has looped, the first after the last). Or
+/// (HDTurns) a mech's legs frame drawn as its turn middle: <see cref="Step"/> a turn step, <see cref="Next"/> the frame
+/// itself, and <see cref="Bounds"/> where the middle lies (an effect's in-between lies over the two frames' bounds).
 /// </summary>
 struct MCInBetween
 {
     int32_t Frame = 0;
     int32_t Next = 0;
     int32_t Step = 0;
+    std::optional<MCInBetweenBounds> Bounds;
 };
 
 /// <summary>

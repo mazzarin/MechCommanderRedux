@@ -65,6 +65,7 @@ public:
     void Ellipse(MCWindow& target, const MCEllipseCommand& command) override;
     void StatusBar(MCWindow& target, const MCStatusBarCommand& command) override;
     void Shadow(MCWindow& target, const MCShadowCommand& command) override;
+    void Particle(MCWindow& target, const MCParticleCommand& command) override;
     void Glyph(MCWindow& target, const MCGlyphCommand& command) override;
     /// <summary>
     /// Draws the frame's terrain tiles from the mesh in one draw (shaders/terrain.vshader), uploading the mesh and its
@@ -262,8 +263,10 @@ private:
         MCAddressKey Key;
         std::weak_ptr<MCWindow> Window;
         /// <summary>
-        /// The surface's colours (premultiplied RGBA) and indices (R8), both colour targets, and the copy of the indices
-        /// draws that read the surface itself read.
+        /// The surface's colours (premultiplied RGBA) and indices, both colour targets, and the copy of the indices
+        /// draws that read the surface itself read. The indices are RGBA8: R the palette index; port-only (HD
+        /// lighting's relief maps), G and B the slope of the HD ground drawn there and A 1 where it is (MCHdArt's
+        /// relief maps: what draws over the ground writes 0, what blends over it leaves the ground's).
         /// </summary>
         Texture Target;
         Texture Index;
@@ -359,6 +362,15 @@ private:
         Texture HdAtlas;
         Texture HdAtlas2;
         int32_t HdScale = 0;
+        /// <summary>
+        /// Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): the tiles' relief maps at ReliefScale, BC5,
+        /// shelved as the HD tiles are (none without them).
+        /// </summary>
+        Texture ReliefAtlas;
+        Texture ReliefAtlas2;
+        int32_t ReliefScale = 0;
+        /// <summary>Whether it was made for the relief maps (ReliefMapsInUse), so turning them on or off remakes it.</summary>
+        bool Relief = false;
         /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
         uint64_t HdPack = 0;
         std::shared_ptr<SDL_GPUBuffer> Cells;
@@ -539,8 +551,9 @@ private:
                                                   int32_t height, int32_t step = 0);
 
     /// <summary>
-    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together: where the frame's
-    /// bounds start in the in-between's, and the in-between's size (original pixels).
+    /// Port-only: an HD art pack's in-between, over its frame's and the next one's bounds together (a turn middle: its
+    /// frame's and its neighbour's): where the frame's bounds start in the in-between's, and the in-between's size
+    /// (original pixels).
     /// </summary>
     struct HdInBetweenFrame
     {
@@ -553,10 +566,12 @@ private:
 
     /// <summary>
     /// Port-only: the HD art pack's in-between a draw of frame <paramref name="shapeNum"/> of <paramref name="table"/>
-    /// shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>); none when the draw isn't of the
-    /// in-between's frame or the pack hasn't the in-between.
+    /// (its HD frame <paramref name="hd"/>) shows instead of the frame (<see cref="MCRenderer::DrawingInBetween"/>): an
+    /// effect's, whose frame holds its blended pixels, or (HDTurns) a mech's legs' turn middle, where the draw says it
+    /// lies. None when the draw isn't of the in-between's frame or the pack hasn't the in-between.
     /// </summary>
-    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum);
+    std::optional<HdInBetweenFrame> HdInBetween(std::span<const uint8_t> table, int32_t shapeNum,
+                                                const MCHdArt::Frame& hd);
     /// <summary>The frame's picture index of HD art frame <paramref name="frame"/> (uploaded when new).</summary>
     std::optional<uint32_t> HdPictureOf(const MCHdArt::Frame& frame);
     /// <summary>
@@ -701,8 +716,13 @@ private:
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
     /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
     static uint64_t HdPackInUse();
+    /// <summary>
+    /// Whether the terrain takes the HD art pack's relief maps (HD lighting on, MCLighting::ReliefMaps above 0).
+    /// </summary>
+    static bool ReliefMapsInUse();
     /// <summary>Makes one of the terrain's HD atlases (BC7, MaxHdAtlasSide wide), or says why there is none.</summary>
-    std::expected<void, std::string> MakeHdTerrainAtlas(Texture& atlas, uint32_t height);
+    std::expected<void, std::string> MakeHdTerrainAtlas(
+        Texture& atlas, uint32_t height, SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM);
     /// <summary>Puts an HD terrain tile's colours into HD atlas <paramref name="atlas"/> at (x, y), a block corner.</summary>
     void UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>

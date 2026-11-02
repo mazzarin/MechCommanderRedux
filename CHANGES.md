@@ -122,6 +122,11 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
   Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
   the map selector. See the [README](README.md#premade-matches).
+- With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
+  (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. They stop
+  where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
+  multiplayer the host's setting applies once every player's build has it; with an older build in the match, mechs stop
+  as the original's.
 
 ### Files and Saves
 
@@ -150,6 +155,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - On its first run, the editor copies its own files (the `Teditor` folder and its six sounds) from the CD, a mounted
   CD image or an old editor folder. Nothing on the CD is run, and nothing is written to the registry.
 - The editor finds the game in its own folder, or in the folder given with `--data`.
+- New: **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
+  lighting on the game shows the mission darker. See the [README](README.md#a-missions-time-of-day).
 - A crash writes a stack trace and `MCEditor.dmp` beside the exe instead of showing a dialog.
 
 ---

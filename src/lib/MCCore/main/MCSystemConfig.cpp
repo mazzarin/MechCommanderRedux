@@ -2,6 +2,7 @@
 #include "main/MCSystemConfig.h"
 #include "camera/MCCameraList.h"
 #include "color/MCPalette.h"
+#include "engine/MCCraterManager.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
@@ -19,6 +20,9 @@
 #include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCTerrainTiles.h"
@@ -38,6 +42,14 @@ namespace
         int32_t Audio = HdAudioOff;
         int32_t Lighting = HdLightingOff;
         bool SunShadows = false;
+        bool Clouds = false;
+        bool Relief = false;
+        bool Particles = false;
+        bool Shake = false;
+        bool Footprints = false;
+        bool Turns = false;
+        bool Stops = false;
+        bool Braking = false;
     };
 
     HdDefaults Defaults;
@@ -177,7 +189,18 @@ void ReadSystemConfig(MCFitIniFile& file)
 
 void UseHdByDefault()
 {
-    Defaults = {.Art = true, .Audio = HdAudioOn, .Lighting = HdLightingOn, .SunShadows = true};
+    Defaults = {.Art = true,
+                .Audio = HdAudioOn,
+                .Lighting = HdLightingOn,
+                .SunShadows = true,
+                .Clouds = true,
+                .Relief = true,
+                .Particles = true,
+                .Shake = true,
+                .Footprints = true,
+                .Turns = true,
+                .Stops = true,
+                .Braking = true};
 }
 
 void ReadPreferences(MCFitIniFile& file)
@@ -217,11 +240,33 @@ void ReadPreferences(MCFitIniFile& file)
     // Port-only: HDAudio plays the HD audio pack's music, effects and voices (sound/MCHdAudio.h).
     GHdAudio = std::clamp(file.Read<int32_t>("HDAudio").value_or(Defaults.Audio), static_cast<int32_t>(HdAudioOff),
                           static_cast<int32_t>(HdAudioOrchestral));
-    // Port-only: HDLighting lights the world around shots, fires and explosions (sprite/MCSceneLights.h).
+    // Port-only: HDLighting lights the world around shots, fires and explosions, at the mission's time of day or at dusk
+    // or night (sprite/MCSceneLights.h).
     GHdLighting = std::clamp(file.Read<int32_t>("HDLighting").value_or(Defaults.Lighting),
-                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingDusk));
+                             static_cast<int32_t>(HdLightingOff), static_cast<int32_t>(HdLightingNight));
     // Port-only: HDSunShadows draws objects' shadows darkening the ground instead of solid black (sprite/MCSceneLights.h).
     GHdSunShadows = file.Read<bool>("HDSunShadows").value_or(Defaults.SunShadows) ? 1 : 0;
+    // Port-only: HDClouds lets clouds' shadows drift over the world (sprite/MCSceneLights.h).
+    GHdClouds = file.Read<bool>("HDClouds").value_or(Defaults.Clouds) ? 1 : 0;
+    // Port-only: HDRelief lets the sun show the world's relief, the HD ground's from the pack's relief maps
+    // (sprite/MCSceneLights.h).
+    GHdRelief = file.Read<bool>("HDRelief").value_or(Defaults.Relief) ? 1 : 0;
+    // Port-only: HDParticles draws flecks, debris, smoke, embers, splashes and wakes, its flecks flying as HDFlecks says;
+    // HDShake lets large artillery strikes and buildings' ends shake the picture (sprite/MCParticles.h).
+    GHdParticles = file.Read<bool>("HDParticles").value_or(Defaults.Particles) ? 1 : 0;
+    GHdFlecks =
+        std::clamp(file.Read<int32_t>("HDFlecks").value_or(static_cast<int32_t>(MCParticles::MCFleckStyle::Edge)),
+                   static_cast<int32_t>(MCParticles::MCFleckStyle::Edge),
+                   static_cast<int32_t>(MCParticles::MCFleckStyle::Falling));
+    GHdShake = file.Read<bool>("HDShake").value_or(Defaults.Shake) ? 1 : 0;
+    // Port-only: HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).
+    GHdFootprints = file.Read<bool>("HDFootprints").value_or(Defaults.Footprints) ? 1 : 0;
+    // Port-only: HDTurns eases a mech's turns as drawn and draws its legs between their facings (sprite/MCMechActor.h).
+    GHdTurns = file.Read<bool>("HDTurns").value_or(Defaults.Turns) ? 1 : 0;
+    // Port-only: HDStops has a mech stopped mid-stride with its move held up hold its stride (sprite/MCMechActor.h).
+    GHdStops = file.Read<bool>("HDStops").value_or(Defaults.Stops) ? 1 : 0;
+    // Port-only (gameplay): MechBraking has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
+    GMechBraking = file.Read<bool>("MechBraking").value_or(Defaults.Braking) ? 1 : 0;
 
     // Port-only: "vulkan" (the default) or "software". The command line's -renderer wins.
     if (const MCFitResult<std::string> renderer = file.Read<std::string>("Renderer"); renderer.has_value())

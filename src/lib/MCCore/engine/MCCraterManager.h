@@ -37,8 +37,9 @@ public:
     MCCraterManager& operator=(const MCCraterManager&) = delete;
 
     /// <summary>
-    /// Room for <paramref name="numCraters"/> craters, with every shape of the PAK <paramref name="craterFileName"/>
-    /// (from the sprite path, or the CD's).
+    /// Room for <paramref name="numCraters"/> craters (port: <see cref="HdFootprintsScale"/> times as many with
+    /// <see cref="GHdFootprints"/> on), with every shape of the PAK <paramref name="craterFileName"/> (from the sprite
+    /// path, or the CD's).
     /// </summary>
     static std::expected<std::unique_ptr<MCCraterManager>, std::string> Create(int32_t numCraters,
                                                                                std::string_view craterFileName);
@@ -87,6 +88,17 @@ private:
     /// <summary>Keeps the HD art pack's ties to the shapes while the manager lives.</summary>
     std::shared_ptr<const int> _HdArtOwner = std::make_shared<const int>(0);
 };
+
+/// <summary>
+/// Port-only: PREFS "HDFootprints": 1 keeps <see cref="HdFootprintsScale"/> times as many footprints and craters on the
+/// ground as the mission's ring holds (its CraterSystem NumCraters) before the oldest give way, and prints a walking
+/// mech's feet where its legs are drawn stepping (OB-185, MCBattleMech::Update); 0 as the original. Off by default; a
+/// mission takes the ring's length as it loads.
+/// </summary>
+extern int GHdFootprints;
+
+/// <summary>With <see cref="GHdFootprints"/> on, the mission's ring of craters is this many times as long.</summary>
+inline constexpr int32_t HdFootprintsScale = 3;
 
 /// <summary>The mission's craters (set for the whole scenario).</summary>
 MCCraterManager& CraterManager();

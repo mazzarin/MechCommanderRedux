@@ -175,6 +175,41 @@ TEST_CASE("hd art: a frame file reads back as written, and a wrong one is refuse
     CHECK(!MCHdArt::DecodeHdf(wrong, Width, Height).has_value());
 }
 
+/// <summary>
+/// A relief map's frame file (BC5) reads back as written, its blocks as they are and without indices; one with indices
+/// after its blocks is refused.
+/// </summary>
+TEST_CASE("hd art: a relief map's frame file reads back as written, without indices")
+{
+    constexpr int32_t Scale = 2;
+    constexpr int32_t Width = 9;
+    constexpr int32_t Height = 6;
+    MCHdArt::Frame relief;
+    relief.Width = Width * Scale;
+    relief.Height = Height * Scale;
+    relief.Scale = Scale;
+    relief.Format = MCHdArt::ColorFormat::Bc5;
+    relief.Colors.resize(static_cast<size_t>(MCBc7::Padded(relief.Width) / MCBc7::BlockSide) *
+                         static_cast<size_t>(MCBc7::Padded(relief.Height) / MCBc7::BlockSide) * MCBc7::BlockBytes);
+
+    for (size_t i = 0; i < relief.Colors.size(); ++i)
+    {
+        relief.Colors[i] = static_cast<uint8_t>(i * 13);
+    }
+
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(relief);
+    const auto read = MCHdArt::DecodeHdf(file, Width, Height);
+    REQUIRE(read.has_value());
+    CHECK(read->Format == MCHdArt::ColorFormat::Bc5);
+    CHECK_EQ(read->Scale, Scale);
+    CHECK(read->Colors == relief.Colors);
+    CHECK(read->Indices.empty());
+
+    std::vector<uint8_t> withIndices = file;
+    withIndices.resize(file.size() + static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes);
+    CHECK(!MCHdArt::DecodeHdf(withIndices, Width, Height).has_value());
+}
+
 namespace
 {
     /// <summary>Raw DEFLATE streams from Python's zlib: a stored block, a fixed-Huffman one, a dynamic-Huffman one.</summary>

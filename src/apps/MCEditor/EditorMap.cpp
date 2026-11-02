@@ -2017,6 +2017,7 @@ bool SingleMap::loadMission(DaoDatabase& database, const CString& name)
     timeLimit = mission.m_TimeLimit;
     artillerySmall = mission.m_ArtillerySmall;
     playerForceLimit = mission.m_PlayerForceLimit;
+    timeOfDay = MissionTimeOfDayOf(mission.m_TimeOfDay);
     const long missionId = mission.m_MissionID;
     mission.Close();
 

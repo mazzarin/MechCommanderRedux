@@ -284,7 +284,7 @@ auto MCTacticalInterface::UpdateMouseState(MCOptionalRef<MCGuiEvent> mouseEvent)
 
                     case MCObjectClass::Artillery:
                     case MCObjectClass::Debris:
-                    case static_cast<MCObjectClass>(0x14):
+                    case MCObjectClass::Unused14:
                     {
                         MouseTarget = MCMouseTarget::Nothing;
                         MouseObject.reset();

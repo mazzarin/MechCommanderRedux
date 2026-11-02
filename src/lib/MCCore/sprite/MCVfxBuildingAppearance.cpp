@@ -10,6 +10,7 @@
 #include "object/MCBuildingMarines.h"
 #include "object/MCObjectDrawing.h"
 #include "object/MCForces.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -238,8 +239,12 @@ auto MCVfxBuildingAppearance::Render(int32_t) -> int32_t
             frame = CurrentFrame;
         }
 
-        ElementList().OpenGroup(static_cast<int32_t>(-ScreenPos.Y), true);
+        const auto depth = static_cast<int32_t>(-ScreenPos.Y);
+        ElementList().OpenGroup(depth, true);
         AddShape(shape->FrameList(), ScreenPos.X, ScreenPos.Y, frame, hazeTable);
+        // Port-only (sun shadows): the building (not its tile) casts its own shadow at dusk.
+        const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, frame};
+        MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
     }
 
     if (obj->Selected == 1 || obj->GetNumAttackers() > 0)

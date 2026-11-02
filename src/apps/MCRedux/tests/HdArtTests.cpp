@@ -9,9 +9,11 @@
 #include "appear/MCAppearanceType.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
+#include "camera/MCCameraList.h"
 #include "camera/MCViewWindow.h"
 #include "color/MCPalette.h"
 #include "engine/MCCraterManager.h"
+#include "fakes/MCMemoryFileSource.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiPort.h"
@@ -35,16 +37,21 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCArtillery.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
 #include "object/MCBullet.h"
+#include "object/MCCommander.h"
 #include "object/MCExplosion.h"
+#include "object/MCForces.h"
 #include "object/MCGroundVehicleGameSystem.h"
 #include "object/MCLaser.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCMoverMath.h"
+#include "object/MCObjectDrawing.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCProjectileLaser.h"
 #include "platform/MCDisplay.h"
@@ -60,9 +67,12 @@
 #include "sprite/MCHdArt.h"
 #include "sprite/MCHdMovie.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCPUAppearanceType.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
+#include "sprite/MCSpriteMath.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteTree.h"
 #include "sprite/MCVfxAppearance.h"
@@ -3395,7 +3405,9 @@ namespace
 /// (its body, its baked shadow in black beside it) shows its shadow solid black with them off, and with them on as
 /// what lies under it at half its light; its body is the same either way. A part drawn as a unit's sun shadow
 /// (MCRenderer::SunShadowScope), with the shadow cast a pixel right and up for every pixel above its foot, darkens the
-/// ground where its rows land and leaves its own place as it was.
+/// ground where its body's rows land (its baked shadow casts nothing) and leaves its own place as it was. At dusk and
+/// night (HD lighting showing them) the baked shadow is hidden, the ground showing through it, and the object casts its
+/// own: at dusk farther (MCSceneLights::ShownLighting), at night not at all (no sun).
 /// </summary>
 TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked shadow, and cast a unit's own")
 {
@@ -3556,7 +3568,7 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
                     MCTest::Scope scope(std::format("{}{}, column {}, row {}: cast to column {}",
                                                     mirrored ? "mirrored" : "as is", cut ? ", cut" : "", column, row,
                                                     right));
-                    const float kept = cut ? 1.0f : 1.0f - Darkness;
+                    const float kept = cut || column >= BodyColumns ? 1.0f : 1.0f - Darkness;
                     CHECK(sameAs(at(cast, right, row), under.r * kept, under.g * kept, under.b * kept));
                     const SDL_Color own = at(castUnder, stands, row);
                     CHECK(sameAs(at(cast, stands, row), own.r, own.g, own.b));
@@ -3565,11 +3577,925 @@ TEST_CASE_ISOLATED("game: sun shadows darken the ground under an object's baked 
         }
     }
 
+    // Dusk and night: where the frame's middle row casts the body's and the baked shadow's middles (the day's way when
+    // the sun is down), the window pixel holding the place.
+    const int lightingWas = GHdLighting;
+    constexpr float MiddleRow = Top + Height / 2;
+    const auto sameColor = [&](SDL_Color actual, SDL_Color expected)
+    { return sameAs(actual, expected.r, expected.g, expected.b); };
+    const auto luma = [](SDL_Color color) { return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b; };
+
+    for (const int shown : {HdLightingDusk, HdLightingNight})
+    {
+        GHdLighting = shown;
+        const MCSceneLights::MCLighting sun = MCSceneLights::ShownLighting();
+        const bool sunUp = sun.SunShadowUp > 0.0f;
+        const float right = sunUp ? sun.SunShadowRight : lighting.SunShadowRight;
+        const float up = sunUp ? sun.SunShadowUp : lighting.SunShadowUp;
+        MCTest::Scope timeScope(shown == HdLightingDusk ? "dusk" : "night");
+        CHECK(MCSceneLights::RecastsSunShadows());
+        CHECK_EQ(sunUp, shown == HdLightingDusk);
+
+        if (sunUp)
+        {
+            CHECK(right > lighting.SunShadowRight);
+            CHECK(up > lighting.SunShadowUp);
+        }
+
+        const auto [hiddenUnder, hidden] = drawn(1, false);
+
+        for (int32_t row = Top + 1; row < Top + Height - 1; ++row)
+        {
+            for (const int32_t column : {1, 2, 5, 6})
+            {
+                MCTest::Scope placeScope(std::format("column {}, row {}", column, row));
+                const bool same = sameColor(at(hidden, column, row), at(hiddenUnder, column, row));
+                CHECK(same == (column >= BodyColumns));
+            }
+        }
+
+        const auto [castUnder, cast] = drawn(1, true);
+
+        for (const float column : {BodyColumns / 2.0f, BodyColumns + BodyColumns / 2.0f})
+        {
+            const float above = -MiddleRow;
+            const auto landX = static_cast<int32_t>(std::floor(column + right * above));
+            const auto landY = static_cast<int32_t>(std::floor(-up * above));
+            const SDL_Color under = at(castUnder, landX, landY);
+            const SDL_Color landed = at(cast, landX, landY);
+            MCTest::Scope placeScope(std::format("column {} cast to {}, {}", column, landX, landY));
+
+            if (sunUp && column < BodyColumns)
+            {
+                CHECK(luma(landed) < luma(under) * (1.0f - Darkness / 2.0f));
+            }
+            else
+            {
+                CHECK(sameColor(landed, under));
+            }
+        }
+    }
+
+    GHdLighting = lightingWas;
     GamePaused = false;
     GHdSunShadows = 0;
     lighting = kept;
     hdArt.reset();
     std::filesystem::remove_all(scratch);
+}
+
+namespace
+{
+    /// <summary>The share of each component a picture's pixels show of another's (1 where they are the same).</summary>
+    struct ShownShare
+    {
+        float Red = 1.0f;
+        float Green = 1.0f;
+        float Blue = 1.0f;
+        float Luma = 1.0f;
+    };
+
+    /// <summary>A pixel's brightness (Rec. 601), 0 to 255.</summary>
+    float LumaOf(SDL_Color color)
+    {
+        return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b;
+    }
+}
+
+/// <summary>
+/// Cloud shadows (GHdClouds), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface (right of its panels, below the paused message): with them on, part of the world darkens by their darkness
+/// (its blue less, the sky's light) and the rest shows as drawn, none of it darker or brighter; the same game time shows
+/// the same clouds. As the game's time goes on they drift with the wind at their speed: the darkening a while later is
+/// the earlier one moved that far along the wind's way on the ground.
+/// </summary>
+TEST_CASE_ISOLATED("game: cloud shadows darken part of the world, drifting with the wind as the game's time goes")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    constexpr float Darkness = 0.5f;
+    constexpr float Speed = 5.0f;
+    // A while: the clouds drift Speed * Later meters, about as many pixels.
+    constexpr float Later = 6.0f;
+    lighting.Clouds = Darkness;
+    lighting.CloudCover = 0.5f;
+    lighting.CloudSize = 150.0f;
+    lighting.CloudSpeed = Speed;
+    const float now = ScenarioTime;
+    GamePaused = true;
+
+    const auto shown = [&](int32_t clouds, float time)
+    {
+        GHdClouds = clouds;
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const std::vector<SDL_Color> clear = shown(0, now);
+    const std::vector<SDL_Color> clouded = shown(1, now);
+    const std::vector<SDL_Color> again = shown(1, now);
+    const std::vector<SDL_Color> drifted = shown(1, now + Later);
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    const float distance = Speed * Later;
+    const MCVector2D from = ProjectToScreen(MCVector3D(0.0f, 0.0f, 0.0f), *camera);
+    const MCVector2D to = ProjectToScreen(
+        MCVector3D(MCSceneLights::WindEast * distance, MCSceneLights::WindNorth * distance, 0.0f), *camera);
+    GamePaused = false;
+    GHdClouds = 0;
+    ScenarioTime = now;
+    lighting = kept;
+
+    // The world clear of the interface: the panels take the screen's left third (the minimap's blips blink), the paused
+    // message its top quarter's middle.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    const auto inWorld = [&](size_t i)
+    { return static_cast<int32_t>(i % width) >= left && static_cast<int32_t>(i / width) >= top; };
+    // A pixel's share of the clear one's components, where it isn't too dark to measure (none otherwise).
+    constexpr uint8_t MinComponent = 24;
+    const auto share = [&](const std::vector<SDL_Color>& frame, size_t i) -> std::optional<ShownShare>
+    {
+        const SDL_Color under = clear[i];
+        const SDL_Color over = frame[i];
+
+        if (!inWorld(i) || std::min({under.r, under.g, under.b}) < MinComponent)
+        {
+            return std::nullopt;
+        }
+
+        return ShownShare{static_cast<float>(over.r) / under.r, static_cast<float>(over.g) / under.g,
+                          static_cast<float>(over.b) / under.b, LumaOf(over) / LumaOf(under)};
+    };
+
+    // Every pixel between as drawn and its darkness (a component's rounding either way); the darkest have taken it
+    // all, the blue less.
+    constexpr int32_t Rounding = 2;
+    constexpr float BlueKept = 0.2f;
+    const auto atLeast = [](int32_t actual, float expected) { return actual >= std::lround(expected) - Rounding; };
+    size_t measured = 0;
+    size_t covered = 0;
+    size_t open = 0;
+    double redCovered = 0.0;
+    double blueCovered = 0.0;
+    size_t outside = 0;
+    size_t changed = 0;
+
+    for (size_t i = 0; i < clear.size(); ++i)
+    {
+        if (!inWorld(i))
+        {
+            continue;
+        }
+
+        const SDL_Color under = clear[i];
+        const SDL_Color over = clouded[i];
+        const bool between = over.r <= under.r + Rounding && over.g <= under.g + Rounding &&
+                             over.b <= under.b + Rounding && atLeast(over.r, under.r * (1.0f - Darkness)) &&
+                             atLeast(over.g, under.g * (1.0f - Darkness)) &&
+                             atLeast(over.b, under.b * (1.0f - Darkness * (1.0f - BlueKept)));
+        outside += between ? 0 : 1;
+        changed += SameColor(over, again[i]) ? 0 : 1;
+
+        if (const std::optional<ShownShare> part = share(clouded, i); part.has_value())
+        {
+            ++measured;
+
+            if (part->Luma < 1.0f - 0.9f * Darkness)
+            {
+                ++covered;
+                redCovered += part->Red;
+                blueCovered += part->Blue;
+            }
+            else if (part->Luma > 0.98f)
+            {
+                ++open;
+            }
+        }
+    }
+
+    REQUIRE(measured > static_cast<size_t>(width - left) * (height - top) / 4);
+    const double coveredShare = static_cast<double>(covered) / measured;
+    const double openShare = static_cast<double>(open) / measured;
+    std::cout << std::format("  under the clouds: {:.0f}% of the world, {:.0f}% in the open, {} pixels out of bounds\n",
+                             100.0 * coveredShare, 100.0 * openShare, outside);
+    CHECK(changed == 0);
+    CHECK(outside == 0);
+    CHECK(coveredShare > 0.1);
+    CHECK(openShare > 0.1);
+    REQUIRE(covered > 0);
+    CHECK(blueCovered / covered - redCovered / covered > 0.5 * Darkness * BlueKept);
+
+    // The drift: the shift of the later darkening that matches the earlier best, searched within twice the expected
+    // one's reach (on every Sample-th pixel), lies near it.
+    const float expectedX = to.X - from.X;
+    const float expectedY = to.Y - from.Y;
+    const int32_t reach =
+        static_cast<int32_t>(std::ceil(2.0f * std::max(std::abs(expectedX), std::abs(expectedY)))) + 8;
+    REQUIRE(2 * reach < std::min(width - left, height - top));
+    constexpr int32_t Sample = 5;
+    constexpr float Unmeasured = -1.0f;
+    std::vector<float> earlier(clear.size(), Unmeasured);
+    std::vector<float> later(clear.size(), Unmeasured);
+
+    for (size_t i = 0; i < clear.size(); ++i)
+    {
+        const auto luma = [](const ShownShare& part) { return part.Luma; };
+        earlier[i] = share(clouded, i).transform(luma).value_or(Unmeasured);
+        later[i] = share(drifted, i).transform(luma).value_or(Unmeasured);
+    }
+
+    const auto mismatch = [&](int32_t dx, int32_t dy)
+    {
+        double sum = 0.0;
+        size_t count = 0;
+
+        for (int32_t y = top + reach; y < height - reach; y += Sample)
+        {
+            for (int32_t x = left + reach; x < width - reach; x += Sample)
+            {
+                const float a = earlier[static_cast<size_t>(y) * width + x];
+                const float b = later[static_cast<size_t>(y + dy) * width + x + dx];
+
+                if (a != Unmeasured && b != Unmeasured)
+                {
+                    sum += std::abs(a - b);
+                    ++count;
+                }
+            }
+        }
+
+        return count > 0 ? sum / count : std::numeric_limits<double>::max();
+    };
+
+    double best = std::numeric_limits<double>::max();
+    int32_t bestX = 0;
+    int32_t bestY = 0;
+
+    for (int32_t dy = -reach; dy <= reach; ++dy)
+    {
+        for (int32_t dx = -reach; dx <= reach; ++dx)
+        {
+            if (const double off = mismatch(dx, dy); off < best)
+            {
+                best = off;
+                bestX = dx;
+                bestY = dy;
+            }
+        }
+    }
+
+    const double still = mismatch(0, 0);
+    std::cout << std::format("  drifted ({}, {}) pixels in {:.0f} s, expected ({:.1f}, {:.1f}); mismatch {:.3f} there, "
+                             "{:.3f} unmoved\n",
+                             bestX, bestY, Later, expectedX, expectedY, best, still);
+    CHECK(std::hypot(expectedX, expectedY) > 10.0f);
+    CHECK(std::hypot(bestX - expectedX, bestY - expectedY) < 0.2f * std::hypot(expectedX, expectedY) + 3.0f);
+    CHECK(best < 0.5 * still);
+}
+
+namespace
+{
+    /// <summary>Saves a frame <c>ReadFrame</c> read as <paramref name="name"/>.png in the <c>--shots</c> folder, if any.</summary>
+    void SaveShownFrame(const std::vector<SDL_Color>& frame, int32_t width, int32_t height, std::string_view name)
+    {
+        const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+        if (!shots.has_value())
+        {
+            return;
+        }
+
+        std::vector<uint8_t> rgba;
+        rgba.reserve(frame.size() * BytesPerPixel);
+
+        for (const SDL_Color& color : frame)
+        {
+            rgba.insert(rgba.end(), {color.r, color.g, color.b, 255});
+        }
+
+        std::filesystem::create_directories(std::filesystem::path(*shots));
+        SavePng(std::filesystem::path(*shots) / std::format("{}.png", name), width, height, rgba);
+    }
+}
+
+/// <summary>
+/// A mission's time of day (port-only): its scenario file's [Environment] TimeOfDay, named in any case; day without the
+/// block or the key, and for a name that isn't a time of day. HD lighting ON shows the mission's own, DUSK and NIGHT
+/// their own whatever the mission's, and off shows day (as drawn); dusk dims the world's light, night more and blue, its
+/// colours paler and the lights stronger.
+/// </summary>
+TEST_CASE("hd lighting: a mission's time of day is its scenario file's, shown as HD LIGHTING says")
+{
+    MCTestContextScope scope;
+    MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    const auto read = [&](std::string_view name, std::string_view environment)
+    {
+        const std::string path = GamePath(MissionPath, name, ".fit");
+        files.AddFile(path, std::format("FITini\r\n[Music]\r\nuc scenarioTuneNum = 0\r\n{}FITend\r\n", environment));
+        MCFitIniFile file;
+        REQUIRE_EQ(file.Open(path), 0);
+        return MCSceneLights::ReadTimeOfDay(file);
+    };
+
+    CHECK(read("plain", "") == MCTimeOfDay::Day);
+    CHECK(read("bare", "[Environment]\r\n") == MCTimeOfDay::Day);
+    CHECK(read("day", "[Environment]\r\nst TimeOfDay = \"Day\"\r\n") == MCTimeOfDay::Day);
+    CHECK(read("dusk", "[Environment]\r\nst TimeOfDay = \"Dusk\"\r\n") == MCTimeOfDay::Dusk);
+    CHECK(read("night", "[Environment]\r\nst TimeOfDay = \"NIGHT\"\r\n") == MCTimeOfDay::Night);
+    CHECK(read("noon", "[Environment]\r\nst TimeOfDay = \"Noon\"\r\n") == MCTimeOfDay::Day);
+
+    const int lightingWas = GHdLighting;
+    const MCTimeOfDay missionWas = MCSceneLights::MissionTime();
+    const auto shownAt = [](int lighting, MCTimeOfDay mission)
+    {
+        GHdLighting = lighting;
+        MCSceneLights::SetMissionTime(mission);
+        return MCSceneLights::TimeOfDay();
+    };
+
+    CHECK(shownAt(HdLightingOff, MCTimeOfDay::Night) == MCTimeOfDay::Day);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Day) == MCTimeOfDay::Day);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Dusk) == MCTimeOfDay::Dusk);
+    CHECK(shownAt(HdLightingOn, MCTimeOfDay::Night) == MCTimeOfDay::Night);
+    CHECK(shownAt(HdLightingDusk, MCTimeOfDay::Night) == MCTimeOfDay::Dusk);
+    CHECK(shownAt(HdLightingNight, MCTimeOfDay::Day) == MCTimeOfDay::Night);
+
+    shownAt(HdLightingOn, MCTimeOfDay::Day);
+    const MCSceneLights::MCLighting day = MCSceneLights::ShownLighting();
+    shownAt(HdLightingOn, MCTimeOfDay::Dusk);
+    const MCSceneLights::MCLighting dusk = MCSceneLights::ShownLighting();
+    shownAt(HdLightingOn, MCTimeOfDay::Night);
+    const MCSceneLights::MCLighting night = MCSceneLights::ShownLighting();
+    GHdLighting = lightingWas;
+    MCSceneLights::SetMissionTime(missionWas);
+
+    CHECK(dusk.Ambient < day.Ambient);
+    CHECK(night.Ambient < dusk.Ambient);
+    CHECK(dusk.Strength > day.Strength);
+    CHECK(night.Strength > dusk.Strength);
+    CHECK(night.AmbientTint[2] > night.AmbientTint[0]);
+    CHECK(night.AmbientGrey > 0.0f);
+    CHECK(dusk.AmbientGrey == 0.0f);
+}
+
+/// <summary>
+/// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
+/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
+/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
+/// median) and bluer, and HD LIGHTING's DUSK shows a night mission just as a dusk one. At night, and only then, the
+/// units in view shine headlights: a spotlight each, which brighten the world; shut down, they shine none.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a mission set at dusk or night shows its world darker, at night bluer, its units' headlights on")
+{
+    // A mover's status shut down (MCMover::ShutDown).
+    constexpr int32_t MechShutDown = 4;
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Night);
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    CHECK(MCSceneLights::MissionTime() == MCTimeOfDay::Day);
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    GamePaused = true;
+
+    // The spotlights among the lights the frame last showed.
+    size_t spots = 0;
+    const auto shown = [&](int lighting, MCTimeOfDay time)
+    {
+        GHdLighting = lighting;
+        MCSceneLights::SetMissionTime(time);
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+        REQUIRE(camera != nullptr);
+        const std::shared_ptr<MCWindow> world = camera->View()->SharedWorldFrame()->Window.lock();
+        REQUIRE(world != nullptr);
+        spots = static_cast<size_t>(std::ranges::count_if(MCSceneLights::Shown(*world), [](const MCSceneLight& light)
+                                                          { return light.SpotCos > 0.0f; }));
+        return std::move(*frame);
+    };
+
+    const std::vector<SDL_Color> drawn = shown(HdLightingOff, MCTimeOfDay::Day);
+    const std::vector<SDL_Color> unlitNight = shown(HdLightingOff, MCTimeOfDay::Night);
+    const std::vector<SDL_Color> day = shown(HdLightingOn, MCTimeOfDay::Day);
+    const size_t daySpots = spots;
+    const std::vector<SDL_Color> dusk = shown(HdLightingOn, MCTimeOfDay::Dusk);
+    const size_t duskSpots = spots;
+    const std::vector<SDL_Color> night = shown(HdLightingOn, MCTimeOfDay::Night);
+    const size_t nightSpots = spots;
+
+    // Every mech shut down (MCMover::ShutDown's status), then as it was.
+    std::vector<std::pair<std::shared_ptr<MCBaseObject>, int32_t>> statuses;
+
+    for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
+    {
+        for (const std::shared_ptr<MCBaseObject>& object : *list)
+        {
+            auto& mech = static_cast<MCBattleMech&>(*object);
+            statuses.emplace_back(object, mech.Status);
+            mech.Status = MechShutDown;
+        }
+    }
+
+    shown(HdLightingOn, MCTimeOfDay::Night);
+    const size_t shutDownSpots = spots;
+
+    for (const auto& [object, status] : statuses)
+    {
+        static_cast<MCBattleMech&>(*object).Status = status;
+    }
+
+    const std::vector<SDL_Color> duskChosen = shown(HdLightingDusk, MCTimeOfDay::Night);
+    GamePaused = false;
+    GHdLighting = HdLightingOff;
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
+    SaveShownFrame(day, width, height, "time-of-day-day");
+    SaveShownFrame(dusk, width, height, "time-of-day-dusk");
+    SaveShownFrame(night, width, height, "time-of-day-night");
+
+    // The world clear of the interface (as the cloud shadows' test): right of the panels, below the paused message.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    struct Measure
+    {
+        double Luma = 0.0;
+        double MedianLuma = 0.0;
+        double Red = 0.0;
+        double Blue = 0.0;
+    };
+
+    const auto measure = [&](const std::vector<SDL_Color>& frame)
+    {
+        Measure sum;
+        std::vector<float> lumas;
+
+        for (int32_t y = top; y < height; ++y)
+        {
+            for (int32_t x = left; x < width; ++x)
+            {
+                const SDL_Color color = frame[static_cast<size_t>(y) * width + x];
+                lumas.push_back(LumaOf(color));
+                sum.Luma += lumas.back();
+                sum.Red += color.r;
+                sum.Blue += color.b;
+            }
+        }
+
+        REQUIRE(!lumas.empty());
+        const auto middle = lumas.begin() + static_cast<std::ptrdiff_t>(lumas.size() / 2);
+        std::ranges::nth_element(lumas, middle);
+        const double count = static_cast<double>(lumas.size());
+        return Measure{sum.Luma / count, *middle, sum.Red / count, sum.Blue / count};
+    };
+
+    // Different pixels in that world (none where two frames show it the same).
+    const auto different = [&](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    {
+        size_t count = 0;
+
+        for (int32_t y = top; y < height; ++y)
+        {
+            for (int32_t x = left; x < width; ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+                count += SameColor(a[i], b[i]) ? 0 : 1;
+            }
+        }
+
+        return count;
+    };
+
+    const Measure byDay = measure(day);
+    const Measure atDusk = measure(dusk);
+    const Measure atNight = measure(night);
+    std::cout << std::format("  the world's brightness: {:.1f} by day, {:.1f} at dusk, {:.1f} at night (median {:.1f}, "
+                             "{:.1f}, {:.1f}); blue per red {:.2f} by day, {:.2f} at night; {} headlights at night\n",
+                             byDay.Luma, atDusk.Luma, atNight.Luma, byDay.MedianLuma, atDusk.MedianLuma,
+                             atNight.MedianLuma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red, nightSpots);
+    CHECK_EQ(different(unlitNight, drawn), size_t{0});
+    CHECK_EQ(different(duskChosen, dusk), size_t{0});
+    CHECK(atDusk.Luma < 0.8 * byDay.Luma);
+    CHECK(atNight.MedianLuma < 0.75 * atDusk.MedianLuma);
+    CHECK(atNight.Blue / atNight.Red > 1.2 * (byDay.Blue / byDay.Red));
+    CHECK_EQ(daySpots, size_t{0});
+    CHECK_EQ(duskSpots, size_t{0});
+    CHECK(nightSpots >= 3);
+    CHECK_EQ(shutDownSpots, size_t{0});
+}
+
+/// <summary>
+/// HD particles (GHdParticles), on the screen drawn by the GPU over mission 1, paused, where the world shows clear of the
+/// interface: with them off a burst makes nothing. On, a shot's hit on a unit and a big explosion on the ground in the
+/// view's middle show there as they're made and nowhere else; as the game's time goes on they fly out from it, and by the
+/// time they've all gone the world shows as drawn again. The same bursts at the same times show the same, the particles'
+/// dice starting again (MCParticles::Clear), and none of it throws the game's dice. Flecks: breaking off fires' edges (the
+/// default), bursts with no explosion's art make none, and a real explosion's do as it burns, past the burst it makes as
+/// it's first drawn; falling, a burst throws them.
+/// </summary>
+TEST_CASE_ISOLATED("game: particles burst where shots land, fly out as the game's time goes, and never touch the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    const float now = ScenarioTime;
+    GamePaused = true;
+    // A frame's time step the particles take (MCParticles' most), and a while they've all gone by.
+    constexpr float Step = 0.1f;
+    constexpr float AllGone = 9.0f;
+    // A hit on a unit (its height above the ground) and a big explosion on the ground (a unit's end), at the view's
+    // middle, as big as the battles' (their fires' and their extents' sides).
+    constexpr float HitHeight = 30.0f;
+    constexpr MCParticles::MCBurstSize HitSize{10.0f, 18.0f};
+    constexpr MCParticles::MCBurstSize BigSize{77.0f, 100.0f};
+    MCVector3D ground = camera->Position;
+    ground.Z = MCTerrain::GetTerrainElevation(ground);
+    MCVector3D hit = ground;
+    hit.Z += HitHeight;
+    const MCVector2D middle = ProjectToScreen(ground, *camera);
+
+    const auto shown = [&](float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    // The times the frames are drawn at: the bursts', then a step at a time until they've all gone.
+    std::vector<float> times{now};
+
+    while (times.back() < now + AllGone)
+    {
+        times.push_back(times.back() + Step);
+    }
+
+    constexpr float OutAfter = 0.5f;
+    const auto outFrame = static_cast<size_t>(std::lround(OutAfter / Step));
+
+    // The bursts and the frames after them: as they're made, a while on, and once they've all gone.
+    struct Run
+    {
+        std::vector<SDL_Color> Made;
+        std::vector<SDL_Color> Out;
+        std::vector<SDL_Color> Gone;
+        size_t Count = 0;
+        size_t Flecks = 0;
+        size_t Left = 0;
+    };
+
+    const auto run = [&](int32_t particles)
+    {
+        GHdParticles = particles;
+        MCParticles::Clear();
+        MCParticles::AddBurst(hit, HitSize, false);
+        MCParticles::AddBurst(ground, BigSize, false);
+        Run made;
+
+        for (size_t i = 0; i < times.size(); ++i)
+        {
+            std::vector<SDL_Color> frame = shown(times[i]);
+
+            if (i == 0)
+            {
+                made.Made = std::move(frame);
+                made.Count = MCParticles::Count();
+                made.Flecks = MCParticles::FleckCount();
+            }
+            else if (i == outFrame)
+            {
+                made.Out = std::move(frame);
+            }
+            else if (i + 1 == times.size())
+            {
+                made.Gone = std::move(frame);
+            }
+        }
+
+        made.Left = MCParticles::Count();
+        return made;
+    };
+
+    // Off, then on twice; the game paused, nothing else throws its dice.
+    const Run clear = run(0);
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    const Run first = run(1);
+    const Run second = run(1);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+
+    // Falling flecks: a burst throws them.
+    GHdFlecks = static_cast<int>(MCParticles::MCFleckStyle::Falling);
+    MCParticles::Clear();
+    MCParticles::AddBurst(hit, HitSize, false);
+    shown(now);
+    const size_t falling = MCParticles::FleckCount();
+    GHdFlecks = static_cast<int>(MCParticles::MCFleckStyle::Edge);
+
+    // A real explosion: it bursts once it has been updated and drawn, and flecks break off its fire's edge as it burns.
+    constexpr int32_t Burning = 20;
+    MCParticles::Clear();
+    constexpr int32_t ExplosionType = 0x290;
+    MCVector3D at = ground;
+    ::CreateExplosion(ExplosionType, at, 0.0f, 0.0f);
+    GamePaused = false;
+    MCTestGame::RunFrame(FrameSeconds);
+    MCTestGame::RunFrame(FrameSeconds);
+    const size_t exploded = MCParticles::Count();
+    size_t broken = 0;
+
+    for (int32_t frame = 0; frame < Burning; ++frame)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        broken = std::max(broken, MCParticles::FleckCount());
+    }
+
+    GHdParticles = 0;
+    ScenarioTime = now;
+    SaveShownFrame(clear.Made, width, height, "particles_clear");
+    SaveShownFrame(first.Made, width, height, "particles_made");
+    SaveShownFrame(first.Out, width, height, "particles_out");
+
+    // The world clear of the interface (as the cloud shadows' test): the panels take the screen's left third, the
+    // paused message its top quarter's middle.
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    REQUIRE(middle.X > static_cast<float>(left));
+    REQUIRE(middle.Y > static_cast<float>(top));
+    // As they're made, they're all near where they burst (flecks a third of the fire's side from it, smoke and embers
+    // about as wide as a tenth of the explosion, over the ground and the hit above it); a while on they've flown
+    // further out.
+    constexpr float MadeReach = 60.0f;
+    constexpr float FlownOut = 10.0f;
+    size_t changed = 0;
+    float madeReach = 0.0f;
+    float outReach = 0.0f;
+    size_t leftOver = 0;
+    size_t unlike = 0;
+
+    for (int32_t y = top; y < height; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            const float off = std::hypot(static_cast<float>(x) - middle.X, static_cast<float>(y) - middle.Y);
+
+            if (!SameColor(first.Made[i], clear.Made[i]))
+            {
+                ++changed;
+                madeReach = std::max(madeReach, off);
+            }
+
+            if (!SameColor(first.Out[i], clear.Out[i]))
+            {
+                outReach = std::max(outReach, off);
+            }
+
+            leftOver += SameColor(first.Gone[i], clear.Gone[i]) ? 0 : 1;
+            unlike += SameColor(first.Made[i], second.Made[i]) && SameColor(first.Out[i], second.Out[i]) ? 0 : 1;
+        }
+    }
+
+    std::cout << std::format("  {} particles made: {} pixels changed, out to {:.0f}; {:.1f} s on out to {:.0f}; {} "
+                             "left once gone; {} unlike the second time; a real explosion made {}, {} flecks broke off "
+                             "it at most at once; a falling burst threw {}\n",
+                             first.Count, changed, madeReach, OutAfter, outReach, leftOver, unlike, exploded, broken,
+                             falling);
+    CHECK(clear.Count == 0);
+    CHECK(first.Count > 0);
+    CHECK(first.Left == 0);
+    CHECK(changed > 0);
+    CHECK(madeReach < MadeReach + HitHeight);
+    CHECK(outReach > madeReach + FlownOut);
+    CHECK(leftOver == 0);
+    CHECK(second.Count == first.Count);
+    CHECK(unlike == 0);
+    CHECK(exploded > 0);
+    CHECK(first.Flecks == 0);
+    CHECK(broken > 0);
+    CHECK(falling > 0);
+}
+
+/// <summary>
+/// The shake (GHdShake), on the screen drawn by the GPU over mission 1, paused, with no particles: a burst that shakes (a
+/// large artillery strike's, a building's end) in the view's middle moves the world shown, all of it the same whole
+/// pixels, the way the shake says; a big one that doesn't (a unit's end) leaves it be, and once the shake has died away
+/// the world shows where it was. Then, the game going on, a large artillery strike called there shakes it as its
+/// explosions go off, and a small one doesn't.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "game: a large artillery strike or a building's end shakes the world shown, a unit's end doesn't, and "
+    "the shake dies away")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    REQUIRE(camera->View() != nullptr);
+    const std::shared_ptr<MCWindow> world = camera->View()->SharedWorldFrame()->Window.lock();
+    REQUIRE(world != nullptr);
+    const float now = ScenarioTime;
+    GamePaused = true;
+    GHdShake = 1;
+    MCVector3D ground = camera->Position;
+    ground.Z = MCTerrain::GetTerrainElevation(ground);
+
+    const auto shown = [&](float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    // A frame with the shake off, then on, at the same time (the shake it began goes on).
+    const auto unshaken = [&](float time)
+    {
+        GHdShake = 0;
+        std::vector<SDL_Color> frame = shown(time);
+        GHdShake = 1;
+        return frame;
+    };
+
+    // A unit's end and a strike's explosion, as big as the battles' (their fires' and their extents' sides).
+    constexpr MCParticles::MCBurstSize UnitEnd{77.0f, 100.0f};
+    constexpr MCParticles::MCBurstSize Strike{90.0f, 100.0f};
+    const std::vector<SDL_Color> still = unshaken(now);
+    MCParticles::AddBurst(ground, UnitEnd, false);
+    const std::vector<SDL_Color> hit = shown(now);
+    const MCParticles::MCShake hitShake = MCParticles::ShownShake(*world);
+    MCParticles::AddBurst(ground, Strike, true);
+    shown(now);
+    // A moment on, where the shake moves the world a pixel or more; and a while on, once it has died away.
+    constexpr float Moment = 0.02f;
+    constexpr float Later = 2.0f;
+    const std::vector<SDL_Color> stillMoment = unshaken(now + Moment);
+    const std::vector<SDL_Color> shaken = shown(now + Moment);
+    const MCParticles::MCShake shake = MCParticles::ShownShake(*world);
+    const std::vector<SDL_Color> stillLater = unshaken(now + Later);
+    const std::vector<SDL_Color> settled = shown(now + Later);
+    const MCParticles::MCShake settledShake = MCParticles::ShownShake(*world);
+    ScenarioTime = now;
+    GamePaused = false;
+
+    // A strike called on the view's middle, landing as soon as one can (sooner is taken for the type's own time), and
+    // how far the world shook by the time its explosions have gone off.
+    constexpr int32_t SmallStrikeType = 0;
+    constexpr int32_t LargeStrikeType = 1;
+    constexpr int32_t LandsSoon = 3;
+    constexpr float StrikeLasts = 9.0f;
+    const auto strike = [&](int32_t strikeType)
+    {
+        MCParticles::Clear();
+        const std::shared_ptr<MCCommander> commander = HomeCommander();
+        commander->SetNumSmallStrikes(commander->NumSmallStrikes + 1);
+        commander->SetNumLargeStrikes(commander->NumLargeStrikes + 1);
+        CallArtillery(commander->Id, strikeType, ground, LandsSoon, 0);
+        float most = 0.0f;
+
+        for (float time = 0.0f; time < StrikeLasts; time += FrameSeconds)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCParticles::MCShake shook = MCParticles::ShownShake(*world);
+            most = std::max(most, std::hypot(shook.X, shook.Y));
+        }
+
+        return most;
+    };
+
+    const float largeShook = strike(LargeStrikeType);
+    const float smallShook = strike(SmallStrikeType);
+    GHdShake = 0;
+
+    // The world clear of the interface, and of the edges a shake shows smeared.
+    constexpr int32_t Most = 8;
+    const int32_t left = width / 3 + Most;
+    const int32_t top = height / 4 + Most;
+    const auto mismatch =
+        [&](const std::vector<SDL_Color>& frame, const std::vector<SDL_Color>& under, int32_t dx, int32_t dy)
+    {
+        size_t different = 0;
+
+        for (int32_t y = top; y < height - Most; ++y)
+        {
+            for (int32_t x = left; x < width - Most; ++x)
+            {
+                different += SameColor(frame[static_cast<size_t>(y) * width + x],
+                                       under[static_cast<size_t>(y - dy) * width + x - dx])
+                                 ? 0
+                                 : 1;
+            }
+        }
+
+        return different;
+    };
+
+    size_t best = std::numeric_limits<size_t>::max();
+    int32_t bestX = 0;
+    int32_t bestY = 0;
+
+    for (int32_t dy = -Most; dy <= Most; ++dy)
+    {
+        for (int32_t dx = -Most; dx <= Most; ++dx)
+        {
+            if (const size_t off = mismatch(shaken, stillMoment, dx, dy); off < best)
+            {
+                best = off;
+                bestX = dx;
+                bestY = dy;
+            }
+        }
+    }
+
+    // The window pixels' size on the screen.
+    const float scaleX = static_cast<float>(width) / static_cast<float>(world->XMax + 1);
+    const float scaleY = static_cast<float>(height) / static_cast<float>(world->YMax + 1);
+    std::cout << std::format("  shaken ({:.2f}, {:.2f}) window pixels: the world moved ({}, {}) screen pixels, {} "
+                             "pixels off; a large strike shook it {:.2f}, a small one {:.2f}\n",
+                             shake.X, shake.Y, bestX, bestY, best, largeShook, smallShook);
+    CHECK(hitShake.X == 0.0f);
+    CHECK(hitShake.Y == 0.0f);
+    CHECK(mismatch(hit, still, 0, 0) == 0);
+    CHECK(std::hypot(shake.X, shake.Y) >= 1.0f);
+    CHECK(best == 0);
+    CHECK(std::abs(static_cast<float>(bestX) - shake.X * scaleX) <= scaleX);
+    CHECK(std::abs(static_cast<float>(bestY) - shake.Y * scaleY) <= scaleY);
+    CHECK(settledShake.X == 0.0f);
+    CHECK(settledShake.Y == 0.0f);
+    CHECK(mismatch(settled, stillLater, 0, 0) == 0);
+    CHECK(largeShook >= 1.0f);
+    CHECK(smallShook == 0.0f);
 }
 
 /// <summary>
@@ -4219,11 +5145,191 @@ namespace
     }
 
     /// <summary>
+    /// With <c>--hd-clouds &lt;darkness&gt;[,&lt;cover&gt;[,&lt;size&gt;[,&lt;speed&gt;]]]</c>, turns cloud shadows on
+    /// (GHdClouds): they take that much of the world's own light, over that share of the ground, that big (meters) and
+    /// drifting that fast (meters a second); each left out keeps MCSceneLights::MCLighting's.
+    /// </summary>
+    void CloudsFromOptions()
+    {
+        const std::optional<std::string_view> clouds = MCTest::Option("hd-clouds");
+
+        if (!clouds.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*clouds);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f,%f,%f", &settings.Clouds, &settings.CloudCover, &settings.CloudSize,
+                            &settings.CloudSpeed) >= 1);
+        GHdClouds = 1;
+        std::cout << std::format(
+            "  cloud shadows: {:.2f} of the light taken, {:.2f} of the ground, {:.0f} m, {:.1f} m/s\n", settings.Clouds,
+            settings.CloudCover, settings.CloudSize, settings.CloudSpeed);
+    }
+
+    /// <summary>
+    /// With <c>--hd-footprints-on 1</c>, turns HDFootprints on (GHdFootprints): footprints under the feet as drawn. The
+    /// ring of footprints and craters keeps the mission's length (three times it needs PREFS, read as the mission starts,
+    /// before its ring is made).
+    /// </summary>
+    void FootprintsFromOptions()
+    {
+        if (MCTest::Option("hd-footprints-on").has_value())
+        {
+            GHdFootprints = 1;
+            std::cout << "  footprints: under the feet\n";
+        }
+    }
+
+    /// <summary>
+    /// With <c>--hd-turns 1</c>, turns HDTurns on (GHdTurns): mechs drawn turning eased, their legs between facings where
+    /// the pack has the middles.
+    /// </summary>
+    void TurnsFromOptions()
+    {
+        if (MCTest::Option("hd-turns").has_value())
+        {
+            GHdTurns = 1;
+            std::cout << "  turns: eased, legs between facings\n";
+        }
+    }
+
+    /// <summary>
+    /// With <c>--hd-stops 1</c>, turns HDStops on (GHdStops): a mech stopped mid-stride with its move held up holds its
+    /// stride and walks on from it; with <c>--mech-braking 1</c>, MechBraking (GMechBraking): mechs brake to a halt
+    /// through their stopping art where their moves end.
+    /// </summary>
+    void StopsFromOptions()
+    {
+        if (MCTest::Option("hd-stops").has_value())
+        {
+            GHdStops = 1;
+            std::cout << "  stops: strides held while held up\n";
+        }
+
+        if (MCTest::Option("mech-braking").has_value())
+        {
+            GMechBraking = 1;
+            std::cout << "  mech braking: halts through the stopping art\n";
+        }
+    }
+
+    /// <summary>
+    /// With <c>--hd-particles &lt;amount&gt;</c>, turns the particles on (GHdParticles), that many as made
+    /// (MCParticles::MCParticleLook::Amount); with <c>--hd-shake &lt;strength&gt;</c>, the shake (GHdShake), that strong;
+    /// <c>--hd-flecks edge|falling</c> picks how explosions' flecks fly (GHdFlecks).
+    /// </summary>
+    void ParticlesFromOptions()
+    {
+        MCParticles::MCParticleLook& look = MCParticles::Look();
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        if (const std::optional<std::string_view> amount = MCTest::Option("hd-particles"); amount.has_value())
+        {
+            look.Amount = std::strtof(std::string(*amount).c_str(), nullptr);
+            GHdParticles = 1;
+            std::cout << std::format("  particles: {:.2f} as many as made\n", look.Amount);
+        }
+
+        if (const std::optional<std::string_view> shake = MCTest::Option("hd-shake"); shake.has_value())
+        {
+            look.Shake = std::strtof(std::string(*shake).c_str(), nullptr);
+            GHdShake = 1;
+            std::cout << std::format("  shake: {:.2f} as strong as made\n", look.Shake);
+        }
+
+        if (const std::optional<std::string_view> flecks = MCTest::Option("hd-flecks"); flecks.has_value())
+        {
+            const bool falling = *flecks == "falling";
+            GHdFlecks =
+                static_cast<int>(falling ? MCParticles::MCFleckStyle::Falling : MCParticles::MCFleckStyle::Edge);
+            std::cout << std::format("  flecks: {}\n", falling ? "falling" : "breaking off the fire's edge");
+        }
+    }
+
+    /// <summary>
+    /// With <c>--hd-air-beams &lt;strength&gt;</c>, the spotlights' beams show in the air that much
+    /// (MCLighting::AirBeams).
+    /// </summary>
+    void AirBeamsFromOptions()
+    {
+        const std::optional<std::string_view> strength = MCTest::Option("hd-air-beams");
+
+        if (!strength.has_value())
+        {
+            return;
+        }
+
+        // strtof: libc++ has floating-point from_chars only from macOS 26.
+        MCSceneLights::Lighting().AirBeams = std::strtof(std::string(*strength).c_str(), nullptr);
+        std::cout << std::format("  beams in the air: {:.2f}\n", MCSceneLights::Lighting().AirBeams);
+    }
+
+    /// <summary>
+    /// With <c>--hd-sun-relief &lt;strength&gt;</c>, turns relief on (GHdRelief), the sun showing the world's relief
+    /// that much (MCLighting::SunRelief, 0 to 1); the relief maps keep their steepness unless --hd-relief-maps says.
+    /// </summary>
+    void SunReliefFromOptions()
+    {
+        const std::optional<std::string_view> strength = MCTest::Option("hd-sun-relief");
+
+        if (!strength.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::Lighting().SunRelief = std::strtof(std::string(*strength).c_str(), nullptr);
+        GHdRelief = 1;
+        std::cout << std::format("  sun relief: {:.2f}\n", MCSceneLights::Lighting().SunRelief);
+    }
+
+    /// <summary>
+    /// With <c>--hd-relief-maps &lt;steepness&gt;</c>, turns relief on (GHdRelief), the HD ground taking the pack's
+    /// relief maps that steep (MCLighting::ReliefMaps; 3 about matches the brightness relief, 0 leaves them out); the
+    /// sun's relief keeps its strength unless --hd-sun-relief says.
+    /// </summary>
+    void ReliefMapsFromOptions()
+    {
+        const std::optional<std::string_view> steepness = MCTest::Option("hd-relief-maps");
+
+        if (!steepness.has_value())
+        {
+            return;
+        }
+
+        MCSceneLights::Lighting().ReliefMaps = std::strtof(std::string(*steepness).c_str(), nullptr);
+        GHdRelief = 1;
+        std::cout << std::format("  relief maps: {:.2f}\n", MCSceneLights::Lighting().ReliefMaps);
+    }
+
+    /// <summary>
+    /// With <c>--hd-time-of-day day|dusk|night</c>, sets the mission at that time of day, as its scenario file's
+    /// [Environment] TimeOfDay would (MCSceneLights::SetMissionTime): shown so with HD lighting on.
+    /// </summary>
+    void TimeOfDayFromOptions()
+    {
+        const std::optional<std::string_view> name = MCTest::Option("hd-time-of-day");
+
+        if (!name.has_value())
+        {
+            return;
+        }
+
+        const std::optional<MCTimeOfDay> time = MCSceneLights::TimeOfDayNamed(*name);
+        REQUIRE(time.has_value());
+        MCSceneLights::SetMissionTime(*time);
+        std::cout << std::format("  time of day: {}\n", *name);
+    }
+
+    /// <summary>
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
     /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
-    /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>).
+    /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
+    /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>), the other HD options as
+    /// their flags ask (<see cref="FootprintsFromOptions"/>, <see cref="TurnsFromOptions"/>...).
     /// </summary>
     /// <returns>Whether the pictures are the original's (<c>--hd-original</c>).</returns>
     bool StartPictures(std::string_view pack, std::optional<MCHdArtOn>& hdArt)
@@ -4263,15 +5369,24 @@ namespace
         }
 
         LightingFromOptions();
+        TimeOfDayFromOptions();
+        AirBeamsFromOptions();
+        SunReliefFromOptions();
+        ReliefMapsFromOptions();
         SunShadowsFromOptions();
+        CloudsFromOptions();
+        ParticlesFromOptions();
+        FootprintsFromOptions();
+        TurnsFromOptions();
+        StopsFromOptions();
         return original;
     }
 
     /// <summary>
     /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
     /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
-    /// command names them (main/MCArtModes.h: original, hd, lit, dusk). Without <c>--hd-original 1</c>, so the pack is
-    /// there for the modes that draw HD art.
+    /// command names them (main/MCArtModes.h: original, hd, lit, dusk, night). Without <c>--hd-original 1</c>, so the
+    /// pack is there for the modes that draw HD art.
     /// </summary>
     std::map<int32_t, MCArtMode> ArtModesFromOptions()
     {
@@ -4399,6 +5514,383 @@ TEST_CASE_ISOLATED("tool: --hd-pack pictures a pack's mech beside the original")
         MCTestGame::RunFrame(FrameSeconds);
         shoot(std::format("paint_{}", scheme));
     }
+}
+
+namespace
+{
+    /// <summary>A footprint as it was made, and what the mech that made it was doing.</summary>
+    struct MadePrint
+    {
+        int32_t Leg = 0;
+        MCVector3D Print;
+        MCVector3D Mech;
+        float Facing = 0.0f;
+        int32_t Gesture = 0;
+        int32_t LegsFrame = 0;
+        bool Mirrored = false;
+    };
+
+    /// <summary>The player's mech as the mission gave it, with its own tree (its hot spots are its type's).</summary>
+    PlayerMech OwnPlayerMech()
+    {
+        PlayerMech player;
+        player.Mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(PlayerMechPartId));
+        REQUIRE(player.Mech != nullptr);
+        player.Actor = std::static_pointer_cast<MCMechActor>(player.Mech->Appearance);
+        REQUIRE(player.Actor != nullptr);
+        player.Tree = player.Actor->MechTree;
+        Eye()->ChangeTarget(player.Mech, true);
+        return player;
+    }
+
+    /// <summary>
+    /// Walks <paramref name="player"/>'s mech a leg in each of <paramref name="legs"/> ways (evenly round, from 10
+    /// degrees), the camera on it, and hands each of a leg's first <paramref name="perLeg"/> prints made once it walks
+    /// to <paramref name="made"/>, as it is made. <paramref name="step"/> runs a frame (made may run more).
+    /// </summary>
+    void WalkPrinting(const PlayerMech& player, int32_t legs, int32_t perLeg, const std::function<void()>& step,
+                      const std::function<void(const MadePrint&)>& made)
+    {
+        const std::shared_ptr<MCMechWarrior> pilot = player.Mech->GetPilot();
+        REQUIRE(pilot != nullptr);
+        MCCraterManager& craters = CraterManager();
+        const auto slots = static_cast<int32_t>(craters.Craters().size());
+        constexpr float FirstWay = 10.0f;
+        constexpr float LegDistance = 250.0f;
+        constexpr int32_t LegFrames = 150;
+        // Prints while the mech still turns onto its way are left out.
+        constexpr int32_t SettleFrames = 30;
+
+        for (int32_t leg = 0; leg < legs; ++leg)
+        {
+            const double way = (FirstWay + 360.0f * static_cast<float>(leg) / static_cast<float>(legs)) *
+                               MCMoverMath::DegreesToRadians;
+            const MCVector3D from = player.Mech->GetPosition();
+            pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                    MCVector3D(from.X + static_cast<float>(std::cos(way)) * LegDistance,
+                                               from.Y + static_cast<float>(std::sin(way)) * LegDistance, from.Z),
+                                    -1, 0);
+            int32_t slot = craters.NextSlot();
+            int32_t printed = 0;
+
+            for (int32_t frame = 0; frame < LegFrames && printed < perLeg; ++frame)
+            {
+                step();
+
+                if (craters.NextSlot() == slot)
+                {
+                    continue;
+                }
+
+                slot = craters.NextSlot();
+
+                if (frame < SettleFrames)
+                {
+                    continue;
+                }
+
+                const MCFrameOfRef facing = player.Mech->GetFrame();
+                made(MadePrint{leg, craters.Craters()[static_cast<size_t>((slot + slots - 1) % slots)].Position,
+                               player.Mech->GetPosition(),
+                               static_cast<float>(std::atan2(facing.I.Y, facing.I.X) / MCMoverMath::DegreesToRadians),
+                               player.Actor->CurrentGesture, player.Actor->CurrentFrame[0],
+                               player.Actor->Reverse[0] != 0});
+                slot = craters.NextSlot();
+                ++printed;
+            }
+        }
+    }
+
+    /// <summary>A mech type's hot spot packet for <paramref name="gesture"/> (32 bytes: the feet's frames and offsets).</summary>
+    std::span<const uint8_t> FootPacket(const MCBattleMechType& type, int32_t gesture)
+    {
+        constexpr size_t PacketBytes = 32;
+        const uint32_t packet = MCMechActor::GetHotSpotIndex(static_cast<uint32_t>(gesture));
+        REQUIRE(packet < type.NumHotSpotPackets);
+        return std::span<const uint8_t>(type.HotSpotData).subspan(packet * PacketBytes, PacketBytes);
+    }
+
+    /// <summary>The 4-byte value in slot <paramref name="slot"/> of a foot hot spot packet.</summary>
+    template <typename T> T FootValue(std::span<const uint8_t> packet, size_t slot)
+    {
+        T value{};
+        std::memcpy(&value, packet.data() + slot * sizeof(T), sizeof(T));
+        return value;
+    }
+}
+
+/// <summary>
+/// Tool: <c>--hd-footprints &lt;pack&gt; --shots &lt;folder&gt;</c> pictures where a walking mech's footprints land:
+/// mission 1's mech (its own tree, or <c>--mech</c>'s) walks a leg in each of 16 ways, the camera on it, zoomed in; at
+/// each of a leg's first prints once it walks, <c>print_&lt;leg&gt;_&lt;n&gt;_&lt;step&gt;.png</c> (the view's middle as
+/// the print is made, then every other frame), and a line in the log: the mech's facing, the print's offset from it,
+/// the legs' frame and the foot frames of their hot spot packet, and where the mech and the print are on screen.
+/// <c>--hd-original 1</c>, <c>--window</c> and the lighting flags as --hd-pack's; <c>--hd-footprints-on 1</c> turns
+/// HDFootprints on.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --hd-footprints pictures where a walking mech's footprints land")
+{
+    const std::optional<std::string_view> pack = MCTest::Option("hd-footprints");
+    const std::optional<std::string_view> shots = MCTest::Option("shots");
+
+    if (!pack.has_value() || !shots.has_value() || !MCTestGame::Available())
+    {
+        return;
+    }
+
+    std::optional<MCHdArtOn> hdArt;
+    const bool original = StartPictures(*pack, hdArt);
+    const std::optional<std::string_view> tree = MCTest::Option("mech");
+    const PlayerMech player = tree.has_value() ? GivePlayerMech(*tree) : OwnPlayerMech();
+    std::cout << std::format("  the mech: {}\n", player.Mech->TypeAs<MCBattleMechType>().Name);
+    const std::filesystem::path folder(*shots);
+    std::filesystem::create_directories(folder);
+    constexpr float ZoomedLines = 150.0f;
+    MCFixedZoomHeight = ZoomedLines;
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    constexpr int32_t CropWidth = 640;
+    constexpr int32_t CropHeight = 520;
+    const auto shoot = [&](const std::string& name)
+    {
+        const auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        std::vector<uint8_t> crop;
+        crop.reserve(static_cast<size_t>(CropWidth) * CropHeight * BytesPerPixel);
+
+        for (int32_t y = (height - CropHeight) / 2; y < (height + CropHeight) / 2; ++y)
+        {
+            for (int32_t x = (width - CropWidth) / 2; x < (width + CropWidth) / 2; ++x)
+            {
+                const SDL_Color c = (*frame)[static_cast<size_t>(y) * width + x];
+                crop.insert(crop.end(), {c.r, c.g, c.b, 255});
+            }
+        }
+
+        SavePng(folder / std::format("{}_{}.png", name, original ? "original" : "hd"), CropWidth, CropHeight, crop);
+    };
+
+    const auto step = [&]()
+    {
+        Eye()->SetPosition(player.Mech->GetPosition());
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    const auto& type = player.Mech->TypeAs<MCBattleMechType>();
+    constexpr int32_t Legs = 16;
+    constexpr int32_t PrintsShot = 2;
+    constexpr int32_t ShotSteps = 4;
+    constexpr int32_t FramesBetweenShots = 2;
+    std::map<int32_t, int32_t> printsOfLeg;
+
+    WalkPrinting(player, Legs, PrintsShot, step,
+                 [&](const MadePrint& made)
+                 {
+                     const std::span<const uint8_t> packet = FootPacket(type, made.Gesture);
+                     const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+                     REQUIRE(camera != nullptr);
+                     const MCVector2D mechOnScreen = ProjectToScreen(made.Mech, *camera);
+                     const MCVector2D printOnScreen = ProjectToScreen(made.Print, *camera);
+                     const int32_t number = printsOfLeg[made.Leg]++;
+                     std::cout << std::format(
+                         "  leg {:2} print {}: facing {:+7.1f}, print {:+6.1f} {:+6.1f} m from the mech, legs' frame "
+                         "{} (gesture {}, mirrored {}), feet at frames {} and {}; on screen mech {:.1f} {:.1f}, print "
+                         "{:.1f} {:.1f}, view {:.1f} x {:.1f}, window {} x {}\n",
+                         made.Leg, number, made.Facing, made.Print.X - made.Mech.X, made.Print.Y - made.Mech.Y,
+                         made.LegsFrame, made.Gesture, made.Mirrored ? 1 : 0, FootValue<int32_t>(packet, 0),
+                         FootValue<int32_t>(packet, 4), mechOnScreen.X, mechOnScreen.Y, printOnScreen.X,
+                         printOnScreen.Y, camera->HalfWidth * 2.0f, camera->HalfHeight * 2.0f, width, height);
+
+                     for (int32_t shot = 0; shot < ShotSteps; ++shot)
+                     {
+                         shoot(std::format("print_{:02}_{}_{}", made.Leg, number, shot));
+
+                         for (int32_t i = 0; i < FramesBetweenShots; ++i)
+                         {
+                             step();
+                         }
+                     }
+                 });
+}
+
+/// <summary>
+/// Footprints, mission 1's mech walking eight ways: as the original made them, each foot's print two frames before its
+/// frame (its hot spot packet's), its offset turned by the facing floored to 40 degrees; with HDFootprints (OB-185), at
+/// its frame, turned as the legs are drawn (MCSpriteTree::DrawnFacing, within one of their 17 facings of the mech's
+/// way). A mirrored mech's feet swap offsets: the original took the legs as mirrored by the frame's mirroring
+/// (SetGesture's), which mirrors left of straight ahead and back though they're drawn unmirrored; HDFootprints as
+/// drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDFootprints a walking mech's footprints land under its feet as its legs are drawn")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const PlayerMech player = OwnPlayerMech();
+    const auto& type = player.Mech->TypeAs<MCBattleMechType>();
+    constexpr int32_t Legs = 8;
+    constexpr int32_t PerLeg = 2;
+    constexpr int32_t EarlyFrames = 2;
+    constexpr float FootScale = 20.0f;
+    constexpr float OriginalStep = 40.0f;
+    constexpr float LegFacing = 360.0f / 17.0f;
+    constexpr float Tolerance = 0.05f;
+    // A foot packet's slots: the first foot's frame, x, y, then (from slot 4) the second's.
+    constexpr size_t FirstFoot = 0;
+    constexpr size_t SecondFoot = 4;
+
+    const auto step = [&]()
+    {
+        Eye()->SetPosition(player.Mech->GetPosition());
+        MCTestGame::RunFrame(FrameSeconds);
+    };
+
+    for (const int hd : {0, 1})
+    {
+        MCTest::Scope scope(std::format("HDFootprints {}", hd));
+        GHdFootprints = hd;
+        size_t checked = 0;
+        // Prints where the frame's mirroring isn't the drawn one, so the original swapped the feet.
+        size_t swapped = 0;
+
+        WalkPrinting(player, Legs, PerLeg, step,
+                     [&](const MadePrint& made)
+                     {
+                         MCTest::Scope printScope(std::format("leg {}, facing {:.1f}", made.Leg, made.Facing));
+                         const std::span<const uint8_t> packet = FootPacket(type, made.Gesture);
+                         const int32_t early = hd != 0 ? 0 : EarlyFrames;
+                         const bool first = made.LegsFrame == FootValue<int32_t>(packet, FirstFoot) - early;
+                         const bool second = made.LegsFrame == FootValue<int32_t>(packet, SecondFoot) - early;
+                         REQUIRE(first != second);
+                         const std::optional<MCDrawnFacing> drawn =
+                             player.Tree->DrawnFacing(made.Gesture, 0, made.Facing);
+                         REQUIRE(drawn.has_value());
+                         // The actor's mirroring once the frame is drawn is the drawn one.
+                         CHECK_EQ(drawn->Mirrored, made.Mirrored);
+                         int32_t reverse = 0;
+                         float frameRate = 0.0f;
+                         player.Tree->SetGesture(made.Gesture, 0, made.Facing, reverse, frameRate);
+                         swapped += (reverse != 0) != drawn->Mirrored ? 1 : 0;
+                         const bool mirrored = hd != 0 ? drawn->Mirrored : reverse != 0;
+                         // A foot's offset: its own, or (mirrored) the other foot's.
+                         const size_t offset = (first != mirrored ? FirstFoot : SecondFoot) + 1;
+                         const float x = FootValue<float>(packet, offset);
+                         const float y = FootValue<float>(packet, offset + 1);
+                         float degrees = std::floor(made.Facing / OriginalStep) * OriginalStep;
+
+                         if (hd != 0)
+                         {
+                             const float off = std::remainder(made.Facing - drawn->Degrees, 360.0f);
+                             CHECK(std::fabs(off) < LegFacing);
+                             degrees = drawn->Degrees;
+                         }
+
+                         const double turn = degrees * MCMoverMath::DegreesToRadians;
+                         const auto c = static_cast<float>(std::cos(turn));
+                         const auto s = static_cast<float>(std::sin(turn));
+                         CHECK(std::fabs(made.Print.X - made.Mech.X - (c * x - s * y) * FootScale) < Tolerance);
+                         CHECK(std::fabs(made.Print.Y - made.Mech.Y - (s * x + c * y) * FootScale) < Tolerance);
+                         ++checked;
+                     });
+
+        CHECK(checked >= static_cast<size_t>(Legs));
+        CHECK(swapped > 0);
+    }
+
+    GHdFootprints = 0;
+}
+
+/// <summary>
+/// With HDTurns a mech's drawn facing (MCMechActor::TurnedFacing) follows its own, eased: mission 1's mech, walking a
+/// leg then turned 120 degrees onto another, is drawn turning no faster than TurnEaseRate (or kept within TurnLagMost),
+/// lags its facing by more than a facing's width (~21 degrees) as it turns, and catches up once it walks straight; with
+/// HDTurns off it is drawn at its own facing every frame.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDTurns a mech is drawn turning eased, catching up with its facing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const PlayerMech player = OwnPlayerMech();
+    const std::shared_ptr<MCMechWarrior> pilot = player.Mech->GetPilot();
+    REQUIRE(pilot != nullptr);
+    constexpr float FirstWay = 10.0f;
+    constexpr float Turn = 120.0f;
+    constexpr float LegDistance = 250.0f;
+    constexpr int32_t LegFrames = 90;
+    constexpr float LegWidth = 360.0f / 17.0f;
+    constexpr float Caught = 0.5f;
+    constexpr float Slack = 0.01f;
+    const auto wrap = [](float degrees) { return std::remainder(degrees, 360.0f); };
+    const auto walk = [&](float way)
+    {
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        const MCVector3D from = player.Mech->GetPosition();
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                MCVector3D(from.X + static_cast<float>(std::cos(radians)) * LegDistance,
+                                           from.Y + static_cast<float>(std::sin(radians)) * LegDistance, from.Z),
+                                -1, 0);
+    };
+
+    for (const int turns : {0, 1})
+    {
+        MCTest::Scope scope(std::format("HDTurns {}", turns));
+        GHdTurns = turns;
+        walk(FirstWay);
+
+        for (int32_t frame = 0; frame < LegFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        walk(FirstWay + Turn);
+        float most = 0.0f;
+        float last = 0.0f;
+        std::optional<float> before;
+
+        for (int32_t frame = 0; frame < LegFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            REQUIRE(player.Actor->TurnedFacing.has_value());
+            const float drawn = *player.Actor->TurnedFacing;
+            const auto own = static_cast<float>(MCActorFacing(*player.Mech));
+            const float lag = std::fabs(wrap(own - drawn));
+            MCTest::Scope frameScope(std::format("frame {}: facing {:.1f}, drawn {:.1f}", frame, own, drawn));
+            CHECK(lag <= TurnLagMost + Slack);
+
+            // Each frame it turns at the ease rate, or is pulled along within the lag.
+            if (turns != 0 && before.has_value() && lag < TurnLagMost - Slack)
+            {
+                CHECK(std::fabs(wrap(drawn - *before)) <= TurnEaseRate * FrameSeconds + Slack);
+            }
+
+            if (turns == 0)
+            {
+                CHECK(lag == 0.0f);
+            }
+
+            most = std::max(most, lag);
+            last = lag;
+            before = drawn;
+        }
+
+        if (turns != 0)
+        {
+            CHECK(most > LegWidth);
+        }
+
+        CHECK(last < Caught);
+    }
+
+    GHdTurns = 0;
 }
 
 /// <summary>
@@ -4934,10 +6426,12 @@ namespace
 
     /// <summary>
     /// Writes the HD copies of the ground mesh's tiles into <paramref name="pack"/>'s terrain folder: each pixel's shown
-    /// colour inverted, at <see cref="TerrainScale"/> (nearest), opaque, with the index picture beside it.
+    /// colour as <paramref name="paint"/> makes it (inverted), at <see cref="TerrainScale"/> (nearest), opaque, with the
+    /// index picture beside it.
     /// </summary>
     size_t WriteTerrainPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh,
-                            std::span<const SDL_Color, 256> colors)
+                            std::span<const SDL_Color, 256> colors,
+                            const std::function<SDL_Color(SDL_Color)>& paint = Inverted)
     {
         const std::filesystem::path folder = pack / "terrain";
         std::filesystem::create_directories(folder);
@@ -4963,10 +6457,10 @@ namespace
                 {
                     const size_t from = static_cast<size_t>(y / TerrainScale) * decoded.Width + x / TerrainScale;
                     const size_t to = (static_cast<size_t>(y) * width + x) * BytesPerPixel;
-                    const SDL_Color shown = colors[decoded.Index[from]];
-                    color[to] = static_cast<uint8_t>(255 - shown.r);
-                    color[to + 1] = static_cast<uint8_t>(255 - shown.g);
-                    color[to + 2] = static_cast<uint8_t>(255 - shown.b);
+                    const SDL_Color painted = paint(colors[decoded.Index[from]]);
+                    color[to] = painted.r;
+                    color[to + 1] = painted.g;
+                    color[to + 2] = painted.b;
                     color[to + 3] = HasIndex;
                     index[to] = decoded.Index[from];
                     index[to + 1] = decoded.Drawn[from] != 0 ? HasIndex : 0;
@@ -5109,6 +6603,195 @@ TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
         std::cout << std::format("  first difference, frame {}: {}\n", tally.FirstFrame, tally.First);
     }
 
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// A colour pressed into the middle (MutedFloor and MutedShare of it): ground bright enough to measure, and dim
+    /// enough that none of it counts as a light's own pixels (composite.pshader's SelfLit, above 55%).
+    /// </summary>
+    constexpr int32_t MutedFloor = 60;
+    constexpr int32_t MutedShare = 3;
+    constexpr int32_t MutedOf = 10;
+
+    SDL_Color Muted(SDL_Color color)
+    {
+        const auto mute = [](uint8_t value) { return static_cast<uint8_t>(MutedFloor + value * MutedShare / MutedOf); };
+        return SDL_Color{mute(color.r), mute(color.g), mute(color.b), 255};
+    }
+
+    /// <summary>
+    /// Writes a relief map of each of the ground mesh's tiles into <paramref name="pack"/>'s relief folder: BC5 at
+    /// <see cref="TerrainScale"/>, the ground rising <paramref name="rise"/> steps (MCHdArt::ReliefFlat) a pixel right
+    /// everywhere, and flat down the picture.
+    /// </summary>
+    size_t WriteReliefPack(const std::filesystem::path& pack, const MCTerrainMesh& mesh, int32_t rise)
+    {
+        const std::filesystem::path folder = pack / "relief";
+        std::filesystem::create_directories(folder);
+        // A block of two BC4 blocks (R, then G), each with both ends its value: every pixel decodes to it.
+        constexpr size_t Bc4Bytes = MCBc7::BlockBytes / 2;
+        std::array<uint8_t, MCBc7::BlockBytes> block{};
+        block[0] = static_cast<uint8_t>(MCHdArt::ReliefFlat + rise);
+        block[1] = block[0];
+        block[Bc4Bytes] = static_cast<uint8_t>(MCHdArt::ReliefFlat);
+        block[Bc4Bytes + 1] = block[Bc4Bytes];
+        size_t written = 0;
+
+        for (const std::vector<uint8_t>& tile : mesh.Tiles)
+        {
+            const DecodedTile decoded = DecodeTile(tile);
+
+            if (decoded.Width == 0)
+            {
+                continue;
+            }
+
+            MCHdArt::Frame relief;
+            relief.Scale = TerrainScale;
+            relief.Width = decoded.Width * TerrainScale;
+            relief.Height = decoded.Height * TerrainScale;
+            relief.Format = MCHdArt::ColorFormat::Bc5;
+            const size_t blocks = static_cast<size_t>(MCBc7::Padded(relief.Width) / MCBc7::BlockSide) *
+                                  static_cast<size_t>(MCBc7::Padded(relief.Height) / MCBc7::BlockSide);
+
+            for (size_t i = 0; i < blocks; ++i)
+            {
+                relief.Colors.insert(relief.Colors.end(), block.begin(), block.end());
+            }
+
+            const std::vector<uint8_t> file = MCHdArt::EncodeHdf(relief);
+            std::ofstream(folder / (MCHdArt::TerrainTileName(tile) + ".hdf"), std::ios::binary)
+                .write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+            ++written;
+        }
+
+        return written;
+    }
+
+    /// <summary>composite.pshader's ReliefSteps (a relief map's steps for a rise of a texel) and SunFacingMost.</summary>
+    constexpr float ShaderReliefSteps = 127.0f;
+    constexpr float ShaderSunFacingMost = 0.3f;
+}
+
+/// <summary>
+/// Relief (GHdRelief) with HD lighting by day, on the screen drawn by the GPU over mission 1, paused, with a pack of the
+/// map's tiles (muted) whose relief maps rise evenly to the right: on, the HD ground facing the sun takes more of the
+/// world's own light, as much as its maps' slope, their steepness and the sun's way make it (composite.pshader's
+/// SunFacing), and with the sun on its other side as much less; off, the sun's way changes nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: relief lights the HD ground by the pack's relief maps, brighter facing the sun")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // A pack of the ground alone.
+    const std::filesystem::path pack = scene->Scratch / "ground";
+    constexpr int32_t Rise = 20;
+    REQUIRE(WriteTerrainPack(pack, *mesh, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(pack, *mesh, Rise) > 0);
+    const MCHdArtOn hdArt(pack);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const int lightingWas = GHdLighting;
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    GHdLighting = HdLightingOn;
+    GamePaused = true;
+
+    // Two frames each: the first may build the ground again with its relief maps or without them.
+    const auto shown = [&](int relief, float sunRight)
+    {
+        GHdRelief = relief;
+        lighting.SunShadowRight = sunRight;
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const float right = kept.SunShadowRight;
+    const std::vector<SDL_Color> flat = shown(0, right);
+    const std::vector<SDL_Color> flatOtherSun = shown(0, -right);
+    const std::vector<SDL_Color> facing = shown(1, right);
+    const std::vector<SDL_Color> away = shown(1, -right);
+    GHdRelief = 0;
+    GamePaused = false;
+    GHdLighting = lightingWas;
+    lighting = kept;
+
+    // The maps' slope a pixel along the ground against the sun's way (SlopeAt's and the presenter's; their scale by the
+    // brightness relief's span cancels).
+    const float toward = static_cast<float>(Rise) / ShaderReliefSteps * kept.ReliefMaps * kept.SunRelief * right;
+    const float more = ShaderSunFacingMost * std::tanh(toward / ShaderSunFacingMost);
+
+    // The world clear of the interface (the panels at the left, whose minimap blinks, the paused message at the top,
+    // the mech bar at the bottom), where it isn't too dark to measure.
+    constexpr float MinLuma = 40.0f;
+    constexpr float Tolerance = 0.03f;
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    const int32_t bottom = height - height / 8;
+    size_t measured = 0;
+    size_t brighter = 0;
+    size_t darker = 0;
+    size_t sunChanged = 0;
+    std::vector<float> facingShares;
+    std::vector<float> awayShares;
+
+    for (int32_t y = top; y < bottom; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            const float under = LumaOf(flat[i]);
+            sunChanged += SameColor(flatOtherSun[i], flat[i]) ? 0 : 1;
+
+            if (under < MinLuma)
+            {
+                continue;
+            }
+
+            ++measured;
+            facingShares.push_back(LumaOf(facing[i]) / under);
+            awayShares.push_back(LumaOf(away[i]) / under);
+            brighter += std::fabs(facingShares.back() - (1.0f + more)) <= Tolerance ? 1 : 0;
+            darker += std::fabs(awayShares.back() - (1.0f - more)) <= Tolerance ? 1 : 0;
+        }
+    }
+
+    REQUIRE(measured > static_cast<size_t>(width - left) * (bottom - top) / 2);
+    const auto median = [](std::vector<float>& shares)
+    {
+        std::ranges::nth_element(shares, shares.begin() + static_cast<ptrdiff_t>(shares.size() / 2));
+        return shares[shares.size() / 2];
+    };
+
+    const float facingMedian = median(facingShares);
+    const float awayMedian = median(awayShares);
+    std::cout << std::format("  expected x{:.3f} facing the sun, x{:.3f} away; median x{:.3f} and x{:.3f}; "
+                             "{:.0f}% and {:.0f}% of {} pixels within {:.2f}\n",
+                             1.0f + more, 1.0f - more, facingMedian, awayMedian, 100.0 * brighter / measured,
+                             100.0 * darker / measured, measured, Tolerance);
+    CHECK_EQ(sunChanged, 0u);
+    CHECK(std::fabs(facingMedian - (1.0f + more)) <= Tolerance / 3.0f);
+    CHECK(std::fabs(awayMedian - (1.0f - more)) <= Tolerance / 3.0f);
+    CHECK(brighter * 2 > measured);
+    CHECK(darker * 2 > measured);
     std::filesystem::remove_all(scene->Scratch);
 }
 
@@ -10311,4 +11994,146 @@ TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
     }
 
     MCFixedZoomHeight = 0.0f;
+}
+
+/// <summary>
+/// A mech's legs turning (HDTurns: MCMechActor::LegsTurnMiddle's in-between, which says where the middle lies) show the
+/// pack's turn middle round their frame, over the frame's own indices: on the screen, drawn by the GPU over mission 1, a
+/// 4 x 4 frame shows red alone; within the scope of its middle (6 x 4, the frame 2 columns in), the middle's colour
+/// from 2 columns before the frame as it is, and mirrored about the hot spot (as the frame is) to 2 columns past the
+/// mirrored frame: blue for the middle toward the next facing, green for the one toward the next facing mirrored.
+/// </summary>
+TEST_CASE_ISOLATED("game: a mech's legs turning show the pack's turn middle round their frame")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto renderer = std::dynamic_pointer_cast<MCVulkanRenderer>(MCRenderer::Hardware());
+
+    if (renderer == nullptr || MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const uint8_t opaque = FullColorIndex(colors);
+
+    // One frame of 4 x 4 opaque pixels; its middles 6 x 4, the frame 2 columns in.
+    constexpr int32_t Side = 4;
+    constexpr int32_t Shift = 2;
+    constexpr int32_t Together = Side + Shift;
+    std::vector<uint8_t> rows;
+
+    for (int32_t row = 0; row < Side; ++row)
+    {
+        rows.insert(rows.end(), {RunOf(Side), opaque, opaque, opaque, opaque, RowEnd});
+    }
+
+    const std::vector<uint8_t> table = FramesTable(std::array{TableFrame{0, 0, Side, Side, rows}});
+    MCRegisteredBlock block(table.size(), MCDataKind::Shapes);
+    std::ranges::copy(table, block.Bytes().begin());
+    const auto shape = std::make_shared<MCShape>(std::move(block), std::weak_ptr<MCAppearanceType>(), 0);
+
+    constexpr int32_t Scale = 2;
+    constexpr SDL_Color Red = {200, 0, 0, 255};
+    constexpr SDL_Color Blue = {0, 0, 200, 255};
+    constexpr SDL_Color Green = {0, 200, 0, 255};
+    const auto everywhere = [&](int32_t, int32_t) { return std::optional<uint8_t>(opaque); };
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_turn_middle";
+    std::filesystem::remove_all(scratch);
+    const std::filesystem::path pack = scratch / "pack";
+    const MCHdArt::MechShapeKey key{"legs90", 1, 0};
+    const std::filesystem::path folder = pack / MCHdArt::FolderOf(key);
+    std::filesystem::create_directories(folder);
+    WriteSteppedFrame(folder / "0", Side, Side, Scale, Red, everywhere);
+    WriteSteppedFrame(folder / "0_turn", Together, Side, Scale, Blue, everywhere);
+    WriteSteppedFrame(folder / "0_turnm", Together, Side, Scale, Green, everywhere);
+    WritePaletteRgb(pack, colors);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    const int32_t width = display->Width();
+    std::optional<MCHdArtOn> hdArt(std::in_place, pack);
+    MCHdArt::Attach(shape, key);
+
+    // The screen's pixels after drawing the frame with its hot spot at (x, y), as it is or mirrored, in the scope of an
+    // in-between (none: none), and before.
+    const auto drawn = [&](bool mirrored, const std::optional<MCInBetween>& inBetween)
+    {
+        MCTestGame::RunFrame(FrameSeconds);
+        auto before = display->ReadFrame();
+        REQUIRE(before.has_value());
+        {
+            const MCRenderer::InBetweenScope scope(inBetween);
+
+            if (mirrored)
+            {
+                AGShapeTransform(pane, shape->FrameList(), 0, x, y, 1, 1);
+            }
+            else
+            {
+                AGShapeDraw(pane, shape->FrameList(), 0, x, y);
+            }
+        }
+
+        auto after = display->ReadFrame();
+        REQUIRE(after.has_value());
+        return std::pair{std::move(*before), std::move(*after)};
+    };
+
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t column, int32_t row)
+    { return frame[static_cast<size_t>(y + row + pane.Y0) * width + x + column + pane.X0]; };
+    const auto near = [](int32_t actual, int32_t expected) { return std::abs(actual - expected) <= 2; };
+    const auto same = [&](SDL_Color actual, SDL_Color expected)
+    { return near(actual.r, expected.r) && near(actual.g, expected.g) && near(actual.b, expected.b); };
+    const MCInBetweenBounds bounds{Shift, 0, Together, Side};
+
+    // Within the edges (smooth, so their pixels are part covered): column c of the middle at x + c - 2 as it is, at
+    // x - (c - 2) mirrored; column c of the frame at x + c, or x - c.
+    for (const bool mirrored : {false, true})
+    {
+        for (const int32_t step : {0, TurnStep, TurnMirroredStep})
+        {
+            const std::optional<MCInBetween> inBetween =
+                step == 0 ? std::nullopt : std::optional(MCInBetween{0, 0, step, bounds});
+            const auto [before, after] = drawn(mirrored, inBetween);
+
+            for (int32_t row = 1; row < Side - 1; ++row)
+            {
+                for (int32_t column = 1; column < Together - 1; ++column)
+                {
+                    const int32_t placed = column - Shift;
+                    const int32_t shown = mirrored ? -placed : placed;
+                    const SDL_Color pixel = at(after, shown, row);
+                    MCTest::Scope scope(std::format("{}, step {}, column {}, row {}: {} {} {}",
+                                                    mirrored ? "mirrored" : "as is", step, column, row, pixel.r,
+                                                    pixel.g, pixel.b));
+
+                    if (step != 0)
+                    {
+                        CHECK(same(pixel, step == TurnStep ? Blue : Green));
+                    }
+                    else if (placed >= 1 && placed < Side - 1)
+                    {
+                        CHECK(same(pixel, Red));
+                    }
+                    else if (placed < -1)
+                    {
+                        CHECK(same(pixel, at(before, shown, row)));
+                    }
+                }
+            }
+        }
+    }
+
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
 }

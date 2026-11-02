@@ -4,6 +4,7 @@
 
 #include "EditorTile.h"
 #include "MissionText.h"
+#include "MissionTimeOfDay.h"
 
 class ControlLink;
 class DaoDatabase;
@@ -576,6 +577,11 @@ public:
     /// and damage tools then work on the selection at once.
     /// </summary>
     bool tilesSelected = false;
+    /// <summary>
+    /// Port-only: the time of day the mission is set at (Mission > Time of Day), saved in its NewMissions row; not in
+    /// the original's layout.
+    /// </summary>
+    MissionTimeOfDay timeOfDay = MissionTimeOfDay::Day;
 
     /// <summary>
     /// The global map's area of the tile of cell (<paramref name="col"/>, <paramref name="row"/>): 0 without a global

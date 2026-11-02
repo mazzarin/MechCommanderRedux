@@ -48,7 +48,17 @@ enum class MCMPMessageType : uint16_t
     TechbaseChange = 44,
     SessionCheckIn = 45,
     /// <summary>Port: a configured match (<c>MPGameConfiguration</c>): teams, tech bases, points and the mission in one.</summary>
-    StartMatch = 46
+    StartMatch = 46,
+    /// <summary>
+    /// Port: a player's build's gameplay rules beyond the original (<c>MCMatchRule</c> bits, a long), to the server
+    /// before its check-in. A build without them sends none, and ignores both rule messages.
+    /// </summary>
+    PlayerRules = 47,
+    /// <summary>
+    /// Port: the rules the match plays by (a long), from the server before the scenario starts: its own choices that
+    /// every player's build plays by.
+    /// </summary>
+    MatchRules = 48
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

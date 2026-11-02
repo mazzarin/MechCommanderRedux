@@ -88,6 +88,40 @@ struct MCGesturePacket
     bool Reverse = false;
 };
 
+/// <summary>Port-only (HDFootprints): which way a mech part is drawn facing (<see cref="MCSpriteTree::DrawnFacing"/>).</summary>
+struct MCDrawnFacing
+{
+    /// <summary>The way, in degrees: the start of the rotations that show the facing, the other way when mirrored.</summary>
+    float Degrees = 0.0f;
+    /// <summary>Whether the shape is drawn mirrored (straight ahead and straight back never are).</summary>
+    bool Mirrored = false;
+};
+
+/// <summary>
+/// Port-only (HDTurns): a mech's legs drawn as the HD art pack's turn middle, halfway to a neighbouring stored facing
+/// (<see cref="MCSpriteTree::TurnMiddle"/>).
+/// </summary>
+struct MCTurnMiddle
+{
+    /// <summary>The middle's step in the pack (sprite/MCInBetween.h's TurnStep or TurnMirroredStep).</summary>
+    int32_t Step = 0;
+    /// <summary>The stored facing it is halfway to, whether that one is mirrored, and a rotation showing it unmirrored.</summary>
+    int32_t Toward = 0;
+    bool TowardMirrored = false;
+    float TowardRotation = 0.0f;
+    /// <summary>The way it is drawn facing, in degrees as a rotation (<see cref="MCDrawnFacing::Degrees"/>).</summary>
+    float Degrees = 0.0f;
+};
+
+/// <summary>
+/// Whether gesture <paramref name="gesture"/> strides (walking, running, limping, walking backward): a mirrored part
+/// leads with the other leg, so it may run half a cycle off (MCMechActor::Render).
+/// </summary>
+inline bool MCStrideGesture(int32_t gesture)
+{
+    return gesture == 4 || gesture == 7 || gesture == 9 || gesture == 11;
+}
+
 /// <summary>
 /// The type of a <see cref="MCMechActor"/>: a mech's gestures, its special animation data, the transition table and
 /// the files of its four parts in the part PAKs.
@@ -121,6 +155,22 @@ public:
     /// at <paramref name="rotation"/> degrees is; nothing when the gesture has no frames.
     /// </summary>
     std::optional<MCGesturePacket> GesturePacket(int32_t gesture, int32_t part, float rotation) const;
+
+    /// <summary>
+    /// Port-only (HDFootprints): the way part <paramref name="part"/> (the tree's numbering) of gesture
+    /// <paramref name="gesture"/> is drawn facing at <paramref name="rotation"/> degrees, as <see cref="GetGesture"/>
+    /// draws it. Nothing when the gesture has no frames.
+    /// </summary>
+    std::optional<MCDrawnFacing> DrawnFacing(int32_t gesture, int32_t part, float rotation) const;
+
+    /// <summary>
+    /// Port-only (HDTurns): the turn middle the legs of gesture <paramref name="gesture"/> show at
+    /// <paramref name="rotation"/> degrees, drawn over the facing it shows (whose indices stay): in the second half of a
+    /// facing's range (~10.6 degrees of each ~21.2), the facing halfway to the next one (the next mirrored, from
+    /// straight ahead on the mirrored side), and in straight back's half on the mirrored side, straight back. None in a
+    /// facing's first half, or for a gesture with every fourth facing only (falls and the like) or without frames.
+    /// </summary>
+    std::optional<MCTurnMiddle> TurnMiddle(int32_t gesture, float rotation) const;
 
     /// <summary>
     /// The shape of part <paramref name="part"/> (the tree's numbering) in gesture <paramref name="gesture"/> at

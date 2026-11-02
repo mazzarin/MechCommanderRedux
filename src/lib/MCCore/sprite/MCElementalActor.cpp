@@ -8,6 +8,7 @@
 #include "main/MCMissionGlobals.h"
 #include "object/MCBigGameObject.h"
 #include "object/MCForces.h"
+#include "sprite/MCSceneLights.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteMath.h"
 #include "terrain/MCTerrain.h"
@@ -164,7 +165,8 @@ auto MCElementalActor::Render(int32_t depthFixup) -> int32_t
         AppearType->GetGesture(CurrentGesture, static_cast<float>(MCActorFacing(*obj)));
     CurrentShape = shape;
     RecalcBounds(EyeRef());
-    ElementList().OpenGroup(static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y), true);
+    const auto depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
+    ElementList().OpenGroup(depth, true);
 
     if (DrawTerrainGrid != 0)
     {
@@ -190,6 +192,9 @@ auto MCElementalActor::Render(int32_t depthFixup) -> int32_t
 
     ElementList().Add(
         ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame, 0, fadeTable, 1));
+    // Port-only (sun shadows): its own shadow at dusk.
+    const MCSceneLights::MCSunShadowPart part{shape->FrameList(), ScreenPos.X, ScreenPos.Y, CurrentFrame};
+    MCSceneLights::AddRecastShadows(std::span(&part, 1), depth, true);
 
     // Selection: -1 and 1 draw the bars (none for elementals), 2 the brackets in the owner's alignment colour.
     const int32_t selected = obj->Selected;

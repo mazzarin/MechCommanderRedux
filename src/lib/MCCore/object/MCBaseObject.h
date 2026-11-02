@@ -10,11 +10,14 @@ class MCObjectType;
 
 /// <summary>
 /// What an object is (<see cref="MCBaseObject::ObjectClass"/>). The values are the ones each class's init stores; the
-/// names are the port's. Values no init in MCX.EXE stores (1, 0xb-0xd, 0xf, 0x14, 0x17) have no name.
+/// names are the port's. Values no init in MCX.EXE stores (1, 0xb-0xd, 0xf, 0x14, 0x17) have no name, but for those its
+/// code still tests (Unused1, Unused14, Unused17).
 /// </summary>
 enum class MCObjectClass : int32_t
 {
     BaseObject = 0,
+    /// <summary>No init stores it; the original's targeting tests it with the buildings and terrain objects.</summary>
+    Unused1 = 1,
     BattleMech = 2,
     GroundVehicle = 3,
     Elemental = 4,
@@ -30,8 +33,12 @@ enum class MCObjectClass : int32_t
     Smoke = 0x11,
     Bullet = 0x12,
     Debris = 0x13,
+    /// <summary>No init stores it; the original's mouse code tests it with artillery and debris.</summary>
+    Unused14 = 0x14,
     Tree = 0x15,
     TerrainObject = 0x16,
+    /// <summary>No init stores it; the original's code tests it with the terrain objects.</summary>
+    Unused17 = 0x17,
     MiscTerrainObject = 0x18,
     Jet = 0x19,
     ProjectileLaser = 0x1a,

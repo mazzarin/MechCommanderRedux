@@ -343,6 +343,16 @@ namespace
             Target().Shadow(Window(), moved);
         }
 
+        void Particle(MCWindow&, const MCParticleCommand& command) override
+        {
+            MCParticleCommand moved = command;
+            moved.X0 += static_cast<float>(_X);
+            moved.Y0 += static_cast<float>(_Y);
+            moved.X1 += static_cast<float>(_X);
+            moved.Y1 += static_cast<float>(_Y);
+            Target().Particle(Window(), moved);
+        }
+
         void Glyph(MCWindow&, const MCGlyphCommand& command) override
         {
             MCGlyphCommand moved = command;
@@ -521,6 +531,10 @@ void MCRenderer::EndTerrainLayer(MCWindow& /*target*/)
 }
 
 void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/)
+{
+}
+
+void MCRenderer::Particle(MCWindow& /*target*/, const MCParticleCommand& /*command*/)
 {
 }
 

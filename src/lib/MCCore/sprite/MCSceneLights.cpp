@@ -6,18 +6,27 @@
 #include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
+#include "engine/MCVfxElement.h"
+#include "lib/MCFitIniFile.h"
+#include "lib/MCFrameOfRef.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCObjectDrawing.h"
 #include "platform/MCRenderer.h"
+#include "sprite/MCHdArt.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCAgShape.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <map>
+
 int GHdLighting = 0;
 int GHdSunShadows = 0;
+int GHdClouds = 0;
+int GHdRelief = 0;
 
 namespace
 {
@@ -39,9 +48,70 @@ namespace
     constexpr float BeamGain = 0.9f;
     /// <summary>A beam's height above the ground (the arms and torsos it runs between), in pixels.</summary>
     constexpr float BeamHeight = 10.0f;
-    /// <summary>DUSK's world light (the world dimmed to it) and its lights' strength.</summary>
+    /// <summary>Dusk's world light (the world dimmed to it) and its lights' strength.</summary>
     constexpr float DuskAmbient = 0.6f;
     constexpr float DuskStrength = 1.0f;
+    /// <summary>
+    /// Port-only (sun shadows): dusk's sun, from the day's side (the art's lit one) but lower: its shadows this many
+    /// times as long as the day's.
+    /// </summary>
+    constexpr float DuskSunLength = 2.5f;
+    /// <summary>
+    /// Night's world light: dimmer than dusk's, the moon's blue (its tint about as bright as white), and the world's
+    /// colours paler in it; the lights stronger.
+    /// </summary>
+    constexpr float NightAmbient = 0.35f;
+    constexpr std::array<float, 3> NightTint{0.78f, 0.95f, 1.45f};
+    constexpr float NightGrey = 0.5f;
+    constexpr float NightStrength = 1.5f;
+    /// <summary>
+    /// A unit's headlight at night, a spotlight from its lamp (the window's pixels, along the ground): its beam's middle
+    /// meets the ground this far ahead of the ground under the lamp, whatever the lamp's height (a higher lamp tips its
+    /// beam down more), and it has faded out this far from there; a unit with no lamp in its art (a vehicle) has one this
+    /// low at its feet, and a lamp at least this high; its beam fades out this many degrees off its middle, full within
+    /// SpotFull of that; its colour (a lamp's warm white) and its light where its beam's middle meets the ground.
+    /// </summary>
+    constexpr float HeadlightAhead = 70.0f;
+    constexpr float HeadlightReach = 180.0f;
+    constexpr float HeadlightLowLamp = 12.0f;
+    constexpr float HeadlightLowest = 6.0f;
+    constexpr float HeadlightDegrees = 22.0f;
+    constexpr std::array<float, 3> HeadlightColor{1.0f, 0.93f, 0.8f};
+    constexpr float HeadlightGain = 0.8f;
+    /// <summary>
+    /// A unit's facing is measured this many world units ahead of it: far enough that the projection's rounding to
+    /// pixels doesn't bend its way.
+    /// </summary>
+    constexpr float FacingStep = 1000.0f;
+    /// <summary>A headlight's lamp's mark: its size (the window's pixels), softness and colour (premultiplied, added).</summary>
+    struct LampMark
+    {
+        float Radius = 0.0f;
+        float Softness = 0.0f;
+        std::array<uint8_t, 3> Color{};
+    };
+
+    /// <summary>
+    /// A headlight's lamp: a small hard-edged core, as the art draws a light, in a faint halo; shown fully facing the
+    /// camera or sideways, fading out as the unit faces away (its facing's share up the screen, from LampHideFrom to
+    /// LampHidden; composite.pshader's AirBeamHideFrom and AirBeamHidden for its beam in the air).
+    /// </summary>
+    constexpr LampMark LampCore{1.4f, 0.35f, {255, 246, 225}};
+    constexpr LampMark LampHalo{4.5f, 1.0f, {110, 95, 70}};
+    constexpr float LampHideFrom = 0.2f;
+    constexpr float LampHidden = 0.7f;
+    /// <summary>
+    /// A spotlight's beam is full within this share of the way from its edge to its middle; the ground nearer it than
+    /// where its beam's middle meets the ground takes at most SpotMost times the light there (composite.pshader's).
+    /// </summary>
+    constexpr float SpotFull = 0.5f;
+    constexpr float SpotMost = 1.5f;
+    /// <summary>The times of day by name (a scenario file's TimeOfDay, the tools' --hd-time-of-day).</summary>
+    constexpr std::array<std::pair<std::string_view, MCTimeOfDay>, 3> TimesOfDay{{
+        {"Day", MCTimeOfDay::Day},
+        {"Dusk", MCTimeOfDay::Dusk},
+        {"Night", MCTimeOfDay::Night},
+    }};
     /// <summary>A muzzle flash's reach, its colour (a propellant's) and how much it lights the ground under it.</summary>
     constexpr float MuzzleFlashReach = 36.0f;
     constexpr std::array<float, 3> MuzzleFlashColor{1.0f, 0.72f, 0.38f};
@@ -74,6 +144,8 @@ namespace
     struct State
     {
         MCSceneLights::MCLighting Lighting;
+        /// <summary>The time of day of the mission being played.</summary>
+        MCTimeOfDay MissionTime = MCTimeOfDay::Day;
         /// <summary>The window whose world is being drawn.</summary>
         std::weak_ptr<MCWindow> Drawing;
         std::vector<MCSceneLight> Adding;
@@ -150,14 +222,32 @@ namespace
                 1.0f};
     }
 
-    /// <summary>A glow's lit pixels: their centre (from the hot spot, weighted by their light), mean light and count.</summary>
-    struct Glow
+    using Glow = MCSceneLights::MCGlowMeasure;
+
+    /// <summary>A pixel's light and its weight (its light times its coverage), when it's one of the pixels that shine.</summary>
+    struct ShiningPixel
     {
-        float X = 0.0f;
-        float Y = 0.0f;
-        std::array<float, 3> Color{};
-        int32_t Pixels = 0;
+        PixelLight Light;
+        double Weight = 0.0;
     };
+
+    /// <summary>
+    /// Pixel <paramref name="color"/>'s light, when it's one of <paramref name="shining"/> (it sends out light, and for
+    /// MCGlowPixels::Bright it's bright); none otherwise.
+    /// </summary>
+    std::optional<ShiningPixel> Shining(uint8_t color, bool translucent, MCSceneLights::MCGlowPixels shining)
+    {
+        const PixelLight light = LightOf(color, translucent);
+        const double weight = (static_cast<double>(light.Color[0]) + light.Color[1] + light.Color[2]) * light.Coverage;
+
+        if (weight <= 0.0 ||
+            (shining == MCSceneLights::MCGlowPixels::Bright && std::ranges::max(light.Color) < BrightPixel))
+        {
+            return std::nullopt;
+        }
+
+        return ShiningPixel{light, weight};
+    }
 
     std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
                                     MCSceneLights::MCGlowPixels shining)
@@ -176,15 +266,15 @@ namespace
         VfxShapeVisit(shapeTable, frame,
                       [&](int32_t x, int32_t y, uint8_t color)
                       {
-                          const PixelLight light = LightOf(color, translucent);
-                          const double w =
-                              (static_cast<double>(light.Color[0]) + light.Color[1] + light.Color[2]) * light.Coverage;
+                          const std::optional<ShiningPixel> shone = Shining(color, translucent, shining);
 
-                          if (w <= 0.0 || (shining == MCSceneLights::MCGlowPixels::Bright &&
-                                           std::ranges::max(light.Color) < BrightPixel))
+                          if (!shone.has_value())
                           {
                               return;
                           }
+
+                          const PixelLight& light = shone->Light;
+                          const double w = shone->Weight;
 
                           for (size_t i = 0; i < sum.size(); ++i)
                           {
@@ -230,7 +320,7 @@ namespace
     }
 
     /// <summary>The frame of a shape table an appearance drew, and the shape that holds the table.</summary>
-    struct DrawnFrame
+    struct DrawnShape
     {
         std::shared_ptr<MCShape> Shape;
         std::span<const uint8_t> Table;
@@ -241,7 +331,7 @@ namespace
     /// The frame <paramref name="appearance"/> last drew (its Render), when it drew one of a VFX shape table: as
     /// MCVfxElement and MCDeltaElement draw it, a delta animation's change over its first shape (its fire).
     /// </summary>
-    std::optional<DrawnFrame> FrameDrawn(const MCVfxAppearance& appearance)
+    std::optional<DrawnShape> FrameDrawn(const MCVfxAppearance& appearance)
     {
         std::shared_ptr<MCShape> shape = appearance.CurrentShape.lock();
         const MCVfxAppearance::MCFrameDrawing drawing = appearance.FrameDrawing();
@@ -257,7 +347,7 @@ namespace
         const int32_t frame = drawing == MCVfxAppearance::MCFrameDrawing::Delta
                                   ? std::min(appearance.CurrentFrame + 1, last)
                                   : std::min(appearance.CurrentFrame, last);
-        return DrawnFrame{std::move(shape), table, frame};
+        return DrawnShape{std::move(shape), table, frame};
     }
 
     /// <summary>How high <paramref name="position"/> is above the ground under it (0 without a terrain).</summary>
@@ -276,6 +366,35 @@ namespace
         /// <summary>Its light there (its components' mean), as the composite pools it without the relief.</summary>
         float Light = 0.0f;
     };
+
+    /// <summary>
+    /// A spotlight's (<paramref name="light"/>'s) light on the ground (<paramref name="dx"/>, <paramref name="dy"/>) off
+    /// the ground under it (along the ground, a screen height <paramref name="aspect"/> of one), as a share of its light
+    /// where its beam's middle meets the ground: as the composite's SpotPool.
+    /// </summary>
+    float SpotPool(const MCSceneLight& light, float dx, float dy, float aspect)
+    {
+        const std::array<float, 3> ray{dx, dy, -light.Height};
+        const std::array<float, 3> aim{light.SpotX, light.SpotY / aspect, -light.Height};
+        const auto dot = [](const std::array<float, 3>& a, const std::array<float, 3>& b)
+        { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+        const float lengths = std::sqrt(dot(ray, ray) * dot(aim, aim));
+
+        if (lengths <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        const float full = light.SpotCos + (1.0f - light.SpotCos) * SpotFull;
+        const float t = std::clamp((dot(ray, aim) / lengths - light.SpotCos) / (full - light.SpotCos), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t) * std::min(dot(aim, aim) / dot(ray, ray), SpotMost);
+    }
+
+    /// <summary>Whether <paramref name="light"/> is a spotlight (see MCSceneLight::SpotX).</summary>
+    bool IsSpot(const MCSceneLight& light)
+    {
+        return light.SpotCos > 0.0f && (light.SpotX != 0.0f || light.SpotY != 0.0f);
+    }
 
     /// <summary>
     /// How <paramref name="light"/> reaches the ground at window (<paramref name="x"/>, <paramref name="y"/>), as the
@@ -304,8 +423,8 @@ namespace
             const float soft = std::max(light.Height, light.Reach * LightSoftness);
             const float x2 = d2 / reach2;
             const float fade = 1.0f - x2 * x2;
-            reaching.Light =
-                (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * soft * soft / (d2 + soft * soft);
+            const float pool = IsSpot(light) ? SpotPool(light, dx, dy, aspect) : soft * soft / (d2 + soft * soft);
+            reaching.Light = (light.Red + light.Green + light.Blue) / 3.0f * fade * fade * pool;
         }
 
         return reaching;
@@ -368,17 +487,97 @@ auto MCSceneLights::Lighting() -> MCLighting&
     return TheState().Lighting;
 }
 
+auto MCSceneLights::ReliefMapsOn() -> bool
+{
+    return MCHdArt::Active() && GHdLighting != HdLightingOff && GHdRelief != 0 && TheState().Lighting.ReliefMaps > 0.0f;
+}
+
 auto MCSceneLights::ShownLighting() -> MCLighting
 {
     MCLighting shown = TheState().Lighting;
 
-    if (GHdLighting == HdLightingDusk)
+    switch (TimeOfDay())
     {
-        shown.Ambient = DuskAmbient;
-        shown.Strength = DuskStrength;
+        case MCTimeOfDay::Day:
+            break;
+        case MCTimeOfDay::Dusk:
+        {
+            shown.Ambient = DuskAmbient;
+            shown.Strength = DuskStrength;
+            shown.SunShadowRight *= DuskSunLength;
+            shown.SunShadowUp *= DuskSunLength;
+            break;
+        }
+        case MCTimeOfDay::Night:
+        {
+            shown.Ambient = NightAmbient;
+            shown.AmbientTint = NightTint;
+            shown.AmbientGrey = NightGrey;
+            shown.Strength = NightStrength;
+            // No sun.
+            shown.SunShadowRight = 0.0f;
+            shown.SunShadowUp = 0.0f;
+            break;
+        }
     }
 
     return shown;
+}
+
+auto MCSceneLights::SetMissionTime(MCTimeOfDay time) -> void
+{
+    TheState().MissionTime = time;
+}
+
+auto MCSceneLights::MissionTime() -> MCTimeOfDay
+{
+    return TheState().MissionTime;
+}
+
+auto MCSceneLights::TimeOfDay() -> MCTimeOfDay
+{
+    switch (GHdLighting)
+    {
+        case HdLightingOff:
+            return MCTimeOfDay::Day;
+        case HdLightingDusk:
+            return MCTimeOfDay::Dusk;
+        case HdLightingNight:
+            return MCTimeOfDay::Night;
+        default:
+            return MissionTime();
+    }
+}
+
+auto MCSceneLights::TimeOfDayNamed(std::string_view name) -> std::optional<MCTimeOfDay>
+{
+    const auto found =
+        std::ranges::find_if(TimesOfDay, [name](const auto& time) { return MCIEquals(time.first, name); });
+    return found != TimesOfDay.end() ? std::optional(found->second) : std::nullopt;
+}
+
+auto MCSceneLights::ReadTimeOfDay(MCFitIniFile& file) -> MCTimeOfDay
+{
+    if (file.SeekBlock("Environment") != 0)
+    {
+        return MCTimeOfDay::Day;
+    }
+
+    const MCFitResult<std::string> name = file.Read<std::string>("TimeOfDay");
+
+    if (!name)
+    {
+        return MCTimeOfDay::Day;
+    }
+
+    if (const std::optional<MCTimeOfDay> time = TimeOfDayNamed(*name); time.has_value())
+    {
+        return *time;
+    }
+
+    SDL_Log("MCSceneLights: the scenario's [Environment] TimeOfDay \"%s\" is none of Day, Dusk and Night; shown by day",
+            name->c_str());
+    return MCTimeOfDay::Day;
 }
 
 auto MCSceneLights::Begin(const MCPane& pane) -> void
@@ -434,11 +633,95 @@ auto MCSceneLights::AddGlow(const MCVfxAppearance& appearance, const MCVector3D&
         return;
     }
 
-    if (const std::optional<DrawnFrame> drawn = FrameDrawn(appearance); drawn.has_value())
+    if (const std::optional<DrawnShape> drawn = FrameDrawn(appearance); drawn.has_value())
     {
         AddGlow(drawn->Table, drawn->Frame, appearance.ScreenPos.X, appearance.ScreenPos.Y, AltitudeOf(position),
                 pixels);
     }
+}
+
+auto MCSceneLights::MeasureDrawn(const MCVfxAppearance& appearance, MCGlowPixels pixels) -> std::optional<MCGlowMeasure>
+{
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
+    return drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, pixels) : std::nullopt;
+}
+
+auto MCSceneLights::MeasureFrame(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::optional<MCGlowMeasure>
+{
+    return MeasureGlow(shapeTable, frame, pixels);
+}
+
+auto MCSceneLights::FrameColors(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::vector<MCGlowColor>
+{
+    if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+    {
+        return {};
+    }
+
+    const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    std::array<int32_t, MCPalette::ColorCount> counts{};
+    VfxShapeVisit(shapeTable, frame,
+                  [&](int32_t, int32_t, uint8_t color)
+                  {
+                      if (Shining(color, translucent, pixels).has_value())
+                      {
+                          ++counts[color];
+                      }
+                  });
+    std::vector<MCGlowColor> colors;
+
+    for (size_t color = 0; color < counts.size(); ++color)
+    {
+        if (counts[color] > 0)
+        {
+            colors.push_back({LightOf(static_cast<uint8_t>(color), translucent).Color, counts[color]});
+        }
+    }
+
+    return colors;
+}
+
+auto MCSceneLights::FrameOutline(std::span<const uint8_t> shapeTable, int32_t frame, MCGlowPixels pixels)
+    -> std::vector<MCGlowPixel>
+{
+    if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+    {
+        return {};
+    }
+
+    const bool translucent = MCAgShapeIsAlpha(shapeTable, frame);
+    std::map<std::pair<int32_t, int32_t>, std::array<float, 3>> shining;
+    VfxShapeVisit(shapeTable, frame,
+                  [&](int32_t x, int32_t y, uint8_t color)
+                  {
+                      if (const std::optional<ShiningPixel> shone = Shining(color, translucent, pixels);
+                          shone.has_value())
+                      {
+                          shining[{x, y}] = shone->Light.Color;
+                      }
+                  });
+    std::vector<MCGlowPixel> outline;
+
+    for (const auto& [at, color] : shining)
+    {
+        const auto [x, y] = at;
+
+        if (!shining.contains({x - 1, y}) || !shining.contains({x + 1, y}) || !shining.contains({x, y - 1}) ||
+            !shining.contains({x, y + 1}))
+        {
+            outline.push_back({x, y, color});
+        }
+    }
+
+    return outline;
+}
+
+auto MCSceneLights::DrawnFrame(const MCVfxAppearance& appearance) -> std::optional<MCTableFrame>
+{
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
+    return drawn.has_value() ? std::optional<MCTableFrame>({drawn->Table, drawn->Frame}) : std::nullopt;
 }
 
 auto MCSceneLights::AddBeam(float x0, float y0, float x1, float y1, float width, uint8_t color) -> void
@@ -521,6 +804,129 @@ auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& 
     }
 }
 
+auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
+                                 float turn, const std::optional<MCVector3D>& lamp, int32_t depthFixup) -> void
+{
+    State& state = TheState();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+
+    if (TimeOfDay() != MCTimeOfDay::Night || state.Drawing.expired() || camera == nullptr)
+    {
+        return;
+    }
+
+    // Its facing on the ground (the frame turned an eighth of a turn, the facing its art is drawn at, as MCMover's),
+    // turned as far again (counterclockwise, a mech's torso's), and that way on the screen along the ground (a screen
+    // height GroundAspect of one).
+    const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
+    const float bodyX = (frame.I.X - frame.J.X) * eighth;
+    const float bodyY = (frame.I.Y - frame.J.Y) * eighth;
+    const float radians = turn * std::numbers::pi_v<float> / 180.0f;
+    const float facingX = bodyX * std::cos(radians) - bodyY * std::sin(radians);
+    const float facingY = bodyX * std::sin(radians) + bodyY * std::cos(radians);
+    const MCVector2D at = ProjectToScreen(position, *camera);
+    const MCVector2D ahead = ProjectToScreen(
+        MCVector3D(position.X + facingX * FacingStep, position.Y + facingY * FacingStep, position.Z), *camera);
+    const float aspect = GroundAspect();
+    const float screenX = ahead.X - at.X;
+    const float screenY = ahead.Y - at.Y;
+    const float wayX = screenX;
+    const float wayY = screenY / aspect;
+    const float way = std::hypot(wayX, wayY);
+
+    if (way <= 0.0f)
+    {
+        return;
+    }
+
+    // The lamp, and the ground under it (its altitude lower on the screen); with none, a low one at the unit's feet (a
+    // jumping unit's are its altitude lower on the screen).
+    const std::optional<MCVector2D> lampAt =
+        lamp.has_value() ? std::optional(ProjectToScreen(*lamp, *camera)) : std::nullopt;
+    const float height = lamp.has_value() ? std::max(AltitudeOf(*lamp), HeadlightLowest) : HeadlightLowLamp;
+    MCSceneLight light;
+    light.X0 = light.X1 = lampAt.has_value() ? lampAt->X : appearance.ScreenPos.X;
+    light.Y0 = light.Y1 =
+        lampAt.has_value() ? lampAt->Y + AltitudeOf(*lamp) : appearance.ScreenPos.Y + AltitudeOf(position);
+    light.Height = height;
+    light.SpotX = wayX / way * HeadlightAhead;
+    light.SpotY = wayY / way * HeadlightAhead * aspect;
+    light.SpotCos = std::cos(HeadlightDegrees * std::numbers::pi_v<float> / 180.0f);
+    light.Reach = HeadlightReach;
+    light.Red = HeadlightColor[0] * HeadlightGain;
+    light.Green = HeadlightColor[1] * HeadlightGain;
+    light.Blue = HeadlightColor[2] * HeadlightGain;
+    Add(light);
+
+    // The lamp: hidden by the unit as it faces away (up the screen).
+    const float up = -screenY / std::hypot(screenX, screenY);
+    const float shows = 1.0f - std::clamp((up - LampHideFrom) / (LampHidden - LampHideFrom), 0.0f, 1.0f);
+
+    if (!lampAt.has_value() || shows <= 0.0f)
+    {
+        return;
+    }
+
+    // Its halo, then its core over it, just over the unit's parts (drawn after them).
+    const int32_t depth = static_cast<int32_t>(std::floor(static_cast<float>(depthFixup) - appearance.ScreenPos.Y)) - 1;
+
+    for (const auto& [look, order] : {std::pair{LampHalo, 0}, std::pair{LampCore, 1}})
+    {
+        MCParticleCommand mark;
+        mark.X0 = mark.X1 = lampAt->X;
+        mark.Y0 = mark.Y1 = lampAt->Y;
+        mark.Radius = look.Radius;
+        mark.Softness = look.Softness;
+        mark.Red = static_cast<uint8_t>(std::lround(look.Color[0] * shows));
+        mark.Green = static_cast<uint8_t>(std::lround(look.Color[1] * shows));
+        mark.Blue = static_cast<uint8_t>(std::lround(look.Color[2] * shows));
+        MCParticles::AddMark(mark, depth - order);
+    }
+}
+
+auto MCSceneLights::HeadlightOn(int32_t status) -> bool
+{
+    constexpr int32_t Running = 0;
+    constexpr int32_t StartingUp = 3;
+    return status == Running || status == StartingUp;
+}
+
+auto MCSceneLights::RecastsSunShadows() -> bool
+{
+    return GHdSunShadows != 0 && TimeOfDay() != MCTimeOfDay::Day && MCHdArt::Active() &&
+           MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+}
+
+auto MCSceneLights::SunCasts() -> bool
+{
+    return GHdSunShadows != 0 && ShownLighting().SunShadowUp > 0.0f;
+}
+
+auto MCSceneLights::AddRecastShadows(std::span<const MCSunShadowPart> parts, int32_t depth, bool sortElements) -> void
+{
+    if (!RecastsSunShadows() || !SunCasts())
+    {
+        return;
+    }
+
+    ElementList().OpenGroup(ShadowDepth, false);
+
+    for (const MCSunShadowPart& part : parts)
+    {
+        if (part.Frames.empty())
+        {
+            continue;
+        }
+
+        auto& element = ElementList().Make<MCVfxElement>(part.Frames, part.X, part.Y, part.Frame, part.Reverse,
+                                                         std::nullopt, part.Scale);
+        element.SunShadow = true;
+        ElementList().Add(element);
+    }
+
+    ElementList().OpenGroup(depth, sortElements);
+}
+
 auto MCSceneLights::AddShadows() -> void
 {
     State& state = TheState();
@@ -554,7 +960,7 @@ auto MCSceneLights::AddShadows() -> void
 
         for (const auto& [light, reaches] : reaching)
         {
-            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes).
+            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes, its headlight).
             if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
             {
                 continue;
@@ -609,7 +1015,7 @@ auto MCSceneLights::AddHeat(const MCVfxAppearance& appearance) -> void
         return;
     }
 
-    const std::optional<DrawnFrame> drawn = FrameDrawn(appearance);
+    const std::optional<DrawnShape> drawn = FrameDrawn(appearance);
     const std::optional<Glow> fire =
         drawn.has_value() ? MeasureGlow(drawn->Table, drawn->Frame, MCGlowPixels::Bright) : std::nullopt;
 
@@ -708,7 +1114,7 @@ auto MCSceneLights::ShownGround(const MCWindow& view) -> std::optional<MCSceneGr
 {
     const State& state = TheState();
 
-    if (GHdLighting == HdLightingOff || state.ShownWindow.lock().get() != &view)
+    if ((GHdLighting == HdLightingOff && GHdClouds == 0) || state.ShownWindow.lock().get() != &view)
     {
         return std::nullopt;
     }

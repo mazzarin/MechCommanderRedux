@@ -124,6 +124,22 @@ The first time the editor opens its mission database, it converts Teditor\FitAbl
 uses that from then on. The original FitAbl.mdb is left untouched.
 
 
+A mission's time of day
+
+New in Redux: Mission > Time of Day sets a mission at Day, Dusk or Night. Missions are
+set by day until you change it, as every mission of the original is.
+
+- At dusk units see 80% as far as by day, at night 60%. This works in the original game
+  too.
+- With HD LIGHTING set to ON (in Preferences), Redux shows a dusk mission darker, and a
+  night one dark with the mechs' and vehicles' headlights on. The player's DUSK and
+  NIGHT choices show their own time whatever the mission's.
+
+In the mission's .FIT file this is [Environment]'s st TimeOfDay ("Day", "Dusk" or
+"Night"), and a VisualRangeTable of 256 entries in [GameScale]; the project's README.md
+has the details.
+
+
 If something goes wrong
 
 "... isn't a MechCommander Gold folder: it has no SYSTEM.CFG."

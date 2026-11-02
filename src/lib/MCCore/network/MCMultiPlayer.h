@@ -26,6 +26,21 @@ class MCTacticalOrder;
 class MCTurret;
 class MCVector3D;
 
+/// <summary>Port: the gameplay rules beyond the original a match can play by, as bits (MCMultiPlayer::MatchRules).</summary>
+namespace MCMatchRule
+{
+    /// <summary>Mechs brake to a halt (PREFS MechBraking, sprite/MCMechStops.h).</summary>
+    inline constexpr uint32_t MechBraking = 1;
+    /// <summary>Every rule this build plays by.</summary>
+    inline constexpr uint32_t Supported = MechBraking;
+} // namespace MCMatchRule
+
+/// <summary>
+/// Port: of the rules <paramref name="wanted"/>, those every one of <paramref name="players"/> plays by, as its rules
+/// message (<paramref name="said"/>, by player id) said; a player whose build sent none plays by none.
+/// </summary>
+uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said);
+
 /// <summary>The game's DirectPlay application GUID.</summary>
 inline constexpr _GUID MultiPlayerAppGuid{0x09608800, 0x4815, 0x11d2, {0x92, 0xd2, 0x00, 0x60, 0x97, 0x3c, 0xfb, 0x2c}};
 
@@ -166,7 +181,20 @@ public:
     /// <summary>Sends chat <paramref name="text"/> to <paramref name="toID"/> (0 = everyone).</summary>
     int32_t SendChat(uint32_t toID, std::string_view text);
 
+    /// <summary>Port: first sends the server this build's rules (<see cref="SendPlayerRules"/>).</summary>
     int32_t SendPlayerCheckIn();
+
+    /// <summary>Port: sends the server the rules this build plays by (MCMatchRule::Supported).</summary>
+    int32_t SendPlayerRules();
+
+    /// <summary>
+    /// Port, the server: sends everyone the rules the match plays by, and plays by them (<see cref="AgreedRules"/> of
+    /// its own choices).
+    /// </summary>
+    int32_t SendMatchRules();
+
+    /// <summary>Port: MCAgreedRules among the session's players (with a number).</summary>
+    uint32_t AgreedRules(uint32_t wanted) const;
 
     /// <summary>The server's setup message to <paramref name="toID"/> (0 = everyone): the group ids.</summary>
     int32_t SendPlayerSetup(uint32_t toID, uint32_t innerSphereGroupID, uint32_t clanGroupID);
@@ -325,6 +353,13 @@ public:
     std::array<int32_t, MaxLinkupPlayers> PlayerCheckedIn{};
     /// <summary>Per player number: set by message 45 (SessionScreen::SomeoneCheckedIn).</summary>
     std::array<int32_t, MaxLinkupPlayers> PlayerSessionCheckIn{};
+    /// <summary>Port: the rules each player's build plays by (its rules message), by player id.</summary>
+    std::map<uint32_t, uint32_t> PlayerRules;
+    /// <summary>
+    /// Port: the rules the match plays by (MCMatchRule bits; the server's rules message): none, the original's game,
+    /// until the server sends them.
+    /// </summary>
+    uint32_t MatchRules = 0;
     /// <summary>Set by the start-planning message: the players are in logistics.</summary>
     bool InLogistics = false;
     /// <summary>Whether a mission runs (UpdateClients only sends then).</summary>

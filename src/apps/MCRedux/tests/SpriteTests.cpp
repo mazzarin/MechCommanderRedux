@@ -3,6 +3,8 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "fixtures/MCRegisteredData.h"
+#include "ai/MCMovePath.h"
+#include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "camera/MCCamera.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -13,13 +15,16 @@
 #include "main/MCMissionGlobals.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
+#include "object/MCMoverMath.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCGVAppearance.h"
 #include "sprite/MCMechActor.h"
+#include "sprite/MCMechStops.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCSpriteManager.h"
 #include "sprite/MCSpriteMath.h"
@@ -505,10 +510,66 @@ TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrore
     CHECK_EQ(where->Packet, 12u * 32 + 24);
     CHECK(!where->Reverse);
 
-    // A gesture without frames has no shapes; the frame rate is made positive.
-    CHECK(!tree->GesturePacket(3, 0, 0.0f).has_value());
+    // The way the drawn facing points: its first angle, mirrored with the sprite.
     int32_t reverse = 0;
     float frameRate = 0.0f;
+    std::optional<MCDrawnFacing> drawn = tree->DrawnFacing(2, 0, 90.0f);
+    REQUIRE(drawn.has_value());
+    CHECK_EQ(drawn->Degrees, 80.0f);
+    CHECK(!drawn->Mirrored);
+    drawn = tree->DrawnFacing(2, 0, -90.0f);
+    CHECK_EQ(drawn->Degrees, -80.0f);
+    CHECK(drawn->Mirrored);
+    // Just left of straight ahead: drawn as straight ahead, though the frame's mirroring (SetGesture's) mirrors it.
+    drawn = tree->DrawnFacing(2, 0, -1.0f);
+    CHECK_EQ(drawn->Degrees, 0.0f);
+    CHECK(!drawn->Mirrored);
+    tree->SetGesture(2, 0, -1.0f, reverse, frameRate);
+    CHECK_EQ(reverse, 1);
+    CHECK_EQ(tree->DrawnFacing(14, 1, 100.0f)->Degrees, 8 * 360.0f / 33.0f);
+
+    // Turn middles (the legs' 9 facings round, 40 degrees apart): none in a facing's first half; in its second, halfway
+    // to the next facing, mirrored on the other side; from straight ahead on the other side, halfway to the next facing
+    // mirrored; on the other side of straight back, straight back.
+    constexpr float Apart = 40.0f;
+    CHECK(!tree->TurnMiddle(2, 10.0f).has_value());
+    std::optional<MCTurnMiddle> middle = tree->TurnMiddle(2, 25.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 1);
+    CHECK(!middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, Apart / 2);
+    where = tree->GesturePacket(2, 0, middle->TowardRotation);
+    CHECK_EQ(where->Packet, 2u * 9 + 1);
+    CHECK(!where->Reverse);
+    middle = tree->TurnMiddle(2, -25.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnMirroredStep);
+    CHECK_EQ(middle->Toward, 1);
+    CHECK(middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, -Apart / 2);
+    middle = tree->TurnMiddle(2, -70.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 2);
+    CHECK(!middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, -1.5f * Apart);
+    CHECK(!tree->TurnMiddle(2, 165.0f).has_value());
+    middle = tree->TurnMiddle(2, -165.0f);
+    REQUIRE(middle.has_value());
+    CHECK_EQ(middle->Step, TurnStep);
+    CHECK_EQ(middle->Toward, 4);
+    CHECK(middle->TowardMirrored);
+    CHECK_EQ(middle->Degrees, 180.0f);
+    // A fall has every fourth facing only; a gesture without frames, none.
+    CHECK(!tree->TurnMiddle(14, 25.0f).has_value());
+    CHECK(!tree->TurnMiddle(3, 25.0f).has_value());
+    CHECK(MCStrideGesture(4));
+    CHECK(!MCStrideGesture(2));
+
+    // A gesture without frames has no shapes; the frame rate is made positive.
+    CHECK(!tree->GesturePacket(3, 0, 0.0f).has_value());
+    CHECK(!tree->DrawnFacing(3, 0, 0.0f).has_value());
     tree->SetGesture(14, 1, 10.0f, reverse, frameRate);
     CHECK_EQ(frameRate, 15.0f);
 
@@ -517,6 +578,20 @@ TEST_CASE("sprites: a mech part's packet follows its gesture and facing, mirrore
     REQUIRE(shape != nullptr);
     CHECK_EQ(Tag(shape), 8000 + 2 * 9 + 2);
     CHECK(tree->GetGesture(2, 0, 90.0f, reverse, frameRate, false) == shape);
+}
+
+TEST_CASE("sprites: a mech's drawn facing eases toward its own the short way round, never lagging too far")
+{
+    constexpr float Step = 9.0f;
+    constexpr float Lag = 90.0f;
+    // Short of the step, it arrives; else it turns a step, across straight back if that is the short way.
+    CHECK_EQ(MCEaseFacing(0.0f, 5.0f, Step, Lag), 5.0f);
+    CHECK_EQ(MCEaseFacing(10.0f, 0.0f, Step, Lag), 1.0f);
+    CHECK_EQ(MCEaseFacing(170.0f, -170.0f, Step, Lag), 179.0f);
+    CHECK_EQ(MCEaseFacing(-175.0f, 175.0f, Step, Lag), 176.0f);
+    // A turn too far to follow leaves it the lag behind.
+    CHECK_EQ(MCEaseFacing(0.0f, 150.0f, Step, Lag), 60.0f);
+    CHECK_EQ(MCEaseFacing(0.0f, -150.0f, Step, Lag), -60.0f);
 }
 
 TEST_CASE("sprites: a mech's transitions come from its own table when it has one")
@@ -534,6 +609,74 @@ TEST_CASE("sprites: a mech's transitions come from its own table when it has one
     CHECK_EQ(plain.Transition(row), 3);
     CHECK_EQ(plain.Transition(row + 1), 4);
     CHECK_EQ(plain.Transition(row + 2), -1);
+}
+
+TEST_CASE("sprites: a stride fitted to a stop plays its frames over the room left, its rate nearest 1 within bounds")
+{
+    constexpr int32_t StrideFrames = 30;
+    constexpr float MetresPerFrame = 0.5f;
+    constexpr float Close = 0.0001f;
+
+    // 10 frames left of the stride over 5 m: as drawn, the stop starts at the stride's end.
+    std::optional<MCStridePlan> plan = MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 5.0f);
+    REQUIRE(plan.has_value());
+    CHECK(std::fabs(plan->Rate - 1.0f) < Close);
+    CHECK_EQ(plan->Strides, 0);
+
+    // Over 20 m: a whole stride more first.
+    plan = MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 20.0f);
+    REQUIRE(plan.has_value());
+    CHECK(std::fabs(plan->Rate - 1.0f) < Close);
+    CHECK_EQ(plan->Strides, 1);
+
+    // Over 4.5 m: the stride played a ninth faster (its feet slide a little).
+    plan = MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 4.5f);
+    REQUIRE(plan.has_value());
+    CHECK(std::fabs(plan->Rate - 10.0f / 9.0f) < Close);
+    CHECK_EQ(plan->Strides, 0);
+
+    // Over 2 m the stride would play 2.5 times as fast, over 11.5 m too slow or, a stride more, too fast: no fit.
+    CHECK(!MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 2.0f).has_value());
+    CHECK(!MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 11.5f).has_value());
+    CHECK(!MCPlanStride(10.0f, StrideFrames, MetresPerFrame, 0.0f).has_value());
+}
+
+TEST_CASE("sprites: braking, the expansion's stops slow down (OB-186), and a stop's metres follow its eased speed")
+{
+    // The Turkina's walk, walk to stand and run to walk, which keep their start speed to the end.
+    MCSpriteTree tree;
+    constexpr int32_t Gestures = 9;
+    tree.NumGestures = Gestures;
+    tree.Gestures.resize(Gestures);
+    tree.Gestures[MCStopGesture::Walk] = {
+        .NumFrames = 30, .FrameRate = 15.0f, .StartVelocity = 7.5f, .EndVelocity = 7.5f};
+    tree.Gestures[MCStopGesture::WalkToStand] = {
+        .NumFrames = 14, .FrameRate = 15.0f, .StartVelocity = 7.5f, .EndVelocity = 7.5f};
+    tree.Gestures[MCStopGesture::RunToWalk] = {
+        .NumFrames = 6, .FrameRate = 15.0f, .StartVelocity = 15.0f, .EndVelocity = 15.0f};
+    constexpr float Close = 0.0001f;
+
+    const auto velocities = [&](int32_t gesture, bool braking)
+    {
+        const MCGestureVelocities v = MCStopVelocities(tree, gesture, braking);
+        return std::pair(v.Start, v.End);
+    };
+
+    CHECK(velocities(MCStopGesture::WalkToStand, false) == std::pair(7.5f, 7.5f));
+    CHECK(velocities(MCStopGesture::WalkToStand, true) == std::pair(7.5f, 0.0f));
+    CHECK(velocities(MCStopGesture::RunToWalk, true) == std::pair(15.0f, 7.5f));
+    CHECK(velocities(MCStopGesture::Walk, true) == std::pair(7.5f, 7.5f));
+
+    // Half way through the walk to stand, half the speed; braking it covers 0.5 m a frame less a fourteenth each frame.
+    CHECK(std::fabs(MCFrameSpeed({7.5f, 0.0f}, 14, 7) - 3.75f) < Close);
+    CHECK(std::fabs(MCGestureMetres(tree, MCStopGesture::WalkToStand, 0.0f, true) - 3.75f) < Close);
+    CHECK(std::fabs(MCGestureMetres(tree, MCStopGesture::WalkToStand, 0.0f, false) - 7.0f) < Close);
+    CHECK(std::fabs(MCGestureMetres(tree, MCStopGesture::Walk, 10.5f, true) - 9.75f) < Close);
+
+    // Without the art drawn (no part shapes here), braking keeps the tree's own transitions: a walk stands at once.
+    const int32_t walkToStand = MCStopTransition(tree, MCStopState::Stand, MCStopState::Walk, 0, true);
+    CHECK_EQ(walkToStand, tree.Transition((MCStopState::Stand + MCStopState::Walk * 9) * 10));
+    CHECK_EQ(walkToStand, MCStopGesture::Stand);
 }
 
 TEST_CASE("sprites: a jump leaves the ground at the bottom of its crouch and lands at the top of its climb")
@@ -864,4 +1007,503 @@ TEST_CASE("game: every mech sprite tree in the retail sprite PAK loads and finds
 
     std::cout << std::format("  {} mech trees\n", trees);
     CHECK(trees > 0);
+}
+
+namespace
+{
+    /// <summary>A frame of a mech's move to a halt: its gesture, legs frame, speed and where it is.</summary>
+    struct StopFrame
+    {
+        int32_t Gesture = 0;
+        int32_t Frame = 0;
+        float Speed = 0.0f;
+        float StrideRate = 1.0f;
+        MCVector3D Position;
+    };
+
+    /// <summary>
+    /// Moves mission 1's player mech, drawn and moving as <paramref name="treeName"/>, <paramref name="metres"/> along
+    /// <paramref name="way"/> degrees (running when <paramref name="run"/>) until it stands still, and hands each frame;
+    /// <paramref name="end"/> gets where its path ended.
+    /// </summary>
+    std::vector<StopFrame> MoveToHalt(std::string_view treeName, bool run, float way, float metres, MCVector3D& end)
+    {
+        const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+        REQUIRE(mech != nullptr);
+        const auto actor = std::static_pointer_cast<MCMechActor>(mech->Appearance);
+        const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(treeName);
+        REQUIRE(tree != nullptr);
+        tree->PreloadGestures();
+        REQUIRE_EQ(actor->Init(tree, mech), 0);
+        const std::shared_ptr<MCMechWarrior> pilot = mech->GetPilot();
+        constexpr float FrameSeconds = 1.0f / 15.0f;
+        constexpr int32_t SettleFrames = 15;
+        constexpr int32_t MostFrames = 1200;
+        constexpr int32_t StillFrames = 15;
+        constexpr uint32_t RunParam = 1;
+
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        const MCVector3D from = mech->GetPosition();
+        const float units = metres * WorldUnitsPerMeter;
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player,
+                                MCVector3D(from.X + static_cast<float>(std::cos(radians)) * units,
+                                           from.Y + static_cast<float>(std::sin(radians)) * units, from.Z),
+                                -1, run ? RunParam : 0);
+        std::vector<StopFrame> frames;
+        int32_t still = 0;
+        bool moved = false;
+
+        for (int32_t frame = 0; frame < MostFrames && still < StillFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCMovePath& path = pilot->GetMovePath();
+
+            if (path.NumStepsWhenNotPaused > 0)
+            {
+                end = path.StepList[static_cast<size_t>(path.NumStepsWhenNotPaused - 1)].Destination;
+            }
+
+            frames.push_back({actor->CurrentGesture, actor->CurrentFrame[MCMechPart::Legs],
+                              actor->GetVelocityMagnitude(), actor->StrideRate, mech->GetPosition()});
+            moved = moved || actor->CurrentGesture != MCStopGesture::Stand;
+            still = moved && actor->CurrentGesture == MCStopGesture::Stand && !actor->InTransition ? still + 1 : 0;
+        }
+
+        REQUIRE(moved);
+        REQUIRE(still == StillFrames);
+        return frames;
+    }
+
+    /// <summary>The frames' gestures, a run of each once, for the log.</summary>
+    std::string GestureRuns(const std::vector<StopFrame>& frames)
+    {
+        std::string runs;
+
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            if (i == 0 || frames[i].Gesture != frames[i - 1].Gesture)
+            {
+                runs += std::format(" {}@{}", frames[i].Gesture, frames[i].Frame);
+            }
+        }
+
+        return runs;
+    }
+} // namespace
+
+/// <summary>
+/// With MechBraking a mech whose move ends brakes to a halt through its stopping art: mission 1's mech, drawn as an
+/// original mech, one that leaves its stride part way for the stop (commando), one with its own stops in its table
+/// (madcat), and expansion mechs whose stops never slow in their data (OB-186), with (ShadowCat) and without (Turkina)
+/// a run to walk, walks 120 metres or runs 240 and halts. Braking, its stride gives way to the stop where that starts
+/// (the walk's end or its frame for the stop, the run's frame for its run to walk or, without, its end), it never
+/// drops from a stride to standing, it only slows from there, it stands where the original stops (within the slack),
+/// and its stride is never fitted beyond the rate bounds; without, it plays no stop, its legs dropping from the stride
+/// to standing as the original's.
+/// </summary>
+TEST_CASE_ISOLATED("game: with MechBraking a mech brakes to a halt through its stopping art where its move ends")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    constexpr float WalkMetres = 120.0f;
+    constexpr float RunMetres = 240.0f;
+    constexpr float Slack = 0.01f;
+    std::vector<std::pair<std::string, bool>> cases = {{"atlas", false},    {"commando", false}, {"Turkina", false},
+                                                       {"atlas", true},     {"madcat", true},    {"commando", true},
+                                                       {"ShadowCat", true}, {"Turkina", true}};
+
+    // --stop-mechs walk|run: every mech of the retail PAK instead, walking or running.
+    if (const std::optional<std::string_view> every = MCTest::Option("stop-mechs"); every.has_value())
+    {
+        cases.clear();
+        std::set<std::string> names;
+
+        for (const auto& [treeName, packet] : MCTestGame::MechTrees())
+        {
+            if (names.insert(treeName).second)
+            {
+                cases.emplace_back(treeName, *every == "run");
+            }
+        }
+    }
+
+    float way = 10.0f;
+
+    for (const auto& [treeName, run] : cases)
+    {
+        for (const int braking : {1, 0})
+        {
+            MCTest::Scope scope(std::format("{} {} MechBraking {}", treeName, run ? "running" : "walking", braking));
+            GMechBraking = braking;
+            MCVector3D end;
+            const std::vector<StopFrame> frames = MoveToHalt(treeName, run, way, run ? RunMetres : WalkMetres, end);
+            way += 180.0f;
+            std::cout << std::format("  {} {} braking {}:{}\n", treeName, run ? "run" : "walk", braking,
+                                     GestureRuns(frames));
+            const std::shared_ptr<MCSpriteTree> tree = MCTestGame::FindMechTree(treeName);
+            const auto stride = [](int32_t gesture)
+            { return gesture == MCStopGesture::Walk || gesture == MCStopGesture::Run; };
+            const auto stopping = [](int32_t gesture)
+            { return gesture == MCStopGesture::WalkToStand || gesture == MCStopGesture::RunToWalk; };
+            const auto played = std::ranges::any_of(frames, [&](const StopFrame& f) { return stopping(f.Gesture); });
+
+            if (braking == 0)
+            {
+                CHECK(!played);
+                continue;
+            }
+
+            REQUIRE(played);
+
+            for (size_t i = 1; i < frames.size(); ++i)
+            {
+                CHECK(!(stride(frames[i - 1].Gesture) && frames[i].Gesture == MCStopGesture::Stand));
+            }
+
+            // Where the stride gives way: the frame after the move's last run, or its walk's before the stop.
+            const int32_t strideGesture = run ? MCStopGesture::Run : MCStopGesture::Walk;
+            const auto stopped = std::ranges::find_if(frames, [&](const StopFrame& f) { return stopping(f.Gesture); });
+            const auto lastStride = std::find_if(std::make_reverse_iterator(stopped), frames.rend(),
+                                                 [&](const StopFrame& f) { return f.Gesture == strideGesture; });
+            REQUIRE(lastStride != frames.rend());
+            const auto first = static_cast<size_t>(std::distance(frames.begin(), lastStride.base()));
+            const MCMechSpecialInfo& info = tree->SpecialInfo;
+            const auto strideFrames = static_cast<int32_t>(tree->Gestures[strideGesture].NumFrames);
+            const int32_t walkGivesWay =
+                info.WalkToWSFrame != NoFrame ? static_cast<int32_t>(info.WalkToWSFrame) : strideFrames - 1;
+            const int32_t runGivesWay = frames[first].Gesture == MCStopGesture::RunToWalk && info.RunToRWFrame != 0
+                                            ? static_cast<int32_t>(info.RunToRWFrame)
+                                            : strideFrames - 1;
+            CHECK_EQ(frames[first - 1].Frame, run ? runGivesWay : walkGivesWay);
+
+            for (size_t i = first + 1; i < frames.size(); ++i)
+            {
+                CHECK(frames[i].Speed <= frames[i - 1].Speed + Slack);
+            }
+
+            for (const StopFrame& frame : frames)
+            {
+                CHECK(frame.StrideRate >= MinStrideRate - Slack);
+                CHECK(frame.StrideRate <= MaxStrideRate + Slack);
+            }
+
+            // Where the original stops it: its last step's margin of error short of the end.
+            const MCVector3D last = frames.back().Position;
+            const float off = std::hypot(last.X - end.X, last.Y - end.Y) * MetersPerWorldUnit - MoveMarginOfError[1];
+            std::cout << std::format("    stop at {} ends {:.2f} m off where the original stops\n", first, off);
+            CHECK(frames.back().Speed == 0.0f);
+            CHECK(std::fabs(off) <= BrakeArrivalSlack);
+        }
+    }
+
+    GMechBraking = 0;
+}
+
+namespace
+{
+    /// <summary>
+    /// A frame of a held up mech: its gesture, legs frame, and its legs as drawn (HDStops), with whether they'd settle in
+    /// place from there (MCMechActor::DrawnSettlesNear).
+    /// </summary>
+    struct HeldFrame
+    {
+        int32_t Gesture = 0;
+        int32_t Frame = 0;
+        int32_t DrawnGesture = 0;
+        int32_t DrawnFrame = 0;
+        bool Held = false;
+        MCDrawnMode Mode = MCDrawnMode::Held;
+        bool Still = false;
+        bool Near = false;
+    };
+
+    /// <summary>A held up move: how the mech goes, how long it is held up, and how it goes on.</summary>
+    struct HoldUp
+    {
+        std::string_view Name;
+        bool Run = false;
+        int32_t PausedFrames = 0;
+        /// <summary>How it goes on: as it was, or ordered anew, running or walking, so many metres on.</summary>
+        std::optional<bool> OnRunning;
+        float OnMetres = 0.0f;
+        bool Braking = false;
+    };
+
+    /// <summary>
+    /// Moves mission 1's player mech 120 metres along <paramref name="way"/> degrees as <paramref name="hold"/> has it,
+    /// paused once it has gone a stride, in the middle of the next (as waiting on its lance's point mech pauses it,
+    /// MCBattleMech's UpdateMovePath, a unit in its way much the same, CrashAvoidanceSystem), then going on, until it
+    /// stands still, drawn as it plays; hands each frame, and <paramref name="paused"/> the frame it was paused at.
+    /// </summary>
+    std::vector<HeldFrame> MoveHeldUp(const HoldUp& hold, float way, int32_t& paused)
+    {
+        const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+        REQUIRE(mech != nullptr);
+        const auto actor = std::static_pointer_cast<MCMechActor>(mech->Appearance);
+        const std::shared_ptr<MCMechWarrior> pilot = mech->GetPilot();
+        constexpr float FrameSeconds = 1.0f / 15.0f;
+        constexpr int32_t SettleFrames = 15;
+        constexpr int32_t MostFrames = 1200;
+        constexpr int32_t StillFrames = 15;
+        constexpr float Metres = 120.0f;
+        constexpr uint32_t RunParam = 1;
+        // MCMoveOrders::WaitForPointTime waiting for the point mech, and not.
+        constexpr float WaitingForPoint = 999999.0f;
+        constexpr float NotWaiting = -1.0f;
+
+        for (int32_t frame = 0; frame < SettleFrames; ++frame)
+        {
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const double radians = way * MCMoverMath::DegreesToRadians;
+        const auto along = [&](float metres)
+        {
+            const MCVector3D from = mech->GetPosition();
+            const float units = metres * WorldUnitsPerMeter;
+            return MCVector3D(from.X + static_cast<float>(std::cos(radians)) * units,
+                              from.Y + static_cast<float>(std::sin(radians)) * units, from.Z);
+        };
+
+        pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player, along(Metres), -1, hold.Run ? RunParam : 0);
+        const int32_t stride = hold.Run ? MCStopGesture::Run : MCStopGesture::Walk;
+        const int32_t strideFrames = static_cast<int32_t>(actor->MechTree->Gestures[stride].NumFrames);
+        std::vector<HeldFrame> frames;
+        int32_t strode = 0;
+        int32_t still = 0;
+        paused = -1;
+        MCVector3D last = mech->GetPosition();
+
+        for (int32_t frame = 0; frame < MostFrames && still < StillFrames; ++frame)
+        {
+            const auto now = static_cast<int32_t>(frames.size());
+            const bool midStride = actor->CurrentGesture == stride &&
+                                   std::abs(actor->CurrentFrame[MCMechPart::Legs] - strideFrames / 2) <= 1;
+            strode += actor->CurrentGesture == stride ? 1 : 0;
+
+            if (paused < 0 && strode > strideFrames && midStride)
+            {
+                paused = now;
+            }
+
+            // Kept waiting: a mech with no point mech is let go at once.
+            if (paused >= 0 && now < paused + hold.PausedFrames)
+            {
+                pilot->PausePath();
+                pilot->MoveOrders.WaitForPointTime = WaitingForPoint;
+            }
+            else if (paused >= 0 && now == paused + hold.PausedFrames)
+            {
+                pilot->MoveOrders.WaitForPointTime = NotWaiting;
+
+                if (hold.OnRunning.has_value())
+                {
+                    pilot->OrderMoveToPoint(0, 1, MCOrderOrigin::Player, along(hold.OnMetres), -1,
+                                            *hold.OnRunning ? RunParam : 0);
+                }
+                else
+                {
+                    pilot->ResumePath();
+                }
+            }
+
+            MCTestGame::RunFrame(FrameSeconds);
+            const MCVector3D at = mech->GetPosition();
+            frames.push_back({actor->CurrentGesture, actor->CurrentFrame[MCMechPart::Legs], actor->DrawnGesture(),
+                              actor->DrawnLegsFrame(), actor->DrawnStride.has_value(),
+                              actor->DrawnStride.has_value() ? actor->DrawnStride->Mode : MCDrawnMode::Held,
+                              at.X == last.X && at.Y == last.Y, actor->DrawnSettlesNear()});
+            last = at;
+            still = paused >= 0 && now > paused + hold.PausedFrames && actor->CurrentGesture == MCStopGesture::Stand &&
+                            !actor->InTransition && !actor->DrawnStride.has_value()
+                        ? still + 1
+                        : 0;
+        }
+
+        REQUIRE(paused >= 0);
+        REQUIRE(still == StillFrames);
+        return frames;
+    }
+} // namespace
+
+/// <summary>
+/// With HDStops a mech whose move is held up mid-stride (its path paused, as a unit in its way pauses it) holds its
+/// stride as drawn while it stands, then goes on from it: mission 1's mech walks or runs 120 metres, paused in the middle
+/// of a stride for a second, or five (it settles to standing; from a run, too far to step in place, it drops to standing
+/// as the original, rather than walk on the spot), then going on as it was, or ordered to run or walk on, or to walk just 15
+/// metres more, braking (MechBraking). Held, its legs stay at the frame they stopped on while it stands still and go on
+/// with it; they never jump: from frame to frame a frame or two on, or on to the next gesture through the art between
+/// them (walk to run, run to walk, the stop), the way the mech's own go, but for that drop; they hand back to its own
+/// gestures once in step; and it stands still at its move's end, drawn as it plays. Without, it drops to standing as
+/// the original.
+/// </summary>
+TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its stride, then walks on from it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    REQUIRE(mech != nullptr);
+    const auto actor = std::static_pointer_cast<MCMechActor>(mech->Appearance);
+    MCSpriteTree& tree = *actor->MechTree;
+    Eye()->ChangeTarget(mech, true);
+    constexpr int32_t Second = 15;
+    constexpr int32_t Settled = 75;
+    constexpr float BrakingMetres = 15.0f;
+    // A frame's step, and those a stride drawn on closes in by.
+    constexpr int32_t MostJump = 2;
+    const std::vector<HoldUp> holds = {
+        {"walking, a second", false, Second},
+        {"walking, five seconds", false, Settled},
+        {"running, five seconds", true, Settled},
+        {"running, a second, on walking", true, Second, false, 120.0f},
+        {"walking, a second, on running", false, Second, true, 120.0f},
+        {"walking, a second, on 15 metres braking", false, Second, false, BrakingMetres, true},
+    };
+
+    // The gestures the drawn legs go from one to the next by: the tree's art between them (settling, a start and a walk
+    // speeding up back the way they came), or straight on without it.
+    const auto byArt = [&](int32_t from, int32_t to)
+    {
+        using namespace MCStopGesture;
+        static constexpr std::array<std::pair<int32_t, int32_t>, 10> Art = {{{Stand, StandToWalk},
+                                                                             {StandToWalk, Walk},
+                                                                             {Walk, WalkToStand},
+                                                                             {WalkToStand, Stand},
+                                                                             {Walk, WalkToRun},
+                                                                             {WalkToRun, Run},
+                                                                             {Run, RunToWalk},
+                                                                             {RunToWalk, Walk},
+                                                                             {StandToWalk, Stand},
+                                                                             {WalkToRun, Walk}}};
+        return std::ranges::find(Art, std::pair{from, to}) != Art.end() ||
+               (from == Walk && to == Stand && !MCHasGestureArt(tree, WalkToStand)) ||
+               (from == Run && to == Walk && !MCHasGestureArt(tree, RunToWalk)) ||
+               (from == Walk && to == Run && !MCHasGestureArt(tree, WalkToRun));
+    };
+
+    float way = 10.0f;
+
+    for (const HoldUp& hold : holds)
+    {
+        for (const int stops : {1, 0})
+        {
+            MCTest::Scope scope(std::format("{}, HDStops {}", hold.Name, stops));
+            GHdStops = stops;
+            GMechBraking = hold.Braking ? 1 : 0;
+            int32_t paused = -1;
+            const std::vector<HeldFrame> frames = MoveHeldUp(hold, way, paused);
+            way += 180.0f;
+            const auto pause = frames.begin() + paused;
+            const auto heldFrames = std::ranges::count_if(frames, &HeldFrame::Held);
+            std::string drawn;
+
+            for (auto f = pause; f != frames.end(); ++f)
+            {
+                if (f == pause || f->DrawnGesture != (f - 1)->DrawnGesture || f->Held != (f - 1)->Held)
+                {
+                    drawn += std::format(" {}{}@{}", f->Held ? "" : "=", f->DrawnGesture, f->DrawnFrame);
+                }
+            }
+
+            std::cout << std::format("  {}, HDStops {}: held {} frames, drawn{}\n", hold.Name, stops, heldFrames,
+                                     drawn);
+
+            // Stopped dead, as the original stops it.
+            const auto stood =
+                std::find_if(pause, frames.end(), [](const HeldFrame& f) { return f.Gesture == MCStopGesture::Stand; });
+            REQUIRE(stood != frames.end());
+            CHECK(std::distance(pause, stood) <= MostJump);
+            CHECK(!frames.back().Held);
+
+            if (stops == 0)
+            {
+                CHECK(heldFrames == 0);
+                continue;
+            }
+
+            // Held at the frame its legs stopped on, and still while the mech is, but settling.
+            const int32_t stride = hold.Run ? MCStopGesture::Run : MCStopGesture::Walk;
+            const auto strideFrames = static_cast<int32_t>(tree.Gestures[stride].NumFrames);
+            CHECK(stood->Held);
+            CHECK(stood->DrawnGesture == stride);
+            CHECK((stood->DrawnFrame - (pause - 1)->DrawnFrame + strideFrames) % strideFrames <= MostJump);
+
+            for (auto f = pause + 1; f != frames.end(); ++f)
+            {
+                const auto prev = f - 1;
+
+                if (!f->Held && !prev->Held)
+                {
+                    continue;
+                }
+
+                MCTest::Scope at(std::format("frame {}", std::distance(frames.begin(), f)));
+
+                if (f->DrawnGesture != prev->DrawnGesture)
+                {
+                    // Or dropped to standing as the original stops, the mech standing still, from too far to settle.
+                    const bool dropped = !f->Held && f->Gesture == MCStopGesture::Stand && f->Still && !prev->Near;
+                    CHECK((byArt(prev->DrawnGesture, f->DrawnGesture) || dropped));
+                    continue;
+                }
+
+                const auto count = static_cast<int32_t>(tree.Gestures[f->DrawnGesture].NumFrames);
+                const int32_t step = (f->DrawnFrame - prev->DrawnFrame + count) % count;
+                CHECK(std::min(step, count - step) <= MostJump);
+
+                if (f->Still && prev->Held && f->Mode == MCDrawnMode::Held && prev->Mode == MCDrawnMode::Held)
+                {
+                    CHECK(step == 0);
+                }
+            }
+
+            const auto played = [&](int32_t gesture)
+            {
+                return std::ranges::any_of(frames,
+                                           [&](const HeldFrame& f) { return f.Held && f.DrawnGesture == gesture; });
+            };
+
+            if (hold.PausedFrames == Settled)
+            {
+                // Settled to standing while it waited, through its stop; too far from it to step there in place, dropped
+                // once held as long as a stride is (from a run).
+                const auto settled = std::find_if(stood, pause + Settled, [](const HeldFrame& f) { return !f.Held; });
+                CHECK(settled != pause + Settled);
+                CHECK(stood->Near == !hold.Run);
+                CHECK(played(MCStopGesture::WalkToStand) ==
+                      (MCHasGestureArt(tree, MCStopGesture::WalkToStand) && stood->Near));
+
+                if (!stood->Near)
+                {
+                    CHECK(std::distance(stood, settled) >= static_cast<int32_t>(HoldMostSeconds * Second));
+                }
+            }
+
+            if (hold.Run && hold.OnRunning == false)
+            {
+                CHECK(played(MCStopGesture::RunToWalk) == MCHasGestureArt(tree, MCStopGesture::RunToWalk));
+            }
+
+            if (!hold.Run && hold.OnRunning == true)
+            {
+                CHECK(played(MCStopGesture::WalkToRun) == MCHasGestureArt(tree, MCStopGesture::WalkToRun));
+            }
+        }
+    }
+
+    GHdStops = 0;
+    GMechBraking = 0;
 }

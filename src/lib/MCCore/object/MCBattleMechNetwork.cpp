@@ -75,7 +75,7 @@ auto MCBattleMech::NetUpdateMovePath(char& newRotate, char& newThrottleSetting, 
     LastValidPosition = destination;
     const auto distance = static_cast<float>(DistanceFrom(destination));
     const int32_t numSteps = path.NumSteps;
-    const float margin = step == numSteps - 1 ? MoveMarginOfError[1] : MoveMarginOfError[0];
+    const float margin = step == numSteps - 1 ? LastStepMargin() : MoveMarginOfError[0];
 
     if (margin <= distance)
     {
@@ -389,6 +389,7 @@ auto MCBattleMech::NetUpdateMovement() -> void
     UpdateMoveStateGoal();
     NetUpdateMovePath(newRotate, newThrottleSetting, newRotatePerSec, newGestureStateGoal, newMoveState, minThrottle,
                       maxThrottle);
+    PlanStop(newGestureStateGoal);
 
     if (newMoveState != MCMoveState::NoChange)
     {
@@ -492,12 +493,12 @@ auto MCBattleMech::BuildStatusChunk() -> int32_t
 
                 switch (targetClass)
                 {
-                    case static_cast<MCObjectClass>(1):
+                    case MCObjectClass::Unused1:
                     case MCObjectClass::Building:
                     case MCObjectClass::Debris:
                     case MCObjectClass::Tree:
                     case MCObjectClass::TerrainObject:
-                    case static_cast<MCObjectClass>(0x17):
+                    case MCObjectClass::Unused17:
                     case MCObjectClass::MiscTerrainObject:
                     case MCObjectClass::Jet:
                     case MCObjectClass::TreeBuilding:

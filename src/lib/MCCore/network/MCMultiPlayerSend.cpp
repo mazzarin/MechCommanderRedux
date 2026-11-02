@@ -15,6 +15,7 @@
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCTurret.h"
+#include "sprite/MCMechStops.h"
 
 // The multiplayer game's sends: the session messages (chat, check-in, setup, the scenario's start and end), the
 // players' orders, and the server's updates of movers, turrets, weapons and the world, each packed into the message
@@ -79,8 +80,39 @@ int32_t MCMultiPlayer::SendChat(uint32_t toID, std::string_view text)
     return 0;
 }
 
+int32_t MCMultiPlayer::SendPlayerRules()
+{
+    auto rules = StartGuaranteedMessage<MCMPLongMessage>(MCMPMessageType::PlayerRules);
+    rules.Value = static_cast<int32_t>(MCMatchRule::Supported);
+    PutMessage(rules);
+
+    if (!IsServer)
+    {
+        SessionManager->SendMessageToServerGuaranteed(Outgoing(sizeof(MCMPLongMessage)));
+    }
+    else
+    {
+        PlayerRules[SessionManager->MyPlayer()->Id] = MCMatchRule::Supported;
+    }
+
+    return 0;
+}
+
+int32_t MCMultiPlayer::SendMatchRules()
+{
+    // The server's own choices (its PREFS), as far as every player's build plays by them.
+    const uint32_t wanted = GMechBraking != 0 ? MCMatchRule::MechBraking : 0;
+    auto rules = StartGuaranteedMessage<MCMPLongMessage>(MCMPMessageType::MatchRules);
+    rules.Value = static_cast<int32_t>(AgreedRules(wanted));
+    PutMessage(rules);
+    SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLongMessage)));
+    MatchRules = static_cast<uint32_t>(rules.Value);
+    return 0;
+}
+
 int32_t MCMultiPlayer::SendPlayerCheckIn()
 {
+    SendPlayerRules();
     auto checkIn = StartGuaranteedMessage<MCMPPlayerCheckInMessage>(MCMPMessageType::PlayerCheckIn);
     checkIn.CheckInId = static_cast<int8_t>(CheckInId);
     checkIn.HomeTeam = static_cast<int8_t>(HomeTeam);
@@ -173,6 +205,8 @@ int32_t MCMultiPlayer::SendPrepareScenario()
 
 int32_t MCMultiPlayer::SendStartScenario(std::span<const int32_t> playerValues, std::string_view missionName)
 {
+    // Port: the rules first, so that every player plays the scenario by them from its start.
+    SendMatchRules();
     constexpr size_t nameOffset = sizeof(MCMPStartScenarioMessage);
     auto start = StartGuaranteedMessage<MCMPStartScenarioMessage>(MCMPMessageType::StartScenario);
     const size_t numValues =

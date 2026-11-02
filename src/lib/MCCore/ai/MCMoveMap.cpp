@@ -502,7 +502,8 @@ auto MCMoveMap::MarkGoalCells(const MCPathSearch& search, MCVector3D targetPos) 
     _DoorCellFree.assign(static_cast<size_t>(std::max(length, 0)), true);
     Assert(Door >= 0 && Door < globalMap.NumDoors, 0, " FUDGE 1");
     Assert(goal.Direction[0] == 1 || goal.Direction[0] == 2, 0, " FUDGE 2");
-    Assert(goal.Length >= 1 && goal.Length <= 0x3ff, 0, " FUDGE 3");
+    // The original also asserted Length <= 0x3ff, which its one-byte length always is.
+    Assert(goal.Length >= 1, 0, " FUDGE 3");
 
     // Clears the door cells a standing mech occupies (on either side of the door).
     const bool alongRows = goal.Direction[0] == 1;

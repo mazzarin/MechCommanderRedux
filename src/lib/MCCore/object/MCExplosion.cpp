@@ -10,6 +10,7 @@
 #include "object/MCObjectDrawing.h"
 #include "object/MCObjectSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCVfxAppearance.h"
 #include "terrain/MCTerrain.h"
@@ -117,6 +118,15 @@ auto MCExplosion::Render() -> void
         // Port-only (HD lighting): an explosion's fire lights what's around it, as long as it burns (its light's glow,
         // where it has one, is a flash that ends sooner).
         MCSceneLights::AddGlow(*Appearance, Position, MCSceneLights::MCGlowPixels::Bright);
+
+        // Port-only (HD particles): what it throws, once, as it's first seen, and what breaks off it as it burns.
+        if (!Burst)
+        {
+            Burst = true;
+            MCParticles::AddExplosion(*Appearance, Position, Shakes);
+        }
+
+        MCParticles::AddExplosionFrame(*Appearance, Position);
     }
 
     if (Light != nullptr)

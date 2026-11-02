@@ -606,6 +606,21 @@ namespace
         }
     }
 
+    /// <summary>
+    /// Port-only (HD art's arms): notes how far a shot about to take off an arm goes past what the arm has left, before the
+    /// shot is cut to that (MCBattleMech::RightArmBlow, LeftArmBlow).
+    /// </summary>
+    void NoteArmBlow(MCBattleMech& mech, int32_t bodyLocation, float damage)
+    {
+        const MCBodyLocation& location = mech.BodyAt(bodyLocation);
+
+        if ((bodyLocation == MechRightArm || bodyLocation == MechLeftArm) && location.MaxInternalStructure > 0)
+        {
+            (bodyLocation == MechRightArm ? mech.RightArmBlow : mech.LeftArmBlow) =
+                (damage - location.CurInternalStructure) / static_cast<float>(location.MaxInternalStructure);
+        }
+    }
+
     /// <summary>Passes what is left of a shot on to the location a destroyed one transfers to.</summary>
     void TransferHit(MCBattleMech& mech, MCWeaponShotInfo& shotInfo, int32_t bodyLocation)
     {
@@ -711,6 +726,7 @@ auto MCBattleMech::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultiplayC
         else
         {
             const float internalStructure = location.CurInternalStructure;
+            NoteArmBlow(*this, bodyLocation, shotInfo.Damage);
             shotInfo.SetDamage(shotInfo.Damage - internalStructure);
             InjureBodyLocation(bodyLocation, internalStructure);
 
@@ -768,6 +784,7 @@ auto MCBattleMech::HandleWeaponHit(MCWeaponShotInfo& shotInfo, int addMultiplayC
         }
         else
         {
+            NoteArmBlow(*this, bodyLocation, shotInfo.Damage);
             shotInfo.SetDamage(shotInfo.Damage - internalStructure);
             InjureBodyLocation(bodyLocation, internalStructure);
 

@@ -17,6 +17,7 @@
 #include "lib/MCOptionalRef.h"
 #include "platform/MCAddressKey.h"
 #include "sprite/MCInBetween.h"
+#include "sprite/MCSpriteTurn.h"
 #include "vfx/MCVfx.h"
 
 namespace MCHdArt
@@ -773,6 +774,30 @@ public:
 
     /// <summary>Whether the shape draws now are a unit's sun shadow (<see cref="SunShadowScope"/>).</summary>
     static bool DrawingSunShadow();
+
+    /// <summary>
+    /// Port-only (HD art): while one lives, the shape draws are drawn turned as it says (the hardware renderer draws their
+    /// HD art pack frames so, nothing without one; the software renderer draws them as they are). One made with none
+    /// draws them as they are.
+    /// </summary>
+    class TurnScope
+    {
+    public:
+        /// <summary>Starts drawing turned by <paramref name="turn"/> (none: as they are).</summary>
+        explicit TurnScope(const std::optional<MCSpriteTurn>& turn);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~TurnScope();
+
+        TurnScope(const TurnScope&) = delete;
+        TurnScope& operator=(const TurnScope&) = delete;
+
+    private:
+        std::optional<MCSpriteTurn> _Was;
+    };
+
+    /// <summary>The turn the shape draws now are drawn by (<see cref="TurnScope"/>), none outside one.</summary>
+    static const std::optional<MCSpriteTurn>& DrawingTurn();
 
     // Frame surfaces ----------------------------------------------------------------------------------------------
 

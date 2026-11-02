@@ -597,6 +597,9 @@ namespace
     /// <summary>Whether a <see cref="MCRenderer::SunShadowScope"/> is drawing a unit's sun shadow.</summary>
     bool SunShadowDrawn = false;
 
+    /// <summary>The turn a <see cref="MCRenderer::TurnScope"/> is drawing by, none outside one.</summary>
+    std::optional<MCSpriteTurn> TurnDrawn;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -818,6 +821,21 @@ MCRenderer::SunShadowScope::~SunShadowScope()
 bool MCRenderer::DrawingSunShadow()
 {
     return SunShadowDrawn;
+}
+
+MCRenderer::TurnScope::TurnScope(const std::optional<MCSpriteTurn>& turn) : _Was(TurnDrawn)
+{
+    TurnDrawn = turn;
+}
+
+MCRenderer::TurnScope::~TurnScope()
+{
+    TurnDrawn = _Was;
+}
+
+const std::optional<MCSpriteTurn>& MCRenderer::DrawingTurn()
+{
+    return TurnDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

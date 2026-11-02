@@ -1553,6 +1553,11 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
         {
             element.InBetween = LegsTurnMiddle(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part]);
         }
+        else if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
+        {
+            (part == MCMechPart::RightArm ? DrawnRightArm : DrawnLeftArm) = {drawnShape[part], drawnFrame[part],
+                                                                             drawnReverse[part]};
+        }
 
         ElementList().Add(element);
     }

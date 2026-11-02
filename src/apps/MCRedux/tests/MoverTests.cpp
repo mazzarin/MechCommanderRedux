@@ -21,6 +21,7 @@
 #include "object/MCWeaponShotInfo.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
+#include "object/MCDebris.h"
 #include "object/MCMechGameSystem.h"
 #include "terrain/MCTerrain.h"
 
@@ -615,6 +616,56 @@ TEST_CASE_ISOLATED("game: a mech's hits take armor, then internal structure, the
     Hit(*mech, MechCenterTorso, mech->BodyAt(MechCenterTorso).CurInternalStructure + 10.0f);
     CHECK_EQ(static_cast<int32_t>(mech->BodyAt(MechCenterTorso).DamageState), 2);
     CHECK(mech->IsDisabled() != 0 || mech->IsDestroyed() != 0);
+}
+
+/// <summary>
+/// Port-only (HD art's arms): a hit that takes off an arm notes how far it went past what the arm had left, a share of
+/// the arm's whole structure, before the shot is cut to that and the rest passes inward; its armor taken first or
+/// already gone. That picks how the arm shows (MCDebris::StyleOfBlow): just enough drops it, a quarter of an arm more
+/// throws it, a whole arm more shatters it.
+/// </summary>
+TEST_CASE_ISOLATED("game: a hit taking off an arm notes how far past it went, for HD art's arms")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const std::shared_ptr<MCBattleMech> mech = FirstMech();
+    REQUIRE(mech != nullptr);
+    // No critical hits: the dice could take an arm off with no blow.
+    CriticalHitTable[0] = 100;
+    constexpr float Exact = 1e-5f;
+
+    // A hit the arm takes notes nothing.
+    MCBodyLocation& rightArm = mech->BodyAt(MechRightArm);
+    mech->Armor[MechRightArm].CurArmor = 0.0f;
+    REQUIRE(rightArm.CurInternalStructure > 1.0f);
+    Hit(*mech, MechRightArm, 1.0f);
+    CHECK(static_cast<int32_t>(rightArm.DamageState) != 2);
+    CHECK_EQ(mech->RightArmBlow, 0.0f);
+
+    // Its armor gone, just what it has left: dropped.
+    Hit(*mech, MechRightArm, rightArm.CurInternalStructure);
+    CHECK_EQ(static_cast<int32_t>(rightArm.DamageState), 2);
+    CHECK_EQ(mech->RightArmBlow, 0.0f);
+    CHECK(MCDebris::StyleOfBlow(mech->RightArmBlow) == MCArmStyle::Dropped);
+
+    // Through its armor, half an arm more than it has left: thrown.
+    MCBodyLocation& leftArm = mech->BodyAt(MechLeftArm);
+    const float whole = static_cast<float>(leftArm.MaxInternalStructure);
+    REQUIRE(mech->Armor[MechLeftArm].CurArmor > 0.0f);
+    Hit(*mech, MechLeftArm, mech->Armor[MechLeftArm].CurArmor + leftArm.CurInternalStructure + whole / 2.0f);
+    CHECK_EQ(static_cast<int32_t>(leftArm.DamageState), 2);
+    CHECK(std::abs(mech->LeftArmBlow - 0.5f) < Exact);
+    CHECK(MCDebris::StyleOfBlow(mech->LeftArmBlow) == MCArmStyle::Thrown);
+
+    // The bounds.
+    CHECK(MCDebris::StyleOfBlow(0.24f) == MCArmStyle::Dropped);
+    CHECK(MCDebris::StyleOfBlow(0.25f) == MCArmStyle::Thrown);
+    CHECK(MCDebris::StyleOfBlow(0.99f) == MCArmStyle::Thrown);
+    CHECK(MCDebris::StyleOfBlow(1.0f) == MCArmStyle::Shattered);
 }
 
 /// <summary>

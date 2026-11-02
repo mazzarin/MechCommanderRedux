@@ -1,0 +1,61 @@
+#pragma once
+
+// Port-only: the HD settings PREFS.CFG keeps, from "HDArt" to "MechBraking": the setting each key holds, its choices,
+// what it reads as when PREFS lacks it, and how it is read and written. The preferences' HD OPTIONS page edits them
+// (logistics/MCHdOptionsPanel.h).
+
+class MCFitIniFile;
+
+/// <summary>
+/// Personal build: PREFS.CFG's HD settings read as their personal defaults when it lacks them (on, lit at the mission's
+/// time of day: <see cref="MCHdSettings::MCSetting::Personal"/>), instead of the original's game (off). The app calls it
+/// before the game starts; the tests don't, so they keep the original's defaults.
+/// </summary>
+void UseHdByDefault();
+
+namespace MCHdSettings
+{
+    /// <summary>An HD setting: its PREFS key, the global it sets, its choices and its defaults.</summary>
+    struct MCSetting
+    {
+        /// <summary>The PREFS key.</summary>
+        std::string_view Key;
+        /// <summary>The setting.</summary>
+        int* Value = nullptr;
+        /// <summary>Its choices, Least to Most (PREFS values outside them are clamped).</summary>
+        int32_t Least = 0;
+        int32_t Most = 1;
+        /// <summary>Written as a boolean (else as a number).</summary>
+        bool Boolean = true;
+        /// <summary>What it reads as when PREFS lacks it: the original's game, and the personal build.</summary>
+        int32_t Original = 0;
+        int32_t Personal = 1;
+    };
+
+    /// <summary>Every HD setting, in PREFS' order.</summary>
+    std::span<const MCSetting> All();
+
+    /// <summary>The setting PREFS keeps as <paramref name="key"/>; an unknown key is fatal.</summary>
+    const MCSetting& Find(std::string_view key);
+
+    /// <summary>What <paramref name="setting"/> reads as when PREFS lacks it (personal after <see cref="UseHdByDefault"/>).</summary>
+    int32_t Default(const MCSetting& setting);
+
+    /// <summary>Reads every HD setting from <paramref name="file"/>'s current block (a missing key: its default).</summary>
+    void Read(MCFitIniFile& file);
+
+    /// <summary>Writes every HD setting into <paramref name="file"/>'s current block.</summary>
+    void Write(MCFitIniFile& file);
+
+    /// <summary>Every HD setting's value now, in <see cref="All"/>'s order (for <see cref="Restore"/>).</summary>
+    std::vector<int32_t> Now();
+
+    /// <summary>Puts back the values <see cref="Now"/> gave.</summary>
+    void Restore(std::span<const int32_t> values);
+
+    /// <summary>Every HD setting to its default (<see cref="Default"/>).</summary>
+    void UseDefaults();
+
+    /// <summary>Every HD setting to the original's game: off.</summary>
+    void UseOriginal();
+}

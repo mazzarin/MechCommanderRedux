@@ -11,6 +11,9 @@
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGenericScreen.h"
+#include "logistics/MCLogTextButton.h"
+#include "logistics/MCLogOptionList.h"
+#include "logistics/MCHdOptionsPanel.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCMainMenu.h"
@@ -23,11 +26,17 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
+#include "main/MCMissionGlobals.h"
 #include "logistics/MCUnitLimits.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "gui/MCGuiGlobals.h"
+#include "sprite/MCSceneLights.h"
+#include "platform/MCRenderer.h"
+#include "platform/MCInput.h"
+#include "platform/MCDisplay.h"
 
 // The menus, the briefing screen and the mission/logistics bridge (P3-log-3): the registry version, the starting
 // fit's components, a pilot's profile, the temp folder's clean-up, the menus' screens and states, the drop slots'
@@ -304,6 +313,43 @@ namespace
         Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2, x, y);
         Settle();
     }
+
+    /// <summary>
+    /// From the main menu, a new campaign's first mission: its briefing, the first mech in the first drop slot, the
+    /// launch button, then frames until the scenario is up.
+    /// </summary>
+    /// <returns>Whether the scenario is up.</returns>
+    bool LaunchFirstMission()
+    {
+        NewCampaign();
+        Settle();
+
+        {
+            // Pinned only for the set-up: the launch takes logistics down.
+            const std::shared_ptr<MCLogistics> pinned = GlobalLog();
+            REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
+            MCScrollPane& pane = *pinned->BriefingScreen->DeployPane;
+            REQUIRE(pane.NumberOfChildren() > 0);
+            std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+            REQUIRE(mech != nullptr);
+            MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
+            DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
+            REQUIRE(mech->Deployed != 0);
+        }
+
+        // The launch button.
+        constexpr int32_t launchX = 0x230;
+        constexpr int32_t launchY = 0x152;
+        constexpr int32_t mostFrames = 300;
+        RealClick(launchX, launchY);
+
+        for (int32_t frame = 0; frame < mostFrames && Scenario() == nullptr; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        return Scenario() != nullptr;
+    }
 }
 
 TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the drop tonnage")
@@ -376,37 +422,128 @@ TEST_CASE_ISOLATED("game: the launch button leaves logistics and starts the miss
 
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
-    NewCampaign();
-    Settle();
     std::weak_ptr<MCLogistics> logistics = GlobalLog();
-    std::weak_ptr<MCBriefingScreen> briefing;
-    {
-        // Pinned only for the set-up: the launch takes logistics down.
-        const std::shared_ptr<MCLogistics> pinned = GlobalLog();
-        briefing = pinned->BriefingScreen;
-        REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
-        MCScrollPane& pane = *pinned->BriefingScreen->DeployPane;
-        REQUIRE(pane.NumberOfChildren() > 0);
-        std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
-        REQUIRE(mech != nullptr);
-        MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
-        DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
-        REQUIRE(mech->Deployed != 0);
-    }
-
-    // The launch button.
-    RealClick(0x230, 0x152);
-
-    for (int32_t frame = 0; frame < 300 && Scenario() == nullptr; frame++)
-    {
-        MCTestGame::RunFrame(1.0f / 15.0f);
-    }
-
-    REQUIRE(Scenario() != nullptr);
+    std::weak_ptr<MCBriefingScreen> briefing = GlobalLog()->BriefingScreen;
+    REQUIRE(LaunchFirstMission());
     CHECK(Mission()->State == MCMissionState::Scenario);
     CHECK(GlobalLog() == nullptr);
     CHECK(logistics.expired());
     CHECK(briefing.expired());
+}
+
+/// <summary>
+/// A setting changed on the preferences' HD OPTIONS page reaches the mission launched next: HD LIGHTING clicked from OFF
+/// to NIGHT there and accepted is written to PREFS, and the new campaign's first mission shows at night, its world
+/// much darker than with HD LIGHTING off.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD LIGHTING set to NIGHT on the HD OPTIONS page darkens the mission launched next")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    Settle();
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::filesystem::remove(prefsPath);
+    REQUIRE_EQ(GHdLighting, static_cast<int>(HdLightingOff));
+
+    // The preferences, OPTIONS, three clicks on HD LIGHTING (ON, DUSK, NIGHT), DONE, ACCEPT.
+    ShowPreferences();
+    Settle();
+    const std::shared_ptr<MCLogTextButton> options = FindTextButton(*GlobalLog()->PrefScreen, "OPTIONS");
+    REQUIRE(options != nullptr);
+    RealClick(options->GlobalX() + options->Width() / 2, options->GlobalY() + options->Height() / 2);
+    Settle();
+    REQUIRE(HdOptionsShown());
+    const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
+    REQUIRE(list != nullptr);
+    const std::optional<int32_t> row = list->RowOf("HDLighting");
+    REQUIRE(row.has_value());
+    const std::optional<std::pair<int32_t, int32_t>> setting = list->SettingCentre(*row);
+    REQUIRE(setting.has_value());
+    constexpr int32_t clicksToNight = 3;
+
+    for (int32_t click = 0; click < clicksToNight; click++)
+    {
+        RealClick(setting->first, setting->second);
+    }
+
+    CHECK_EQ(list->ChoiceName(*row), "NIGHT");
+    HideHdOptions();
+    WritePrefs();
+    Settle();
+    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        CHECK_EQ(prefs.Read<int32_t>("HDLighting"), MCFitResult<int32_t>(HdLightingNight));
+    }
+
+    REQUIRE(LaunchFirstMission());
+    CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Night);
+
+    // Past the scenario's start-up (its static) until units move, as MCTestGame::StartMission waits.
+    constexpr int32_t startedTurn = 30;
+    constexpr int32_t mostStartFrames = 3000;
+
+    for (int32_t frame = 0; frame < mostStartFrames && Turn <= startedTurn; frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    REQUIRE(Turn > startedTurn);
+
+    // Paused, the world (clear of the interface: the panels at the left, the mech bar at the bottom) at night, then
+    // with HD LIGHTING off.
+    GamePaused = true;
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const auto worldLuma = [&]
+    {
+        constexpr int32_t settleFrames = 2;
+
+        for (int32_t frame = 0; frame < settleFrames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+
+        const std::expected<std::vector<SDL_Color>, std::string> frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE_EQ(frame->size(), static_cast<size_t>(width) * height);
+        double sum = 0.0;
+        size_t count = 0;
+
+        for (int32_t y = height / 4; y < height - height / 8; y++)
+        {
+            for (int32_t x = width / 3; x < width; x++)
+            {
+                const SDL_Color color = (*frame)[static_cast<size_t>(y) * width + x];
+                sum += 0.299 * color.r + 0.587 * color.g + 0.114 * color.b;
+                count++;
+            }
+        }
+
+        return sum / static_cast<double>(std::max<size_t>(count, 1));
+    };
+
+    const double night = worldLuma();
+    MCScreenInput::SaveShownShot("hd options night mission");
+    GHdLighting = HdLightingOff;
+    const double off = worldLuma();
+    MCScreenInput::SaveShownShot("hd options night mission lighting off");
+    std::cout << std::format("  world luma: night {:.1f}, HD lighting off {:.1f}\n", night, off);
+    // Night's world light is a third of the day's (MCSceneLights' night look).
+    constexpr double atMostOfOff = 0.6;
+    CHECK(night < off * atMostOfOff);
+
+    GamePaused = false;
+    std::filesystem::remove(prefsPath);
 }
 
 TEST_CASE_ISOLATED("game: the operation tab starts the briefing movie half a second later")

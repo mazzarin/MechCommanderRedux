@@ -5,6 +5,7 @@
 #include "MCVersion.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
+#include "main/MCHdSettings.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"

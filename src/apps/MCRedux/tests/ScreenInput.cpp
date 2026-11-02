@@ -6,6 +6,7 @@
 #include "gui/MCGuiPort.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
+#include "logistics/MCLogTextButton.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCUtf8Path.h"
@@ -204,4 +205,23 @@ namespace MCScreenInput
         MCInput::HandleEvent(wheel);
         MCTestGame::RunFrame(1.0f / 15.0f);
     }
+}
+
+std::shared_ptr<MCLogTextButton> MCScreenInput::FindTextButton(MCGuiObject& parent, std::string_view label)
+{
+    for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
+    {
+        if (auto button = std::dynamic_pointer_cast<MCLogTextButton>(child);
+            button != nullptr && button->Label() == label)
+        {
+            return button;
+        }
+
+        if (std::shared_ptr<MCLogTextButton> found = FindTextButton(*child, label); found != nullptr)
+        {
+            return found;
+        }
+    }
+
+    return nullptr;
 }

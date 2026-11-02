@@ -8744,8 +8744,10 @@ TEST_CASE_ISOLATED("game: relief lights the HD ground by the pack's relief maps,
 /// <summary>
 /// A mech stands on the HD ground, not in its relief, whichever way it faces: the relief maps light none of its pixels,
 /// its mirrored parts' (drawn by a transform, MCVulkanRenderer::ShapeBlit) as its others', drawn from the original or
-/// from the pack. Their indices tell the composite what stands on the ground (the relief's light, the water, the rain's
-/// wet look); a mirrored part once wrote none, and showed the ground's relief and puddles through it.
+/// from the pack, nor its frames' smooth edges past the original's pixels. Their indices tell the composite what stands
+/// on the ground (the relief's light, the water, the rain's wet look), and a frame's mark pass where it shows past them;
+/// a mirrored part once wrote none, and showed the ground's relief and puddles through it, and a frame's edge read as
+/// the ground.
 /// </summary>
 TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mirrored parts' too")
 {
@@ -8853,11 +8855,13 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
 
     // The mech's pixels: where its frames from the pack (inverted) show far other colours than the original's, more
     // than MechApart in a channel (the ground about it differs a little too: the sun's relief shades it by the mech's
-    // brightness); of those, the ones inside it (the frame's smooth edges blend the ground's light in).
+    // brightness); of those, the ones inside it (the frame's smooth edges blend the ground's light in), and the ones at
+    // its edge, where the frame from the pack shows over the ground, past the original's pixels too.
     constexpr int MechApart = 64;
     const auto at = [&](int32_t x, int32_t y) { return static_cast<size_t>(y) * cropWidth + x; };
     size_t groundPixels = 0;
     size_t groundLit = 0;
+    size_t edgePixels = 0;
     int32_t mirrored = 0;
 
     for (int32_t i = 0; i < Facings; ++i)
@@ -8874,6 +8878,8 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
         size_t inside = 0;
         size_t lit = 0;
         size_t hdLit = 0;
+        size_t edge = 0;
+        size_t edgeLit = 0;
 
         for (int32_t y = 1; y < cropHeight - 1; ++y)
         {
@@ -8886,30 +8892,37 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
                     continue;
                 }
 
+                const bool hdLitHere = !SameColor(facing.HdRelief[at(x, y)], facing.HdSteep[at(x, y)]);
+
                 if (!(isMech(x - 1, y - 1) && isMech(x, y - 1) && isMech(x + 1, y - 1) && isMech(x - 1, y) &&
                       isMech(x + 1, y) && isMech(x - 1, y + 1) && isMech(x, y + 1) && isMech(x + 1, y + 1)))
                 {
+                    ++edge;
+                    edgeLit += hdLitHere ? 1 : 0;
                     continue;
                 }
 
                 ++inside;
                 lit += SameColor(facing.Relief[at(x, y)], facing.Steep[at(x, y)]) ? 0 : 1;
-                hdLit += SameColor(facing.HdRelief[at(x, y)], facing.HdSteep[at(x, y)]) ? 0 : 1;
+                hdLit += hdLitHere ? 1 : 0;
             }
         }
 
         mirrored += facing.Mirrored ? 1 : 0;
+        edgePixels += edge;
         std::cout << std::format("  facing {:.0f}{}: {} of the mech's pixels lit by the relief from the original, {} "
-                                 "from the pack, of {} inside it\n",
+                                 "from the pack, of {} inside it; from the pack {} of {} at its edge\n",
                                  FirstFacing + static_cast<float>(i) * FacingStep,
-                                 facing.Mirrored ? " (mirrored parts)" : "", lit, hdLit, inside);
+                                 facing.Mirrored ? " (mirrored parts)" : "", lit, hdLit, inside, edgeLit, edge);
         CHECK(inside > 0);
         CHECK_EQ(lit, 0u);
         CHECK_EQ(hdLit, 0u);
+        CHECK_EQ(edgeLit, 0u);
     }
 
     std::cout << std::format("  {} of {} ground pixels lit by the relief\n", groundLit, groundPixels);
     CHECK(mirrored > 0);
+    CHECK(edgePixels > 0);
     CHECK(groundLit * 2 > groundPixels);
     std::filesystem::remove_all(scene->Scratch);
 }

@@ -40,6 +40,24 @@ std::expected<void, std::string> ShowArtMode(const MCArtMode& mode);
 void EndArtMode();
 
 /// <summary>
+/// For its lifetime, HD ART and HD LIGHTING hold the player's own while a mode <see cref="ShowArtMode"/> showed is in
+/// force, so PREFS saved meanwhile (the in-mission INTERFACE SIZE keys save it) keeps theirs; the mode's come back
+/// after. Nothing is drawn while it lives.
+/// </summary>
+class MCPlayersArtScope
+{
+public:
+    MCPlayersArtScope();
+    ~MCPlayersArtScope();
+    MCPlayersArtScope(const MCPlayersArtScope&) = delete;
+    MCPlayersArtScope& operator=(const MCPlayersArtScope&) = delete;
+
+private:
+    int _HdArt = 0;
+    int _HdLighting = 0;
+};
+
+/// <summary>
 /// Ties every shape loaded so far to the HD art pack, as loading it with HD art on would have: the sprite cache's, the
 /// craters', the mech bar's icons and logistics' icons. Does nothing while HD art is off.
 /// </summary>

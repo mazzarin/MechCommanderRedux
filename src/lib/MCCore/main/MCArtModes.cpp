@@ -88,6 +88,21 @@ auto EndArtMode() -> void
     }
 }
 
+MCPlayersArtScope::MCPlayersArtScope() : _HdArt(GHdArt), _HdLighting(GHdLighting)
+{
+    if (PlayersOwn.has_value())
+    {
+        GHdArt = PlayersOwn->HdArt;
+        GHdLighting = PlayersOwn->HdLighting;
+    }
+}
+
+MCPlayersArtScope::~MCPlayersArtScope()
+{
+    GHdArt = _HdArt;
+    GHdLighting = _HdLighting;
+}
+
 auto AttachHdArtToLoaded() -> void
 {
     if (!MCHdArt::Active())

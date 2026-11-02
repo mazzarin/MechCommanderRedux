@@ -434,7 +434,8 @@ TEST_CASE_ISOLATED("game: the launch button leaves logistics and starts the miss
 
 /// <summary>
 /// An art mode the debug console showed is the run's only: with the player's own HD LIGHTING at NIGHT, the mode
-/// "original" turns it off, opening the preferences puts NIGHT back, and accepting them saves NIGHT, not the mode's.
+/// "original" turns it off; PREFS saved while it shows (as the in-mission INTERFACE SIZE keys save it) keeps NIGHT and
+/// the mode stays shown; opening the preferences puts NIGHT back, and accepting them saves NIGHT, not the mode's.
 /// </summary>
 TEST_CASE_ISOLATED("game: an art mode the debug console showed ends at the preferences, which save the player's own")
 {
@@ -446,6 +447,14 @@ TEST_CASE_ISOLATED("game: an art mode the debug console showed ends at the prefe
     REQUIRE(MCTestGame::StartLogistics());
     Settle();
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    const auto savedLighting = [&]
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        return prefs.Read<int32_t>("HDLighting");
+    };
+
     std::filesystem::remove(prefsPath);
     GHdLighting = HdLightingNight;
     const std::optional<MCArtMode> original = ArtModeNamed("original");
@@ -453,18 +462,16 @@ TEST_CASE_ISOLATED("game: an art mode the debug console showed ends at the prefe
     REQUIRE(ShowArtMode(*original).has_value());
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
 
+    SavePrefs();
+    CHECK_EQ(savedLighting(), MCFitResult<int32_t>(HdLightingNight));
+    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingOff));
+
     ShowPreferences();
     Settle();
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
     WritePrefs();
     Settle();
-
-    {
-        MCFitIniFile prefs;
-        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
-        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
-        CHECK_EQ(prefs.Read<int32_t>("HDLighting"), MCFitResult<int32_t>(HdLightingNight));
-    }
+    CHECK_EQ(savedLighting(), MCFitResult<int32_t>(HdLightingNight));
 
     // No mode shown now: the preferences change nothing.
     ShowPreferences();

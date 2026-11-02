@@ -441,7 +441,12 @@ void SavePrefs()
     prefs.WriteIdLong("ScrollSpeed", GScrollSpeed);
     prefs.WriteIdLong("InterfaceSize", GInterfaceSize);
     prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
-    MCHdSettings::Write(prefs);
+    // Port: never a debug console's art mode (MCArtModes.h), but the player's own.
+    {
+        const MCPlayersArtScope playersArt;
+        MCHdSettings::Write(prefs);
+    }
+
     MCKeyBindings::WritePrefs(prefs);
 }
 

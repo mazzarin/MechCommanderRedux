@@ -5575,7 +5575,7 @@ namespace
     /// <summary>
     /// The art modes <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> asks a picture tool to switch to as it plays,
     /// each from that frame on (the tool's frames, as its shots number them), by frame; modes as the debug console's art
-    /// command names them (main/MCArtModes.h: original, hd, lit, dusk, night). Without <c>--hd-original 1</c>, so the
+    /// command names them (main/MCArtModes.h: original, hd, day, dusk, night). Without <c>--hd-original 1</c>, so the
     /// pack is there for the modes that draw HD art.
     /// </summary>
     std::map<int32_t, MCArtMode> ArtModesFromOptions()
@@ -6195,7 +6195,7 @@ namespace
 /// (<c>&lt;name&gt;_&lt;frame, 4 digits&gt;</c>; the pack's in-betweens show between the art's frames). With
 /// <c>--hd-effects-arms 1</c>, the player's mech throws off both its arms instead (<c>arms_...</c>; the debris named), each
 /// tumbling at 7 frames a second as it flies. <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c> switches the art as
-/// each plays (original, hd, lit, dusk: the debug console's art command).
+/// each plays (original, hd, day, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-pack-effects pictures a pack's explosions beside the original")
 {
@@ -12102,7 +12102,7 @@ namespace
 /// both water and land around it, the view zoomed to <c>--hd-water-zoom &lt;lines&gt;</c> if given, then
 /// <c>--hd-water-frames &lt;n&gt;</c> frames (default 150) at 30 a second, <c>water_NNNN_hd.png</c> (or _original.png
 /// with <c>--hd-original 1</c>), lit as <c>--hd-lighting</c> asks; <c>--hd-art-modes &lt;frame&gt;:&lt;mode&gt;,...</c>
-/// switches the art as it plays (original, hd, lit, dusk: the debug console's art command).
+/// switches the art as it plays (original, hd, day, dusk: the debug console's art command).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-water pictures the water moving")
 {

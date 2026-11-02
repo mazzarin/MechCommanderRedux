@@ -17,8 +17,8 @@ struct MCArtMode
 };
 
 /// <summary>
-/// The art modes: <c>original</c> (the original's art), <c>hd</c> (HD art), <c>lit</c> (HD art, HD lighting on, at the
-/// mission's time of day), <c>dusk</c> and <c>night</c> (HD art, HD lighting at dusk or at night).
+/// The art modes: <c>original</c> (the original's art), <c>hd</c> (HD art), <c>day</c> (HD art, HD lighting on, at the
+/// mission's own time of day: by day in the original's missions), <c>dusk</c> and <c>night</c> (HD art, HD lighting at dusk or at night).
 /// </summary>
 std::span<const MCArtMode> ArtModes();
 

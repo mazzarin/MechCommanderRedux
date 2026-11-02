@@ -25,13 +25,15 @@ auto MCLogSlider::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height
 auto MCLogSlider::Destroy() -> void
 {
     ThumbPort.reset();
-    TrackPort.reset();
+    TrackArt.reset();
     MCLogObject::Destroy();
 }
 
-auto MCLogSlider::SetTrack(std::shared_ptr<MCLogPort> track, int32_t thumbInset) -> void
+auto MCLogSlider::SetTrack(std::shared_ptr<MCLogPort> art, int32_t left, int32_t top, int32_t thumbInset) -> void
 {
-    TrackPort = std::move(track);
+    TrackArt = std::move(art);
+    TrackLeft = left;
+    TrackTop = top;
     ThumbInset = thumbInset;
 }
 
@@ -49,9 +51,9 @@ auto MCLogSlider::ThumbX() -> int32_t
 
 auto MCLogSlider::Draw() -> void
 {
-    if (TrackPort != nullptr)
+    if (TrackArt != nullptr)
     {
-        TrackPort->CopyTo(Lport()->Frame(), 0, 0, false);
+        VfxPaneCopy(TrackArt->Frame(), TrackLeft, TrackTop, Lport()->Frame(), 0, 0, VfxNoColor);
     }
     else
     {

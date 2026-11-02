@@ -7901,10 +7901,32 @@ namespace
     }
 }
 
+#if MC_AUDIT_CONTROLS
+namespace
+{
+    /// <summary>Calls <paramref name="each"/> with every text button under <paramref name="parent"/> (at any depth).</summary>
+    void ForEachTextButton(const MCGuiObject& parent, const std::function<void(const MCLogTextButton&)>& each)
+    {
+        for (const std::shared_ptr<MCGuiObject>& child : parent.Children())
+        {
+            if (const auto button = std::dynamic_pointer_cast<MCLogTextButton>(child); button != nullptr)
+            {
+                each(*button);
+            }
+
+            ForEachTextButton(*child, each);
+        }
+    }
+}
+#endif
+
 /// <summary>
 /// Tool: <c>--hd-extract-menus &lt;folder&gt;</c> writes every picture of the menus' and logistics' art for the HD art
 /// generator (tools/upscale/make_menu_pack.py): the TGAs in the install's FastFiles and the GIF packets of the GUI's art
-/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from.
+/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; and the
+/// pictures of the port's text buttons (MCLogTextButton: the preferences' CONTROLS and the CONTROLS panel's), named as
+/// the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the state's letter h up, g pressed, n
+/// grayed).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -7931,6 +7953,29 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                        WritePicture(folder, manifest, source, pixels, width, height, pictureColors, written);
                        ++pictures;
                    });
+
+#if MC_AUDIT_CONTROLS
+    ShowPreferences();
+    MCTestGame::RunFrame(FrameSeconds);
+    MCInput::Display()->GetShownColors(colors);
+    ForEachTextButton(*GlobalLog()->PrefScreen,
+                      [&](const MCLogTextButton& button)
+                      {
+                          std::string word = button.Label();
+                          std::ranges::transform(word, word.begin(),
+                                                 [](char c) { return static_cast<char>(std::tolower(c)); });
+
+                          for (const auto& [state, picture] :
+                               {std::pair{'h', button.GetUpPicture()}, std::pair{'g', button.GetDownPicture()},
+                                std::pair{'n', button.GetGrayPicture()}})
+                          {
+                              WritePicture(folder, manifest, std::format("textbutton\\b{}_text_{}.tga", state, word),
+                                           picture->Pixels(), picture->Width(), picture->Height(), colors, written);
+                              ++pictures;
+                          }
+                      });
+    CancelPrefs();
+#endif
 
     std::cout << std::format("  {} pictures ({} distinct) in {}, {} skipped\n", pictures, written.size(),
                              folder.string(), skipped);

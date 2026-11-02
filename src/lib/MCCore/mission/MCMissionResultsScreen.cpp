@@ -8,6 +8,7 @@
 #include "logistics/MCVehicleInventoryBlock.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCDragIcon.h"
+#include "logistics/MCLogPort.h"
 #include "logistics/MCLogRows.h"
 #include "main/MCLogistics.h"
 #include "color/MCPalette.h"
@@ -57,54 +58,77 @@ namespace
     /// <summary>The multiplayer screen's timeout.</summary>
     constexpr int16_t TimeoutTimer = 10;
 
-    /// <summary>
-    /// A picture of <paramref name="warrior"/>'s icon without its 2-pixel frame: the pilot's own portrait for a pilot
-    /// whose icon shows the dead image. (The original redrew the icon's own picture with the portrait swapped in,
-    /// moved its pane's edges in by 2 and copied it onto the window; the icon draws itself through a view now, so it
-    /// is drawn into a picture, which the screen copies each frame.)
-    /// </summary>
-    /// <returns>The picture, or null when the pilot's mover has no icon.</returns>
-    MCGuiOwned<MCGuiPort> TakeIconPicture(MCMechWarrior& warrior)
+    /// <summary>The frame round a mech bar icon that a pilot line leaves out, in pixels each side.</summary>
+    constexpr int32_t IconFrame = 2;
+
+    /// <summary>The mech bar icon of <paramref name="warrior"/>'s mover, or null.</summary>
+    std::shared_ptr<MCFriendlyMechIcon> IconOf(const MCMechWarrior& warrior)
     {
-        std::shared_ptr<MCFriendlyMechIcon> icon =
-            TacticalInterface()->GetMechIconFromID(LockObject(warrior.Vehicle)->PartId);
+        const std::shared_ptr<MCGameObject> vehicle = LockObject(warrior.Vehicle);
+        return vehicle != nullptr ? TacticalInterface()->GetMechIconFromID(vehicle->PartId) : nullptr;
+    }
+
+    /// <summary>
+    /// <paramref name="warrior"/>'s icon for a pilot line, its model brought up to date, with the pilot's own portrait
+    /// for a pilot whose icon shows the dead image. (The original redrew the icon's own picture then, the portrait
+    /// swapped in, moved its pane's edges in by 2 and copied it onto the window.)
+    /// </summary>
+    /// <returns>The icon, or none when the pilot's mover has no icon.</returns>
+    std::optional<MCResultsIcon> TakeIcon(MCMechWarrior& warrior)
+    {
+        const std::shared_ptr<MCFriendlyMechIcon> icon = IconOf(warrior);
 
         if (icon == nullptr)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
-        const int32_t status = warrior.Status;
-
-        if (status == PilotMissing)
-        {
-            icon->PilotImage->Init(warrior.Picture.data());
-        }
-
-        MCGuiOwned<MCGuiPort> picture = MCMakeGui<MCGuiPort>();
-        picture->Init(icon->Port().Width(), icon->Port().Height());
         icon->UpdateModel();
-        icon->DrawIcon(*picture);
-        MCPane& pane = picture->Frame();
-        pane.X0 += 2;
-        pane.Y0 += 2;
-        pane.X1 -= 2;
-        pane.Y1 -= 2;
+        MCResultsIcon taken{.Warrior = warrior.weak_from_this()};
 
-        if (status == PilotMissing)
+        if (warrior.Status == PilotMissing)
         {
-            icon->PilotImage->Init(4);
+            taken.Portrait = MCMakeGui<MCGuiPort>();
+            taken.Portrait->Init(std::string_view(warrior.Picture));
         }
 
-        return picture;
+        return taken;
     }
 
-    /// <summary>Copies an icon picture from <see cref="TakeIconPicture"/> to (<paramref name="x"/>, <paramref name="y"/>) of <paramref name="target"/>.</summary>
-    void DrawIconPicture(const MCGuiOwned<MCGuiPort>& picture, MCPane& target, int32_t x, int32_t y)
+    /// <summary>
+    /// Draws an icon from <see cref="TakeIcon"/> at (<paramref name="x"/>, <paramref name="y"/>) of
+    /// <paramref name="target"/>, without its frame: the icon draws itself in place, through a view cut to its inside.
+    /// </summary>
+    void DrawPilotIcon(const std::optional<MCResultsIcon>& taken, const MCPane& target, int32_t x, int32_t y)
     {
-        if (picture != nullptr)
+        const std::shared_ptr<MCMechWarrior> warrior = taken.has_value() ? taken->Warrior.lock() : nullptr;
+        const std::shared_ptr<MCFriendlyMechIcon> icon = warrior != nullptr ? IconOf(*warrior) : nullptr;
+
+        if (icon == nullptr)
         {
-            picture->CopyTo(target, x, y, false);
+            return;
+        }
+
+        const int32_t width = icon->Port().Width();
+        const int32_t height = icon->Port().Height();
+        MCPane inside = target;
+        inside.X0 = target.X0 + x;
+        inside.Y0 = target.Y0 + y;
+        inside.X1 = std::min(target.X1, inside.X0 + width - 2 * IconFrame - 1);
+        inside.Y1 = std::min(target.Y1, inside.Y0 + height - 2 * IconFrame - 1);
+        MCLogBlockPort view(inside, -IconFrame, -IconFrame, width, height, false);
+        MCGuiOwned<MCGuiPort> portrait = taken->Portrait;
+
+        if (portrait != nullptr)
+        {
+            std::swap(icon->PilotImage, portrait);
+        }
+
+        icon->DrawIcon(view);
+
+        if (portrait != nullptr)
+        {
+            std::swap(icon->PilotImage, portrait);
         }
     }
 
@@ -620,7 +644,7 @@ auto MCMissionResultsScreen::StepPilots() -> void
     if (const std::shared_ptr<MCMechWarrior> warrior = _Results.Pilots[static_cast<size_t>(index)].Warrior.lock();
         warrior != nullptr)
     {
-        _PilotIcons[static_cast<size_t>(index)] = TakeIconPicture(*warrior);
+        _PilotIcons[static_cast<size_t>(index)] = TakeIcon(*warrior);
         _StepIndex++;
     }
 
@@ -857,7 +881,7 @@ auto MCMissionResultsScreen::DrawPilot(int32_t index) -> void
         barY += 9;
     }
 
-    DrawIconPicture(_PilotIcons[static_cast<size_t>(index)], Port().Frame(), left + 4, top + 0x10);
+    DrawPilotIcon(_PilotIcons[static_cast<size_t>(index)], Port().Frame(), left + 4, top + 0x10);
 }
 
 auto MCMissionResultsScreen::DrawMPPilotList() -> void
@@ -925,7 +949,7 @@ auto MCMissionResultsScreen::DrawMPPilotList() -> void
             barY += 9;
         }
 
-        DrawIconPicture(_PilotIcons[i], Port().Frame(), left + 4, top + 0x10);
+        DrawPilotIcon(_PilotIcons[i], Port().Frame(), left + 4, top + 0x10);
         rowBase += 0x42;
     }
 }
@@ -942,7 +966,7 @@ auto MCMissionResultsScreen::DrawMPSummary() -> void
         WriteText(*MedWhiteFont, Port().Frame(), 0x70, 0x4d,
                   LoadGameString(best->Alignment == HomeTeam()->Alignment ? 0xb6 : 0xb7, 0xfe));
         WriteText(*MedWhiteFont, Port().Frame(), 0xca, 0x4d, std::to_string(_Results.Pilots[0].OldRank));
-        DrawIconPicture(_BestPilotIcon, Port().Frame(), 0xb, 0x2f);
+        DrawPilotIcon(_BestPilotIcon, Port().Frame(), 0xb, 0x2f);
     }
 
     static constexpr std::array<int32_t, 5> statisticY = {100, 0x70, 0x7c, 0x88, 0x94};
@@ -1082,7 +1106,7 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         // Port fix: MCX.EXE reads the best pilot without checking there is one.
         if (!_Results.Pilots.empty())
         {
-            _BestPilotIcon = TakeIconPicture(*_Results.Pilots[0].Warrior.lock());
+            _BestPilotIcon = TakeIcon(*_Results.Pilots[0].Warrior.lock());
         }
 
         _PilotIcons.clear();
@@ -1090,7 +1114,7 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         for (const MCMissionPilotResult& pilot : _Results.Pilots)
         {
             const std::shared_ptr<MCMechWarrior> warrior = pilot.Warrior.lock();
-            _PilotIcons.push_back(warrior != nullptr ? TakeIconPicture(*warrior) : nullptr);
+            _PilotIcons.push_back(warrior != nullptr ? TakeIcon(*warrior) : std::nullopt);
         }
 
         const int32_t seconds = static_cast<int32_t>(std::fmod(static_cast<double>(ActualTime), 60.0));

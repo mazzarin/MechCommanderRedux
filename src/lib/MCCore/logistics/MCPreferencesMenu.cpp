@@ -39,7 +39,7 @@ namespace
 {
     // Port: the preferences screen is laid out in code over the panel art (prefs_00.tga, element 7), so it can hold
     // more settings than the art has room for. A panel covers the art's, taller, and holds a box for each group of
-    // settings with its labels and controls: the sliders (each drawing its own track, cut from the art), the
+    // settings with its labels and controls: the sliders (each drawing its own track from the art), the
     // DIFFICULTY and RENDERER drop-downs, and ACCEPT and CANCEL side by side at the bottom right. The original's
     // DIFFICULTY checks (elements 8..10) are hidden. Places are in the art's pixels: the panel's from the art's
     // corner, everything else's from the corner of the box it is on.
@@ -215,32 +215,25 @@ namespace
         object->MoveTo(xPos, yPos);
     }
 
-    /// <summary>Gives <paramref name="slider"/> the art's track and places it with its label in <paramref name="box"/>.</summary>
+    /// <summary>Gives <paramref name="slider"/> the track in <paramref name="art"/> and places it with its label in <paramref name="box"/>.</summary>
     void PlaceSlider(MCGenericScreen& screen, MCGuiObject& box, MCLogSlider& slider, const MCPrefsSliderRow& row,
-                     std::shared_ptr<MCLogPort> track)
+                     std::shared_ptr<MCLogPort> art)
     {
         AddLabel(screen, box, row.Label, SliderLabelLeft, row.LabelTop);
         slider.Resize(SliderTrackArt.Width, SliderTrackArt.Height);
-        slider.SetTrack(std::move(track), SliderThumbInset);
+        slider.SetTrack(std::move(art), SliderTrackArt.Left, SliderTrackArt.Top, SliderThumbInset);
         slider.MoveTo(SliderLeft, row.SliderTop);
     }
 
-    /// <summary>Moves the fit's slider <paramref name="element"/> into <paramref name="box"/> with its label and track.</summary>
+    /// <summary>
+    /// Moves the fit's slider <paramref name="element"/> into <paramref name="box"/> with its label and the track in
+    /// <paramref name="art"/>.
+    /// </summary>
     void MoveSlider(MCGenericScreen& screen, MCGuiObject& box, int32_t element, const MCPrefsSliderRow& row,
-                    std::shared_ptr<MCLogPort> track)
+                    std::shared_ptr<MCLogPort> art)
     {
         MoveOnto(screen, element, box, SliderLeft, row.SliderTop);
-        PlaceSlider(screen, box, *screen.Element<MCLogSlider>(element), row, std::move(track));
-    }
-
-    /// <summary>The art's slider track, cut out as a picture of its own.</summary>
-    std::shared_ptr<MCLogPort> CutSliderTrack(MCGenericScreen& screen)
-    {
-        auto track = std::make_shared<MCLogPort>();
-        track->Init(SliderTrackArt.Width, SliderTrackArt.Height);
-        const MCLogPort& art = *screen.Element<MCLogImage>(PanelArtElement)->Art;
-        VfxPaneCopy(art.Frame(), SliderTrackArt.Left, SliderTrackArt.Top, track->Frame(), 0, 0, VfxNoColor);
-        return track;
+        PlaceSlider(screen, box, *screen.Element<MCLogSlider>(element), row, std::move(art));
     }
 
     /// <summary>Adds a drop-down editing <paramref name="setting"/> in <paramref name="box"/>.</summary>
@@ -302,15 +295,15 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     newPanel->SetTransparent(true);
     newPanel->ShowGuiWindow(true);
     MCLogGroupBox& panel = screen.AdoptChild(std::move(newPanel));
-    const std::shared_ptr<MCLogPort> track = CutSliderTrack(screen);
+    const std::shared_ptr<MCLogPort> panelArt = screen.Element<MCLogImage>(PanelArtElement)->Art;
 
     MCLogGroupBox& brightness = AddBox(screen, panel, BrightnessBoxPlace, BoxOutlineColor);
-    MoveSlider(screen, brightness, BrightnessSliderElement, BrightnessRow, track);
+    MoveSlider(screen, brightness, BrightnessSliderElement, BrightnessRow, panelArt);
 
     MCLogGroupBox& sound = AddBox(screen, panel, SoundBoxPlace, BoxOutlineColor);
-    MoveSlider(screen, sound, MusicSliderElement, MusicRow, track);
-    MoveSlider(screen, sound, RadioSliderElement, RadioRow, track);
-    MoveSlider(screen, sound, FxSliderElement, FxRow, track);
+    MoveSlider(screen, sound, MusicSliderElement, MusicRow, panelArt);
+    MoveSlider(screen, sound, RadioSliderElement, RadioRow, panelArt);
+    MoveSlider(screen, sound, FxSliderElement, FxRow, panelArt);
 
     // INTERFACE VOLUME: a slider of the volumes' range.
     auto newSlider = MCMakeGui<MCLogSlider>();
@@ -321,7 +314,7 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     newSlider->ShowGuiWindow(true);
     InterfaceSlider = newSlider;
     MCLogSlider& interfaceSlider = screen.AdoptChildOf(sound, std::move(newSlider));
-    PlaceSlider(screen, sound, interfaceSlider, InterfaceRow, track);
+    PlaceSlider(screen, sound, interfaceSlider, InterfaceRow, panelArt);
 
     MCLogGroupBox& difficulty = AddBox(screen, panel, DifficultyBoxPlace, BoxOutlineColor);
     AddLabel(screen, difficulty, "DIFFICULTY", BoxTitleLeft, BoxTitleTop);

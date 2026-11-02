@@ -2799,6 +2799,8 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
             }
 
             const auto [frameAt, frameFrom] = smooth ? widened(hdAt, shapeFrom) : std::pair{hdAt, shapeFrom};
+            AddPaintedShadow(surface, *hd, hdAt[0] - shapeFrom[0], hdAt[1] - shapeFrom[1],
+                             Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom});
             // An effect's frame part of the way to its next (or a mech's legs turning) shows the pack's in-between
             // there instead (over the two frames' bounds, clipped as the command's rows and columns; widened as the
             // frame for smooth edges), over the frame's own indices.
@@ -2944,6 +2946,9 @@ void MCVulkanRenderer::FastShape(MCWindow& target, const MCFastShapeCommand& com
                        std::min(at[2] + 1, command.ClipX1), std::min(at[3] + 1, command.ClipY1)};
             frameFrom = {column - (at[0] - frameAt[0]), command.FirstRow - (at[1] - frameAt[1]), 1, 1};
         }
+
+        AddPaintedShadow(surface, *hd, at[0] - column, at[1] - command.FirstRow,
+                         Quad{command.ClipX0, command.ClipY0, command.ClipX1, command.ClipY1});
 
         if (AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges))
         {
@@ -3317,16 +3322,62 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
         return;
     }
 
-    if (Add(SurfaceFor(target), SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1},
-            KindHdMap | AlphaBlend | SunShadowDraw, static_cast<uint32_t>(frame->Scale), 0, 0))
+    AddMappedSunShadow(SurfaceFor(target), *frame, *picture, at, mapping, 0);
+}
+
+void MCVulkanRenderer::AddPaintedShadow(uint16_t surface, const MCHdArt::Frame& frame, int32_t x, int32_t y,
+                                        const Quad& clip)
+{
+    const std::array<float, 2> reach = MCSceneLights::PaintedShadowReach();
+
+    if (!frame.PaintedShadow || (reach[0] <= 0.0f && reach[1] <= 0.0f))
     {
-        // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
-        std::array<int32_t, 20>& draw = _Draws.back();
-        std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
-        draw[18] = frame->OriginalWidth();
-        draw[19] = frame->OriginalHeight();
-        ++_HdDrawn;
+        return;
     }
+
+    const std::optional<uint32_t> picture = HdPictureOf(frame);
+
+    if (!picture)
+    {
+        return;
+    }
+
+    // The frame's bounds, reaching right and up as far as the shadow does.
+    const auto right = static_cast<int32_t>(std::ceil(reach[0]));
+    const auto up = static_cast<int32_t>(std::ceil(reach[1]));
+    const Quad at = {std::max(x, clip[0]), std::max(y - up, clip[1]),
+                     std::min(x + frame.OriginalWidth() - 1 + right, clip[2]),
+                     std::min(y + frame.OriginalHeight() - 1, clip[3])};
+
+    if (at[2] < at[0] || at[3] < at[1])
+    {
+        return;
+    }
+
+    // The reach in the frame's pixels, right and down, in 16ths: op.z's low and high halves (LengthenedShadowPixel).
+    constexpr float Sixteenths = 16.0f;
+    const auto half = [](float pixels)
+    { return static_cast<uint32_t>(static_cast<uint16_t>(static_cast<int16_t>(std::lround(pixels * Sixteenths)))); };
+    const std::array<float, 6> mapping = {1.0f, 0.0f, static_cast<float>(-x), 0.0f, 1.0f, static_cast<float>(-y)};
+    AddMappedSunShadow(surface, frame, *picture, at, mapping, half(reach[0]) | half(-reach[1]) << 16);
+}
+
+bool MCVulkanRenderer::AddMappedSunShadow(uint16_t surface, const MCHdArt::Frame& frame, uint32_t picture,
+                                          const Quad& at, const std::array<float, 6>& mapping, uint32_t reach)
+{
+    if (!Add(surface, SourceKind::Picture, picture, at, Quad{0, 0, 1, 1}, KindHdMap | AlphaBlend | SunShadowDraw,
+             static_cast<uint32_t>(frame.Scale), reach, 0))
+    {
+        return false;
+    }
+
+    // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
+    std::array<int32_t, 20>& draw = _Draws.back();
+    std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
+    draw[18] = frame.OriginalWidth();
+    draw[19] = frame.OriginalHeight();
+    ++_HdDrawn;
+    return true;
 }
 
 bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)

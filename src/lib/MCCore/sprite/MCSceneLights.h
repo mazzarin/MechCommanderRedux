@@ -409,6 +409,13 @@ namespace MCSceneLights
     bool SunCasts();
 
     /// <summary>
+    /// Port-only: while the objects re-cast their sun shadows and the sun casts any (dusk), how much farther than the
+    /// day's sun the shown one casts the shadows painted into art that casts none of its own (a forest's:
+    /// MCHdArt::Frame::PaintedShadow), in window pixels right and up; none otherwise, the painted shadow drawn as it is.
+    /// </summary>
+    std::array<float, 2> PaintedShadowReach();
+
+    /// <summary>
     /// Port-only: while the objects re-cast their sun shadows and the sun casts any (<see cref="RecastsSunShadows"/>,
     /// <see cref="SunCasts"/>), adds <paramref name="parts"/> as one object's or unit's sun shadow
     /// (MCElement::SunShadow) in the shadows' group, then opens the caller's group again (<paramref name="depth"/> and

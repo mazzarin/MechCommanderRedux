@@ -529,7 +529,10 @@ namespace
         return found->second;
     }
 
-    /// <summary>A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's.</summary>
+    /// <summary>
+    /// A frame just read from <paramref name="folder"/>: numbered, its baked shadow marked if it is an object's, else
+    /// whether the pack marked one (MCHdArt::Frame::PaintedShadow).
+    /// </summary>
     std::shared_ptr<const MCHdArt::Frame> Finished(MCHdArt::Frame&& frame, const FrameFolder& folder)
     {
         auto made = std::make_shared<MCHdArt::Frame>(std::move(frame));
@@ -538,6 +541,13 @@ namespace
         if (folder.BakedShadows)
         {
             MCHdArt::MarkBakedShadows(*made);
+        }
+        else
+        {
+            for (size_t at = 1; at < made->Indices.size() && !made->PaintedShadow; at += MCHdArt::IndexBytes)
+            {
+                made->PaintedShadow = made->Indices[at] == MCHdArt::BakedShadow;
+            }
         }
 
         return made;
@@ -707,7 +717,8 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
                 (static_cast<size_t>(y) * scale * index->Width + static_cast<size_t>(x) * scale) * BytesPerPixel;
             const size_t to = (static_cast<size_t>(y) * width + x) * IndexBytes;
             made.Indices[to] = index->Pixels[from];
-            made.Indices[to + 1] = index->Pixels[from + 1] == HasIndex ? HasIndex : 0;
+            const uint8_t green = index->Pixels[from + 1];
+            made.Indices[to + 1] = green == HasIndex || green == BakedShadow ? green : 0;
         }
     }
 

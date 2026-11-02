@@ -656,7 +656,7 @@ Output SmoothBlendedPixel(Input input, int2 target)
 }
 
 // An HD frame's index picture's green (MCHdArt.h) is 255 for a pixel with an index, and this for one that is also
-// part of an object's baked shadow (MCHdArt::MarkBakedShadows).
+// part of an object's baked shadow (MCHdArt::MarkBakedShadows, or the pack's marks: a forest's).
 static const uint BakedShadow = 254u;
 
 // Whether an HD frame's index picture's texel has an index.
@@ -688,10 +688,9 @@ float4 HdTexel(int2 texel, int2 size, int hdScale, uint flags, uint key)
     return Fetch(hdTex, hdSampler, texel);
 }
 
-// Port-only (sun shadows): how much of an HD frame's colour at `shape` (a place in its original's pixels, their
-// centres at .5) is its baked shadow: between the four original pixels around it, of those with an index (so the
-// shadow keeps its strength out to its edge, where the frame's own coverage fades it).
-float BakedShadowAt(int2 original, float2 shape)
+// Port-only (sun shadows): an HD frame's baked shadow at `shape` (a place in its original's pixels, their centres at
+// .5), between the four original pixels around it: x the weight of those in its shadow, y of those with an index.
+float2 BakedShadowWeights(int2 original, float2 shape)
 {
     const float2 at = shape - 0.5;
     const int2 base = int2(floor(at));
@@ -723,7 +722,15 @@ float BakedShadowAt(int2 original, float2 shape)
         }
     }
 
-    return drawn > 0.0 ? shadow / drawn : 0.0;
+    return float2(shadow, drawn);
+}
+
+// Port-only (sun shadows): how much of an HD frame's colour at `shape` is its baked shadow: of the original pixels
+// around it with an index (so the shadow keeps its strength out to its edge, where the frame's own coverage fades it).
+float BakedShadowAt(int2 original, float2 shape)
+{
+    const float2 weights = BakedShadowWeights(original, shape);
+    return weights.y > 0.0 ? weights.x / weights.y : 0.0;
 }
 
 // Port-only: an HD frame's coverage at `shape` (a place in its original's pixels, their centres at .5) for
@@ -768,6 +775,25 @@ float HdMaskCoverage(int2 original, int hdScale, float2 shape, out int2 nearest)
     return smoothstep(SpriteEdgeLow, SpriteEdgeHigh, coverage);
 }
 
+// An HD art frame's colour at `shape`, a place in its original's pixels (their centres at .5; `original` their size):
+// between the four HD texels around it (premultiplied, so the transparent ones add no colour).
+float4 HdColourBetween(Input input, float2 shape, int2 original)
+{
+    const uint hdScale = input.op.y & 255u;
+    const int2 size = original * (int)hdScale;
+    const float2 at = shape * (float)hdScale - 0.5;
+    const int2 base = int2(floor(at));
+    const float2 f = at - float2(base);
+    const uint flags = input.op.x;
+    const uint key = (input.op.y >> 8) & 255u;
+    const int texelScale = (int)hdScale;
+    const float4 top = lerp(HdTexel(base, size, texelScale, flags, key),
+                            HdTexel(base + int2(1, 0), size, texelScale, flags, key), f.x);
+    const float4 bottom = lerp(HdTexel(base + int2(0, 1), size, texelScale, flags, key),
+                               HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
+    return lerp(top, bottom, f.y);
+}
+
 // An HD art frame's colour at `shape`, a place in the original's pixels (their centres at .5): between the four HD
 // texels around it, recoloured as the original pixel under it shows now. A smooth-edged one's (KindHdSmooth) is that
 // colour, unpremultiplied, at HdMaskCoverage's coverage; past the frame's own coverage, where it keeps no colour, the
@@ -780,19 +806,10 @@ Output HdPixelAt(Input input, float2 shape)
     sourceTex.GetDimensions(width, height);
     const int2 original = int2((int)width, (int)height);
     const int2 size = original * (int)hdScale;
-
-    // Between the four texels around the point (premultiplied, so the transparent ones add no colour).
-    const float2 at = shape * (float)hdScale - 0.5;
-    const int2 base = int2(floor(at));
-    const float2 f = at - float2(base);
     const uint flags = input.op.x;
     const uint key = (input.op.y >> 8) & 255u;
     const int texelScale = (int)hdScale;
-    const float4 top = lerp(HdTexel(base, size, texelScale, flags, key),
-                            HdTexel(base + int2(1, 0), size, texelScale, flags, key), f.x);
-    const float4 bottom = lerp(HdTexel(base + int2(0, 1), size, texelScale, flags, key),
-                               HdTexel(base + int2(1, 1), size, texelScale, flags, key), f.x);
-    float4 color = lerp(top, bottom, f.y);
+    float4 color = HdColourBetween(input, shape, original);
     int2 texel = clamp(int2(floor(shape)), int2(0, 0), original - 1);
 
     // A smooth-edged frame's pixel is coloured, and recoloured below, as its nearest drawn original pixel.
@@ -872,12 +889,67 @@ float2 MappedPlace(Input input, int2 target)
     return float2(u.x * window.x + u.y * window.y + u.z, u.w * window.x + v.x * window.y + v.y);
 }
 
+// Port-only (sun shadows): a frame's painted shadow lengthened (MCVulkanRenderer::AddPaintedShadow: a forest's at dusk):
+// op.z the reach in its original pixels, right and down, in 16ths (signed, its low half and its high half). The
+// painted shadow stays whole (at the frame's coverage, as by day) and trails off along the reach, fading and widening with distance as a low sun's soft
+// shadow does: a point is in shadow by how much of the line back along the reach from it the frame's baked shadow
+// covers (empty pixels none), the nearer parts counting more and the farther read a little to either side,
+// LengthenedShadowGain times; as dark as look.y. (Where a forest's pieces meet, two such trails, one fading out as the
+// other comes in, darken about as one: the gain kept low.)
+static const float LengthenedShadowSixteenths = 16.0;
+static const uint LengthenedShadowSteps = 16u;
+static const float LengthenedShadowGain = 1.25;
+// How much less the farthest part of the line counts than the nearest.
+static const float LengthenedShadowFade = 0.9;
+// How far to either side of the line a part is read, per pixel of its distance.
+static const float LengthenedShadowSpread = 0.3;
+
+Output LengthenedShadowPixel(Input input, float2 shape)
+{
+    uint width;
+    uint height;
+    sourceTex.GetDimensions(width, height);
+    const int2 original = int2((int)width, (int)height);
+    const int packed = (int)input.op.z;
+    const float2 reach = float2((float)((packed << 16) >> 16), (float)(packed >> 16)) / LengthenedShadowSixteenths;
+    const float2 across = float2(-reach.y, reach.x) * LengthenedShadowSpread;
+    float covered = 0.0;
+    float counted = 0.0;
+
+    for (uint step = 0u; step <= LengthenedShadowSteps; step++)
+    {
+        const float back = (float)step / (float)LengthenedShadowSteps;
+        // Left of the line, on it, right of it, in turn.
+        const float side = (float)((int)(step % 3u) - 1);
+        const float weight = 1.0 - back * LengthenedShadowFade;
+        covered += weight * BakedShadowWeights(original, shape - reach * back + across * (back * side)).x;
+        counted += weight;
+    }
+
+    const float trail = saturate(covered / counted * LengthenedShadowGain);
+    const float painted = HdColourBetween(input, shape, original).a * BakedShadowAt(original, shape);
+    const float shadow = max(painted, trail);
+
+    if (shadow <= 0.0)
+    {
+        discard;
+    }
+
+    return Blended(float4(0.0, 0.0, 0.0, look.y * shadow));
+}
+
 // Port-only: a textured polygon's picture shown from the HD art pack (KindHdMap): the drawn pixel's place in the
 // picture is the polygon's affine map of the window (u from span.xyz, v from span.w and walk.xy: floats; texel centres at .5), then
-// read as HdPixel reads a frame; nothing outside the picture.
+// read as HdPixel reads a frame; nothing outside the picture. A painted shadow lengthened reaches past it.
 Output HdMapPixel(Input input, int2 target)
 {
     const float2 picture = MappedPlace(input, target);
+
+    if ((input.op.x & SunShadowDraw) != 0 && input.op.z != 0u)
+    {
+        return LengthenedShadowPixel(input, picture);
+    }
+
     uint width;
     uint height;
     sourceTex.GetDimensions(width, height);

@@ -85,6 +85,11 @@ namespace MCHdArt
         /// them: a pixel may add light (colour without coverage), and the original's draw blends none of them.
         /// </summary>
         bool Blended = false;
+        /// <summary>
+        /// Port-only (sun shadows): whether its index picture marks a baked shadow (<see cref="BakedShadow"/>) the pack's
+        /// generator found in art that casts no shadow of its own (a forest's), not one MarkBakedShadows marked.
+        /// </summary>
+        bool PaintedShadow = false;
 
         /// <summary>The original's width and height.</summary>
         int32_t OriginalWidth() const { return Width / std::max(Scale, 1); }
@@ -99,7 +104,8 @@ namespace MCHdArt
     inline constexpr uint8_t HasIndex = 255;
     /// <summary>
     /// Port-only: an index picture's green for a pixel with an index that is part of an object's baked shadow
-    /// (<see cref="MarkBakedShadows"/>); otherwise it is as HasIndex's.
+    /// (<see cref="MarkBakedShadows"/>, or marked by the pack's generator in art the game doesn't mark, a forest's);
+    /// otherwise it is as HasIndex's.
     /// </summary>
     inline constexpr uint8_t BakedShadow = 254;
     /// <summary>The palette index the original's object art draws its baked shadows in (black).</summary>
@@ -110,8 +116,9 @@ namespace MCHdArt
     /// <summary>
     /// A frame from a PNG pair as the generator writes them: <paramref name="colorPath"/> (straight RGBA, made
     /// premultiplied; already premultiplied in a frame that holds its blended pixels) and <paramref name="indexPath"/>
-    /// (the same size; each original pixel's index read from its block's top-left pixel, and whether the frame holds its
-    /// blended pixels from the top-left pixel's blue) at <paramref name="scale"/> HD pixels per original pixel.
+    /// (the same size; each original pixel's index read from its block's top-left pixel, its green HasIndex, BakedShadow
+    /// or none, and whether the frame holds its blended pixels from the top-left pixel's blue) at
+    /// <paramref name="scale"/> HD pixels per original pixel.
     /// </summary>
     std::expected<Frame, std::string> FrameFromPngs(const std::filesystem::path& colorPath,
                                                     const std::filesystem::path& indexPath, int32_t scale);

@@ -24,6 +24,25 @@ namespace
         {"dusk", HdArtOn, HdLightingDusk},
         {"night", HdArtOn, HdLightingNight},
     }};
+
+    /// <summary>The player's own HD ART and HD LIGHTING (what PREFS keeps) while a mode is shown.</summary>
+    std::optional<MCArtMode> PlayersOwn;
+
+    /// <summary>
+    /// Sets HD ART and HD LIGHTING to <paramref name="art"/>'s, tying the shapes loaded so far to the pack when HD art
+    /// comes on.
+    /// </summary>
+    void SetArt(const MCArtMode& art)
+    {
+        const int hdArtWas = GHdArt;
+        GHdArt = art.HdArt;
+        GHdLighting = art.HdLighting;
+
+        if (hdArtWas == HdArtOff && GHdArt != HdArtOff)
+        {
+            AttachHdArtToLoaded();
+        }
+    }
 }
 
 auto ArtModes() -> std::span<const MCArtMode>
@@ -40,24 +59,48 @@ auto ArtModeNamed(std::string_view name) -> std::optional<MCArtMode>
 
 auto ShowArtMode(const MCArtMode& mode) -> std::expected<void, std::string>
 {
+    // MCHdArt::Active asks HD ART too, so it is asked with the mode's.
     const int hdArtWas = GHdArt;
     GHdArt = mode.HdArt;
+    const bool drawable = GHdArt == HdArtOff || MCHdArt::Active();
+    GHdArt = hdArtWas;
 
-    if (GHdArt != HdArtOff && !MCHdArt::Active())
+    if (!drawable)
     {
-        GHdArt = hdArtWas;
         return std::unexpected(std::format("{} needs an HD art pack: there is none readable at {}", mode.Name,
                                            MCHdArt::PackFolder().string()));
     }
 
-    GHdLighting = mode.HdLighting;
-
-    if (hdArtWas == HdArtOff && GHdArt != HdArtOff)
+    if (!PlayersOwn.has_value())
     {
-        AttachHdArtToLoaded();
+        PlayersOwn = MCArtMode{.HdArt = GHdArt, .HdLighting = GHdLighting};
     }
 
+    SetArt(mode);
     return {};
+}
+
+auto EndArtMode() -> void
+{
+    if (const std::optional<MCArtMode> own = std::exchange(PlayersOwn, std::nullopt); own.has_value())
+    {
+        SetArt(*own);
+    }
+}
+
+MCPlayersArtScope::MCPlayersArtScope() : _HdArt(GHdArt), _HdLighting(GHdLighting)
+{
+    if (PlayersOwn.has_value())
+    {
+        GHdArt = PlayersOwn->HdArt;
+        GHdLighting = PlayersOwn->HdLighting;
+    }
+}
+
+MCPlayersArtScope::~MCPlayersArtScope()
+{
+    GHdArt = _HdArt;
+    GHdLighting = _HdLighting;
 }
 
 auto AttachHdArtToLoaded() -> void

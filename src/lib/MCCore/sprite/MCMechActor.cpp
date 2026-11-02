@@ -1484,6 +1484,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     const auto partsDepth = static_cast<int16_t>(
         static_cast<int32_t>(std::floor(static_cast<double>(static_cast<float>(depthFixup) - ScreenPos.Y))));
     ElementList().OpenGroup(partsDepth, true);
+    // Port-only (HDTurns): the legs' turn middle as drawn, which their sun shadow casts too.
+    std::optional<MCInBetween> legsMiddle;
 
     for (int32_t i = 0; i < MechPartCount; i++)
     {
@@ -1551,7 +1553,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
         if (part == MCMechPart::Legs)
         {
-            element.InBetween = LegsTurnMiddle(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part]);
+            legsMiddle = LegsTurnMiddle(DrawnGesture(), drawnFrame[part], facing, *drawnShape[part]);
+            element.InBetween = legsMiddle;
         }
         else if (part == MCMechPart::RightArm || part == MCMechPart::LeftArm)
         {
@@ -1580,6 +1583,12 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
             auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                              drawnFrame[part], drawnReverse[part], std::nullopt, 1);
             element.SunShadow = true;
+
+            if (part == MCMechPart::Legs)
+            {
+                element.InBetween = legsMiddle;
+            }
+
             ElementList().Add(element);
         }
 

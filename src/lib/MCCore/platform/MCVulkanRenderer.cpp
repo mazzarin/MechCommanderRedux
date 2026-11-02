@@ -678,7 +678,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
             targets[2].blend_state.color_write_mask = 0;
         }
 
-        // Port-only (HDSway): a forest's HD frame writes the sway mark (the indices' alpha) alone.
+        // Port-only: a forest's HD frame (HDSway) writes the sway mark (the indices' alpha) alone, as an HD frame's
+        // mark pass (indexOnly too) writes what stands on the ground.
         if (marks)
         {
             targets[1].blend_state.enable_color_write_mask = true;
@@ -702,11 +703,12 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
     renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
     renderer->_BlendMarks = makePipeline(*renderer->_VertexShader, true, false, false, true);
+    renderer->_IndexMarks = makePipeline(*renderer->_VertexShader, false, true, false, true);
     renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
     renderer->_TerrainSeamPipeline = makePipeline(*renderer->_TerrainShader, true);
 
     if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
-        renderer->_ShadowPipeline == nullptr || renderer->_BlendMarks == nullptr ||
+        renderer->_ShadowPipeline == nullptr || renderer->_BlendMarks == nullptr || renderer->_IndexMarks == nullptr ||
         renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
@@ -813,6 +815,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _IndexOnly.reset();
     _ShadowPipeline.reset();
     _BlendMarks.reset();
+    _IndexMarks.reset();
     _TerrainPipeline.reset();
     _TerrainSeamPipeline.reset();
     _VertexShader.reset();
@@ -1076,7 +1079,9 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     draw[11] = static_cast<int32_t>(after);
     const bool indexOnly = (op & IndexOnly) != 0;
     const bool shadow = (op & KindMask) == KindShadow;
-    const bool marks = (op & Sways) != 0 && blend;
+    // A forest's HD frame marks its sway; an HD frame's index-only draw is its mark pass (HdMarks::Standing).
+    const bool hdFrame = (op & KindMask) == KindHd || (op & KindMask) == KindHdSmooth;
+    const bool marks = indexOnly ? hdFrame : (op & Sways) != 0 && blend;
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
     const auto continues = [&](const Record& last)
@@ -2332,12 +2337,13 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             const Quad betweenAt = {left, top, left + inBetween->Width - 1, top + inBetween->Height - 1};
             const Quad betweenFrom = {mirrored ? inBetween->Width - 1 : 0, 0, from[2], 1};
             drawn = AddHd(SurfaceFor(target), *inBetween->Frame, betweenAt, betweenFrom, command.Table, std::nullopt,
-                          HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable));
+                          HdColours::Corrected, HdEdgesOf(*inBetween->Frame, command.ShapeTable), HdMarks::Standing);
         }
 
         if (!drawn)
         {
-            AddHd(SurfaceFor(target), *hd, at, from, command.Table, std::nullopt, HdColours::Corrected, edges);
+            AddHd(SurfaceFor(target), *hd, at, from, command.Table, std::nullopt, HdColours::Corrected, edges,
+                  HdMarks::Standing);
         }
 
         // A frame keeping its own edges has its blended pixels blended over it as the original draws them.
@@ -2627,7 +2633,7 @@ bool MCVulkanRenderer::SharpScreenSurface(uint16_t surface) const
 
 bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, const Quad& at, const Quad& from,
                              const std::optional<MCColorTable>& table, std::optional<uint8_t> key, HdColours colours,
-                             HdEdges edges)
+                             HdEdges edges, HdMarks marks)
 {
     const std::optional<uint32_t> picture = HdPictureOf(frame);
 
@@ -2652,6 +2658,13 @@ bool MCVulkanRenderer::AddHd(uint16_t surface, const MCHdArt::Frame& frame, cons
     if (Add(surface, SourceKind::Picture, *picture, at, from, op, color, before, 0))
     {
         ++_HdDrawn;
+    }
+
+    // Its mark pass: what stands on the ground wherever the frame shows, past the original's pixels too, which the
+    // original's index pass leaves the ground's (draw.pshader's HdPixelAt).
+    if (marks == HdMarks::Standing && !frame.Blended && (op & Sways) == 0)
+    {
+        Add(surface, SourceKind::Picture, *picture, at, from, op | IndexOnly, color, before, 0);
     }
 
     return true;
@@ -2902,12 +2915,13 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                                                                                     : std::pair{betweenAt, betweenFrom};
                 drawn = left <= right && top <= bottom &&
                         AddHd(surface, *inBetween->Frame, placedAt, placedFrom, command.Table, std::nullopt,
-                              HdColours::Corrected, betweenEdges);
+                              HdColours::Corrected, betweenEdges, HdMarks::Standing);
             }
 
             if (!drawn)
             {
-                AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges);
+                AddHd(surface, *hd, frameAt, frameFrom, command.Table, std::nullopt, HdColours::Corrected, edges,
+                      HdMarks::Standing);
             }
 
             if ((indexOp & Sways) == 0)
@@ -3355,13 +3369,26 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
 
     const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
     const int32_t yMin = MCRead32(header, ShapeYMinAt);
-    const int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
-    const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
-    const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
+    int32_t width = MCRead32(header, ShapeXMaxAt) - MCRead32(header, ShapeXMinAt) + 1;
+    int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
+    std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
 
     if (frame == nullptr)
     {
         return;
+    }
+
+    const auto foot = static_cast<float>(top - yMin);
+
+    // A mech's legs drawn as their turn middle (HDTurns) cast the middle, where the draw places it (as Shape and
+    // ShapeBlit do: mirrored, the middle's last column comes first).
+    if (const std::optional<HdInBetweenFrame> inBetween = HdInBetween(table, shapeNum, *frame); inBetween.has_value())
+    {
+        left = mirrored ? left + width - inBetween->Width + inBetween->FrameX : left - inBetween->FrameX;
+        top -= inBetween->FrameY;
+        width = inBetween->Width;
+        height = inBetween->Height;
+        frame = inBetween->Frame;
     }
 
     const std::optional<uint32_t> picture = HdPictureOf(*frame);
@@ -3374,7 +3401,6 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
     // A point h window pixels above the foot (the hot spot's row) casts its shadow right * h right and up * h up of
     // it (down, for a sun beyond the camera's side); the draw maps each window point back to the frame's (a picture point, the frame's original pixels).
     const float right = lighting.SunShadowRight;
-    const auto foot = static_cast<float>(top - yMin);
     const float x0 = static_cast<float>(left);
     const float y0 = static_cast<float>(top);
     const float step = mirrored ? -1.0f : 1.0f;
@@ -5356,7 +5382,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         };
 
         SDL_BindGPUGraphicsPipeline(pass, record.Shadow      ? _ShadowPipeline.get()
-                                          : record.IndexOnly ? _IndexOnly.get()
+                                          : record.IndexOnly ? (record.Marks ? _IndexMarks.get() : _IndexOnly.get())
                                           : record.Blend     ? (record.Marks ? _BlendMarks.get() : _Blend.get())
                                                              : _Opaque.get());
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);

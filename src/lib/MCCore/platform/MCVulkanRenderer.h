@@ -488,6 +488,17 @@ private:
                       bool mirrored, const std::optional<Quad>& clip);
 
     /// <summary>
+    /// Port-only (HD art): adds frame <paramref name="shapeNum"/> of <paramref name="table"/> turned as
+    /// MCRenderer::DrawingTurn says (its HD art pack frame; nothing without one), upright its first column and row at
+    /// window (<paramref name="left"/>, <paramref name="top"/>), <paramref name="mirrored"/> its first column drawn its
+    /// last, through <paramref name="paint"/> (a paint scheme) when given; or, while drawing a sun shadow, the shadow the
+    /// sun casts of it as it lies above the ground (MCSpriteTurn::Lift). Within <paramref name="clip"/> (window pixels,
+    /// inclusive; the window's when none).
+    /// </summary>
+    void AddTurned(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left, int32_t top,
+                   bool mirrored, const std::optional<MCColorTable>& paint, const std::optional<Quad>& clip);
+
+    /// <summary>
     /// Port-only (sun shadows): while the shown sun casts farther than the day's (MCSceneLights::PaintedShadowReach:
     /// dusk), adds the shadow painted into <paramref name="frame"/> (MCHdArt::Frame::PaintedShadow: a forest's, which
     /// casts none of its own) lengthened as far, its original pixels from window (<paramref name="x"/>,
@@ -500,10 +511,17 @@ private:
     /// Port-only (sun shadows): adds <paramref name="frame"/> (picture <paramref name="picture"/>) as a sun shadow at
     /// <paramref name="at"/>, each window point read from the frame's original pixels at <paramref name="mapping"/>'s
     /// affine map of it (u's three terms, then v's), lengthened by <paramref name="reach"/> (draw.pshader's
-    /// LengthenedShadowPixel; 0: cast as it is). Whether it was added.
+    /// LengthenedShadowPixel; 0: cast as it is), of the frame's <paramref name="piece"/> alone (draw.pshader's
+    /// HdMapPixel; 0: all of it). Whether it was added.
     /// </summary>
     bool AddMappedSunShadow(uint16_t surface, const MCHdArt::Frame& frame, uint32_t picture, const Quad& at,
-                            const std::array<float, 6>& mapping, uint32_t reach);
+                            const std::array<float, 6>& mapping, uint32_t reach, uint32_t piece = 0);
+
+    /// <summary>
+    /// Port-only: lays the last draw added's map of the window into <paramref name="frame"/>'s original pixels
+    /// (<paramref name="mapping"/>: u's three terms, then v's) where a KindHdMap draw reads it.
+    /// </summary>
+    void SetDrawMapping(const MCHdArt::Frame& frame, const std::array<float, 6>& mapping);
 
     /// <summary>
     /// Port-only: adds the smooth colour pass of a game-drawn picture mapped with its key transparent (the fog of war,

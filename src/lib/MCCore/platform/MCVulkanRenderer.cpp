@@ -2188,9 +2188,9 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
 {
     const AuditScope audit(*this, "ShapeBlit", target, command.ShapeTable, command.ShapeNum);
 
-    // Port-only: a unit's sun shadow, from the blit's place (a whole frame at full size: mirrored, its first column
-    // drawn is its last), clipped as the blit was.
-    if (MCRenderer::DrawingSunShadow())
+    // Port-only: a unit's sun shadow, or a turned draw (a blown-off arm's) or its shadow, from the blit's place (a whole
+    // frame at full size: mirrored, its first column drawn is its last), clipped as the blit was.
+    if (MCRenderer::DrawingSunShadow() || MCRenderer::DrawingTurn().has_value())
     {
         const MCAlphaBlitCommand& blit = command.Blit;
         const std::optional<std::pair<Quad, Quad>> place =
@@ -2201,9 +2201,18 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
             const auto& [at, from] = *place;
             const int32_t left = blit.Mirror ? at[0] + from[0] - command.Width + 1 : at[0] - from[0];
             const bool clipKnown = blit.Clip.X1 >= blit.Clip.X0 && blit.Clip.Y1 >= blit.Clip.Y0;
-            AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], blit.Mirror,
-                         clipKnown ? std::optional(Quad{blit.Clip.X0, blit.Clip.Y0, blit.Clip.X1, blit.Clip.Y1})
-                                   : std::nullopt);
+            const std::optional<Quad> clip =
+                clipKnown ? std::optional(Quad{blit.Clip.X0, blit.Clip.Y0, blit.Clip.X1, blit.Clip.Y1}) : std::nullopt;
+
+            if (MCRenderer::DrawingTurn().has_value())
+            {
+                AddTurned(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], blit.Mirror,
+                          command.Table, clip);
+            }
+            else
+            {
+                AddSunShadow(target, command.ShapeTable, command.ShapeNum, left, at[1] - from[1], blit.Mirror, clip);
+            }
         }
 
         return;
@@ -2654,14 +2663,24 @@ void MCVulkanRenderer::Pixel(MCWindow& target, int32_t x, int32_t y, uint8_t col
 void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 {
     const AuditScope audit(*this, "Shape", target, command.ShapeTable, command.ShapeNum);
+    const bool rowsClipped = command.ClipBottom >= command.ClipTop;
+
+    // Port-only: a turned draw (a blown-off arm's) or its sun shadow, within the pane.
+    if (MCRenderer::DrawingTurn().has_value())
+    {
+        AddTurned(target, command.ShapeTable, command.ShapeNum, command.Left, command.Top - command.SkipRows, false,
+                  command.Table,
+                  rowsClipped ? std::optional(Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom})
+                              : std::nullopt);
+        return;
+    }
 
     // Port-only: a unit's sun shadow, clipped as the shape is.
     if (MCRenderer::DrawingSunShadow())
     {
-        const bool rowsKnown = command.ClipBottom >= command.ClipTop;
         AddSunShadow(target, command.ShapeTable, command.ShapeNum, command.Left, command.Top - command.SkipRows, false,
-                     rowsKnown ? std::optional(Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom})
-                               : std::nullopt);
+                     rowsClipped ? std::optional(Quad{command.Lo, command.ClipTop, command.Hi, command.ClipBottom})
+                                 : std::nullopt);
         return;
     }
 
@@ -3370,6 +3389,114 @@ void MCVulkanRenderer::AddSunShadow(MCWindow& target, std::span<const uint8_t> t
     AddMappedSunShadow(SurfaceFor(target), *frame, *picture, at, mapping, 0);
 }
 
+void MCVulkanRenderer::AddTurned(MCWindow& target, std::span<const uint8_t> table, int32_t shapeNum, int32_t left,
+                                 int32_t top, bool mirrored, const std::optional<MCColorTable>& paint,
+                                 const std::optional<Quad>& clip)
+{
+    const MCSpriteTurn& turn = *MCRenderer::DrawingTurn();
+    const bool shadow = MCRenderer::DrawingSunShadow();
+    const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
+
+    if (shadow && (GHdSunShadows == 0 || lighting.SunShadowUp == 0.0f))
+    {
+        return;
+    }
+
+    const std::span<const uint8_t> header = table.subspan(MCShapeOffset(table, shapeNum));
+    const int32_t xMin = MCRead32(header, ShapeXMinAt);
+    const int32_t yMin = MCRead32(header, ShapeYMinAt);
+    const int32_t width = MCRead32(header, ShapeXMaxAt) - xMin + 1;
+    const int32_t height = MCRead32(header, ShapeYMaxAt) - yMin + 1;
+    const std::shared_ptr<const MCHdArt::Frame> frame = HdShape(table, shapeNum, width, height);
+    const std::optional<uint32_t> picture = frame != nullptr ? HdPictureOf(*frame) : std::nullopt;
+
+    if (!picture)
+    {
+        return;
+    }
+
+    // The point turned about (from the hot spot, mirrored with the frame), and the shadow's way from the frame: down to
+    // the ground under it, then as far as a point that high casts, the frame taken as lying flat (ShadowThickness thick).
+    constexpr float ShadowThickness = 2.0f;
+    const auto x0 = static_cast<float>(left);
+    const auto y0 = static_cast<float>(top);
+    const float hotX = mirrored ? x0 + static_cast<float>(width + xMin) : x0 - static_cast<float>(xMin);
+    const float pivotX = hotX + turn.PivotX;
+    const float pivotY = y0 - static_cast<float>(yMin) + turn.PivotY;
+    const float above = shadow ? turn.Lift + ShadowThickness : 0.0f;
+    const float awayX = lighting.SunShadowRight * above;
+    const float awayY = shadow ? turn.Lift - lighting.SunShadowUp * above : 0.0f;
+
+    // Each window point turned back about the pivot to where it lay upright, then read from the frame's original pixels
+    // (mirrored: its first column read at the right); the shadow's from the point it lies away from.
+    const float c = std::cos(turn.Radians);
+    const float s = std::sin(turn.Radians);
+    const float step = mirrored ? -1.0f : 1.0f;
+    const float firstColumn = mirrored ? x0 + static_cast<float>(width) : -x0;
+    std::array<float, 6> mapping = {step * c, step * s, step * (pivotX - c * pivotX - s * pivotY) + firstColumn,
+                                    -s,       c,        pivotY + s * pivotX - c * pivotY - y0};
+    mapping[2] -= mapping[0] * awayX + mapping[1] * awayY;
+    mapping[5] -= mapping[3] * awayX + mapping[4] * awayY;
+
+    // Its bounds: the upright frame's corners turned (and moved away for the shadow).
+    float minX = std::numeric_limits<float>::max();
+    float minY = minX;
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = maxX;
+
+    for (const float x : {x0, x0 + static_cast<float>(width)})
+    {
+        for (const float y : {y0, y0 + static_cast<float>(height)})
+        {
+            const float turnedX = pivotX + c * (x - pivotX) - s * (y - pivotY) + awayX;
+            const float turnedY = pivotY + s * (x - pivotX) + c * (y - pivotY) + awayY;
+            minX = std::min(minX, turnedX);
+            maxX = std::max(maxX, turnedX);
+            minY = std::min(minY, turnedY);
+            maxY = std::max(maxY, turnedY);
+        }
+    }
+
+    const Quad bounds = clip.value_or(Quad{0, 0, target.XMax, target.YMax});
+    const Quad at = {std::max(static_cast<int32_t>(std::floor(minX)), bounds[0]),
+                     std::max(static_cast<int32_t>(std::floor(minY)), bounds[1]),
+                     std::min(static_cast<int32_t>(std::ceil(maxX)), bounds[2]),
+                     std::min(static_cast<int32_t>(std::ceil(maxY)), bounds[3])};
+
+    if (at[2] < at[0] || at[3] < at[1])
+    {
+        return;
+    }
+
+    // A piece: its left, top, right and bottom, each past the last, in op.w's bytes (draw.pshader's HdMapPixel).
+    uint32_t piece = 0;
+
+    if (turn.Piece.has_value())
+    {
+        const std::array<uint8_t, 4>& part = *turn.Piece;
+        piece = part[0] | static_cast<uint32_t>(part[1]) << 8 | (part[2] + 1u) << 16 | (part[3] + 1u) << 24;
+    }
+
+    const uint16_t surface = SurfaceFor(target);
+
+    if (shadow)
+    {
+        AddMappedSunShadow(surface, *frame, *picture, at, mapping, 0, piece);
+        return;
+    }
+
+    const uint32_t op =
+        KindHdMap | AlphaBlend | (paint.has_value() ? TableBefore : 0u) | (frame->Blended ? HdLight : 0u);
+    const uint32_t before = paint.has_value() ? TableRow(*paint) : 0u;
+
+    if (Add(surface, SourceKind::Picture, *picture, at, Quad{0, 0, 1, 1}, op, static_cast<uint32_t>(frame->Scale),
+            before, piece))
+    {
+        SetDrawMapping(*frame, mapping);
+        ++_HdDrawn;
+    }
+}
+
 void MCVulkanRenderer::AddPaintedShadow(uint16_t surface, const MCHdArt::Frame& frame, int32_t x, int32_t y,
                                         const Quad& clip)
 {
@@ -3408,21 +3535,27 @@ void MCVulkanRenderer::AddPaintedShadow(uint16_t surface, const MCHdArt::Frame& 
 }
 
 bool MCVulkanRenderer::AddMappedSunShadow(uint16_t surface, const MCHdArt::Frame& frame, uint32_t picture,
-                                          const Quad& at, const std::array<float, 6>& mapping, uint32_t reach)
+                                          const Quad& at, const std::array<float, 6>& mapping, uint32_t reach,
+                                          uint32_t piece)
 {
     if (!Add(surface, SourceKind::Picture, picture, at, Quad{0, 0, 1, 1}, KindHdMap | AlphaBlend | SunShadowDraw,
-             static_cast<uint32_t>(frame.Scale), reach, 0))
+             static_cast<uint32_t>(frame.Scale), reach, piece))
     {
         return false;
     }
 
+    SetDrawMapping(frame, mapping);
+    ++_HdDrawn;
+    return true;
+}
+
+void MCVulkanRenderer::SetDrawMapping(const MCHdArt::Frame& frame, const std::array<float, 6>& mapping)
+{
     // The map in span and walk.xy (floats), the picture's size in walk.zw, as AddMapped lays them.
     std::array<int32_t, 20>& draw = _Draws.back();
     std::ranges::transform(mapping, draw.begin() + 12, [](float value) { return std::bit_cast<int32_t>(value); });
     draw[18] = frame.OriginalWidth();
     draw[19] = frame.OriginalHeight();
-    ++_HdDrawn;
-    return true;
 }
 
 bool MCVulkanRenderer::AddHdMap(uint16_t surface, const MCHdArt::Frame& frame, const MCPolygonCommand& command)

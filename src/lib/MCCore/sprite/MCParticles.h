@@ -106,6 +106,9 @@ namespace MCParticles
     /// </summary>
     void Draw(const MCCamera& camera);
 
+    /// <summary>Whether the map's tile at world (<paramref name="x"/>, <paramref name="y"/>) is water.</summary>
+    bool WaterAt(float x, float y);
+
     /// <summary>Drops every particle and shake, and throws the dice from their start again (a mission's start).</summary>
     void Clear();
 

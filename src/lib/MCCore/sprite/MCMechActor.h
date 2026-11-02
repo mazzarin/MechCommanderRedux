@@ -25,6 +25,17 @@ enum class MCDrawnMode : uint8_t
 };
 
 /// <summary>
+/// Port-only (HD art's arms): an arm as its mech last drew it, for MCDebris to throw off as it was: its shape (none until
+/// drawn), frame and mirroring.
+/// </summary>
+struct MCDrawnArm
+{
+    std::shared_ptr<MCShape> Shape;
+    int32_t Frame = 0;
+    int32_t Reverse = 0;
+};
+
+/// <summary>
 /// Port-only (HDStops): a stride drawn on while its mech stands with its move held up: each part's frame as last drawn,
 /// moved on by the ground the mech covers, so that the mech stops mid-stride and picks its stride up where it stopped;
 /// then drawn after the mech's own gestures until in step with them, or settled to standing in place.
@@ -263,6 +274,9 @@ public:
     bool RightArmGone = false;
     /// <summary>Set when the left arm is blown off: it is no longer drawn or animated.</summary>
     bool LeftArmGone = false;
+    /// <summary>Port-only (HD art's arms): the right and left arms as last drawn.</summary>
+    MCDrawnArm DrawnRightArm;
+    MCDrawnArm DrawnLeftArm;
     /// <summary>Whether a transition plays (SetGestureGoal fails).</summary>
     bool InTransition = false;
     /// <summary>

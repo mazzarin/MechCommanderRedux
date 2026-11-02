@@ -2451,6 +2451,9 @@
     <ClInclude Include="sprite\MCSpriteTree.h">
       <Filter>sprite</Filter>
     </ClInclude>
+    <ClInclude Include="sprite\MCSpriteTurn.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
     <ClInclude Include="sprite\MCVfxAppearance.h">
       <Filter>sprite</Filter>
     </ClInclude>

@@ -1622,6 +1622,11 @@ auto MCParticles::AddMover(const void* unit, const MCVector3D& position, float h
     }
 }
 
+auto MCParticles::WaterAt(float x, float y) -> bool
+{
+    return IsWater(x, y);
+}
+
 auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> void
 {
     ElementList().OpenGroup(depth, true);

@@ -846,6 +846,7 @@
     <ClInclude Include="sprite\MCSpriteManager.h" />
     <ClInclude Include="sprite\MCSpriteMath.h" />
     <ClInclude Include="sprite\MCSpriteTree.h" />
+    <ClInclude Include="sprite\MCSpriteTurn.h" />
     <ClInclude Include="sprite\MCVfxAppearance.h" />
     <ClInclude Include="sprite\MCVfxAppearanceType.h" />
     <ClInclude Include="sprite\MCVfxBuildingAppearance.h" />

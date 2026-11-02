@@ -982,7 +982,7 @@ namespace
     /// Throws off an arm (debris type <paramref name="debrisId"/>): framed the torso's way, flying sideways at a
     /// random angle from <paramref name="angle"/>, painted as the mech.
     /// </summary>
-    void ThrowArm(MCBattleMech& mech, uint32_t debrisId, float angle)
+    void ThrowArm(MCBattleMech& mech, uint32_t debrisId, float angle, const MCDrawnArm& arm, float blow)
     {
         std::shared_ptr<MCGameObject> piece = CreateObject(static_cast<int32_t>(debrisId));
 
@@ -1016,7 +1016,10 @@ namespace
 
         piece->SetVelocity(flight);
         piece->SetPosition(mech.Position);
-        debris.SetPaintScheme(static_cast<MCMechActor*>(mech.Appearance.get())->FadeTableIndex);
+        const int32_t paint = static_cast<MCMechActor*>(mech.Appearance.get())->FadeTableIndex;
+        debris.SetPaintScheme(paint);
+        // Port-only (HD art's arms): drawn as the mech's own arm, torn off.
+        debris.TearOff(mech, arm, paint, blow);
 
         AddToDefaultList(std::move(piece));
     }
@@ -1299,11 +1302,11 @@ auto MCBattleMech::Update() -> int32_t
         {
             if (0.0f <= facing + TorsoRotation)
             {
-                ThrowArm(*this, mechType.LeftArmDebrisId, -180.0f);
+                ThrowArm(*this, mechType.LeftArmDebrisId, -180.0f, actor.DrawnRightArm, RightArmBlow);
             }
             else
             {
-                ThrowArm(*this, mechType.RightArmDebrisId, 0.0f);
+                ThrowArm(*this, mechType.RightArmDebrisId, 0.0f, actor.DrawnRightArm, RightArmBlow);
             }
 
             actor.RightArmGone = true;
@@ -1313,11 +1316,11 @@ auto MCBattleMech::Update() -> int32_t
         {
             if (0.0f <= facing + TorsoRotation)
             {
-                ThrowArm(*this, mechType.RightArmDebrisId, 0.0f);
+                ThrowArm(*this, mechType.RightArmDebrisId, 0.0f, actor.DrawnLeftArm, LeftArmBlow);
             }
             else
             {
-                ThrowArm(*this, mechType.LeftArmDebrisId, -180.0f);
+                ThrowArm(*this, mechType.LeftArmDebrisId, -180.0f, actor.DrawnLeftArm, LeftArmBlow);
             }
 
             actor.LeftArmGone = true;

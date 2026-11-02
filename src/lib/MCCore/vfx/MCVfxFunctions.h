@@ -46,6 +46,12 @@ int32_t VfxPixelWrite(const MCPane& pane, int32_t x, int32_t y, uint8_t color);
 int32_t VfxLineDraw(const MCPane& pane, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t color);
 
 /// <summary>
+/// Port-only: the line of <see cref="VfxLineDraw"/>, <paramref name="width"/> window pixels wide where lines are drawn
+/// smooth (the GPU's HD screens). Its pixels, and the line elsewhere, are the original's.
+/// </summary>
+int32_t VfxLineDrawWide(const MCPane& pane, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t color, float width);
+
+/// <summary>
 /// The line of <see cref="VfxLineDraw"/>, each pixel replaced by its entry in the 256-byte <paramref name="table"/>
 /// (LD_TRANSLATE).
 /// </summary>

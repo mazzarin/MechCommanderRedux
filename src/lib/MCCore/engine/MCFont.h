@@ -64,6 +64,11 @@ public:
     float Scale = 2.0f;
     /// <summary>Whether sizes are scaled by <see cref="Scale"/> (rounded down).</summary>
     bool Scaled = true;
+    /// <summary>
+    /// Port-only: the strokes' width in window pixels where lines are drawn smooth (VfxLineDrawWide); 1 is the
+    /// original's.
+    /// </summary>
+    float StrokeWidth = 1.0f;
 
 private:
     /// <summary>The strokes of <paramref name="letter"/> (looked up once), or empty.</summary>

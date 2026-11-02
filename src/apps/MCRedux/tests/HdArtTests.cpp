@@ -10228,6 +10228,56 @@ TEST_CASE_ISOLATED("game: HD art draws lines and ellipses at the output's resolu
 }
 
 /// <summary>
+/// Port-only: a line drawn wide (VfxLineDrawWide) is that wide where HD art draws lines at the output's resolution, and
+/// is the original's line with HD art off. A level line on mission 1's screen (shown larger), drawn the original's width
+/// and three times it: with HD art off both change the same pixels to the same colours; with it on, the wide one changes
+/// about three times as many.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art draws a wide line as wide as asked, and with HD art off the original's line")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_wide_line");
+    MCPane& pane = ScreenPort()->Frame();
+    const int32_t x = (pane.X1 - pane.X0) / 2;
+    const int32_t y = (pane.Y1 - pane.Y0) / 2;
+    constexpr int32_t Length = 60;
+    constexpr int32_t Margin = 4;
+    constexpr float Wide = 3.0f;
+    constexpr uint8_t Color = 0x30;
+    const MCRect box{x - Length - Margin, y - Margin, x + Length + Margin, y + Margin};
+    const auto line = [&](float width)
+    { return [&pane, x, y, width] { VfxLineDrawWide(pane, x - Length, y, x + Length, y, Color, width); }; };
+    const auto same = [](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
+    { return std::ranges::equal(a, b, SameColor); };
+
+    GamePaused = true;
+    const std::vector<SDL_Color> original = ChangedPixels(std::nullopt, box, line(1.0f));
+    const std::vector<SDL_Color> originalWide = ChangedPixels(std::nullopt, box, line(Wide));
+    const size_t smooth = ChangedPixels(pack, box, line(1.0f)).size();
+    const size_t smoothWide = ChangedPixels(pack, box, line(Wide)).size();
+    GamePaused = false;
+    std::cout << std::format("  pixels changed: {} and {} wide with HD art off, {} and {} wide on\n", original.size(),
+                             originalWide.size(), smooth, smoothWide);
+    CHECK(!original.empty());
+    CHECK(same(original, originalWide));
+    REQUIRE(smooth > 0);
+    CHECK(smoothWide >= smooth * 5 / 2);
+    CHECK(smoothWide <= smooth * 7 / 2);
+    std::filesystem::remove_all(pack.parent_path());
+}
+
+/// <summary>
 /// With HD art on, a health bar is drawn at the output's resolution: its fill ends where the game measured it, inside its
 /// last window pixel. Two bars over one colour on mission 1's screen (shown larger), one measured a whole number of
 /// pixels long and one half a pixel longer, show alike with HD art off (the original rounds the length down) and differ
@@ -10801,6 +10851,126 @@ TEST_CASE_ISOLATED("game: HD art keeps the tactical map's palette indices")
     {
         CheckIndicesKept(*scene);
     }
+}
+
+/// <summary>
+/// With HD art on, the tactical map's objective numbers are drawn bolder over a dark outline, and the units' dots are
+/// still drawn over the objectives' dots, as the original's (a unit at an objective stays in sight). Mission 1's first
+/// objective moved under a home mech, its markers lit, the map revealed: beside its dot, the outline's black and more of the number's
+/// yellow show only with HD art on; at its middle, the mech's dot shows, not the objective's, either way.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art outlines the tactical map's objective numbers, under the units' dots")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCTacticalMap> map = TacticalMap();
+    REQUIRE(map != nullptr);
+    map->SetDisplayType(MCTacmapPage::Map);
+    // The map's ground shown (the fog of war is black, as the outline).
+    RevealAll();
+    const std::shared_ptr<MCTeam> home = HomeTeam();
+    REQUIRE(home->NumObjectives > 0);
+    MCScenarioObjective& objective = Scenario()->Objectives[home->FirstObjective];
+    REQUIRE(objective.Status == MCScenarioObjective::Pending);
+    const std::shared_ptr<MCObjectList> mechs = home == InnerSphereTeam() ? InnerSphereMechList() : ClanMechList();
+    const auto mech = std::static_pointer_cast<MCGameObject>(mechs->First());
+    REQUIRE(mech != nullptr);
+    REQUIRE(mech->GetAwake() != 0);
+    const MCVector3D at = mech->GetPosition();
+    objective.Position = {at.X, at.Y, at.Z};
+    MCVector3D dot(at.X, at.Y, 0.0f);
+    map->WorldToTacMap(dot, true);
+    const auto dotX = static_cast<int32_t>(std::floor(dot.X));
+    const auto dotY = static_cast<int32_t>(std::floor(dot.Y));
+
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_objective_numbers");
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    std::array<SDL_Color, 256> colors{};
+    display->GetShownColors(colors);
+    constexpr uint8_t DotColor = 0x1f;
+    constexpr uint8_t MechColor = 0xf;
+    constexpr uint8_t SelectedColor = 0xb;
+    constexpr uint8_t NumberColor = 0xf2;
+    constexpr uint8_t OutlineColor = 0x10;
+    // The number "1" right of and below the dot's middle (the line font at its scale), in screen pixels.
+    const MCRect number{dotX + 1, dotY - 2, dotX + 16, dotY + 20};
+
+    struct Seen
+    {
+        int64_t Outline = 0;
+        int64_t Number = 0;
+        SDL_Color Middle{};
+    };
+
+    const auto seen = [&](bool hd)
+    {
+        std::optional<MCHdArtOn> on;
+
+        if (hd)
+        {
+            on.emplace(pack);
+        }
+
+        // Two frames, the second sharp from the start; the markers lit throughout (they blink five times a second).
+        for (int32_t frame = 0; frame < 2; ++frame)
+        {
+            MCTacticalMap::MarkersLit = true;
+            MCTacticalMap::MarkerBlinkTime = 0.0f;
+            MCTestGame::RunFrame(FrameSeconds);
+        }
+
+        const Shown shown = ReadShown(pack.parent_path());
+        const float scale = static_cast<float>(shown.Width) / static_cast<float>(display->Width());
+        const auto pixel = [&](int32_t x, int32_t y)
+        {
+            const size_t offset = (static_cast<size_t>(y) * shown.Width + x) * BytesPerPixel;
+            return SDL_Color{shown.Pixels[offset], shown.Pixels[offset + 1], shown.Pixels[offset + 2], 255};
+        };
+
+        const auto window = [scale](int32_t screen)
+        { return static_cast<int32_t>(static_cast<float>(screen) * scale); };
+        Seen result;
+
+        for (int32_t y = window(number.Y0); y < window(number.Y1 + 1); ++y)
+        {
+            for (int32_t x = window(number.X0); x < window(number.X1 + 1); ++x)
+            {
+                result.Outline += SameColor(pixel(x, y), colors[OutlineColor]) ? 1 : 0;
+                result.Number += SameColor(pixel(x, y), colors[NumberColor]) ? 1 : 0;
+            }
+        }
+
+        result.Middle = pixel(window(dotX) + window(1) / 2, window(dotY) + window(1) / 2);
+        return result;
+    };
+
+    GamePaused = true;
+    const Seen original = seen(false);
+    const Seen hd = seen(true);
+    GamePaused = false;
+    std::cout << std::format("  beside the dot: {} outline and {} number pixels with HD art off, {} and {} on\n",
+                             original.Outline, original.Number, hd.Outline, hd.Number);
+    CHECK(original.Number > 0);
+    CHECK(hd.Number > original.Number);
+    CHECK(hd.Outline > original.Outline + 50);
+
+    for (const Seen& each : {original, hd})
+    {
+        CHECK(!SameColor(each.Middle, colors[DotColor]));
+        CHECK((SameColor(each.Middle, colors[MechColor]) || SameColor(each.Middle, colors[SelectedColor])));
+    }
+
+    std::filesystem::remove_all(pack.parent_path());
 }
 
 /// <summary>

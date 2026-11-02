@@ -1132,8 +1132,9 @@ static const float LineHalfWidth = 0.5;
 
 // Port-only: a line's or an ellipse's colour at drawn pixel `target`, the shape drawn at the output's resolution (its
 // indices were written by the original's pixels, in an index-only pass): the drawn pixel's distance from the line
-// between the centres of its first and last pixels (span), or from the ellipse (span: its centre and radii; walk.x 1
-// when it is filled), its edge ramped over a drawn pixel. Premultiplied, through the blend pipeline.
+// between the centres of its first and last pixels (span; asfloat(walk.y) its half width when wider than the
+// original's, 0 for theirs), or from the ellipse (span: its centre and radii; walk.x 1 when it is filled), its edge
+// ramped over a drawn pixel. Premultiplied, through the blend pipeline.
 Output SmoothShapePixel(Input input, int2 target, uint kind)
 {
     const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
@@ -1146,7 +1147,8 @@ Output SmoothShapePixel(Input input, int2 target, uint kind)
         const float2 ab = float2(input.span.zw) + 0.5 - a;
         const float length2 = dot(ab, ab);
         const float t = length2 > 0.0 ? saturate(dot(window - a, ab) / length2) : 0.0;
-        distance = length(window - (a + t * ab)) - LineHalfWidth;
+        const float halfWidth = input.walk.y != 0u ? asfloat(input.walk.y) : LineHalfWidth;
+        distance = length(window - (a + t * ab)) - halfWidth;
     }
     else
     {

@@ -7569,6 +7569,179 @@ TEST_CASE_ISOLATED("game: relief lights the HD ground by the pack's relief maps,
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// A mech stands on the HD ground, not in its relief, whichever way it faces: the relief maps light none of its pixels,
+/// its mirrored parts' (drawn by a transform, MCVulkanRenderer::ShapeBlit) as its others', drawn from the original or
+/// from the pack. Their indices tell the composite what stands on the ground (the relief's light, the water, the rain's
+/// wet look); a mirrored part once wrote none, and showed the ground's relief and puddles through it.
+/// </summary>
+TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mirrored parts' too")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    // The ground with its relief maps alone, and with the mech's standing frames (colours inverted) too.
+    constexpr int32_t Rise = 20;
+    const std::filesystem::path ground = scene->Scratch / "ground";
+
+    for (const std::filesystem::path& pack : {ground, scene->Pack})
+    {
+        REQUIRE(WriteTerrainPack(pack, *mesh, colors, Muted) > 0);
+        REQUIRE(WriteReliefPack(pack, *mesh, Rise) > 0);
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const int lightingWas = GHdLighting;
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    REQUIRE(kept.ReliefMaps > 0.0f);
+    GHdLighting = HdLightingOn;
+    GHdRelief = 1;
+    GamePaused = true;
+
+    // The view's middle, where the mech stands (clear of the interface).
+    const int32_t left = width / 4;
+    const int32_t top = height / 4;
+    const int32_t cropWidth = width / 2;
+    const int32_t cropHeight = height / 2;
+    // Two frames each: the first may build the ground again with its relief maps. The relief maps as steep as
+    // `steeper` times as made (the sun's relief, which lights everything, as it is).
+    const auto shown = [&](float steeper)
+    {
+        lighting.ReliefMaps = kept.ReliefMaps * steeper;
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        const auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        std::vector<SDL_Color> middle;
+        middle.reserve(static_cast<size_t>(cropWidth) * cropHeight);
+
+        for (int32_t y = top; y < top + cropHeight; ++y)
+        {
+            const auto row = frame->begin() + static_cast<ptrdiff_t>(y) * width + left;
+            middle.insert(middle.end(), row, row + cropWidth);
+        }
+
+        return middle;
+    };
+
+    // The mech facing four ways, a quarter turn apart (half of them mirroring parts): its frames from the original and
+    // from the pack, on the relief maps as made and twice as steep.
+    constexpr int32_t Facings = 4;
+    constexpr float FirstFacing = 45.0f;
+    constexpr float FacingStep = 360.0f / Facings;
+    constexpr float Steeper = 2.0f;
+    MCBattleMech& mech = *scene->Player.Mech;
+    struct Facing
+    {
+        std::vector<SDL_Color> Relief;
+        std::vector<SDL_Color> Steep;
+        std::vector<SDL_Color> HdRelief;
+        std::vector<SDL_Color> HdSteep;
+        bool Mirrored = false;
+    };
+
+    std::array<Facing, Facings> facings;
+
+    for (const bool hd : {false, true})
+    {
+        const MCHdArtOn hdArt(hd ? scene->Pack : ground);
+
+        for (int32_t i = 0; i < Facings; ++i)
+        {
+            MCTestGame::FaceMech(mech, FirstFacing + static_cast<float>(i) * FacingStep);
+            Facing& facing = facings[static_cast<size_t>(i)];
+            (hd ? facing.HdRelief : facing.Relief) = shown(1.0f);
+            (hd ? facing.HdSteep : facing.Steep) = shown(Steeper);
+
+            for (int32_t part = 0; part < MechPartCount; ++part)
+            {
+                const std::optional<MCGesturePacket> packet =
+                    scene->Player.Tree->GesturePacket(StandGesture, part, static_cast<float>(MCActorFacing(mech)));
+                facing.Mirrored = facing.Mirrored || (packet.has_value() && packet->Reverse);
+            }
+        }
+    }
+
+    GHdRelief = 0;
+    GamePaused = false;
+    GHdLighting = lightingWas;
+    lighting = kept;
+
+    // The mech's pixels: where its frames from the pack (inverted) show far other colours than the original's, more
+    // than MechApart in a channel (the ground about it differs a little too: the sun's relief shades it by the mech's
+    // brightness); of those, the ones inside it (the frame's smooth edges blend the ground's light in).
+    constexpr int MechApart = 64;
+    const auto at = [&](int32_t x, int32_t y) { return static_cast<size_t>(y) * cropWidth + x; };
+    size_t groundPixels = 0;
+    size_t groundLit = 0;
+    int32_t mirrored = 0;
+
+    for (int32_t i = 0; i < Facings; ++i)
+    {
+        const Facing& facing = facings[static_cast<size_t>(i)];
+        const auto isMech = [&](int32_t x, int32_t y)
+        {
+            const SDL_Color original = facing.Relief[at(x, y)];
+            const SDL_Color hd = facing.HdRelief[at(x, y)];
+            return std::max({std::abs(original.r - hd.r), std::abs(original.g - hd.g), std::abs(original.b - hd.b)}) >
+                   MechApart;
+        };
+
+        size_t inside = 0;
+        size_t lit = 0;
+        size_t hdLit = 0;
+
+        for (int32_t y = 1; y < cropHeight - 1; ++y)
+        {
+            for (int32_t x = 1; x < cropWidth - 1; ++x)
+            {
+                if (!isMech(x, y))
+                {
+                    ++groundPixels;
+                    groundLit += SameColor(facing.Relief[at(x, y)], facing.Steep[at(x, y)]) ? 0 : 1;
+                    continue;
+                }
+
+                if (!(isMech(x - 1, y - 1) && isMech(x, y - 1) && isMech(x + 1, y - 1) && isMech(x - 1, y) &&
+                      isMech(x + 1, y) && isMech(x - 1, y + 1) && isMech(x, y + 1) && isMech(x + 1, y + 1)))
+                {
+                    continue;
+                }
+
+                ++inside;
+                lit += SameColor(facing.Relief[at(x, y)], facing.Steep[at(x, y)]) ? 0 : 1;
+                hdLit += SameColor(facing.HdRelief[at(x, y)], facing.HdSteep[at(x, y)]) ? 0 : 1;
+            }
+        }
+
+        mirrored += facing.Mirrored ? 1 : 0;
+        std::cout << std::format("  facing {:.0f}{}: {} of the mech's pixels lit by the relief from the original, {} "
+                                 "from the pack, of {} inside it\n",
+                                 FirstFacing + static_cast<float>(i) * FacingStep,
+                                 facing.Mirrored ? " (mirrored parts)" : "", lit, hdLit, inside);
+        CHECK(inside > 0);
+        CHECK_EQ(lit, 0u);
+        CHECK_EQ(hdLit, 0u);
+    }
+
+    std::cout << std::format("  {} of {} ground pixels lit by the relief\n", groundLit, groundPixels);
+    CHECK(mirrored > 0);
+    CHECK(groundLit * 2 > groundPixels);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 namespace
 {
     /// <summary>

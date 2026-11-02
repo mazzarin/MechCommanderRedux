@@ -418,15 +418,26 @@ private:
     /// changed. Pixels changed after a draw of this frame read the copy go into a picture for the rest of the frame.
     /// </summary>
     std::optional<uint32_t> PictureOf(MCTexture& texture);
+
+    /// <summary>
+    /// What a blit of a picture draws: its colours, only its blended pixels' (an HD art frame shows the rest), or only
+    /// its opaque pixels' indices (the blend pipeline leaves the indices).
+    /// </summary>
+    enum class BlitPixels : uint8_t
+    {
+        All,
+        Blended,
+        OpaqueIndices,
+    };
+
     /// <summary>
     /// Adds a blended blit (CopySprite) of a picture <paramref name="width"/> x <paramref name="height"/>, which
     /// <paramref name="picture"/> gives once the blit is known to stay inside it (else <paramref name="command"/> is
-    /// noted as not supported); only its blended pixels when <paramref name="blendedOnly"/> (an HD art frame shows the
-    /// rest).
+    /// noted as not supported); of its <paramref name="pixels"/>.
     /// </summary>
     void BlitPicture(MCWindow& target, const MCAlphaBlitCommand& blit, int32_t width, int32_t height,
                      std::string_view command, const std::function<std::optional<uint32_t>()>& picture,
-                     bool smoothEdges = false, bool blendedOnly = false);
+                     bool smoothEdges = false, BlitPixels pixels = BlitPixels::All);
     /// <summary>
     /// Where a blit of a picture <paramref name="width"/> x <paramref name="height"/> goes (its rectangle) and reads
     /// from (its first pixel and steps); none when it draws nothing, or reads outside the picture (then

@@ -5,6 +5,7 @@
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 
+#include <bitset>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -327,6 +328,20 @@ private:
         Strip
     };
 
+    /// <summary>
+    /// Port-only: the draw shader's build a draw goes through (VariantOf): the one for every kind, or the one for the
+    /// original's own kinds alone (shaders/draw_basic.pshader) or for HD art frames alone (draw_hd.pshader).
+    /// </summary>
+    enum class DrawVariant : uint8_t
+    {
+        Every,
+        Basic,
+        Hd
+    };
+
+    /// <summary>The draw variants.</summary>
+    static constexpr size_t DrawVariants = 3;
+
     /// <summary>One recorded command: a run of draws with the same target and bindings, or a surface resize.</summary>
     struct Record
     {
@@ -345,6 +360,8 @@ private:
         /// with IndexOnly, an HD frame's mark pass: HdMarks::Standing).
         /// </summary>
         bool Marks = false;
+        /// <summary>Port-only: the draw shader's build the draws go through.</summary>
+        DrawVariant Variant = DrawVariant::Every;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -411,6 +428,19 @@ private:
     bool Add(uint16_t surface, SourceKind source, uint32_t sourceIndex, const Quad& rect,
              const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before, uint32_t after,
              bool join = false);
+    /// <summary>
+    /// Port-only: the draw shader's build a draw with <paramref name="op"/> goes through: the basic one for the
+    /// original's own kinds (a fill, hash, texture, Gouraud span or texel walk, without smooth edges), the HD one for an
+    /// HD art frame (KindHd, KindHdSmooth), else the one for every kind.
+    /// </summary>
+    static DrawVariant VariantOf(uint32_t op);
+    /// <summary>The part of <paramref name="rect"/> (window pixels) on <paramref name="surface"/>, as Add draws it.</summary>
+    static MCRect Clipped(const Surface& surface, const Quad& rect);
+    /// <summary>
+    /// Notes a blended draw left out (it would draw nothing) over <paramref name="rect"/>, as Add notes one drawn:
+    /// mirror mode leaves its pixels out of its comparison all the same.
+    /// </summary>
+    void NoteBlended(uint16_t surface, const Quad& rect);
     /// <summary>What a draw reads from a window: its surface, the target's copy, or a picture of its pixels.</summary>
     struct SourceRef
     {
@@ -740,6 +770,11 @@ private:
         uint64_t PictureId = 0;
         /// <summary>Mirror mode: the bytes it was made from, to catch a change nobody announced.</summary>
         std::vector<uint8_t> Bytes;
+        /// <summary>
+        /// Port-only: the colours of the pixels it draws, as decoded into the atlas: a translucent shape with none a
+        /// translucent draw shows opaque has no index pass (Shape).
+        /// </summary>
+        std::bitset<256> Colors;
     };
 
     /// <summary>
@@ -802,19 +837,40 @@ private:
     MCGpuHandle<SDL_GPUShader> _VertexShader;
     MCGpuHandle<SDL_GPUShader> _FragmentShader;
     /// <summary>
-    /// Opaque draws (colours and indices written), blended ones (alpha blended into the colours), and those that write
-    /// the indices alone.
+    /// Port-only: the fragment shaders of the draws of the original's own kinds alone and of HD art frames alone
+    /// (DrawVariant), and of the terrain layer's.
     /// </summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _Opaque;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _Blend;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexOnly;
+    MCGpuHandle<SDL_GPUShader> _BasicFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _HdFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _TerrainFragmentShader;
+
+    /// <summary>The draws' pipelines with one fragment shader.</summary>
+    struct DrawPipelines
+    {
+        /// <summary>
+        /// Opaque draws (colours and indices written), blended ones (alpha blended into the colours), and those that
+        /// write the indices alone.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Opaque;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Blend;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> IndexOnly;
+        /// <summary>
+        /// Port-only (HDSway): a forest's draw, blended, writing the sway mark (the indices' alpha) alone.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> BlendMarks;
+        /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> IndexMarks;
+        /// <summary>Whether every pipeline was made.</summary>
+        bool Made() const;
+        /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
+        SDL_GPUGraphicsPipeline* For(const Record& record) const;
+    };
+
+    /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
+    std::array<DrawPipelines, DrawVariants> _Pipelines;
     /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
-    /// <summary>Port-only (HDSway): a forest's HD frame, blended, writing the sway mark (the indices' alpha) alone.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _BlendMarks;
-    /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexMarks;
-    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
+    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the terrain's fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
     /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>

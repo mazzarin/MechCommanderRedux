@@ -36,7 +36,25 @@
 // size it is shown): each drawn pixel takes the coverage of the glyph's strokes at its centre, filtered between the
 // redrawn pixels, in the colour the glyph's table gives the font byte of the ink pixel nearest it.
 //
+// Port-only: this shader is also built for some draws alone (DRAW_VARIANT), whose pixels then don't pay for the
+// registers the other kinds take: draw_basic.pshader for the original's own kinds (fills, hashes, textures, Gouraud
+// spans and texel walks, without smooth edges; MCVulkanRenderer's BasicDraw), draw_terrain.pshader for the terrain's
+// (terrain.vshader's: those, with HD colours, and the seam pass).
+//
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3.
+
+#define DRAW_EVERY_KIND 0
+#define DRAW_BASIC_KINDS 1
+#define DRAW_TERRAIN_KINDS 2
+#define DRAW_HD_KINDS 3
+
+#ifndef DRAW_VARIANT
+#define DRAW_VARIANT DRAW_EVERY_KIND
+#endif
+
+// Whether the variant draws the port's kinds of sprites, and the terrain's HD colours and seams.
+#define DRAWS_SPRITE_KINDS (DRAW_VARIANT == DRAW_EVERY_KIND)
+#define DRAWS_TERRAIN_KINDS (DRAW_VARIANT == DRAW_EVERY_KIND || DRAW_VARIANT == DRAW_TERRAIN_KINDS)
 
 // The source: an atlas page (red value, green state), a picture (red), a surface's indices (red), an HD art frame's
 // original indices (red the index, green 1 where there is one; one texel an original pixel), or a glyph redrawn sharp
@@ -1592,9 +1610,13 @@ Output DrawnOutput(Input input)
         discard;
     }
 
+#if DRAW_VARIANT == DRAW_HD_KINDS
+    return HdPixel(input, target);
+#else
     const uint flags = input.op.x;
     const uint kind = flags & 15u;
 
+#if DRAWS_SPRITE_KINDS
     if (kind == KindHd || kind == KindHdSmooth)
     {
         return HdPixel(input, target);
@@ -1636,11 +1658,16 @@ Output DrawnOutput(Input input)
         return SmoothPolygonPixel(input, target);
     }
 
+#endif
+
+#if DRAWS_TERRAIN_KINDS
     if (kind == KindTerrainSeam)
     {
         return TerrainSeamPixel(input, target);
     }
+#endif
 
+#if DRAWS_SPRITE_KINDS
     if (kind == KindSmoothBar)
     {
         return SmoothBarPixel(input, target);
@@ -1650,6 +1677,7 @@ Output DrawnOutput(Input input)
     {
         return ShadowPixel(input, target);
     }
+#endif
 
     const uint color = input.op.y & 255u;
     uint value = color;
@@ -1675,11 +1703,13 @@ Output DrawnOutput(Input input)
         value = Byte(sample.r);
         state = (flags & OpaqueSource) != 0 ? 1 : Byte(sample.g);
 
+#if DRAWS_SPRITE_KINDS
         if ((flags & SmoothEdges) != 0)
         {
             coverage = ShapeCoverage(input, target, value);
             state = coverage > 0.0 ? 1 : 0;
         }
+#endif
     }
     else if (kind == KindGouraud)
     {
@@ -1733,16 +1763,20 @@ Output DrawnOutput(Input input)
         discard;
     }
 
+#if DRAWS_TERRAIN_KINDS
     if ((flags & HdColors) != 0 && (flags & UseColor) == 0 && !(cycle.z != 0 && value == 255))
     {
         return HdTerrainPixel(input, target, original, value);
     }
+#endif
 
+#if DRAWS_SPRITE_KINDS
     // A smooth-edged opaque shape's colour pass (its indices were written by an index-only one).
     if ((flags & SmoothEdges) != 0 && (flags & (AlphaBlend | TableAfter)) == 0)
     {
         return Blended(float4(Shown(value), 1.0) * coverage);
     }
+#endif
 
     if ((flags & (AlphaBlend | TableAfter)) == 0)
     {
@@ -1793,6 +1827,7 @@ Output DrawnOutput(Input input)
     }
 
     return Blended(blend * coverage);
+#endif
 }
 
 Output main(Input input)

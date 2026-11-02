@@ -130,6 +130,11 @@ namespace
     constexpr size_t MaxPages = 6;
     /// <summary>A picture not used for this many frames is dropped.</summary>
     constexpr uint64_t PictureFrames = 300;
+    /// <summary>
+    /// Pictures past PictureFrames are looked for once in this many frames: going over them all every frame costs more
+    /// than holding them a little longer.
+    /// </summary>
+    constexpr uint64_t PictureSweepFrames = 32;
     /// <summary>The bytes the pictures may take before the oldest go.</summary>
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
     /// <summary>The same for the HD art frames on the GPU.</summary>
@@ -223,6 +228,46 @@ namespace
     constexpr float AlphaNothing = 0.0f;
     constexpr float AlphaOpaque = 1.0f;
     constexpr float AlphaBlended = 2.0f;
+
+    /// <summary>
+    /// Whether a translucent draw shows <paramref name="color"/> opaque (AlphaOpaque): not 0 or 0xff, which it leaves
+    /// out, nor a special colour (AlphaPal.ini's), which it blends.
+    /// </summary>
+    bool OpaqueAlphaColor(int32_t color)
+    {
+        return color != 0 && color != 0xff && SpecialColor[static_cast<size_t>(color)] == 0;
+    }
+
+    /// <summary>Whether any of <paramref name="colors"/> is one a translucent draw shows opaque.</summary>
+    bool AnyOpaqueAlphaColor(const std::bitset<256>& colors)
+    {
+        for (size_t color = 0; color < colors.size(); ++color)
+        {
+            if (colors.test(color) && OpaqueAlphaColor(static_cast<int32_t>(color)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The colours of the drawn pixels of an image decoded into the atlas (DecodedBytes a pixel).</summary>
+    std::bitset<256> DrawnColors(std::span<const uint8_t> decoded)
+    {
+        std::bitset<256> colors;
+
+        for (size_t at = 0; at + DecodedBytes <= decoded.size(); at += DecodedBytes)
+        {
+            if (decoded[at + 1] == DecodedDrawn)
+            {
+                colors.set(decoded[at]);
+            }
+        }
+
+        return colors;
+    }
+
     /// <summary>The free colours (AlphaTable and FindClosest leave out the system's 0..9 and 246..255).</summary>
     constexpr int32_t FirstFreeColor = 10;
     constexpr int32_t LastFreeColor = 245;
@@ -650,7 +695,23 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     renderer->_FragmentShader = std::move(*fragment);
 
-    // The terrain layer: its own vertex shader, the draws' fragment shader.
+    // Port-only: the same for the draws of the original's own kinds alone and of HD art frames alone, and for the
+    // terrain layer's.
+    for (auto [info, shader] : {std::pair{&MCVulkanShaders::DrawBasicFragment, &renderer->_BasicFragmentShader},
+                                std::pair{&MCVulkanShaders::DrawHdFragment, &renderer->_HdFragmentShader},
+                                std::pair{&MCVulkanShaders::DrawTerrainFragment, &renderer->_TerrainFragmentShader}})
+    {
+        auto loaded = MCVulkanShaders::Load(device, *info);
+
+        if (!loaded)
+        {
+            return std::unexpected(loaded.error());
+        }
+
+        *shader = std::move(*loaded);
+    }
+
+    // The terrain layer: its own vertex shader, and its own fragment shader (the draws' for its kinds alone).
     auto terrain = MCVulkanShaders::Load(device, MCVulkanShaders::TerrainVertex);
 
     if (!terrain)
@@ -664,8 +725,8 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
     // three; blended draws blend their premultiplied colour over the colours and the glints (ONE, ONE_MINUS_SRC_ALPHA)
     // and leave the indices. A shadow (HD lighting) takes the colours' alpha down by its own (ZERO,
     // ONE_MINUS_SRC_ALPHA) and leaves the rest, as an index-only draw leaves all but the indices.
-    const auto makePipeline =
-        [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false, bool marks = false)
+    const auto makePipeline = [&](SDL_GPUShader& vertexShader, bool blend, bool indexOnly = false, bool shadow = false,
+                                  bool marks = false, SDL_GPUShader* fragmentShader = nullptr)
     {
         SDL_GPUColorTargetDescription targets[SurfaceTargets]{};
         targets[0].format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -725,7 +786,7 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = &vertexShader;
-        pipeline.fragment_shader = renderer->_FragmentShader.get();
+        pipeline.fragment_shader = fragmentShader != nullptr ? fragmentShader : renderer->_FragmentShader.get();
         pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
         pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
@@ -735,17 +796,26 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
                                                     MCGpuRelease{device});
     };
 
-    renderer->_Opaque = makePipeline(*renderer->_VertexShader, false);
-    renderer->_Blend = makePipeline(*renderer->_VertexShader, true);
-    renderer->_IndexOnly = makePipeline(*renderer->_VertexShader, false, true);
-    renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
-    renderer->_BlendMarks = makePipeline(*renderer->_VertexShader, true, false, false, true);
-    renderer->_IndexMarks = makePipeline(*renderer->_VertexShader, false, true, false, true);
-    renderer->_TerrainPipeline = makePipeline(*renderer->_TerrainShader, false);
-    renderer->_TerrainSeamPipeline = makePipeline(*renderer->_TerrainShader, true);
+    const auto makeDrawPipelines = [&](DrawPipelines& pipelines, SDL_GPUShader& fragmentShader)
+    {
+        SDL_GPUShader& vertexShader = *renderer->_VertexShader;
+        pipelines.Opaque = makePipeline(vertexShader, false, false, false, false, &fragmentShader);
+        pipelines.Blend = makePipeline(vertexShader, true, false, false, false, &fragmentShader);
+        pipelines.IndexOnly = makePipeline(vertexShader, false, true, false, false, &fragmentShader);
+        pipelines.BlendMarks = makePipeline(vertexShader, true, false, false, true, &fragmentShader);
+        pipelines.IndexMarks = makePipeline(vertexShader, false, true, false, true, &fragmentShader);
+    };
 
-    if (renderer->_Opaque == nullptr || renderer->_Blend == nullptr || renderer->_IndexOnly == nullptr ||
-        renderer->_ShadowPipeline == nullptr || renderer->_BlendMarks == nullptr || renderer->_IndexMarks == nullptr ||
+    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Every)], *renderer->_FragmentShader);
+    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Basic)], *renderer->_BasicFragmentShader);
+    makeDrawPipelines(renderer->_Pipelines[static_cast<size_t>(DrawVariant::Hd)], *renderer->_HdFragmentShader);
+    renderer->_ShadowPipeline = makePipeline(*renderer->_VertexShader, false, false, true);
+    renderer->_TerrainPipeline =
+        makePipeline(*renderer->_TerrainShader, false, false, false, false, renderer->_TerrainFragmentShader.get());
+    renderer->_TerrainSeamPipeline =
+        makePipeline(*renderer->_TerrainShader, true, false, false, false, renderer->_TerrainFragmentShader.get());
+
+    if (!std::ranges::all_of(renderer->_Pipelines, &DrawPipelines::Made) || renderer->_ShadowPipeline == nullptr ||
         renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
@@ -847,16 +917,15 @@ MCVulkanRenderer::~MCVulkanRenderer()
     _DrawBuffer.reset();
     _Nearest.reset();
     ReleaseTerrainMesh();
-    _Opaque.reset();
-    _Blend.reset();
-    _IndexOnly.reset();
+    _Pipelines = {};
     _ShadowPipeline.reset();
-    _BlendMarks.reset();
-    _IndexMarks.reset();
     _TerrainPipeline.reset();
     _TerrainSeamPipeline.reset();
     _VertexShader.reset();
     _FragmentShader.reset();
+    _BasicFragmentShader.reset();
+    _HdFragmentShader.reset();
+    _TerrainFragmentShader.reset();
     _TerrainShader.reset();
 }
 
@@ -996,9 +1065,12 @@ void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictu
 {
     const auto drop = [&](auto it) { return DropPicture(pictures, it, bytes, bytesPerPixel); };
 
-    for (auto it = pictures.begin(); it != pictures.end();)
+    if (_Frame % PictureSweepFrames == 0)
     {
-        it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
+        for (auto it = pictures.begin(); it != pictures.end();)
+        {
+            it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
+        }
     }
 
     if (bytes > budget)
@@ -1061,21 +1133,65 @@ uint16_t MCVulkanRenderer::SurfaceFor(const MCWindow& window)
     return static_cast<uint16_t>(index);
 }
 
+auto MCVulkanRenderer::VariantOf(uint32_t op) -> DrawVariant
+{
+    const uint32_t kind = op & KindMask;
+
+    if (kind <= KindTexelWalk && (op & SmoothEdges) == 0)
+    {
+        return DrawVariant::Basic;
+    }
+
+    return kind == KindHd || kind == KindHdSmooth ? DrawVariant::Hd : DrawVariant::Every;
+}
+
+bool MCVulkanRenderer::DrawPipelines::Made() const
+{
+    return Opaque != nullptr && Blend != nullptr && IndexOnly != nullptr && BlendMarks != nullptr &&
+           IndexMarks != nullptr;
+}
+
+SDL_GPUGraphicsPipeline* MCVulkanRenderer::DrawPipelines::For(const Record& record) const
+{
+    return record.IndexOnly ? (record.Marks ? IndexMarks.get() : IndexOnly.get())
+           : record.Blend   ? (record.Marks ? BlendMarks.get() : Blend.get())
+                            : Opaque.get();
+}
+
+MCRect MCVulkanRenderer::Clipped(const Surface& surface, const Quad& rect)
+{
+    return MCRect{std::max(rect[0], 0), std::max(rect[1], 0),
+                  std::min(rect[2], static_cast<int32_t>(surface.RecordedWidth) - 1),
+                  std::min(rect[3], static_cast<int32_t>(surface.RecordedHeight) - 1)};
+}
+
+void MCVulkanRenderer::NoteBlended(uint16_t surfaceIndex, const Quad& rect)
+{
+    Surface& surface = _Surfaces[surfaceIndex];
+
+    if (const MCRect clipped = Clipped(surface, rect); !Empty(clipped))
+    {
+        surface.Blended.push_back(clipped);
+    }
+}
+
 bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t sourceIndex, const Quad& rect,
                            const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before,
                            uint32_t after, bool join)
 {
     Surface& surface = _Surfaces[surfaceIndex];
-    std::array<int32_t, 20> draw{};
-    draw[0] = std::max(rect[0], 0);
-    draw[1] = std::max(rect[1], 0);
-    draw[2] = std::min(rect[2], static_cast<int32_t>(surface.RecordedWidth) - 1);
-    draw[3] = std::min(rect[3], static_cast<int32_t>(surface.RecordedHeight) - 1);
+    const MCRect clipped = Clipped(surface, rect);
 
-    if (draw[2] < draw[0] || draw[3] < draw[1])
+    if (Empty(clipped))
     {
         return false;
     }
+
+    std::array<int32_t, 20> draw{};
+    draw[0] = clipped.X0;
+    draw[1] = clipped.Y0;
+    draw[2] = clipped.X1;
+    draw[3] = clipped.Y1;
 
     if (sourceAt.has_value())
     {
@@ -1119,13 +1235,14 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     // A forest's HD frame marks its sway; an HD frame's index-only draw is its mark pass (HdMarks::Standing).
     const bool hdFrame = (op & KindMask) == KindHd || (op & KindMask) == KindHdSmooth;
     const bool marks = indexOnly ? hdFrame : (op & Sways) != 0 && blend;
+    const DrawVariant variant = VariantOf(op);
     // A run of draws with the same target, bindings and pipeline: a copy within the surface only when the draws are
     // one command's and apart (else each must see the ones before).
     const auto continues = [&](const Record& last)
     {
         return !last.Resize && last.TerrainDraw < 0 && last.SurfaceIndex == surfaceIndex && last.Source == source &&
                last.SourceIndex == sourceIndex && last.Blend == blend && last.IndexOnly == indexOnly &&
-               last.Shadow == shadow && last.Marks == marks &&
+               last.Shadow == shadow && last.Marks == marks && last.Variant == variant &&
                (join || (!last.ReadsCopy && source != SourceKind::TargetCopy)) &&
                last.First + last.Count == _Draws.size();
     };
@@ -1142,6 +1259,7 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         fresh.IndexOnly = indexOnly;
         fresh.Shadow = shadow;
         fresh.Marks = marks;
+        fresh.Variant = variant;
         fresh.First = static_cast<uint32_t>(_Draws.size());
         _Records.push_back(fresh);
     }
@@ -1300,7 +1418,7 @@ void MCVulkanRenderer::UploadAlphaColors()
         {
             kind[0] = AlphaNothing;
         }
-        else if (SpecialColor[color] == 0)
+        else if (OpaqueAlphaColor(color))
         {
             kind[0] = AlphaOpaque;
         }
@@ -1553,7 +1671,12 @@ auto MCVulkanRenderer::AtlasForData(std::span<const uint8_t> data, uint64_t seed
     }
 
     const Extent& extent = image.Measured;
-    image.Place = AtlasFor(extent.Width, extent.Height, [&](std::span<uint8_t> out) { decode(out, extent); });
+    image.Place = AtlasFor(extent.Width, extent.Height,
+                           [&](std::span<uint8_t> out)
+                           {
+                               decode(out, extent);
+                               image.Colors = DrawnColors(out);
+                           });
     return found;
 }
 
@@ -2942,7 +3065,12 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
                       HdMarks::Standing);
             }
 
-            if ((indexOp & Sways) == 0)
+            // A translucent shape with no colour it shows opaque keeps no indices: its index pass would draw nothing.
+            if ((indexOp & Sways) == 0 && translucent && !AnyOpaqueAlphaColor(image.Colors))
+            {
+                NoteBlended(surface, at);
+            }
+            else if ((indexOp & Sways) == 0)
             {
                 Add(surface, SourceKind::Atlas, place->Page, at, from, indexOp, 0, before, after);
             }
@@ -5240,7 +5368,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             if (next.Resize || next.TerrainDraw >= 0 || next.SurfaceIndex != record.SurfaceIndex ||
                 next.Source != record.Source || next.SourceIndex != record.SourceIndex || next.Blend != record.Blend ||
                 next.IndexOnly != record.IndexOnly || next.Shadow != record.Shadow || next.Marks != record.Marks ||
-                next.ReadsCopy || record.ReadsCopy || next.First != previous.First + previous.Count)
+                next.Variant != record.Variant || next.ReadsCopy || record.ReadsCopy ||
+                next.First != previous.First + previous.Count)
             {
                 break;
             }
@@ -5307,10 +5436,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {_PaletteTexture.Handle.get(), _Nearest.get()},
         };
 
-        SDL_BindGPUGraphicsPipeline(pass, record.Shadow      ? _ShadowPipeline.get()
-                                          : record.IndexOnly ? (record.Marks ? _IndexMarks.get() : _IndexOnly.get())
-                                          : record.Blend     ? (record.Marks ? _BlendMarks.get() : _Blend.get())
-                                                             : _Opaque.get());
+        SDL_BindGPUGraphicsPipeline(pass, record.Shadow ? _ShadowPipeline.get()
+                                                        : _Pipelines[static_cast<size_t>(record.Variant)].For(record));
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},

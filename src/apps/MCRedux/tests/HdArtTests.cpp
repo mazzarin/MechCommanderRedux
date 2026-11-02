@@ -4129,6 +4129,105 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>
+    /// A forest's frame for the forest tests, as a shape table's (<see cref="Table"/>, frame 0) and in an HD pack
+    /// (<see cref="Pack"/>): Width x Height above its foot, its canopy in its left CanopyColumns in squares of two free
+    /// colours far apart, either by a hash of their place (so no shift of it looks like it), its painted shadow in the
+    /// rest (MCHdArt::Frame::PaintedShadow).
+    /// </summary>
+    struct TestForest
+    {
+        static constexpr int32_t Width = 96;
+        static constexpr int32_t Height = 48;
+        static constexpr int32_t CanopyColumns = 64;
+        std::vector<uint8_t> Table;
+        std::filesystem::path Pack;
+    };
+
+    /// <summary>Makes a <see cref="TestForest"/> in the palette's <paramref name="colors"/>, its pack in
+    /// <paramref name="scratch"/> (emptied first).</summary>
+    TestForest MakeTestForest(const std::filesystem::path& scratch, std::span<const SDL_Color, 256> colors)
+    {
+        // The canopy's two colours: free ones (as FullColorIndex's) with room to brighten, far apart.
+        constexpr int32_t FirstFree = 10;
+        constexpr int32_t EndFree = 246;
+        constexpr uint8_t Least = 40;
+        constexpr uint8_t Most = 160;
+        constexpr float Apart = 40.0f;
+        const auto canopyColor = [&](std::optional<uint8_t> other)
+        {
+            const auto free = std::views::iota(FirstFree, EndFree);
+            const auto found = std::ranges::find_if(
+                free,
+                [&](int32_t i)
+                {
+                    const SDL_Color& c = colors[static_cast<size_t>(i)];
+                    return SpecialColor[static_cast<size_t>(i)] == 0 && std::min({c.r, c.g, c.b}) >= Least &&
+                           std::max({c.r, c.g, c.b}) <= Most &&
+                           (!other.has_value() || std::abs(LumaOf(c) - LumaOf(colors[*other])) >= Apart);
+                });
+            REQUIRE(found != free.end());
+            return static_cast<uint8_t>(*found);
+        };
+
+        const uint8_t firstShade = canopyColor(std::nullopt);
+        const std::array<uint8_t, 2> shades = {firstShade, canopyColor(firstShade)};
+
+        constexpr int32_t Width = TestForest::Width;
+        constexpr int32_t Height = TestForest::Height;
+        constexpr int32_t CanopyColumns = TestForest::CanopyColumns;
+        constexpr int32_t Cell = 4;
+        constexpr int32_t Top = -Height;
+        constexpr uint32_t HashAcross = 374761393u;
+        constexpr uint32_t HashDown = 668265263u;
+        constexpr uint32_t HashMix = 1274126177u;
+        constexpr int HashFold = 13;
+        constexpr int HashBit = 16;
+        const auto indexAt = [&](int32_t column, int32_t row) -> uint8_t
+        {
+            if (column >= CanopyColumns)
+            {
+                return MCHdArt::BakedShadowIndex;
+            }
+
+            uint32_t hash =
+                static_cast<uint32_t>(column / Cell) * HashAcross + static_cast<uint32_t>(row / Cell) * HashDown;
+            hash = (hash ^ (hash >> HashFold)) * HashMix;
+            return shades[(hash >> HashBit) & 1u];
+        };
+
+        constexpr uint8_t RowPixels = 2 * Width + 1;
+        constexpr uint8_t RowEnd = 0;
+        std::vector<uint8_t> rows;
+
+        for (int32_t row = 0; row < Height; ++row)
+        {
+            rows.push_back(RowPixels);
+
+            for (int32_t column = 0; column < Width; ++column)
+            {
+                rows.push_back(indexAt(column, row));
+            }
+
+            rows.push_back(RowEnd);
+        }
+
+        TestForest forest{.Table = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}}),
+                          .Pack = scratch / "pack"};
+        std::filesystem::remove_all(scratch);
+        const std::filesystem::path& pack = forest.Pack;
+        const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(forest.Table));
+        std::filesystem::create_directories(folder);
+        constexpr int32_t Scale = 2;
+        WriteObjectFrame(folder / "0", Width, Height, Scale, colors, indexAt,
+                         [](int32_t column, int32_t) { return column >= CanopyColumns; });
+        WritePaletteRgb(pack, colors);
+        return forest;
+    }
+}
+
 /// <summary>
 /// Forests swaying (GHdSway) over mission 1 drawn by the GPU, paused: a forest's frame from the pack drawn in the world
 /// (a shape table's, its canopy in squares of two colours at random, its painted shadow beside it;
@@ -4157,85 +4256,13 @@ TEST_CASE_ISOLATED("game: with HDSway a forest's canopy sways downwind as the ga
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
 
-    // The canopy's two colours: free ones (as FullColorIndex's) with room to brighten, far apart.
-    constexpr int32_t FirstFree = 10;
-    constexpr int32_t EndFree = 246;
-    constexpr uint8_t Least = 40;
-    constexpr uint8_t Most = 160;
-    constexpr float Apart = 40.0f;
-    const auto canopyColor = [&](std::optional<uint8_t> other)
-    {
-        const auto free = std::views::iota(FirstFree, EndFree);
-        const auto found = std::ranges::find_if(
-            free,
-            [&](int32_t i)
-            {
-                const SDL_Color& c = colors[static_cast<size_t>(i)];
-                return SpecialColor[static_cast<size_t>(i)] == 0 && std::min({c.r, c.g, c.b}) >= Least &&
-                       std::max({c.r, c.g, c.b}) <= Most &&
-                       (!other.has_value() || std::abs(LumaOf(c) - LumaOf(colors[*other])) >= Apart);
-            });
-        REQUIRE(found != free.end());
-        return static_cast<uint8_t>(*found);
-    };
-
-    const uint8_t firstShade = canopyColor(std::nullopt);
-    const std::array<uint8_t, 2> shades = {firstShade, canopyColor(firstShade)};
-
-    // 96 x 48 above its foot: the canopy in columns 0-63, in Cell pixel squares of either colour by a hash of their
-    // place (so no shift of it looks like it), its painted shadow in the rest.
-    constexpr int32_t Width = 96;
-    constexpr int32_t Height = 48;
-    constexpr int32_t CanopyColumns = 64;
-    constexpr int32_t Cell = 4;
-    constexpr int32_t Top = -Height;
-    constexpr uint32_t HashAcross = 374761393u;
-    constexpr uint32_t HashDown = 668265263u;
-    constexpr uint32_t HashMix = 1274126177u;
-    constexpr int HashFold = 13;
-    constexpr int HashBit = 16;
-    const auto indexAt = [&](int32_t column, int32_t row) -> uint8_t
-    {
-        if (column >= CanopyColumns)
-        {
-            return MCHdArt::BakedShadowIndex;
-        }
-
-        uint32_t hash =
-            static_cast<uint32_t>(column / Cell) * HashAcross + static_cast<uint32_t>(row / Cell) * HashDown;
-        hash = (hash ^ (hash >> HashFold)) * HashMix;
-        return shades[(hash >> HashBit) & 1u];
-    };
-
-    constexpr uint8_t RowPixels = 2 * Width + 1;
-    constexpr uint8_t RowEnd = 0;
-    std::vector<uint8_t> rows;
-
-    for (int32_t row = 0; row < Height; ++row)
-    {
-        rows.push_back(RowPixels);
-
-        for (int32_t column = 0; column < Width; ++column)
-        {
-            rows.push_back(indexAt(column, row));
-        }
-
-        rows.push_back(RowEnd);
-    }
-
-    const std::vector<uint8_t> made = FramesTable(std::array{TableFrame{0, Top, Width, Height, rows}});
-    MCRegisteredBlock table(made.size(), MCDataKind::Shapes);
-    std::ranges::copy(made, table.Bytes().begin());
-
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_sway";
-    std::filesystem::remove_all(scratch);
-    const std::filesystem::path pack = scratch / "pack";
-    const std::filesystem::path folder = pack / MCHdArt::ShapeTableFolder(MCHdArt::ShapeTableHash(table.Bytes()));
-    std::filesystem::create_directories(folder);
-    constexpr int32_t Scale = 2;
-    WriteObjectFrame(folder / "0", Width, Height, Scale, colors, indexAt,
-                     [](int32_t column, int32_t) { return column >= CanopyColumns; });
-    WritePaletteRgb(pack, colors);
+    const TestForest forest = MakeTestForest(scratch, colors);
+    constexpr int32_t Width = TestForest::Width;
+    constexpr int32_t CanopyColumns = TestForest::CanopyColumns;
+    MCRegisteredBlock table(forest.Table.size(), MCDataKind::Shapes);
+    std::ranges::copy(forest.Table, table.Bytes().begin());
+    const std::filesystem::path& pack = forest.Pack;
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
     const int32_t width = display->Width();
@@ -4533,6 +4560,159 @@ TEST_CASE_ISOLATED("game: with HDSway a forest's canopy sways downwind as the ga
     CHECK(worst < 0.25 * contrast);
     CHECK(brighter > 1.0 + 0.5 * Light * leanShare);
     CHECK(brighter < 1.0 + Light + 0.02);
+}
+
+/// <summary>
+/// The sun's relief (GHdRelief) with HD lighting by day, over mission 1 drawn by the GPU, paused, forests swaying
+/// (GHdSway, held still so the frames compare): a forest's frame from the pack drawn in the world shows its canopy with
+/// relief on as with it off, as drawn, unless MCLighting::CanopyRelief gives it a share of the sun's relief; the ground
+/// round it takes the relief whatever that share. The canopy's tiny bumps catching the sun glittered as it swayed.
+/// </summary>
+TEST_CASE_ISOLATED("game: the sun's relief spares a swaying forest's canopy, the ground round it lit by it")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+    REQUIRE(MCTestGame::StartMission(1));
+
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On)
+    {
+        std::cout << "  (skipped: no GPU renderer on this machine)\n";
+        return;
+    }
+
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_canopy_relief";
+    const TestForest forest = MakeTestForest(scratch, colors);
+    MCRegisteredBlock table(forest.Table.size(), MCDataKind::Shapes);
+    std::ranges::copy(forest.Table, table.Bytes().begin());
+    std::optional<MCHdArtOn> hdArt(std::in_place, forest.Pack);
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    REQUIRE(camera->View() != nullptr);
+    const int lightingWas = GHdLighting;
+    MCSceneLights::MCLighting& lighting = MCSceneLights::Lighting();
+    const MCSceneLights::MCLighting kept = lighting;
+    GHdLighting = HdLightingOn;
+    GHdSway = 1;
+    lighting.Sway = 0.0f;
+    lighting.SunRelief = 1.0f;
+    GamePaused = true;
+
+    // A frame of the world with relief on or off and the canopy's share of it, the forest drawn in it (a little right
+    // of the middle and up, clear of the units) or not.
+    constexpr int32_t Aside = 30;
+    const auto shown = [&](bool drawForest, int relief, float canopy)
+    {
+        GHdRelief = relief;
+        lighting.CanopyRelief = canopy;
+        MCTestGame::RunFrame(FrameSeconds);
+
+        if (drawForest)
+        {
+            MCPane& world = camera->View()->WorldFrame();
+            AGShapeDraw(world, table.Bytes(), 0, (world.X1 - world.X0) / 2 + Aside, (world.Y1 - world.Y0) / 2 - Aside);
+        }
+
+        auto frame = display->ReadFrame();
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->size() == static_cast<size_t>(width) * height);
+        return std::move(*frame);
+    };
+
+    const std::vector<SDL_Color> bare = shown(false, 0, 0.0f);
+    const std::vector<SDL_Color> flat = shown(true, 0, 0.0f);
+    const std::vector<SDL_Color> spared = shown(true, 1, 0.0f);
+    const std::vector<SDL_Color> lit = shown(true, 1, 1.0f);
+    SaveShownFrame(lit, width, height, "canopy-relief-lit");
+    SaveShownFrame(spared, width, height, "canopy-relief-spared");
+    GHdRelief = 0;
+    GHdSway = 0;
+    GamePaused = false;
+    GHdLighting = lightingWas;
+    lighting = kept;
+    hdArt.reset();
+    std::filesystem::remove_all(scratch);
+
+    // The frame on the screen, where it differs from the bare ground (near the middle: the minimap's blips blink), and
+    // its canopy, the left CanopyColumns of its Width (each past its last pixel).
+    const auto at = [&](const std::vector<SDL_Color>& frame, int32_t x, int32_t y)
+    { return frame[static_cast<size_t>(y) * width + x]; };
+    int32_t frameLeft = width;
+    int32_t frameRight = 0;
+    int32_t frameTop = height;
+    int32_t frameBottom = 0;
+
+    for (int32_t y = height / 4; y < height * 3 / 4; ++y)
+    {
+        for (int32_t x = width / 4; x < width * 3 / 4; ++x)
+        {
+            if (!SameColor(at(bare, x, y), at(flat, x, y)))
+            {
+                frameLeft = std::min(frameLeft, x);
+                frameRight = std::max(frameRight, x + 1);
+                frameTop = std::min(frameTop, y);
+                frameBottom = std::max(frameBottom, y + 1);
+            }
+        }
+    }
+
+    REQUIRE(frameRight > frameLeft);
+    REQUIRE(frameBottom > frameTop);
+    const int32_t canopyRight = frameLeft + (frameRight - frameLeft) * TestForest::CanopyColumns / TestForest::Width;
+
+    // Inside the canopy's edge (Fringe pixels, drawn smooth): the pixels the relief changed, spared and with its share.
+    // Round the frame, Margin pixels wide: the ground's, and those the canopy's share changed.
+    constexpr int32_t Fringe = 2;
+    constexpr int32_t Margin = 24;
+    size_t canopyPixels = 0;
+    size_t canopySpared = 0;
+    size_t canopyLit = 0;
+    size_t groundPixels = 0;
+    size_t groundLit = 0;
+    size_t groundByShare = 0;
+
+    for (int32_t y = frameTop - Margin; y < frameBottom + Margin; ++y)
+    {
+        for (int32_t x = frameLeft - Margin; x < frameRight + Margin; ++x)
+        {
+            const bool canopy = x >= frameLeft + Fringe && x < canopyRight - Fringe && y >= frameTop + Fringe &&
+                                y < frameBottom - Fringe;
+            const bool ground = x < frameLeft || x >= frameRight || y < frameTop || y >= frameBottom;
+            const SDL_Color under = at(flat, x, y);
+
+            if (canopy)
+            {
+                ++canopyPixels;
+                canopySpared += SameColor(at(spared, x, y), under) ? 0 : 1;
+                canopyLit += SameColor(at(lit, x, y), under) ? 0 : 1;
+            }
+            else if (ground)
+            {
+                ++groundPixels;
+                groundLit += SameColor(at(spared, x, y), under) ? 0 : 1;
+                groundByShare += SameColor(at(spared, x, y), at(lit, x, y)) ? 0 : 1;
+            }
+        }
+    }
+
+    std::cout << std::format(
+        "  the canopy: {} of {} pixels changed by the relief spared, {} with all of it; the ground "
+        "round it: {} of {} lit by it, {} changed by the canopy's share\n",
+        canopySpared, canopyPixels, canopyLit, groundLit, groundPixels, groundByShare);
+    REQUIRE(canopyPixels > 0);
+    CHECK_EQ(canopySpared, 0u);
+    CHECK(canopyLit * 10 > canopyPixels);
+    CHECK(groundLit * 10 > groundPixels);
+    CHECK_EQ(groundByShare, 0u);
 }
 
 /// <summary>
@@ -7221,8 +7401,10 @@ namespace
     }
 
     /// <summary>
-    /// With <c>--hd-sun-relief &lt;strength&gt;</c>, turns relief on (GHdRelief), the sun showing the world's relief
-    /// that much (MCLighting::SunRelief, 0 to 1); the relief maps keep their steepness unless --hd-relief-maps says.
+    /// With <c>--hd-sun-relief &lt;strength&gt;[,&lt;canopy&gt;]</c>, turns relief on (GHdRelief), the sun showing the
+    /// world's relief that much (MCLighting::SunRelief, 0 to 1), and a swaying forest's canopy that share of it
+    /// (MCLighting::CanopyRelief; left out, its default); the relief maps keep their steepness unless --hd-relief-maps
+    /// says.
     /// </summary>
     void SunReliefFromOptions()
     {
@@ -7233,9 +7415,12 @@ namespace
             return;
         }
 
-        MCSceneLights::Lighting().SunRelief = std::strtof(std::string(*strength).c_str(), nullptr);
+        MCSceneLights::MCLighting& settings = MCSceneLights::Lighting();
+        const std::string given(*strength);
+        REQUIRE(std::sscanf(given.c_str(), "%f,%f", &settings.SunRelief, &settings.CanopyRelief) >= 1);
         GHdRelief = 1;
-        std::cout << std::format("  sun relief: {:.2f}\n", MCSceneLights::Lighting().SunRelief);
+        std::cout << std::format("  sun relief: {:.2f}, the canopy {:.2f} of it\n", settings.SunRelief,
+                                 settings.CanopyRelief);
     }
 
     /// <summary>

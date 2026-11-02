@@ -179,6 +179,12 @@ namespace MCSceneLights
         /// </summary>
         float SunRelief = 0.75f;
         /// <summary>
+        /// With relief on and forests swaying (<see cref="GHdSway"/>, which marks their canopy): how much of the sun's
+        /// relief a forest's canopy shows, 0 to 1 of the ground's (0: lit as drawn, so the crowns' tiny bumps don't
+        /// glitter as they sway; the lights still show them).
+        /// </summary>
+        float CanopyRelief = 0.0f;
+        /// <summary>
         /// With relief on: how steeply the HD art pack's relief maps (MCHdArt::FindTerrainRelief) stand the HD ground's
         /// bumps for the lights and the sun, where it has them: its slopes times this (0: the ground is lit by its
         /// brightness, as the rest; 3 about matches the brightness relief's strength).

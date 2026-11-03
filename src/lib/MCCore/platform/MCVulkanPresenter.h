@@ -139,6 +139,11 @@ private:
     /// <summary>Port-only (HD lighting): the underlays' blooms (Bloom), in the same order.</summary>
     std::vector<Texture> _Blooms;
     /// <summary>
+    /// Port-only (HD lighting): the underlays' fields (composite.pshader's Field: the bloom and the clouds' cover at the
+    /// bloom's texels), in the same order.
+    /// </summary>
+    std::vector<Texture> _Fields;
+    /// <summary>
     /// Port-only (HD lighting): the underlays' light tiles (composite.pshader's lightTileTex), in the same order, and
     /// one bound where there are none (never read; made empty).
     /// </summary>

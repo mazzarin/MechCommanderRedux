@@ -115,6 +115,8 @@ namespace
     constexpr float MinCloudSize = 1.0f;
     /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
     constexpr float BrightPassMode = 2.0f;
+    /// <summary>The composite's mode for the GPU world's field (composite.pshader's FieldPass).</summary>
+    constexpr float FieldPassMode = 3.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t7).</summary>
     constexpr size_t CompositeSamplers = 8;
     /// <summary>
@@ -550,7 +552,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_LightTiles})
+    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_Fields, &_LightTiles})
     {
         for (Texture& texture : *textures)
         {
@@ -951,6 +953,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         CompositeUniforms Uniforms{};
         LightTiles Lights;
         SDL_GPUTexture* LightTileTexture = nullptr;
+        /// <summary>Port-only (HD lighting): the GPU world's field (null: none, without a bloom or clouds).</summary>
+        SDL_GPUTexture* Field = nullptr;
     };
 
     std::vector<std::optional<UnderlayDraw>> underlayDraws(frame.Underlays.size());
@@ -1051,6 +1055,81 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         }
     }
 
+    // Port-only (HD lighting): each GPU world's field (composite.pshader's Field), its bloom and its clouds' cover at
+    // its bloom's texels, which the composite's pass reads. One that can't be made shows its world without either.
+    _Fields.resize(std::max(_Fields.size(), underlayDraws.size()));
+
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
+    {
+        if (!gpuSurfaces || !underlayDraws[i].has_value())
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = *underlayDraws[i];
+        CompositeUniforms& uniforms = drawn.Uniforms;
+
+        if (uniforms.LightLook[1] <= 0.0f && uniforms.Clouds[0] <= 0.0f)
+        {
+            continue;
+        }
+
+        const World& world = worlds[i];
+        Texture& field = _Fields[i];
+        const uint32_t fieldWidth = (static_cast<uint32_t>(world.Size[0]) + BloomScale - 1) / BloomScale;
+        const uint32_t fieldHeight = (static_cast<uint32_t>(world.Size[1]) + BloomScale - 1) / BloomScale;
+
+        if (auto made = Ensure(field, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                               SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, fieldWidth,
+                               fieldHeight, false);
+            !made)
+        {
+            SDL_Log("MCVulkanPresenter: underlay %zu shown without its bloom and clouds' shadows: %s", i,
+                    made.error().c_str());
+            uniforms.LightLook[1] = 0.0f;
+            uniforms.Clouds[0] = 0.0f;
+            continue;
+        }
+
+        SDL_GPUColorTargetInfo fieldTarget{};
+        fieldTarget.texture = field.Handle.get();
+        // Only the texels the composite reads are drawn (FieldAt).
+        fieldTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        fieldTarget.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* fieldPass = SDL_BeginGPURenderPass(&commands, &fieldTarget, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(fieldPass, _CompositePipeline.get());
+        const float allocatedWidth = static_cast<float>(field.Width);
+        const float allocatedHeight = static_cast<float>(field.Height);
+        const SDL_GPUViewport fieldViewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
+        SDL_SetGPUViewport(fieldPass, &fieldViewport);
+        CompositeUniforms fieldUniforms = uniforms;
+        fieldUniforms.Mode[0] = FieldPassMode;
+        // The pass reads the bloom's mips alone (the world bound for the rest, and for mips it hasn't, unread).
+        SDL_GPUTexture* const mips = world.Bloom != nullptr ? world.Bloom : world.Texture;
+        const CompositeBindings bindings{{
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {mips, _Linear.get()},
+            {world.Texture, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+        }};
+        // The texels in use and the next across and down, which the world's last pixels read toward.
+        const uint32_t drawnWidth = std::min(fieldWidth + 1, field.Width);
+        const uint32_t drawnHeight = std::min(fieldHeight + 1, field.Height);
+        DrawComposite(commands, *fieldPass, bindings,
+                      {{0.0f, 0.0f, static_cast<float>(drawnWidth), static_cast<float>(drawnHeight)},
+                       {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
+                      fieldUniforms);
+        SDL_EndGPURenderPass(fieldPass);
+        drawn.Field = field.Handle.get();
+        std::ranges::copy(std::array{static_cast<float>(fieldWidth), static_cast<float>(fieldHeight), allocatedWidth,
+                                     allocatedHeight},
+                          uniforms.BloomSize);
+    }
+
     SDL_GPUColorTargetInfo target{};
     target.texture = _Frame.Handle.get();
     // The first quad covers every pixel.
@@ -1090,7 +1169,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
                       uniforms);
     };
 
-    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
+    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't).
     draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
@@ -1107,7 +1186,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         const UnderlayDraw& drawn = *underlayDraws[i];
         const World& world = worlds[i];
-        draw(drawn.Rect, *world.Texture, world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, *world.Glints,
+        draw(drawn.Rect, *world.Texture, drawn.Field != nullptr ? *drawn.Field : *screen, *world.Indices, *world.Glints,
              drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle, drawn.Uniforms);
     }
 

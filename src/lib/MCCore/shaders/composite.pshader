@@ -37,8 +37,9 @@ SamplerState tableSampler : register(s3, space2);
 // The palette, 256 x 1, as shown (gamma applied).
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
-// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear; unused
-// without a bloom).
+// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear), in the field
+// pass (FieldPass); over the GPU world, its field (Field): the bloom (rgb) and the clouds' cover (a) at the middle of
+// each of those texels, read between them (unused without either).
 Texture2D<float4> bloomTex : register(t5, space2);
 SamplerState bloomSampler : register(s5, space2);
 // Port-only (HD weather): the light the GPU world's raindrops caught by the lights they fall past (MCWeather::Glint;
@@ -72,8 +73,9 @@ cbuffer Composite : register(b0, space3)
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
     // x: 1 when drawing an underlay's rectangle, 0 for the screen alone, 2 for the bloom's bright pass of the GPU
-    // world (BrightPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
-    // drawn at the size it's shown; 0 or 1 otherwise).
+    // world (BrightPass), 3 for its field (FieldPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the
+    // screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen, drawn at the size it's shown; 0
+    // or 1 otherwise).
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
     // shows the colour of cycleSources[(i + y) & 7] (one source a component).
@@ -100,7 +102,7 @@ cbuffer Composite : register(b0, space3)
     // How the lights colour the world, x: how much more of their hue it takes, its brightness kept. The bloom of the
     // GPU world: y, its strength (0 none); z, the brightness (a pixel's brightest component's) a pixel blooms above.
     float4 lightLook;
-    // The bloom's texture: its size in use (xy, half the world's) and allocated (zw).
+    // The bloom's texture (the field's over the GPU world): its size in use (xy, half the world's) and allocated (zw).
     float4 bloomSize;
     // The heat haze: x, the most a world sample shimmers, and y, the length of its waves (texels); z, the game's time
     // (seconds); w, the fires in heat.
@@ -162,8 +164,9 @@ cbuffer Composite : register(b0, space3)
     float4 lights[MaxLights * 3];
 };
 
-// mode.x for the bloom's bright pass.
+// mode.x for the bloom's bright pass, and for the GPU world's field (Field).
 static const float BrightPass = 2.0;
+static const float FieldPass = 3.0;
 // The brightness the relief takes for height, and the grey a light's hue is taken from.
 static const float3 Luma = float3(0.299, 0.587, 0.114);
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
@@ -499,9 +502,10 @@ float4 Bright(float2 texel)
     return float4(sum / (BloomScale * BloomScale), 1.0);
 }
 
-// The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
-// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before and weighing BloomFalloff of it (a
-// glow mostly close by). Each is taken from four taps half its texel diagonally each way, which smooths its blocks.
+// The bloom's mips added at a world texel, as a share of their light (lightLook.y's strength left to the field's
+// reader): from BloomFirst (its bright pixels' own light left out) to the last of BloomLevels (MCVulkanPresenter's),
+// each spread twice as wide as the one before and weighing BloomFalloff of it (a glow mostly close by). Each is taken
+// from four taps half its texel diagonally each way, which smooths its blocks.
 static const uint BloomFirst = 1;
 static const uint BloomLevels = 6;
 static const float BloomFalloff = 0.6;
@@ -511,11 +515,6 @@ static const float2 BloomTaps[BloomTapCount] = {float2(-0.5, -0.5), float2(0.5, 
 
 float3 BloomAt(float2 texel)
 {
-    if (lightLook.y <= 0.0)
-    {
-        return float3(0.0, 0.0, 0.0);
-    }
-
     // The texel's centre in the bloom's first level's texels.
     const float2 at = (texel + 0.5) / BloomScale;
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -535,7 +534,7 @@ float3 BloomAt(float2 texel)
         weight *= BloomFalloff;
     }
 
-    return sum * (lightLook.y / (BloomTapCount * weights));
+    return sum / (BloomTapCount * weights);
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
@@ -972,14 +971,9 @@ static const float CloudEdge = 0.06;
 static const float2 CloudLayerApart = float2(17.3, -9.1);
 static const float3 CloudShadeTint = float3(1.0, 0.97, 0.8);
 
-// The world's own light the clouds leave at a world texel (1 where none lies).
-float3 CloudsAt(float2 texel)
+// How much a cloud covers a world texel (0 to 1).
+float CloudAt(float2 texel)
 {
-    if (clouds.x <= 0.0)
-    {
-        return float3(1.0, 1.0, 1.0);
-    }
-
     const float2 offset = texel - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
     const float drift = haze.z * clouds.w;
@@ -1003,8 +997,52 @@ float3 CloudsAt(float2 texel)
     }
 
     const float level = 0.5 + CloudSpread * (0.5 - clouds.y);
-    const float cloud = smoothstep(level - 0.5 * CloudEdge, level + 0.5 * CloudEdge, sum / weights);
+    return smoothstep(level - 0.5 * CloudEdge, level + 0.5 * CloudEdge, sum / weights);
+}
+
+// The world's own light a cloud's cover (CloudAt) leaves.
+float3 CloudLight(float cloud)
+{
     return 1.0 - clouds.x * cloud * CloudShadeTint;
+}
+
+// The world's own light the clouds leave at a world texel (1 where none lies).
+float3 CloudsAt(float2 texel)
+{
+    if (clouds.x <= 0.0)
+    {
+        return float3(1.0, 1.0, 1.0);
+    }
+
+    return CloudLight(CloudAt(texel));
+}
+
+// The GPU world's field pass: at the middle of the bloom's texel `texel`, the bloom (BloomAt, rgb) and the clouds'
+// cover (CloudAt, a), each where shown. Both change little from texel to texel, so the world's pixels read them between
+// these (FieldAt) rather than work them out each: a quarter of the work.
+float4 Field(float2 texel)
+{
+    float4 field = float4(0.0, 0.0, 0.0, 0.0);
+
+    // BloomAt's texel at this middle (its world texels BloomScale * texel and the next), and the world's point there.
+    if (lightLook.y > 0.0)
+    {
+        field.rgb = BloomAt(texel * BloomScale + 0.5);
+    }
+
+    if (clouds.x > 0.0)
+    {
+        field.a = CloudAt((texel + 0.5) * BloomScale);
+    }
+
+    return field;
+}
+
+// The field (Field) at a world point (a texel's middle at the texel + 0.5), between the middles of the bloom's texels;
+// off the world (the haze moves its pixels a little), at its edge, which the field's pass draws a texel past.
+float4 FieldAt(float2 at)
+{
+    return bloomTex.SampleLevel(bloomSampler, clamp(at / BloomScale, 0.0, bloomSize.xy) / bloomSize.zw, 0);
 }
 
 // Port-only (HD weather): the light under the overcast, a little blue.
@@ -1349,6 +1387,11 @@ float4 main(float4 position : SV_Position) : SV_Target
         return Bright(pixel);
     }
 
+    if (mode.x == FieldPass)
+    {
+        return Field(pixel);
+    }
+
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
     // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
     const float2 drawn = max(mode.zw, float2(1.0, 1.0));
@@ -1385,8 +1428,21 @@ float4 main(float4 position : SV_Position) : SV_Target
 
             float glint;
             const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
-            const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
-            const float3 cloudLight = CloudsAt(hazy + 0.5);
+            // The bloom and the clouds' shadows, from the field (Field).
+            float3 bloom = float3(0.0, 0.0, 0.0);
+            float3 cloudLight = float3(1.0, 1.0, 1.0);
+
+            if (lightLook.y > 0.0 || clouds.x > 0.0)
+            {
+                const float4 field = FieldAt(hazy + 0.5);
+                bloom = field.rgb * lightLook.y * (1.0 - SelfLit(seen));
+
+                if (clouds.x > 0.0)
+                {
+                    cloudLight = CloudLight(field.a);
+                }
+            }
+
             // Port-only (HD weather): under the overcast, its light and no sun to glint; the rain's veil; the wet look;
             // the light the drops caught, as it is.
             const float3 overcast = OvercastAt(hazy);

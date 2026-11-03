@@ -13750,7 +13750,9 @@ namespace
 /// <c>--showcase-incoming &lt;frame&gt;[:mech],...</c> the other side's on that mech (the first) and its nearest mate,
 /// marked; <c>--showcase-mines</c> sets a mine off under a mech as it steps out toward its enemy onto ground the force
 /// hasn't crossed (the other side's minefield), <c>--showcase-smoke</c> sets the forests nearest it alight
-/// (their smoke all around it);
+/// (their smoke all around it); <c>--showcase-snow-least &lt;from&gt;,&lt;to&gt;</c> throws the snow's least share
+/// from one frame and all of it again from the other (MCWeatherPacing::Hold), the steepest a slow machine's pace cuts
+/// it and brings it back;
 /// <c>--showcase-alpha</c> sends the enemy mech nearest a mech running in to its reach five seconds before (held
 /// standing until then; set down within reach the frame before if still further) and has the mech fire every weapon at
 /// it, the camera between them if on it; <c>--showcase-destroy
@@ -13928,6 +13930,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const int32_t hud = ShowcaseOption("hud", 0);
     const int32_t jumpEvery = ShowcaseOption("jump", 0);
     const std::vector<int32_t> strikes = ShowcaseFrames("strike");
+    const std::vector<int32_t> snowLeast = ShowcaseFrames("snow-least");
     const std::vector<MCShowcaseEvent> incoming = ShowcaseEvents("incoming");
     const int32_t walkFrame = ShowcaseOption("walk", 0);
     const int32_t contactFrame = ShowcaseOption("contact", -1);
@@ -14717,6 +14720,15 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
     for (int32_t frame = 0; frame < last; ++frame)
     {
+        if (!snowLeast.empty() && frame == snowLeast.front())
+        {
+            MCWeatherPacing::Hold(MCWeatherPace::LeastShare);
+        }
+        else if (snowLeast.size() > 1 && frame == snowLeast[1])
+        {
+            MCWeatherPacing::Hold(1.0f);
+        }
+
         const bool down = target != nullptr && target->IsDisabled() != 0;
         fallen += down ? 1 : 0;
         const std::vector<std::shared_ptr<MCMover>> lance = LiveLance();

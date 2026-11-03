@@ -530,6 +530,11 @@ void MCRenderer::EndTerrainLayer(MCWindow& /*target*/)
 {
 }
 
+std::expected<void, std::string> MCRenderer::PrepareTerrain(const MCTerrainMesh& /*mesh*/)
+{
+    return {};
+}
+
 void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/)
 {
 }

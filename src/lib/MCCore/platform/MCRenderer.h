@@ -943,6 +943,12 @@ public:
     /// <summary>Ends the terrain pass <see cref="TerrainLayer"/> began.</summary>
     virtual void EndTerrainLayer(MCWindow& target);
 
+    /// <summary>
+    /// Port-only: puts <paramref name="mesh"/> on the GPU now, as the first <see cref="TerrainLayer"/> drawing it would
+    /// (while a mission loads, MCTerrainUploadGround); a renderer that draws no terrain layer does nothing.
+    /// </summary>
+    virtual std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh);
+
     // Shared state ----------------------------------------------------------------------------------------------
 
     /// <summary>Tells every renderer the alpha table changed (InitAlphaLookup).</summary>

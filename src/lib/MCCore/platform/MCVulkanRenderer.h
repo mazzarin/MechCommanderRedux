@@ -75,6 +75,11 @@ public:
     /// </summary>
     std::expected<void, std::string> TerrainLayer(MCWindow& target, const MCTerrainFrame& frame) override;
     void EndTerrainLayer(MCWindow& target) override;
+    /// <summary>
+    /// Uploads <paramref name="mesh"/> and its tiles unless they're on the GPU already, as they are (the same mesh, HD
+    /// art pack and relief maps); the uploads go straight to the GPU, ahead of the frame being recorded.
+    /// </summary>
+    std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh) override;
 
     /// <summary>
     /// The colours the next <see cref="Execute"/> draws with: the palette as shown (gamma applied, 256 entries; empty
@@ -203,6 +208,23 @@ public:
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
+    /// <summary>
+    /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
+    /// already up sends its cells alone).
+    /// </summary>
+    uint64_t TerrainUploads() const { return _TerrainUploads; }
+    int64_t TerrainTileUploads() const { return _TerrainTileUploads; }
+
+    /// <summary>
+    /// A frame's uploads are staged and sent through memory kept for the next frames up to this many bytes each (the
+    /// staging and the transfer buffer); a frame that sends more sends it through memory of its own, gone once the
+    /// frame has run, so the burst isn't held all session.
+    /// </summary>
+    static constexpr size_t KeptUploadBytes = 16 * 1024 * 1024;
+
+    /// <summary>The bytes kept for the next frames' uploads (the staging's and the transfer buffer's).</summary>
+    size_t UploadBytesKept() const { return _Staging.capacity() + _TransferSize; }
+
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
@@ -255,6 +277,12 @@ protected:
     void OnFrameSurfaceRemoved(const MCWindow& window) override;
 
 private:
+    /// <summary>
+    /// Port-only: an upload too big for a frame's staging (the ground's, hundreds of megabytes with HD art), written
+    /// straight into a few transfer buffers in turn, each sent up on a command buffer of its own as it fills.
+    /// </summary>
+    class ChunkedUpload;
+
     /// <summary>A texture and its allocated size.</summary>
     struct Texture
     {
@@ -421,6 +449,8 @@ private:
         bool Relief = false;
         /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
         uint64_t HdPack = 0;
+        /// <summary>Port-only: the mesh's tiles the atlases hold (a mesh of the same tiles keeps them).</summary>
+        std::vector<std::vector<uint8_t>> Tiles;
         std::shared_ptr<SDL_GPUBuffer> Cells;
         std::shared_ptr<SDL_GPUBuffer> Images;
         int32_t FirstRow = 0;
@@ -914,8 +944,13 @@ private:
     void PlaceSurfaces(std::span<const MCUnderlay> underlays);
     /// <summary>(Re)makes a surface's textures at its drawn size and clears them, as a window's new pixels start.</summary>
     std::expected<void, std::string> MakeSurfaceTextures(SDL_GPUCommandBuffer& commands, Surface& surface);
-    /// <summary>Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images).</summary>
+    /// <summary>
+    /// Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images; its cells alone
+    /// when the tiles up are its own), through a <see cref="ChunkedUpload"/>.
+    /// </summary>
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
+    /// <summary>Puts <paramref name="mesh"/>'s cells in a new cell buffer, through <paramref name="upload"/>.</summary>
+    std::expected<void, std::string> UploadTerrainCells(ChunkedUpload& upload, const MCTerrainMesh& mesh);
     /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
     static uint64_t HdPackInUse();
     /// <summary>
@@ -925,12 +960,14 @@ private:
     /// <summary>Makes one of the terrain's HD atlases (BC7, MaxHdAtlasSide wide), or says why there is none.</summary>
     std::expected<void, std::string> MakeHdTerrainAtlas(
         Texture& atlas, uint32_t height, SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM);
-    /// <summary>Puts an HD terrain tile's colours into HD atlas <paramref name="atlas"/> at (x, y), a block corner.</summary>
-    void UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y);
+    /// <summary>
+    /// Puts an HD terrain tile's colours into HD atlas <paramref name="atlas"/> at (x, y), a block corner, through
+    /// <paramref name="upload"/>.
+    /// </summary>
+    std::expected<void, std::string> UploadHdTile(ChunkedUpload& upload, Texture& atlas, const MCHdArt::Frame& frame,
+                                                  uint32_t x, uint32_t y);
     /// <summary>Releases the terrain mesh's textures and buffers.</summary>
     void ReleaseTerrainMesh();
-    /// <summary>Queues <paramref name="size"/> bytes for an upload into a buffer: where to write them.</summary>
-    std::span<uint8_t> QueueBufferUpload(std::shared_ptr<SDL_GPUBuffer> buffer, uint32_t size);
     /// <summary>Execution: draws a terrain layer in the render pass under way.</summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
                      const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
@@ -1021,16 +1058,8 @@ private:
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    int64_t _TerrainTileUploads = 0;
 
-    /// <summary>Uploads into buffers waiting for the next <see cref="Execute"/>.</summary>
-    struct BufferUpload
-    {
-        std::shared_ptr<SDL_GPUBuffer> Buffer;
-        uint32_t Size;
-        size_t Offset;
-    };
-
-    std::vector<BufferUpload> _BufferUploads;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
     Texture _Blank;
@@ -1081,8 +1110,8 @@ private:
     Texture _Strip;
 
     /// <summary>
-    /// Uploads waiting for the next <see cref="Execute"/>, run in order: from <c>Buffer</c> at <c>Offset</c>
-    /// (<c>_Transfer</c> when null; rows <c>RowPixels</c> apart, <c>Width</c> when 0), or with <c>From</c> set, a copy of
+    /// Uploads waiting for the next <see cref="Execute"/>, run in order: from <c>Buffer</c> at <c>Offset</c> (the
+    /// frame's staging when null; rows <c>RowPixels</c> apart, <c>Width</c> when 0), or with <c>From</c> set, a copy of
     /// the same rectangle from that texture. A null <c>Texture</c> was dropped. An upload holds what it reads and
     /// writes until the frame has run.
     /// </summary>
@@ -1101,6 +1130,10 @@ private:
     };
 
     std::vector<Upload> _Uploads;
+    /// <summary>
+    /// The uploads' bytes, and the transfer buffer they go up through, kept for the next frames up to
+    /// <see cref="KeptUploadBytes"/> (a bigger frame's go once it has run).
+    /// </summary>
     std::vector<uint8_t> _Staging;
     std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;
     uint32_t _TransferSize = 0;
@@ -1173,8 +1206,9 @@ private:
     };
 
     /// <summary>
-    /// Drops the pictures of <paramref name="pictures"/> unused for a while, then, oldest first, those past
-    /// <paramref name="budget"/> bytes (down to half of it); <paramref name="bytes"/> counts what they take.
+    /// Drops the pictures of <paramref name="pictures"/> unused for a while (looked for every PictureSweepFrames
+    /// frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in the last frame; at most
+    /// TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                       size_t bytesPerPixel);

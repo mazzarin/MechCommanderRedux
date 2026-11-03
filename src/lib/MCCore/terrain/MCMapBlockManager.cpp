@@ -167,10 +167,9 @@ auto MCMapBlockManager::BlockStart(int32_t blockNum) const -> size_t
 auto MCMapBlockManager::MapVertexIndex(int32_t row, int32_t col) const -> size_t
 {
     const int32_t side = MCTerrain::VerticesBlockSide;
-    const int32_t mapSide = MCTerrain::BlocksMapSide * side;
     int32_t blockNum = _NumBlocks;
 
-    if (row >= 0 && col >= 0 && row < mapSide && col < mapSide)
+    if (OnMap(row, col))
     {
         blockNum = (row / side) * MCTerrain::BlocksMapSide + col / side;
     }
@@ -185,12 +184,23 @@ auto MCMapBlockManager::GetTopLeftElevation() -> float
     return static_cast<float>(_Vertices[0].Elevation) * MCTerrain::MetersPerElevLevel;
 }
 
+auto MCMapBlockManager::OnMap(int32_t row, int32_t col) -> bool
+{
+    const int32_t mapSide = MCTerrain::BlocksMapSide * MCTerrain::VerticesBlockSide;
+    return row >= 0 && col >= 0 && row < mapSide && col < mapSide;
+}
+
 auto MCMapBlockManager::RaiseOffMapBlock() -> void
 {
     for (MCPrecompVertex& vertex : Block(_NumBlocks))
     {
-        vertex.Elevation = static_cast<uint8_t>(static_cast<uint8_t>(GameMap().BaseElevation) + 1);
+        vertex.Elevation = RaisedOffMapElevation();
     }
+}
+
+auto MCMapBlockManager::RaisedOffMapElevation() -> uint8_t
+{
+    return static_cast<uint8_t>(static_cast<uint8_t>(GameMap().BaseElevation) + 1);
 }
 
 auto MCMapBlockManager::Update(const MCVector3D& cameraPos, MCTerrainWindow& window) -> void

@@ -159,11 +159,10 @@ void MCSoundRenderer::ServiceStreams(bool checkEnds)
     // The fills are taken and ended under the lock, and written without it: decoding a stream's next bytes holds up no
     // sound start on the game's thread.
     std::vector<std::pair<MCSoundChannel*, MCSoundChannel::MCStreamFill>> fills;
-    uint32_t now = 0;
+    std::optional<uint32_t> now;
 
     {
         std::scoped_lock lock(_Lock);
-        now = MCPort::Milliseconds();
 
         for (const std::unique_ptr<MCSoundChannel>& channel : _Channels)
         {
@@ -198,9 +197,11 @@ void MCSoundRenderer::ServiceStreams(bool checkEnds)
     for (const std::unique_ptr<MCSoundChannel>& channel : _Channels)
     {
         if (const std::shared_ptr<MCSoundResource> resource = channel->Resource.lock();
-            resource != nullptr && resource->Type == MCSoundResourceType::Stream)
+            resource != nullptr && resource->Type == MCSoundResourceType::Stream && channel->Streaming)
         {
-            channel->StopStreamAtEnd(now);
+            // The clock is read only for a stream playing, as the original's stream timer read it.
+            now = now.has_value() ? now : MCPort::Milliseconds();
+            channel->StopStreamAtEnd(*now);
         }
     }
 }

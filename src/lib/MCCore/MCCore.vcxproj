@@ -930,14 +930,24 @@
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
   </ItemGroup>
-  <!-- miniz (src\lib\miniz-3.0.2, MIT): its inflate unpacks the HD art pack's archives (lib\MCInflate), as it
-       unpacks the Gold CD's cabinets for the editor. One C unit outside MCCore, so its own ItemGroup too. -->
+  <!-- libdeflate 1.26 (src\lib\libdeflate-1.26, MIT): its decompressor unpacks the HD art pack's archives
+       (lib\MCInflate); x86\cpu_features.c picks its BMI2 decoder where the processor has one (its README.md). C units
+       outside MCCore, so their own ItemGroup too. -->
   <ItemGroup>
-    <ClCompile Include="$(MCLibDir)miniz-3.0.2\miniz.c">
+    <ClCompile Include="$(MCLibDir)libdeflate-1.26\lib\deflate_decompress.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
-      <WarningLevel>Level1</WarningLevel>
-      <PreprocessorDefinitions>MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_TIME;MINIZ_NO_STDIO;MINIZ_NO_ZLIB_COMPATIBLE_NAMES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdeflate-1.26\lib\utils.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdeflate-1.26\lib\x86\cpu_features.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
   </ItemGroup>
   <!-- bc7enc_rdo (src\lib\bc7enc_rdo, MIT or public domain): the HD art pack's BC7 encoder, decoder and entropy

@@ -133,6 +133,58 @@ namespace
     /// </summary>
     constexpr float AirBeamLength = 1.1f;
     constexpr float AirBeamLampWidth = 1.0f;
+    /// <summary>A spotlight's pool is taken as this many radians wider each way along the ground, against rounding.</summary>
+    constexpr float SpotWedgePadding = 0.02f;
+
+    /// <summary>
+    /// The box (left, top, right, bottom; the ground's units, a texel across and lighting.w of one down) of the ground a
+    /// spotlight's pool can light (composite.pshader's SpotPool: nothing outside its beam): the wedge of its reach
+    /// (<paramref name="reach"/>, from the ground under its lamp at <paramref name="x"/>, <paramref name="y"/>) round the
+    /// way it aims (<paramref name="spotX"/>, <paramref name="spotY"/>, from its lamp <paramref name="height"/> up),
+    /// as wide as its beam (the cosine <paramref name="edge"/> off its middle) spreads along the ground. None when its
+    /// beam takes in the ground right under its lamp, where it lights every way.
+    /// </summary>
+    std::optional<std::array<float, 4>> SpotWedge(float x, float y, float reach, float height, float spotX, float spotY,
+                                                  float edge)
+    {
+        constexpr float QuarterTurn = std::numbers::pi_v<float> / 2.0f;
+        // The beam's half width, and how far below the ground's plane its middle points.
+        const float half = std::acos(std::clamp(edge, -1.0f, 1.0f));
+        const float down = std::atan2(height, std::hypot(spotX, spotY));
+
+        if (half + down + SpotWedgePadding >= QuarterTurn)
+        {
+            return std::nullopt;
+        }
+
+        // A way within `half` of the beam's middle turns at most this far from it along the ground.
+        const float spread = std::asin(std::sin(half) / std::cos(down)) + SpotWedgePadding;
+        const float aim = std::atan2(spotY, spotX);
+        std::array<float, 4> box{x, y, x, y};
+        const auto take = [&](float angle)
+        {
+            const float px = x + reach * std::cos(angle);
+            const float py = y + reach * std::sin(angle);
+            box = {std::min(box[0], px), std::min(box[1], py), std::max(box[2], px), std::max(box[3], py)};
+        };
+
+        take(aim - spread);
+        take(aim + spread);
+
+        // The wedge's arc reaches furthest each way where it crosses a quarter turn.
+        for (int quarter = -4; quarter <= 4; ++quarter)
+        {
+            const float angle = static_cast<float>(quarter) * QuarterTurn;
+
+            if (std::abs(angle - aim) <= spread)
+            {
+                take(angle);
+            }
+        }
+
+        return box;
+    }
+
     /// <summary>The lights' bits come in words of this many (composite.pshader's LightWordBits).</summary>
     constexpr size_t LightWordBits = 32;
     /// <summary>
@@ -159,8 +211,9 @@ namespace
     /// The light tiles of a world <paramref name="width"/> x <paramref name="height"/> texels for the first
     /// <paramref name="count"/> lights of <paramref name="uniforms"/>: each light in every tile its box meets, the
     /// ground within its reach of its point or beam (composite.pshader's LightAt: heights stretched as the ground's,
-    /// lighting.w; at least a texel), and a spotlight's also in every tile the box of its beam in the air meets
-    /// (AirBeamsAt), so a tile holds every light that can light one of its texels. A texel off the world takes its
+    /// lighting.w; at least a texel; a spotlight's, the wedge of it its beam meets, SpotWedge), and a spotlight's also in
+    /// every tile the box of its beam in the air meets (AirBeamsAt), so a tile holds every light that can light one of
+    /// its texels. A texel off the world takes its
     /// nearest tile's lights, so a box off it marks the tiles at its edge.
     /// </summary>
     LightTiles MakeLightTiles(const CompositeUniforms& uniforms, size_t count, float width, float height)
@@ -205,10 +258,27 @@ namespace
                 }
             };
 
-            mark(std::min(ends[0], ends[2]) - reach, std::min(ends[1], ends[3]) - reachDown,
-                 std::max(ends[0], ends[2]) + reach, std::max(ends[1], ends[3]) + reachDown);
+            // A spotlight's pool lights only the wedge its beam meets (from its point).
+            const bool spot = (uniforms.SpotLights[i / LightWordBits] & bit) != 0;
+            const bool point = ends[0] == ends[2] && ends[1] == ends[3];
+            const std::optional<std::array<float, 4>> wedge =
+                spot && point && stretch > 0.0f ? SpotWedge(ends[0], ends[1] * stretch, reach, shape[0], shape[2],
+                                                            shape[3] * stretch, uniforms.Lights[i * 3 + 2][3])
+                                                : std::nullopt;
 
-            if ((uniforms.SpotLights[i / LightWordBits] & bit) != 0)
+            if (wedge.has_value())
+            {
+                const std::array<float, 4>& box = *wedge;
+                mark(box[0] - LightTilePadding, box[1] / stretch - LightTilePadding, box[2] + LightTilePadding,
+                     box[3] / stretch + LightTilePadding);
+            }
+            else
+            {
+                mark(std::min(ends[0], ends[2]) - reach, std::min(ends[1], ends[3]) - reachDown,
+                     std::max(ends[0], ends[2]) + reach, std::max(ends[1], ends[3]) + reachDown);
+            }
+
+            if (spot)
             {
                 // The beam in the air: from its lamp, its height up the screen from the ground under it, along the way
                 // to where its middle meets the ground, AirBeamLength of it, widening as it spreads (the cosine of its

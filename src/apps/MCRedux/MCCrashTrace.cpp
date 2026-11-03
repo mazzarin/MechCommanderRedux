@@ -100,6 +100,12 @@ namespace
     /// <summary>The report's path when it goes to a file, else empty.</summary>
     wchar_t ReportPath[MAX_PATH] = {};
 
+    /// <summary>The reports' record's path (<see cref="MCCrashTrace::SetRecordPath"/>), else empty.</summary>
+    wchar_t RecordPath[MAX_PATH] = {};
+
+    /// <summary>Frames print as the record has them: a module's name and offset, the function if known.</summary>
+    bool PlainFrames = false;
+
     /// <summary>Formats into a static buffer and writes it to the report, without touching the heap.</summary>
     template <typename... Args> void Print(std::format_string<Args...> format, Args&&... args)
     {
@@ -205,6 +211,28 @@ namespace
         const bool haveSymbol = SymFromAddr(process, address, &displacement, &symbol.Info) != FALSE;
         const bool haveLine = SymGetLineFromAddr64(process, address, &lineDisplacement, &line) != FALSE;
 
+        if (PlainFrames)
+        {
+            IMAGEHLP_MODULE64 module{};
+            module.SizeOfStruct = sizeof(module);
+            const DWORD64 base = SymGetModuleBase64(process, address);
+            const std::string_view name = SymGetModuleInfo64(process, address, &module) != FALSE
+                                              ? std::string_view(module.ModuleName)
+                                              : std::string_view("?");
+
+            if (haveSymbol)
+            {
+                Print("{} +0x{:x} {} + 0x{:x}\n", name, address - base, std::string_view(symbol.Info.Name),
+                      displacement);
+            }
+            else
+            {
+                Print("{} +0x{:x}\n", name, address - base);
+            }
+
+            return;
+        }
+
         if (haveSymbol && haveLine)
         {
             Print("  #{:02} {}+0x{:x}  {}({})\n", index, std::string_view(symbol.Info.Name), displacement,
@@ -275,6 +303,43 @@ namespace
         }
 
         SymCleanup(process);
+    }
+
+    /// <summary>The stack as the record has it, guarded (its function holds no objects, as __try needs).</summary>
+    void PrintPlainStack()
+    {
+        PlainFrames = true;
+
+        __try
+        {
+            PrintStack();
+        }
+
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+
+        PlainFrames = false;
+    }
+
+    /// <summary>Writes the reports' record, when there is a path for it, the report's file set aside meanwhile.</summary>
+    void WriteRecord()
+    {
+        if (RecordPath[0] == L'\0')
+        {
+            return;
+        }
+
+        MCWin32Handle report = std::move(State().ReportFile);
+        State().ReportFile = MCWin32Handle(CreateFileW(RecordPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+
+        if (IsOpen(State().ReportFile))
+        {
+            PrintPlainStack();
+        }
+
+        State().ReportFile = std::move(report);
     }
 
     /// <summary>Runs the reporter, if any, its stderr going where the report goes.</summary>
@@ -386,6 +451,7 @@ namespace
         }
 
         CloseReport();
+        WriteRecord();
 
         __try
         {
@@ -539,6 +605,21 @@ void MCCrashTrace::SetReporter(std::function<void()> reporter)
     State().Reporter = std::move(reporter);
 }
 
+void MCCrashTrace::SetRecordPath(const std::filesystem::path& path)
+{
+    const std::wstring& text = path.native();
+
+    // A path too long for the buffer goes unwritten rather than cut.
+    if (text.size() >= MAX_PATH)
+    {
+        RecordPath[0] = L'\0';
+        return;
+    }
+
+    std::ranges::copy(text, std::begin(RecordPath));
+    RecordPath[text.size()] = L'\0';
+}
+
 #else
 
 void MCCrashTrace::Install()
@@ -546,6 +627,10 @@ void MCCrashTrace::Install()
 }
 
 void MCCrashTrace::SetReporter(std::function<void()>)
+{
+}
+
+void MCCrashTrace::SetRecordPath(const std::filesystem::path&)
 {
 }
 

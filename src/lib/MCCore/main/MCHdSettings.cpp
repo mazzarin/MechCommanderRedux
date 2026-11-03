@@ -3,6 +3,7 @@
 #include "engine/MCCraterManager.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
+#include "main/MCTelemetry.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechActor.h"
@@ -63,10 +64,19 @@ namespace
         MCSetting{.Key = "HDStops", .Value = &GHdStops},
         // MechBraking (gameplay) has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
         MCSetting{.Key = "MechBraking", .Value = &GMechBraking},
+        // Reports sends anonymous reports of the computer, how the game runs and its crashes, once the player has seen
+        // what they hold (main/MCTelemetry.h): off until then, whatever the build.
+        MCSetting{.Key = "Reports", .Value = &GReports, .Personal = 0, .Player = true},
     };
 
     /// <summary>The defaults are the personal build's (<see cref="UseHdByDefault"/>).</summary>
     bool PersonalDefaults = false;
+
+    /// <summary>A look DEFAULTS and ORIGINAL set (not the player's own answer, as REPORTS is).</summary>
+    bool IsLook(const MCSetting& setting)
+    {
+        return !setting.Player;
+    }
 }
 
 void UseHdByDefault()
@@ -155,7 +165,7 @@ auto MCHdSettings::Restore(std::span<const int32_t> values) -> void
 
 auto MCHdSettings::UseDefaults() -> void
 {
-    for (const MCSetting& setting : Settings)
+    for (const MCSetting& setting : Settings | std::views::filter(IsLook))
     {
         *setting.Value = Default(setting);
     }
@@ -163,7 +173,7 @@ auto MCHdSettings::UseDefaults() -> void
 
 auto MCHdSettings::UseOriginal() -> void
 {
-    for (const MCSetting& setting : Settings)
+    for (const MCSetting& setting : Settings | std::views::filter(IsLook))
     {
         *setting.Value = setting.Original;
     }

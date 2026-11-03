@@ -5,12 +5,14 @@
     <ClCompile Include="MCConsole.cpp" />
     <ClCompile Include="MCCrashTrace.cpp" />
     <ClCompile Include="MCGameFolder.cpp" />
+    <ClCompile Include="MCTelemetryWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCGameFolder.h" />
+    <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>
 </Project>

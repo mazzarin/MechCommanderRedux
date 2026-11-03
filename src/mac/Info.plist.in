@@ -38,5 +38,8 @@
   <string>uJU9bzHfuaVaOzO0OUxodWg8ExKCBxWjoVxYLyoWrqw=</string>
   <key>SUEnableAutomaticChecks</key>
   <false/>
+  <!-- The reports' server (main/MCTelemetry.h): empty, the app sends no reports. -->
+  <key>MCReportsURL</key>
+  <string>@MC_REPORTS_URL@</string>
 </dict>
 </plist>

@@ -15,6 +15,7 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameContext.h"
 #include "main/MCGameStrings.h"
+#include "main/MCTelemetry.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
 #include "mission/MCMission.h"
@@ -677,6 +678,9 @@ void MCMultiPlayer::SetServer(uint32_t newServerID)
 
 void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
 {
+    // Port (personal): the match's report counts the players lost (main/MCTelemetry.h).
+    MCTelemetry::PlayerLost();
+
     if (SessionManager->CurrentConnection != MCNetProtocol::Lobby)
     {
         NumLanPlayers--;

@@ -217,6 +217,9 @@
     <ClCompile Include="tests\StateHashTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\TelemetryTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\TerrainGridTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

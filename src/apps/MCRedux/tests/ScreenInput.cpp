@@ -16,11 +16,22 @@ namespace MCScreenInput
     uint32_t ScreenHash()
     {
         const MCWindow& screen = ScreenPort()->Bitmap();
-        const int32_t width = screen.XMax + 1;
-        const int32_t height = screen.YMax + 1;
         uint32_t hash = 0x811c9dc5;
-        hash = (hash ^ static_cast<uint32_t>(width)) * 0x01000193;
-        hash = (hash ^ static_cast<uint32_t>(height)) * 0x01000193;
+        hash = (hash ^ static_cast<uint32_t>(screen.XMax + 1)) * 0x01000193;
+        hash = (hash ^ static_cast<uint32_t>(screen.YMax + 1)) * 0x01000193;
+
+        for (const uint8_t pixel : ShownScreen())
+        {
+            hash = (hash ^ pixel) * 0x01000193;
+        }
+
+        return hash;
+    }
+
+    std::vector<uint8_t> ShownScreen()
+    {
+        const MCWindow& screen = ScreenPort()->Bitmap();
+        const size_t size = static_cast<size_t>(screen.XMax + 1) * static_cast<size_t>(screen.YMax + 1);
         std::vector<uint8_t> shown;
 
         if (MCInput::Display() != nullptr && MCInput::Display()->Screen().Pixels == screen.Pixels)
@@ -29,16 +40,11 @@ namespace MCScreenInput
         }
         else
         {
-            shown.assign(screen.Pixels.get(),
-                         screen.Pixels.get() + static_cast<size_t>(width) * static_cast<size_t>(height));
+            shown.assign(screen.Pixels.get(), screen.Pixels.get() + size);
         }
 
-        for (const uint8_t pixel : std::span(shown).first(static_cast<size_t>(width) * static_cast<size_t>(height)))
-        {
-            hash = (hash ^ pixel) * 0x01000193;
-        }
-
-        return hash;
+        shown.resize(size);
+        return shown;
     }
 
     void SaveShot(const std::string& name, uint32_t hash)

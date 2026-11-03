@@ -21,6 +21,7 @@
 #include "main/MCGameSession.h"
 #include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
+#include "main/MCTelemetry.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
@@ -1392,6 +1393,8 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
     const std::span<const uint8_t> bytes = msg.Bytes();
     MCMultiPlayer& game = Game();
     const auto type = static_cast<MCMPMessageType>(msg.Type());
+    // Port (personal): its type and size go in the reports' black box (main/MCTelemetry.h).
+    MCTelemetry::MessageIn(msg.Type(), bytes.size());
 
     if (!MaySend(type, fromID))
     {

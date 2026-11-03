@@ -1,8 +1,8 @@
 #pragma once
 
-// Port-only: the HD settings PREFS.CFG keeps, from "HDArt" to "MechBraking": the setting each key holds, its choices,
-// what it reads as when PREFS lacks it, and how it is read and written. The preferences' HD OPTIONS page edits them
-// (logistics/MCHdOptionsPanel.h).
+// Port-only: the HD settings PREFS.CFG keeps, from "HDArt" to "MechBraking", and "Reports" (main/MCTelemetry.h): the
+// setting each key holds, its choices, what it reads as when PREFS lacks it, and how it is read and written. The
+// preferences' HD OPTIONS page edits them (logistics/MCHdOptionsPanel.h).
 
 class MCFitIniFile;
 
@@ -30,6 +30,8 @@ namespace MCHdSettings
         /// <summary>What it reads as when PREFS lacks it: the original's game, and the personal build.</summary>
         int32_t Original = 0;
         int32_t Personal = 1;
+        /// <summary>The player's own answer, not a look (REPORTS): DEFAULTS and ORIGINAL leave it.</summary>
+        bool Player = false;
     };
 
     /// <summary>Every HD setting, in PREFS' order.</summary>
@@ -53,9 +55,9 @@ namespace MCHdSettings
     /// <summary>Puts back the values <see cref="Now"/> gave.</summary>
     void Restore(std::span<const int32_t> values);
 
-    /// <summary>Every HD setting to its default (<see cref="Default"/>).</summary>
+    /// <summary>Every HD setting to its default (<see cref="Default"/>), but the player's own answers.</summary>
     void UseDefaults();
 
-    /// <summary>Every HD setting to the original's game: off.</summary>
+    /// <summary>Every HD setting to the original's game: off, but the player's own answers.</summary>
     void UseOriginal();
 }

@@ -120,7 +120,7 @@ namespace
 
 /// <summary>
 /// The table of HD settings: each PREFS key once, each value its own global, the original's defaults off (fleck style
-/// at the edge) and the personal build's on (but the fleck style).
+/// at the edge) and the personal build's on (but the fleck style, and REPORTS, the player's own answer, off in both).
 /// </summary>
 TEST_CASE("hd settings: each HD setting has its own key and global, off in the original, on in the personal build")
 {
@@ -136,12 +136,12 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK(setting.Personal >= setting.Least);
         CHECK(setting.Personal <= setting.Most);
         CHECK_EQ(setting.Boolean, setting.Most == 1 && setting.Key != "HDFlecks");
-        CHECK((setting.Personal != setting.Original) == (setting.Key != "HDFlecks"));
+        CHECK((setting.Personal != setting.Original) == (setting.Key != "HDFlecks" && !setting.Player));
         // The tests keep the original's defaults (only the app calls UseHdByDefault).
         CHECK_EQ(MCHdSettings::Default(setting), setting.Original);
     }
 
-    CHECK_EQ(keys.size(), size_t{15});
+    CHECK_EQ(keys.size(), size_t{16});
 }
 
 /// <summary>
@@ -176,8 +176,17 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
 
     const std::vector<int32_t> most = MCHdSettings::Now();
     write([](MCFitIniFile& prefs) { MCHdSettings::Write(prefs); });
+
+    // ORIGINAL sets every look back, and leaves the player's own answers (REPORTS).
+    std::vector<int32_t> original = OriginalSettings();
+
+    for (size_t i = 0; i < original.size(); i++)
+    {
+        original[i] = MCHdSettings::All()[i].Player ? most[i] : original[i];
+    }
+
     MCHdSettings::UseOriginal();
-    CHECK(MCHdSettings::Now() == OriginalSettings());
+    CHECK(MCHdSettings::Now() == original);
     read();
     CHECK(MCHdSettings::Now() == most);
 

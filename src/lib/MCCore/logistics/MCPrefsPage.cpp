@@ -27,7 +27,7 @@ namespace
 }
 
 MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std::span<const MCPageButton> buttons,
-                            void (*done)())
+                            void (*done)(), std::vector<std::weak_ptr<MCLogTextButton>>* made)
 {
     auto newPage = MCMakeGui<MCLogGroupBox>(PageOutlineColor, PageFillColor);
     newPage->Init(PageLeft, PageTop, PageWidth, PageHeight);
@@ -42,7 +42,7 @@ MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std
 
     // The buttons take the art's size; they are placed once made.
     int32_t left = ButtonInset;
-    const auto place = [&](std::string_view word, void (*clicked)(), bool atRight)
+    const auto place = [&](std::string_view word, void (*clicked)(), bool atRight) -> MCLogTextButton&
     {
         auto button = MCMakeGui<MCLogTextButton>();
         button->InitWithLabel(0, 0, word, clicked);
@@ -50,12 +50,17 @@ MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std
         button->MoveTo(atRight ? PageWidth - ButtonInset - button->Width() : left, top);
         button->ShowGuiWindow(true);
         left += button->Width() + ButtonInset;
-        screen.AdoptChildOf(page, std::move(button));
+        return screen.AdoptChildOf(page, std::move(button));
     };
 
     for (const MCPageButton& button : buttons)
     {
-        place(button.Label, button.Clicked, false);
+        MCLogTextButton& placed = place(button.Label, button.Clicked, false);
+
+        if (made != nullptr)
+        {
+            made->push_back(placed.SharedAs<MCLogTextButton>());
+        }
     }
 
     place("DONE", done, true);

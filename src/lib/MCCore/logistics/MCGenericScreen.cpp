@@ -179,8 +179,11 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
             exec = ConnectScreen;
             break;
         case 5:
+        {
             exec = ReplayCinema;
+            CinemaButton = button.SharedAs<MCLogButton>();
             break;
+        }
         case 6:
             exec = ReturnToGame;
             break;
@@ -344,6 +347,7 @@ auto MCGenericScreen::Destroy() -> void
     LoadSaveButton.reset();
     DeleteButton.reset();
     CancelButton.reset();
+    CinemaButton.reset();
     ChildList.clear();
     ArtPort.reset();
     MCLogObject::Destroy();

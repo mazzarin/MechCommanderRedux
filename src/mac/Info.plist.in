@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The app's Info.plist; version.cmake fills in the version and the oldest macOS. -->
+<!-- The app's Info.plist; version.cmake fills in the version, the build and the oldest macOS. -->
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
@@ -22,7 +22,7 @@
   <key>CFBundleShortVersionString</key>
   <string>@MC_BUNDLE_VERSION@</string>
   <key>CFBundleVersion</key>
-  <string>@MC_BUNDLE_VERSION@</string>
+  <string>@MC_BUNDLE_BUILD@</string>
   <!-- A game: macOS turns on Game Mode while it's full screen. -->
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.strategy-games</string>
@@ -30,5 +30,13 @@
   <string>@MC_MIN_MACOS@</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <!-- The updater (Sparkle): the fork's feed, from its latest release; the game looks once a start itself, and
+       installs only an update signed with this key's private half (generate_keys, the releaser's login Keychain). -->
+  <key>SUFeedURL</key>
+  <string>https://github.com/mazzarin/MechCommanderRedux/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>uJU9bzHfuaVaOzO0OUxodWg8ExKCBxWjoVxYLyoWrqw=</string>
+  <key>SUEnableAutomaticChecks</key>
+  <false/>
 </dict>
 </plist>

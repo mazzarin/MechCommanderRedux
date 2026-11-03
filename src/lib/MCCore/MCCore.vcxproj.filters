@@ -627,6 +627,9 @@
     <ClCompile Include="logistics\MCUnitLimits.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCUpdatePage.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -715,6 +718,9 @@
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCSystemConfig.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
+    <ClCompile Include="main\MCUpdater.cpp">
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="MCPort.cpp" />
@@ -1867,6 +1873,9 @@
     <ClInclude Include="logistics\MCUnitLimits.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCUpdatePage.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1946,6 +1955,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCSystemConfig.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCUpdater.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="MCCore.h" />

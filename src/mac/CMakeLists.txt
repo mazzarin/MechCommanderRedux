@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "The oldest macOS the build runs on")
 set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "The architectures to build (Apple Silicon)")
-project(MCReduxMac LANGUAGES C CXX OBJC ASM)
+project(MCReduxMac LANGUAGES C CXX OBJC OBJCXX ASM)
 
 # The port uses C++23 throughout. Apple's libc++ has what it needs from Xcode 16.3 (AppleClang 17), with std::jthread
 # and std::stop_token behind -fexperimental-library before Xcode 26.
@@ -172,17 +172,27 @@ set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS 
 # to run it at all.
 set(MC_ICON ${MC_SRC}/res/MCRedux.icns)
 set_source_files_properties(${MC_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_ICON})
+#
+# Personal build: the app updates itself through Sparkle (src/lib/Sparkle-2.10.1, its framework as released), which the
+# Mac-only MCSparkleUpdater.mm drives; the framework is copied into Contents/Frameworks before the app is signed.
+set(MC_SPARKLE ${MC_SRC}/lib/Sparkle-2.10.1)
+set(MC_SPARKLE_UPDATER ${MC_SRC}/apps/MCRedux/MCSparkleUpdater.mm)
+set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+                            COMPILE_OPTIONS "-fobjc-arc;-F${MC_SPARKLE}")
+add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_ICON})
 # The Info.plist is a link dependency, so a changed one (a new version, an edited template) relinks, which copies it.
 set_target_properties(MCRedux PROPERTIES OUTPUT_NAME "MechCommander Redux" LINK_DEPENDS ${MC_GENERATED_DIR}/Info.plist)
 target_include_directories(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
-target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics")
+target_link_options(MCRedux PRIVATE -F${MC_SPARKLE} "-Wl,-rpath,@executable_path/../Frameworks")
+target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework Sparkle")
 add_custom_command(TARGET MCRedux POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_GENERATED_DIR}/Info.plist
           $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Info.plist
+  COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Frameworks/Sparkle.framework
+  COMMAND ditto ${MC_SPARKLE}/Sparkle.framework $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Frameworks/Sparkle.framework
   COMMAND codesign --force --sign - $<TARGET_BUNDLE_DIR:MCRedux>
-  COMMENT "Signing MechCommander Redux.app (ad hoc)"
+  COMMENT "Signing MechCommander Redux.app (ad hoc), Sparkle inside"
   VERBATIM)
 
 add_executable(mc_tests ${MCTESTS_SOURCES})

@@ -1006,7 +1006,8 @@ private:
 
     /// <summary>
     /// Drops the pictures of <paramref name="pictures"/> unused for a while, then, oldest first, those past
-    /// <paramref name="budget"/> bytes (down to half of it); <paramref name="bytes"/> counts what they take.
+    /// <paramref name="budget"/> bytes not drawn in the last frame; at most TrimmedBytesPerFrame a frame (the rest go
+    /// in the next). <paramref name="bytes"/> counts what they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                       size_t bytesPerPixel);

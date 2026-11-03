@@ -178,8 +178,30 @@ namespace
     constexpr uint64_t PictureFrames = 300;
     /// <summary>The bytes the pictures may take before the oldest go.</summary>
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
-    /// <summary>The same for the HD art frames on the GPU.</summary>
-    constexpr size_t HdPictureBudget = 512 * 1024 * 1024;
+    /// <summary>
+    /// The same for the HD art frames on the GPU: this share of the machine's memory (which the GPU shares on Apple
+    /// silicon and with integrated graphics), at least and at most these, as MCHdArt::CacheBudget sizes the frames
+    /// kept on the CPU. It's what may be kept, not what is set aside.
+    /// </summary>
+    constexpr size_t HdPictureMemoryShare = 16;
+    constexpr size_t MinHdPictureBudget = size_t{128} * 1024 * 1024;
+    constexpr size_t MaxHdPictureBudget = size_t{2048} * 1024 * 1024;
+    constexpr size_t BytesPerMegabyte = 1024 * 1024;
+    /// <summary>
+    /// The most bytes of pictures let go in a frame (past their budget or unused for a while; the rest go in the
+    /// frames after), so no frame drops a pile of them at once.
+    /// </summary>
+    constexpr size_t TrimmedBytesPerFrame = 64 * 1024 * 1024;
+
+    /// <summary>The HD art frames' budget on the GPU (HdPictureMemoryShare).</summary>
+    size_t HdPictureBudget()
+    {
+        static const size_t budget =
+            std::clamp(static_cast<size_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte / HdPictureMemoryShare,
+                       MinHdPictureBudget, MaxHdPictureBudget);
+        return budget;
+    }
+
     /// <summary>
     /// The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4; BC5's, a
     /// relief map's, as many).
@@ -1010,9 +1032,9 @@ void MCVulkanRenderer::BeginRecording()
     }
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
-    // each frame, such as the shape transforms' work buffer, make a new one every frame).
+    // each frame, such as the shape transforms' work buffer, make a new one every frame); a few at a time.
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
-    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdRgbaBytes);
+    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget(), HdRgbaBytes);
     TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -1057,33 +1079,30 @@ void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                                     size_t bytesPerPixel)
 {
-    const auto drop = [&](auto it) { return DropPicture(pictures, it, bytes, bytesPerPixel); };
+    // Those unused for a while, and past the budget those not drawn in the last frame (they'd only go up again).
+    const auto idle = [&](uint64_t lastFrame) { return lastFrame + PictureFrames < _Frame; };
+    std::vector<std::pair<uint64_t, uint64_t>> byAge;
 
-    for (auto it = pictures.begin(); it != pictures.end();)
+    for (const auto& [key, picture] : pictures)
     {
-        it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
-    }
-
-    if (bytes > budget)
-    {
-        std::vector<std::pair<uint64_t, uint64_t>> byAge;
-
-        for (const auto& [key, picture] : pictures)
+        if (idle(picture.LastFrame) || (bytes > budget && picture.LastFrame + 1 < _Frame))
         {
             byAge.emplace_back(picture.LastFrame, key);
         }
+    }
 
-        std::ranges::sort(byAge);
+    // Oldest first, so the idle ones go first; at most TrimmedBytesPerFrame.
+    std::ranges::sort(byAge);
+    const size_t before = bytes;
 
-        for (const auto& [lastFrame, key] : byAge)
+    for (const auto& [lastFrame, key] : byAge)
+    {
+        if ((!idle(lastFrame) && bytes <= budget) || before - bytes >= TrimmedBytesPerFrame)
         {
-            if (bytes <= budget / 2)
-            {
-                break;
-            }
-
-            drop(pictures.find(key));
+            break;
         }
+
+        DropPicture(pictures, pictures.find(key), bytes, bytesPerPixel);
     }
 }
 

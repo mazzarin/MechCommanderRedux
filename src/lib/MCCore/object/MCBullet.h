@@ -37,6 +37,21 @@ public:
     void Connect(MCGameObject& source, MCVector3D targetPos, int32_t sourceHotSpot);
     /// <summary>A new shot to apply on arrival (the caller fills it).</summary>
     MCWeaponShotInfo& NewShot() { return Shots.emplace_back(); }
+    /// <summary>
+    /// Whether a shot <paramref name="groundDistanceSq"/> (squared, along the ground) from where it flies has arrived,
+    /// flying at <paramref name="velocity"/> with frames of <paramref name="frameLength"/>; lowers
+    /// <paramref name="closestDistanceSq"/>, the closest it has been, when it gets closer. The original's test (here
+    /// and in MCProjectileLaser): arrived once the distance stops shrinking. Port fix: with frames shorter than 15 a
+    /// second's, a followed target's hot spot, which moves a few units whenever its animation turns a frame, can get
+    /// further away than a shot's step, and the hit landed at once, mid-flight. So with shorter frames a shot that
+    /// follows a target arrives within a step of it, or once it is further than its closest by a 15 fps step less this
+    /// frame's (what the original's test lets the target gain at 15).
+    /// </summary>
+    static bool Approach(float& closestDistanceSq, double groundDistanceSq, float velocity, float frameLength,
+                         bool followsTarget);
+
+    /// <summary>The frames the original's arrival test holds for: 15 a second, the frame lock's (Ctrl+Alt+S).</summary>
+    static constexpr float PacedFrameLength = 1.0f / 15.0f;
 
     /// <summary>Set until the first update, which plays the sound and places the bullet.</summary>
     bool JustCreated = true;

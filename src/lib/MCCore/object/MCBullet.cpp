@@ -116,13 +116,8 @@ auto MCBullet::Update() -> int32_t
     const double dxSq = static_cast<double>(dx) * dx;
     const double dySq = static_cast<double>(dy) * dy;
     const double groundDistanceSq = dxSq + dySq;
-    const bool arrived = ClosestDistanceSq <= groundDistanceSq;
-
-    if (!arrived)
-    {
-        ClosestDistanceSq = static_cast<float>(groundDistanceSq);
-    }
-
+    const bool arrived =
+        Approach(ClosestDistanceSq, groundDistanceSq, bulletType.Velocity, FrameLength, LockObject(Target) != nullptr);
     int32_t result = arrived ? 0 : 1;
 
     MCVector3D velocity;
@@ -331,6 +326,34 @@ auto MCBullet::Init(std::shared_ptr<MCObjectType> objType) -> int32_t
 
     ObjectClass = MCObjectClass::Bullet;
     return 0;
+}
+
+auto MCBullet::Approach(float& closestDistanceSq, double groundDistanceSq, float velocity, float frameLength,
+                        bool followsTarget) -> bool
+{
+    // The target's gain the original's test allows at 15 fps, less this frame's: none at 15 fps or slower.
+    const double slack = followsTarget ? static_cast<double>(velocity) *
+                                             (static_cast<double>(PacedFrameLength) - static_cast<double>(frameLength))
+                                       : 0.0;
+    bool arrived = false;
+
+    if (slack <= 0.0)
+    {
+        arrived = closestDistanceSq <= groundDistanceSq;
+    }
+    else
+    {
+        const double distance = std::sqrt(groundDistanceSq);
+        const double step = static_cast<double>(velocity) * frameLength;
+        arrived = distance <= step || std::sqrt(static_cast<double>(closestDistanceSq)) + slack <= distance;
+    }
+
+    if (!arrived && groundDistanceSq < closestDistanceSq)
+    {
+        closestDistanceSq = static_cast<float>(groundDistanceSq);
+    }
+
+    return arrived;
 }
 
 auto MCBullet::Connect(MCGameObject& source, MCVector3D targetPos, int32_t sourceHotSpot) -> void

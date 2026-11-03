@@ -250,6 +250,9 @@
     <ClCompile Include="tests\VideoWindowTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\WeatherPaceTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ZoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

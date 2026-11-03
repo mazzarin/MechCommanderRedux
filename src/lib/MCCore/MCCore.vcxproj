@@ -445,6 +445,7 @@
     <ClCompile Include="sprite\MCVfxBuildingAppearance.cpp" />
     <ClCompile Include="sprite\MCVfxBuildingAppearanceType.cpp" />
     <ClCompile Include="sprite\MCWeather.cpp" />
+    <ClCompile Include="sprite\MCWeatherPace.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -865,6 +866,7 @@
     <ClInclude Include="sprite\MCVfxBuildingAppearance.h" />
     <ClInclude Include="sprite\MCVfxBuildingAppearanceType.h" />
     <ClInclude Include="sprite\MCWeather.h" />
+    <ClInclude Include="sprite\MCWeatherPace.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="terrain\MCArtilleryButton.h" />

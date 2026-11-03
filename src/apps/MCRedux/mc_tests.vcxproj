@@ -146,6 +146,7 @@
     <ClCompile Include="tests\VfxPolygonTests.cpp" />
     <ClCompile Include="tests\VfxTransformTests.cpp" />
     <ClCompile Include="tests\VideoWindowTests.cpp" />
+    <ClCompile Include="tests\WeatherPaceTests.cpp" />
     <ClCompile Include="tests\ZoomTests.cpp" />
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />

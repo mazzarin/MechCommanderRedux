@@ -4701,6 +4701,8 @@ void MCVulkanRenderer::ReleaseTerrainMesh()
 
 std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTerrainMesh& mesh)
 {
+    ++_TerrainUploads;
+
     if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
         mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
     {

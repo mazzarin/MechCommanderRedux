@@ -3,6 +3,7 @@
 #include "ai/MCMoveSystem.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
+#include "main/MCMissionGlobals.h"
 #include "object/MCElemental.h"
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
@@ -63,9 +64,10 @@ namespace
 
     /// <summary>
     /// Builds the ground mesh over the map and a ring of <paramref name="ring"/> off-map vertices around it, reading
-    /// every tile it uses.
+    /// every tile it uses; the off-map vertices at <paramref name="offMapElevation"/> when given (else the map's).
     /// </summary>
-    void BuildGroundMesh(int32_t ring, int32_t stepX, int32_t stepY, int32_t elevStep)
+    void BuildGroundMesh(int32_t ring, int32_t stepX, int32_t stepY, int32_t elevStep,
+                         std::optional<uint8_t> offMapElevation = std::nullopt)
     {
         MCMapBlockManager& blocks = *Terrain()->MapBlocks;
         MCTerrainTiles& tileCache = *Terrain()->Tiles;
@@ -84,7 +86,9 @@ namespace
             for (int32_t c = 0; c < side; ++c)
             {
                 const MCPrecompVertex& vertex = blocks.MapVertexAt(r - ring, c - ring);
-                built->Elevations[static_cast<size_t>(r) * side + c] = vertex.Elevation;
+                built->Elevations[static_cast<size_t>(r) * side + c] =
+                    offMapElevation.has_value() && !MCMapBlockManager::OnMap(r - ring, c - ring) ? *offMapElevation
+                                                                                                 : vertex.Elevation;
                 built->Textures[static_cast<size_t>(r) * side + c] = vertex.TextureData;
             }
         }
@@ -402,9 +406,12 @@ std::expected<void, std::string> MCTerrainUploadGround()
         const MCTerrainMeshSteps steps = MCTerrainScreenSteps(*camera);
         const int32_t ring = window->Side() + RingPastGrid;
 
+        // The first frame is drawn on the first turn, which raises the off-map ground (MCMapBlockManager::Update): before
+        // it, the mesh has it raised already, as that frame will find it.
         if (!MeshStepsAre(steps.Across, steps.Down, steps.Up) || GroundMesh->Mesh.FirstRow != -ring)
         {
-            BuildGroundMesh(ring, steps.Across, steps.Down, steps.Up);
+            BuildGroundMesh(ring, steps.Across, steps.Down, steps.Up,
+                            Turn < 1 ? std::optional(MCMapBlockManager::RaisedOffMapElevation()) : std::nullopt);
         }
 
         return hardware->PrepareTerrain(GroundMesh->Mesh);

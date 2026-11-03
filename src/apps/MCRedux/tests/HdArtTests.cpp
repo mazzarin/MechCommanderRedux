@@ -8745,7 +8745,8 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
 
 /// <summary>
 /// Port-only: the ground goes up to the GPU while the mission loads (MCTerrainUploadGround), as the first frame would
-/// have put it up, so that frame and the next find it there; HD art's ground too, and its upload keeps no memory.
+/// have put it up (the off-map ground raised as on the first turn), so the frames find it there; HD art's ground too,
+/// and its upload keeps no memory. A mesh built again of the same tiles sends its cells alone.
 /// </summary>
 TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, and its upload memory goes back")
 {
@@ -8761,7 +8762,8 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
         return;
     }
 
-    // The load put it up; the frames since, the mission's first among them, built the same mesh and found it there.
+    // The load put it up; the frames since, the mission's first among them, found the mesh they'd build there.
+    CHECK_EQ(renderer->TerrainUploads(), 1);
     CHECK_EQ(renderer->TerrainTileUploads(), 1);
     const MCTerrainMesh* mesh = MCTerrainMeshInUse();
     REQUIRE(mesh != nullptr);
@@ -8783,8 +8785,15 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
         CHECK(renderer->HdTerrain());
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
         MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(renderer->TerrainUploads(), 2);
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
         CHECK(renderer->UploadBytesKept() <= 2 * MCVulkanRenderer::KeptUploadBytes);
+
+        MCTerrainForgetMesh();
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(renderer->TerrainUploads(), 3);
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        CHECK(renderer->HdTerrain());
     }
 
     std::filesystem::remove_all(scratch);

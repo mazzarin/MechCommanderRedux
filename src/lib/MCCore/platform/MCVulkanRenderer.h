@@ -208,9 +208,10 @@ public:
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
     /// <summary>
-    /// The times the ground's tiles went up to the GPU so far (a mesh of other tiles; one of the same tiles sends its
-    /// cells alone).
+    /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
+    /// already up sends its cells alone).
     /// </summary>
+    int64_t TerrainUploads() const { return _TerrainUploads; }
     int64_t TerrainTileUploads() const { return _TerrainTileUploads; }
 
     /// <summary>
@@ -878,6 +879,7 @@ private:
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    int64_t _TerrainUploads = 0;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;

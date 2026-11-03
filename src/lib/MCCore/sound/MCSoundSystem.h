@@ -347,7 +347,10 @@ private:
     void UpdateMusicChoice();
     /// <summary>Stops the rain bed and closes its loop.</summary>
     void StopRain();
-    /// <summary>Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest.</summary>
+    /// <summary>
+    /// Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest, from the thunder's
+    /// file read once till the purge.
+    /// </summary>
     void StartThunder(float heard, const MCWeather::MCThunderClap& clap);
 
     /// <summary>
@@ -414,6 +417,11 @@ private:
     std::vector<MCThunderRoll> _ThunderRolls;
     /// <summary>The thunder's PCM read last.</summary>
     std::vector<uint8_t> _ThunderChunk;
+    /// <summary>The pack's thunder file, read whole at the first clap (null till then, or when it can't be read).
+    /// </summary>
+    std::shared_ptr<const std::vector<uint8_t>> _ThunderBytes;
+    /// <summary>Where it was read from (none: the pack has no thunder).</summary>
+    std::optional<std::filesystem::path> _ThunderPath;
     /// <summary>Set once the pack had no thunder that plays: none is looked for again till the purge.</summary>
     bool _ThunderMissing = false;
 };

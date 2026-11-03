@@ -919,6 +919,12 @@ TEST_CASE(
     sound->UpdateThunder(Heard, &near);
     CHECK_EQ(sound->ThunderRolls(), size_t{2});
 
+    // The thunder's file was read once: with it gone, another clap still rolls.
+    std::filesystem::remove(thunder);
+    sound->UpdateThunder(Heard, &near);
+    CHECK_EQ(sound->ThunderRolls(), size_t{3});
+    Write(thunder, Flac());
+
     // None heard: no clap.
     sound->PurgeSoundSystem();
     sound->UpdateThunder(0.0f, &near);

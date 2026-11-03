@@ -66,15 +66,14 @@ namespace
     constexpr float ThunderFadeOut = 1.5f;
 
     /// <summary>
-    /// The HD audio pack's sound at <paramref name="path"/> (none: the pack lacks it) opened into <paramref
-    /// name="file"/>, and a stream playing it through <paramref name="mixer"/> at <paramref name="speed"/> times its
-    /// rate (faster: higher); null, the file closed, when there is none or it won't play (logged, as
+    /// A stream playing <paramref name="file"/> (the HD audio pack's sound at <paramref name="path"/>, opened; null: the
+    /// pack lacks it or it isn't FLAC) through <paramref name="mixer"/> at <paramref name="speed"/> times its rate
+    /// (faster: higher); null, the file closed, when there is none or it won't play (logged, as
     /// <paramref name="what"/>).
     /// </summary>
-    std::shared_ptr<MCAudioStream> OpenPackSound(MCAudio& mixer, const std::optional<std::filesystem::path>& path,
-                                                 std::string_view what, float speed, std::unique_ptr<MCFlac>& file)
+    std::shared_ptr<MCAudioStream> StreamPackSound(MCAudio& mixer, const std::optional<std::filesystem::path>& path,
+                                                   std::string_view what, float speed, std::unique_ptr<MCFlac>& file)
     {
-        file = path.has_value() ? MCFlac::Open(*path) : nullptr;
         std::expected<std::shared_ptr<MCAudioStream>, std::string> stream =
             std::unexpected(file != nullptr ? "it holds no sound" : "not a FLAC file");
 
@@ -543,6 +542,8 @@ void MCSoundSystem::PurgeSoundSystem()
     _RainMissing = false;
     _ThunderRolls.clear();
     _ThunderMissing = false;
+    _ThunderBytes.reset();
+    _ThunderPath.reset();
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -972,7 +973,9 @@ void MCSoundSystem::UpdateRain(float heard)
 
     if (_RainStream == nullptr)
     {
-        _RainStream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::RainLoop(), "rain loop", 1.0f, _RainLoop);
+        const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
+        _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
+        _RainStream = StreamPackSound(_Renderer.Mixer(), path, "rain loop", 1.0f, _RainLoop);
 
         if (_RainStream == nullptr)
         {
@@ -1050,9 +1053,17 @@ void MCSoundSystem::UpdateThunder(float heard, const MCWeather::MCThunderClap* c
 
 void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
 {
+    // The thunder is read once (each clap's reader reads it from memory), till the purge.
+    if (_ThunderBytes == nullptr)
+    {
+        _ThunderPath = MCHdAudio::Thunder();
+        _ThunderBytes = _ThunderPath.has_value() ? MCFlac::ReadFile(*_ThunderPath) : nullptr;
+    }
+
     MCThunderRoll roll;
-    roll.Stream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::Thunder(), "thunder",
-                                std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
+    roll.File = MCFlac::Open(_ThunderBytes);
+    roll.Stream = StreamPackSound(_Renderer.Mixer(), _ThunderPath, "thunder",
+                                  std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
 
     if (roll.Stream == nullptr)
     {

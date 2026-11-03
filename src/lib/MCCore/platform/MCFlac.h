@@ -7,6 +7,14 @@ class MCFlac
 {
 public:
     static std::unique_ptr<MCFlac> Open(const std::filesystem::path& path);
+    /// <summary>
+    /// A reader of the FLAC file <paramref name="bytes"/> already read into memory (kept while it reads), so a sound
+    /// played again and again is read from disk once: no file is opened.
+    /// </summary>
+    static std::unique_ptr<MCFlac> Open(std::shared_ptr<const std::vector<uint8_t>> bytes);
+    /// <summary>The whole file at <paramref name="path"/>, for <see cref="Open"/> from memory; null when it can't be read.
+    /// </summary>
+    static std::shared_ptr<const std::vector<uint8_t>> ReadFile(const std::filesystem::path& path);
     ~MCFlac();
     MCFlac(const MCFlac&) = delete;
     MCFlac& operator=(const MCFlac&) = delete;
@@ -26,6 +34,8 @@ public:
 
 private:
     MCFlac();
+    /// <summary>Whether the decoder just opened (none: it didn't open) is one this code plays; takes its format.</summary>
+    bool Opened();
     struct Impl;
     std::unique_ptr<Impl> _Impl;
     MCSoundFormat _Format;

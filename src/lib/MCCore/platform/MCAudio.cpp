@@ -68,6 +68,13 @@ namespace
                (static_cast<uint32_t>(bytes[at + 2]) << 16) | (static_cast<uint32_t>(bytes[at + 3]) << 24);
     }
 
+    /// <summary>Why a buffer of <paramref name="format"/> can't be made.</summary>
+    std::string UnsupportedFormat(const MCSoundFormat& format)
+    {
+        return std::format("unsupported sound format: {} Hz, {} channels, {} bits", format.Rate, format.Channels,
+                           format.Bits);
+    }
+
     /// <summary>The little-endian 16-bit value at <paramref name="at"/>.</summary>
     uint16_t ReadU16(std::span<const uint8_t> bytes, size_t at)
     {
@@ -84,7 +91,8 @@ void MCAudioCore::MixBuffer(MCSoundBuffer& buffer, std::span<float> out) const
 
     const MCSoundFormat& format = buffer._Format;
     const uint32_t blockAlign = format.BlockAlign();
-    const size_t total = buffer._Data.size() / blockAlign;
+    const std::span<const uint8_t> data = buffer.Bytes();
+    const size_t total = data.size() / blockAlign;
 
     if (total == 0)
     {
@@ -100,7 +108,6 @@ void MCAudioCore::MixBuffer(MCSoundBuffer& buffer, std::span<float> out) const
     gainLeft *= Master;
     gainRight *= Master;
 
-    const std::span<const uint8_t> data = buffer._Data;
     const bool stereo = format.Channels == 2;
     double position = buffer._Position;
     const size_t frames = out.size() / 2;
@@ -269,10 +276,34 @@ MCSoundBuffer::MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSou
     _Data.assign(size, format.Bits == 8 ? uint8_t{0x80} : uint8_t{0});
 }
 
+MCSoundBuffer::MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSoundFormat& format,
+                             std::span<const uint8_t> pcm)
+    : _Core(std::move(core)), _Format(format)
+{
+    const uint32_t blockAlign = format.BlockAlign();
+    _Data.assign(pcm.begin(), pcm.begin() + static_cast<ptrdiff_t>(pcm.size() / blockAlign * blockAlign));
+}
+
+MCSoundBuffer::MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSoundFormat& format,
+                             std::shared_ptr<const std::vector<uint8_t>> pcm)
+    : _Core(std::move(core)), _Format(format), _Shared(std::move(pcm))
+{
+    const uint32_t blockAlign = format.BlockAlign();
+    _SharedSize = _Shared == nullptr ? 0 : _Shared->size() / blockAlign * blockAlign;
+}
+
 MCSoundBuffer::~MCSoundBuffer() = default;
 
 MCSoundBuffer::MCLockedRegion MCSoundBuffer::Lock(uint32_t offset, uint32_t bytes)
 {
+    // Shared samples are never written: the buffer takes its own copy, under the lock the mixer reads them by.
+    if (_Shared != nullptr)
+    {
+        std::scoped_lock lock(_Core->Lock);
+        _Data.assign(_Shared->begin(), _Shared->begin() + static_cast<ptrdiff_t>(_SharedSize));
+        _Shared.reset();
+    }
+
     MCLockedRegion region;
     const uint32_t size = Size();
 
@@ -314,7 +345,7 @@ void MCSoundBuffer::Play(bool looping)
 {
     {
         std::scoped_lock lock(_Core->Lock);
-        _Playing = !_Data.empty();
+        _Playing = !Bytes().empty();
         _Looping = looping;
     }
 
@@ -549,28 +580,45 @@ std::expected<std::shared_ptr<MCSoundBuffer>, std::string> MCAudio::CreateBuffer
 {
     if (!format.IsValid())
     {
-        return std::unexpected(std::format("unsupported sound format: {} Hz, {} channels, {} bits", format.Rate,
-                                           format.Channels, format.Bits));
+        return std::unexpected(UnsupportedFormat(format));
     }
 
-    auto buffer = std::make_shared<MCSoundBuffer>(MCSoundBuffer::Key{}, _Core, format, bytes);
-    std::scoped_lock lock(_Core->Lock);
-    _Core->Sweep();
-    _Core->Buffers.push_back(buffer);
-    return buffer;
+    return Register(std::make_shared<MCSoundBuffer>(MCSoundBuffer::Key{}, _Core, format, bytes));
 }
 
 std::expected<std::shared_ptr<MCSoundBuffer>, std::string> MCAudio::CreateBuffer(const MCSoundFormat& format,
                                                                                  std::span<const uint8_t> pcm)
 {
-    auto buffer = CreateBuffer(format, static_cast<uint32_t>(std::min<size_t>(pcm.size(), UINT32_MAX)));
-
-    if (!buffer)
+    if (!format.IsValid())
     {
-        return buffer;
+        return std::unexpected(UnsupportedFormat(format));
     }
 
-    std::memcpy((*buffer)->_Data.data(), pcm.data(), (*buffer)->_Data.size());
+    return Register(std::make_shared<MCSoundBuffer>(MCSoundBuffer::Key{}, _Core, format,
+                                                    pcm.first(std::min<size_t>(pcm.size(), UINT32_MAX))));
+}
+
+std::expected<std::shared_ptr<MCSoundBuffer>, std::string> MCAudio::CreateBuffer(
+    const MCSoundFormat& format, std::shared_ptr<const std::vector<uint8_t>> pcm)
+{
+    if (!format.IsValid())
+    {
+        return std::unexpected(UnsupportedFormat(format));
+    }
+
+    if (pcm != nullptr && pcm->size() > UINT32_MAX)
+    {
+        return CreateBuffer(format, std::span<const uint8_t>(*pcm));
+    }
+
+    return Register(std::make_shared<MCSoundBuffer>(MCSoundBuffer::Key{}, _Core, format, std::move(pcm)));
+}
+
+std::shared_ptr<MCSoundBuffer> MCAudio::Register(std::shared_ptr<MCSoundBuffer> buffer)
+{
+    std::scoped_lock lock(_Core->Lock);
+    _Core->Sweep();
+    _Core->Buffers.push_back(buffer);
     return buffer;
 }
 

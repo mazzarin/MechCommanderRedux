@@ -33,10 +33,12 @@ public:
     static void Uninstall();
 
     /// <summary>
-    /// Makes a memory resource of the caller's wave image (gos_CreateSoundResource). The renderer keeps it until
+    /// Makes a memory resource of the caller's wave image (gos_CreateSoundResource), given its
+    /// <see cref="MCHdAudio::SampleId"/> when the caller keeps it. The renderer keeps it until
     /// <see cref="DestroyResource"/>; the caller keeps a <c>weak_ptr</c>.
     /// </summary>
-    std::shared_ptr<MCSoundResource> CreateResource(std::span<const uint8_t> image);
+    std::shared_ptr<MCSoundResource> CreateResource(std::span<const uint8_t> image,
+                                                    std::optional<uint64_t> hdId = std::nullopt);
     /// <summary>Makes a file or stream resource of <paramref name="fileName"/>.</summary>
     std::shared_ptr<MCSoundResource> CreateResource(MCSoundResourceType type, std::string_view fileName);
     /// <summary>Stops every channel playing the resource, then destroys it (gos_DestroySoundResource).</summary>
@@ -67,10 +69,12 @@ public:
     /// <summary>How many channels there are.</summary>
     int32_t ChannelCount() const { return static_cast<int32_t>(_Channels.size()); }
     /// <summary>
-    /// Refills every streaming channel (the original's per-channel stream timers; the port's mouse timer thread calls
-    /// it).
+    /// Refills every streaming channel with what has played since its last fill, decoding without the lock (the
+    /// original's per-channel stream timers; the port's mouse timer thread calls it every tick).
+    /// <paramref name="checkEnds"/> also stops the non-looping streams whose duration has passed (the timer does every
+    /// 550 ms, as the original's stream timer serviced them).
     /// </summary>
-    void ServiceStreams();
+    void ServiceStreams(bool checkEnds = true);
     /// <summary>The mixer (Smacker's sound plays through it too).</summary>
     MCAudio& Mixer() { return *_Mixer; }
 
@@ -87,7 +91,7 @@ private:
     std::vector<std::shared_ptr<MCSoundResource>> _Resources;
     /// <summary>The channels.</summary>
     std::vector<std::unique_ptr<MCSoundChannel>> _Channels;
-    /// <summary>Guards the channels and resources against the stream-servicing thread.</summary>
+    /// <summary>Guards the channels and resources against the stream-servicing thread (which decodes without it).</summary>
     mutable std::recursive_mutex _Lock;
 };
 

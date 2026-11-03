@@ -45,9 +45,10 @@ std::shared_ptr<MCSoundResource> MCSoundRenderer::Adopt(std::shared_ptr<MCSoundR
     return _Resources.emplace_back(std::move(resource));
 }
 
-std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(std::span<const uint8_t> image)
+std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(std::span<const uint8_t> image,
+                                                                 std::optional<uint64_t> hdId)
 {
-    return Adopt(std::make_shared<MCSoundResource>(image));
+    return Adopt(std::make_shared<MCSoundResource>(image, hdId));
 }
 
 std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(MCSoundResourceType type, std::string_view fileName)
@@ -153,16 +154,54 @@ std::shared_ptr<MCSoundResource> MCSoundRenderer::ChannelResource(int32_t channe
     return _Channels[channel]->Resource.lock();
 }
 
-void MCSoundRenderer::ServiceStreams()
+void MCSoundRenderer::ServiceStreams(bool checkEnds)
 {
+    // The fills are taken and ended under the lock, and written without it: decoding a stream's next bytes holds up no
+    // sound start on the game's thread.
+    std::vector<std::pair<MCSoundChannel*, MCSoundChannel::MCStreamFill>> fills;
+    std::optional<uint32_t> now;
+
+    {
+        std::scoped_lock lock(_Lock);
+
+        for (const std::unique_ptr<MCSoundChannel>& channel : _Channels)
+        {
+            if (const std::shared_ptr<MCSoundResource> resource = channel->Resource.lock();
+                resource != nullptr && resource->Type == MCSoundResourceType::Stream && channel->Streaming)
+            {
+                if (std::optional<MCSoundChannel::MCStreamFill> fill = channel->BeginFill())
+                {
+                    fills.emplace_back(channel.get(), std::move(*fill));
+                }
+            }
+        }
+    }
+
+    for (auto& [channel, fill] : fills)
+    {
+        channel->WriteFill(fill);
+    }
+
     std::scoped_lock lock(_Lock);
+
+    for (const auto& [channel, fill] : fills)
+    {
+        channel->EndFill(fill);
+    }
+
+    if (!checkEnds)
+    {
+        return;
+    }
 
     for (const std::unique_ptr<MCSoundChannel>& channel : _Channels)
     {
         if (const std::shared_ptr<MCSoundResource> resource = channel->Resource.lock();
             resource != nullptr && resource->Type == MCSoundResourceType::Stream && channel->Streaming)
         {
-            channel->ServiceBuffer();
+            // The clock is read only for a stream playing, as the original's stream timer read it.
+            now = now.has_value() ? now : MCPort::Milliseconds();
+            channel->StopStreamAtEnd(*now);
         }
     }
 }

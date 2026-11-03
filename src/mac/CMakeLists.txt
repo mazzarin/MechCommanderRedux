@@ -118,6 +118,8 @@ set(MC_BC7ENC_SOURCES ${MC_SRC}/lib/bc7enc_rdo/bc7enc.cpp ${MC_SRC}/lib/bc7enc_r
 target_sources(MCCore PRIVATE ${MC_BC7ENC_SOURCES})
 set_source_files_properties(${MC_BC7ENC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/bc7enc_rdo)
+# xxHash (sound/MCHdAudio's sound identities), header-only.
+target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 # libdeflate's decompressor (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++
 # options; the x86 file builds to nothing here.
 set(MC_LIBDEFLATE_DIR ${MC_SRC}/lib/libdeflate-1.26)

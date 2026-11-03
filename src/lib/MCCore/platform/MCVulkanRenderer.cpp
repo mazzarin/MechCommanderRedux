@@ -583,10 +583,11 @@ namespace
     constexpr int32_t TerrainSeamReach = 2;
     /// <summary>
     /// Port-only (the kept ground): the most parts a frame draws again (each launches the terrain's grid again; more go
-    /// as their bounds), the share of the clip past which it is drawn again whole, and the drawn pixels two parts' bounds
-    /// may add to them to be drawn as one.
+    /// as their bounds) and the most it merges a pair at a time, the share of the clip past which it is drawn again
+    /// whole, and the drawn pixels two parts' bounds may add to them to be drawn as one.
     /// </summary>
     constexpr size_t MostGroundParts = 8;
+    constexpr size_t MostMergedParts = 64;
     constexpr int64_t WholeGroundPercent = 60;
     constexpr int64_t GroundMergeSlack = 64 * 64;
     /// <summary>Port-only (the kept ground): a cell's draw in the terrain's first pass and its seam pass, and its haze.</summary>
@@ -5077,8 +5078,8 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const std::optional<int32_t> shiftX = drawnMove(moveX, surface.MappedWidth, surface.Target.Width);
     const std::optional<int32_t> shiftY = drawnMove(moveY, surface.MappedHeight, surface.Target.Height);
 
-    if (moved && (!shiftX.has_value() || !shiftY.has_value() || std::abs(moveX) > clip.X1 - clip.X0 ||
-                  std::abs(moveY) > clip.Y1 - clip.Y0))
+    if (!shiftX.has_value() || !shiftY.has_value() ||
+        (moved && (std::abs(moveX) > clip.X1 - clip.X0 || std::abs(moveY) > clip.Y1 - clip.Y0)))
     {
         return plan;
     }
@@ -5255,7 +5256,25 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
                    static_cast<int32_t>(std::min<int64_t>((cut.Y1 + 1) * height / windowHeight + 1, height - 1))});
     }
 
-    // Parts drawn as one where their bounds add little, then as few as MostGroundParts.
+    // Parts drawn as one where their bounds add little, then as few as MostGroundParts (as their bounds). Past
+    // MostMergedParts (a lake's cycled colours), as their bounds at once: merging them a pair at a time takes too long.
+    const auto asBounds = [&plan]
+    {
+        MCRect all{0, 0, -1, -1};
+
+        for (const MCRect& part : plan.Redrawn)
+        {
+            all = Union(all, part);
+        }
+
+        plan.Redrawn.assign(1, all);
+    };
+
+    if (plan.Redrawn.size() > MostMergedParts)
+    {
+        asBounds();
+    }
+
     for (bool merged = true; merged;)
     {
         merged = false;
@@ -5278,14 +5297,7 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
 
     if (plan.Redrawn.size() > MostGroundParts)
     {
-        MCRect all{0, 0, -1, -1};
-
-        for (const MCRect& part : plan.Redrawn)
-        {
-            all = Union(all, part);
-        }
-
-        plan.Redrawn.assign(1, all);
+        asBounds();
     }
 
     int64_t redrawn = 0;
@@ -5900,8 +5912,11 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         const int32_t fogColumns = fog->XMax + 1;
         // The terrain's frame uniforms (a record with no source's).
         const FrameUniforms frame = recordFrame(surface, Record{});
+        // What the ground depends on of them: not the cycle's step (PlanGround follows it), nor the looks, which only
+        // glows and shapes read (they change as the light does).
         FrameUniforms unstepped = frame;
         unstepped.Cycle[1] = 0;
+        std::ranges::fill(unstepped.Look, 0.0f);
         std::vector<uint8_t> looks = GroundLooks(surface, draw, std::as_bytes(std::span(&unstepped, 1)));
         const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, _Cycle.Step);
         KeptGround& kept = _KeptGround;

@@ -435,6 +435,55 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
 }
 
 /// <summary>
+/// A frame dropped to keep within the budget is read again when next drawn, with the Id it had (the GPU's copy of it
+/// stays good), while another frame has another.
+/// </summary>
+TEST_CASE("hd art: a frame read again keeps its Id")
+{
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const std::array<std::vector<uint8_t>, 2> tiles = {std::vector<uint8_t>{1, 2}, std::vector<uint8_t>{3, 4}};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_frame_id_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    const std::vector<uint8_t> archive =
+        BuildArchive({{MCHdArt::TerrainTileName(tiles[0]) + ".hdf", file, file.size(), std::nullopt},
+                      {MCHdArt::TerrainTileName(tiles[1]) + ".hdf", file, file.size(), std::nullopt}});
+    std::ofstream(pack / "terrain.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+
+    // Room for one frame: each one read drops the other.
+    MCHdArt::SetCacheBudget(1);
+    const std::shared_ptr<const MCHdArt::Frame> first = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(first != nullptr);
+    const uint64_t firstId = first->Id;
+    const std::shared_ptr<const MCHdArt::Frame> second = MCHdArt::FindTerrainTile(tiles[1], Width, Height);
+    REQUIRE(second != nullptr);
+    CHECK(second->Id != firstId);
+    const size_t read = MCHdArt::FramesRead();
+    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tiles[0], Width, Height);
+    REQUIRE(again != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    CHECK(again != first);
+    CHECK_EQ(again->Id, firstId);
+
+    MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
 /// MCHdArt::Prepare opens a mech part's archive (<c>mechs/legs90/5.hda</c>) before any of its shapes is drawn, once, and
 /// nothing for a mech without one or while HD art is off.
 /// </summary>

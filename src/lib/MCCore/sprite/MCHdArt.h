@@ -65,7 +65,10 @@ namespace MCHdArt
     /// <summary>An HD frame as the GPU takes it.</summary>
     struct Frame
     {
-        /// <summary>A number no other frame read in this run has (the GPU keeps its copy by it).</summary>
+        /// <summary>
+        /// A number no other frame read in this run has, kept when the same frame is read again (the GPU keeps its copy
+        /// by it).
+        /// </summary>
         uint64_t Id = 0;
         /// <summary>The colours' width and height (HD pixels).</summary>
         int32_t Width = 0;
@@ -189,8 +192,14 @@ namespace MCHdArt
 
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
-    /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
-    inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
+    /// <summary>
+    /// The bytes of frames kept in memory before the least recently used go: a sixteenth of the machine's memory (512 MB
+    /// on 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
+    /// </summary>
+    size_t CacheBudget();
+
+    /// <summary>Sets the budget (0: the machine's again), dropping frames until the kept ones fit (for the tests).</summary>
+    void SetCacheBudget(size_t bytes);
 
     /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a

@@ -2,6 +2,8 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiPort.h"
+#include "gui/MCGuiSystem.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
@@ -204,6 +206,40 @@ namespace
     bool Holds(std::string_view json, std::string_view part)
     {
         return json.find(part) != std::string_view::npos;
+    }
+
+    /// <summary>A dialog's inner panel: its edges' columns, in from the dialog's sides, and the blank inside each.</summary>
+    constexpr int32_t PanelLeftEdge = 9;
+    constexpr int32_t PanelRightEdge = 10;
+    constexpr int32_t PanelBlank = 3;
+
+    /// <summary>
+    /// Whether <paramref name="dialog"/>'s text keeps as far from its panel's right edge as from its left: on every
+    /// row of the text, the blank columns inside both edges are alike, on the screen as shown.
+    /// </summary>
+    bool TextInsidePanel(MCReusableDialog& dialog)
+    {
+        const std::vector<uint8_t> shown = MCScreenInput::ShownScreen();
+        const auto width = static_cast<size_t>(ScreenPort()->Bitmap().XMax + 1);
+        const auto pixel = [&](int32_t x, int32_t y)
+        { return shown[static_cast<size_t>(y) * width + static_cast<size_t>(x)]; };
+        const int32_t left = dialog.GlobalX() + PanelLeftEdge + 1;
+        const int32_t right = dialog.GlobalX() + dialog.Width() - PanelRightEdge - PanelBlank;
+        const int32_t bottom = dialog.GlobalY() + dialog.Height() - dialog.BottomPiece->Height();
+
+        for (int32_t y = dialog.GlobalY() + dialog.TopPiece->Height(); y < bottom; y++)
+        {
+            for (int32_t column = 0; column < PanelBlank; column++)
+            {
+                if (pixel(left + column, y) != pixel(right + column, y))
+                {
+                    SDL_Log("The dialog's text reaches its panel's edge at (%d, %d)", right + column, y);
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 }
 
@@ -483,6 +519,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(ReportsNoticeText()));
     MCScreenInput::SaveShot("reports notice", MCScreenInput::ScreenHash());
+    CHECK(TextInsidePanel(dialog));
     MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
                              dialog.OkButton->GlobalY() + dialog.OkButton->Height() / 2);
     MCTestGame::RunFrame(1.0f / 15.0f);
@@ -510,6 +547,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(ReportsQuestionText()));
     MCScreenInput::SaveShot("reports question", MCScreenInput::ScreenHash());
+    CHECK(TextInsidePanel(dialog));
     MCScreenInput::RealClick(dialog.CancelButton->GlobalX() + dialog.CancelButton->Width() / 2,
                              dialog.CancelButton->GlobalY() + dialog.CancelButton->Height() / 2);
     MCTestGame::RunFrame(1.0f / 15.0f);

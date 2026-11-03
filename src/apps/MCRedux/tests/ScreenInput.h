@@ -15,6 +15,12 @@ namespace MCScreenInput
     /// </summary>
     uint32_t ScreenHash();
 
+    /// <summary>
+    /// The screen as shown, row by row, in palette indices (the world view composited under the key): the screen port's
+    /// size.
+    /// </summary>
+    std::vector<uint8_t> ShownScreen();
+
     /// <summary>--shots &lt;folder&gt;: saves the screen as <paramref name="name"/>.bmp there and prints its hash.</summary>
     void SaveShot(const std::string& name, uint32_t hash);
 

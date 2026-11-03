@@ -70,8 +70,12 @@ public:
 protected:
     /// <summary>Draws the frame: the top, <see cref="NumMiddlePieces"/> middle pieces and the bottom.</summary>
     void DrawFrame();
-    /// <summary>The width the text wraps to.</summary>
-    int32_t WrapWidth() { return Width() - 0x14; }
+    /// <summary>
+    /// The width the text wraps to: from 0xc, where it starts, to 3 pixels inside the panel's right edge (10 in from
+    /// the dialog's), as far as it starts inside the left. The original's Width() - 0x14 let a full line run over the
+    /// right edge.
+    /// </summary>
+    int32_t WrapWidth() { return Width() - 0x19; }
 };
 
 /// <summary>

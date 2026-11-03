@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "gui/MCGuiFont.h"
+#include "gui/MCFontGlyphs.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "main/MCGamePaths.h"
@@ -51,16 +52,20 @@ auto MCGuiFont::Load(std::string_view fileName) -> int32_t
         return -2;
     }
 
-    FontData = MCRegisteredBlock(size, MCDataKind::Shapes);
-    file.Read(FontData.Bytes());
+    std::vector<uint8_t> data(size);
+    file.Read(data);
     file.Close();
 
     // A font whose glyphs don't fit its data is refused (issue #25).
-    if (!VfxFontFits(FontData.Bytes()))
+    if (!VfxFontFits(data))
     {
-        FontData = {};
         return -3;
     }
+
+    // Port-only: glyphs for the characters the font leaves blank (´, §, ...).
+    MCFontGlyphs::AddMissing(data);
+    FontData = MCRegisteredBlock(data.size(), MCDataKind::Shapes);
+    std::ranges::copy(data, FontData.Bytes().begin());
 
     for (size_t i = 0; i < ColorTable.size(); i++)
     {
@@ -111,6 +116,11 @@ auto MCGuiFont::Width(uint8_t c) const -> int32_t
     }
 
     return VfxCharacterWidth(FontData.Bytes(), c);
+}
+
+auto MCGuiFont::Draws(uint8_t c) const -> bool
+{
+    return !FontData.Empty() && MCFontGlyphs::Draws(FontData.Bytes(), c);
 }
 
 auto MCGuiFont::WriteChar(const MCPane& pane, int32_t xPos, int32_t yPos, char c) -> int32_t

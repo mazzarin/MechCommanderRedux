@@ -201,6 +201,13 @@ namespace MCInput
     /// <summary>The set-1 scan code of a physical key.</summary>
     MCScanCode Win32ScanCode(SDL_Scancode scancode);
 
+    /// <summary>
+    /// The Windows-1252 character the key with set-1 scan code <paramref name="code"/> (0x1xx: extended) types alone in
+    /// the keyboard layout, or -1 (a key that types none, such as the keypad's, space or Enter, or one the code page
+    /// lacks).
+    /// </summary>
+    int LayoutCharacter(uint16_t code);
+
     /// <summary>The lParam of a key message.</summary>
     /// <param name="scan">The key's scan code.</param>
     /// <param name="altDown">Bit 29, the context code: Alt is held.</param>

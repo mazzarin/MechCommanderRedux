@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 
+#include "iface/MCKeyBindings.h"
 #include "lib/MCFatal.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCUtf8Path.h"
@@ -378,6 +379,9 @@ int main(int argc, char** argv)
     // assertion) prints its stack and writes mc_tests.dmp instead of showing a dialog.
     MCNoMessageBoxes = true;
     MCCrashTrace::Install();
+    // The CONTROLS screen names keys as a US keyboard does, whatever this machine's layout, so its pictures are the
+    // same on every machine.
+    MCKeyBindings::SetLayout(nullptr);
     std::vector<std::string> arguments;
 
     for (int i = 0; i < argc; i++)

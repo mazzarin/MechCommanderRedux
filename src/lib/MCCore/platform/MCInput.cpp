@@ -62,6 +62,11 @@ namespace
     /// <summary>The first printable character: WM_CHAR below it is a control character.</summary>
     constexpr int FirstPrintable = 0x20;
 
+    /// <summary>The bit a binding's scan code has for an extended key (Windows' E0 prefix).</summary>
+    constexpr uint16_t ExtendedScanCode = 0x100;
+    /// <summary>How many scan codes there are, the extended ones included.</summary>
+    constexpr size_t ScanCodeCount = 0x200;
+
     /// <summary>Whether SDL's text input runs in the attached window (keys type their text through it).</summary>
     bool textInputActive()
     {
@@ -421,6 +426,19 @@ namespace
         return -1;
     }
 
+    /// <summary>The Windows-1252 character SDL keycode <paramref name="typed"/> types, or -1 (none, or one the code page lacks).</summary>
+    int keycodeCharacter(SDL_Keycode typed)
+    {
+        // Keys without a character have keycodes built from their scancode (or SDL's extended ones).
+        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 ||
+            typed < static_cast<SDL_Keycode>(FirstPrintable) || typed == SDLK_DELETE)
+        {
+            return -1;
+        }
+
+        return MCInput::CodePointToWindows1252(typed);
+    }
+
     /// <summary>
     /// The Windows-1252 character a key (<paramref name="vk"/>) makes with the modifiers held, in the keyboard layout,
     /// or -1 (a key that makes none, or one the code page lacks): TranslateMessage's WM_CHAR, for when SDL's text
@@ -450,16 +468,7 @@ namespace
                 break;
         }
 
-        const SDL_Keycode typed = SDL_GetKeyFromScancode(key.scancode, key.mod, false);
-
-        // Keys without a character have keycodes built from their scancode (or SDL's extended ones).
-        if ((typed & (SDLK_SCANCODE_MASK | SDLK_EXTENDED_MASK)) != 0 ||
-            typed < static_cast<SDL_Keycode>(FirstPrintable) || typed == SDLK_DELETE)
-        {
-            return -1;
-        }
-
-        return MCInput::CodePointToWindows1252(typed);
+        return keycodeCharacter(SDL_GetKeyFromScancode(key.scancode, key.mod, false));
     }
 
     void handleKey(const SDL_KeyboardEvent& key)
@@ -1078,6 +1087,8 @@ namespace MCInput
                 return VK_OEM_PERIOD;
             case SDL_SCANCODE_SLASH:
                 return VK_OEM_2;
+            case SDL_SCANCODE_NONUSBACKSLASH:
+                return VK_OEM_102;
             case SDL_SCANCODE_CAPSLOCK:
                 return VK_CAPITAL;
             case SDL_SCANCODE_PRINTSCREEN:
@@ -1228,6 +1239,8 @@ namespace MCInput
                 return {0x52, false};
             case SDL_SCANCODE_KP_PERIOD:
                 return {0x53, false};
+            case SDL_SCANCODE_NONUSBACKSLASH:
+                return {0x56, false};
             case SDL_SCANCODE_F11:
                 return {0x57, false};
             case SDL_SCANCODE_F12:
@@ -1271,6 +1284,35 @@ namespace MCInput
             default:
                 return {0, false};
         }
+    }
+
+    int LayoutCharacter(uint16_t code)
+    {
+        // The physical key of each scan code: Win32ScanCode turned around.
+        static const std::array<SDL_Scancode, ScanCodeCount> keys = []
+        {
+            std::array<SDL_Scancode, ScanCodeCount> found{};
+
+            for (int key = SDL_SCANCODE_UNKNOWN + 1; key < SDL_SCANCODE_COUNT; key++)
+            {
+                const MCScanCode scan = Win32ScanCode(static_cast<SDL_Scancode>(key));
+                const size_t slot = scan.Code | (scan.Extended ? ExtendedScanCode : 0);
+
+                if (scan.Code != 0 && found[slot] == SDL_SCANCODE_UNKNOWN)
+                {
+                    found[slot] = static_cast<SDL_Scancode>(key);
+                }
+            }
+
+            return found;
+        }();
+
+        if (code >= keys.size() || keys[code] == SDL_SCANCODE_UNKNOWN)
+        {
+            return -1;
+        }
+
+        return keycodeCharacter(SDL_GetKeyFromScancode(keys[code], SDL_KMOD_NONE, false));
     }
 
     int32_t MakeKeyLParam(MCScanCode scan, bool altDown, bool previousDown, bool releasing, uint16_t repeatCount)

@@ -68,8 +68,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Alt+= and Alt+- during a mission make the interface (tactical map, command palette, mech bar, unit overlays) bigger
   or smaller, from 100% to 200% in steps of 25%, without changing how much of the battlefield shows. It starts at AUTO,
   the size that keeps the original's proportions (the screen's lines over the original's 480: 200% at 1080P), which
-  the keys step on from. The size is kept in `PREFS.CFG` (`InterfaceSize`), and the keys can be changed on the
-  CONTROLS screen.
+  the keys step on from. Alt with the keypad's + and - does the same. The size is kept in `PREFS.CFG`
+  (`InterfaceSize`), and the keys can be changed on the CONTROLS screen.
 - The Preferences screen's INTERFACE SIZE sets the same size (AUTO, or 100% to 200%) for the next mission. AUTO
   shows the size it picks for the window, e.g. AUTO (200%).
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
@@ -110,6 +110,9 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - The CONTROLS, DEFAULTS, LAPTOP and DONE buttons are lettered as the game's own buttons are.
 - The system's input methods (an IME, or macOS's accent menu on a held letter) work in text fields only, so they no
   longer hold back or swallow mission keys.
+- The CONTROLS screen names keys as your keyboard types them: on a German keyboard the keys right of 0 show as ß and
+  ´ (not - and =), and Y and Z swap. `PREFS.CFG` keeps the US keyboard's names, so it reads the same on any keyboard.
+  The key left of Z on European keyboards (< on a German one) can be bound too: it used to give the game no key.
 
 ### Sound
 
@@ -267,6 +270,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - A mech icon part for a location without armor no longer divides by zero when it picks its colour. It shows red, as
   in the original.
 - The health bar over popup turrets and gates is green, yellow and red again instead of black.
+- Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
+  own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 
 ### Mission Editor Fixes
 

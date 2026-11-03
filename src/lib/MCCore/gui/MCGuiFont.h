@@ -37,6 +37,8 @@ public:
     int32_t Width(std::string_view text) const;
     /// <summary>The width of one character.</summary>
     int32_t Width(uint8_t c) const;
+    /// <summary>Whether the font has a glyph for <paramref name="c"/> that draws (not a blank one).</summary>
+    bool Draws(uint8_t c) const;
     /// <summary>Draws one character at (<paramref name="xPos"/>, <paramref name="yPos"/>).</summary>
     /// <returns>0, or -3 without letters.</returns>
     int32_t WriteChar(const MCPane& pane, int32_t xPos, int32_t yPos, char c);

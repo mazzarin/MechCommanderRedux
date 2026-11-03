@@ -483,7 +483,7 @@ TEST_CASE_ISOLATED("game: INTERFACE SIZE 150% draws a 1080P mission's interface 
 
 /// <summary>
 /// In a mission, alt+= makes the interface a size bigger and alt+- a size smaller, at once, and PREFS keeps it; alt
-/// let go after them doesn't toggle the tactical map, as alt alone does.
+/// let go after them doesn't toggle the tactical map, as alt alone does. Alt with the keypad's + and - does the same.
 /// </summary>
 TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission and PREFS keeps it")
 {
@@ -516,6 +516,14 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, kept(OriginalInterfaceSize));
     CHECK_EQ(display->Height(), LargeWindowLines);
+    CHECK_EQ(map->IsHidden(), mapHidden);
+
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_KP_PLUS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, kept(125));
+    MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_KP_MINUS);
+    MCTestGame::RunFrame(1.0f / 15.0f);
+    CHECK_EQ(GInterfaceSize, kept(OriginalInterfaceSize));
     CHECK_EQ(map->IsHidden(), mapHidden);
 
     // AUTO: the screen takes AUTO's pick's lines.

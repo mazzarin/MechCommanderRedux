@@ -293,10 +293,13 @@ enum class MCKeyCommand : int32_t
     InterfaceSizeUp = 77,
     /// <summary>Port-only, alt+-: the next smaller interface size.</summary>
     InterfaceSizeDown = 78,
+    /// <summary>Port-only, alt with the keypad's + and -: the same, on keys in the same place on every layout.</summary>
+    InterfaceSizeUpAlternate = 79,
+    InterfaceSizeDownAlternate = 80,
 };
 
 /// <summary>How many key binding slots there are: the original's 77, then the port's.</summary>
-inline constexpr size_t NumKeyCommands = 79;
+inline constexpr size_t NumKeyCommands = 81;
 
 /// <summary>The modifier bits of a key binding: the key code is in bits 0-15.</summary>
 inline constexpr uint32_t KeyShift = 0x10000;

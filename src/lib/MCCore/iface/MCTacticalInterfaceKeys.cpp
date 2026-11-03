@@ -313,12 +313,13 @@ auto MCTacticalInterface::HandleKeyDown(MCGuiEvent& event) -> void
                 ShowTacticalMapPage(MCTacmapPage::Info);
             }
         }
-        else if (is(MCKeyCommand::InterfaceSizeUp) || is(MCKeyCommand::InterfaceSizeDown))
+        else if (is(MCKeyCommand::InterfaceSizeUp) || is(MCKeyCommand::InterfaceSizeUpAlternate) ||
+                 is(MCKeyCommand::InterfaceSizeDown) || is(MCKeyCommand::InterfaceSizeDownAlternate))
         {
             // Port-only: a bigger or smaller interface, kept in PREFS; the alt held with the key leaves the map as
             // it is.
             TacMapShown = false;
-            StepInterfaceSize(is(MCKeyCommand::InterfaceSizeUp) ? 1 : -1);
+            StepInterfaceSize(is(MCKeyCommand::InterfaceSizeUp) || is(MCKeyCommand::InterfaceSizeUpAlternate) ? 1 : -1);
         }
         else if (is(MCKeyCommand::ZoomIn) || is(MCKeyCommand::ZoomInAlternate))
         {

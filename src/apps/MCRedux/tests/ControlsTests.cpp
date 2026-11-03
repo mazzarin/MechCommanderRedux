@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCKeyBindings.h"
 #include "lib/MCFitIniFile.h"
@@ -14,6 +15,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCInput.h"
 
 // The player's key bindings (iface/MCKeyBindings) and the preferences' CONTROLS panel that edits them: the defaults
 // are the original's, every command a player can bind is listed once, the names read back, a key moves from the
@@ -55,6 +57,41 @@ namespace
     }
 
     using MCScreenInput::FindTextButton;
+
+    /// <summary>What a German keyboard's keys type, for those the layout test names (the rest type nothing here).</summary>
+    int GermanLayout(uint16_t code)
+    {
+        switch (code)
+        {
+            case 0x0c:
+                return 0xdf; // ß
+            case 0x0d:
+                return 0xb4; // ´
+            case 0x15:
+                return 'z';
+            case 0x2c:
+                return 'y';
+            case 0x27:
+                return 0xf6; // ö
+            case 0x29:
+                return '^';
+            case 0x39:
+                return ' ';
+            case 0x56:
+                return '<';
+            default:
+                return -1;
+        }
+    }
+
+    /// <summary>Names keys by <paramref name="layout"/> for a scope, then as a US keyboard does again (the tests' own).</summary>
+    struct MCLayoutScope
+    {
+        explicit MCLayoutScope(MCKeyBindings::MCKeyLayout layout) { MCKeyBindings::SetLayout(layout); }
+        ~MCLayoutScope() { MCKeyBindings::SetLayout(nullptr); }
+        MCLayoutScope(const MCLayoutScope&) = delete;
+        MCLayoutScope& operator=(const MCLayoutScope&) = delete;
+    };
 
     /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
     void Frames()
@@ -175,6 +212,38 @@ TEST_CASE("controls: key names read back as the same keys")
 #else
     CHECK_EQ(MCKeyBindings::KeyLabel(0x38 | KeyAlt), "ALT");
 #endif
+}
+
+/// <summary>
+/// Issue #56: the CONTROLS screen names a key that types a character by what it types in the keyboard layout, in
+/// capitals (a German keyboard's key right of 0 is ß, and Y and Z swap), and keeps a key's own name when it types
+/// nothing, only space, or what the font can't draw; PREFS keeps the US keyboard's names whatever the layout.
+/// </summary>
+TEST_CASE("controls: the CONTROLS screen names keys by what they type in the keyboard layout")
+{
+    MCLayoutScope german(GermanLayout);
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x0c), "\xdf");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x0d | KeyCtrl), "CTRL+\xb4");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x15), "Z");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x2c | KeyShift), "SHIFT+Y");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x27), "\xd6");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x29), "^");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x56 | KeyShift), "SHIFT+<");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x39), "SPACE");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x4e), "KEYPAD +");
+    CHECK_EQ(MCKeyBindings::KeyName(0x0c), "-");
+    CHECK_EQ(MCKeyBindings::KeyName(0x15 | KeyCtrl), "CTRL+Y");
+
+    // A font without the character (one without letters draws none) leaves the key its own name.
+    const MCGuiFont blank;
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x0c, &blank), "-");
+
+    // Keys that type no character type none in any layout.
+    for (const uint16_t code : {0x0e, 0x1c, 0x1d, 0x4e, 0x4a, 0x148})
+    {
+        MCTest::Scope scope(std::format("scan code {:#x}", code));
+        CHECK_EQ(MCInput::LayoutCharacter(code), -1);
+    }
 }
 
 /// <summary>

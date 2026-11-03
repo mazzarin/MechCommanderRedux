@@ -241,7 +241,8 @@ auto MCLogKeyList::Assign(uint32_t key) -> void
     }
 
     _Lost = CellOf(lost);
-    _Status = std::format("{} MOVED FROM {}.", MCKeyBindings::KeyLabel(key), MCKeyBindings::CommandLabel(lost));
+    _Status = std::format("{} MOVED FROM {}.", MCKeyBindings::KeyLabel(key, WhiteFont.get()),
+                          MCKeyBindings::CommandLabel(lost));
 }
 
 auto MCLogKeyList::Clear(Cell cell) -> void
@@ -400,7 +401,7 @@ auto MCLogKeyList::DrawCell(Cell cell, int32_t top) -> void
     }
 
     const uint8_t color = key == MCKeyBindings::Defaults()[index] ? BoxTextColor : ChangedKeyColor;
-    Write(left + BoxTextLeft, top + 1, MCKeyBindings::KeyLabel(key), color, textWidth);
+    Write(left + BoxTextLeft, top + 1, MCKeyBindings::KeyLabel(key, WhiteFont.get()), color, textWidth);
 }
 
 auto MCLogKeyList::Draw() -> void

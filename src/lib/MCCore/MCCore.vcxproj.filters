@@ -249,6 +249,9 @@
     <ClCompile Include="gui\MCFloatHelp.cpp">
       <Filter>gui</Filter>
     </ClCompile>
+    <ClCompile Include="gui\MCFontGlyphs.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
     <ClCompile Include="gui\MCGuiAnimation.cpp">
       <Filter>gui</Filter>
     </ClCompile>
@@ -1496,6 +1499,9 @@
       <Filter>gameos</Filter>
     </ClInclude>
     <ClInclude Include="gui\MCFloatHelp.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="gui\MCFontGlyphs.h">
       <Filter>gui</Filter>
     </ClInclude>
     <ClInclude Include="gui\MCGuiAnimation.h">

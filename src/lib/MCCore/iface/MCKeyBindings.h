@@ -3,6 +3,7 @@
 #include "iface/MCInterfaceTypes.h"
 
 class MCFitIniFile;
+class MCGuiFont;
 
 /// <summary>
 /// Port-only: the player's key bindings. The original's are fixed (<see cref="MCTacticalInterface::Init"/> set them);
@@ -83,9 +84,20 @@ namespace MCKeyBindings
 
     /// <summary>
     /// The binding's name as the CONTROLS screen shows it: <see cref="KeyName"/>, with the Mac's names for the keys
-    /// its keyboard labels otherwise (OPTION, CMD, DELETE, RETURN) on macOS, and nothing for no key.
+    /// its keyboard labels otherwise (OPTION, CMD, DELETE, RETURN) on macOS, and nothing for no key. A key that types
+    /// a character is named by what it types in the keyboard layout (<see cref="SetLayout"/>), upper-case, when
+    /// <paramref name="font"/> draws it (null: any): on a German keyboard the key right of 0 is ß, not -.
     /// </summary>
-    std::string KeyLabel(uint32_t key);
+    std::string KeyLabel(uint32_t key, const MCGuiFont* font = nullptr);
+
+    /// <summary>What a keyboard layout's keys type: the Windows-1252 character of a scan code, or -1 for none.</summary>
+    using MCKeyLayout = int (*)(uint16_t code);
+
+    /// <summary>
+    /// Sets the layout <see cref="KeyLabel"/> names keys by: the player's keyboard's (MCInput::LayoutCharacter) until
+    /// then, or null for the US keyboard's names PREFS keeps (tests, which picture the same on any machine).
+    /// </summary>
+    void SetLayout(MCKeyLayout layout);
 
     /// <summary>The binding <paramref name="name"/> (as <see cref="KeyName"/> writes it, case ignored) names, if any.</summary>
     std::optional<uint32_t> ParseKey(std::string_view name);

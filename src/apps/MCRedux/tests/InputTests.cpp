@@ -14,6 +14,9 @@ TEST_CASE("input: key lParam and Windows-1252")
     CHECK_EQ(static_cast<uint32_t>(MCInput::MakeKeyLParam(up, false, true, true)), 0xc1480001u);
     CHECK_EQ(MCInput::VirtualKeyFromScancode(SDL_SCANCODE_KP_8, SDLK_UNKNOWN, true), VK_NUMPAD8);
     CHECK_EQ(MCInput::VirtualKeyFromScancode(SDL_SCANCODE_KP_8, SDLK_UNKNOWN, false), VK_UP);
+    // The key left of Z on European keyboards (a German one's <) has Windows' codes, so it can be bound.
+    CHECK_EQ(MCInput::Win32ScanCode(SDL_SCANCODE_NONUSBACKSLASH).Code, 0x56);
+    CHECK_EQ(MCInput::VirtualKeyFromScancode(SDL_SCANCODE_NONUSBACKSLASH, SDLK_LESS, true), VK_OEM_102);
     CHECK_EQ(MCInput::CodePointToWindows1252('A'), 'A');
     CHECK_EQ(MCInput::CodePointToWindows1252(0x20ac), 0x80);
     CHECK_EQ(MCInput::CodePointToWindows1252(0x00e9), 0xe9);

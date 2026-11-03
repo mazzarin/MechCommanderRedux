@@ -130,6 +130,7 @@ inline constexpr int VK_OEM_4 = 0xDB;      // [{
 inline constexpr int VK_OEM_5 = 0xDC;      // \|
 inline constexpr int VK_OEM_6 = 0xDD;      // ]}
 inline constexpr int VK_OEM_7 = 0xDE;      // '"
+inline constexpr int VK_OEM_102 = 0xE2;    // <> (the key left of Z on European keyboards)
 
 /// <summary>
 /// A Win32/COM GUID (16 bytes). The game identifies DirectPlay sessions and applications by them, stores them in

@@ -104,6 +104,7 @@
     <ClCompile Include="gameos\MCSoundRenderer.cpp" />
     <ClCompile Include="gameos\MCSoundResource.cpp" />
     <ClCompile Include="gui\MCFloatHelp.cpp" />
+    <ClCompile Include="gui\MCFontGlyphs.cpp" />
     <ClCompile Include="gui\MCGuiAnimation.cpp" />
     <ClCompile Include="gui\MCGuiButton.cpp" />
     <ClCompile Include="gui\MCGuiButtonBar.cpp" />
@@ -527,6 +528,7 @@
     <ClInclude Include="gameos\MCSoundRenderer.h" />
     <ClInclude Include="gameos\MCSoundResource.h" />
     <ClInclude Include="gui\MCFloatHelp.h" />
+    <ClInclude Include="gui\MCFontGlyphs.h" />
     <ClInclude Include="gui\MCGuiAnimation.h" />
     <ClInclude Include="gui\MCGuiButton.h" />
     <ClInclude Include="gui\MCGuiButtonBar.h" />

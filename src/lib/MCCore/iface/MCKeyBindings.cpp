@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "iface/MCKeyBindings.h"
+#include "gui/MCGuiFont.h"
 #include "lib/MCFitIniFile.h"
+#include "platform/MCInput.h"
 
 namespace
 {
@@ -95,9 +97,11 @@ namespace
         {MCKeyCommand::TogglePalette, 0xf, 0},
         {MCKeyCommand::SelectVisible, 0x12, 0},
         {MCKeyCommand::Chat, 0x1c, 0},
-        // Port-only: the interface size, alt with the zoom keys' = and -.
+        // Port-only: the interface size, alt with the zoom keys' = and - (on the main keys and the keypad).
         {MCKeyCommand::InterfaceSizeUp, 0xd, KeyAlt},
         {MCKeyCommand::InterfaceSizeDown, 0xc, KeyAlt},
+        {MCKeyCommand::InterfaceSizeUpAlternate, 0x4e, KeyAlt},
+        {MCKeyCommand::InterfaceSizeDownAlternate, 0x4a, KeyAlt},
     };
 
     /// <summary>
@@ -147,6 +151,8 @@ namespace
         {MCKeyCommand::TacticalMapZoomOut, 0x0c, KeyCtrl},
         {MCKeyCommand::TacticalMapZoomInAlternate, NoKey, 0},
         {MCKeyCommand::TacticalMapZoomOutAlternate, NoKey, 0},
+        {MCKeyCommand::InterfaceSizeUpAlternate, NoKey, 0},
+        {MCKeyCommand::InterfaceSizeDownAlternate, NoKey, 0},
         {MCKeyCommand::TacticalMapScrollUp, 0x148, KeyShift},
         {MCKeyCommand::TacticalMapScrollDown, 0x150, KeyShift},
         {MCKeyCommand::TacticalMapScrollLeft, 0x14b, KeyShift},
@@ -228,8 +234,8 @@ namespace
         {"MAP SCROLL LEFT", MCKeyCommand::TacticalMapScrollLeft},
         {"MAP SCROLL RIGHT", MCKeyCommand::TacticalMapScrollRight},
         {"COMMAND PALETTE", MCKeyCommand::TogglePalette},
-        {"BIGGER INTERFACE", MCKeyCommand::InterfaceSizeUp},
-        {"SMALLER INTERFACE", MCKeyCommand::InterfaceSizeDown},
+        {"BIGGER INTERFACE", MCKeyCommand::InterfaceSizeUp, MCKeyCommand::InterfaceSizeUpAlternate},
+        {"SMALLER INTERFACE", MCKeyCommand::InterfaceSizeDown, MCKeyCommand::InterfaceSizeDownAlternate},
         {"MULTIPLAYER"},
         {"CHAT", MCKeyCommand::Chat},
     };
@@ -316,6 +322,8 @@ namespace
         {MCKeyCommand::Chat, "Chat"},
         {MCKeyCommand::InterfaceSizeUp, "InterfaceSizeUp"},
         {MCKeyCommand::InterfaceSizeDown, "InterfaceSizeDown"},
+        {MCKeyCommand::InterfaceSizeUpAlternate, "InterfaceSizeUpAlternate"},
+        {MCKeyCommand::InterfaceSizeDownAlternate, "InterfaceSizeDownAlternate"},
     };
 
     /// <summary>A key's name (as PREFS keeps it), and the Mac keyboard's label for it when that differs.</summary>
@@ -473,6 +481,53 @@ namespace
         return result;
     }
 
+    /// <summary>The first character a key's name can be in the layout's (space has its name).</summary>
+    constexpr int FirstNamingCharacter = 0x21;
+    /// <summary>The Windows-1252 lower-case letters that have capitals 0x20 below them (but ÷, 0xF7).</summary>
+    constexpr int FirstAccentedLower = 0xe0;
+    constexpr int LastAccentedLower = 0xfe;
+    constexpr int Division = 0xf7;
+    /// <summary>How far a Windows-1252 letter's capital is below it.</summary>
+    constexpr int CapitalOffset = 0x20;
+
+    /// <summary>The layout the CONTROLS screen names keys by (null: the US keyboard's names).</summary>
+    MCKeyBindings::MCKeyLayout& Layout()
+    {
+        static MCKeyBindings::MCKeyLayout layout = MCInput::LayoutCharacter;
+        return layout;
+    }
+
+    /// <summary>The capital of Windows-1252 character <paramref name="character"/>, or itself (ß, ÿ and the rest).</summary>
+    int Capital(int character)
+    {
+        const bool lower = (character >= 'a' && character <= 'z') ||
+                           (character >= FirstAccentedLower && character <= LastAccentedLower && character != Division);
+        return lower ? character - CapitalOffset : character;
+    }
+
+    /// <summary>
+    /// The name of the key with scan code <paramref name="code"/> by what it types in the layout, upper-case, if it
+    /// types a character other than space that <paramref name="font"/> draws (null: any).
+    /// </summary>
+    std::optional<std::string> TypedName(uint32_t code, const MCGuiFont* font)
+    {
+        const MCKeyBindings::MCKeyLayout layout = Layout();
+
+        if (layout == nullptr || code > CodeBits)
+        {
+            return std::nullopt;
+        }
+
+        const int character = Capital(layout(static_cast<uint16_t>(code)));
+
+        if (character < FirstNamingCharacter || (font != nullptr && !font->Draws(static_cast<uint8_t>(character))))
+        {
+            return std::nullopt;
+        }
+
+        return std::string(1, static_cast<char>(character));
+    }
+
     /// <summary>The player's bindings (the defaults until PREFS or the CONTROLS screen changes them).</summary>
     MCKeyTable& PlayerKeys()
     {
@@ -512,8 +567,11 @@ namespace
         return std::string(macName && !entry->MacName.empty() ? entry->MacName : entry->Name);
     }
 
-    /// <summary>The binding's name with or without the Mac keyboard's labels.</summary>
-    std::string BindingName(uint32_t key, bool macNames)
+    /// <summary>
+    /// The binding's name with or without the Mac keyboard's labels, and with <paramref name="typed"/> the key by what
+    /// it types in the layout when <paramref name="font"/> draws that.
+    /// </summary>
+    std::string BindingName(uint32_t key, bool macNames, bool typed = false, const MCGuiFont* font = nullptr)
     {
         if (key == NoKey)
         {
@@ -532,7 +590,8 @@ namespace
             }
         }
 
-        return name + CodeName(code, macNames);
+        const std::optional<std::string> typedName = typed ? TypedName(code, font) : std::nullopt;
+        return name + typedName.value_or(CodeName(code, macNames));
     }
 }
 
@@ -630,9 +689,14 @@ std::string MCKeyBindings::KeyName(uint32_t key)
     return BindingName(key, false);
 }
 
-std::string MCKeyBindings::KeyLabel(uint32_t key)
+std::string MCKeyBindings::KeyLabel(uint32_t key, const MCGuiFont* font)
 {
-    return key == NoKey ? std::string() : BindingName(key, MacNames);
+    return key == NoKey ? std::string() : BindingName(key, MacNames, true, font);
+}
+
+void MCKeyBindings::SetLayout(MCKeyLayout layout)
+{
+    Layout() = layout;
 }
 
 auto MCKeyBindings::ParseKey(std::string_view name) -> std::optional<uint32_t>

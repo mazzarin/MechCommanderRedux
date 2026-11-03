@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
+#include "gui/MCFontGlyphs.h"
 #include "lib/MCFile.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -585,4 +586,137 @@ TEST_CASE("game: the fonts decode and draw")
 
         CHECK(drawn > 20);
     }
+}
+
+namespace
+{
+    /// <summary>A font's glyph: its width and its pixels, row by row (the layout in vfx/MCVfxFunctions.h).</summary>
+    struct MCTestGlyph
+    {
+        int32_t Width = 0;
+        std::vector<uint8_t> Pixels;
+
+        bool operator==(const MCTestGlyph&) const = default;
+    };
+
+    MCTestGlyph GlyphOf(std::span<const uint8_t> font, uint8_t character)
+    {
+        int32_t offset = 0;
+        std::memcpy(&offset, font.data() + 0x10 + static_cast<size_t>(character) * 4, 4);
+        MCTestGlyph glyph{VfxCharacterWidth(font, character), {}};
+        const auto pixels = font.subspan(static_cast<size_t>(offset) + 4,
+                                         static_cast<size_t>(glyph.Width) * static_cast<size_t>(VfxFontHeight(font)));
+        glyph.Pixels.assign(pixels.begin(), pixels.end());
+        return glyph;
+    }
+
+    /// <summary>Game font <paramref name="name"/> as the files hold it, and with MCFontGlyphs' glyphs added.</summary>
+    std::pair<std::vector<uint8_t>, std::vector<uint8_t>> FontBeforeAndAfter(std::string_view name)
+    {
+        std::vector<uint8_t> loaded = ReadGameFile(name);
+        REQUIRE(VfxFontFits(loaded));
+        std::vector<uint8_t> filled = loaded;
+        MCFontGlyphs::AddMissing(filled);
+        REQUIRE(VfxFontFits(filled));
+        return {std::move(loaded), std::move(filled)};
+    }
+}
+
+/// <summary>
+/// Port-only (MCFontGlyphs): WHITE.FNT gets glyphs for the characters it lists blank: ´ is é's mark alone (its rows
+/// above the e it shares with ë), ¿ is ? turned half round, and § is drawn in the font's ink from its capitals' top
+/// row, with a clear column on its left. Its own glyphs stay as they were (¡ among them, the one character of
+/// 0x80-0xBF it draws) and a character nothing makes (£) stays blank;
+/// the drop-shadow font gets the cut glyphs but not the drawn ones (it has two inks), and a font listing nothing past
+/// 0x8B is left alone.
+/// </summary>
+TEST_CASE("game: the fonts get glyphs for the characters they leave blank")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::OpenFastFiles();
+    constexpr uint8_t Clear = 0xff;
+    constexpr uint8_t Pound = 0xa3;
+    constexpr uint8_t Section = 0xa7;
+    constexpr uint8_t Acute = 0xb4;
+    constexpr uint8_t InvertedQuestion = 0xbf;
+    constexpr uint8_t AcuteE = 0xe9;
+    // WHITE.FNT's é: its mark is in rows 0-1, the e in the rows below; its ? fills rows 0-5 and columns 1-4.
+    constexpr int32_t MarkRows = 2;
+    constexpr int32_t QuestionRows = 6;
+    constexpr int32_t QuestionLeft = 1;
+    constexpr int32_t QuestionRight = 4;
+    const auto [loaded, font] = FontBeforeAndAfter("data\\fonts\\WHITE.FNT");
+    const int32_t height = VfxFontHeight(font);
+    int32_t count = 0;
+    std::memcpy(&count, font.data() + 4, 4);
+
+    for (const uint8_t character : {0xa7, 0xa8, 0xab, 0xb0, 0xb2, 0xb4, 0xba, 0xbb, 0xbd, 0xbf})
+    {
+        MCTest::Scope scope(std::format("character {:#x}", character));
+        CHECK(!MCFontGlyphs::Draws(loaded, character));
+        CHECK(MCFontGlyphs::Draws(font, character));
+    }
+
+    CHECK(!MCFontGlyphs::Draws(font, Pound));
+
+    for (int32_t character = 0; character < std::min(count, 256); character++)
+    {
+        if (MCFontGlyphs::Draws(loaded, static_cast<uint8_t>(character)))
+        {
+            MCTest::Scope scope(std::format("character {:#x}", character));
+            CHECK(GlyphOf(font, static_cast<uint8_t>(character)) == GlyphOf(loaded, static_cast<uint8_t>(character)));
+        }
+    }
+
+    const MCTestGlyph acute = GlyphOf(font, Acute);
+    const MCTestGlyph acuteE = GlyphOf(font, AcuteE);
+    REQUIRE_EQ(acute.Width, acuteE.Width);
+
+    for (size_t i = 0; i < acute.Pixels.size(); i++)
+    {
+        const bool mark = static_cast<int32_t>(i) / acute.Width < MarkRows;
+        CHECK_EQ(acute.Pixels[i], mark ? acuteE.Pixels[i] : Clear);
+    }
+
+    const MCTestGlyph inverted = GlyphOf(font, InvertedQuestion);
+    const MCTestGlyph question = GlyphOf(font, '?');
+    REQUIRE_EQ(inverted.Width, question.Width);
+
+    for (int32_t y = 0; y < height; y++)
+    {
+        const int32_t fromY = y < QuestionRows ? QuestionRows - 1 - y : y;
+
+        for (int32_t x = 0; x < question.Width; x++)
+        {
+            const int32_t fromX = x >= QuestionLeft && x <= QuestionRight ? QuestionLeft + QuestionRight - x : x;
+            CHECK_EQ(inverted.Pixels[static_cast<size_t>(y * question.Width + x)],
+                     question.Pixels[static_cast<size_t>(fromY * question.Width + fromX)]);
+        }
+    }
+
+    // § in the ink of H, from H's top row.
+    const MCTestGlyph capital = GlyphOf(font, 'H');
+    const MCTestGlyph section = GlyphOf(font, Section);
+    const auto firstInk = [](const MCTestGlyph& glyph)
+    { return std::ranges::find_if(glyph.Pixels, [](uint8_t pixel) { return pixel != Clear; }); };
+    const uint8_t ink = *firstInk(capital);
+    CHECK_EQ(std::distance(section.Pixels.begin(), firstInk(section)) / section.Width,
+             std::distance(capital.Pixels.begin(), firstInk(capital)) / capital.Width);
+
+    for (size_t i = 0; i < section.Pixels.size(); i++)
+    {
+        CHECK((section.Pixels[i] == Clear || section.Pixels[i] == ink));
+        CHECK((i % static_cast<size_t>(section.Width) != 0 || section.Pixels[i] == Clear));
+    }
+
+    const auto [dropLoaded, drop] = FontBeforeAndAfter("data\\fonts\\YELLDRP.FNT");
+    CHECK(MCFontGlyphs::Draws(drop, Acute));
+    CHECK(!MCFontGlyphs::Draws(drop, Section));
+
+    const auto [dimLoaded, dim] = FontBeforeAndAfter("data\\fonts\\DIM.FNT");
+    CHECK(dim == dimLoaded);
 }

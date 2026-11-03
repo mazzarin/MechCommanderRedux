@@ -10,6 +10,7 @@
 #include "main/MCSystemConfig.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
+#include "sprite/MCWeatherPace.h"
 
 #if defined(__APPLE__)
 #include "MCSparkleUpdater.h"
@@ -296,8 +297,10 @@ int main(int argc, char** argv)
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
     // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
-    // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h).
+    // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h). The snow
+    // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h).
     UseHdByDefault();
+    MCWeatherPacing::Follow(true);
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
 #endif

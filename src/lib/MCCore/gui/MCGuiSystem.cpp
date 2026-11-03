@@ -31,6 +31,8 @@
 #include "platform/MCInput.h"
 #include "platform/MCRenderer.h"
 #include "platform/MCSmacker.h"
+#include "sprite/MCWeather.h"
+#include "sprite/MCWeatherPace.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -424,6 +426,8 @@ auto MCGuiSystem::Run() -> void
         MCFrameLog::NextFrame();
         // Port (personal): the reports' frame times, and their server's replies (main/MCTelemetry.h).
         MCTelemetry::Frame();
+        // Port-only (HD weather's snow): the frames' pace, which a machine that can't keep up thins it by.
+        MCWeatherPacing::Frame(MCWeather::TakeSnowDrawn());
 
         // The PeekMessage / TranslateMessage / DispatchMessage loop, which stopped at WM_QUIT.
         if (MCFrameLog::Scope pump("pump"); !MCInput::PumpMessages())

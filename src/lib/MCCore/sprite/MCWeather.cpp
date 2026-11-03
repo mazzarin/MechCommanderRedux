@@ -10,6 +10,7 @@
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCParticles.h"
+#include "sprite/MCWeatherPace.h"
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -17,6 +18,7 @@
 #include <map>
 #include <numbers>
 #include <random>
+#include <utility>
 
 int GHdWeather = 0;
 
@@ -873,6 +875,8 @@ namespace
         /// </summary>
         std::deque<LeftOutFlakes> LeftOut;
         MCWeather::MCSpeckle Speckle;
+        /// <summary>Port-only (HD weather's snow): falling snow drawn since MCWeather::TakeSnowDrawn.</summary>
+        bool SnowDrawn = false;
     };
 
     /// <summary>The weather's one state.</summary>
@@ -1658,6 +1662,27 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (HD weather's snow, MCWeatherPace): the share of each size's flakes thrown real when the frames keep
+    /// up with <paramref name="share"/> of them all: the farthest go first, their specks drawn as they are, then those
+    /// between, the nearest last.
+    /// </summary>
+    std::array<float, FlakeSizes.size()> PacedFlakes(const MCWeather::MCWeatherLook& look, float share)
+    {
+        std::array<float, FlakeSizes.size()> kept{};
+        float cut = 1.0f - share;
+
+        for (size_t size = 0; size < kept.size(); ++size)
+        {
+            const float sizeShare = SizeShare(look, size);
+            const float taken = std::min(cut, sizeShare);
+            kept[size] = sizeShare > 0.0f ? 1.0f - taken / sizeShare : 1.0f;
+            cut -= taken;
+        }
+
+        return kept;
+    }
+
+    /// <summary>
     /// The share of a size's flakes still falling <paramref name="age"/> seconds after they were thrown: those whose fall
     /// over their speed (each even through its range) is longer.
     /// </summary>
@@ -1721,15 +1746,19 @@ namespace
                                : 1.0f;
         const float area = (width + landLeft + LandRight) * (height + landBelow) * kept;
         const float rate = look.Drops * state.Settings.Amount * area / (DropsArea * DropsArea) * SheetMost;
+        // Port-only (HD weather's snow): on a machine whose frames can't keep up with them all, fewer flakes are
+        // thrown real (MCWeatherPacing), the farthest first; the specks draw the rest too.
+        const float pace = look.Snows ? MCWeatherPacing::Share() : 1.0f;
+        const std::array<float, FlakeSizes.size()> paced = PacedFlakes(look, pace);
 
-        if (kept < 1.0f)
+        if (kept < 1.0f || pace < 1.0f)
         {
             LeftOutFlakes& left = state.LeftOut.emplace_back(LeftOutFlakes{.Time = time});
 
             for (size_t size = 0; size < left.Thrown.size(); ++size)
             {
-                left.Thrown[size] = (1.0f - kept) * look.Drops * state.Settings.Amount / (DropsArea * DropsArea) *
-                                    SheetLeast * SizeShare(look, size) * step;
+                left.Thrown[size] = (1.0f - kept * paced[size]) * look.Drops * state.Settings.Amount /
+                                    (DropsArea * DropsArea) * SheetLeast * SizeShare(look, size) * step;
             }
         }
 
@@ -1762,6 +1791,12 @@ namespace
 
             if (look.Snows)
             {
+                // Paced out: a speck instead (the die thrown only then, so the whole share throws as before).
+                if (paced[sizeIndex] < 1.0f && dice.Unit() >= paced[sizeIndex])
+                {
+                    continue;
+                }
+
                 const FlakeSize& flake = FlakeSizes[sizeIndex];
                 Drop drop{.X = ground.X,
                           .Y = ground.Y,
@@ -2806,6 +2841,12 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     AddSplashes(marks, state, camera, catching, palest);
     AddDrops(marks, state, camera, catching, palest);
     MCParticles::AddMarks(marks.Commands, marks.Depths);
+    state.SnowDrawn = state.SnowDrawn || (look.Snows && !state.Drops.empty());
+}
+
+auto MCWeather::TakeSnowDrawn() -> bool
+{
+    return std::exchange(TheState().SnowDrawn, false);
 }
 
 auto MCWeather::Clear() -> void

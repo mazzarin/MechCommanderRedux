@@ -90,6 +90,7 @@
 #include "sprite/MCVfxAppearanceType.h"
 #include "sprite/MCVfxBuildingAppearanceType.h"
 #include "sprite/MCWeather.h"
+#include "sprite/MCWeatherPace.h"
 #include "terrain/MCGroundMesh.h"
 #include "terrain/MCTacticalMap.h"
 #include "terrain/MCTerrain.h"
@@ -7485,7 +7486,9 @@ namespace
     /// its drops splashing as the ground takes them that strongly, 1 as made (0: every land alike, as the rain first
     /// fell; MCWeatherSettings::Ground). The snows (lightsnow, snow, blizzard): with <c>--hd-snow
     /// &lt;seconds&gt;[,&lt;pace&gt;]</c>, it had snowed that long before the mission's start (MCWeatherSettings::Settled)
-    /// and settles and fills the prints in that many times as fast (MCWeatherSettings::SettlePace).
+    /// and settles and fills the prints in that many times as fast (MCWeatherSettings::SettlePace); with
+    /// <c>--hd-snow-share &lt;share&gt;</c>, that share of its flakes are thrown real and the rest drawn as specks, as
+    /// on a machine whose frames keep up with only that many (MCWeatherPacing::Hold).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -7556,6 +7559,13 @@ namespace
 
             std::cout << std::format("  snow: fallen {:.0f} s before the start, settling {:.2f} times as fast\n",
                                      MCWeather::Settings().Settled, MCWeather::Settings().SettlePace);
+        }
+
+        if (const std::optional<std::string_view> share = MCTest::Option("hd-snow-share"); share.has_value())
+        {
+            MCWeatherPacing::Hold(std::strtof(std::string(*share).c_str(), nullptr));
+            std::cout << std::format("  snow: {:.2f} of the flakes thrown real, the rest drawn as specks\n",
+                                     MCWeatherPacing::Share());
         }
 
         const MCWeather::MCWeatherSettings& settings = MCWeather::Settings();

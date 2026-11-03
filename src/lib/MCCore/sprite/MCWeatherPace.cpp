@@ -119,6 +119,8 @@ namespace MCWeatherPacing
 
         /// <summary>The app's pace while followed.</summary>
         std::optional<MCWeatherPace> Pace;
+        /// <summary>The share held whatever the frames.</summary>
+        std::optional<float> Held;
         /// <summary>When the last frame ended.</summary>
         std::optional<Clock::time_point> LastFrame;
 
@@ -136,6 +138,11 @@ namespace MCWeatherPacing
     {
         Pace = on ? std::optional<MCWeatherPace>(MCWeatherPace()) : std::nullopt;
         LastFrame.reset();
+    }
+
+    void Hold(std::optional<float> share)
+    {
+        Held = share.has_value() ? std::optional(std::clamp(*share, MCWeatherPace::LeastShare, 1.0f)) : std::nullopt;
     }
 
     void Frame(bool drewPieces)
@@ -157,6 +164,11 @@ namespace MCWeatherPacing
 
     float Share()
     {
+        if (Held.has_value())
+        {
+            return *Held;
+        }
+
         return Pace.has_value() ? Pace->Share() : 1.0f;
     }
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 // Port-only (HD weather): how many of the HD weather's falling pieces a machine's frames keep up with. When the frames
 // fall behind the display's for a second, fewer pieces are thrown; once they keep up for a while, more come back a
 // step at a time, and a step that makes them fall behind goes back at once and doubles the wait before the next. A cut
@@ -58,11 +60,17 @@ namespace MCWeatherPacing
     void Follow(bool on);
 
     /// <summary>
+    /// Throws <paramref name="share"/> of the pieces whatever the frames, as a machine that keeps up with only that
+    /// many does (the picture tools' <c>--hd-snow-share</c>); none: the frames' share again.
+    /// </summary>
+    void Hold(std::optional<float> share);
+
+    /// <summary>
     /// Ends a frame: its time since the last, against the window's display; nothing unless followed. Frames with the
     /// frame rate locked (LockFrameRate) or without the weather's pieces don't count.
     /// </summary>
     void Frame(bool drewPieces);
 
-    /// <summary>The share of the HD weather's falling pieces to throw: 1 unless followed.</summary>
+    /// <summary>The share of the HD weather's falling pieces to throw: the one held, else 1 unless followed.</summary>
     float Share();
 }

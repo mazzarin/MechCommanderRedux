@@ -510,6 +510,11 @@ namespace MCWeather
     size_t Count();
 
     /// <summary>
+    /// Whether falling snow was drawn since the last call: the frames whose pace thins it (MCWeatherPacing::Frame).
+    /// </summary>
+    bool TakeSnowDrawn();
+
+    /// <summary>
     /// The puddles' level (composite.pshader's PuddleField under it is a puddle) that leaves <paramref name="share"/> of
     /// the ground under them, measured once.
     /// </summary>

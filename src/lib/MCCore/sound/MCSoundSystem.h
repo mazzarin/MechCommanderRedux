@@ -196,6 +196,11 @@ public:
     /// thunder, none till the purge.
     /// </summary>
     void UpdateThunder(float heard, const MCWeather::MCThunderClap* clap);
+    /// <summary>
+    /// Port-only (HD weather): reads the pack's thunder for a mission whose weather shown strikes lightning, under its
+    /// loading bar, so its first clap reads nothing (it is kept till the purge).
+    /// </summary>
+    void PrepareThunder();
     /// <summary>How many claps of thunder are rolling (one fading out under a newer one counts).</summary>
     size_t ThunderRolls() const { return _ThunderRolls.size(); }
     /// <summary>Streams music <paramref name="musicId"/> ("DMS%d", +25 on the second planet), fading from the stream
@@ -347,6 +352,8 @@ private:
     void UpdateMusicChoice();
     /// <summary>Stops the rain bed and closes its loop.</summary>
     void StopRain();
+    /// <summary>Reads the pack's thunder whole, once till the purge (none when the pack has none).</summary>
+    void ReadThunder();
     /// <summary>
     /// Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest, from the thunder's
     /// file read once till the purge.

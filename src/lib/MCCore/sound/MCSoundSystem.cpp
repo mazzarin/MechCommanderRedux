@@ -1051,15 +1051,27 @@ void MCSoundSystem::UpdateThunder(float heard, const MCWeather::MCThunderClap* c
                   { return (roll.Read && roll.Stream->QueuedFrames() == 0) || roll.Left <= 0.0f; });
 }
 
-void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
+void MCSoundSystem::ReadThunder()
 {
-    // The thunder is read once (each clap's reader reads it from memory), till the purge.
-    if (_ThunderBytes == nullptr)
+    if (_ThunderBytes == nullptr && !_ThunderMissing)
     {
         _ThunderPath = MCHdAudio::Thunder();
         _ThunderBytes = _ThunderPath.has_value() ? MCFlac::ReadFile(*_ThunderPath) : nullptr;
     }
+}
 
+void MCSoundSystem::PrepareThunder()
+{
+    if (UseSound != 0 && MCWeather::LookOf(MCWeather::Shown()).Strikes > 0.0f)
+    {
+        ReadThunder();
+    }
+}
+
+void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
+{
+    // The thunder is read once (each clap's reader reads it from memory), till the purge.
+    ReadThunder();
     MCThunderRoll roll;
     roll.File = MCFlac::Open(_ThunderBytes);
     roll.Stream = StreamPackSound(_Renderer.Mixer(), _ThunderPath, "thunder",

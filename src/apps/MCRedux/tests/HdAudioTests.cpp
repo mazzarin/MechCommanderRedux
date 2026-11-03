@@ -942,6 +942,17 @@ TEST_CASE(
     sound->UpdateThunder(Heard, &near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
 
+    // A mission whose weather strikes lightning reads the thunder as it loads: its first clap reads nothing.
+    sound->PurgeSoundSystem();
+    const int shownWeather = GHdWeather;
+    GHdWeather = HdWeatherDownpour;
+    sound->PrepareThunder();
+    GHdWeather = shownWeather;
+    std::filesystem::remove(thunder);
+    sound->UpdateThunder(Heard, &near);
+    CHECK_EQ(sound->ThunderRolls(), size_t{1});
+    sound->PurgeSoundSystem();
+
     // Only a downpour has lightning; nothing is heard while no rain is drawn.
     CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).Strikes > 0.0f);
     CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).ThunderHeard > 0.0f);

@@ -12,6 +12,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
+#include "object/MCBullet.h"
 #include "object/MCExplosion.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCObjectDrawing.h"
@@ -194,15 +195,8 @@ auto MCProjectileLaser::Update() -> int32_t
     const double dxSq = static_cast<double>(dx) * dx;
     const double dySq = static_cast<double>(dy) * dy;
     const double groundDistanceSq = dxSq + dySq;
-
-    if (ClosestDistanceSq <= groundDistanceSq)
-    {
-        arrived = true;
-    }
-    else
-    {
-        ClosestDistanceSq = static_cast<float>(groundDistanceSq);
-    }
+    arrived = MCBullet::Approach(ClosestDistanceSq, groundDistanceSq, laserType.Velocity, FrameLength,
+                                 LockObject(Target) != nullptr);
 
     const double travelLength = std::sqrt(static_cast<double>(dz) * dz + dxSq + dySq);
     const auto travelLengthF = static_cast<float>(travelLength);

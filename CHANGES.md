@@ -212,6 +212,10 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Shots now fly to the spot they hit. In the original, bullets, laser beams and Gauss rifle (railgun) bolts flew to a
   point on the target picked by the firing weapon's mount, while the impact played where the shot hit, so hits often
   looked like misses. Damage is unchanged.
+- Missiles and cannon shots that hit now fly all the way to the target at any frame rate. The original's test for a
+  shot reaching its target holds at 15 frames a second; at 60 or 120, the target's sprite shifting between its
+  animation frames could end the flight, and the hit landed at once, mid-flight (more than a quarter of LRM hits at
+  120). At 15 frames a second or fewer nothing changes.
 - A mech component that was already destroyed and then hit again, for example when its limb was blown off, no longer
   shows in its normal colour on the payload page. Its health wrapped around instead of staying at 0, so a destroyed
   Gauss rifle (railgun) could look undamaged while a destroyed ER laser showed red.

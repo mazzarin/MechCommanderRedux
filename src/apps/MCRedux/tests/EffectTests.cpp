@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "main/MCGameContext.h"
 #include "main/MCMissionGlobals.h"
+#include "object/MCBullet.h"
 #include "object/MCEffectSystem.h"
 #include "object/MCExplosionType.h"
 #include "object/MCFire.h"
@@ -239,4 +240,105 @@ TEST_CASE("effects: a frame's in-betweens go toward the next frame, and back to 
     CHECK(Steps(weapon.InBetween()) == halfway(1, 2));
     weapon.CurrentFrame = static_cast<int32_t>(Frames) - 1;
     CHECK(!weapon.InBetween().has_value());
+}
+
+namespace
+{
+    /// <summary>The closest a shot has been when fired (MCBullet's and MCProjectileLaser's first update).</summary>
+    constexpr float FiredClosestDistanceSq = 1.0e8f;
+    /// <summary>An LRM's speed (the lrm bullet type's Velocity), in world units a second.</summary>
+    constexpr float LrmVelocity = 200.0f;
+    /// <summary>A display's 120 frames a second.</summary>
+    constexpr float FastFrameLength = 1.0f / 120.0f;
+
+    /// <summary>
+    /// How far from a followed target's hot spot a shot at <paramref name="velocity"/>, flown with frames of
+    /// <paramref name="frameLength"/>, arrives, fired <paramref name="distance"/> from it along the ground: the hot
+    /// spot steps <paramref name="wobble"/> further away and back by turns as the target's animation turns a frame (15
+    /// a second). Negative if it never arrives.
+    /// </summary>
+    double ArrivalDistance(float velocity, float frameLength, double distance, double wobble)
+    {
+        constexpr double AnimationFrameLength = 1.0 / 15.0;
+        constexpr int32_t MaxFrames = 100000;
+        float closestDistanceSq = FiredClosestDistanceSq;
+        double shot = 0.0;
+
+        for (int32_t frame = 0; frame < MaxFrames; frame++)
+        {
+            const auto animationFrame =
+                static_cast<int64_t>(frame * static_cast<double>(frameLength) / AnimationFrameLength);
+            const double left = distance + (animationFrame % 2 == 1 ? wobble : 0.0) - shot;
+
+            if (MCBullet::Approach(closestDistanceSq, left * left, velocity, frameLength, true))
+            {
+                return std::abs(left);
+            }
+
+            shot += std::copysign(static_cast<double>(velocity) * frameLength, left);
+        }
+
+        return -1.0;
+    }
+}
+
+/// <summary>
+/// Port fix: a shot that follows its target (missiles, cannon and pulse shots that hit) flies all the way to it however
+/// short the frames. The target's hot spot moves a few units as its animation turns a frame; with frames shorter than
+/// 15 a second's that outran a shot's step, and the hit landed at once, mid-flight.
+/// </summary>
+TEST_CASE("shots: a shot following its target flies all the way to it at 120 frames a second as at 15")
+{
+    constexpr double Distance = 1000.0;
+    constexpr double Wobble = 4.0;
+
+    for (const float frameLength : {MCBullet::PacedFrameLength, 1.0f / 60.0f, FastFrameLength})
+    {
+        const double arrival = ArrivalDistance(LrmVelocity, frameLength, Distance, Wobble);
+        // Within a 15 fps step of the hot spot, wherever its wobble has it (the original's lands just past it).
+        const double reach = static_cast<double>(LrmVelocity * MCBullet::PacedFrameLength) + Wobble;
+
+        if (arrival < 0.0 || arrival > reach)
+        {
+            std::cout << std::format("  at {:.0f} frames a second the shot arrived {:.1f} from its target\n",
+                                     1.0f / frameLength, arrival);
+        }
+
+        CHECK(arrival >= 0.0);
+        CHECK(arrival <= reach);
+    }
+}
+
+/// <summary>
+/// A shot arrives once its distance stops shrinking, as the original's does, at 15 frames a second or fewer and at a
+/// point on the ground; with shorter frames, a followed target that gets away (further than the shot's closest by a
+/// 15 fps step less this frame's) ends the shot, as one outrunning it would at 15.
+/// </summary>
+TEST_CASE("shots: at 15 frames a second, or at a point, a shot arrives as the original's once it stops getting closer")
+{
+    constexpr double Closest = 50.0;
+    constexpr double Nearer = 49.0;
+    constexpr float ClosestSq = static_cast<float>(Closest * Closest);
+    const double slack = static_cast<double>(LrmVelocity) *
+                         (static_cast<double>(MCBullet::PacedFrameLength) - static_cast<double>(FastFrameLength));
+
+    for (const float frameLength : {MCBullet::PacedFrameLength, 0.1f})
+    {
+        float closest = ClosestSq;
+        CHECK(MCBullet::Approach(closest, Closest * Closest, LrmVelocity, frameLength, true));
+        CHECK(!MCBullet::Approach(closest, Nearer * Nearer, LrmVelocity, frameLength, true));
+        CHECK_EQ(closest, static_cast<float>(Nearer * Nearer));
+    }
+
+    // At a point, the step after the closest ends it at any frame rate.
+    float atPoint = ClosestSq;
+    CHECK(MCBullet::Approach(atPoint, (Closest + 1.0) * (Closest + 1.0), LrmVelocity, FastFrameLength, false));
+
+    // A followed target a little further away keeps the shot flying, and its closest stays.
+    float followed = ClosestSq;
+    const double gained = Closest + slack - 1.0;
+    CHECK(!MCBullet::Approach(followed, gained * gained, LrmVelocity, FastFrameLength, true));
+    CHECK_EQ(followed, ClosestSq);
+    const double away = Closest + slack + 1.0;
+    CHECK(MCBullet::Approach(followed, away * away, LrmVelocity, FastFrameLength, true));
 }

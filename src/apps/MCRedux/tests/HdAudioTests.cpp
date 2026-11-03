@@ -388,6 +388,15 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     CHECK(again.WaveData().data() == first->Pcm.data());
     CHECK(again.SharedWaveData().get() == &first->Pcm);
 
+    // Given the wave's id, kept by its caller (the sound system keeps each loaded bite's), it isn't hashed again: the
+    // id finds it, whatever the bytes.
+    const std::optional<uint64_t> id = MCHdAudio::SampleId(Original());
+    REQUIRE(id.has_value());
+    CHECK_EQ(MCHdAudio::SampleKey(Original()), std::format("{:016x}", *id));
+    CHECK(MCHdAudio::Sample(Original(882), id) == first);
+    MCSoundResource byId(Original(882), id);
+    CHECK(byId.WaveData().data() == first->Pcm.data());
+
     // A buffer plays it where it is; written to, it takes a copy of its own, and the decoded samples stay as they are.
     auto mixer = MCAudio::CreateSilent();
     auto buffer = mixer->CreateBuffer(first->Format, again.SharedWaveData());

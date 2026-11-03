@@ -335,7 +335,38 @@ bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
     }
 
     file.ReadPacket(biteId, std::span(bite.BiteData).first(std::min<size_t>(size, bite.BiteData.size())));
+    _BiteHdIds.resize(Sounds.size());
+    _BiteHdIds[biteId] = {MCHdAudio::SampleId(bite.BiteData), bite.BiteData.data(), bite.BiteData.size()};
     return true;
+}
+
+std::optional<uint64_t> MCSoundSystem::BiteHdId(int32_t biteId) const
+{
+    if (biteId < 0 || static_cast<size_t>(biteId) >= _BiteHdIds.size() || static_cast<size_t>(biteId) >= Sounds.size())
+    {
+        return std::nullopt;
+    }
+
+    const MCBiteHdId& known = _BiteHdIds[biteId];
+    const std::vector<uint8_t>& data = Sounds[biteId].BiteData;
+    return known.Data == data.data() && known.Size == data.size() ? known.Id : std::nullopt;
+}
+
+std::optional<uint64_t> MCSoundSystem::BettyHdId()
+{
+    if (_BettyLoaded < 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto [found, added] = _BettyHdIds.try_emplace(_BettyLoaded);
+
+    if (added)
+    {
+        found->second = MCHdAudio::SampleId(_BettySoundBite);
+    }
+
+    return found->second;
 }
 
 std::span<const uint8_t> MCSoundSystem::LoadBettySample(int32_t bettyId)
@@ -355,7 +386,14 @@ std::span<const uint8_t> MCSoundSystem::LoadBettySample(int32_t bettyId)
     }
 
     LastBettyId = bettyId;
-    file.ReadPacket(bettyId, std::span(_BettySoundBite).first(size));
+    const int32_t read = file.ReadPacket(bettyId, std::span(_BettySoundBite).first(size));
+
+    // Port: which sample the bytes are, for its HD audio identity; none known when the packet didn't read whole.
+    if (size != 0)
+    {
+        _BettyLoaded = read == static_cast<int32_t>(size) ? bettyId : -1;
+    }
+
     return _BettySoundBite;
 }
 
@@ -379,14 +417,14 @@ void MCSoundSystem::FreeChannelResource(int32_t channel)
     _ChannelResource[channel].reset();
 }
 
-void MCSoundSystem::SetChannelImage(int32_t channel, std::span<const uint8_t> image)
+void MCSoundSystem::SetChannelImage(int32_t channel, std::span<const uint8_t> image, std::optional<uint64_t> hdId)
 {
     if (const std::shared_ptr<MCSoundResource> resource = _ChannelResource[channel].lock(); resource != nullptr)
     {
         _Renderer.DestroyResource(*resource);
     }
 
-    _ChannelResource[channel] = _Renderer.CreateResource(image);
+    _ChannelResource[channel] = _Renderer.CreateResource(image, hdId);
 }
 
 bool MCSoundSystem::QueueRadioMessage(std::unique_ptr<MCRadioMessage> message)
@@ -462,9 +500,11 @@ void MCSoundSystem::PurgeSoundSystem()
         bite.BiteData = {};
     }
 
+    _BiteHdIds.clear();
     NoiseFile.reset();
     RadioMessageInfoLoaded = false;
     _BettySoundBite = {};
+    _BettyLoaded = -1;
 }
 
 void MCSoundSystem::PlayStaticNoise()
@@ -810,7 +850,7 @@ void MCSoundSystem::Update()
                 return;
             }
 
-            SetChannelImage(NOISE_CHANNEL, Sounds[FIRE_BITE].BiteData);
+            SetChannelImage(NOISE_CHANNEL, Sounds[FIRE_BITE].BiteData, BiteHdId(FIRE_BITE));
             _Renderer.SetChannelLooping(NOISE_CHANNEL, true);
             _Renderer.SetChannelPanning(NOISE_CHANNEL, 0.0f);
             // OB-181 fixed: the original played the fire at the effects volume, without the bite's own.
@@ -1088,7 +1128,7 @@ int32_t MCSoundSystem::PlayBettySample(uint32_t bettyId)
         return -1;
     }
 
-    SetChannelImage(BETTY_CHANNEL, sample);
+    SetChannelImage(BETTY_CHANNEL, sample, BettyHdId());
     SampleChannels[BETTY_CHANNEL].FadeDown = false;
     _Renderer.SetChannelPanning(BETTY_CHANNEL, 0.0f);
     _Renderer.SetChannelVolume(BETTY_CHANNEL, ChannelVolume(RadioLevel));
@@ -1226,7 +1266,7 @@ int32_t MCSoundSystem::PlaySample(uint32_t sampleId, MCOptionalRef<MCGameObject>
 
     if (const std::span<const uint8_t> wave = Sounds[sampleId].BiteData; !wave.empty() && IsWaveImage(wave))
     {
-        _ChannelResource[channel] = _Renderer.CreateResource(wave);
+        _ChannelResource[channel] = _Renderer.CreateResource(wave, BiteHdId(static_cast<int32_t>(sampleId)));
         _Renderer.Play(channel, _ChannelResource[channel].lock());
     }
 

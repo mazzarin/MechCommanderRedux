@@ -45,9 +45,10 @@ std::shared_ptr<MCSoundResource> MCSoundRenderer::Adopt(std::shared_ptr<MCSoundR
     return _Resources.emplace_back(std::move(resource));
 }
 
-std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(std::span<const uint8_t> image)
+std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(std::span<const uint8_t> image,
+                                                                 std::optional<uint64_t> hdId)
 {
-    return Adopt(std::make_shared<MCSoundResource>(image));
+    return Adopt(std::make_shared<MCSoundResource>(image, hdId));
 }
 
 std::shared_ptr<MCSoundResource> MCSoundRenderer::CreateResource(MCSoundResourceType type, std::string_view fileName)

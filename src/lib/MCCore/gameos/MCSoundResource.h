@@ -30,7 +30,9 @@ public:
     /// had to outlive it; a resource is only read when it is played, right after it is made), or its HD replacement.
     /// Fatal when it isn't one.
     /// </summary>
-    explicit MCSoundResource(std::span<const uint8_t> image);
+    /// <param name="hdId">The image's <see cref="MCHdAudio::SampleId"/> when its caller keeps it (none: it is worked
+    /// out here).</param>
+    explicit MCSoundResource(std::span<const uint8_t> image, std::optional<uint64_t> hdId = std::nullopt);
     /// <summary>A file resource (read whole) or a stream resource (opened for reading as it plays). Fatal on a file
     /// that can't be opened or isn't a PCM wave.</summary>
     MCSoundResource(MCSoundResourceType type, std::string_view fileName);
@@ -94,11 +96,11 @@ private:
     /// </summary>
     void OpenStream();
     /// <summary>
-    /// Plays the HD audio pack's replacement for the wave <paramref name="image"/>, when there is one
-    /// (<see cref="MCHdAudio::Sample"/>).
+    /// Plays the HD audio pack's replacement for the wave <paramref name="image"/> (of <paramref name="id"/>, when
+    /// known), when there is one (<see cref="MCHdAudio::Sample"/>).
     /// </summary>
     /// <returns>Whether there is.</returns>
-    bool TryHdSample(std::span<const uint8_t> image);
+    bool TryHdSample(std::span<const uint8_t> image, std::optional<uint64_t> id = std::nullopt);
     /// <summary>
     /// The HD audio pack's music for the stream, when it has some as long as the original's
     /// <paramref name="sourceFrames"/> and not cut short; the original's file is closed then.

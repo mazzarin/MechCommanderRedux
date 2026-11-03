@@ -44,15 +44,22 @@ public:
     static std::optional<std::filesystem::path> RainLoop();
     /// <summary>The pack's thunder (<c>audio/ambience/thunder.flac</c>), or none; there whatever HD audio is, as the rain loop.</summary>
     static std::optional<std::filesystem::path> Thunder();
-    /// <summary>Canonical FNV-1a key: rate u32, channels u16, bits u16 (little endian), then the original PCM bytes.</summary>
+    /// <summary>
+    /// The wave image <paramref name="wave"/>'s canonical key, a 64-bit FNV-1a of: rate u32, channels u16, bits u16
+    /// (little endian), then the original PCM bytes. None for an image that isn't a PCM wave.
+    /// </summary>
+    static std::optional<uint64_t> SampleId(std::span<const uint8_t> wave);
+    /// <summary>The name <see cref="SampleId"/> gives the wave's replacement in the pack: 16 hex digits (empty for
+    /// none).</summary>
     static std::string SampleKey(std::span<const uint8_t> wave);
     /// <summary>
     /// The pack's replacement for the wave image <paramref name="wave"/>, decoded, or none. Decoded replacements (and
     /// the waves that have none) are remembered, the least recently used going past a budget, so a sound played again
-    /// costs a fast hash of its PCM (XXH64, not the canonical key's FNV-1a) and a lookup; its player shares the decoded
-    /// samples, without a copy.
+    /// costs a hash of its PCM (none when the caller kept the wave's <paramref name="id"/>, its
+    /// <see cref="SampleId"/>) and a lookup; its player shares the decoded samples, without a copy.
     /// </summary>
-    static std::shared_ptr<const Decoded> Sample(std::span<const uint8_t> wave);
+    static std::shared_ptr<const Decoded> Sample(std::span<const uint8_t> wave,
+                                                 std::optional<uint64_t> id = std::nullopt);
     /// <summary>Whether <paramref name="flac"/> lasts as long as the original, to the nearest output frame.</summary>
     static bool MatchesLength(const MCFlac& flac, uint64_t sourceFrames, uint32_t sourceRate);
     /// <summary>Whether the pack folder has HD audio: an audio.cfg of a format this code reads.</summary>

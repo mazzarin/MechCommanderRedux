@@ -44,12 +44,13 @@ namespace
     }
 }
 
-MCSoundResource::MCSoundResource(std::span<const uint8_t> image) : Type(MCSoundResourceType::Memory)
+MCSoundResource::MCSoundResource(std::span<const uint8_t> image, std::optional<uint64_t> hdId)
+    : Type(MCSoundResourceType::Memory)
 {
     ReadWaveInfo(image);
 
     // An HD replacement plays from the pack's decoded copy: the original's image isn't kept.
-    if (!TryHdSample(image))
+    if (!TryHdSample(image, hdId))
     {
         _Image.assign(image.begin(), image.end());
     }
@@ -97,9 +98,9 @@ void MCSoundResource::LoadFile()
     }
 }
 
-bool MCSoundResource::TryHdSample(std::span<const uint8_t> image)
+bool MCSoundResource::TryHdSample(std::span<const uint8_t> image, std::optional<uint64_t> id)
 {
-    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(image);
+    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(image, id);
 
     if (decoded == nullptr)
     {

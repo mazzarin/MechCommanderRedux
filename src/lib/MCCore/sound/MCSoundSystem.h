@@ -45,7 +45,10 @@ struct MCSoundBite
     uint32_t Cache = 0;
     /// <summary>"soundId" (read, not used).</summary>
     uint32_t SoundId = 0;
-    /// <summary>The wave, when loaded (empty while not).</summary>
+    /// <summary>
+    /// The wave, when loaded (empty while not). Port: the sound system keeps its HD audio identity as it loads it, so
+    /// it is loaded only by the sound system.
+    /// </summary>
     std::vector<uint8_t> BiteData;
     /// <summary>"volume" (0..1): the bite's level, 20 * (volume - 1) dB (see <see cref="SoundBiteGain"/>).</summary>
     float Volume = 0.0f;
@@ -310,9 +313,18 @@ private:
     void SetMusicState(std::optional<MCMusicState> state);
     /// <summary>Whether the music state holds <paramref name="state"/>.</summary>
     bool HasMusicState(MCMusicState state) const { return _MusicState[std::to_underlying(state)]; }
-    /// <summary>Puts a new resource of <paramref name="image"/> on <paramref name="channel"/>, freeing the old one.
+    /// <summary>
+    /// Puts a new resource of <paramref name="image"/> (of <paramref name="hdId"/>, its MCHdAudio::SampleId, when
+    /// known) on <paramref name="channel"/>, freeing the old one.
     /// </summary>
-    void SetChannelImage(int32_t channel, std::span<const uint8_t> image);
+    void SetChannelImage(int32_t channel, std::span<const uint8_t> image, std::optional<uint64_t> hdId = std::nullopt);
+    /// <summary>
+    /// Sound bite <paramref name="biteId"/>'s MCHdAudio::SampleId, worked out once as it was loaded (none: not loaded by
+    /// <see cref="PreloadSoundBite"/>, or not a wave), so a bite played again isn't hashed again.
+    /// </summary>
+    std::optional<uint64_t> BiteHdId(int32_t biteId) const;
+    /// <summary>The Betty sample loaded's MCHdAudio::SampleId, worked out once a sample (none: not a wave).</summary>
+    std::optional<uint64_t> BettyHdId();
     /// <summary>Frees <paramref name="channel"/>'s resource (stopping it).</summary>
     void FreeChannelResource(int32_t channel);
     /// <summary>Steps one music stream's cross-fade.</summary>
@@ -357,6 +369,23 @@ private:
     std::unique_ptr<MCPacketFile> _BettyDataFile;
     /// <summary>The Betty sample loaded.</summary>
     std::vector<uint8_t> _BettySoundBite;
+    /// <summary>Which Betty sample <see cref="_BettySoundBite"/> holds (-1: none).</summary>
+    int32_t _BettyLoaded = -1;
+    /// <summary>The Betty samples' MCHdAudio::SampleIds, by sample, as each was first played (betty.pak's don't change).
+    /// </summary>
+    std::unordered_map<int32_t, std::optional<uint64_t>> _BettyHdIds;
+    /// <summary>
+    /// A loaded bite's MCHdAudio::SampleId and the bytes it was worked out for (the bite's own, checked when used).
+    /// </summary>
+    struct MCBiteHdId
+    {
+        std::optional<uint64_t> Id;
+        const uint8_t* Data = nullptr;
+        size_t Size = 0;
+    };
+
+    /// <summary>Each sound bite's HD audio identity, as <see cref="PreloadSoundBite"/> loaded it.</summary>
+    std::vector<MCBiteHdId> _BiteHdIds;
     /// <summary>The radio static wave (empty while not loaded).</summary>
     std::vector<uint8_t> _NoiseData;
     /// <summary>Every pilot's radio.</summary>

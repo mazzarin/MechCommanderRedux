@@ -33,10 +33,12 @@ public:
     static void Uninstall();
 
     /// <summary>
-    /// Makes a memory resource of the caller's wave image (gos_CreateSoundResource). The renderer keeps it until
+    /// Makes a memory resource of the caller's wave image (gos_CreateSoundResource), given its
+    /// <see cref="MCHdAudio::SampleId"/> when the caller keeps it. The renderer keeps it until
     /// <see cref="DestroyResource"/>; the caller keeps a <c>weak_ptr</c>.
     /// </summary>
-    std::shared_ptr<MCSoundResource> CreateResource(std::span<const uint8_t> image);
+    std::shared_ptr<MCSoundResource> CreateResource(std::span<const uint8_t> image,
+                                                    std::optional<uint64_t> hdId = std::nullopt);
     /// <summary>Makes a file or stream resource of <paramref name="fileName"/>.</summary>
     std::shared_ptr<MCSoundResource> CreateResource(MCSoundResourceType type, std::string_view fileName);
     /// <summary>Stops every channel playing the resource, then destroys it (gos_DestroySoundResource).</summary>

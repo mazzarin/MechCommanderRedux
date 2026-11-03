@@ -26,6 +26,8 @@ namespace
 {
     /// <summary>The loopback address the game hosts on (not the default port, so a running game is left alone).</summary>
     constexpr std::string_view HostAddress = "127.0.0.1:28877";
+    /// <summary>The MATCH OPTIONS test's, so it can run beside the frames test (--jobs).</summary>
+    constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
 
     /// <summary>Selects the TCP/IP connection to <paramref name="address"/> ("host:port").</summary>
     uint32_t Connect(MCDirectPlay& directPlay, std::string_view address)
@@ -66,9 +68,9 @@ namespace
     class Guest
     {
     public:
-        bool Join(MCDirectPlay& host)
+        bool Join(MCDirectPlay& host, std::string_view address = HostAddress)
         {
-            if (Connect(_DirectPlay, HostAddress) != DP_OK)
+            if (Connect(_DirectPlay, address) != DP_OK)
             {
                 return false;
             }
@@ -339,7 +341,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     Settle();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
-    manager.ConnectTcp(HostAddress);
+    manager.ConnectTcp(OptionsHostAddress);
     MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
     GlobalLog()->MultiplayerScreen->ShowGuiWindow(0);
     lanScreen.ShowGuiWindow(1);
@@ -354,7 +356,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     REQUIRE(manager.DirectPlay != nullptr);
 
     Guest guest;
-    REQUIRE(guest.Join(*manager.DirectPlay));
+    REQUIRE(guest.Join(*manager.DirectPlay, OptionsHostAddress));
     Settle();
     Go();
     Settle();

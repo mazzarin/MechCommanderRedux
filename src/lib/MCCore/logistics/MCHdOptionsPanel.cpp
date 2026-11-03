@@ -6,6 +6,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCPrefsPage.h"
 #include "main/MCHdSettings.h"
+#include "main/MCTelemetry.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCParticles.h"
@@ -68,6 +69,12 @@ namespace
         {
             ShowMenuMessage("HD AUDIO needs an HD audio pack in the HD folder beside your saved games.");
         }
+    }
+
+    /// <summary>REPORTS changed here is the player's own choice: no notice or question comes after it.</summary>
+    void ReportsChanged(int32_t)
+    {
+        MCTelemetry::Chosen();
     }
 
     /// <summary>The page's rows, under their headings.</summary>
@@ -146,6 +153,12 @@ namespace
             .Description = "MECHS BRAKE TO A HALT INSTEAD OF STOPPING DEAD. CHANGES PLAY.",
             .Key = "MechBraking",
             .Choices = OffOn},
+        Row{.Label = "PRIVACY"},
+        Row{.Label = "REPORTS",
+            .Description = "ANONYMOUS REPORTS OF YOUR COMPUTER, HOW SMOOTHLY THE GAME RUNS, AND CRASHES.",
+            .Key = "Reports",
+            .Choices = OffOn,
+            .Changed = ReportsChanged},
     };
 
     /// <summary>The panels.</summary>

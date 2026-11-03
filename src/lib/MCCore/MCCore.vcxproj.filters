@@ -606,6 +606,9 @@
     <ClCompile Include="logistics\MCRepairScreen.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
+    <ClCompile Include="logistics\MCReportsNotice.cpp">
+      <Filter>logistics</Filter>
+    </ClCompile>
     <ClCompile Include="logistics\MCReusableDialog.cpp">
       <Filter>logistics</Filter>
     </ClCompile>
@@ -718,6 +721,9 @@
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCSystemConfig.cpp">
+      <Filter>main</Filter>
+    </ClCompile>
+    <ClCompile Include="main\MCTelemetry.cpp">
       <Filter>main</Filter>
     </ClCompile>
     <ClCompile Include="main\MCUpdater.cpp">
@@ -1852,6 +1858,9 @@
     <ClInclude Include="logistics\MCRepairScreen.h">
       <Filter>logistics</Filter>
     </ClInclude>
+    <ClInclude Include="logistics\MCReportsNotice.h">
+      <Filter>logistics</Filter>
+    </ClInclude>
     <ClInclude Include="logistics\MCReusableDialog.h">
       <Filter>logistics</Filter>
     </ClInclude>
@@ -1955,6 +1964,9 @@
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCSystemConfig.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="main\MCTelemetry.h">
       <Filter>main</Filter>
     </ClInclude>
     <ClInclude Include="main\MCUpdater.h">

@@ -9,6 +9,7 @@
 #include "linkup/MCFidpPlayer.h"
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
+#include "main/MCTelemetry.h"
 #include "object/MCArtilleryChunk.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
@@ -50,6 +51,14 @@ namespace
         chunk.Data = 0;
         return chunk;
     }
+}
+
+std::span<uint8_t> MCMultiPlayer::Outgoing(size_t size)
+{
+    uint16_t header = 0;
+    std::memcpy(&header, MsgBuffer.data(), sizeof(header));
+    MCTelemetry::MessageOut(header & FIMSG_TYPE_MASK, size);
+    return std::span(MsgBuffer).first(size);
 }
 
 int32_t MCMultiPlayer::SendChat(uint32_t toID, std::string_view text)

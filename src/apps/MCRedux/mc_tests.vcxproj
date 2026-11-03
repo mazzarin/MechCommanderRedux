@@ -135,6 +135,7 @@
     <ClCompile Include="tests\SoundTests.cpp" />
     <ClCompile Include="tests\SpriteTests.cpp" />
     <ClCompile Include="tests\StateHashTests.cpp" />
+    <ClCompile Include="tests\TelemetryTests.cpp" />
     <ClCompile Include="tests\TerrainGridTests.cpp" />
     <ClCompile Include="tests\TerrainTests.cpp" />
     <ClCompile Include="tests\TestGame.cpp" />

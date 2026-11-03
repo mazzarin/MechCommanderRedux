@@ -20,6 +20,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGameSession.h"
 #include "main/MCSystemConfig.h"
+#include "main/MCTelemetry.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
@@ -421,6 +422,8 @@ auto MCGuiSystem::Run() -> void
     {
         PerfStartTime = MCPort::PerformanceCounter();
         MCFrameLog::NextFrame();
+        // Port (personal): the reports' frame times, and their server's replies (main/MCTelemetry.h).
+        MCTelemetry::Frame();
 
         // The PeekMessage / TranslateMessage / DispatchMessage loop, which stopped at WM_QUIT.
         if (MCFrameLog::Scope pump("pump"); !MCInput::PumpMessages())

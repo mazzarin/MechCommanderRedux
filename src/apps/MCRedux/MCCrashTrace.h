@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 
 /// <summary>
@@ -18,4 +19,10 @@ namespace MCCrashTrace
 
     /// <summary>Sets a function the handler calls after the stack, to print game state to stderr.</summary>
     void SetReporter(std::function<void()> reporter);
+
+    /// <summary>
+    /// Port (personal): a crash's stack also goes to <paramref name="path"/> (none when empty) as the reports' record
+    /// (MCTelemetryWin.cpp): the exception's line, then a frame a line as its module's name and offset, with no paths.
+    /// </summary>
+    void SetRecordPath(const std::filesystem::path& path);
 }

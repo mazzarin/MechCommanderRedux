@@ -5,10 +5,10 @@ class MCGuiObject;
 class MCLogOptionList;
 
 // Port-only: the preferences screen's HD OPTIONS page, where the player sets every HD setting (main/MCHdSettings.h):
-// the packs, the lighting, the effects and the mechs' motion, a row each under headings, in a list that scrolls. The
-// OPTIONS button in the preferences panel's HD box shows it in that panel's place; DONE goes back. It edits the
-// settings themselves: the preferences' ACCEPT writes them to PREFS, CANCEL puts back what they were when the screen
-// opened.
+// the packs, the lighting, the effects, the mechs' motion and the reports (main/MCTelemetry.h), a row each under
+// headings, in a list that scrolls. The OPTIONS button in the preferences panel's HD box shows it in that panel's
+// place; DONE goes back. It edits the settings themselves: the preferences' ACCEPT writes them to PREFS, CANCEL puts
+// back what they were when the screen opened.
 
 /// <summary>
 /// Adds the HD OPTIONS page (hidden) to <paramref name="screen"/>, and the OPTIONS button that shows it to

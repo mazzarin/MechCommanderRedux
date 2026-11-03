@@ -2,6 +2,7 @@
 #include "MCConsole.h"
 #include "MCCrashTrace.h"
 #include "MCGameFolder.h"
+#include "MCTelemetryBackend.h"
 #include "MCVersion.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
@@ -294,12 +295,17 @@ int main(int argc, char** argv)
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
-    // Personal build: the HD options are on unless PREFS.CFG turns them off, and the Mac app updates itself.
+    // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
+    // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h).
     UseHdByDefault();
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
 #endif
+    MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
     const int result = RunGame(options->GameCommandLine);
+    // A clean quit: the reports' black box marks the run as ended.
+    MCTelemetry::Quit();
+    MCTelemetry::SetBackend(nullptr);
     SDL_Quit();
     return result;
 }

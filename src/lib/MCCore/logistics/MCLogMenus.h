@@ -28,6 +28,10 @@ void ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback = 
 void AskMenuQuestion(MCReusableDialog& dialog, uint32_t stringId, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
 
+/// <summary>As the other overload, with <paramref name="text"/> (port: a question the game's strings don't hold).</summary>
+void AskMenuQuestion(MCReusableDialog& dialog, std::string_view text, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons);
+
 /// <summary>The text typed in text element <paramref name="index"/> of <paramref name="screen"/> (up to its first NUL).</summary>
 std::string ElementText(MCGenericScreen& screen, int32_t index);
 

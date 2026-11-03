@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "sprite/MCHdMovie.h"
+#include "main/MCTelemetry.h"
 
 #include <condition_variable>
 #include <dav1d/dav1d.h>
@@ -479,8 +480,9 @@ auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t h
     if (!decoded)
     {
         // The movie is shown no more: its decoding stops after the frame it is on, rather than decoding frames ahead
-        // that nothing takes while the original plays.
+        // that nothing takes while the original plays. Port (personal): the reports count it (main/MCTelemetry.h).
         impl.Worker.request_stop();
+        MCTelemetry::MovieFellBehind();
     }
 
     if (!decoded || !decoded->has_value())

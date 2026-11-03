@@ -52,6 +52,7 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "main/MCGameContext.h"
+#include "main/MCTelemetry.h"
 #include "main/MCUpdater.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
@@ -244,6 +245,9 @@ auto MCLogistics::Start() -> void
     }
 
     MCUpdater::CheckAtStart();
+    // Port (personal): the reports start once a run (main/MCTelemetry.h); the main menu shows their notice or
+    // question when due (MCMission::Run).
+    MCTelemetry::Start();
 
     if (InDemo == 0)
     {

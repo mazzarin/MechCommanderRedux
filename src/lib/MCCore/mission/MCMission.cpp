@@ -11,6 +11,7 @@
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
 #include "main/MCGamePaths.h"
+#include "main/MCTelemetry.h"
 #include "logistics/MCConnectMenu.h"
 #include "gui/MCGuiSmackerWindow.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -24,6 +25,7 @@
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPurchaseDlg.h"
+#include "logistics/MCReportsNotice.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
@@ -511,6 +513,9 @@ auto MCMission::Run() -> int32_t
                 Logistics->ShowLogScreen(true, false);
             }
 
+            // Port (personal): the reports' notice or question, once due and the main menu is free.
+            ShowReportsNotice();
+
             EscapedSmackerMovie = 0;
             MovieOver = 0;
             GuiSystem().SetCursorVisible(true);
@@ -804,6 +809,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 {
     // A copy: the name may live in the logistics phase this frees.
     std::string scenarioName(name);
+    // Port (personal): the reports measure the load, then the play (main/MCTelemetry.h).
+    MCTelemetry::PlayLoading(scenarioName, MultiPlayer() != nullptr);
 
     SoundSystem()->PlayBettySample(0x13);
     EndScenarioRequested = 0;
@@ -867,6 +874,8 @@ auto MCMission::StartScenario(std::string_view name) -> void
 
     _InterfaceUpdateCallback->SetExec(UpdateMouseStateCallback);
     GuiSystem().AddCallback(_InterfaceUpdateCallback);
+    const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+    MCTelemetry::PlayStarted(game != nullptr ? game->NumPlayers() : 1, game != nullptr && game->IsServer);
 }
 
 auto MCMission::RequestScenario(std::string_view scenarioName) -> void
@@ -876,6 +885,7 @@ auto MCMission::RequestScenario(std::string_view scenarioName) -> void
 
 auto MCMission::StopScenarioCallbacks() -> void
 {
+    MCTelemetry::PlayEnded();
     RemoveCallback(_InterfaceUpdateCallback);
     TacticalInterface()->HideTags();
     RemoveCallback(ScenarioCallback);
@@ -901,6 +911,8 @@ auto MCMission::StartLogistics() -> MCLogistics&
 
 auto MCMission::EndScenario() -> void
 {
+    // The play's end, if the results screen didn't mark it (twice is harmless).
+    MCTelemetry::PlayEnded();
     TotalScenarioTime = ScenarioTime;
 
     if (GlobalGameSegment == 0 && MultiPlayer() == nullptr)

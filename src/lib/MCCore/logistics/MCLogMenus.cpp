@@ -29,7 +29,14 @@ auto ShowMenuMessage(uint32_t stringId, std::function<void(int32_t)> callback, s
 auto AskMenuQuestion(MCReusableDialog& dialog, uint32_t stringId, std::function<void()> okExec,
                      std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
 {
-    dialog.SetText(LoadGameString(stringId, 0xfe));
+    AskMenuQuestion(dialog, LoadGameString(stringId, 0xfe), std::move(okExec), std::move(cancelExec), cancelDownArt,
+                    enableButtons);
+}
+
+auto AskMenuQuestion(MCReusableDialog& dialog, std::string_view text, std::function<void()> okExec,
+                     std::function<void()> cancelExec, std::string_view cancelDownArt, bool enableButtons) -> void
+{
+    dialog.SetText(text);
     dialog.SetTwoButton(true);
     dialog.Callback = nullptr;
     dialog.OkButton->SetUpPicture("bh_okay.tga");

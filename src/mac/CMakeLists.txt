@@ -54,11 +54,16 @@ if(NOT MC_HAS_JTHREAD)
   set(MC_EXPERIMENTAL_LIBRARY -fexperimental-library)
 endif()
 
+# Personal build: the reports' server (main/MCTelemetry.h), an https address the Info.plist names; empty, the app
+# sends no reports.
+set(MC_REPORTS_URL "" CACHE STRING "The reports' server (https), or empty for none")
+
 # MCVersion.h and the app's Info.plist, from nbgv on every build as on Windows (version.cmake).
 add_custom_target(mc_version
   COMMAND ${CMAKE_COMMAND} -DREPO_DIR=${MC_SRC}/.. -DOUTPUT=${MC_GENERATED_DIR}/MCVersion.h
           -DPLIST_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in -DPLIST=${MC_GENERATED_DIR}/Info.plist
-          -DMIN_MACOS=${CMAKE_OSX_DEPLOYMENT_TARGET} -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
+          -DMIN_MACOS=${CMAKE_OSX_DEPLOYMENT_TARGET} -DMC_REPORTS_URL=${MC_REPORTS_URL}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
   BYPRODUCTS ${MC_GENERATED_DIR}/MCVersion.h ${MC_GENERATED_DIR}/Info.plist
   COMMENT "Getting the version from nbgv"
   VERBATIM)
@@ -165,7 +170,7 @@ target_link_options(MCCore PUBLIC ${MC_EXPERIMENTAL_LIBRARY})
 # The files Visual Studio builds without the precompiled header, because Windows.h (or here CoreGraphics) and MCCore's
 # Win32 stand-ins can't meet.
 set(MC_APP_NO_PCH ${MC_SRC}/apps/MCRedux/MCConsole.cpp ${MC_SRC}/apps/MCRedux/MCCrashTrace.cpp
-                  ${MC_SRC}/apps/MCRedux/MCGameFolder.cpp)
+                  ${MC_SRC}/apps/MCRedux/MCGameFolder.cpp ${MC_SRC}/apps/MCRedux/MCTelemetryWin.cpp)
 set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # The game, as "MechCommander Redux.app": upstream's icon at the Mac's sizes (src/res/MCRedux.icns), and the
@@ -180,13 +185,17 @@ set(MC_SPARKLE ${MC_SRC}/lib/Sparkle-2.10.1)
 set(MC_SPARKLE_UPDATER ${MC_SRC}/apps/MCRedux/MCSparkleUpdater.mm)
 set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEADERS ON
                             COMPILE_OPTIONS "-fobjc-arc;-F${MC_SPARKLE}")
-add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_ICON})
+# Personal build: the reports' backend on the Mac (MCTelemetryMac.mm: IOKit for the machine and its power).
+set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm)
+set_source_files_properties(${MC_TELEMETRY_BACKEND} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
+add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_TELEMETRY_BACKEND} ${MC_ICON})
 # The Info.plist is a link dependency, so a changed one (a new version, an edited template) relinks, which copies it.
 set_target_properties(MCRedux PROPERTIES OUTPUT_NAME "MechCommander Redux" LINK_DEPENDS ${MC_GENERATED_DIR}/Info.plist)
 target_include_directories(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(MCRedux PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
 target_link_options(MCRedux PRIVATE -F${MC_SPARKLE} "-Wl,-rpath,@executable_path/../Frameworks")
-target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework Sparkle")
+target_link_libraries(MCRedux PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit"
+                      "-framework Sparkle")
 add_custom_command(TARGET MCRedux POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MC_GENERATED_DIR}/Info.plist
           $<TARGET_BUNDLE_CONTENT_DIR:MCRedux>/Info.plist

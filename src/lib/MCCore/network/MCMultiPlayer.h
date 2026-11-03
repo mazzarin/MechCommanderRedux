@@ -300,8 +300,11 @@ public:
     /// <summary>The first <paramref name="size"/> bytes of the message buffer.</summary>
     std::span<const uint8_t> Built(size_t size) const { return std::span(MsgBuffer).first(size); }
 
-    /// <summary>The first <paramref name="size"/> bytes of the message buffer, for a send (which may set its flags).</summary>
-    std::span<uint8_t> Outgoing(size_t size) { return std::span(MsgBuffer).first(size); }
+    /// <summary>
+    /// The first <paramref name="size"/> bytes of the message buffer, for a send (which may set its flags). Port
+    /// (personal): the send's type and size go in the reports' black box.
+    /// </summary>
+    std::span<uint8_t> Outgoing(size_t size);
 
     std::unique_ptr<MCSessionManager> SessionManager;
     /// <summary>Where messages are built.</summary>

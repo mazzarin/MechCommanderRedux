@@ -135,6 +135,15 @@ namespace
     constexpr float SameMuzzle = 2.0f;
     /// <summary>A light's pool is as soft as one this much of its reach high, at least (composite.pshader's LightSoftness).</summary>
     constexpr float LightSoftness = 0.3f;
+    /// <summary>
+    /// Port-only (HD weather): MCAirLights' tiles' side, in window pixels (at most AirMostTiles of them each way, the
+    /// last taking the rest); a light is sorted into the tiles its reach
+    /// times AirReachSlack, and AirPixelSlack pixels more, covers, so rounding never leaves out one that reaches.
+    /// </summary>
+    constexpr float AirTile = 64.0f;
+    constexpr float AirMostTiles = 256.0f;
+    constexpr float AirReachSlack = 1.01f;
+    constexpr float AirPixelSlack = 1.0f;
     /// <summary>The most shadows a frame draws (the strongest).</summary>
     constexpr size_t MaxShadows = 96;
     /// <summary>Of a unit's sprite, the share of its width its body is: its shadow's width at its feet.</summary>
@@ -543,6 +552,32 @@ namespace
         }
 
         return reaching;
+    }
+
+    /// <summary>Adds to <paramref name="sum"/> what <paramref name="light"/> adds to LightInAir's.</summary>
+    void AddInAir(std::array<float, 3>& sum, const MCSceneLight& light, float x, float y, float height, float aspect)
+    {
+        const auto [underX, underY] = NearestUnder(light, x, y, aspect);
+        const float dx = x - underX;
+        const float dy = y / aspect - underY;
+        const float up = height - light.Height;
+        const float d2 = dx * dx + dy * dy + up * up;
+        const float reach2 = std::max(light.Reach * light.Reach, 1.0f);
+
+        if (d2 >= reach2)
+        {
+            return;
+        }
+
+        // Faded out at its reach as its pool is; a light shining every way as soft as its pool's softest.
+        const float near2 = d2 / reach2;
+        const float fade = 1.0f - near2 * near2;
+        const float soft = light.Reach * LightSoftness;
+        const float share = IsSpot(light) ? SpotPool(light, dx, dy, aspect, height) : soft * soft / (d2 + soft * soft);
+        const float lit = fade * fade * share;
+        sum[0] += light.Red * lit;
+        sum[1] += light.Green * lit;
+        sum[2] += light.Blue * lit;
     }
 
     /// <summary>The frame's shadows, drawn into the world's light (MCRenderer::Shadow) when the draw list comes to them.</summary>
@@ -1327,28 +1362,117 @@ auto MCSceneLights::LightInAir(std::span<const MCSceneLight> lights, float x, fl
 
     for (const MCSceneLight& light : lights)
     {
-        const auto [underX, underY] = NearestUnder(light, x, y, aspect);
-        const float dx = x - underX;
-        const float dy = y / aspect - underY;
-        const float up = height - light.Height;
-        const float d2 = dx * dx + dy * dy + up * up;
-        const float reach2 = std::max(light.Reach * light.Reach, 1.0f);
-
-        if (d2 >= reach2)
-        {
-            continue;
-        }
-
-        // Faded out at its reach as its pool is; a light shining every way as soft as its pool's softest.
-        const float near2 = d2 / reach2;
-        const float fade = 1.0f - near2 * near2;
-        const float soft = light.Reach * LightSoftness;
-        const float share = IsSpot(light) ? SpotPool(light, dx, dy, aspect, height) : soft * soft / (d2 + soft * soft);
-        const float lit = fade * fade * share;
-        sum[0] += light.Red * lit;
-        sum[1] += light.Green * lit;
-        sum[2] += light.Blue * lit;
+        AddInAir(sum, light, x, y, height, aspect);
     }
 
     return sum;
+}
+
+MCSceneLights::MCAirLights::MCAirLights(std::vector<MCSceneLight> lights, float width, float height, float aspect)
+    : _Lights(std::move(lights)), _Aspect(aspect)
+{
+    if (_Lights.empty() || aspect <= 0.0f)
+    {
+        return;
+    }
+
+    const auto tilesAcross = [](float span)
+    {
+        return std::isfinite(span) ? static_cast<int32_t>(std::clamp(std::ceil(span / AirTile), 1.0f, AirMostTiles))
+                                   : 1;
+    };
+
+    _Columns = tilesAcross(width);
+    _Rows = tilesAcross(height);
+    // The tiles each light may reach: round the ground under it (its point, or a beam's), as far as AddInAir lets it
+    // reach across and that times the aspect down; a light whose reach isn't a number, every tile.
+    struct Tiles
+    {
+        int32_t Left = 0;
+        int32_t Top = 0;
+        int32_t Right = 0;
+        int32_t Bottom = 0;
+    };
+
+    std::vector<Tiles> covers(_Lights.size());
+    std::vector<uint32_t> counts(static_cast<size_t>(_Columns) * static_cast<size_t>(_Rows) + 1, 0);
+
+    for (size_t i = 0; i < _Lights.size(); ++i)
+    {
+        const MCSceneLight& light = _Lights[i];
+        const float reach = std::sqrt(std::max(light.Reach * light.Reach, 1.0f)) * AirReachSlack + AirPixelSlack;
+        const float left = std::min(light.X0, light.X1) - reach;
+        const float right = std::max(light.X0, light.X1) + reach;
+        const float top = std::min(light.Y0, light.Y1) - reach * aspect;
+        const float bottom = std::max(light.Y0, light.Y1) + reach * aspect;
+        Tiles& tiles = covers[i];
+
+        if (std::isfinite(left) && std::isfinite(right) && std::isfinite(top) && std::isfinite(bottom))
+        {
+            tiles = {TileOf(left, _Columns), TileOf(top, _Rows), TileOf(right, _Columns), TileOf(bottom, _Rows)};
+        }
+        else
+        {
+            tiles = {0, 0, _Columns - 1, _Rows - 1};
+        }
+
+        for (int32_t row = tiles.Top; row <= tiles.Bottom; ++row)
+        {
+            for (int32_t column = tiles.Left; column <= tiles.Right; ++column)
+            {
+                ++counts[static_cast<size_t>(row * _Columns + column) + 1];
+            }
+        }
+    }
+
+    for (size_t tile = 1; tile < counts.size(); ++tile)
+    {
+        counts[tile] += counts[tile - 1];
+    }
+
+    _Indices.resize(counts.back());
+    _Starts = counts;
+
+    // Each tile's lights in their order, so its sums add them as LightInAir does.
+    for (size_t i = 0; i < _Lights.size(); ++i)
+    {
+        const Tiles& tiles = covers[i];
+
+        for (int32_t row = tiles.Top; row <= tiles.Bottom; ++row)
+        {
+            for (int32_t column = tiles.Left; column <= tiles.Right; ++column)
+            {
+                _Indices[counts[static_cast<size_t>(row * _Columns + column)]++] = static_cast<uint32_t>(i);
+            }
+        }
+    }
+}
+
+auto MCSceneLights::MCAirLights::At(float x, float y, float height) const -> std::array<float, 3>
+{
+    if (_Lights.empty() || _Aspect <= 0.0f)
+    {
+        return {};
+    }
+
+    // A point that isn't a number reaches what LightInAir's every light makes of it.
+    if (!std::isfinite(x) || !std::isfinite(y))
+    {
+        return LightInAir(_Lights, x, y, height, _Aspect);
+    }
+
+    std::array<float, 3> sum{};
+    const auto tile = static_cast<size_t>(TileOf(y, _Rows) * _Columns + TileOf(x, _Columns));
+
+    for (uint32_t i = _Starts[tile]; i < _Starts[tile + 1]; ++i)
+    {
+        AddInAir(sum, _Lights[_Indices[i]], x, y, height, _Aspect);
+    }
+
+    return sum;
+}
+
+auto MCSceneLights::MCAirLights::TileOf(float at, int32_t count) -> int32_t
+{
+    return static_cast<int32_t>(std::clamp(std::floor(at / AirTile), 0.0f, static_cast<float>(count - 1)));
 }

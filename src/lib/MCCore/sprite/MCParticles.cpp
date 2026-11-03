@@ -21,6 +21,7 @@
 
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <random>
 #include <tuple>
 #include <unordered_map>
@@ -61,6 +62,8 @@ namespace
     constexpr int32_t GroundDepthFixup = 30;
     /// <summary>Particles whose drawn mark lies wholly this far outside the view are moved on but not drawn.</summary>
     constexpr float ViewMargin = 4.0f;
+    /// <summary>MCParticles::AddMarks gives each depth its own bucket when the marks span at most this many.</summary>
+    constexpr int64_t MaxBucketedDepths = 1 << 16;
     /// <summary>The share each way a particle's size, strength and shade may differ from its kind's.</summary>
     constexpr float Vary = 0.2f;
     /// <summary>How soft a mark's edge is (the share of its radius it fades over) where nothing else says.</summary>
@@ -1608,6 +1611,17 @@ namespace
         return command;
     }
 
+    /// <summary><paramref name="command"/> (in <paramref name="pane"/>'s pixels) in its window's.</summary>
+    MCParticleCommand Placed(const MCParticleCommand& command, const MCPane& pane)
+    {
+        MCParticleCommand placed = command;
+        placed.X0 += static_cast<float>(pane.X0);
+        placed.Y0 += static_cast<float>(pane.Y0);
+        placed.X1 += static_cast<float>(pane.X0);
+        placed.Y1 += static_cast<float>(pane.Y0);
+        return placed;
+    }
+
     /// <summary>A particle in the frame's draw list, drawn into the pane the list draws into (MCRenderer::Particle).</summary>
     class MCParticleElement final : public MCElement
     {
@@ -1624,16 +1638,44 @@ namespace
                 return;
             }
 
-            MCParticleCommand placed = _Command;
-            placed.X0 += static_cast<float>(pane.X0);
-            placed.Y0 += static_cast<float>(pane.Y0);
-            placed.X1 += static_cast<float>(pane.X0);
-            placed.Y1 += static_cast<float>(pane.Y0);
-            MCRenderer::For(*window).Particle(*window, placed);
+            MCRenderer::For(*window).Particle(*window, Placed(_Command, pane));
         }
 
     private:
         MCParticleCommand _Command;
+    };
+
+    /// <summary>
+    /// Marks at one depth of the frame's draw list (MCParticles::AddMarks), each drawn as MCParticleElement draws it,
+    /// in their order.
+    /// </summary>
+    class MCParticleRunElement final : public MCElement
+    {
+    public:
+        MCParticleRunElement(std::vector<MCParticleCommand> commands, int32_t depth)
+            : MCElement(depth), _Commands(std::move(commands))
+        {
+        }
+
+        void Draw() override
+        {
+            const MCPane& pane = *GlobalPane;
+            const std::shared_ptr<MCWindow> window = pane.Window.lock();
+
+            if (window == nullptr)
+            {
+                return;
+            }
+
+            std::vector<MCParticleCommand> placed;
+            placed.reserve(_Commands.size());
+            std::ranges::transform(_Commands, std::back_inserter(placed),
+                                   [&pane](const MCParticleCommand& command) { return Placed(command, pane); });
+            MCRenderer::For(*window).Particles(*window, placed);
+        }
+
+    private:
+        std::vector<MCParticleCommand> _Commands;
     };
 
     /// <summary>
@@ -1644,6 +1686,8 @@ namespace
     {
         const float right = camera.HalfWidth * 2.0f + ViewMargin;
         const float bottom = camera.HalfHeight * 2.0f + ViewMargin;
+        std::vector<MCParticleCommand> commands;
+        std::vector<int32_t> depths;
 
         for (const Particle& particle : state.Particles)
         {
@@ -1665,11 +1709,12 @@ namespace
             }
 
             const MCVector2D foot = Project(particle.X, particle.Y, particle.Ground, camera);
-            const int32_t depth =
-                (particle.Resting ? GroundDepthFixup : AirDepthFixup) - static_cast<int32_t>(std::floor(foot.Y));
-            ElementList().OpenGroup(depth, true);
-            ElementList().Add(ElementList().Make<MCParticleElement>(command, depth));
+            commands.push_back(command);
+            depths.push_back((particle.Resting ? GroundDepthFixup : AirDepthFixup) -
+                             static_cast<int32_t>(std::floor(foot.Y)));
         }
+
+        MCParticles::AddMarks(commands, depths);
     }
 
     /// <summary>Drops every particle, shake and pending burst, fire, unit and step, and restarts the dice.</summary>
@@ -1800,6 +1845,78 @@ auto MCParticles::AddMark(const MCParticleCommand& command, int32_t depth) -> vo
 {
     ElementList().OpenGroup(depth, true);
     ElementList().Add(ElementList().Make<MCParticleElement>(command, depth));
+}
+
+auto MCParticles::AddMarks(std::span<const MCParticleCommand> commands, std::span<const int32_t> depths) -> void
+{
+    SDL_assert(commands.size() == depths.size());
+    const size_t count = std::min(commands.size(), depths.size());
+
+    if (count == 0)
+    {
+        return;
+    }
+
+    const auto addRun = [](std::vector<MCParticleCommand> run, int32_t depth)
+    {
+        ElementList().OpenGroup(depth, true);
+        ElementList().Add(ElementList().Make<MCParticleRunElement>(std::move(run), depth));
+    };
+
+    // Each depth's marks in their order: a bucket a depth when they span few depths, else sorted (stably) by depth.
+    const auto [lowest, highest] = std::ranges::minmax(depths.first(count));
+    const int64_t spanned = int64_t{highest} - lowest + 1;
+
+    if (spanned <= MaxBucketedDepths)
+    {
+        std::vector<uint32_t> sizes(static_cast<size_t>(spanned), 0);
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            ++sizes[static_cast<size_t>(depths[i] - lowest)];
+        }
+
+        std::vector<std::vector<MCParticleCommand>> buckets(sizes.size());
+
+        for (size_t bucket = 0; bucket < buckets.size(); ++bucket)
+        {
+            buckets[bucket].reserve(sizes[bucket]);
+        }
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            buckets[static_cast<size_t>(depths[i] - lowest)].push_back(commands[i]);
+        }
+
+        for (size_t bucket = 0; bucket < buckets.size(); ++bucket)
+        {
+            if (!buckets[bucket].empty())
+            {
+                addRun(std::move(buckets[bucket]), lowest + static_cast<int32_t>(bucket));
+            }
+        }
+
+        return;
+    }
+
+    std::vector<uint32_t> order(count);
+    std::iota(order.begin(), order.end(), 0u);
+    std::ranges::stable_sort(order, {}, [depths](uint32_t i) { return depths[i]; });
+
+    for (size_t first = 0; first < count;)
+    {
+        const int32_t depth = depths[order[first]];
+        std::vector<MCParticleCommand> run;
+        size_t end = first;
+
+        for (; end < count && depths[order[end]] == depth; ++end)
+        {
+            run.push_back(commands[order[end]]);
+        }
+
+        addRun(std::move(run), depth);
+        first = end;
+    }
 }
 
 auto MCParticles::ViewPoint(float x, float y, float z, const MCCamera& camera) -> MCVector2D

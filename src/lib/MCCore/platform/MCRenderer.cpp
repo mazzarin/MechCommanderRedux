@@ -345,12 +345,16 @@ namespace
 
         void Particle(MCWindow&, const MCParticleCommand& command) override
         {
-            MCParticleCommand moved = command;
-            moved.X0 += static_cast<float>(_X);
-            moved.Y0 += static_cast<float>(_Y);
-            moved.X1 += static_cast<float>(_X);
-            moved.Y1 += static_cast<float>(_Y);
-            Target().Particle(Window(), moved);
+            Target().Particle(Window(), Move(command));
+        }
+
+        void Particles(MCWindow&, std::span<const MCParticleCommand> commands) override
+        {
+            std::vector<MCParticleCommand> moved;
+            moved.reserve(commands.size());
+            std::ranges::transform(commands, std::back_inserter(moved),
+                                   [this](const MCParticleCommand& command) { return Move(command); });
+            Target().Particles(Window(), moved);
         }
 
         void Glyph(MCWindow&, const MCGlyphCommand& command) override
@@ -386,6 +390,17 @@ namespace
             moved.Left += _X;
             moved.Top += _Y;
             moved.Clip = Move(blit.Clip);
+            return moved;
+        }
+
+        /// <summary><paramref name="particle"/> moved by the view's origin.</summary>
+        MCParticleCommand Move(const MCParticleCommand& particle) const
+        {
+            MCParticleCommand moved = particle;
+            moved.X0 += static_cast<float>(_X);
+            moved.Y0 += static_cast<float>(_Y);
+            moved.X1 += static_cast<float>(_X);
+            moved.Y1 += static_cast<float>(_Y);
             return moved;
         }
 
@@ -541,6 +556,14 @@ void MCRenderer::Shadow(MCWindow& /*target*/, const MCShadowCommand& /*command*/
 
 void MCRenderer::Particle(MCWindow& /*target*/, const MCParticleCommand& /*command*/)
 {
+}
+
+void MCRenderer::Particles(MCWindow& target, std::span<const MCParticleCommand> commands)
+{
+    for (const MCParticleCommand& command : commands)
+    {
+        Particle(target, command);
+    }
 }
 
 MCRenderer& MCRenderer::For(const MCWindow& window)

@@ -114,6 +114,14 @@ namespace MCParticles
     void AddMark(const MCParticleCommand& command, int32_t depth);
 
     /// <summary>
+    /// Adds marks to the draw list as AddMark adds each (<paramref name="commands"/>, each at its
+    /// <paramref name="depths"/>), but those at the same depth as one element: drawn the same and in the same order
+    /// (the list keeps the order of what lies at the same depth, and nothing else is added between them), for a
+    /// fraction of the cost (HD weather's flakes and drops, tens of thousands a frame).
+    /// </summary>
+    void AddMarks(std::span<const MCParticleCommand> commands, std::span<const int32_t> depths);
+
+    /// <summary>
     /// Moves the particles on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list
     /// (MCCamera::Render, once the objects have added theirs, before the list is sorted); makes what this frame's
     /// explosions, fires and units began.

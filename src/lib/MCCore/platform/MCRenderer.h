@@ -958,6 +958,12 @@ public:
     virtual void Particle(MCWindow& target, const MCParticleCommand& command);
 
     /// <summary>
+    /// Port-only: particles in their order, each as <see cref="Particle"/> draws it (HD weather's flakes and drops, a
+    /// depth of the draw list's at a time).
+    /// </summary>
+    virtual void Particles(MCWindow& target, std::span<const MCParticleCommand> commands);
+
+    /// <summary>
     /// Draws a frame's terrain tiles from the map's mesh. A hardware renderer always does (the terrain pass asks it
     /// whenever it draws the world, and a failure is an error, never a quiet return to tile commands); the software
     /// renderer draws none. Until <see cref="EndTerrainLayer"/>, the tiles of the pass (VFX_nTile_draw) still come as

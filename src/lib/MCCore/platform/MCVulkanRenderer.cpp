@@ -4490,7 +4490,27 @@ void MCVulkanRenderer::Shadow(MCWindow& target, const MCShadowCommand& command)
 void MCVulkanRenderer::Particle(MCWindow& target, const MCParticleCommand& command)
 {
     const AuditScope audit(*this, "Particle", target);
+    AddParticle(SurfaceFor(target), command);
+}
+
+void MCVulkanRenderer::Particles(MCWindow& target, std::span<const MCParticleCommand> commands)
+{
+    if (commands.empty())
+    {
+        return;
+    }
+
     const uint16_t surface = SurfaceFor(target);
+
+    for (const MCParticleCommand& command : commands)
+    {
+        const AuditScope audit(*this, "Particle", target);
+        AddParticle(surface, command);
+    }
+}
+
+void MCVulkanRenderer::AddParticle(uint16_t surface, const MCParticleCommand& command)
+{
     // Its box: its ends and its edge (a ring's outer one), and a pixel for the smooth edge.
     const float across = command.Radius + std::max(command.Ring, 0.0f) + 1.0f;
     const float down = across * command.Aspect + 1.0f;

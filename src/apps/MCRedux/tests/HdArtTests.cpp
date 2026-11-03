@@ -4916,6 +4916,103 @@ TEST_CASE("hd weather: a drop catches a light by it in the light's colour, a hea
 }
 
 /// <summary>
+/// HD weather's drops and flakes catching the light (port-only, MCSceneLights::MCAirLights): the frame's lights sorted
+/// once into the window's tiles light every point of the air exactly as all of them do (LightInAir), each sum to the
+/// bit: lights that shine every way, beams and headlights, from a reach under a pixel to most of the window, inside
+/// it and beyond its edges, at points inside it and beyond, near the ground and high over it.
+/// </summary>
+TEST_CASE("hd weather: the lights sorted into the window's tiles light the air exactly as all of them do")
+{
+    constexpr float Aspect = 0.6f;
+    constexpr float Width = 700.0f;
+    constexpr float Height = 420.0f;
+    // Lights every LightStep pixels each way, from Beyond outside the window to as far past it, their reach, kind and
+    // colour turning with their place; points every PointStep pixels, at each of the Heights.
+    constexpr float Beyond = 150.0f;
+    constexpr float LightStep = 90.0f;
+    constexpr float PointStep = 7.0f;
+    constexpr std::array Reaches{0.5f, 12.0f, 30.0f, 50.0f, 80.0f};
+    // And one past the window's corner, reaching most of it.
+    constexpr float FarReach = 600.0f;
+    constexpr std::array Heights{0.0f, 9.0f, 30.0f};
+    constexpr float BeamLength = 50.0f;
+    constexpr float SpotAhead = 45.0f;
+    constexpr float SpotCos = 0.92f;
+    constexpr float LampStep = 10.0f;
+    std::vector<MCSceneLight> lights;
+
+    for (float y = -Beyond; y <= Height + Beyond; y += LightStep)
+    {
+        for (float x = -Beyond; x <= Width + Beyond; x += LightStep)
+        {
+            const size_t n = lights.size();
+            MCSceneLight light{.X0 = x,
+                               .Y0 = y,
+                               .X1 = x,
+                               .Y1 = y,
+                               .Height = static_cast<float>(n % 3) * LampStep,
+                               .Reach = Reaches[n % Reaches.size()],
+                               .Red = 0.2f + 0.1f * static_cast<float>(n % 7),
+                               .Green = 0.5f,
+                               .Blue = 0.9f - 0.1f * static_cast<float>(n % 5)};
+
+            if (n % 4 == 1)
+            {
+                light.X1 = x + BeamLength;
+                light.Y1 = y + 0.5f * BeamLength;
+            }
+            else if (n % 4 == 2)
+            {
+                light.SpotX = SpotAhead;
+                light.SpotY = -0.5f * SpotAhead;
+                light.SpotCos = SpotCos;
+            }
+
+            lights.push_back(light);
+        }
+    }
+
+    lights.push_back({.X0 = -Beyond,
+                      .Y0 = -Beyond,
+                      .X1 = -Beyond,
+                      .Y1 = -Beyond,
+                      .Reach = FarReach,
+                      .Red = 0.3f,
+                      .Green = 0.3f,
+                      .Blue = 0.3f});
+    const MCSceneLights::MCAirLights binned(lights, Width, Height, Aspect);
+    int64_t points = 0;
+    int64_t lit = 0;
+    int64_t differ = 0;
+
+    for (const float height : Heights)
+    {
+        for (float y = -Beyond; y <= Height + Beyond; y += PointStep)
+        {
+            for (float x = -Beyond; x <= Width + Beyond; x += PointStep)
+            {
+                const std::array<float, 3> all = MCSceneLights::LightInAir(lights, x, y, height, Aspect);
+                ++points;
+                lit += all[0] > 0.0f ? 1 : 0;
+                differ += binned.At(x, y, height) != all ? 1 : 0;
+            }
+        }
+    }
+
+    std::cout << std::format("  {} lights, {} points: {} lit, {} differ\n", lights.size(), points, lit, differ);
+    CHECK(lit > 0);
+    CHECK(lit < points);
+    CHECK(differ == 0);
+    // None at all without lights or with the view on its edge, as LightInAir.
+    CHECK(MCSceneLights::MCAirLights().Empty());
+    const std::array<float, 3> flat =
+        MCSceneLights::MCAirLights(lights, Width, Height, 0.0f).At(0.5f * Width, 0.5f * Height, 0.0f);
+    CHECK(flat[0] == 0.0f);
+    CHECK(flat[1] == 0.0f);
+    CHECK(flat[2] == 0.0f);
+}
+
+/// <summary>
 /// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
 /// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
 /// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the

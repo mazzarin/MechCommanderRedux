@@ -134,8 +134,8 @@ private:
     MCGpuHandle<SDL_GPUShader> _FieldShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _FieldPipeline;
     /// <summary>
-    /// Port-only (HD weather): the composite without rain, built without the rain's wet look and veil
-    /// (shaders/composite_dry.pshader), for a quad where neither shows.
+    /// Port-only (HD weather): the composite without the weather, built without the rain's wet look, the weather's veil
+    /// and the snow's cover (shaders/composite_dry.pshader), for a quad where none shows.
     /// </summary>
     MCGpuHandle<SDL_GPUShader> _DryShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _DryPipeline;

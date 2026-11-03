@@ -67,6 +67,7 @@ public:
     void StatusBar(MCWindow& target, const MCStatusBarCommand& command) override;
     void Shadow(MCWindow& target, const MCShadowCommand& command) override;
     void Particle(MCWindow& target, const MCParticleCommand& command) override;
+    void Particles(MCWindow& target, std::span<const MCParticleCommand> commands) override;
     void Glyph(MCWindow& target, const MCGlyphCommand& command) override;
     /// <summary>
     /// Draws the frame's terrain tiles from the mesh in one draw (shaders/terrain.vshader), uploading the mesh and its
@@ -541,6 +542,8 @@ private:
     bool Add(uint16_t surface, SourceKind source, uint32_t sourceIndex, const Quad& rect,
              const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before, uint32_t after,
              bool join = false);
+    /// <summary>Adds particle <paramref name="command"/>'s draw to <paramref name="surface"/> (Particle).</summary>
+    void AddParticle(uint16_t surface, const MCParticleCommand& command);
     /// <summary>
     /// Port-only: the draw shader's build a draw with <paramref name="op"/> goes through: the basic one for the
     /// original's own kinds (a fill, hash, texture, Gouraud span or texel walk, without smooth edges), the HD one for an

@@ -16,6 +16,9 @@
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3. A replacement in the
 // shaders folder (composite.spv) must keep them.
+//
+// HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
+// have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
 Texture2D<float4> screenTex : register(t0, space2);
@@ -325,8 +328,13 @@ float3 LightAt(float2 texel, float2 slope)
                 const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
                 const float4 color = lights[i * 3 + 2];
                 const float2 spot = shape.zw * ground;
-                const float pool = color.w > 0.0 && any(spot != 0.0) ? SpotPool(off, shape.x, spot, color.w)
-                                                                     : soft * soft / (d2 + soft * soft);
+                float pool = soft * soft / (d2 + soft * soft);
+
+                if (color.w > 0.0 && any(spot != 0.0))
+                {
+                    pool = SpotPool(off, shape.x, spot, color.w);
+                }
+
                 sum += color.rgb * (fade * fade * pool * facing);
             }
         }
@@ -454,7 +462,7 @@ float4 Faded(float3 color)
 
 float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return tex.Sample(samp, (texel + 0.5) / size);
+    return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
 // The GPU world between its texels (from its four nearest, blended), clamped to the surface.
@@ -532,12 +540,12 @@ float3 BloomAt(float2 texel)
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return Byte(tex.Sample(samp, (texel + 0.5) / size));
+    return Byte(tex.SampleLevel(samp, (texel + 0.5) / size, 0));
 }
 
 uint IndexAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return Byte(tex.Sample(samp, (texel + 0.5) / size).r);
+    return Byte(tex.SampleLevel(samp, (texel + 0.5) / size, 0).r);
 }
 
 // The colour index shows, through the colour cycle.
@@ -551,15 +559,21 @@ float3 Shown(uint index)
         index = cycleSources[source >> 2][source & 3u];
     }
 
-    return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
+    return paletteTex.SampleLevel(paletteSampler, float2((index + 0.5) / 256.0, 0.5), 0).rgb;
 }
 
 // The world's colour at a world texel (clamped to the surface), through the palette for the software renderer's.
 float3 WorldAt(float2 texel)
 {
     const float2 at = clamp(texel, 0.0, worldSize.xy - 1.0);
-    const float4 world = worldTex.Sample(worldSampler, (at + 0.5) / worldSize.zw);
-    return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
+    const float4 world = worldTex.SampleLevel(worldSampler, (at + 0.5) / worldSize.zw, 0);
+
+    if (mode.y != 0.0)
+    {
+        return world.rgb;
+    }
+
+    return Shown(Byte(world.r));
 }
 
 // The relief's height at a world texel: its brightness, but a light's own pixels stand at centre's height (the texel the
@@ -686,8 +700,13 @@ static const float FoamMost = 0.8;
 uint WorldIndexAt(float2 texel)
 {
     const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
-    return mode.y != 0.0 ? IndexAt(opTex, opSampler, at, worldSize.zw)
-                         : Byte(TexelAt(worldTex, worldSampler, at, worldSize.zw).r);
+
+    if (mode.y != 0.0)
+    {
+        return IndexAt(opTex, opSampler, at, worldSize.zw);
+    }
+
+    return Byte(TexelAt(worldTex, worldSampler, at, worldSize.zw).r);
 }
 
 bool IsWater(uint index)
@@ -700,7 +719,7 @@ float3 WaterCycleColour(uint entry, uint step)
 {
     const uint source = (entry + step) & (WaterColors - 1u);
     const uint index = cycleSources[source >> 2][source & 3u];
-    return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
+    return paletteTex.SampleLevel(paletteSampler, float2((index + 0.5) / 256.0, 0.5), 0).rgb;
 }
 
 // A value between 0 and 1 for a lattice point, the same every frame.
@@ -1353,8 +1372,17 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float2 hazy = world + HazeAt(world + 0.5);
             float swayLight;
             const float2 swayed = SwayedAt(hazy, swayLight);
-            const float4 lit =
-                any(swayed != world) ? WorldBetween(swayed) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            float4 lit;
+
+            if (any(swayed != world))
+            {
+                lit = WorldBetween(swayed);
+            }
+            else
+            {
+                lit = TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            }
+
             float glint;
             const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
             const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));

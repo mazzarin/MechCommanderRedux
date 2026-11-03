@@ -270,6 +270,8 @@ namespace
     constexpr uint8_t WaterColors = 8;
     /// <summary>The tile drawn over a world point is its own map vertex's, or one this many rows or columns off.</summary>
     constexpr int32_t TileNear = 2;
+    /// <summary>A terrain tile's header, its hot spot and rows first (VfxTilePixel finds nothing in less).</summary>
+    constexpr size_t TileHeader = 4;
 
     // Fires: embers and smoke a second for each pixel of the side of a square of a flame's bright pixels.
     constexpr float FireEmbers = 0.25f;
@@ -684,6 +686,14 @@ namespace
         const auto py = static_cast<int32_t>(std::floor(at.Y));
         const size_t count = std::min(offsets.size(), pixels.size());
 
+        if (count == 0)
+        {
+            return;
+        }
+
+        // The rows of the pixels, to pass over the tiles none of them lies in (VfxTilePixel's first test) at once.
+        const auto [above, below] = std::ranges::minmax(offsets.first(count), {}, &std::pair<int32_t, int32_t>::second);
+
         for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2);
              ++r)
         {
@@ -697,13 +707,15 @@ namespace
                 const std::span<const uint8_t> overlay = overlays && vertex.OverlayData >= 0
                                                              ? terrain->Tiles->Lookup(vertex.OverlayData)
                                                              : std::span<const uint8_t>();
+                const bool inRows = tile.size() >= TileHeader && py + below.second - corner.Py + tile[1] >= 0 &&
+                                    py + above.second - corner.Py + tile[1] < tile[2];
 
                 for (size_t k = 0; k < count; ++k)
                 {
                     const int32_t pixelX = px + offsets[k].first - corner.Px;
                     const int32_t pixelY = py + offsets[k].second - corner.Py;
 
-                    if (tile.size() >= 2)
+                    if (inRows)
                     {
                         if (const std::optional<uint8_t> pixel = VfxTilePixel(tile, pixelX + tile[0], pixelY + tile[1]);
                             pixel.has_value())

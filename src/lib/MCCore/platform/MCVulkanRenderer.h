@@ -379,8 +379,7 @@ private:
         uint16_t FogIndex = 0;
         MCTerrainFrame Frame;
         uint32_t HazeRows[3] = {};
-        /// <summary>The mesh's cells drawn (the rows of the grid).</summary>
-        uint32_t FirstCell = 0;
+        /// <summary>The mesh's cells drawn (those of the grid).</summary>
         uint32_t CellCount = 0;
     };
 

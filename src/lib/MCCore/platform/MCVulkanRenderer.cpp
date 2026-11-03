@@ -4370,14 +4370,15 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
         }
     }
 
-    // The mesh's rows the grid covers.
+    // The mesh's cells the grid covers (terrain.vshader launches an instance each).
     const int32_t firstRow = std::max(frame.FirstRow, _TerrainMesh.FirstRow);
     const int32_t lastRow = std::min(frame.LastRow, _TerrainMesh.FirstRow + _TerrainMesh.Rows - 1);
+    const int32_t firstCol = std::max(frame.FirstCol, _TerrainMesh.FirstCol);
+    const int32_t lastCol = std::min(frame.LastCol, _TerrainMesh.FirstCol + _TerrainMesh.Cols - 1);
 
-    if (lastRow >= firstRow && !Empty(draw.Frame.Clip))
+    if (lastRow >= firstRow && lastCol >= firstCol && !Empty(draw.Frame.Clip))
     {
-        draw.FirstCell = static_cast<uint32_t>((firstRow - _TerrainMesh.FirstRow) * _TerrainMesh.Cols);
-        draw.CellCount = static_cast<uint32_t>((lastRow - firstRow + 1) * _TerrainMesh.Cols);
+        draw.CellCount = static_cast<uint32_t>((lastRow - firstRow + 1) * (lastCol - firstCol + 1));
         Record record;
         record.SurfaceIndex = surface;
         record.TerrainDraw = static_cast<int32_t>(_TerrainDraws.size());
@@ -4818,7 +4819,6 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     uniforms.Origin[0] = frame.OriginX;
     uniforms.Origin[1] = frame.OriginY;
     uniforms.Origin[2] = frame.ElevStep;
-    uniforms.Origin[3] = static_cast<int32_t>(draw.FirstCell);
     uniforms.Steps[0] = frame.StepX;
     uniforms.Steps[1] = frame.StepY;
     uniforms.Steps[2] = _TerrainMesh.FirstRow;

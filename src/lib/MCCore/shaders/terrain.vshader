@@ -6,8 +6,8 @@
 // A cell is the quad whose top-left corner is map vertex (row, col). Its tile is drawn at that vertex's screen point,
 // which moves by whole pixels from vertex to vertex: (col - row) * stepX across, (row + col) * stepY - elevation *
 // elevStep down, from the point of vertex (0, 0) this frame (origin). Only the terrain window's grid is drawn (the cells
-// TerrainWindow::render draws), not a cell whose four corners all lie outside the corner range (Vertex::clipped), and
-// each tile is cut to the pane (clip).
+// TerrainWindow::render draws; an instance each, row by row as the mesh holds them), not a cell whose four corners all
+// lie outside the corner range (Vertex::clipped), and each tile is cut to the pane (clip).
 //
 // Haze: the corners the home side sees (the fog of war's flags, a byte per map vertex, read as ByteFlag::getFlag reads
 // them) pick the tile's table: none with all four seen, the haze table for one to three, the fill (colour 0x10) for none
@@ -47,7 +47,7 @@ cbuffer Terrain : register(b0, space1)
 {
     // The target window's size in pixels (xy), and the size its surface is drawn at (zw).
     float4 targetSize;
-    // xy: the screen point of map vertex (0, 0) (pane pixels); z: the elevation step; w: the first cell drawn.
+    // xy: the screen point of map vertex (0, 0) (pane pixels); z: the elevation step; w unused.
     int4 origin;
     // x, y: the step across and down a vertex; z, w: the map vertex of the mesh's first cell (row, col).
     int4 steps;
@@ -149,9 +149,13 @@ Output Nothing()
 
 Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
-    const uint index = (uint)origin.w + instance;
-    const int row = steps.z + (int)(index / (uint)mesh.x);
-    const int col = steps.w + (int)(index % (uint)mesh.x);
+    // The grid's cells in the mesh, an instance each.
+    const int firstRow = max(grid.x, steps.z);
+    const int firstCol = max(grid.y, steps.w);
+    const uint columns = (uint)(min(grid.w, steps.w + mesh.x - 1) - firstCol + 1);
+    const int row = firstRow + (int)(instance / columns);
+    const int col = firstCol + (int)(instance % columns);
+    const uint index = (uint)(row - steps.z) * (uint)mesh.x + (uint)(col - steps.w);
     const uint4 cell = cells[index];
 
     if (cell.x == 0xffffffffu || row < grid.x || col < grid.y || row > grid.z || col > grid.w)

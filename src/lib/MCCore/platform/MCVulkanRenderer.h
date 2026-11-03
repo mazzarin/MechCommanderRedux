@@ -207,6 +207,22 @@ public:
     /// <summary>The terrain layers drawn from the mesh so far.</summary>
     int64_t TerrainLayersDrawn() const { return _TerrainLayersDrawn; }
 
+    /// <summary>
+    /// The times the ground's tiles went up to the GPU so far (a mesh of other tiles; one of the same tiles sends its
+    /// cells alone).
+    /// </summary>
+    int64_t TerrainTileUploads() const { return _TerrainTileUploads; }
+
+    /// <summary>
+    /// A frame's uploads are staged and sent through memory kept for the next frames up to this many bytes each (the
+    /// staging and the transfer buffer); a frame that sends more sends it through memory of its own, gone once the
+    /// frame has run, so the burst isn't held all session.
+    /// </summary>
+    static constexpr size_t KeptUploadBytes = 16 * 1024 * 1024;
+
+    /// <summary>The bytes kept for the next frames' uploads (the staging's and the transfer buffer's).</summary>
+    size_t UploadBytesKept() const { return _Staging.capacity() + _TransferSize; }
+
     /// <summary>The shapes drawn from the HD art pack so far (<see cref="MCHdArt"/>).</summary>
     int64_t HdDrawn() const { return _HdDrawn; }
     /// <summary>Whether the ground is drawn with the HD art pack's colours (it has an HD terrain atlas).</summary>
@@ -402,6 +418,8 @@ private:
         bool Relief = false;
         /// <summary>The HD art pack it was made with (HdPackInUse; 0: none), so a change of pack remakes it.</summary>
         uint64_t HdPack = 0;
+        /// <summary>Port-only: the mesh's tiles the atlases hold (a mesh of the same tiles keeps them).</summary>
+        std::vector<std::vector<uint8_t>> Tiles;
         std::shared_ptr<SDL_GPUBuffer> Cells;
         std::shared_ptr<SDL_GPUBuffer> Images;
         int32_t FirstRow = 0;
@@ -803,10 +821,12 @@ private:
     /// <summary>(Re)makes a surface's textures at its drawn size and clears them, as a window's new pixels start.</summary>
     std::expected<void, std::string> MakeSurfaceTextures(SDL_GPUCommandBuffer& commands, Surface& surface);
     /// <summary>
-    /// Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images), through a
-    /// <see cref="ChunkedUpload"/>.
+    /// Puts <paramref name="mesh"/> on the GPU (its tiles in the terrain atlas, its cells and images; its cells alone
+    /// when the tiles up are its own), through a <see cref="ChunkedUpload"/>.
     /// </summary>
     std::expected<void, std::string> UploadTerrainMesh(const MCTerrainMesh& mesh);
+    /// <summary>Puts <paramref name="mesh"/>'s cells in a new cell buffer, through <paramref name="upload"/>.</summary>
+    std::expected<void, std::string> UploadTerrainCells(ChunkedUpload& upload, const MCTerrainMesh& mesh);
     /// <summary>The HD art pack in use (MCHdArt::PackVersion), or 0 when HD art is off.</summary>
     static uint64_t HdPackInUse();
     /// <summary>
@@ -858,6 +878,7 @@ private:
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
+    int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>A 1x1 texture bound where a draw has no source or no world.</summary>
@@ -930,8 +951,8 @@ private:
 
     std::vector<Upload> _Uploads;
     /// <summary>
-    /// The uploads' bytes, and the transfer buffer they go up through, kept for the next frames up to KeptUploadBytes
-    /// (a bigger frame's go once it has run).
+    /// The uploads' bytes, and the transfer buffer they go up through, kept for the next frames up to
+    /// <see cref="KeptUploadBytes"/> (a bigger frame's go once it has run).
     /// </summary>
     std::vector<uint8_t> _Staging;
     std::shared_ptr<SDL_GPUTransferBuffer> _Transfer;

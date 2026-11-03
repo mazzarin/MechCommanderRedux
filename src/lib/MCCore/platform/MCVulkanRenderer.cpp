@@ -266,12 +266,6 @@ namespace
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
     constexpr size_t UploadAlignment = 512;
     /// <summary>
-    /// A frame's uploads (a few megabytes) are staged and sent through memory kept for the next frames, up to this
-    /// much; a frame that sends more (a burst of new pictures) sends it through memory of its own, gone once the frame
-    /// has run, so the burst isn't held all session.
-    /// </summary>
-    constexpr size_t KeptUploadBytes = 16 * 1024 * 1024;
-    /// <summary>
     /// Port-only: the ground's upload (hundreds of megabytes with HD art) is written into transfer buffers this big,
     /// this many in turn (MCVulkanRenderer::ChunkedUpload).
     /// </summary>
@@ -4707,13 +4701,46 @@ void MCVulkanRenderer::ReleaseTerrainMesh()
 
 std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTerrainMesh& mesh)
 {
+    if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
+        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
+    {
+        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
+                                           "blocked counts",
+                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
+                                           mesh.CellBlocked.size()));
+    }
+
+    const auto placeMesh = [&]
+    {
+        _TerrainMesh.Version = mesh.Version;
+        _TerrainMesh.FirstRow = mesh.FirstRow;
+        _TerrainMesh.FirstCol = mesh.FirstCol;
+        _TerrainMesh.Cols = mesh.Cols;
+        _TerrainMesh.Rows = mesh.Rows;
+    };
+
+    // Port-only: a mesh of the tiles already up, from the same pack and relief maps (the map's heights changed: its
+    // off-map ground is raised on the first turn, after the mission's load put the ground up), keeps them, its images
+    // too; only its cells go up.
+    if (_TerrainMesh.Usable && _TerrainMesh.HdPack == HdPackInUse() && _TerrainMesh.Relief == ReliefMapsInUse() &&
+        _TerrainMesh.Tiles == mesh.Tiles)
+    {
+        placeMesh();
+        ChunkedUpload upload(_Device);
+
+        if (auto sent = UploadTerrainCells(upload, mesh); !sent)
+        {
+            _TerrainMesh.Usable = false;
+            return sent;
+        }
+
+        return upload.Finish();
+    }
+
+    ++_TerrainTileUploads;
     ReleaseTerrainMesh();
-    _TerrainMesh.Version = mesh.Version;
+    placeMesh();
     _TerrainMesh.HdPack = HdPackInUse();
-    _TerrainMesh.FirstRow = mesh.FirstRow;
-    _TerrainMesh.FirstCol = mesh.FirstCol;
-    _TerrainMesh.Cols = mesh.Cols;
-    _TerrainMesh.Rows = mesh.Rows;
 
     // The tiles in shelves across the atlas.
     struct Place
@@ -4797,21 +4824,9 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
     const auto atlasHeight =
         static_cast<uint32_t>(std::bit_ceil(static_cast<uint32_t>(std::max(shelfY + shelfHeight, 1))));
-    SDL_GPUBufferCreateInfo cellsInfo{};
-    cellsInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-    cellsInfo.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
     SDL_GPUBufferCreateInfo imagesInfo{};
     imagesInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     imagesInfo.size = static_cast<uint32_t>(std::max<size_t>(places.size(), 1) * TerrainImageInts * sizeof(int32_t));
-
-    if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
-        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
-    {
-        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
-                                           "blocked counts",
-                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
-                                           mesh.CellBlocked.size()));
-    }
 
     if (atlasHeight > 16384)
     {
@@ -4826,14 +4841,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         return made;
     }
 
-    _TerrainMesh.Cells =
-        MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &cellsInfo), MCGpuRelease{_Device});
     _TerrainMesh.Images =
         MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &imagesInfo), MCGpuRelease{_Device});
 
-    if (_TerrainMesh.Cells == nullptr || _TerrainMesh.Images == nullptr)
+    if (_TerrainMesh.Images == nullptr)
     {
-        return std::unexpected(SdlError("SDL_CreateGPUBuffer(terrain)"));
+        return std::unexpected(SdlError("SDL_CreateGPUBuffer(the terrain's images)"));
     }
 
     // Port-only: the HD tiles in shelves of their own across up to two atlases (ShelveHdFrames), each place on whole
@@ -5037,26 +5050,18 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         image[12] = tile[3];
     }
 
-    std::vector<uint32_t> cells(mesh.CellTiles.size() * TerrainCellInts, 0);
+    const auto room = upload.Buffer(_TerrainMesh.Images, imagesInfo.size);
 
-    for (size_t i = 0; i < mesh.CellTiles.size(); ++i)
+    if (!room)
     {
-        cells[i * TerrainCellInts] = mesh.CellTiles[i];
-        cells[i * TerrainCellInts + 1] = mesh.CellElevations[i];
-        cells[i * TerrainCellInts + 2] = mesh.CellBlocked[i];
+        return std::unexpected(room.error());
     }
 
-    for (const auto& [buffer, bytes] : {std::pair{_TerrainMesh.Images, std::as_bytes(std::span(images))},
-                                        std::pair{_TerrainMesh.Cells, std::as_bytes(std::span(cells))}})
+    std::memcpy(room->data(), images.data(), imagesInfo.size);
+
+    if (auto sent = UploadTerrainCells(upload, mesh); !sent)
     {
-        const auto room = upload.Buffer(buffer, static_cast<uint32_t>(bytes.size()));
-
-        if (!room)
-        {
-            return std::unexpected(room.error());
-        }
-
-        std::memcpy(room->data(), bytes.data(), bytes.size());
+        return sent;
     }
 
     if (auto sent = upload.Finish(); !sent)
@@ -5064,7 +5069,40 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         return sent;
     }
 
+    _TerrainMesh.Tiles = mesh.Tiles;
     _TerrainMesh.Usable = true;
+    return {};
+}
+
+std::expected<void, std::string> MCVulkanRenderer::UploadTerrainCells(ChunkedUpload& upload, const MCTerrainMesh& mesh)
+{
+    SDL_GPUBufferCreateInfo info{};
+    info.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+    info.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
+    _TerrainMesh.Cells = MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &info), MCGpuRelease{_Device});
+
+    if (_TerrainMesh.Cells == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateGPUBuffer(the terrain's cells)"));
+    }
+
+    const auto room = upload.Buffer(_TerrainMesh.Cells, info.size);
+
+    if (!room)
+    {
+        return std::unexpected(room.error());
+    }
+
+    const std::span<uint32_t> cells = UploadAs<uint32_t>(*room);
+
+    for (size_t i = 0; i < mesh.CellTiles.size(); ++i)
+    {
+        cells[i * TerrainCellInts] = mesh.CellTiles[i];
+        cells[i * TerrainCellInts + 1] = mesh.CellElevations[i];
+        cells[i * TerrainCellInts + 2] = mesh.CellBlocked[i];
+        cells[i * TerrainCellInts + 3] = 0;
+    }
+
     return {};
 }
 

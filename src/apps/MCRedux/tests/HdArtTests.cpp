@@ -8744,6 +8744,53 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
 }
 
 /// <summary>
+/// Port-only: the ground goes up to the GPU while the mission loads (MCTerrainUploadGround), as the first frame would
+/// have put it up, so that frame and the next find it there; HD art's ground too, and its upload keeps no memory.
+/// </summary>
+TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, and its upload memory goes back")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // The load put it up; the frames since, the mission's first among them, built the same mesh and found it there.
+    CHECK_EQ(renderer->TerrainTileUploads(), 1);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_ground_upload";
+    std::filesystem::remove_all(scratch);
+    REQUIRE(WriteTerrainPack(scratch / "pack", *mesh, colors) > 0);
+
+    {
+        const MCHdArtOn hdArt(scratch / "pack");
+        MCTerrainReadHdTiles();
+
+        if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+        {
+            FAIL(uploaded.error());
+        }
+
+        CHECK(renderer->HdTerrain());
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        CHECK(renderer->UploadBytesKept() <= 2 * MCVulkanRenderer::KeptUploadBytes);
+    }
+
+    std::filesystem::remove_all(scratch);
+}
+
+/// <summary>
 /// Port-only (HD weather's puddles, kept off cliffs): the ground mesh carries how many of each cell's movement cells
 /// can't be entered, as the map has them (none off the map), and the map has ground none of which can be.
 /// </summary>

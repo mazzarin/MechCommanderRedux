@@ -271,6 +271,8 @@ namespace
     constexpr uint8_t WaterColors = 8;
     /// <summary>The tile drawn over a world point is its own map vertex's, or one this many rows or columns off.</summary>
     constexpr int32_t TileNear = 2;
+    /// <summary>A terrain tile's header, its hot spot and rows first (VfxTilePixel finds nothing in less).</summary>
+    constexpr size_t TileHeader = 4;
 
     // Fires: embers and smoke a second for each pixel of the side of a square of a flame's bright pixels.
     constexpr float FireEmbers = 0.25f;
@@ -652,22 +654,24 @@ namespace
     }
 
     /// <summary>
-    /// The palette entry drawn at world point (x, y, z) in <paramref name="camera"/>'s view: the pixel there of the
-    /// last tile its terrain window drew over it (each block's at its top-left corner, row by row, as
-    /// MCTerrainBlock::Draw); with <paramref name="overlays"/>, that of the last overlay drawn over the tiles there
-    /// (MCTerrainBlock:: DrawOverlay, after them all) where one covers it; the pixel <paramref name="right"/> and
-    /// <paramref name="down"/> of where the point is drawn. None outside the window's tiles.
+    /// What is drawn round world point (x, y, z) in <paramref name="camera"/>'s view: <paramref name="pixels"/>[k],
+    /// the pixel <paramref name="offsets"/>[k] right and down of where the point is drawn. Its ground: the pixel there
+    /// of the last tile its terrain window drew over it (each block's at its top-left corner, row by row, as
+    /// MCTerrainBlock::Draw). Its surface, with <paramref name="overlays"/>: that of the last overlay drawn over the
+    /// tiles there (MCTerrainBlock:: DrawOverlay, after them all) where one covers it, else its ground. None outside
+    /// the window's tiles. The tiles round the point are looked up once for all the pixels.
     /// </summary>
-    std::optional<uint8_t> DrawnAt(float x, float y, float z, const MCCamera& camera, bool overlays, int32_t right = 0,
-                                   int32_t down = 0)
+    void FindDrawn(float x, float y, float z, const MCCamera& camera, bool overlays,
+                   std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCParticles::MCDrawnPixel> pixels)
     {
+        std::ranges::fill(pixels, MCParticles::MCDrawnPixel{});
         const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
         const std::shared_ptr<MCTerrain> terrain = Terrain();
 
         if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
             terrain->Tiles == nullptr)
         {
-            return std::nullopt;
+            return;
         }
 
         // The window's grid from its first vertex's map vertex, and the map vertex the world point lies by.
@@ -679,10 +683,17 @@ namespace
         int32_t col = 0;
         MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), row, col);
         const MCVector2D at = Project(x, y, z, camera);
-        const auto px = static_cast<int32_t>(std::floor(at.X)) + right;
-        const auto py = static_cast<int32_t>(std::floor(at.Y)) + down;
-        std::optional<uint8_t> drawn;
-        std::optional<uint8_t> over;
+        const auto px = static_cast<int32_t>(std::floor(at.X));
+        const auto py = static_cast<int32_t>(std::floor(at.Y));
+        const size_t count = std::min(offsets.size(), pixels.size());
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        // The rows of the pixels, to pass over the tiles none of them lies in (VfxTilePixel's first test) at once.
+        const auto [above, below] = std::ranges::minmax(offsets.first(count), {}, &std::pair<int32_t, int32_t>::second);
 
         for (int32_t r = std::max(row - TileNear - firstRow, 0); r <= std::min(row + TileNear - firstRow, side - 2);
              ++r)
@@ -694,30 +705,43 @@ namespace
                 const MCPrecompVertex& vertex = terrain->MapBlocks->Vertex(corner.MapVertex);
                 const std::span<const uint8_t> tile =
                     vertex.TextureData < 0 ? std::span<const uint8_t>() : terrain->Tiles->Lookup(vertex.TextureData);
+                const std::span<const uint8_t> overlay = overlays && vertex.OverlayData >= 0
+                                                             ? terrain->Tiles->Lookup(vertex.OverlayData)
+                                                             : std::span<const uint8_t>();
+                const bool inRows = tile.size() >= TileHeader && py + below.second - corner.Py + tile[1] >= 0 &&
+                                    py + above.second - corner.Py + tile[1] < tile[2];
 
-                if (tile.size() >= 2)
+                for (size_t k = 0; k < count; ++k)
                 {
-                    if (const std::optional<uint8_t> pixel =
-                            VfxTilePixel(tile, px - corner.Px + tile[0], py - corner.Py + tile[1]);
-                        pixel.has_value())
+                    const int32_t pixelX = px + offsets[k].first - corner.Px;
+                    const int32_t pixelY = py + offsets[k].second - corner.Py;
+
+                    if (inRows)
                     {
-                        drawn = pixel;
+                        if (const std::optional<uint8_t> pixel = VfxTilePixel(tile, pixelX + tile[0], pixelY + tile[1]);
+                            pixel.has_value())
+                        {
+                            pixels[k].Ground = pixel;
+                        }
                     }
-                }
 
-                if (overlays && vertex.OverlayData >= 0)
-                {
-                    if (const std::optional<uint8_t> pixel = FastShapePixel(terrain->Tiles->Lookup(vertex.OverlayData),
-                                                                            0, px - corner.Px, py - corner.Py);
-                        pixel.has_value())
+                    // The overlays' pixels are kept as the surfaces for now, and the ground's where none is found.
+                    if (overlays && vertex.OverlayData >= 0)
                     {
-                        over = pixel;
+                        if (const std::optional<uint8_t> pixel = FastShapePixel(overlay, 0, pixelX, pixelY);
+                            pixel.has_value())
+                        {
+                            pixels[k].Surface = pixel;
+                        }
                     }
                 }
             }
         }
 
-        return over.has_value() ? over : drawn;
+        for (MCParticles::MCDrawnPixel& pixel : pixels.first(count))
+        {
+            pixel.Surface = pixel.Surface.has_value() ? pixel.Surface : pixel.Ground;
+        }
     }
 
     /// <summary>
@@ -1790,13 +1814,17 @@ auto MCParticles::GroundAt(float x, float y) -> float
 
 auto MCParticles::GroundDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
 {
-    return DrawnAt(x, y, z, camera, false);
+    constexpr std::array<std::pair<int32_t, int32_t>, 1> here{};
+    std::array<MCDrawnPixel, 1> pixel;
+    FindDrawn(x, y, z, camera, false, here, pixel);
+    return pixel[0].Ground;
 }
 
-auto MCParticles::SurfaceDrawnAt(float x, float y, float z, const MCCamera& camera, int32_t right, int32_t down)
-    -> std::optional<uint8_t>
+auto MCParticles::DrawnRound(float x, float y, float z, const MCCamera& camera,
+                             std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCDrawnPixel> pixels)
+    -> void
 {
-    return DrawnAt(x, y, z, camera, true, right, down);
+    FindDrawn(x, y, z, camera, true, offsets, pixels);
 }
 
 auto MCParticles::BridgedAt(float x, float y) -> bool

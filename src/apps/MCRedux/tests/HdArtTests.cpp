@@ -8763,7 +8763,7 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
     }
 
     // The load put it up; the frames since, the mission's first among them, found the mesh they'd build there.
-    CHECK_EQ(renderer->TerrainUploads(), 1);
+    CHECK_EQ(renderer->TerrainUploads(), uint64_t{1});
     CHECK_EQ(renderer->TerrainTileUploads(), 1);
     const MCTerrainMesh* mesh = MCTerrainMeshInUse();
     REQUIRE(mesh != nullptr);
@@ -8785,13 +8785,13 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
         CHECK(renderer->HdTerrain());
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
         MCTestGame::RunFrame(FrameSeconds);
-        CHECK_EQ(renderer->TerrainUploads(), 2);
+        CHECK_EQ(renderer->TerrainUploads(), uint64_t{2});
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
         CHECK(renderer->UploadBytesKept() <= 2 * MCVulkanRenderer::KeptUploadBytes);
 
         MCTerrainForgetMesh();
         MCTestGame::RunFrame(FrameSeconds);
-        CHECK_EQ(renderer->TerrainUploads(), 3);
+        CHECK_EQ(renderer->TerrainUploads(), uint64_t{3});
         CHECK_EQ(renderer->TerrainTileUploads(), 2);
         CHECK(renderer->HdTerrain());
     }

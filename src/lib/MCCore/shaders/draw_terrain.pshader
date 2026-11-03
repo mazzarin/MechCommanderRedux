@@ -1,0 +1,6 @@
+// Port-only: the Vulkan renderer's terrain layer (terrain.vshader's draws) alone: the original's own kinds of draws, a
+// tile's HD colours and the seam pass. It is draw.pshader with the sprites' kinds left out, so the ground's pixels don't
+// pay for the registers those take.
+
+#define DRAW_VARIANT DRAW_TERRAIN_KINDS
+#include "draw.pshader"

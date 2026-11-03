@@ -1,0 +1,5 @@
+// Port-only: the Vulkan renderer's draws of HD art frames alone (MCVulkanRenderer's HdDraw: KindHd and KindHdSmooth).
+// It is draw.pshader with the other kinds left out, so these pixels don't pay for the registers those take.
+
+#define DRAW_VARIANT DRAW_HD_KINDS
+#include "draw.pshader"

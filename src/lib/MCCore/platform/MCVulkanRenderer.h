@@ -5,6 +5,7 @@
 #include "platform/MCSharpText.h"
 #include "platform/MCSoftwareRenderer.h"
 
+#include <bitset>
 #include <unordered_set>
 
 namespace MCHdArt
@@ -211,7 +212,7 @@ public:
     /// The ground meshes put on the GPU so far, and the times their tiles went up with them (a mesh of the tiles
     /// already up sends its cells alone).
     /// </summary>
-    int64_t TerrainUploads() const { return _TerrainUploads; }
+    uint64_t TerrainUploads() const { return _TerrainUploads; }
     int64_t TerrainTileUploads() const { return _TerrainTileUploads; }
 
     /// <summary>
@@ -355,6 +356,20 @@ private:
         Strip
     };
 
+    /// <summary>
+    /// Port-only: the draw shader's build a draw goes through (VariantOf): the one for every kind, or the one for the
+    /// original's own kinds alone (shaders/draw_basic.pshader) or for HD art frames alone (draw_hd.pshader).
+    /// </summary>
+    enum class DrawVariant : uint8_t
+    {
+        Every,
+        Basic,
+        Hd
+    };
+
+    /// <summary>The draw variants.</summary>
+    static constexpr size_t DrawVariants = 3;
+
     /// <summary>One recorded command: a run of draws with the same target and bindings, or a surface resize.</summary>
     struct Record
     {
@@ -373,6 +388,8 @@ private:
         /// with IndexOnly, an HD frame's mark pass: HdMarks::Standing).
         /// </summary>
         bool Marks = false;
+        /// <summary>Port-only: the draw shader's build the draws go through.</summary>
+        DrawVariant Variant = DrawVariant::Every;
         /// <summary>Whether the draws read the target's copy, and the part of the target they read.</summary>
         bool ReadsCopy = false;
         MCRect Reads{0, 0, -1, -1};
@@ -390,9 +407,22 @@ private:
         uint16_t FogIndex = 0;
         MCTerrainFrame Frame;
         uint32_t HazeRows[3] = {};
-        /// <summary>The mesh's cells drawn (the rows of the grid).</summary>
-        uint32_t FirstCell = 0;
+        /// <summary>The mesh's cells drawn (those of the grid).</summary>
         uint32_t CellCount = 0;
+    };
+
+    /// <summary>
+    /// Port-only (the kept ground, KeepGround): a terrain tile as a cell draws it (terrain.vshader's Image): its box's
+    /// size, its hot spot and the width its header gives; and the palette indices its pixels hold.
+    /// </summary>
+    struct TerrainTileShape
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        int32_t HotX = 0;
+        int32_t HotY = 0;
+        int32_t HeaderWidth = 0;
+        std::bitset<256> Colors;
     };
 
     /// <summary>The terrain mesh on the GPU: its tiles' atlas, its cells and images (shaders/terrain.vshader).</summary>
@@ -427,6 +457,76 @@ private:
         int32_t FirstCol = 0;
         int32_t Cols = 0;
         int32_t Rows = 0;
+        /// <summary>
+        /// Port-only (KeepGround): the cells' tiles and corner elevations as uploaded, and the tiles as they are drawn,
+        /// so the kept ground can tell which cells' draws changed.
+        /// </summary>
+        std::vector<uint32_t> CellTiles;
+        std::vector<uint32_t> CellElevations;
+        std::vector<TerrainTileShape> Shapes;
+        /// <summary>Port-only: which upload this is (TerrainUploads), so the kept ground knows the mesh it was drawn from.</summary>
+        uint64_t Upload = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the ground (the terrain layer drawn over nothing) kept from frame to frame for the surface the
+    /// terrain draws on first, so a frame redraws only the ground that changed: what the view scrolled onto, and the
+    /// cells whose draw changed (fog of war, the water's colour cycle, a tile now dropped or drawn at the view's edges).
+    /// It is in one of two pairs of textures the surface's size (colours, indices); when the view moved, the next
+    /// frame's is made in the other from this one, shifted. A frame then lays it over the surface where the terrain
+    /// layer would be drawn (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but
+    /// the void past the map's ring of off-map cells, where its seams' blends over the surface may round apart). Only
+    /// with HD ground, whose two passes are most of a frame's drawing.
+    /// </summary>
+    struct KeptGround
+    {
+        std::array<Texture, 2> Colors;
+        std::array<Texture, 2> Indices;
+        /// <summary>The glints the terrain's draws write while it is drawn (its pipelines' third target), never read.</summary>
+        Texture Glints;
+        /// <summary>The pair holding the ground, and whether one does.</summary>
+        size_t Current = 0;
+        bool Held = false;
+        /// <summary>The surface (its index and window) and the terrain mesh's upload it was drawn for.</summary>
+        int32_t SurfaceIndex = -1;
+        MCAddressKey SurfaceKey;
+        uint64_t Upload = 0;
+        /// <summary>The terrain layer drawn (the camera's place, the grid), the fog's flags (1: the home side sees the
+        /// vertex; FogColumns a row) and the colour cycle's step.</summary>
+        MCTerrainFrame Frame;
+        std::vector<uint8_t> Seen;
+        int32_t FogColumns = 0;
+        int32_t CycleStep = 0;
+        /// <summary>
+        /// The camera's place the frame before (the origin of the last terrain layer drawn, kept or not): a view moving
+        /// so its pixels can't be kept moved draws its terrain directly until it holds still.
+        /// </summary>
+        std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
+        /// <summary>
+        /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
+        /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
+        /// </summary>
+        std::vector<uint8_t> Looks;
+    };
+
+    /// <summary>Port-only: what shaders/ground.pshader draws of the kept ground (its modes).</summary>
+    enum class KeptGroundMode : int32_t
+    {
+        Copy,
+        Clear,
+        Over,
+        Indices
+    };
+
+    /// <summary>Port-only (KeepGround): how a frame brings the kept ground up to date.</summary>
+    struct GroundPlan
+    {
+        /// <summary>Whether it is drawn again whole (else from the kept one, shifted).</summary>
+        bool Whole = true;
+        /// <summary>How far the kept pixels moved (drawn pixels).</summary>
+        std::array<int32_t, 2> Shift{};
+        /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
+        std::vector<MCRect> Redrawn;
     };
 
     /// <summary>The surface for <paramref name="window"/> (made on first use); records a resize when its size changed.</summary>
@@ -441,6 +541,24 @@ private:
     bool Add(uint16_t surface, SourceKind source, uint32_t sourceIndex, const Quad& rect,
              const std::optional<Quad>& sourceAt, uint32_t op, uint32_t color, uint32_t before, uint32_t after,
              bool join = false);
+    /// <summary>
+    /// Port-only: the draw shader's build a draw with <paramref name="op"/> goes through: the basic one for the
+    /// original's own kinds (a fill, hash, texture, Gouraud span or texel walk, without smooth edges), the HD one for an
+    /// HD art frame (KindHd, KindHdSmooth), else the one for every kind.
+    /// </summary>
+    static DrawVariant VariantOf(uint32_t op);
+    /// <summary>
+    /// Port-only: whether <paramref name="record"/>'s first draw writes every texel of <paramref name="surface"/> (an
+    /// opaque fill of all of its window), so a pass starting with it needn't load what the surface held.
+    /// </summary>
+    bool FillsSurface(const Record& record, const Surface& surface) const;
+    /// <summary>The part of <paramref name="rect"/> (window pixels) on <paramref name="surface"/>, as Add draws it.</summary>
+    static MCRect Clipped(const Surface& surface, const Quad& rect);
+    /// <summary>
+    /// Notes a blended draw left out (it would draw nothing) over <paramref name="rect"/>, as Add notes one drawn:
+    /// mirror mode leaves its pixels out of its comparison all the same.
+    /// </summary>
+    void NoteBlended(uint16_t surface, const Quad& rect);
     /// <summary>What a draw reads from a window: its surface, the target's copy, or a picture of its pixels.</summary>
     struct SourceRef
     {
@@ -788,6 +906,11 @@ private:
         uint64_t PictureId = 0;
         /// <summary>Mirror mode: the bytes it was made from, to catch a change nobody announced.</summary>
         std::vector<uint8_t> Bytes;
+        /// <summary>
+        /// Port-only: the colours of the pixels it draws, as decoded into the atlas: a translucent shape with none a
+        /// translucent draw shows opaque has no index pass (Shape).
+        /// </summary>
+        std::bitset<256> Colors;
     };
 
     /// <summary>
@@ -848,6 +971,29 @@ private:
     /// <summary>Execution: draws a terrain layer in the render pass under way.</summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
                      const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
+    /// <summary>
+    /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> on
+    /// <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
+    /// <paramref name="frameUniforms"/> are the terrain's (the step left out).
+    /// </summary>
+    std::vector<uint8_t> GroundLooks(const Surface& surface, const TerrainDraw& draw,
+                                     std::span<const std::byte> frameUniforms) const;
+    /// <summary>
+    /// Port-only (KeepGround): how to bring the kept ground up to date for <paramref name="draw"/> on surface
+    /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
+    /// (<paramref name="fogColumns"/> a row) and colour cycle step <paramref name="cycleStep"/>: drawn whole, or shifted
+    /// and the parts that changed drawn again.
+    /// </summary>
+    GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
+                          std::span<const uint8_t> seen, int32_t fogColumns, int32_t cycleStep) const;
+    /// <summary>
+    /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
+    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
+    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size.
+    /// </summary>
+    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
+                        const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from = std::nullopt,
+                        std::array<int32_t, 2> shift = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -857,29 +1003,61 @@ private:
     MCGpuHandle<SDL_GPUShader> _VertexShader;
     MCGpuHandle<SDL_GPUShader> _FragmentShader;
     /// <summary>
-    /// Opaque draws (colours and indices written), blended ones (alpha blended into the colours), and those that write
-    /// the indices alone.
+    /// Port-only: the fragment shaders of the draws of the original's own kinds alone and of HD art frames alone
+    /// (DrawVariant), and of the terrain layer's.
     /// </summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _Opaque;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _Blend;
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexOnly;
+    MCGpuHandle<SDL_GPUShader> _BasicFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _HdFragmentShader;
+    MCGpuHandle<SDL_GPUShader> _TerrainFragmentShader;
+
+    /// <summary>The draws' pipelines with one fragment shader.</summary>
+    struct DrawPipelines
+    {
+        /// <summary>
+        /// Opaque draws (colours and indices written), blended ones (alpha blended into the colours), and those that
+        /// write the indices alone.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Opaque;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> Blend;
+        MCGpuHandle<SDL_GPUGraphicsPipeline> IndexOnly;
+        /// <summary>
+        /// Port-only (HDSway): a forest's draw, blended, writing the sway mark (the indices' alpha) alone.
+        /// </summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> BlendMarks;
+        /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
+        MCGpuHandle<SDL_GPUGraphicsPipeline> IndexMarks;
+        /// <summary>Whether every pipeline was made.</summary>
+        bool Made() const;
+        /// <summary>The pipeline <paramref name="record"/>'s draws go through (not a shadow's).</summary>
+        SDL_GPUGraphicsPipeline* For(const Record& record) const;
+    };
+
+    /// <summary>The draws' pipelines, a set for each draw variant (DrawVariant's order).</summary>
+    std::array<DrawPipelines, DrawVariants> _Pipelines;
     /// <summary>Port-only: shadows (HD lighting), which take the colours' alpha down by theirs and leave the rest.</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _ShadowPipeline;
-    /// <summary>Port-only (HDSway): a forest's HD frame, blended, writing the sway mark (the indices' alpha) alone.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _BlendMarks;
-    /// <summary>Port-only: an HD frame's mark pass (HdMarks::Standing), writing the indices' alpha alone.</summary>
-    MCGpuHandle<SDL_GPUGraphicsPipeline> _IndexMarks;
-    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the draw fragment shader).</summary>
+    /// <summary>The terrain layer's vertex shader and pipeline (opaque, with the terrain's fragment shader).</summary>
     MCGpuHandle<SDL_GPUShader> _TerrainShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainPipeline;
     /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
+    /// <summary>Port-only: the terrain meshes uploaded (TerrainMeshState::Upload).</summary>
+    uint64_t _TerrainUploads = 0;
+    /// <summary>
+    /// Port-only: the kept ground, and the shaders and pipelines that draw it (shaders/ground.pshader): opaque (Copy,
+    /// Clear), blended (Over) and the indices alone (Indices).
+    /// </summary>
+    KeptGround _KeptGround;
+    MCGpuHandle<SDL_GPUShader> _QuadShader;
+    MCGpuHandle<SDL_GPUShader> _GroundShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundPipeline;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundOverPipeline;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundIndexPipeline;
     std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;
     int64_t _TerrainLayersDrawn = 0;
-    int64_t _TerrainUploads = 0;
     int64_t _TerrainTileUploads = 0;
 
     MCGpuHandle<SDL_GPUSampler> _Nearest;
@@ -1028,9 +1206,9 @@ private:
     };
 
     /// <summary>
-    /// Drops the pictures of <paramref name="pictures"/> unused for a while, then, oldest first, those past
-    /// <paramref name="budget"/> bytes not drawn in the last frame; at most TrimmedBytesPerFrame a frame (the rest go
-    /// in the next). <paramref name="bytes"/> counts what they take.
+    /// Drops the pictures of <paramref name="pictures"/> unused for a while (looked for every PictureSweepFrames
+    /// frames), then, oldest first, those past <paramref name="budget"/> bytes not drawn in the last frame; at most
+    /// TrimmedBytesPerFrame a frame (the rest go later). <paramref name="bytes"/> counts what they take.
     /// </summary>
     void TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                       size_t bytesPerPixel);

@@ -54,13 +54,18 @@ namespace
         static MCNeverDestroyed<MCAtomicPtr<std::shared_ptr<MCGameContext>>> current;
         return *current;
     }
+
+    /// <summary>
+    /// The installed context's object, or null for the root one: what Current reads, many thousands of times a frame,
+    /// where loading the shared pointer takes a lock (libc++ has no atomic shared_ptr) and its count.
+    /// </summary>
+    constinit std::atomic<MCGameContext*> CurrentObject{nullptr};
 }
 
 MCGameContext& MCGameContext::Current()
 {
-    // The installed context is kept by the scope that installed it for as long as it is current, so the reference
-    // outlives the copy loaded here.
-    const std::shared_ptr<MCGameContext> context = CurrentContext().load(std::memory_order_acquire);
+    // The installed context is kept by the scope that installed it for as long as it is current.
+    MCGameContext* const context = CurrentObject.load(std::memory_order_acquire);
     return context != nullptr ? *context : *RootContext();
 }
 
@@ -72,7 +77,9 @@ std::shared_ptr<MCGameContext> MCGameContext::CurrentShared()
 
 void MCGameContext::SetCurrent(std::shared_ptr<MCGameContext> context)
 {
+    MCGameContext* const object = context.get();
     CurrentContext().store(std::move(context), std::memory_order_release);
+    CurrentObject.store(object, std::memory_order_release);
 }
 
 template <auto Slot> MCOptionalRef<const MCGameContext> MCGameContext::Holder() const

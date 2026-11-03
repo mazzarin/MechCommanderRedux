@@ -1,0 +1,6 @@
+// Port-only: the Vulkan renderer's draws of the original's own kinds alone (MCVulkanRenderer's BasicDraw): fills,
+// hashes, textures, Gouraud spans and texel walks, without smooth edges or HD colours. It is draw.pshader with the
+// port's other kinds left out, so these pixels don't pay for the registers those take.
+
+#define DRAW_VARIANT DRAW_BASIC_KINDS
+#include "draw.pshader"

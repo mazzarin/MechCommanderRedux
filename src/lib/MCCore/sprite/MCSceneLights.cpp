@@ -155,9 +155,19 @@ namespace
     constexpr float HeatRisePerSide = 2.5f;
     /// <summary>The ground's map (MCSceneGround) is measured over this many meters each way.</summary>
     constexpr float GroundSpan = 100.0f;
+    /// <summary>The most glows kept measured (State::Glows) before they are measured afresh.</summary>
+    constexpr size_t MaxGlowMeasures = 4096;
 
     struct State
     {
+        /// <summary>
+        /// The glows measured while a world is drawn (MeasureGlow), by the hash of the frame's bytes and the pixels that
+        /// shine, while the colour tables hash to GlowTables (ColorTablesHash, taken as each world's drawing begins): a
+        /// frame's light depends on nothing else, and the frames that glow (bullets', lasers', fires') are measured again
+        /// every frame.
+        /// </summary>
+        size_t GlowTables = 0;
+        std::unordered_map<size_t, std::optional<MCSceneLights::MCGlowMeasure>> Glows;
         MCSceneLights::MCLighting Lighting;
         /// <summary>The time of day of the mission being played.</summary>
         MCTimeOfDay MissionTime = MCTimeOfDay::Day;
@@ -264,8 +274,8 @@ namespace
         return ShiningPixel{light, weight};
     }
 
-    std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
-                                    MCSceneLights::MCGlowPixels shining)
+    std::optional<Glow> MeasurePixels(std::span<const uint8_t> shapeTable, int32_t frame,
+                                      MCSceneLights::MCGlowPixels shining)
     {
         if (!VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
         {
@@ -318,6 +328,83 @@ namespace
 
         glow.Pixels = pixels;
         return glow;
+    }
+
+    /// <summary>A hash of <paramref name="bytes"/> (the standard library's, as for a string).</summary>
+    size_t BytesHash(std::span<const std::byte> bytes)
+    {
+        return std::hash<std::string_view>{}(
+            std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
+
+    /// <summary>Hash <paramref name="hash"/> with <paramref name="value"/> mixed in (Boost's hash_combine).</summary>
+    size_t Combined(size_t hash, size_t value)
+    {
+        constexpr size_t GoldenRatio = 0x9e3779b97f4a7c15ull;
+        return hash ^ (value + GoldenRatio + (hash << 6) + (hash >> 2));
+    }
+
+    /// <summary>The hash of the colour tables a frame's light is measured with (LightOf's).</summary>
+    size_t ColorTablesHash()
+    {
+        size_t hash = BytesHash(std::as_bytes(std::span(GamePalette().RgbData)));
+        hash = Combined(hash, BytesHash(std::as_bytes(std::span(SpecialColor))));
+        return Combined(hash, BytesHash(std::as_bytes(std::span(MCAlphaColors))));
+    }
+
+    /// <summary>
+    /// The bytes of shape <paramref name="frame"/> of a valid shape table <paramref name="shapeTable"/>: from its header
+    /// to the next shape's in the table (its end, for the last).
+    /// </summary>
+    std::span<const uint8_t> FrameBytes(std::span<const uint8_t> shapeTable, int32_t frame)
+    {
+        // The directory's entries: 8 bytes a shape from byte 8, the shape's offset first.
+        constexpr size_t DirectoryAt = 8;
+        constexpr size_t EntryBytes = 8;
+        const auto offsetOf = [shapeTable](int32_t shape)
+        { return static_cast<size_t>(MCVfxRead32(shapeTable, DirectoryAt + static_cast<size_t>(shape) * EntryBytes)); };
+        const size_t start = offsetOf(frame);
+        size_t end = shapeTable.size();
+
+        for (int32_t shape = 0; shape < VfxShapeCount(shapeTable); ++shape)
+        {
+            if (const size_t offset = offsetOf(shape); offset > start)
+            {
+                end = std::min(end, offset);
+            }
+        }
+
+        return shapeTable.subspan(start, end - start);
+    }
+
+    /// <summary>
+    /// MeasurePixels's measure, kept while a world is drawn (State::Glows); outside one the colour tables may have
+    /// changed since they were hashed, so it is measured afresh.
+    /// </summary>
+    std::optional<Glow> MeasureGlow(std::span<const uint8_t> shapeTable, int32_t frame,
+                                    MCSceneLights::MCGlowPixels shining)
+    {
+        State& state = TheState();
+
+        if (state.Drawing.expired() || !VfxIsShapeTable(shapeTable) || frame < 0 || frame >= VfxShapeCount(shapeTable))
+        {
+            return MeasurePixels(shapeTable, frame, shining);
+        }
+
+        const size_t key =
+            Combined(BytesHash(std::as_bytes(FrameBytes(shapeTable, frame))), static_cast<size_t>(shining));
+
+        if (const auto kept = state.Glows.find(key); kept != state.Glows.end())
+        {
+            return kept->second;
+        }
+
+        if (state.Glows.size() >= MaxGlowMeasures)
+        {
+            state.Glows.clear();
+        }
+
+        return state.Glows.emplace(key, MeasurePixels(shapeTable, frame, shining)).first->second;
     }
 
     /// <summary>A colour <see cref="LightSaturation"/> times further from the grey of its mean.</summary>
@@ -631,6 +718,14 @@ auto MCSceneLights::Begin(const MCPane& pane) -> void
 {
     State& state = TheState();
     state.Drawing = pane.Window;
+
+    // The glows measured stay while the colour tables they were measured with do.
+    if (const size_t tables = ColorTablesHash(); tables != state.GlowTables)
+    {
+        state.GlowTables = tables;
+        state.Glows.clear();
+    }
+
     state.Adding.clear();
     state.Flashes.clear();
     state.Casters.clear();

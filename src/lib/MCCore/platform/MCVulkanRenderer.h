@@ -548,10 +548,10 @@ private:
     /// </summary>
     static DrawVariant VariantOf(uint32_t op);
     /// <summary>
-    /// Port-only: whether <paramref name="record"/>'s first draw writes every texel of <paramref name="surface"/> (an
-    /// opaque fill of all of its window), so a pass starting with it needn't load what the surface held.
+    /// Port-only: the colour <paramref name="record"/>'s first draw wipes every texel of <paramref name="surface"/>
+    /// with (an opaque fill of all of its window), if it does, so a pass starting with it can start cleared to that.
     /// </summary>
-    bool FillsSurface(const Record& record, const Surface& surface) const;
+    std::optional<uint8_t> WipeColor(const Record& record, const Surface& surface) const;
     /// <summary>The part of <paramref name="rect"/> (window pixels) on <paramref name="surface"/>, as Add draws it.</summary>
     static MCRect Clipped(const Surface& surface, const Quad& rect);
     /// <summary>

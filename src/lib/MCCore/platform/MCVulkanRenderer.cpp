@@ -1338,19 +1338,25 @@ auto MCVulkanRenderer::VariantOf(uint32_t op) -> DrawVariant
     return kind == KindHd || kind == KindHdSmooth ? DrawVariant::Hd : DrawVariant::Every;
 }
 
-bool MCVulkanRenderer::FillsSurface(const Record& record, const Surface& surface) const
+std::optional<uint8_t> MCVulkanRenderer::WipeColor(const Record& record, const Surface& surface) const
 {
     if (record.Resize || record.TerrainDraw >= 0 || record.Count == 0 || record.Source != SourceKind::None ||
         record.Blend || record.IndexOnly || record.Shadow || record.Marks)
     {
-        return false;
+        return std::nullopt;
     }
 
     // An opaque fill (no flags: no key, table or blend) over every window pixel the surface's drawn size shows.
     const std::array<int32_t, 20>& draw = _Draws[record.First];
-    return static_cast<uint32_t>(draw[8]) == KindFill && draw[0] <= 0 && draw[1] <= 0 &&
-           draw[2] >= static_cast<int32_t>(surface.MappedWidth) - 1 &&
-           draw[3] >= static_cast<int32_t>(surface.MappedHeight) - 1;
+
+    if (static_cast<uint32_t>(draw[8]) != KindFill || draw[0] > 0 || draw[1] > 0 ||
+        draw[2] < static_cast<int32_t>(surface.MappedWidth) - 1 ||
+        draw[3] < static_cast<int32_t>(surface.MappedHeight) - 1)
+    {
+        return std::nullopt;
+    }
+
+    return static_cast<uint8_t>(draw[9] & 255);
 }
 
 bool MCVulkanRenderer::DrawPipelines::Made() const
@@ -6322,8 +6328,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         return frame;
     };
 
-    // Draws `count` draws from `record`'s first on, which share its bindings, in render pass `into` on `surface`.
-    const auto drawBatch = [&](SDL_GPURenderPass* into, Surface& surface, const Record& record, uint32_t count)
+    // Draws `count` draws from draw `first` on, which share `record`'s bindings, in render pass `into` on `surface`.
+    const auto drawBatch =
+        [&](SDL_GPURenderPass* into, Surface& surface, const Record& record, uint32_t first, uint32_t count)
     {
         SDL_GPUTexture* source = _Blank.Handle.get();
 
@@ -6402,7 +6409,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
-                                  {record.First, 0, 0, 0}};
+                                  {first, 0, 0, 0}};
         SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
 
         if (const FrameUniforms frame = recordFrame(surface, record);
@@ -6615,6 +6622,9 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             }
         }
 
+        // The draws at the record's start a pass's clear stood for (its wipe), which aren't drawn.
+        uint32_t wiped = 0;
+
         if (passSurface != record.SurfaceIndex)
         {
             endPass();
@@ -6623,10 +6633,12 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             targets[1].texture = surface.Index.Handle.get();
             targets[2].texture = surface.Glints.Handle.get();
 
-            // Port-only: a surface's first pass of the frame starting with a fill of all of it (the world view's
-            // wipe) needn't load what the surface held, every texel of which the fill writes.
+            // Port-only: a surface's first pass of the frame starting with a fill of all of it (the screen's wipe to
+            // its key, shown over the world) needn't load what the surface held, every texel of which the fill
+            // writes: it starts cleared to what the fill writes instead, and the fill isn't drawn (a clear costs a
+            // tile-based GPU nothing; the fill ran the draw shader for each pixel).
             const bool firstPass = !begun[record.SurfaceIndex];
-            const bool overwritten = firstPass && FillsSurface(record, surface);
+            const std::optional<uint8_t> wipe = firstPass ? WipeColor(record, surface) : std::nullopt;
             begun[record.SurfaceIndex] = true;
             passFrame = framePass(surface);
 
@@ -6644,8 +6656,22 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             for (SDL_GPUColorTargetInfo& target : targets)
             {
-                target.load_op = overwritten ? SDL_GPU_LOADOP_DONT_CARE : SDL_GPU_LOADOP_LOAD;
+                target.load_op = wipe.has_value() ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
                 target.store_op = SDL_GPU_STOREOP_STORE;
+            }
+
+            if (wipe.has_value())
+            {
+                // What draw.pshader's Opaque writes for the fill's colour: none for the key on a surface shown over
+                // another.
+                const SDL_Color shown = _Colors[_Cycle.Remap(*wipe)];
+                constexpr float Unit = 255.0f;
+                targets[0].clear_color = passFrame.Cycle[2] != 0 && *wipe == UINT8_MAX
+                                             ? SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f}
+                                             : SDL_FColor{shown.r / Unit, shown.g / Unit, shown.b / Unit, 1.0f};
+                targets[1].clear_color = SDL_FColor{*wipe / Unit, 0.0f, 0.0f, 0.0f};
+                targets[2].clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+                wiped = 1;
             }
 
             pass = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
@@ -6697,7 +6723,10 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             ++last;
         }
 
-        drawBatch(pass, surface, record, count);
+        if (count > wiped)
+        {
+            drawBatch(pass, surface, record, record.First + wiped, count - wiped);
+        }
 
         for (size_t i = k; i <= last; ++i)
         {

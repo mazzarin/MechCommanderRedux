@@ -88,6 +88,8 @@ public:
     /// off the top are dropped.
     /// </summary>
     std::vector<HistoryLine> Lines;
+    /// <summary>Port: the lines added since the window was made (the session screen's MATCH OPTIONS tab watches it).</summary>
+    size_t LinesAdded = 0;
 
 private:
     /// <summary>Makes the history pane above the frame, its content <paramref name="history"/>, scrolled to the end.</summary>

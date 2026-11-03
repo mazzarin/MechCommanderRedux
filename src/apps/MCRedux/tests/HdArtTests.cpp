@@ -113,6 +113,7 @@
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogMech.h"
@@ -10365,8 +10366,10 @@ namespace
 /// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; the
 /// pictures of the port's text buttons (MCLogTextButton: the preferences' CONTROLS and the CONTROLS panel's), named as
 /// the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the state's letter h up, g pressed, n
-/// grayed); and the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own are named
-/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>).
+/// grayed); the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own are named
+/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>); and the session screen's MATCH OPTIONS tabs
+/// (logistics/MCMatchOptionsTab.h: <c>matchtabs\lsbdw02_match.tga</c> behind MULTIPLAYER CHAT,
+/// <c>matchtabs\lsbdw03_match.tga</c> in front).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -10386,9 +10389,11 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     std::set<uint64_t> written;
     int32_t pictures = 0;
     int32_t skipped = 0;
-    // UPDATE is drawn in ORIGINAL CINEMA's colours, which its picture holds.
+    // UPDATE is drawn in ORIGINAL CINEMA's colours, which its picture holds; MATCH OPTIONS' tabs in the tabs'.
     constexpr std::string_view cinemaPicture = "mm_xbh08.tga";
     std::optional<std::array<SDL_Color, 256>> cinemaColors;
+    constexpr std::string_view tabsPicture = "lsbdw02.tga";
+    std::optional<std::array<SDL_Color, 256>> tabsColors;
     ForEachPicture(colors, skipped,
                    [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
                        std::span<const SDL_Color, 256> pictureColors)
@@ -10404,6 +10409,12 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
                            cinemaColors.emplace();
                            std::ranges::copy(pictureColors, cinemaColors->begin());
                        }
+
+                       if (file == tabsPicture)
+                       {
+                           tabsColors.emplace();
+                           std::ranges::copy(pictureColors, tabsColors->begin());
+                       }
                    });
 
     // The main menu's UPDATE button.
@@ -10415,6 +10426,18 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     {
         WritePicture(folder, manifest, std::format("updatebutton\\mm_xb{}_update.tga", state), picture->Pixels(),
                      picture->Width(), picture->Height(), *cinemaColors, written);
+        ++pictures;
+    }
+
+    // The session screen's MATCH OPTIONS tabs (logistics/MCMatchOptionsTab.h), named as the tabs they're made from.
+    REQUIRE(tabsColors.has_value());
+
+    for (const auto& [front, name] : {std::pair{MCSessionTab::Chat, "matchtabs\\lsbdw02_match.tga"},
+                                      std::pair{MCSessionTab::Options, "matchtabs\\lsbdw03_match.tga"}})
+    {
+        const std::shared_ptr<MCLogPort> tabs = MakeMatchTabs(front);
+        REQUIRE(tabs != nullptr);
+        WritePicture(folder, manifest, name, tabs->Pixels(), tabs->Width(), tabs->Height(), *tabsColors, written);
         ++pictures;
     }
 

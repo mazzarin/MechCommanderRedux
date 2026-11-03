@@ -104,6 +104,7 @@ auto MCLogChatWindow::AddLine(std::string_view line) -> void
     std::string text(line);
     const int32_t used = GuiSystem().TextFormatter.Process(text, std::nullopt, pane.Lport()->Width(), 0);
     Lines.push_back(HistoryLine{std::move(text), used});
+    LinesAdded++;
 
     // A line whose strip moved off the top shows nothing any more.
     int32_t above = 0;

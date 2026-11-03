@@ -163,12 +163,20 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-team1rp <n>`, `-team2rp <n>`        | Resource points for **each player** of the team (the session screen's figure is a team's pool, shared out among its players). Without them the mission file's figures are kept. |
 | `-team1tech <is\|clan>`, `-team2tech <is\|clan>` | The team's tech base. Without them the mission's are kept. |
 | `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
+| `-matchweather <weather>`             | The weather every player sees: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. |
+| `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. It changes the look only: units see as far as the mission sets. |
+| `-matchbraking <on\|off>`             | Whether mechs brake to a halt (played only if every player's build has it). Without it (or with `prefs`), the host's `MechBraking`. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
 player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
 left on the "Waiting for Players" screen with a log message and can press Go to carry on by hand. A locked mission keeps
 its own points and tech bases. The game checks only that each player has a file of the mission's name, not that it is the
 same file, so a launcher should check the files match.
+
+The three match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER
+CHAT), and a host started with them but no `-matchmap` opens the session screen with them chosen. A player with WEATHER
+or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day; a build without match options sees the
+mission's own.
 
 ### Saves and Settings
 
@@ -253,6 +261,8 @@ until you change it, as every mission of the original is.
 - **Look.** With **HD LIGHTING** set to **ON** (in Preferences), Redux shows a dusk mission darker, and a night one
   dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their own time
   whatever the mission's. The original game shows every mission by day.
+- **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
+  tab (or with `-matchtime`); it changes the look only, so units still see as far as the mission sets.
 
 For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
 
@@ -275,12 +285,14 @@ st TimeOfDay = "Night"
 
 ### A Mission's Weather
 
-New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain** or a **Downpour**. Missions are clear
-until you change it, as every mission of the original is.
+New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain**, a **Downpour**, **Light Snow**,
+**Snow** or a **Blizzard**. Missions are clear until you change it, as every mission of the original is.
 
-- **Look.** With **WEATHER** set to **ON** (in Preferences, on the HD OPTIONS page), Redux rains on the mission, a
-  downpour harder, with thunder. The player's **RAIN** and **DOWNPOUR** choices rain on every mission whatever its
-  own. The original game shows every mission under a clear sky.
+- **Look.** With **WEATHER** set to **ON** (in Preferences, on the HD OPTIONS page), Redux rains or snows on the
+  mission, a downpour with thunder, the snow settling as the mission goes on. The player's **RAIN**, **SNOW** and other
+  choices show every mission in that weather whatever its own. The original game shows every mission under a clear sky.
+- **Multiplayer.** A match's host can pick another weather for everyone on the session screen's **MATCH OPTIONS** tab
+  (or with `-matchweather`, see [Premade Matches](#premade-matches)); left at **MISSION'S**, the mission's own shows.
 - **Play.** The weather changes nothing in play: units see, move and fight as under a clear sky.
 
 For a mission's `.FIT` file, the editor writes this for rain or a downpour (for a clear sky, nothing):
@@ -290,8 +302,8 @@ For a mission's `.FIT` file, the editor writes this for rain or a downpour (for 
 st Weather = "Rain"
 ```
 
-- `Weather` is `Clear`, `Rain` or `Downpour` (in any case). Without it, or with any other name, the mission is clear.
-  The original game skips the block.
+- `Weather` is `Clear`, `Rain`, `Downpour`, `LightSnow`, `Snow` or `Blizzard` (in any case). Without it, or with any
+  other name, the mission is clear. The original game skips the block.
 - A mission set at dusk or night too has its `TimeOfDay` in the same block. Write a single `[Environment]` block: Redux
   reads only the first.
 

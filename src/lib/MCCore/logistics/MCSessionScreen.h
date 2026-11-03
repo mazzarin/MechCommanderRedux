@@ -2,9 +2,11 @@
 
 #include "gui/MCGuiOwned.h"
 #include "logistics/MCLogObject.h"
+#include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCLogToolButton.h"
+#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCPlayerNameObject.h"
 
 class MCGuiEvent;
@@ -47,8 +49,14 @@ public:
     /// <summary>Port: what the screen shows of the shared places.</summary>
     MCLogScreenChrome ScreenChrome;
 
-    /// <summary>Name drops and the ping/resource point timer.</summary>
+    /// <summary>Name drops, the ping/resource point timer, and (port-only) a click on a tab.</summary>
     void HandleEvent(MCGuiEvent& event) override;
+
+    /// <summary>
+    /// Port-only: brings <paramref name="tab"/> in front, its panel in the communications box's place: the chat, or
+    /// the MATCH OPTIONS list (logistics/MCMatchOptionsTab.h).
+    /// </summary>
+    void ShowTab(MCSessionTab tab);
 
     /// <summary>
     /// Fills the screen from the session: the players, the teams and the controls for host or guest;
@@ -174,6 +182,18 @@ public:
     std::shared_ptr<MCLogPort> MapPicture;
     /// <summary>Port: the mission was taken away: the map box shows colour 0x10 rather than the background's art.</summary>
     bool MapBoxWiped = false;
+
+    /// <summary>Port-only: the MATCH OPTIONS list, in the chat window's place while its tab is in front.</summary>
+    MCGuiOwned<MCLogOptionList> MatchOptionsList;
+    /// <summary>Port-only: the tab in front.</summary>
+    MCSessionTab FrontTab = MCSessionTab::Chat;
+    /// <summary>
+    /// Port-only: the tabs' pictures, with MULTIPLAYER CHAT and with MATCH OPTIONS in front (null when the art isn't
+    /// the tabs' as expected: then there is no MATCH OPTIONS tab).
+    /// </summary>
+    std::array<std::shared_ptr<MCLogPort>, 2> MatchTabs;
+    /// <summary>Port-only: the chat's lines added when MATCH OPTIONS came in front (more since: MULTIPLAYER CHAT blinks).</summary>
+    size_t ChatLinesSeen = 0;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;

@@ -38,6 +38,11 @@ namespace
     }
 }
 
+MCLogOptionList::MCLogOptionList()
+    : MCLogScrollList(RowHeight), _SettingWidth(SettingWidth), _SoftwareHint(SoftwareHint)
+{
+}
+
 auto MCLogOptionList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::span<const Row> rows) -> void
 {
     MCLogObject::Init(xPos, yPos, width, height);
@@ -57,6 +62,33 @@ auto MCLogOptionList::SetNews(std::string_view news) -> void
     _News = news;
 }
 
+auto MCLogOptionList::SetNarrow(int32_t settingWidth) -> void
+{
+    _SettingWidth = settingWidth;
+    _WideDescriptions = true;
+}
+
+auto MCLogOptionList::SetLocked(bool locked, std::string_view hint) -> void
+{
+    _Locked = locked;
+    _LockedHint = hint;
+
+    if (locked)
+    {
+        _Hovered.reset();
+    }
+}
+
+auto MCLogOptionList::SetSoftwareHint(std::string_view hint) -> void
+{
+    _SoftwareHint = hint;
+}
+
+auto MCLogOptionList::SetHeadingColor(uint8_t color) -> void
+{
+    _HeadingColor = color;
+}
+
 auto MCLogOptionList::Status() const -> std::string_view
 {
     if (!_News.empty())
@@ -64,19 +96,25 @@ auto MCLogOptionList::Status() const -> std::string_view
         return _News;
     }
 
-    return GRendererPreference == static_cast<int>(MCRendererKind::Software) ? SoftwareHint : std::string_view();
+    if (_Locked)
+    {
+        return _LockedHint;
+    }
+
+    return GRendererPreference == static_cast<int>(MCRendererKind::Software) ? _SoftwareHint : std::string_view();
 }
 
 auto MCLogOptionList::Setting(int32_t row) const -> int&
 {
-    return *MCHdSettings::Find(_Rows[static_cast<size_t>(row)].Key).Value;
+    const Row& option = _Rows[static_cast<size_t>(row)];
+    return option.Value != nullptr ? *option.Value : *MCHdSettings::Find(option.Key).Value;
 }
 
 auto MCLogOptionList::RowOf(std::string_view key) const -> std::optional<int32_t>
 {
     for (size_t row = 0; row < _Rows.size(); row++)
     {
-        if (!_Rows[row].IsHeading() && _Rows[row].Key == key)
+        if (!_Rows[row].IsHeading() && !key.empty() && _Rows[row].Key == key)
         {
             return static_cast<int32_t>(row);
         }
@@ -141,7 +179,7 @@ auto MCLogOptionList::Step(int32_t row, int32_t steps) -> void
 
 auto MCLogOptionList::SettingLeft() -> int32_t
 {
-    return ScrollBarLeft() - SettingGap - SettingWidth;
+    return ScrollBarLeft() - SettingGap - _SettingWidth;
 }
 
 auto MCLogOptionList::OptionAt(int32_t xPos, int32_t yPos) -> std::optional<int32_t>
@@ -166,7 +204,7 @@ auto MCLogOptionList::SettingCentre(int32_t row) -> std::optional<std::pair<int3
         return std::nullopt;
     }
 
-    return std::pair{GlobalX() + SettingLeft() + SettingWidth / 2, GlobalY() + *top + LineHeight / 2};
+    return std::pair{GlobalX() + SettingLeft() + _SettingWidth / 2, GlobalY() + *top + LineHeight / 2};
 }
 
 auto MCLogOptionList::HandleEvent(MCGuiEvent& event) -> void
@@ -181,7 +219,7 @@ auto MCLogOptionList::HandleEvent(MCGuiEvent& event) -> void
         case MCGuiEventType::LeftButtonDown:
         case MCGuiEventType::RightButtonDown:
         {
-            if (const std::optional<int32_t> row = OptionAt(event.X, event.Y); row.has_value())
+            if (const std::optional<int32_t> row = OptionAt(event.X, event.Y); row.has_value() && !_Locked)
             {
                 Step(*row, event.Type == MCGuiEventType::LeftButtonDown ? 1 : -1);
             }
@@ -189,7 +227,7 @@ auto MCLogOptionList::HandleEvent(MCGuiEvent& event) -> void
         }
         case MCGuiEventType::MouseMove:
         {
-            _Hovered = OptionAt(event.X, event.Y);
+            _Hovered = _Locked ? std::nullopt : OptionAt(event.X, event.Y);
             break;
         }
         case MCGuiEventType::KeyDown:
@@ -227,14 +265,15 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
                       nameWidth);
     }
 
-    Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, NameLeft + nameWidth - left);
+    const int32_t descriptionRight = _WideDescriptions ? ScrollBarLeft() - SettingGap / 2 : NameLeft + nameWidth;
+    Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, descriptionRight - left);
 
     // The setting, in its box.
-    const int32_t right = settingLeft + SettingWidth - 1;
+    const int32_t right = settingLeft + _SettingWidth - 1;
     const int32_t bottom = top + LineHeight - 2;
     DrawOutline(settingLeft, top, right, bottom, _Hovered == row ? HoverLineColor : LineColor);
     Write(settingLeft + BoxTextLeft, top + 1, ChoiceName(row), shows ? BoxTextColor : DimColor,
-          SettingWidth - 2 * BoxTextLeft);
+          _SettingWidth - 2 * BoxTextLeft);
 }
 
 auto MCLogOptionList::Draw() -> void
@@ -248,7 +287,7 @@ auto MCLogOptionList::Draw() -> void
 
     // The column titles.
     Write(HeadingLeft, TitleTop, OptionTitle, TitleColor, SettingLeft() - HeadingLeft);
-    Write(SettingLeft() + BoxTextLeft, TitleTop, SettingTitle, TitleColor, SettingWidth);
+    Write(SettingLeft() + BoxTextLeft, TitleTop, SettingTitle, TitleColor, _SettingWidth);
 
     // The rows shown: a heading on its second line, a space above it.
     const int32_t rows = std::min(VisibleRows(), RowCount() - FirstRow());
@@ -260,7 +299,7 @@ auto MCLogOptionList::Draw() -> void
 
         if (_Rows[static_cast<size_t>(row)].IsHeading())
         {
-            Write(HeadingLeft, top + LineHeight + TextOffset, _Rows[static_cast<size_t>(row)].Label, HeadingColor,
+            Write(HeadingLeft, top + LineHeight + TextOffset, _Rows[static_cast<size_t>(row)].Label, _HeadingColor,
                   ScrollBarLeft() - HeadingLeft);
             continue;
         }

@@ -6,7 +6,8 @@
 /// Port-only: the HD OPTIONS page's list of settings (<see cref="MCHdSettings"/>). A row per option under headings:
 /// its name, a line under it saying what it does, and its setting in a box at the right; a status line under the rows
 /// says what a button did. The list edits the settings themselves and draws every frame from them, in the
-/// CONTROLS list's style.
+/// CONTROLS list's style. The session screen's MATCH OPTIONS is one too (logistics/MCMatchOptionsTab.h), its rows
+/// editing the screen's own values rather than PREFS keys, in a narrow panel.
 /// </summary>
 /// <remarks>
 /// A click on an option's row moves its setting to the next of its choices (after the last, the first); a right click
@@ -35,6 +36,8 @@ public:
         std::string_view Description;
         /// <summary>The PREFS key of the setting it edits (<see cref="MCHdSettings::Find"/>).</summary>
         std::string_view Key;
+        /// <summary>Port: the value it edits instead, with no PREFS key (none: the key's).</summary>
+        int* Value = nullptr;
         /// <summary>Its choices, in the order a click steps through them.</summary>
         std::span<const Choice> Choices;
         /// <summary>The setting that must be on for it to show (its key), and that setting's name.</summary>
@@ -43,13 +46,13 @@ public:
         /// <summary>Called with the new value when a click changes it.</summary>
         void (*Changed)(int32_t value) = nullptr;
 
-        bool IsHeading() const { return Key.empty(); }
+        bool IsHeading() const { return Key.empty() && Value == nullptr; }
     };
 
     /// <summary>The height of a row: a line for the name and one for what it does.</summary>
     static constexpr int32_t RowHeight = 22;
 
-    MCLogOptionList() : MCLogScrollList(RowHeight) {}
+    MCLogOptionList();
 
     /// <summary>
     /// Places the list at (<paramref name="xPos"/>, <paramref name="yPos"/>), <paramref name="width"/> x
@@ -73,6 +76,24 @@ public:
 
     /// <summary>Says <paramref name="news"/> on the status line (what a button did), until the next change.</summary>
     void SetNews(std::string_view news);
+
+    /// <summary>
+    /// Lays the rows out for a narrow panel: setting boxes <paramref name="settingWidth"/> wide, and what an option does
+    /// written on under its box, out to the scroll bar.
+    /// </summary>
+    void SetNarrow(int32_t settingWidth);
+
+    /// <summary>
+    /// Locks the list (<paramref name="locked"/>): clicks change nothing and no box lights; the status line says
+    /// <paramref name="hint"/> (why) when it has no news.
+    /// </summary>
+    void SetLocked(bool locked, std::string_view hint);
+
+    /// <summary>What the status line says with the SOFTWARE renderer chosen (empty: nothing).</summary>
+    void SetSoftwareHint(std::string_view hint);
+
+    /// <summary>The headings' colour, for a screen whose palette has no amber at the preferences' (HeadingColor).</summary>
+    void SetHeadingColor(uint8_t color);
 
     /// <summary>Moves row <paramref name="row"/>'s setting <paramref name="steps"/> choices on (back when negative), among those offered.</summary>
     void Step(int32_t row, int32_t steps);
@@ -115,4 +136,15 @@ private:
     std::optional<int32_t> _Hovered;
     /// <summary>What a button did, if the status line says so (until the next change).</summary>
     std::string _News;
+    /// <summary>The setting boxes' width.</summary>
+    int32_t _SettingWidth;
+    /// <summary>What an option does is written on under its setting box (<see cref="SetNarrow"/>).</summary>
+    bool _WideDescriptions = false;
+    /// <summary>Clicks change nothing (<see cref="SetLocked"/>), and the status line's hint then.</summary>
+    bool _Locked = false;
+    std::string _LockedHint;
+    /// <summary>The status line's hint with the SOFTWARE renderer chosen.</summary>
+    std::string_view _SoftwareHint;
+    /// <summary>The headings' colour.</summary>
+    uint8_t _HeadingColor = HeadingColor;
 };

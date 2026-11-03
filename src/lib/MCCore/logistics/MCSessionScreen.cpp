@@ -38,6 +38,9 @@ namespace
     constexpr int32_t UnassignedRow = 0x14;
     /// <summary>The screen's timer (pings and the resource point updates).</summary>
     constexpr int32_t ScreenTimer = 0;
+    /// <summary>The sample a tab plays as it comes in front (the briefing's), and the chat tab's blink's half period.</summary>
+    constexpr uint32_t TabSound = 0x36;
+    constexpr uint32_t ChatBlinkMs = 500;
 
     MCSessionScreen& Screen()
     {
@@ -355,6 +358,12 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
         nameObject->NumberArt = LogArt(std::format("ses_p{}.tga", slot + 1));
     }
 
+    // Port-only: MATCH OPTIONS, the second tab, its list in the chat window's place.
+    MatchOptionsList = MakeMatchOptionsList();
+    AddChild(MatchOptionsList);
+    MatchTabs = {MakeMatchTabs(MCSessionTab::Chat), MakeMatchTabs(MCSessionTab::Options)};
+    FrontTab = MCSessionTab::Chat;
+
     SetBackground("ses_bk00.tga");
     ScreenWindow()->AddChild(weak_from_this());
     ShowGuiWindow(false);
@@ -385,6 +394,8 @@ auto MCSessionScreen::Destroy() -> void
         nameObject.reset();
     }
 
+    MatchOptionsList.reset();
+    MatchTabs = {};
     DropTargets.clear();
     MissionFile.clear();
     MapName.clear();
@@ -402,6 +413,17 @@ auto MCSessionScreen::Draw() -> void
     MCLogObject::Draw();
     MCPane& frame = _Port->Frame();
     DrawMap(frame);
+
+    // Port-only: the tabs, MULTIPLAYER CHAT blinking behind MATCH OPTIONS while new chat waits; the list shows the
+    // match's options as they are now.
+    if (const std::shared_ptr<MCLogPort>& tabs = MatchTabs[static_cast<size_t>(FrontTab)]; tabs != nullptr)
+    {
+        const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow;
+        const bool newChat = FrontTab == MCSessionTab::Options && chat != nullptr && chat->LinesAdded > ChatLinesSeen;
+        DrawMatchTabs(frame, *tabs, FrontTab, newChat && (MCPort::Milliseconds() / ChatBlinkMs) % 2 == 0);
+    }
+
+    ShowMatchOptions(*MatchOptionsList);
     MedWhiteFont->WriteString(frame, 0x180, 199, MissionName);
     MedWhiteFont->WriteString(frame, 0x180, 0xe3, MapName);
     MedWhiteFont->WriteString(frame, 0x20e, 199, MissionLabel.empty() ? LoadGameString(0x37f, 0xfe) : MissionLabel);
@@ -496,6 +518,15 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
             }
         }
     }
+    else if (event.Type == MCGuiEventType::LeftButtonDown)
+    {
+        // Port-only: a click on a tab brings it in front.
+        if (const std::optional<MCSessionTab> tab = MatchTabAt(event.X - GlobalX(), event.Y - GlobalY());
+            tab.has_value() && MatchTabs[static_cast<size_t>(*tab)] != nullptr)
+        {
+            ShowTab(*tab);
+        }
+    }
     else if (event.Type == 0x1d)
     {
         // A name was dropped: onto a team slot, or anywhere else (no team).
@@ -527,6 +558,25 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
     }
 
     MCGuiObject::HandleEvent(event);
+}
+
+auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void
+{
+    if (FrontTab == tab)
+    {
+        return;
+    }
+
+    FrontTab = tab;
+    SoundSystem()->PlayInterfaceSample(TabSound);
+    const bool options = tab == MCSessionTab::Options;
+    MatchOptionsList->ShowGuiWindow(options);
+
+    if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+    {
+        chat->ShowGuiWindow(!options);
+        ChatLinesSeen = chat->LinesAdded;
+    }
 }
 
 auto MCSessionScreen::Activate(bool refresh) -> void
@@ -571,6 +621,17 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     if (isHost && !refresh)
     {
         SendTwoLongs(GuaranteedHeader(MCMPMessageType::SwitchScreen), 1, 0);
+    }
+
+    // Port-only: the screen opens on the chat; the host's match options go to the guests (its last ones, kept for the
+    // session; at first its command line's).
+    FrontTab = MCSessionTab::Chat;
+    MatchOptionsList->ShowGuiWindow(false);
+    MatchOptionsList->Reset();
+
+    if (isHost)
+    {
+        MultiPlayer()->SendMatchOptions();
     }
 
     Team1ISButton->Toggled = true;

@@ -126,14 +126,21 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
 - A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
-  and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
-  Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
-  the map selector. See the [README](README.md#premade-matches).
+  and tech base, who is on which team, and the match options (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`,
+  `-team2tech`, `-slot`, `-matchweather`, `-matchtime`, `-matchbraking`). Once everyone has joined, the game goes
+  straight from "Waiting for Players" to the mech bay, without the ready room or the map selector. See the
+  [README](README.md#premade-matches).
 - With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
   (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. They stop
   where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
-  multiplayer the host's setting applies once every player's build has it; with an older build in the match, mechs stop
-  as the original's.
+  multiplayer the host's choice applies (MATCH OPTIONS' BRAKING, its `MechBraking` until it changes it) once every
+  player's build has it; with an older build in the match, mechs stop as the original's.
+- The session screen has a second tab under MULTIPLAYER CHAT, **MATCH OPTIONS**, where the host picks the match's
+  weather (the mission's own, clear, rain, a downpour, light snow, snow or a blizzard), time of day (the mission's own,
+  day, dusk or night) and braking. Every player sees the host's weather and time of day over the mission's and over
+  their own WEATHER and HD LIGHTING choices; a player with either off sees the original's clear day. They change only
+  the look: units see as far as the mission sets. The guests see the host's choices, and new chat makes MULTIPLAYER
+  CHAT blink behind the options. A launcher sets them with `-matchweather`, `-matchtime` and `-matchbraking`.
 
 ### Files and Saves
 
@@ -164,8 +171,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - The editor finds the game in its own folder, or in the folder given with `--data`.
 - New: **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
   lighting on the game shows the mission darker. See the [README](README.md#a-missions-time-of-day).
-- New: **Mission > Weather** sets a mission in clear weather, rain or a downpour. With HD weather on the game rains on
-  the mission; nothing in play changes. See the [README](README.md#a-missions-weather).
+- New: **Mission > Weather** sets a mission in clear weather, rain, a downpour, light snow, snow or a blizzard. With
+  HD weather on the game rains or snows on the mission; nothing in play changes. See the [README](README.md#a-missions-weather).
 - A crash writes a stack trace and `MCEditor.dmp` beside the exe instead of showing a dialog.
 
 ---

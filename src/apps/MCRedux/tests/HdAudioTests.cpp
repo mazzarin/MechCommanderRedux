@@ -394,7 +394,8 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     // id finds it, whatever the bytes.
     const std::optional<uint64_t> id = MCHdAudio::SampleId(Original());
     REQUIRE(id.has_value());
-    CHECK_EQ(MCHdAudio::SampleKey(Original()), std::format("{:016x}", *id));
+    CHECK(MCHdAudio::SampleId(Original(882)) != id);
+    CHECK(!MCHdAudio::SampleId({}).has_value());
     CHECK(MCHdAudio::Sample(Original(882), id) == first);
     MCSoundResource byId(Original(882), id);
     CHECK(byId.WaveData().data() == first->Pcm.data());

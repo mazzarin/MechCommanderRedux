@@ -45,18 +45,22 @@ public:
     /// <summary>The pack's thunder (<c>audio/ambience/thunder.flac</c>), or none; there whatever HD audio is, as the rain loop.</summary>
     static std::optional<std::filesystem::path> Thunder();
     /// <summary>
-    /// The wave image <paramref name="wave"/>'s canonical key, a 64-bit FNV-1a of: rate u32, channels u16, bits u16
-    /// (little endian), then the original PCM bytes. None for an image that isn't a PCM wave.
+    /// The wave image <paramref name="wave"/>'s identity among the decoded replacements: xxHash's XXH3 of its PCM,
+    /// seeded with its format, which a caller may keep (the sound system keeps each loaded bite's). None for an image
+    /// that isn't a PCM wave.
     /// </summary>
     static std::optional<uint64_t> SampleId(std::span<const uint8_t> wave);
-    /// <summary>The name <see cref="SampleId"/> gives the wave's replacement in the pack: 16 hex digits (empty for
-    /// none).</summary>
+    /// <summary>
+    /// The name of the wave's replacement in the pack: its canonical key, a 64-bit FNV-1a of rate u32, channels u16,
+    /// bits u16 (little endian), then the original PCM bytes, in 16 hex digits (empty for an image that isn't a wave).
+    /// It is worked out once a wave, to find its file.
+    /// </summary>
     static std::string SampleKey(std::span<const uint8_t> wave);
     /// <summary>
     /// The pack's replacement for the wave image <paramref name="wave"/>, decoded, or none. Decoded replacements (and
     /// the waves that have none) are remembered, the least recently used going past a budget, so a sound played again
-    /// costs a hash of its PCM (none when the caller kept the wave's <paramref name="id"/>, its
-    /// <see cref="SampleId"/>) and a lookup; its player shares the decoded samples, without a copy.
+    /// costs its <see cref="SampleId"/> (none when the caller kept it, as <paramref name="id"/>) and a lookup; its
+    /// player shares the decoded samples, without a copy.
     /// </summary>
     static std::shared_ptr<const Decoded> Sample(std::span<const uint8_t> wave,
                                                  std::optional<uint64_t> id = std::nullopt);

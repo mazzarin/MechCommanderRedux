@@ -117,6 +117,8 @@ set(MC_BC7ENC_SOURCES ${MC_SRC}/lib/bc7enc_rdo/bc7enc.cpp ${MC_SRC}/lib/bc7enc_r
 target_sources(MCCore PRIVATE ${MC_BC7ENC_SOURCES})
 set_source_files_properties(${MC_BC7ENC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/bc7enc_rdo)
+# xxHash (sound/MCHdAudio's sound identities), header-only.
+target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
 # miniz (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++ options.
 add_library(mc_miniz STATIC ${MC_SRC}/lib/miniz-3.0.2/miniz.c)
 target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME MINIZ_NO_STDIO

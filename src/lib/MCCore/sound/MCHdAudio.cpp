@@ -5,6 +5,9 @@
 #include "sprite/MCHdArt.h"
 #include <condition_variable>
 #include <unordered_set>
+// xxHash, header-only: its functions inline in this file alone.
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 
 int GHdAudio = 0;
 
@@ -53,7 +56,8 @@ namespace
         std::mutex Lock;
         /// <summary>Told of every decode ended and job taken.</summary>
         std::condition_variable_any Changed;
-        /// <summary>The replacements by the waves' keys, and the keys not kept, most recently used first.</summary>
+        /// <summary>The replacements by the waves' identities (IdOf), and those not kept, most recently used first.
+        /// </summary>
         std::unordered_map<uint64_t, MCRemembered> Samples;
         std::list<uint64_t> Order;
         /// <summary>The bytes of the replacements in Order (the kept ones aren't counted against the budget).</summary>
@@ -140,7 +144,15 @@ namespace
         return Current().Readable ? Existing(MCHdArt::PackFolder() / "audio" / "ambience" / name) : std::nullopt;
     }
 
-    /// <summary>The canonical key of a wave (MCHdAudio::SampleId).</summary>
+    /// <summary>A wave's identity among the decoded replacements (MCHdAudio::SampleId).</summary>
+    uint64_t IdOf(const MCWaveData& parsed)
+    {
+        const uint64_t format =
+            parsed.Format.Rate | (uint64_t{parsed.Format.Channels} << 32) | (uint64_t{parsed.Format.Bits} << 48);
+        return XXH3_64bits_withSeed(parsed.Samples.data(), parsed.Samples.size(), format);
+    }
+
+    /// <summary>The canonical key of a wave, which names its replacement in the pack (MCHdAudio::SampleKey).</summary>
     uint64_t KeyOf(const MCWaveData& parsed)
     {
         uint64_t hash = 14695981039346656037ull;
@@ -173,10 +185,9 @@ namespace
 
     /// <summary>The replacement for <paramref name="original"/> decoded from the pack's file, or null when it has none
     /// that is whole, of a sane size and as long as the original.</summary>
-    std::shared_ptr<const MCHdAudio::Decoded> Decode(const MCWaveData& original, uint64_t key,
-                                                     const std::filesystem::path& folder)
+    std::shared_ptr<const MCHdAudio::Decoded> Decode(const MCWaveData& original, const std::filesystem::path& folder)
     {
-        const auto path = Existing(folder / "audio" / "samples" / (KeyName(key) + ".flac"));
+        const auto path = Existing(folder / "audio" / "samples" / (KeyName(KeyOf(original)) + ".flac"));
 
         if (!path.has_value())
         {
@@ -257,7 +268,7 @@ namespace
             state.Working = true;
             lock.unlock();
             const auto parsed = MCAudio::ParseWave(job.Wave);
-            const std::optional<uint64_t> key = parsed ? std::optional(KeyOf(*parsed)) : std::nullopt;
+            const std::optional<uint64_t> key = parsed ? std::optional(IdOf(*parsed)) : std::nullopt;
             lock.lock();
             // The game's thread may be decoding it: wait for that, then it is known.
             state.Changed.wait(lock, [&] { return !key || !state.Decoding.contains(*key); });
@@ -275,7 +286,7 @@ namespace
                 {
                     state.Decoding.insert(*key);
                     lock.unlock();
-                    std::shared_ptr<const MCHdAudio::Decoded> decoded = Decode(*parsed, *key, folder);
+                    std::shared_ptr<const MCHdAudio::Decoded> decoded = Decode(*parsed, folder);
                     lock.lock();
 
                     if (state.Generation == generation)
@@ -359,13 +370,13 @@ std::optional<std::filesystem::path> MCHdAudio::Thunder()
 std::optional<uint64_t> MCHdAudio::SampleId(std::span<const uint8_t> wave)
 {
     const auto parsed = MCAudio::ParseWave(wave);
-    return parsed ? std::optional(KeyOf(*parsed)) : std::nullopt;
+    return parsed ? std::optional(IdOf(*parsed)) : std::nullopt;
 }
 
 std::string MCHdAudio::SampleKey(std::span<const uint8_t> wave)
 {
-    const std::optional<uint64_t> id = SampleId(wave);
-    return id.has_value() ? KeyName(*id) : std::string();
+    const auto parsed = MCAudio::ParseWave(wave);
+    return parsed ? KeyName(KeyOf(*parsed)) : std::string();
 }
 
 std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint8_t> wave, std::optional<uint64_t> id)
@@ -383,7 +394,7 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     }
 
     State& state = Current();
-    const uint64_t key = id.has_value() ? *id : KeyOf(*parsed);
+    const uint64_t key = id.has_value() ? *id : IdOf(*parsed);
     std::unique_lock lock(state.Lock);
     // One the decoding thread is on is waited for (a decode at most); one still waiting for it is decoded here.
     state.Changed.wait(lock, [&] { return !state.Decoding.contains(key); });
@@ -401,7 +412,7 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     // Only this thread forgets what was found, so what is decoded here is remembered.
     state.Decoding.insert(key);
     lock.unlock();
-    std::shared_ptr<const Decoded> decoded = Decode(*parsed, key, MCHdArt::PackFolder());
+    std::shared_ptr<const Decoded> decoded = Decode(*parsed, MCHdArt::PackFolder());
     lock.lock();
     Remember(state, key, decoded, false);
     state.Decoding.erase(key);

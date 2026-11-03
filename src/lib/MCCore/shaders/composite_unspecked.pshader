@@ -1,0 +1,7 @@
+// Port-only (HD weather's snow): the weather's composite (composite.pshader) where the snow shows no specks (none
+// zoomed in to MCWeather::FullFlakeLines or closer, once those left out further out have fallen): built without them,
+// so its pixels don't pay for the registers their lattices' loops take. MCVulkanPresenter draws with it whenever the
+// weather shows but no specks do.
+
+#define COMPOSITE_SPECKS 0
+#include "composite.pshader"

@@ -25,6 +25,9 @@
 // the rain's reads held 36 of its 192 registers and all of what spilled (before the snow), the cover 24 more. The
 // puddles' field is a pass of its own too (composite_puddle.pshader, PuddleCell), read by the wet look: worked out
 // there, each of the up to five texels a puddle's edge looks at took the composite ten reads and most of its registers.
+// The weather's composite where the snow shows no specks (MCWeather::ShownSpeckle: none closer than FullFlakeLines) is
+// built without them (COMPOSITE_SPECKS 0, composite_unspecked.pshader): their lattices' loops held registers enough to
+// slow every pixel of it.
 //
 // HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
 // have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
@@ -40,6 +43,10 @@
 
 #ifndef COMPOSITE_WEATHER
 #define COMPOSITE_WEATHER 1
+#endif
+
+#ifndef COMPOSITE_SPECKS
+#define COMPOSITE_SPECKS 1
 #endif
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
@@ -172,6 +179,24 @@ cbuffer Composite : register(b0, space3)
     // The snow (MCWeather::ShownCover): SnowFieldAt below x lies under a dusting, below y thick; z, the share of the
     // ground covered (0: none settles); w, 1 when it snows (its veil white, SnowVeil).
     float4 snow;
+    // The specks (MCWeather::ShownSpeckle, SpecksAt): each layer's a texel where the veil's sheets are thinnest (x to z
+    // the flakes falling, far to near; w those resting); speckSheets.x, how many times as many where they're thickest;
+    // each one's life (seconds); where each one's lattice lies (texels: the first's xy, the second's zw, then the
+    // third's and the resting's), wrapped every SpeckWrap; each one's colour (rgb) and weakest strength (a), then each
+    // one's strongest; each one's square's side (whole texels) or, for a plus, how far its arms reach each way (texels;
+    // -1: a square); how far each falling one falls as a share of the longest fall (speckSheets.yz: texels across and
+    // down from where a speck shows to where it lands), and speckFalls.w, 1 when the index target's alpha tells the
+    // ground from what stands on it (the relief maps; GroundMark); speckSheets.w, how much of the light in the air the
+    // falling ones catch (MCWeather::CatchGain; 0 none).
+    float4 specks;
+    float4 speckSheets;
+    float4 speckLives;
+    float4 speckMoved[2];
+    float4 speckLooks[4];
+    float4 speckStrongest;
+    float4 speckSides;
+    float4 speckArms;
+    float4 speckFalls;
     // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
     // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
     float4 lightTiles;
@@ -1413,15 +1438,16 @@ float3 WetAt(float3 color, float3 art, float2 texel)
     return SteppedPuddleAt(PuddleAt(texel + up) ? puddle : lerp(puddle, sky, EdgeMirror), texel);
 }
 
-// `color` at a world texel seen through the rain's veil, or the snow's (as it is without one).
-float3 VeiledAt(float3 color, float2 texel)
+// `color` at a world texel seen through the rain's veil, or the snow's (as it is without one), its sheets there
+// `sheets` thick (SheetsAt).
+float3 VeiledAt(float3 color, float2 texel, float sheets)
 {
     if (weather.w <= 0.0)
     {
         return color;
     }
 
-    const float veil = saturate(weather.w * (VeilLeast + VeilSheets * SheetsAt(GroundPointAt(texel))));
+    const float veil = saturate(weather.w * (VeilLeast + VeilSheets * sheets));
     const float3 colour = lerp(VeilColour, SnowVeil, snow.w);
     return lerp(color, colour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
 }
@@ -1475,15 +1501,18 @@ float GroundLumaAt(float2 texel, float centre)
 }
 
 // The snow's shade at a world texel drawn `art`: its brightness against the drawn world `span` texels round (where a
-// print lies there, the less of it the more it has filled in, so no outline of a filled print shows round it).
-float SnowShade(float3 art, float2 texel, float span)
+// print lies there, the less of it the more it has filled in, so no outline of a filled print shows round it), the
+// snow's specks laid round it as `specked` says they are on the whole (rgb what they add, a how much of what's under
+// them shows: SpecksAt), as the flakes drawn in the world are.
+float SnowShade(float3 art, float2 texel, float span, float4 specked)
 {
     const float2 side = float2(span, 0.0);
     const float2 up = float2(0.0, span);
     const float centre = dot(art, Luma);
     const float round = (GroundLumaAt(texel + side, centre) + GroundLumaAt(texel - side, centre) +
                          GroundLumaAt(texel + up, centre) + GroundLumaAt(texel - up, centre)) /
-                        4.0;
+                            4.0 * specked.a +
+                        dot(specked.rgb, Luma);
     return clamp(centre / max(round, SnowShadeFloor), SnowShadeLeast, SnowShadeMost);
 }
 
@@ -1529,9 +1558,10 @@ float SnowAmountAt(float2 texel, float2 slope, float blocked)
 }
 
 // `color` at world texel `texel` (drawn as `art`) under the snow's cover: laid over the ground in its steps, shaded as
-// the ground is; over a footprint or a crater as far as it has filled in; a little on a forest's lit leaves; none on
-// the water nor on what stands on the ground. As it is without the cover.
-float3 SnowAt(float3 color, float3 art, float2 texel)
+// the ground is (with the specks round it as `specked` says, SnowShade); over a footprint or a crater as far as it has
+// filled in; a little on a forest's lit leaves; none on the water nor on what stands on the ground. As it is without
+// the cover.
+float3 SnowAt(float3 color, float3 art, float2 texel, float4 specked)
 {
     if (snow.z <= 0.0 || IsWater(WorldIndexAt(texel)))
     {
@@ -1549,7 +1579,7 @@ float3 SnowAt(float3 color, float3 art, float2 texel)
         }
 
         // A forest's canopy: its lit leaves, brighter than round them.
-        const float shade = SnowShade(art, texel, LeafSpan);
+        const float shade = SnowShade(art, texel, LeafSpan, specked);
 
         if (shade <= 1.0)
         {
@@ -1571,8 +1601,261 @@ float3 SnowAt(float3 color, float3 art, float2 texel)
     }
 
     const float3 under = print ? lerp(color, GroundRound(color, texel), filled) : color;
-    const float shade = lerp(SnowShade(art, texel, SnowShadeSpan), 1.0, print ? filled : 0.0);
+    const float shade = lerp(SnowShade(art, texel, SnowShadeSpan, specked), 1.0, print ? filled : 0.0);
     return lerp(under, SnowColour(shade), amount);
+}
+
+// Port-only (HD weather's snow, MCWeather::ShownSpeckle; MCVulkanPresenter's SetSpeckle moves the lattices): a
+// layer's lattice of cells wraps every SpeckWrap texels, as the CPU wraps where it lies.
+static const uint SpeckWrapMask = 0xffffu;
+static const uint SpeckLayers = 4;
+static const uint RestingSpecks = 3;
+
+// A hash of v's three words (pcg3d's mix).
+uint SpeckHash(uint3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v.x ^ v.y ^ v.z;
+}
+
+// A hash's top 24 bits as 0 to 1.
+float SpeckUnit(uint hash)
+{
+    return float(hash >> 8u) * (1.0 / 16777216.0);
+}
+
+// The odd numbers a speck's hash is multiplied by for each of its own values: how strong it is, how much light its
+// facet catches, and where in its cell a plus's middle lies across and down.
+static const uint SpeckStrengthMix = 747796405u;
+static const uint SpeckFacetMix = 3266489917u;
+static const uint SpeckAcrossMix = 2891336453u;
+static const uint SpeckDownMix = 1181783497u;
+// The shortest life a layer's specks are taken to live (seconds), the least of a glint's hue it's scaled by, and the
+// least share of the longest fall a falling layer falls.
+static const float SpeckShortestLife = 1e-3;
+static const float SpeckLeastHue = 1e-4;
+static const float SpeckLeastFall = 1e-6;
+
+// The most texels a speck's square is across or its plus's arms reach: its cells are looked for no farther.
+static const int MostSpeckReach = 8;
+
+// Whether cell `cell` of layer `layer`'s lattice holds a speck now, at `share` of its cells: each living the layer's
+// life from the cell's own phase; `hash` its own (for how strong it is and where in its texel it lies) and `gone`, how
+// much of its life is.
+bool SpeckIn(int2 cell, uint layer, float share, out uint hash, out float gone)
+{
+    const uint2 at = asuint(cell) & SpeckWrapMask;
+    const float lives = haze.z / max(speckLives[layer], SpeckShortestLife) + SpeckUnit(SpeckHash(uint3(at, layer)));
+    hash = SpeckHash(uint3(at.x | (layer << 16u), at.y, asuint(int(floor(lives)))));
+    gone = frac(lives);
+    return SpeckUnit(hash) < share;
+}
+
+// How strong a speck of layer `layer` with its own `hash` is: from the layer's weakest to its strongest.
+float SpeckStrength(uint layer, uint hash)
+{
+    return lerp(speckLooks[layer].a, speckStrongest[layer], SpeckUnit(hash * SpeckStrengthMix));
+}
+
+// The falling specks catch the light as the flakes do (MCWeather::Glint, with MCWeather.cpp's GlintSteps, GlintFull,
+// GlintMost, GlintSaturation and CatchLeast): in steps of the brightest light caught times a speck's facet (CatchLeast
+// to 1, its hash's), the last from GlintFull, each GlintMost over the steps of the lights' hue, further from grey.
+static const float SpeckGlintSteps = 3.0;
+static const float SpeckGlintFull = 0.6;
+static const float SpeckGlintMost = 0.7;
+static const float SpeckGlintSaturation = 1.5;
+static const float SpeckCatchLeast = 0.25;
+
+// The glint's step a speck with its own `hash` catches from `caught`, the brightest light in the air there times how
+// much of it the specks catch.
+float SpeckGlintStep(uint hash, float caught)
+{
+    const float facet = lerp(SpeckCatchLeast, 1.0, SpeckUnit(hash * SpeckFacetMix));
+    return min(floor(caught * facet / SpeckGlintFull * SpeckGlintSteps), SpeckGlintSteps);
+}
+
+// The light the specks' glints show in, a step of it: `light`'s hue further from grey, its brightest SpeckGlintMost
+// over the steps.
+float3 SpeckGlintHue(float3 light)
+{
+    const float grey = (light.r + light.g + light.b) / 3.0;
+    const float3 hue = max(grey + (light - grey) * SpeckGlintSaturation, 0.0);
+    return hue * (SpeckGlintMost / SpeckGlintSteps / max(max(hue.r, hue.g), max(hue.b, SpeckLeastHue)));
+}
+
+// Lays a speck of colour `colour` `strength` strong over the specks `laid` (rgb what they add, a how much of what's
+// under them still shows).
+void LaySpeck(inout float4 laid, float3 colour, float strength)
+{
+    const float shown = saturate(strength);
+    laid = float4(lerp(laid.rgb, colour, shown), laid.a * (1.0 - shown));
+}
+
+// The indices of ground the HD ground isn't drawn on, which nothing stands on: the void past the map's edge, left blank
+// (MCVulkanRenderer's ClearBlank), and a terrain tile no one has seen, filled black (its UnseenTileIndex).
+static const uint BlankIndex = 0;
+static const uint UnseenIndex = 0x10;
+
+// Whether world texel `texel` shows what stands on the ground (a unit, a building, a forest's canopy) by the index
+// target's alpha, where it tells them apart (speckFalls.w); else none does.
+bool StandsAt(float2 texel)
+{
+    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const uint index = Byte(drawn.r);
+    return speckFalls.w > 0.0 && drawn.a <= GroundMark && index != BlankIndex && index != UnseenIndex;
+}
+
+// Whether a speck of layer `layer` over world texel `texel`, `gone` of its life lived, is hidden by what stands there
+// (`standing`), as the flake's depth (as far down the screen as it lands: MCWeather's LandOnUnits) puts it under it: a
+// resting one, on the ground under it; a falling one unless what's that far down the texel's column is the ground (it
+// lands in front of it, not on it or behind it).
+bool SpeckHidden(float2 texel, uint layer, float gone, bool standing)
+{
+    if (!standing)
+    {
+        return false;
+    }
+
+    return layer == RestingSpecks || StandsAt(texel + float2(0.0, (1.0 - gone) * speckFalls[layer] * speckSheets.z));
+}
+
+// Lays layer `layer`'s specks covering world texel `texel` at `share` of its lattice's cells over `laid`, as its flakes
+// are drawn: each a square from its cell right and down, a resting one fading; or a plus, its arms each a texel thick
+// from as far as they reach each way from a point in its cell (its hash's) to as far, its middle under both. Where the
+// texel shows what stands on the ground (`standing`), a falling one only as SpeckHidden says. A falling one adds the
+// glint's steps it catches from `caught` (SpeckGlintStep), times its strength, to `glints`.
+void LaySpeckLayer(inout float4 laid, inout float glints, float2 texel, uint layer, float share, float caught,
+                   bool standing)
+{
+    const float4 pair = speckMoved[layer / 2];
+    const float2 moved = layer % 2 == 0 ? pair.xy : pair.zw;
+    const int2 cell = int2(floor(floor(texel) + 0.5 - moved));
+    const float3 colour = speckLooks[layer].rgb;
+    const float arms = speckArms[layer];
+    uint hash;
+    float gone;
+
+    if (arms < 0.0)
+    {
+        const int side = clamp(int(speckSides[layer]), 1, MostSpeckReach);
+
+        for (int down = 0; down < side; ++down)
+        {
+            for (int across = 0; across < side; ++across)
+            {
+                if (SpeckIn(cell - int2(across, down), layer, share, hash, gone) &&
+                    !SpeckHidden(texel, layer, gone, standing))
+                {
+                    const bool resting = layer == RestingSpecks;
+                    const float strength = SpeckStrength(layer, hash) * (resting ? 1.0 - gone : 1.0);
+                    LaySpeck(laid, colour, strength);
+                    glints += resting ? 0.0 : strength * SpeckGlintStep(hash, caught);
+                }
+            }
+        }
+
+        return;
+    }
+
+    if (SpeckIn(cell, layer, share, hash, gone) && !SpeckHidden(texel, layer, gone, standing))
+    {
+        const float strength = SpeckStrength(layer, hash);
+        LaySpeck(laid, colour, strength);
+        LaySpeck(laid, colour, strength);
+        glints += 2.0 * strength * SpeckGlintStep(hash, caught);
+    }
+
+    const int reach = min(int(ceil(arms)), MostSpeckReach);
+
+    for (int off = 1; off <= reach; ++off)
+    {
+        // The plus whose middle is `off` texels left, right, above or below: its arm along this row or column.
+        const int2 aways[4] = {int2(off, 0), int2(-off, 0), int2(0, off), int2(0, -off)};
+
+        for (uint way = 0; way < 4; ++way)
+        {
+            const int2 away = aways[way];
+
+            if (SpeckIn(cell - away, layer, share, hash, gone) && !SpeckHidden(texel, layer, gone, standing))
+            {
+                // Its point in its cell along the arm, and the arm's ends from there, in whole texels.
+                const float inCell = SpeckUnit(hash * (way < 2 ? SpeckAcrossMix : SpeckDownMix));
+                const int at = away.x + away.y;
+
+                if (at >= int(floor(inCell - arms)) && at <= int(floor(inCell + arms)))
+                {
+                    const float strength = SpeckStrength(layer, hash);
+                    LaySpeck(laid, colour, strength);
+                    glints += strength * SpeckGlintStep(hash, caught);
+                }
+            }
+        }
+    }
+}
+
+// The points along the longest fall the falling specks take the veil's sheets at (MCVulkanPresenter's).
+static const uint SpeckSheetSamples = 4;
+
+// The specks at world texel `texel`, the veil's sheets there `sheets` thick (rgb what they add, a how much of what's
+// under them still shows): each layer's cell under the texel holds a speck living its life from the cell's own phase,
+// at as many of the cells as the layer has specks a texel (more where the sheets are thick), each as strong as a hash
+// between the layer's weakest and strongest picks. A falling flake shows anywhere along its fall above and upwind of
+// where it lands, so a falling layer takes the sheets' mean along its fall (as many of the points along the longest as
+// its share of it, at least one; the sheets' drift as it falls left out), the resting the sheets at the texel. Over
+// what stands on the ground, only those SpeckHidden doesn't hide. The lattices lie still on the screen as the view
+// zooms, so the specks come and go one by one as their share does, and grow and shrink in place as the flakes do.
+// `round`: the specks there on the whole (each layer's as many texels as it covers, as strong as its mean), as the
+// snow's shade takes them round it (SnowShade); `glints`, the glint's steps the falling ones catch from `caught`, the
+// brightest light in the air there times how much of it they catch, times their strengths.
+float4 SpecksAt(float2 texel, float sheets, float caught, out float4 round, out float glints)
+{
+    float4 fell = float4(sheets, sheets, sheets, sheets);
+    float along = 0.0;
+    const float3 shareOfLongest = speckFalls.xyz;
+    // Each layer's points, rounded by hand (`round` here is the specks' mean).
+    const float3 falling = step(SpeckLeastFall, shareOfLongest);
+    const float4 points = float4(falling * max(floor(float(SpeckSheetSamples) * shareOfLongest + 0.5), 1.0), 0.0);
+
+    for (uint taken = 0; taken < SpeckSheetSamples; ++taken)
+    {
+        if (any(points > float(taken)))
+        {
+            const float2 at = texel + 0.5 + speckSheets.yz * ((float(taken) + 0.5) / float(SpeckSheetSamples));
+            along += SheetsAt(GroundPointAt(at));
+            fell = points == float(taken + 1) ? along / float(taken + 1) : fell;
+        }
+    }
+
+    const bool standing = StandsAt(texel);
+
+    const float4 shares = specks * lerp(1.0, speckSheets.x, fell);
+    float4 laid = float4(0.0, 0.0, 0.0, 1.0);
+    round = float4(0.0, 0.0, 0.0, 1.0);
+    glints = 0.0;
+
+    for (uint layer = 0; layer < SpeckLayers; ++layer)
+    {
+        if (shares[layer] > 0.0)
+        {
+            LaySpeckLayer(laid, glints, texel, layer, shares[layer], caught, standing);
+            // On the whole: as many texels as its specks cover, each as strong as its mean (a resting one's faded
+            // half).
+            const float side = min(speckSides[layer], float(MostSpeckReach));
+            const float covers = speckArms[layer] < 0.0 ? side * side : 4.0 * speckArms[layer] + 1.0;
+            const float fade = layer == RestingSpecks ? 0.5 : 1.0;
+            LaySpeck(round, speckLooks[layer].rgb,
+                     shares[layer] * covers * 0.5 * (speckLooks[layer].a + speckStrongest[layer]) * fade);
+        }
+    }
+
+    return laid;
 }
 
 // The composite's pixel `pixel`: the screen over its underlay's world, or alone.
@@ -1638,21 +1921,58 @@ float4 Composed(float2 pixel)
             // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
             const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
             const uint2 near = LightsNear(hazy + 0.5);
-            // Port-only (HD weather's snow): the cover laid over the world before it's lit.
+            // Port-only (HD weather's snow): the specks drawn into the world as the flakes are (a pale one as bright to
+            // the light as theirs), then the cover laid over it before it's lit; the veil's sheets taken once for them
+            // and the veil.
 #if COMPOSITE_WEATHER
-            const float3 snowy = SnowAt(seen, lit.rgb, hazy);
+            float sheets = 0.0;
+            float4 laid = float4(0.0, 0.0, 0.0, 1.0);
+            float4 round = float4(0.0, 0.0, 0.0, 1.0);
+            float glints = 0.0;
+            float3 inAir = float3(0.0, 0.0, 0.0);
+            const float3 beams = AirBeamsAt(hazy + 0.5, near);
+
+            if (weather.w > 0.0 || any(specks > 0.0))
+            {
+                sheets = SheetsAt(GroundPointAt(hazy + 0.5));
+            }
+
+#if COMPOSITE_SPECKS
+            if (any(specks > 0.0))
+            {
+                // The light in the air the falling specks catch: the pools there of the lights shining every way, and
+                // the spotlights' beams (a spotlight's pool is under the air its beam lights).
+                if (speckSheets.w > 0.0 && lighting.x > 0.0)
+                {
+                    const float shownBeams = airBeams.x * lighting.y;
+                    const uint2 everyWay = near & ~uint2(spotLights.x, spotLights.y);
+                    inAir = LightAt(hazy + 0.5, float2(0.0, 0.0), everyWay) +
+                            (shownBeams > 0.0 ? beams / shownBeams : 0.0);
+                }
+
+                laid = SpecksAt(hazy, sheets, max(max(inAir.r, inAir.g), inAir.b) * speckSheets.w, round, glints);
+            }
+#endif
+
+            const float3 specked = seen * laid.a + laid.rgb;
+            const float3 snowy = SnowAt(specked, lit.rgb * laid.a + laid.rgb, hazy, round);
 #else
+            const float3 specked = seen;
             const float3 snowy = seen;
 #endif
-            const float3 litWorld = Lit(snowy, SelfLit(seen), hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint,
+            const float3 litWorld = Lit(snowy, SelfLit(specked), hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint,
                                         cloudLight, overcast, near) +
                                     glint * sunGlint * AmbientLight() * cloudLight;
 #if COMPOSITE_WEATHER
-            const float3 rained = WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy);
+            const float3 rained = WetAt(VeiledAt(litWorld, hazy + 0.5, sheets), seen, hazy);
 #else
             const float3 rained = litWorld;
 #endif
+#if COMPOSITE_WEATHER
+            const float3 shone = rained + caught + beams + (glints > 0.0 ? SpeckGlintHue(inAir) * glints : 0.0);
+#else
             const float3 shone = rained + caught + AirBeamsAt(hazy + 0.5, near);
+#endif
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 

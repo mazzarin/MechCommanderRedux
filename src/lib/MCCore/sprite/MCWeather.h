@@ -397,6 +397,67 @@ namespace MCWeather
     MCSnowCover ShownCover();
 
     /// <summary>
+    /// The view lines past which the snow throws no more real flakes than a view showing that many (a view showing more
+    /// lines throws that share of them over the square of its lines; the GPU's drawing alone), and the composite draws
+    /// the flakes left out as specks (<see cref="ShownSpeckle"/>).
+    /// </summary>
+    constexpr float FullFlakeLines = 540.0f;
+
+    /// <summary>
+    /// One layer of the specks the composite draws for the flakes a zoomed-out view leaves out (composite.pshader's
+    /// SpecksAt), on whole texels as a hard flake is drawn.
+    /// </summary>
+    struct MCSpeckLayer
+    {
+        /// <summary>
+        /// How many a view pixel squared where the veil's sheets are thinnest (the composite takes more where they're
+        /// thick, as the flakes fall: <see cref="MCSpeckle"/>'s ThickSheets times as many where they're thickest).
+        /// </summary>
+        float Density = 0.0f;
+        /// <summary>How fast they move, view pixels a second, across (downwind) and down: falling, or 0 resting.</summary>
+        float Across = 0.0f;
+        float Down = 0.0f;
+        /// <summary>How long each one lives, seconds (a resting one fades over it).</summary>
+        float Life = 0.0f;
+        /// <summary>
+        /// How far a falling one falls on average, view pixels (0 resting): it shows anywhere along its fall above and
+        /// upwind of where it lands, so the sheets it lands by smear along that way.
+        /// </summary>
+        float Fall = 0.0f;
+        /// <summary>
+        /// How it's drawn, as its flakes are, view pixels: a square Side across, or with Arm above 0 a plus, its arms
+        /// reaching Arm each way from its middle (both on its middle's texel).
+        /// </summary>
+        float Side = 0.0f;
+        float Arm = 0.0f;
+        /// <summary>Their colour and how strongly a speck is drawn over the world, each from Weakest to Strongest.</summary>
+        float Red = 0.0f;
+        float Green = 0.0f;
+        float Blue = 0.0f;
+        float Weakest = 0.0f;
+        float Strongest = 0.0f;
+    };
+
+    /// <summary>
+    /// The specks: the three sizes of the flakes falling (far, between and near), then those resting on the ground; as
+    /// many as the flakes left out would be now, each thrown as the view's real ones are and gone after its fall and
+    /// rest, so the real flakes and the specks together are as many as a view throwing them all (none at
+    /// <see cref="FullFlakeLines"/> and closer once the flakes left out further out have fallen and rested).
+    /// </summary>
+    struct MCSpeckle
+    {
+        static constexpr size_t Resting = 3;
+        std::array<MCSpeckLayer, 4> Layers{};
+        /// <summary>How many times its Density a layer has where the veil's sheets are thickest (SheetsAt's 1).</summary>
+        float ThickSheets = 1.0f;
+        /// <summary>How much of the light in the air the falling ones catch, as the flakes do (CatchGain; 0 none).</summary>
+        float Catch = 0.0f;
+    };
+
+    /// <summary>The specks shown now (none but in snow drawn by the GPU, zoomed out past FullFlakeLines lately).</summary>
+    MCSpeckle ShownSpeckle();
+
+    /// <summary>
     /// How far a footprint or a crater made <paramref name="age"/> seconds of the game's time ago has filled in with the
     /// snow shown (0: not at all, as made; 1: as the ground round it), by its look's Fill (times
     /// MCWeatherSettings::SettlePace); 0 while none settles (<see cref="ShownCover"/>).

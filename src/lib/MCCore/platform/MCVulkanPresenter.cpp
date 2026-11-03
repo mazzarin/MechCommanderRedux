@@ -84,6 +84,27 @@ namespace
         /// </summary>
         float Snow[4] = {};
         /// <summary>
+        /// Port-only (HD weather's snow): the specks (MCWeather::ShownSpeckle), in the texture's pixels: each layer's
+        /// a texel where the veil's sheets are thinnest; how many times as many where they're thickest, the longest
+        /// fall's way from where a speck shows to where it lands (texels across and down) and how much of the light in
+        /// the air the falling ones catch; each layer's life; where each one's lattice lies (MCSpeckLattice; the first
+        /// two, then the last two); each one's colour and weakest strength; each one's strongest; each one's square's
+        /// side (whole texels) or, for a plus, how far its arms reach (texels; -1: a square).
+        /// </summary>
+        float Specks[4] = {};
+        float SpeckSheets[4] = {};
+        float SpeckLives[4] = {};
+        float SpeckMoved[2][4] = {};
+        float SpeckLooks[4][4] = {};
+        float SpeckStrongest[4] = {};
+        float SpeckSides[4] = {};
+        float SpeckArms[4] = {};
+        /// <summary>
+        /// How far each falling layer falls as a share of the longest fall (SpeckSheets' yz; 0 for the resting), and,
+        /// last, 1 when the index target's alpha tells the ground from what stands on it (MCSceneLights::ReliefMapsOn).
+        /// </summary>
+        float SpeckFalls[4] = {};
+        /// <summary>
         /// Port-only (HD lighting): the light tiles' side in the world's texels (0: none) and how many there are across
         /// and down (LightTiles).
         /// </summary>
@@ -118,6 +139,11 @@ namespace
     constexpr float MinGroundDeterminant = 1e-6f;
     /// <summary>The smallest clouds, in meters (their size divides the ground's meters).</summary>
     constexpr float MinCloudSize = 1.0f;
+    /// <summary>The specks' lattices wrap every this many texels (composite.pshader's SpeckWrapMask).</summary>
+    constexpr double SpeckWrap = 65536.0;
+    static_assert(std::tuple_size_v<decltype(MCSpeckLattice::Moved)> ==
+                      std::tuple_size_v<decltype(MCWeather::MCSpeckle::Layers)>,
+                  "a lattice for each layer of specks");
     using MCVulkanShaders::CompositeSamplers;
     /// <summary>The puddle pass reaches this many texels past the world each way (composite.pshader's PuddleBorder).</summary>
     constexpr uint32_t PuddleBorder = 1;
@@ -323,12 +349,83 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (HD weather's snow): sets <paramref name="uniforms"/>' specks (MCWeather::ShownSpeckle) for a world
+    /// texture <paramref name="width"/> by <paramref name="height"/>, <paramref name="across"/> and
+    /// <paramref name="down"/> texels a view pixel, its ground's map (uniforms' Ground) and time (Haze's) set; moving
+    /// <paramref name="lattice"/> on by the game's time since it last moved, each layer's as its specks fall, and all as
+    /// far as the ground point at the texture's middle then has moved on the screen since (as the view pans, not as it
+    /// zooms about it).
+    /// </summary>
+    void SetSpeckle(CompositeUniforms& uniforms, MCSpeckLattice& lattice, float across, float down, float width,
+                    float height)
+    {
+        const MCWeather::MCSpeckle speckle = MCWeather::ShownSpeckle();
+        const float time = uniforms.Haze[2];
+        const std::array<float, 2> ground{uniforms.Ground[0], uniforms.Ground[1]};
+        const std::array<float, 2> scale{across, down};
+        const std::array<float, 2> middle{0.5f * width, 0.5f * height};
+
+        if (lattice.Placed && lattice.Scale[0] > 0.0f && lattice.Scale[1] > 0.0f)
+        {
+            const double step = std::max(time - lattice.Time, 0.0f);
+
+            for (size_t axis = 0; axis < middle.size(); ++axis)
+            {
+                const double panned = ground[axis] - middle[axis] +
+                                      (middle[axis] - lattice.Ground[axis]) * scale[axis] / lattice.Scale[axis];
+
+                for (size_t layer = 0; layer < lattice.Moved.size(); ++layer)
+                {
+                    const MCWeather::MCSpeckLayer& shown = speckle.Layers[layer];
+                    const double fell = (axis == 0 ? shown.Across : shown.Down) * scale[axis] * step;
+                    const double moved = lattice.Moved[layer][axis] + panned + fell;
+                    lattice.Moved[layer][axis] = moved - SpeckWrap * std::floor(moved / SpeckWrap);
+                }
+            }
+        }
+
+        lattice.Placed = true;
+        lattice.Time = time;
+        lattice.Ground = ground;
+        lattice.Scale = scale;
+        uniforms.SpeckSheets[0] = speckle.ThickSheets;
+        uniforms.SpeckSheets[3] = speckle.Catch;
+        const auto longest = std::ranges::max_element(speckle.Layers, {},
+                                                      [](const MCWeather::MCSpeckLayer& layer) { return layer.Fall; });
+
+        if (longest->Fall > 0.0f && longest->Down > 0.0f)
+        {
+            uniforms.SpeckSheets[1] = longest->Across / longest->Down * longest->Fall * across;
+            uniforms.SpeckSheets[2] = longest->Fall * down;
+        }
+
+        for (size_t layer = 0; layer < speckle.Layers.size(); ++layer)
+        {
+            const MCWeather::MCSpeckLayer& shown = speckle.Layers[layer];
+            uniforms.Specks[layer] = std::max(shown.Density, 0.0f) / (across * down);
+            uniforms.SpeckLives[layer] = shown.Life;
+            uniforms.SpeckMoved[layer / 2][layer % 2 * 2] = static_cast<float>(lattice.Moved[layer][0]);
+            uniforms.SpeckMoved[layer / 2][layer % 2 * 2 + 1] = static_cast<float>(lattice.Moved[layer][1]);
+            std::ranges::copy(std::array{shown.Red, shown.Green, shown.Blue, shown.Weakest},
+                              uniforms.SpeckLooks[layer]);
+            uniforms.SpeckStrongest[layer] = shown.Strongest;
+            // As a hard particle is drawn: whole texels, at least one (draw.pshader's HardParticlePixel).
+            uniforms.SpeckSides[layer] = std::max(std::round(shown.Side * across), 1.0f);
+            uniforms.SpeckArms[layer] = shown.Arm > 0.0f ? shown.Arm * across : -1.0f;
+            uniforms.SpeckFalls[layer] = shown.Fall > 0.0f ? shown.Fall / longest->Fall : 0.0f;
+        }
+
+        uniforms.SpeckFalls[MCWeather::MCSpeckle::Resting] = MCSceneLights::ReliefMapsOn() ? 1.0f : 0.0f;
+    }
+
+    /// <summary>
     /// Sets <paramref name="uniforms"/>' lighting (sprite/MCSceneLights.h) to the lights world window
     /// <paramref name="world"/> shows, its pixels scaled to its texture's (<paramref name="width"/> by
-    /// <paramref name="height"/>), and distances in the texture's pixels across; returns the lights' tiles (none
-    /// without lights), whose size it sets in the uniforms.
+    /// <paramref name="height"/>), and distances in the texture's pixels across, with the snow's specks moved on in
+    /// <paramref name="specks"/>; returns the lights' tiles (none without lights), whose size it sets in the uniforms.
     /// </summary>
-    LightTiles SetLighting(CompositeUniforms& uniforms, const MCWindow& world, float width, float height)
+    LightTiles SetLighting(CompositeUniforms& uniforms, MCSpeckLattice& specks, const MCWindow& world, float width,
+                           float height)
     {
         const std::span<const MCSceneLight> lights = MCSceneLights::Shown(world);
         const MCSceneLights::MCLighting lighting = MCSceneLights::ShownLighting();
@@ -412,6 +509,7 @@ namespace
             uniforms.Snow[1] = cover.Thick;
             uniforms.Snow[2] = std::clamp(cover.Share, 0.0f, 1.0f);
             uniforms.Snow[3] = look.Snows ? 1.0f : 0.0f;
+            SetSpeckle(uniforms, specks, across, down, width, height);
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
             if (MCSceneLights::ReliefMapsOn())
@@ -555,12 +653,14 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_QuadShader = std::move(*quad);
-    // The composite, with rain and without, and the GPU world's passes before it, each composite.pshader built for it
-    // alone, with the format each draws.
+    // The composite, with the weather (and the snow's specks, or not) and without, and the GPU world's passes before
+    // it, each composite.pshader built for it alone, with the format each draws.
     constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     const std::array composites{
         std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, Rgba},
         std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, Rgba},
+        std::tuple{&MCVulkanShaders::CompositeUnspecked, &presenter->_UnspeckedShader, &presenter->_UnspeckedPipeline,
+                   Rgba},
         std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline, Rgba},
         std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba},
         std::tuple{&MCVulkanShaders::CompositePuddle, &presenter->_PuddleShader, &presenter->_PuddlePipeline,
@@ -697,12 +797,14 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Linear.reset();
     _CompositePipeline.reset();
     _DryPipeline.reset();
+    _UnspeckedPipeline.reset();
     _BrightPipeline.reset();
     _FieldPipeline.reset();
     _PuddlePipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
     _DryShader.reset();
+    _UnspeckedShader.reset();
     _BrightShader.reset();
     _FieldShader.reset();
     _PuddleShader.reset();
@@ -1099,6 +1201,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     };
 
     std::vector<std::optional<UnderlayDraw>> underlayDraws(frame.Underlays.size());
+    _Specks.resize(std::max(_Specks.size(), frame.Underlays.size()));
 
     for (size_t i = 0; i < frame.Underlays.size(); ++i)
     {
@@ -1131,7 +1234,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {1.0f, source, drawnX, drawnY},
         };
 
-        drawn.Lights = SetLighting(uniforms, *world.Source, world.Size[0], world.Size[1]);
+        drawn.Lights = SetLighting(uniforms, _Specks[i], *world.Source, world.Size[0], world.Size[1]);
 
         if (world.Bloom != nullptr)
         {
@@ -1370,13 +1473,17 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {&puddles, _Nearest.get()},
         }};
 
-        // Port-only (HD weather): without the rain's wet look, the weather's veil (the rain's or the falling snow's)
-        // and the snow's cover where none shows (composite.pshader's WetAt, VeiledAt and SnowAt leave the colour as it
-        // is then).
-        const bool weathered = uniforms.WetLook[0] > 0.0f || uniforms.Weather[3] > 0.0f || uniforms.Snow[2] > 0.0f;
+        // Port-only (HD weather): without the rain's wet look, the weather's veil (the rain's or the falling snow's),
+        // the snow's cover and its specks where none shows, and without the specks where only they don't
+        // (composite.pshader's WetAt, VeiledAt, SnowAt and SpecksAt leave the colour as it is then).
+        const bool specked = std::ranges::any_of(uniforms.Specks, [](float specks) { return specks > 0.0f; });
+        const bool weathered =
+            specked || uniforms.WetLook[0] > 0.0f || uniforms.Weather[3] > 0.0f || uniforms.Snow[2] > 0.0f;
+        SDL_GPUGraphicsPipeline* const pipeline = specked     ? _CompositePipeline.get()
+                                                  : weathered ? _UnspeckedPipeline.get()
+                                                              : _DryPipeline.get();
 
-        if (SDL_GPUGraphicsPipeline* const pipeline = weathered ? _CompositePipeline.get() : _DryPipeline.get();
-            pipeline != bound)
+        if (pipeline != bound)
         {
             SDL_BindGPUGraphicsPipeline(pass, pipeline);
             bound = pipeline;

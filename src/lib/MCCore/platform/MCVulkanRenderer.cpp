@@ -234,6 +234,8 @@ namespace
     constexpr SDL_GPUTextureFormat GlintFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     /// <summary>A surface's colour targets: its colours, its indices and (port-only) its glints.</summary>
     constexpr uint32_t SurfaceTargets = 3;
+    /// <summary>The black a terrain tile no one has seen is filled with (composite.pshader's UnseenIndex).</summary>
+    constexpr uint32_t UnseenTileIndex = 0x10;
 
     /// <summary>
     /// Clears <paramref name="targets"/> as a window's new pixels start: index 0 everywhere, in the colour of palette
@@ -3532,7 +3534,7 @@ void MCVulkanRenderer::Tile(MCWindow& target, const MCTileCommand& command)
     if (command.Fill)
     {
         op |= UseColor;
-        color = 0x10;
+        color = UnseenTileIndex;
     }
     else if (command.Table.has_value())
     {

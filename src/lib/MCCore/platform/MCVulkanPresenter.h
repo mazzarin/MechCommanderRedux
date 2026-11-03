@@ -4,6 +4,21 @@
 #include "platform/MCVulkanRenderer.h"
 
 /// <summary>
+/// Port-only (HD weather's snow): where the specks' lattices lie on an underlay's world (MCWeather::ShownSpeckle,
+/// composite.pshader's SpecksAt), in its texels, wrapped: each layer's moved as its specks fall, and all with the
+/// ground as the view pans (still as it zooms); and, once placed, the game's time, the texel of the map's middle and the
+/// texels a view pixel (across, down) they were last moved at.
+/// </summary>
+struct MCSpeckLattice
+{
+    std::array<std::array<double, 2>, 4> Moved{};
+    bool Placed = false;
+    float Time = 0.0f;
+    std::array<float, 2> Ground{};
+    std::array<float, 2> Scale{};
+};
+
+/// <summary>
 /// The Vulkan renderer's presenter: an SDL GPU device (SPIR-V, Vulkan) that owns the window's swapchain. Each frame
 /// it composites the screen over its underlays in palette indices into the frame texture at the screen's size
 /// (quad.vshader + composite.pshader), and blits the shown view into the swapchain, letterboxed, nearest or linear.
@@ -140,6 +155,12 @@ private:
     MCGpuHandle<SDL_GPUShader> _DryShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _DryPipeline;
     /// <summary>
+    /// Port-only (HD weather's snow): the weather's composite built without the snow's specks
+    /// (shaders/composite_unspecked.pshader), for a quad where the weather shows but no specks do.
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _UnspeckedShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _UnspeckedPipeline;
+    /// <summary>
     /// Port-only (HD weather): the GPU world's puddle pass, the composite's shader built for it alone
     /// (shaders/composite_puddle.pshader).
     /// </summary>
@@ -173,6 +194,8 @@ private:
     /// </summary>
     std::vector<Texture> _LightTiles;
     Texture _NoLightTiles;
+    /// <summary>Port-only (HD weather's snow): the underlays' specks' lattices, in the same order.</summary>
+    std::vector<MCSpeckLattice> _Specks;
     /// <summary>The upload buffer, and its size; the light tiles' (uploaded after the frame's textures), and its.</summary>
     MCGpuHandle<SDL_GPUTransferBuffer> _Upload;
     uint32_t _UploadSize = 0;

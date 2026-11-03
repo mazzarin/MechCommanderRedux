@@ -13,6 +13,7 @@
 #include "terrain/MCTerrain.h"
 #include "vfx/MCVfxFunctions.h"
 
+#include <deque>
 #include <map>
 #include <numbers>
 #include <random>
@@ -537,6 +538,13 @@ namespace
     constexpr float FlakeRest = 0.6f;
     constexpr float MaxFlakes = 1800.0f;
     constexpr float FlakeDot = 0.5f * MockPixel;
+    // Each size's flake's radius, far to near, and how far the near one's plus's arms reach each way from its middle.
+    constexpr std::array<float, 3> FlakeRadii{FlakeDot, 2.0f * FlakeDot, FlakeDot};
+    constexpr float FlakeArm = MockPixel;
+    // Zoomed out past MCWeather::FullFlakeLines, the flakes left out (MCWeather::ShownSpeckle) are kept by the frame for
+    // as long as the longest fall and rest; the share of a size's still falling is taken at StillFallingSpeeds speeds
+    // through its range (exactly through its falls).
+    constexpr size_t StillFallingSpeeds = 32;
     // The snow's cover (MCWeather::ShownCover), as composite.pshader lays it (SnowFieldAt): noise SnowSize meters big, two
     // layers, the finer SnowApart off; of the ground it covers, ThickShare lies thick, the rest under a dusting.
     constexpr float SnowSize = 30.0f;
@@ -808,6 +816,17 @@ namespace
     };
 
     /// <summary>
+    /// The flakes of each size a frame of a zoomed-out view left out, at the game's time Time: as many a view pixel
+    /// squared as would have landed where the veil's sheets are as thin as SheetLeast thins them, and SheetMost over
+    /// SheetLeast times as many where they're thickest.
+    /// </summary>
+    struct LeftOutFlakes
+    {
+        float Time = 0.0f;
+        std::array<float, FlakeSizes.size()> Thrown{};
+    };
+
+    /// <summary>
     /// The weather's state: its settings and the mission's weather; the drops falling and the splashes showing, and the
     /// most there may be (for this frame's view); the units drawn, the feet come down and the drops landed by the tools
     /// this frame (Draw empties them each frame); the feet's puddles still reacting (the newest
@@ -848,6 +867,12 @@ namespace
         /// </summary>
         std::vector<float> Filled;
         float FilledFor = 0.0f;
+        /// <summary>
+        /// Port-only (HD weather's snow): the flakes a zoomed-out view left out, a frame's each, for as long as some may
+        /// still be falling or resting; and the specks they make now (MCWeather::ShownSpeckle).
+        /// </summary>
+        std::deque<LeftOutFlakes> LeftOut;
+        MCWeather::MCSpeckle Speckle;
     };
 
     /// <summary>The weather's one state.</summary>
@@ -1617,6 +1642,63 @@ namespace
         }
     }
 
+    /// <summary>The share of the drops thrown that are of size <paramref name="index"/> (Rain's pick by the look's Sizes).</summary>
+    float SizeShare(const MCWeather::MCWeatherLook& look, size_t index)
+    {
+        float below = 0.0f;
+
+        for (size_t i = 0; i < index; ++i)
+        {
+            below += look.Sizes[i];
+        }
+
+        // The last takes every pick past the others'.
+        const float upTo = index + 1 < look.Sizes.size() ? below + look.Sizes[index] : 1.0f;
+        return std::clamp(upTo, 0.0f, 1.0f) - std::clamp(below, 0.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// The share of a size's flakes still falling <paramref name="age"/> seconds after they were thrown: those whose fall
+    /// over their speed (each even through its range) is longer.
+    /// </summary>
+    float StillFalling(const FlakeSize& size, float age)
+    {
+        if (age <= 0.0f)
+        {
+            return 1.0f;
+        }
+
+        float share = 0.0f;
+
+        for (size_t i = 0; i < StillFallingSpeeds; ++i)
+        {
+            const float speed = std::lerp(size.SpeedLow, size.SpeedHigh,
+                                          (static_cast<float>(i) + 0.5f) / static_cast<float>(StillFallingSpeeds));
+            share += std::clamp((size.FallHigh - age * speed) / (size.FallHigh - size.FallLow), 0.0f, 1.0f);
+        }
+
+        return share / static_cast<float>(StillFallingSpeeds);
+    }
+
+    /// <summary>How fast a size's flakes in the air fall on average (each as long in it as its fall over its speed).</summary>
+    float SeenSpeed(const FlakeSize& size)
+    {
+        return (size.SpeedHigh - size.SpeedLow) / std::log(size.SpeedHigh / size.SpeedLow);
+    }
+
+    /// <summary>The longest a flake falls and rests, seconds.</summary>
+    float LongestFlake()
+    {
+        float longest = 0.0f;
+
+        for (const FlakeSize& size : FlakeSizes)
+        {
+            longest = std::max(longest, size.FallHigh / size.SpeedLow);
+        }
+
+        return longest + FlakeRest;
+    }
+
     /// <summary>
     /// The drops thrown this frame (<paramref name="step"/> seconds of the game's time) over <paramref name="camera"/>'s
     /// view, as many as the weather's rate, more where the veil's sheets are thick (no more at once than MaxDrops, more
@@ -1632,8 +1714,25 @@ namespace
         const float landLeft =
             look.Snows ? LandLeft + look.Drift * (FlakeCalm + FlakeGusts) * FlakeSizes[NearFlake].FallHigh : LandLeft;
         const float landBelow = look.Snows ? FlakeBelow : LandBelow;
-        const float area = (width + landLeft + LandRight) * (height + landBelow);
+        // Port-only (HD weather's snow): zoomed out past MCWeather::FullFlakeLines, the view throws no more flakes than
+        // one showing that many lines; the composite draws the rest as specks (LeftOut).
+        const float kept = look.Snows && height > MCWeather::FullFlakeLines
+                               ? (MCWeather::FullFlakeLines / height) * (MCWeather::FullFlakeLines / height)
+                               : 1.0f;
+        const float area = (width + landLeft + LandRight) * (height + landBelow) * kept;
         const float rate = look.Drops * state.Settings.Amount * area / (DropsArea * DropsArea) * SheetMost;
+
+        if (kept < 1.0f)
+        {
+            LeftOutFlakes& left = state.LeftOut.emplace_back(LeftOutFlakes{.Time = time});
+
+            for (size_t size = 0; size < left.Thrown.size(); ++size)
+            {
+                left.Thrown[size] = (1.0f - kept) * look.Drops * state.Settings.Amount / (DropsArea * DropsArea) *
+                                    SheetLeast * SizeShare(look, size) * step;
+            }
+        }
+
         const float most = look.Snows ? MaxFlakes : MaxDrops;
         state.Most = static_cast<size_t>(most * std::max(burst, 1.0f) * area / (DropsArea * DropsArea));
         const int32_t count = dice.Count(rate * step);
@@ -1850,7 +1949,7 @@ namespace
         {
             case FarFlake:
             {
-                command.Radius = FlakeDot;
+                command.Radius = FlakeRadii[FarFlake];
                 SetColor(command, NoPalerThan(FlakeWhite, palest), drop.Alpha);
                 Mark(marks, camera, command, drop.Depth);
                 break;
@@ -1859,22 +1958,22 @@ namespace
             case NearFlake:
             {
                 // Its arms, across and up, each a pixel of the mock-up's wide, crossing at its middle.
-                command.Radius = FlakeDot;
+                command.Radius = FlakeRadii[NearFlake];
                 SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
-                command.X0 -= MockPixel;
-                command.X1 += MockPixel;
+                command.X0 -= FlakeArm;
+                command.X1 += FlakeArm;
                 Mark(marks, camera, command, drop.Depth);
-                command.X0 += MockPixel;
+                command.X0 += FlakeArm;
                 command.X1 = command.X0;
-                command.Y0 -= MockPixel;
-                command.Y1 += MockPixel;
+                command.Y0 -= FlakeArm;
+                command.Y1 += FlakeArm;
                 Mark(marks, camera, command, drop.Depth);
                 break;
             }
 
             default:
             {
-                command.Radius = 2.0f * FlakeDot;
+                command.Radius = FlakeRadii[drop.Size];
                 SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
                 Mark(marks, camera, command, drop.Depth);
                 break;
@@ -2026,6 +2125,87 @@ namespace
     }
 
     /// <summary>
+    /// Port-only (HD weather's snow): the specks for the flakes the view left out (State::LeftOut) at the game's time
+    /// <paramref name="now"/>, dropping those gone: each size's still falling, drifting downwind by the gusts at the
+    /// view's middle, then those landed and resting, as AddFlake and AddSplashes draw them (no paler than
+    /// <paramref name="palest"/>).
+    /// </summary>
+    MCWeather::MCSpeckle Specks(State& state, const MCCamera& camera, const MCWeather::MCWeatherLook& look, float now,
+                                float palest)
+    {
+        const float longest = LongestFlake();
+
+        while (!state.LeftOut.empty() && now - state.LeftOut.front().Time > longest)
+        {
+            state.LeftOut.pop_front();
+        }
+
+        if (state.LeftOut.empty() || !look.Snows)
+        {
+            return {};
+        }
+
+        MCWeather::MCSpeckle speckle{.ThickSheets = SheetMost / SheetLeast, .Catch = MCWeather::CatchGain()};
+        std::array<float, FlakeSizes.size()> landed{};
+
+        for (const LeftOutFlakes& left : state.LeftOut)
+        {
+            const float age = now - left.Time;
+
+            for (size_t size = 0; size < FlakeSizes.size(); ++size)
+            {
+                const float falling = StillFalling(FlakeSizes[size], age);
+                speckle.Layers[size].Density += left.Thrown[size] * falling;
+                landed[size] += left.Thrown[size] * (StillFalling(FlakeSizes[size], age - FlakeRest) - falling);
+            }
+        }
+
+        const MCVector3D middle = GroundPointAt(camera.HalfWidth, camera.HalfHeight, camera);
+        const auto [east, north] = FlatGround(middle.X, middle.Y, middle.Z);
+        const float slant = look.Drift * (FlakeCalm + FlakeGusts * GustAt(east, north, now));
+        MCWeather::MCSpeckLayer& resting = speckle.Layers[MCWeather::MCSpeckle::Resting];
+        resting.Life = FlakeRest;
+        resting.Side = 2.0f * FlakeDot;
+
+        for (size_t size = 0; size < FlakeSizes.size(); ++size)
+        {
+            const FlakeSize& flake = FlakeSizes[size];
+            MCWeather::MCSpeckLayer& layer = speckle.Layers[size];
+            layer.Down = SeenSpeed(flake);
+            layer.Across = slant * layer.Down;
+            layer.Fall = 0.5f * (flake.FallLow + flake.FallHigh);
+            layer.Life = layer.Fall / layer.Down;
+            layer.Side = 2.0f * FlakeRadii[size];
+            layer.Arm = size == NearFlake ? FlakeArm : 0.0f;
+            const Rgb falls = NoPalerThan(size == FarFlake ? FlakeWhite : FlakeGrey, palest);
+            layer.Red = falls.Red;
+            layer.Green = falls.Green;
+            layer.Blue = falls.Blue;
+            layer.Weakest = flake.AlphaLow;
+            layer.Strongest = flake.AlphaHigh;
+            // Each size's landed as many of the resting as there are of them (Throw's colours).
+            const Rgb rests = NoPalerThan(size == FarFlake ? FlakeWhite : FlakeBrightest, palest);
+            resting.Density += landed[size];
+            resting.Red += landed[size] * rests.Red;
+            resting.Green += landed[size] * rests.Green;
+            resting.Blue += landed[size] * rests.Blue;
+            resting.Weakest += landed[size] * flake.AlphaLow;
+            resting.Strongest += landed[size] * flake.AlphaHigh;
+        }
+
+        if (resting.Density > 0.0f)
+        {
+            resting.Red /= resting.Density;
+            resting.Green /= resting.Density;
+            resting.Blue /= resting.Density;
+            resting.Weakest /= resting.Density;
+            resting.Strongest /= resting.Density;
+        }
+
+        return speckle;
+    }
+
+    /// <summary>
     /// Moves the drops and splashes on by <paramref name="step"/> seconds; those landed splash, on what
     /// <paramref name="camera"/> shows drawn under them.
     /// </summary>
@@ -2076,6 +2256,8 @@ namespace
         state.NextStrike.reset();
         state.Strikes.clear();
         state.Thunders.clear();
+        state.LeftOut.clear();
+        state.Speckle = {};
     }
 
     /// <summary>
@@ -2583,6 +2765,8 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
         state.NextStrike.reset();
         state.Strikes.clear();
         state.Thunders.clear();
+        state.LeftOut.clear();
+        state.Speckle = {};
         return;
     }
 
@@ -2617,6 +2801,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
 
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
     const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
+    state.Speckle = Specks(state, camera, look, now, palest);
     Marks marks;
     AddSplashes(marks, state, camera, catching, palest);
     AddDrops(marks, state, camera, catching, palest);
@@ -2669,6 +2854,12 @@ auto MCWeather::ShownCover() -> MCSnowCover
     }
 
     return {.Dusting = SnowLevel(share), .Thick = SnowLevel(share * ThickShare), .Share = share};
+}
+
+auto MCWeather::ShownSpeckle() -> MCSpeckle
+{
+    return Shown() != MCWeatherKind::Clear && MCRenderer::GpuDrawing() == MCGpuDrawing::On ? TheState().Speckle
+                                                                                           : MCSpeckle{};
 }
 
 auto MCWeather::FilledIn(float age) -> float

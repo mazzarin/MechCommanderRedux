@@ -9949,6 +9949,183 @@ TEST_CASE_ISOLATED("game: under the snow a footprint fills in by its age, and wi
     CHECK(oldInSnow * FilledShare < newInSnow);
 }
 
+/// <summary>
+/// HD weather's snow zoomed out (MCWeather::FullFlakeLines and ShownSpeckle) on mission 1's HD ground with its relief
+/// maps, a light blizzard (its flakes seldom on each other) drawn by the GPU, paused: a view showing twice
+/// FullFlakeLines' lines throws no more real flakes than one showing that many, and with the composite's specks laying
+/// the rest shows as many flakes as the real ones did in its middle the moment it zoomed out (none laid at
+/// FullFlakeLines); zoomed back in, the real flakes and the specks show as many as ever while the specks drain, all gone
+/// once the flakes left out would have fallen and rested. Zoomed out a little more with the game's time held, the specks
+/// keep their places.
+/// </summary>
+TEST_CASE_ISOLATED("game: zoomed out, the snow throws no more flakes than its full view, and specks lay the rest")
+{
+    const std::unique_ptr<SnowScene> scene = SetUpSnowScene(HdWeatherBlizzard);
+
+    if (scene == nullptr)
+    {
+        return;
+    }
+
+    // None settles: the flakes are told by what they change of the bare ground (a cover takes on the specks' look).
+    MCWeather::Settings().SettlePace = 0.0f;
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    constexpr float Step = 1.0f / 30.0f;
+    // Three seconds of frames: as many flakes falling and resting as there will be. The flakes left out are gone after
+    // the longest fall and rest (MCWeather.cpp's LongestFlake), a little longer.
+    constexpr int32_t Frames = 90;
+    constexpr int32_t DrainFrames = 105;
+    constexpr float Light = 0.2f;
+    constexpr float Out = 2.0f * MCWeather::FullFlakeLines;
+    // Farther out, where the specks are most of the flakes, and a little farther.
+    constexpr float FarOut = 4.0f * MCWeather::FullFlakeLines;
+    constexpr float LittleFarther = 1.01f;
+    const auto timeAt = [&](int32_t frame) { return now + Step * static_cast<float>(frame); };
+
+    const auto specksShown = []
+    {
+        float specks = 0.0f;
+
+        for (const MCWeather::MCSpeckLayer& layer : MCWeather::ShownSpeckle().Layers)
+        {
+            specks += layer.Density;
+        }
+
+        return specks;
+    };
+
+    // The view `lines` lines high at frame `frame`, snowing from frame `from` (the weather started afresh there).
+    const auto snowFor = [&](float lines, int32_t from, int32_t frame)
+    {
+        MCFixedZoomHeight = lines;
+        MCWeather::Settings().Amount = Light;
+
+        if (from == 0)
+        {
+            MCWeather::Clear();
+        }
+
+        std::vector<SDL_Color> shown;
+
+        for (int32_t at = from; at <= frame; ++at)
+        {
+            shown = ShownAt(timeAt(at));
+        }
+
+        return shown;
+    };
+
+    // The same view without a flake at frame `frame`.
+    const auto bareAt = [&](float lines, int32_t frame)
+    {
+        MCFixedZoomHeight = lines;
+        MCWeather::Settings().Amount = 0.0f;
+        MCWeather::Clear();
+        return ShownAt(timeAt(frame));
+    };
+
+    // The world's pixels the flakes changed as the eye tells (not the bloom's faint glow round the real ones, which the
+    // specks, drawn in the composite, don't cast), clear of the interface (as the rain's test) and, `middle`, in the
+    // middle quarter of the view (what a view of half its lines shows).
+    constexpr int32_t SeenChange = 12;
+    const auto flaked = [&](const std::vector<SDL_Color>& shown, const std::vector<SDL_Color>& bare, bool middle)
+    {
+        std::vector<bool> changed;
+
+        for (int32_t y = height / 4; y < (middle ? 3 * height / 4 : height); ++y)
+        {
+            for (int32_t x = width / 3; x < (middle ? 3 * width / 4 : width); ++x)
+            {
+                const size_t i = static_cast<size_t>(y) * width + x;
+                const int32_t change = std::max({std::abs(shown[i].r - bare[i].r), std::abs(shown[i].g - bare[i].g),
+                                                 std::abs(shown[i].b - bare[i].b)});
+                changed.push_back(change >= SeenChange);
+            }
+        }
+
+        return changed;
+    };
+
+    const auto covered = [](const std::vector<bool>& changed)
+    { return static_cast<double>(std::ranges::count(changed, true)) / static_cast<double>(changed.size()); };
+
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    // Snowing at FullFlakeLines; zoomed out with the time held (its real flakes drawn farther out, none laid as
+    // specks yet), then snowing on there.
+    const std::vector<SDL_Color> full = snowFor(MCWeather::FullFlakeLines, 0, Frames);
+    const size_t fullCount = MCWeather::Count();
+    const float fullSpecks = specksShown();
+    const std::vector<SDL_Color> justOut = snowFor(Out, Frames, Frames);
+    const std::vector<SDL_Color> out = snowFor(Out, Frames + 1, 2 * Frames);
+    const size_t outCount = MCWeather::Count();
+    const float outSpecks = specksShown();
+    SaveShownFrame(out, width, height, "weather_snow_specks");
+    // Back in: a frame a second while they drain, then after.
+    constexpr int32_t Second = 30;
+    std::vector<std::pair<int32_t, std::vector<SDL_Color>>> draining;
+
+    for (int32_t frame = 2 * Frames + Second; frame < 2 * Frames + DrainFrames; frame += Second)
+    {
+        draining.emplace_back(frame, snowFor(MCWeather::FullFlakeLines, frame - Second + 1, frame));
+    }
+
+    snowFor(MCWeather::FullFlakeLines, draining.back().first + 1, 2 * Frames + DrainFrames);
+    const float drained = specksShown();
+
+    const double fullShare = covered(flaked(full, bareAt(MCWeather::FullFlakeLines, Frames), false));
+    const double justOutShare = covered(flaked(justOut, bareAt(Out, Frames), true));
+    const double outShare = covered(flaked(out, bareAt(Out, 2 * Frames), true));
+    std::cout << std::format("  real flakes {} at {} lines, {} at {} with specks {:.4f} a view pixel squared; the "
+                             "middle {:.3f} flaked as it zoomed out, {:.3f} snowing on\n",
+                             fullCount, MCWeather::FullFlakeLines, outCount, Out, outSpecks, justOutShare, outShare);
+    // As many as the real ones a view throwing them all shows, give or take the sheets' (where they're thick, more).
+    constexpr double Most = 1.25;
+    CHECK(fullCount > 0);
+    CHECK(fullSpecks == 0.0f);
+    CHECK(outCount <= fullCount);
+    CHECK(outSpecks > 0.0f);
+    CHECK(outShare < justOutShare * Most);
+    CHECK(justOutShare < outShare * Most);
+
+    for (const auto& [frame, shown] : draining)
+    {
+        const double share = covered(flaked(shown, bareAt(MCWeather::FullFlakeLines, frame), false));
+        std::cout << std::format("  back in, {:.1f} s on: {:.3f} flaked (snowing there throughout {:.3f})\n",
+                                 Step * static_cast<float>(frame - 2 * Frames), share, fullShare);
+        CHECK(share < fullShare * Most);
+        CHECK(fullShare < share * Most);
+    }
+
+    CHECK(drained == 0.0f);
+
+    // Farther out with the time held, zoomed out a little more: the specks stay where they were (most flaked texels
+    // the same), as they wouldn't laid afresh (as many as both cover, about the share each covers).
+    const std::vector<SDL_Color> far = snowFor(FarOut, 0, Frames);
+    const std::vector<SDL_Color> farther = snowFor(FarOut * LittleFarther, Frames, Frames);
+    const std::vector<bool> farFlakes = flaked(far, bareAt(FarOut, Frames), false);
+    const std::vector<bool> fartherFlakes = flaked(farther, bareAt(FarOut * LittleFarther, Frames), false);
+    size_t both = 0;
+    size_t either = 0;
+
+    for (size_t i = 0; i < farFlakes.size(); ++i)
+    {
+        both += farFlakes[i] && fartherFlakes[i] ? 1 : 0;
+        either += farFlakes[i] || fartherFlakes[i] ? 1 : 0;
+    }
+
+    const double kept = static_cast<double>(both) / static_cast<double>(std::max<size_t>(either, 1));
+    std::cout << std::format("  zoomed out from {} to {} lines, {:.2f} of the flaked texels the same ({:.3f} flaked)\n",
+                             FarOut, FarOut * LittleFarther, kept, covered(farFlakes));
+    constexpr double KeptLeast = 0.6;
+    CHECK(kept > KeptLeast);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    MCFixedZoomHeight = 0.0f;
+    ScenarioTime = now;
+}
+
 namespace
 {
     /// <summary>
@@ -13550,7 +13727,8 @@ namespace
 /// force's first target;
 /// <c>--showcase-watch &lt;from&gt;,&lt;to&gt;</c> puts
 /// the camera between the first mech and the contact between those frames, the fog's edge, zoomed out to
-/// <c>--showcase-watch-zoom &lt;lines&gt;</c> if given; <c>--showcase-converge &lt;names&gt;</c> sends the other
+/// <c>--showcase-watch-zoom &lt;lines&gt;</c> if given (eased out and back in over
+/// <c>--showcase-zoom-ease &lt;frames&gt;</c>, else cut); <c>--showcase-converge &lt;names&gt;</c> sends the other
 /// sides' units named so (comma-separated parts of names) at the force once it attacks, the two sides standing
 /// LineMeters apart, each unit on its own mech of the other side (fire spread along the lines);
 /// <c>--showcase-answer &lt;frame&gt;</c> has the force answer from then: its recycled weapons readied each second and
@@ -13748,6 +13926,7 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
     const std::vector<int32_t> kills = ShowcaseFrames("kill");
     const std::vector<int32_t> watch = ShowcaseFrames("watch");
     const int32_t watchZoom = ShowcaseOption("watch-zoom", 0);
+    const int32_t zoomEase = std::max(ShowcaseOption("zoom-ease", 0), 1);
     const std::vector<int32_t> jumpFrames = ShowcaseFrames("jump-at");
     const std::vector<MCShowcaseEvent> cameras = ShowcaseEvents("camera");
     const std::vector<MCShowcaseEvent> dfas = ShowcaseEvents("dfa");
@@ -15609,10 +15788,20 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
             }
         }
 
-        // The watch's zoom, then the recording's again.
-        if (watchZoom > 0 && watch.size() == 2 && (frame == watch[0] || frame == watch[1]))
+        // The watch's zoom, then the recording's again, each eased in over zoomEase frames from the last (one: a cut).
+        if (watchZoom > 0 && watch.size() == 2)
         {
-            MCFixedZoomHeight = static_cast<float>(frame == watch[0] ? watchZoom : zoom);
+            const bool out = frame >= watch[0] && frame < watch[0] + zoomEase;
+            const bool back = frame >= watch[1] && frame < watch[1] + zoomEase;
+
+            if (out || back)
+            {
+                const float eased =
+                    static_cast<float>(frame - (out ? watch[0] : watch[1]) + 1) / static_cast<float>(zoomEase);
+                const float from = static_cast<float>(out ? zoom : watchZoom);
+                const float to = static_cast<float>(out ? watchZoom : zoom);
+                MCFixedZoomHeight = std::lerp(from, to, eased * eased * (3.0f - 2.0f * eased));
+            }
         }
 
         const std::shared_ptr<MCMover> contact = !watching ? nullptr

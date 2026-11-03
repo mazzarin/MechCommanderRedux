@@ -1,7 +1,8 @@
-// Port-only: the kept ground (MCVulkanRenderer's KeptGround), drawn with quad.vshader over the whole target, at the
-// drawn pixels whose window pixels lie in the terrain's clip. The kept ground is the terrain layer drawn over nothing
-// (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where only its seam
-// pass reached) and indices. Each pixel reads the kept pixel `shift` before it (drawn pixels, clamped to the copy).
+// Port-only: the kept ground (MCVulkanRenderer's KeptGround), drawn with quad.vshader over the drawn pixels whose
+// window pixels lie in the terrain's clip (MCVulkanRenderer's DrawnPixels). The kept ground is the terrain layer drawn
+// over nothing (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where
+// only its seam pass reached) and indices. Each pixel reads the kept pixel `shift` before it (drawn pixels, clamped to
+// the copy).
 // By mode:
 // - Copy (opaque pipeline): the kept colours and indices as they are, no glints; to move the kept ground.
 // - Clear (opaque pipeline): nothing (transparent, index 0), to draw a part of it again.
@@ -20,10 +21,6 @@ cbuffer Ground : register(b0, space3)
 {
     // xy: how far before the drawn pixel its kept pixel lies (drawn pixels); z: the mode; w unused.
     int4 shift;
-    // The window pixels written: x0, y0, x1, y1.
-    int4 clip;
-    // The target's size in window pixels (xy) and as drawn (zw).
-    int4 scale;
 };
 
 static const int ModeCopy = 0;
@@ -38,21 +35,9 @@ struct Output
     float4 glint : SV_Target2;
 };
 
-// The window pixel under drawn pixel p's centre, with sizes s (window xy, drawn zw): draw.pshader's WindowPixel.
-int2 WindowPixel(int2 p, int4 s)
-{
-    return int2((2u * uint2(p) + 1u) * uint2(s.xy) / (2u * uint2(s.zw)));
-}
-
 Output main(float4 position : SV_Position)
 {
     const int2 target = int2(floor(position.xy));
-    const int2 pixel = WindowPixel(target, scale);
-
-    if (any(pixel < clip.xy) || any(pixel > clip.zw))
-    {
-        discard;
-    }
 
     Output output;
     output.color = float4(0.0, 0.0, 0.0, 0.0);

@@ -389,6 +389,30 @@ namespace
         return MCRect{std::max(a.X0, b.X0), std::max(a.Y0, b.Y0), std::min(a.X1, b.X1), std::min(a.Y1, b.Y1)};
     }
 
+    /// <summary>
+    /// The drawn pixels whose window pixels (draw.pshader's WindowPixel) lie in <paramref name="window"/>, on a surface
+    /// of <paramref name="windowSize"/> window pixels drawn at <paramref name="drawnSize"/>: shaders/pixels.hlsli's
+    /// DrawnCorner, those t with 2 * x0 * drawn &lt;= (2t + 1) * size &lt; 2 * (x1 + 1) * drawn. Empty when none.
+    /// </summary>
+    MCRect DrawnPixels(const MCRect& window, std::array<uint32_t, 2> windowSize, std::array<uint32_t, 2> drawnSize)
+    {
+        const auto floorDivide = [](int64_t n, int64_t d) { return n >= 0 ? n / d : -((-n + d - 1) / d); };
+        std::array<int32_t, 2> first{};
+        std::array<int32_t, 2> last{};
+
+        for (size_t i = 0; i < 2; ++i)
+        {
+            const int64_t size = std::max(windowSize[i], 1u);
+            const int64_t drawn = std::max(drawnSize[i], 1u);
+            const int64_t from = i == 0 ? window.X0 : window.Y0;
+            const int64_t to = i == 0 ? window.X1 : window.Y1;
+            first[i] = static_cast<int32_t>(-floorDivide(size - 2 * from * drawn, 2 * size));
+            last[i] = static_cast<int32_t>(floorDivide(2 * (to + 1) * drawn - 1 - size, 2 * size));
+        }
+
+        return MCRect{first[0], first[1], last[0], last[1]};
+    }
+
     int64_t Area(const MCRect& rect)
     {
         return Empty(rect) ? 0 : static_cast<int64_t>(rect.X1 - rect.X0 + 1) * (rect.Y1 - rect.Y0 + 1);
@@ -694,8 +718,6 @@ namespace
     struct GroundUniforms
     {
         int32_t Shift[4];
-        int32_t Clip[4];
-        int32_t Scale[4];
     };
 
     /// <summary>The terrain shader's vertex uniforms (shaders/terrain.vshader, cbuffer Terrain).</summary>
@@ -5842,15 +5864,15 @@ void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURen
                                       const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from,
                                       std::array<int32_t, 2> shift)
 {
-    const auto width = static_cast<float>(surface.Target.Width);
-    const auto height = static_cast<float>(surface.Target.Height);
-    const QuadUniforms quad{{0.0f, 0.0f, width, height}, {width, height, 0.0f, 0.0f}};
-    const GroundUniforms ground{{shift[0], shift[1], static_cast<int32_t>(mode), 0},
-                                {clip.X0, clip.Y0, clip.X1, clip.Y1},
-                                {static_cast<int32_t>(std::max(surface.MappedWidth, 1u)),
-                                 static_cast<int32_t>(std::max(surface.MappedHeight, 1u)),
-                                 static_cast<int32_t>(std::max(surface.Target.Width, 1u)),
-                                 static_cast<int32_t>(std::max(surface.Target.Height, 1u))}};
+    // The drawn pixels showing the clip's window pixels, every one of which the ground's shader draws.
+    const MCRect drawn =
+        DrawnPixels(clip, {surface.MappedWidth, surface.MappedHeight}, {surface.Target.Width, surface.Target.Height});
+    const QuadUniforms quad{
+        {static_cast<float>(drawn.X0), static_cast<float>(drawn.Y0),
+         static_cast<float>(std::max(drawn.X1 - drawn.X0 + 1, 0)),
+         static_cast<float>(std::max(drawn.Y1 - drawn.Y0 + 1, 0))},
+        {static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height), 0.0f, 0.0f}};
+    const GroundUniforms ground{{shift[0], shift[1], static_cast<int32_t>(mode), 0}};
     const SDL_GPUTextureSamplerBinding bindings[2] = {
         {from.has_value() ? _KeptGround.Colors[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
         {from.has_value() ? _KeptGround.Indices[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},

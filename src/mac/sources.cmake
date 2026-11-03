@@ -35,3 +35,6 @@ mc_vcxproj_sources(MCTESTS_SOURCES ${MC_SRC}/apps/MCRedux/mc_tests.vcxproj ${MC_
 # The GPU renderer's HLSL shaders, which MCCore.vcxproj compiles with dxc.
 mc_vcxproj_items(MCCORE_SHADERS ${MC_SRC}/lib/MCCore/MCCore.vcxproj ${MC_SRC}/lib/MCCore CustomBuild
                  "shaders\\\\[^\"]+\\.[pv]shader")
+# What they include beside each other (pixels.hlsli).
+mc_vcxproj_items(MCCORE_SHADER_INCLUDES ${MC_SRC}/lib/MCCore/MCCore.vcxproj ${MC_SRC}/lib/MCCore None
+                 "shaders\\\\[^\"]+\\.hlsli")

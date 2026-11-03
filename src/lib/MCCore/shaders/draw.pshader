@@ -290,17 +290,7 @@ Output Blended(float4 color)
     return output;
 }
 
-// The window pixel under drawn pixel p's centre, with sizes s (window xy, drawn zw).
-int2 WindowPixel(int2 p, int4 s)
-{
-    return int2((2u * uint2(p) + 1u) * uint2(s.xy) / (2u * uint2(s.zw)));
-}
-
-// The drawn pixel holding window pixel t's centre.
-int2 DrawnPixel(int2 t, int4 s)
-{
-    return int2((2u * uint2(t) + 1u) * uint2(s.zw) / (2u * uint2(s.xy)));
-}
+#include "pixels.hlsli"
 
 float4 FetchSource(int2 texel)
 {
@@ -1613,14 +1603,8 @@ Output ShadowPixel(Input input, int2 target)
 // The draw's pixel, as main shows it but for a glow's strength.
 Output DrawnOutput(Input input)
 {
-    // The drawn pixel, and the window pixel it shows.
+    // The drawn pixel, one whose window pixel lies in the rectangle (the vertex shaders draw no other).
     const int2 target = int2(floor(input.position.xy));
-    const int2 pixel = WindowPixel(target, scale);
-
-    if (any(pixel < input.rect.xy) || any(pixel > input.rect.zw))
-    {
-        discard;
-    }
 
 #if DRAW_VARIANT == DRAW_HD_KINDS
     return HdPixel(input, target);
@@ -1691,6 +1675,8 @@ Output DrawnOutput(Input input)
     }
 #endif
 
+    // The window pixel it shows, which the original's kinds work from.
+    const int2 pixel = WindowPixel(target, scale);
     const uint color = input.op.y & 255u;
     uint value = color;
     uint state = 1;

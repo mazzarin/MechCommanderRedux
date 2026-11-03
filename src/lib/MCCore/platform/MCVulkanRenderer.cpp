@@ -1145,6 +1145,21 @@ auto MCVulkanRenderer::VariantOf(uint32_t op) -> DrawVariant
     return kind == KindHd || kind == KindHdSmooth ? DrawVariant::Hd : DrawVariant::Every;
 }
 
+bool MCVulkanRenderer::FillsSurface(const Record& record, const Surface& surface) const
+{
+    if (record.Resize || record.TerrainDraw >= 0 || record.Count == 0 || record.Source != SourceKind::None ||
+        record.Blend || record.IndexOnly || record.Shadow || record.Marks)
+    {
+        return false;
+    }
+
+    // An opaque fill (no flags: no key, table or blend) over every window pixel the surface's drawn size shows.
+    const std::array<int32_t, 20>& draw = _Draws[record.First];
+    return static_cast<uint32_t>(draw[8]) == KindFill && draw[0] <= 0 && draw[1] <= 0 &&
+           draw[2] >= static_cast<int32_t>(surface.MappedWidth) - 1 &&
+           draw[3] >= static_cast<int32_t>(surface.MappedHeight) - 1;
+}
+
 bool MCVulkanRenderer::DrawPipelines::Made() const
 {
     return Opaque != nullptr && Blend != nullptr && IndexOnly != nullptr && BlendMarks != nullptr &&
@@ -5231,6 +5246,20 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     SDL_GPURenderPass* pass = nullptr;
     int32_t passSurface = -1;
     FrameUniforms passFrame{};
+    // Port-only: what the pass has bound and the command buffer has pushed (none: not yet), so a draw call binding
+    // the same as the one before binds nothing again.
+    SDL_GPUGraphicsPipeline* boundPipeline = nullptr;
+    std::optional<std::array<SDL_GPUTextureSamplerBinding, DrawSamplers>> boundSamplers;
+    std::optional<FrameUniforms> pushedFrame;
+    const auto forgetBound = [&]
+    {
+        boundPipeline = nullptr;
+        boundSamplers.reset();
+        pushedFrame.reset();
+    };
+
+    // The surfaces a pass has begun on this frame.
+    std::vector<bool> begun(_Surfaces.size(), false);
     const auto endPass = [&]
     {
         if (pass != nullptr)
@@ -5305,14 +5334,20 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             targets[1].texture = surface.Index.Handle.get();
             targets[2].texture = surface.Glints.Handle.get();
 
+            // Port-only: a surface's first pass of the frame starting with a fill of all of it (the world view's
+            // wipe) needn't load what the surface held, every texel of which the fill writes.
+            const bool overwritten = !begun[record.SurfaceIndex] && FillsSurface(record, surface);
+            begun[record.SurfaceIndex] = true;
+
             for (SDL_GPUColorTargetInfo& target : targets)
             {
-                target.load_op = SDL_GPU_LOADOP_LOAD;
+                target.load_op = overwritten ? SDL_GPU_LOADOP_DONT_CARE : SDL_GPU_LOADOP_LOAD;
                 target.store_op = SDL_GPU_STOREOP_STORE;
             }
 
             pass = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
             passSurface = record.SurfaceIndex;
+            forgetBound();
             const SDL_GPUViewport viewport{
                 0.0f, 0.0f, static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height),
                 0.0f, 1.0f};
@@ -5352,6 +5387,8 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             std::ranges::fill(frame.SourceScale, 1);
             DrawTerrain(commands, *pass, surface, _TerrainDraws[static_cast<size_t>(record.TerrainDraw)],
                         std::as_bytes(std::span(&frame, 1)));
+            // The terrain binds and pushes its own.
+            forgetBound();
             surface.DrawnSinceCopy.push_back(record.Writes);
             continue;
         }
@@ -5424,7 +5461,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             }
         }
 
-        const SDL_GPUTextureSamplerBinding bindings[DrawSamplers] = {
+        const std::array<SDL_GPUTextureSamplerBinding, DrawSamplers> bindings{{
             {source, _Nearest.get()},
             {_TableTexture.Handle.get(), _Nearest.get()},
             {_AlphaTexture.Handle.get(), _Nearest.get()},
@@ -5434,11 +5471,25 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             {hdColors, _Nearest.get()},
             {_PaletteTexture.Handle.get(), _Nearest.get()},
             {_PaletteTexture.Handle.get(), _Nearest.get()},
-        };
+        }};
 
-        SDL_BindGPUGraphicsPipeline(pass, record.Shadow ? _ShadowPipeline.get()
-                                                        : _Pipelines[static_cast<size_t>(record.Variant)].For(record));
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, DrawSamplers);
+        if (SDL_GPUGraphicsPipeline* const pipeline =
+                record.Shadow ? _ShadowPipeline.get() : _Pipelines[static_cast<size_t>(record.Variant)].For(record);
+            pipeline != boundPipeline)
+        {
+            SDL_BindGPUGraphicsPipeline(pass, pipeline);
+            boundPipeline = pipeline;
+        }
+
+        const auto sameBinding = [](const SDL_GPUTextureSamplerBinding& a, const SDL_GPUTextureSamplerBinding& b)
+        { return a.texture == b.texture && a.sampler == b.sampler; };
+
+        if (!boundSamplers.has_value() || !std::ranges::equal(*boundSamplers, bindings, sameBinding))
+        {
+            SDL_BindGPUFragmentSamplers(pass, 0, bindings.data(), DrawSamplers);
+            boundSamplers = bindings;
+        }
+
         const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
                                    static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
                                   {record.First, 0, 0, 0}};
@@ -5466,7 +5517,12 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             scaleOf(surface, frame.SourceScale);
         }
 
-        SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
+        if (!pushedFrame.has_value() || std::memcmp(&*pushedFrame, &frame, sizeof(frame)) != 0)
+        {
+            SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
+            pushedFrame = frame;
+        }
+
         SDL_DrawGPUPrimitives(pass, 6, count, 0, 0);
 
         for (size_t i = k; i <= last; ++i)

@@ -434,6 +434,11 @@ private:
     /// HD art frame (KindHd, KindHdSmooth), else the one for every kind.
     /// </summary>
     static DrawVariant VariantOf(uint32_t op);
+    /// <summary>
+    /// Port-only: whether <paramref name="record"/>'s first draw writes every texel of <paramref name="surface"/> (an
+    /// opaque fill of all of its window), so a pass starting with it needn't load what the surface held.
+    /// </summary>
+    bool FillsSurface(const Record& record, const Surface& surface) const;
     /// <summary>The part of <paramref name="rect"/> (window pixels) on <paramref name="surface"/>, as Add draws it.</summary>
     static MCRect Clipped(const Surface& surface, const Quad& rect);
     /// <summary>

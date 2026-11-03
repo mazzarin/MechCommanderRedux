@@ -74,6 +74,11 @@ public:
     /// </summary>
     std::expected<void, std::string> TerrainLayer(MCWindow& target, const MCTerrainFrame& frame) override;
     void EndTerrainLayer(MCWindow& target) override;
+    /// <summary>
+    /// Uploads <paramref name="mesh"/> and its tiles unless they're on the GPU already, as they are (the same mesh, HD
+    /// art pack and relief maps); the uploads go straight to the GPU, ahead of the frame being recorded.
+    /// </summary>
+    std::expected<void, std::string> PrepareTerrain(const MCTerrainMesh& mesh) override;
 
     /// <summary>
     /// The colours the next <see cref="Execute"/> draws with: the palette as shown (gamma applied, 256 entries; empty

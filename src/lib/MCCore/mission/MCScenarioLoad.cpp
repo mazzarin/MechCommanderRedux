@@ -269,6 +269,13 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         Eye()->ChangeTarget(LockObject(MultiPlayer()->LocalMovers[0]), true);
     }
 
+    // Port-only: the ground goes up to the GPU here too, under the loading bar, once the cameras have their terrain
+    // windows, rather than in the mission's first frame.
+    if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+    {
+        Fatal(-1, std::format("The ground can't go up to the GPU: {}", uploaded.error()));
+    }
+
     // The 'Mechs start with the damage their loadouts carried over.
     for (const std::shared_ptr<MCObjectList>& list : {InnerSphereMechList(), ClanMechList()})
     {

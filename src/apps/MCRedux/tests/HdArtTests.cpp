@@ -7465,7 +7465,7 @@ namespace
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
-    /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
+    /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read and uploaded up front, as a mission's load does)
     /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
     /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>), the other HD options as
     /// their flags ask (<see cref="FootprintsFromOptions"/>, <see cref="TurnsFromOptions"/>...).
@@ -7504,7 +7504,6 @@ namespace
         if (!original)
         {
             hdArt.emplace(packFolder);
-            MCTerrainReadHdTiles();
         }
 
         LightingFromOptions();
@@ -7522,6 +7521,15 @@ namespace
         FootprintsFromOptions();
         TurnsFromOptions();
         StopsFromOptions();
+
+        // The ground read and put on the GPU as a mission's load does, with the options (the relief maps') set.
+        MCTerrainReadHdTiles();
+
+        if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+        {
+            FAIL(uploaded.error());
+        }
+
         return original;
     }
 

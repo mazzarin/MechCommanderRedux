@@ -1,5 +1,6 @@
 #pragma once
 
+class MCCamera;
 class MCTerrainWindow;
 struct MCTerrainMesh;
 struct MCTerrainFrame;
@@ -41,3 +42,17 @@ struct MCTerrainMeshSteps
 };
 
 std::optional<MCTerrainMeshSteps> MCTerrainMeshStepsInUse();
+
+/// <summary>
+/// Port: the steps <paramref name="camera"/>'s terrain grid is projected by (MCTerrainWindow::Render), in whole pixels:
+/// those its ground mesh is built with.
+/// </summary>
+MCTerrainMeshSteps MCTerrainScreenSteps(const MCCamera& camera);
+
+/// <summary>
+/// Port-only: builds the map's ground mesh as the mission's first frame will (for the first active camera's terrain
+/// window) and has the hardware renderer put it on the GPU now (MCRenderer::PrepareTerrain), while the mission loads,
+/// rather than in that frame; an error says why it couldn't. Does nothing while the software renderer draws, or before a
+/// camera has a terrain window.
+/// </summary>
+std::expected<void, std::string> MCTerrainUploadGround();

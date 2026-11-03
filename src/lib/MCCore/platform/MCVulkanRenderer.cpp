@@ -4591,6 +4591,17 @@ private:
     std::vector<Region> _Regions;
 };
 
+std::expected<void, std::string> MCVulkanRenderer::PrepareTerrain(const MCTerrainMesh& mesh)
+{
+    if (_TerrainMesh.Version == mesh.Version && _TerrainMesh.HdPack == HdPackInUse() &&
+        _TerrainMesh.Relief == ReliefMapsInUse())
+    {
+        return {};
+    }
+
+    return UploadTerrainMesh(mesh);
+}
+
 std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target, const MCTerrainFrame& frame)
 {
     if (!frame.Mesh.has_value() || frame.Mesh->get().Cols <= 0 || frame.Mesh->get().Rows <= 0)
@@ -4608,13 +4619,9 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const uint16_t surface = SurfaceFor(target);
     const uint16_t fog = SurfaceFor(frame.Fog->get());
 
-    if (_TerrainMesh.Version != mesh.Version || _TerrainMesh.HdPack != HdPackInUse() ||
-        _TerrainMesh.Relief != ReliefMapsInUse())
+    if (auto uploaded = PrepareTerrain(mesh); !uploaded)
     {
-        if (auto uploaded = UploadTerrainMesh(mesh); !uploaded)
-        {
-            return uploaded;
-        }
+        return uploaded;
     }
 
     if (!_TerrainMesh.Usable)

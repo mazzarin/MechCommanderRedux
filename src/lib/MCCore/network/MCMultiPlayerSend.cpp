@@ -114,9 +114,10 @@ uint32_t MCMultiPlayer::WantedRules() const
 
 int32_t MCMultiPlayer::SendMatchRules()
 {
-    // The host's choices (else the server's own PREFS), as far as every player's build plays by them.
+    // Those the match options last played (else the server's own PREFS), as far as every player's build plays by them:
+    // a build that said its rules only at check-in plays none that the host's screen didn't show.
     auto rules = StartGuaranteedMessage<MCMPLongMessage>(MCMPMessageType::MatchRules);
-    rules.Value = static_cast<int32_t>(AgreedRules(WantedRules()));
+    rules.Value = static_cast<int32_t>(AgreedRules(Played.Rules.value_or(WantedRules())));
     PutMessage(rules);
     SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLongMessage)));
     MatchRules = static_cast<uint32_t>(rules.Value);
@@ -125,15 +126,26 @@ int32_t MCMultiPlayer::SendMatchRules()
 
 int32_t MCMultiPlayer::SendMatchOptions()
 {
+    // What every player's build plays of the host's choices, so a build without the host's weather (one that never
+    // said its rules, as the original's) keeps every player to the mission's own.
+    Played = PlayedOptions();
     auto options = StartGuaranteedMessage<MCMPMatchOptionsMessage>(MCMPMessageType::MatchOptions);
-    options.Weather = MatchOptions.Weather.has_value() ? static_cast<int8_t>(*MatchOptions.Weather)
-                                                       : MCMPMatchOptionsMessage::MissionOwn;
-    options.TimeOfDay = MatchOptions.TimeOfDay.has_value() ? static_cast<int8_t>(*MatchOptions.TimeOfDay)
-                                                           : MCMPMatchOptionsMessage::MissionOwn;
-    options.Rules = WantedRules();
+    options.Weather =
+        Played.Weather.has_value() ? static_cast<int8_t>(*Played.Weather) : MCMPMatchOptionsMessage::MissionOwn;
+    options.TimeOfDay =
+        Played.TimeOfDay.has_value() ? static_cast<int8_t>(*Played.TimeOfDay) : MCMPMatchOptionsMessage::MissionOwn;
+    options.Rules = Played.Rules.value_or(0);
     PutMessage(options);
     SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPMatchOptionsMessage)));
     return 0;
+}
+
+void MCMultiPlayer::UpdateMatchOptions()
+{
+    if (IsHost && PlayedOptions() != Played)
+    {
+        SendMatchOptions();
+    }
 }
 
 int32_t MCMultiPlayer::SendPlayerCheckIn()

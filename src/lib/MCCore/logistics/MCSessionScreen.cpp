@@ -415,7 +415,7 @@ auto MCSessionScreen::Draw() -> void
     DrawMap(frame);
 
     // Port-only: the tabs, MULTIPLAYER CHAT blinking behind MATCH OPTIONS while new chat waits; the list shows the
-    // match's options as they are now.
+    // match's options as they are now, the host's sent again when a player's rules change what the match plays.
     if (const std::shared_ptr<MCLogPort>& tabs = MatchTabs[static_cast<size_t>(FrontTab)]; tabs != nullptr)
     {
         const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow;
@@ -423,6 +423,7 @@ auto MCSessionScreen::Draw() -> void
         DrawMatchTabs(frame, *tabs, FrontTab, newChat && (MCPort::Milliseconds() / ChatBlinkMs) % 2 == 0);
     }
 
+    MultiPlayer()->UpdateMatchOptions();
     ShowMatchOptions(*MatchOptionsList);
     MedWhiteFont->WriteString(frame, 0x180, 199, MissionName);
     MedWhiteFont->WriteString(frame, 0x180, 0xe3, MapName);
@@ -623,11 +624,12 @@ auto MCSessionScreen::Activate(bool refresh) -> void
         SendTwoLongs(GuaranteedHeader(MCMPMessageType::SwitchScreen), 1, 0);
     }
 
-    // Port-only: the screen opens on the chat; the host's match options go to the guests (its last ones, kept for the
-    // session; at first its command line's).
+    // Port-only: the screen opens on the chat. Every build says what it plays by, and the host's match options go to
+    // the guests (its last ones, kept for the session; at first its command line's) as far as every build plays them.
     FrontTab = MCSessionTab::Chat;
     MatchOptionsList->ShowGuiWindow(false);
     MatchOptionsList->Reset();
+    MultiPlayer()->SendPlayerRules();
 
     if (isHost)
     {

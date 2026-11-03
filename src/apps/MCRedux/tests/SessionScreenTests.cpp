@@ -3,6 +3,7 @@
 #include "ScreenInput.h"
 #include "TestGame.h"
 #include "gui/MCGuiSystem.h"
+#include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
@@ -118,6 +119,7 @@ namespace
                 return false;
             }
 
+            _Id = id;
             _Listener = std::thread(
                 [this]
                 {
@@ -133,6 +135,7 @@ namespace
                             Keep(std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size())));
                         }
 
+                        SendWaitingRules();
                         _DirectPlay.Pump();
                         SDL_Delay(1);
                     }
@@ -145,6 +148,16 @@ namespace
         {
             const std::lock_guard lock(_Mutex);
             return _MatchOptions;
+        }
+
+        /// <summary>
+        /// Says to the host (player <paramref name="hostId"/>) that this guest's build plays by
+        /// <paramref name="rules"/>, as a game's rules message does (sent from the listener, which owns the connection).
+        /// </summary>
+        void SendRules(uint32_t hostId, uint32_t rules)
+        {
+            const std::lock_guard lock(_Mutex);
+            _RulesToSend = std::pair(hostId, rules);
         }
 
         ~Guest()
@@ -175,11 +188,33 @@ namespace
             }
         }
 
+        /// <summary>Sends the rules message <see cref="SendRules"/> left, if any.</summary>
+        void SendWaitingRules()
+        {
+            std::optional<std::pair<uint32_t, uint32_t>> rules;
+
+            {
+                const std::lock_guard lock(_Mutex);
+                rules.swap(_RulesToSend);
+            }
+
+            if (rules.has_value())
+            {
+                MCMPLongMessage message{};
+                message.Header = PlainHeader(MCMPMessageType::PlayerRules);
+                message.Value = static_cast<int32_t>(rules->second);
+                _DirectPlay.Send(_Id, rules->first, 0, LinkupBytes(message));
+            }
+        }
+
         MCDirectPlay _DirectPlay;
+        uint32_t _Id = 0;
         std::thread _Listener;
         std::atomic<bool> _Stop = false;
         std::mutex _Mutex;
         std::optional<MCMPMatchOptionsMessage> _MatchOptions;
+        /// <summary>The host's player id and the rules to say, until the listener sends them.</summary>
+        std::optional<std::pair<uint32_t, uint32_t>> _RulesToSend;
     };
 
     /// <summary>Runs frames for two seconds of game time, giving the network a moment each; the last frame's hash.</summary>
@@ -326,8 +361,11 @@ namespace
 
 /// <summary>
 /// Port: the session screen's MATCH OPTIONS tab, under MULTIPLAYER CHAT, brings the match's options in front in the
-/// chat's place (its pictures lettered from the art's tabs); the host's changes are the match's and go to the guest at
-/// once, as do the options when the screen opens; a guest's list is locked; MULTIPLAYER CHAT brings the chat back.
+/// chat's place (its pictures lettered from the art's tabs). The match plays the host's choices as far as every
+/// player's build plays them: while the guest's says nothing (as the original's) every option is held at the mission's
+/// own (or off), saying whose game hasn't it; a build of the braking's round frees braking; one that plays them all,
+/// every option. The host's changes are the match's and go to the guest at once, as do the options when the screen
+/// opens; a guest's list is locked; MULTIPLAYER CHAT brings the chat back.
 /// </summary>
 TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match's options and sends them")
 {
@@ -358,22 +396,30 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     Guest guest;
     REQUIRE(guest.Join(*manager.DirectPlay, OptionsHostAddress));
     Settle();
+    MCMultiPlayer& game = *MultiPlayer();
+    game.MatchOptions = MCMatchOptions{
+        .Weather = MCWeatherKind::Rain, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MechBraking};
     Go();
     Settle();
 
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
-    MCMultiPlayer& game = *MultiPlayer();
     REQUIRE(screen.MatchTabs[0] != nullptr);
     REQUIRE(screen.MatchTabs[1] != nullptr);
     CHECK(screen.FrontTab == MCSessionTab::Chat);
     SaveShot("match options 0 chat in front", ScreenHash());
 
-    // Opened: the host's options went to the guest (none chosen: the mission's own, the host's PREFS).
-    std::optional<MCMPMatchOptionsMessage> sent = guest.MatchOptions();
-    REQUIRE(sent.has_value());
-    CHECK_EQ(sent->Weather, MCMPMatchOptionsMessage::MissionOwn);
-    CHECK_EQ(sent->TimeOfDay, MCMPMatchOptionsMessage::MissionOwn);
-    CHECK_EQ(sent->Rules, game.WantedRules());
+    // Opened, the guest's build saying nothing: the mission's own and no rules went to it.
+    const auto sentIs = [&guest](int8_t weather, int8_t time, uint32_t rules)
+    {
+        const std::optional<MCMPMatchOptionsMessage> sent = guest.MatchOptions();
+        REQUIRE(sent.has_value());
+        CHECK_EQ(sent->Weather, weather);
+        CHECK_EQ(sent->TimeOfDay, time);
+        CHECK_EQ(sent->Rules, rules);
+    };
+
+    constexpr int8_t MissionOwn = MCMPMatchOptionsMessage::MissionOwn;
+    sentIs(MissionOwn, MissionOwn, 0);
 
     Click(TabX, OptionsTabY);
     Settle();
@@ -383,23 +429,55 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(!GlobalLog()->ChatWindow->ShowWindow);
     CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
+    CHECK(list.ChoiceName(BrakingRow) == "OFF");
+    constexpr std::string_view NotInGuests = "NOT IN GUEST'S GAME.";
 
-    // MISSION'S, CLEAR, RAIN; MISSION'S, DAY, DUSK, NIGHT; braking the other way.
-    ClickSetting(list, WeatherRow, 2);
-    ClickSetting(list, TimeRow, 3);
-    const bool brakingWas = (game.WantedRules() & MCMatchRule::MechBraking) != 0;
-    ClickSetting(list, BrakingRow, 1);
+    for (const int32_t row : {WeatherRow, TimeRow, BrakingRow})
+    {
+        CHECK(list.HeldReason(row) == NotInGuests);
+    }
+
+    // A held option's click changes nothing.
+    ClickSetting(list, WeatherRow, 1);
+    CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
+    CHECK(game.MatchOptions.Weather == MCWeatherKind::Rain);
+    SaveShot("match options 1 held", ScreenHash());
+
+    // A build of the braking's round: braking, not the weather or time of day.
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    guest.SendRules(hostId, MCMatchRule::MechBraking);
+    Settle();
+    CHECK(list.HeldReason(BrakingRow).empty());
+    CHECK(list.ChoiceName(BrakingRow) == "ON");
+    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
+    CHECK(list.HeldReason(TimeRow) == NotInGuests);
+    sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
+
+    // A build that plays them all: the host's choices.
+    guest.SendRules(hostId, MCMatchRule::Supported);
+    Settle();
+
+    for (const int32_t row : {WeatherRow, TimeRow, BrakingRow})
+    {
+        CHECK(list.HeldReason(row).empty());
+    }
+
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
-    CHECK(game.MatchOptions.Weather == MCWeatherKind::Rain);
-    CHECK(game.MatchOptions.TimeOfDay == MCTimeOfDay::Night);
-    CHECK_EQ((game.WantedRules() & MCMatchRule::MechBraking) != 0, !brakingWas);
-    sent = guest.MatchOptions();
-    REQUIRE(sent.has_value());
-    CHECK_EQ(sent->Weather, static_cast<int8_t>(MCWeatherKind::Rain));
-    CHECK_EQ(sent->TimeOfDay, static_cast<int8_t>(MCTimeOfDay::Night));
-    CHECK_EQ(sent->Rules, game.WantedRules());
-    SaveShot("match options 1 options in front", ScreenHash());
+    sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking);
+
+    // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off.
+    ClickSetting(list, WeatherRow, 1);
+    ClickSetting(list, TimeRow, 1);
+    ClickSetting(list, BrakingRow, 1);
+    CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
+    CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
+    CHECK(list.ChoiceName(BrakingRow) == "OFF");
+    CHECK(game.MatchOptions.Weather == MCWeatherKind::Downpour);
+    CHECK(!game.MatchOptions.TimeOfDay.has_value());
+    CHECK_EQ(game.WantedRules() & MCMatchRule::MechBraking, 0u);
+    sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn, 0);
+    SaveShot("match options 2 options in front", ScreenHash());
 
     // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.
     const size_t linesSeen = screen.ChatLinesSeen;
@@ -411,7 +489,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     game.IsHost = false;
     Settle();
     ClickSetting(list, WeatherRow, 1);
-    CHECK(list.ChoiceName(WeatherRow) == "RAIN");
+    CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
     CHECK(list.Status() == "THE HOST SETS THESE.");
     game.IsHost = true;
     Settle();

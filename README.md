@@ -165,7 +165,7 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
 | `-matchweather <weather>`             | The weather every player sees: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. |
 | `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. It changes the look only: units see as far as the mission sets. |
-| `-matchbraking <on\|off>`             | Whether mechs brake to a halt (played only if every player's build has it). Without it (or with `prefs`), the host's `MechBraking`. |
+| `-matchbraking <on\|off>`             | Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
 player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
@@ -174,9 +174,11 @@ its own points and tech bases. The game checks only that each player has a file 
 same file, so a launcher should check the files match.
 
 The three match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER
-CHAT), and a host started with them but no `-matchmap` opens the session screen with them chosen. A player with WEATHER
-or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day; a build without match options sees the
-mission's own.
+CHAT), and a host started with them but no `-matchmap` opens the session screen with them chosen. Each is played only if
+every player's game has it: every build says what it has when the session screen opens (and when asked for a mission
+file), and while a player's game lacks an option, the match plays the mission's own (braking: off) and the host's
+MATCH OPTIONS say whose game lacks it. A game that says nothing, as the original's, lacks them all. A player with
+WEATHER or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day.
 
 ### Saves and Settings
 
@@ -262,7 +264,8 @@ until you change it, as every mission of the original is.
   dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their own time
   whatever the mission's. The original game shows every mission by day.
 - **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
-  tab (or with `-matchtime`); it changes the look only, so units still see as far as the mission sets.
+  tab (or with `-matchtime`) when every player's game has it; it changes the look only, so units still see as far as
+  the mission sets.
 
 For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
 
@@ -292,7 +295,8 @@ New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain*
   mission, a downpour with thunder, the snow settling as the mission goes on. The player's **RAIN**, **SNOW** and other
   choices show every mission in that weather whatever its own. The original game shows every mission under a clear sky.
 - **Multiplayer.** A match's host can pick another weather for everyone on the session screen's **MATCH OPTIONS** tab
-  (or with `-matchweather`, see [Premade Matches](#premade-matches)); left at **MISSION'S**, the mission's own shows.
+  (or with `-matchweather`, see [Premade Matches](#premade-matches)) when every player's game has it; left at
+  **MISSION'S**, the mission's own shows.
 - **Play.** The weather changes nothing in play: units see, move and fight as under a clear sky.
 
 For a mission's `.FIT` file, the editor writes this for rain or a downpour (for a clear sky, nothing):

@@ -19,8 +19,8 @@ enum class MCTimeOfDay : uint8_t;
 /// <summary>
 /// Port: what a match's host chose beyond the original's settings (the session screen's MATCH OPTIONS; a launcher's
 /// -matchweather, -matchtime and -matchbraking): the weather and time of day every player sees in place of the mission's
-/// own (a player's HD weather or HD lighting off still shows the original's look), and the rules the host wants, played
-/// by as far as every player's build plays by them (<c>MCAgreedRules</c>).
+/// own (a player's HD weather or HD lighting off still shows the original's look), and the rules the host wants. Each is
+/// played only as far as every player's build plays it (<c>MCPlayedOptions</c>).
 /// </summary>
 struct MCMatchOptions
 {

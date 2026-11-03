@@ -11,8 +11,9 @@ struct MCPane;
 
 // Port-only: the multiplayer session screen's MATCH OPTIONS, a second tab under MULTIPLAYER CHAT, as the briefing has
 // two (OPERATION and MISSION BRIEFING). It shows the match's options in the chat's place: the weather and time of day
-// every player sees, and the rules the match plays by (MCMatchOptions, MultiPlayer()->MatchOptions). The host sets
-// them, and every change goes to the guests, who see them locked.
+// every player sees, and the rules the match plays by (MCMatchOptions, MultiPlayer()->Played). The host sets them, and
+// what the match plays of every change goes to the guests, who see them locked. An option a player's game doesn't have
+// is held at the mission's own (or off) on the host's list, saying whose, while that player is in the session.
 
 /// <summary>The tab's word, lettered in the briefing tabs' own letters.</summary>
 inline constexpr std::string_view MatchOptionsWord = "MATCH OPTIONS";
@@ -49,7 +50,8 @@ std::optional<MCSessionTab> MatchTabAt(int32_t xPos, int32_t yPos);
 std::shared_ptr<MCLogOptionList> MakeMatchOptionsList();
 
 /// <summary>
-/// Shows the match's options in <paramref name="list"/>: what MultiPlayer()->MatchOptions says now, the list locked
-/// for a guest. Called before each draw, so a guest's list follows the host's messages.
+/// Shows the match's options in <paramref name="list"/>: what the match plays now (MultiPlayer()->Played), the list
+/// locked for a guest; on the host, each option a player's game doesn't have held, saying whose. Called before each
+/// draw, so a guest's list follows the host's messages.
 /// </summary>
 void ShowMatchOptions(MCLogOptionList& list);

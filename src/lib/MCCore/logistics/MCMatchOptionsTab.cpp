@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCLogOptionList.h"
+#include "linkup/MCFidpPlayer.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
 #include "sprite/MCSceneLights.h"
@@ -213,8 +214,11 @@ namespace
                                         Choice{"NIGHT", static_cast<int32_t>(MCTimeOfDay::Night)}};
     constexpr std::array OffOn = {Choice{"OFF", 0}, Choice{"ON", 1}};
 
-    /// <summary>The host's change: into the match's options, and to every guest.</summary>
-    void Changed()
+    /// <summary>
+    /// The host's change of one option (<paramref name="change"/> of its match options and its game): into its options,
+    /// and what the match plays of them to every guest. A guest's list changes nothing.
+    /// </summary>
+    template <typename Change> void HostChanges(Change change)
     {
         const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
 
@@ -223,18 +227,68 @@ namespace
             return;
         }
 
-        MCMatchOptions& options = game->MatchOptions;
-        options.Weather =
-            WeatherValue == MissionOwn ? std::nullopt : std::optional(static_cast<MCWeatherKind>(WeatherValue));
-        options.TimeOfDay = TimeValue == MissionOwn ? std::nullopt : std::optional(static_cast<MCTimeOfDay>(TimeValue));
-        options.Rules =
-            (game->WantedRules() & ~MCMatchRule::MechBraking) | (BrakingValue != 0 ? MCMatchRule::MechBraking : 0);
+        change(game->MatchOptions, *game);
         game->SendMatchOptions();
     }
 
-    void RowChanged(int32_t)
+    /// <summary>A row's value as a weather or time of day (<see cref="MissionOwn"/>: none, the mission's own).</summary>
+    template <typename Kind> std::optional<Kind> ChosenOf(int32_t value)
     {
-        Changed();
+        return value == MissionOwn ? std::nullopt : std::optional(static_cast<Kind>(value));
+    }
+
+    void WeatherChanged(int32_t value)
+    {
+        HostChanges([value](MCMatchOptions& options, const MCMultiPlayer&)
+                    { options.Weather = ChosenOf<MCWeatherKind>(value); });
+    }
+
+    void TimeChanged(int32_t value)
+    {
+        HostChanges([value](MCMatchOptions& options, const MCMultiPlayer&)
+                    { options.TimeOfDay = ChosenOf<MCTimeOfDay>(value); });
+    }
+
+    void BrakingChanged(int32_t value)
+    {
+        HostChanges(
+            [value](MCMatchOptions& options, const MCMultiPlayer& game)
+            {
+                options.Rules =
+                    (game.WantedRules() & ~MCMatchRule::MechBraking) | (value != 0 ? MCMatchRule::MechBraking : 0);
+            });
+    }
+
+    /// <summary>A row's value from a weather or time of day the match plays (none: <see cref="MissionOwn"/>).</summary>
+    template <typename Kind> int ValueOf(const std::optional<Kind>& played)
+    {
+        return played.has_value() ? static_cast<int>(*played) : MissionOwn;
+    }
+
+    /// <summary>
+    /// Why the host can't choose what <paramref name="rule"/> covers: the players whose game doesn't have it, named when
+    /// one (empty: every player's has it).
+    /// </summary>
+    std::string NotInGames(MCMultiPlayer& game, uint32_t rule)
+    {
+        const std::vector<uint32_t> without = game.PlayersWithout(rule);
+
+        if (without.empty())
+        {
+            return {};
+        }
+
+        const std::shared_ptr<MCFidpPlayer> player = game.SessionManager->GetPlayer(without.front());
+
+        if (without.size() > 1 || player == nullptr)
+        {
+            return std::format("NOT IN {} PLAYERS' GAMES.", without.size());
+        }
+
+        // Through unsigned char: a player's name may hold any byte, and toupper takes only those and EOF.
+        std::string name = player->Name;
+        std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return std::format("NOT IN {}'S GAME.", name);
     }
 
     /// <summary>Width of the setting boxes: LIGHT SNOW's in the list's font, with its margins.</summary>
@@ -257,19 +311,31 @@ namespace
             .Description = "RAIN OR SNOW FOR EVERYONE.",
             .Value = &WeatherValue,
             .Choices = WeatherChoices,
-            .Changed = RowChanged},
+            .Changed = WeatherChanged},
         Row{.Label = "TIME OF DAY",
             .Description = "DUSK OR NIGHT FOR EVERYONE.",
             .Value = &TimeValue,
             .Choices = TimeChoices,
-            .Changed = RowChanged},
+            .Changed = TimeChanged},
         Row{.Label = "PLAY"},
         Row{.Label = "BRAKING",
             .Description = "MECHS BRAKE TO A HALT.",
             .Value = &BrakingValue,
             .Choices = OffOn,
-            .Changed = RowChanged},
+            .Changed = BrakingChanged},
     };
+
+    /// <summary>Each option's row and the rule a player's build must play by for the host to choose it.</summary>
+    struct RuleRow
+    {
+        int32_t Row = 0;
+        uint32_t Rule = 0;
+    };
+
+    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::MatchWeather}, RuleRow{2, MCMatchRule::MatchTimeOfDay},
+                                     RuleRow{4, MCMatchRule::MechBraking}};
+    static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
+                  Rows[RuleRows[2].Row].Value == &BrakingValue);
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>
@@ -331,9 +397,17 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
         return;
     }
 
-    const MCMatchOptions& options = game->MatchOptions;
-    WeatherValue = options.Weather.has_value() ? static_cast<int>(*options.Weather) : MissionOwn;
-    TimeValue = options.TimeOfDay.has_value() ? static_cast<int>(*options.TimeOfDay) : MissionOwn;
-    BrakingValue = (game->WantedRules() & MCMatchRule::MechBraking) != 0 ? 1 : 0;
-    list.SetLocked(game->IsHost == 0, LockedHint);
+    // What the match plays; on the host, an option a player's game doesn't have held at the mission's own (or off),
+    // saying whose.
+    const MCMatchOptions& played = game->Played;
+    WeatherValue = ValueOf(played.Weather);
+    TimeValue = ValueOf(played.TimeOfDay);
+    BrakingValue = (played.Rules.value_or(0) & MCMatchRule::MechBraking) != 0 ? 1 : 0;
+    const bool host = game->IsHost != 0;
+    list.SetLocked(!host, LockedHint);
+
+    for (const RuleRow& option : RuleRows)
+    {
+        list.SetHeld(option.Row, host ? NotInGames(*game, option.Rule) : std::string());
+    }
 }

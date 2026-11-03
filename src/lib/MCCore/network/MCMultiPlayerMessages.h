@@ -50,8 +50,9 @@ enum class MCMPMessageType : uint16_t
     /// <summary>Port: a configured match (<c>MPGameConfiguration</c>): teams, tech bases, points and the mission in one.</summary>
     StartMatch = 46,
     /// <summary>
-    /// Port: a player's build's gameplay rules beyond the original (<c>MCMatchRule</c> bits, a long), to the server
-    /// before its check-in. A build without them sends none, and ignores both rule messages.
+    /// Port: a player's build's gameplay rules beyond the original and the match options it plays (<c>MCMatchRule</c>
+    /// bits, a long), to the server as the session screen opens, with its answer to a file inquiry and before its
+    /// check-in. A build without them sends none, and ignores both rule messages.
     /// </summary>
     PlayerRules = 47,
     /// <summary>
@@ -60,8 +61,9 @@ enum class MCMPMessageType : uint16_t
     /// </summary>
     MatchRules = 48,
     /// <summary>
-    /// Port: the host's match options (<c>MCMPMatchOptionsMessage</c>), to everyone as the host changes them and before
-    /// the match starts. A build without them ignores it, and shows the mission's own weather and time of day.
+    /// Port: what the match plays of the host's match options (<c>MCMPMatchOptionsMessage</c>), to everyone as it
+    /// changes and before the match starts. A build without them ignores it, and shows the mission's own weather and
+    /// time of day.
     /// </summary>
     MatchOptions = 49
 };
@@ -121,9 +123,10 @@ struct MCMPLongMessage : public MCFIGuaranteedMessageHeader
 static_assert(sizeof(MCMPLongMessage) == 0xc);
 
 /// <summary>
-/// Port: the host's match options (guaranteed, <c>MCMatchOptions</c>): the weather and time of day every player sees
-/// (<see cref="MissionOwn"/>: the mission's own; else an <c>MCWeatherKind</c>, an <c>MCTimeOfDay</c>) and the rules the
-/// host wants (<c>MCMatchRule</c> bits). A longer message (a later build's) is read as far as this one goes.
+/// Port: what the match plays of the host's match options (guaranteed, <c>MCMatchOptions</c>, as far as every player's
+/// build plays them): the weather and time of day every player sees (<see cref="MissionOwn"/>: the mission's own; else an
+/// <c>MCWeatherKind</c>, an <c>MCTimeOfDay</c>) and the rules (<c>MCMatchRule</c> bits). A longer message (a later
+/// build's) is read as far as this one goes.
 /// </summary>
 /// <remarks>Fixed layout.</remarks>
 struct MCMPMatchOptionsMessage : public MCFIGuaranteedMessageHeader

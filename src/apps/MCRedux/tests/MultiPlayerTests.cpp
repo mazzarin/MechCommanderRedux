@@ -802,11 +802,12 @@ TEST_CASE("network: a match plays by the server's rules that every player's buil
 }
 
 /// <summary>
-/// Port: the host's match options (the session screen's MATCH OPTIONS) are taken only from the host or the server, kept
-/// as far as this build knows them (a weather or time of day it doesn't is the mission's own; rules it doesn't play by
-/// are left out), and a short message is dropped. The rules the server then wants are the host's, else its own PREFS.
+/// Port: what a match plays of its host's match options (the session screen's MATCH OPTIONS) is taken only from the
+/// host or the server, kept as far as this build knows it (a weather or time of day it doesn't is the mission's own;
+/// rules it doesn't play by are left out), and a short message is dropped. The rules the server wants are the host's,
+/// else its own PREFS.
 /// </summary>
-TEST_CASE("network: a guest keeps the host's match options as far as its build knows them")
+TEST_CASE("network: a guest keeps what the match plays of the host's options as far as its build knows them")
 {
     ClientGame client;
     MCMultiPlayer& game = *client.Game;
@@ -824,37 +825,65 @@ TEST_CASE("network: a guest keeps the host's match options as far as its build k
     const std::vector<uint8_t> snowyNight = optionsMessage(
         static_cast<int8_t>(MCWeatherKind::Snow), static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking);
     Deliver(9, snowyNight);
-    CHECK(game.MatchOptions == MCMatchOptions{});
+    CHECK(game.Played == MCMatchOptions{});
 
     Deliver(8, snowyNight);
-    CHECK(game.MatchOptions.Weather == MCWeatherKind::Snow);
-    CHECK(game.MatchOptions.TimeOfDay == MCTimeOfDay::Night);
-    CHECK(game.MatchOptions.Rules == MCMatchRule::MechBraking);
-    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
+    CHECK(game.Played.Weather == MCWeatherKind::Snow);
+    CHECK(game.Played.TimeOfDay == MCTimeOfDay::Night);
+    CHECK(game.Played.Rules == MCMatchRule::MechBraking);
+    CHECK(game.MatchOptions == MCMatchOptions{});
 
     std::vector<uint8_t> shortMessage = optionsMessage(static_cast<int8_t>(MCWeatherKind::Rain), 0, 0);
     shortMessage.pop_back();
     Deliver(7, shortMessage);
-    CHECK(game.MatchOptions.Weather == MCWeatherKind::Snow);
+    CHECK(game.Played.Weather == MCWeatherKind::Snow);
 
     // A later build's weather and time of day, and every rule.
     constexpr int8_t Unknown = 99;
     Deliver(7, optionsMessage(Unknown, Unknown, 0xffffffff));
-    CHECK(!game.MatchOptions.Weather.has_value());
-    CHECK(!game.MatchOptions.TimeOfDay.has_value());
-    CHECK(game.MatchOptions.Rules == MCMatchRule::Supported);
+    CHECK(!game.Played.Weather.has_value());
+    CHECK(!game.Played.TimeOfDay.has_value());
+    CHECK(game.Played.Rules == MCMatchRule::Supported);
 
     Deliver(8, optionsMessage(MCMPMatchOptionsMessage::MissionOwn, MCMPMatchOptionsMessage::MissionOwn, 0));
-    CHECK(!game.MatchOptions.Weather.has_value());
-    CHECK(!game.MatchOptions.TimeOfDay.has_value());
-    CHECK_EQ(game.WantedRules(), 0u);
+    CHECK(!game.Played.Weather.has_value());
+    CHECK(!game.Played.TimeOfDay.has_value());
+    CHECK(game.Played.Rules == 0u);
 
-    // With no choice of the host's, the server's own PREFS.
+    // The host's choice, else the server's own PREFS.
+    game.MatchOptions.Rules = MCMatchRule::MechBraking;
+    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
     game.MatchOptions.Rules.reset();
     GMechBraking = 1;
     CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
     GMechBraking = 0;
     CHECK_EQ(game.WantedRules(), 0u);
+}
+
+/// <summary>
+/// Port: a match plays its host's weather, time of day and rules only as far as every player's build plays them, as its
+/// rules message said: a build of the braking's round (braking alone) keeps the mission's own weather and time of day,
+/// one that said none (the original's) every option. The players without a rule are those whose message left it out or
+/// who sent none.
+/// </summary>
+TEST_CASE("network: a match plays the host's options as far as every player's build plays them")
+{
+    const MCMatchOptions chosen{
+        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MechBraking};
+    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::Supported) == chosen);
+    CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = 0u}));
+    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::MechBraking) ==
+          MCMatchOptions{.Rules = MCMatchRule::MechBraking});
+    CHECK((MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::MatchWeather) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow, .Rules = 0u}));
+    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, 0) == MCMatchOptions{.Rules = 0u});
+
+    const std::map<uint32_t, uint32_t> said = {{1, MCMatchRule::Supported}, {2, MCMatchRule::MechBraking}};
+    const std::array<uint32_t, 3> players = {1, 2, 3};
+    CHECK((MCPlayersWithout(MCMatchRule::MatchWeather, players, said) == std::vector<uint32_t>{2, 3}));
+    CHECK(MCPlayersWithout(MCMatchRule::MechBraking, players, said) == std::vector<uint32_t>{3});
+    CHECK(MCPlayersWithout(MCMatchRule::MechBraking, std::span(players).first(2), said).empty());
 }
 
 /// <summary>

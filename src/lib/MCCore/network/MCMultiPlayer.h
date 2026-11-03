@@ -26,13 +26,20 @@ class MCTacticalOrder;
 class MCTurret;
 class MCVector3D;
 
-/// <summary>Port: the gameplay rules beyond the original a match can play by, as bits (MCMultiPlayer::MatchRules).</summary>
+/// <summary>
+/// Port: the rules beyond the original a match can play by, as bits (MCMultiPlayer::MatchRules), and the host's match
+/// options a build can play (MATCH OPTIONS): what a player's rules message says its build plays by.
+/// </summary>
 namespace MCMatchRule
 {
     /// <summary>Mechs brake to a halt (PREFS MechBraking, sprite/MCMechStops.h).</summary>
     inline constexpr uint32_t MechBraking = 1;
+    /// <summary>The weather the host chose (MCMatchOptions::Weather, MCWeather::SetMatchWeather).</summary>
+    inline constexpr uint32_t MatchWeather = 2;
+    /// <summary>The time of day the host chose (MCMatchOptions::TimeOfDay, MCSceneLights::SetMatchTime).</summary>
+    inline constexpr uint32_t MatchTimeOfDay = 4;
     /// <summary>Every rule this build plays by.</summary>
-    inline constexpr uint32_t Supported = MechBraking;
+    inline constexpr uint32_t Supported = MechBraking | MatchWeather | MatchTimeOfDay;
 } // namespace MCMatchRule
 
 /// <summary>
@@ -40,6 +47,21 @@ namespace MCMatchRule
 /// message (<paramref name="said"/>, by player id) said; a player whose build sent none plays by none.
 /// </summary>
 uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said);
+
+/// <summary>
+/// Port: those of <paramref name="players"/> whose build doesn't play by <paramref name="rule"/>, as their rules messages
+/// (<paramref name="said"/>) said; a player whose build sent none is one.
+/// </summary>
+std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> players,
+                                       const std::map<uint32_t, uint32_t>& said);
+
+/// <summary>
+/// Port: what a match plays of the host's <paramref name="chosen"/> options and the rules it wants
+/// (<paramref name="wantedRules"/>), with <paramref name="agreed"/> the rules every player's build plays by: its weather
+/// and time of day only if every build plays the host's (else the mission's own), the rules wanted that every build
+/// plays by.
+/// </summary>
+MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed);
 
 /// <summary>The game's DirectPlay application GUID.</summary>
 inline constexpr _GUID MultiPlayerAppGuid{0x09608800, 0x4815, 0x11d2, {0x92, 0xd2, 0x00, 0x60, 0x97, 0x3c, 0xfb, 0x2c}};
@@ -184,23 +206,47 @@ public:
     /// <summary>Port: first sends the server this build's rules (<see cref="SendPlayerRules"/>).</summary>
     int32_t SendPlayerCheckIn();
 
-    /// <summary>Port: sends the server the rules this build plays by (MCMatchRule::Supported).</summary>
+    /// <summary>
+    /// Port: sends the server the rules this build plays by (MCMatchRule::Supported): as the session screen opens, with
+    /// its answer to a file inquiry and at check-in.
+    /// </summary>
     int32_t SendPlayerRules();
 
     /// <summary>
     /// Port, the server: sends everyone the rules the match plays by, and plays by them (<see cref="AgreedRules"/> of
-    /// the host's choice, <see cref="MatchOptions"/>, or else its own PREFS).
+    /// those its match options last played, <see cref="Played"/>; without any sent, of <see cref="WantedRules"/>).
     /// </summary>
     int32_t SendMatchRules();
 
     /// <summary>Port: the rules the server wants: the host's choice (<see cref="MatchOptions"/>), else its own PREFS.</summary>
     uint32_t WantedRules() const;
 
-    /// <summary>Port, the host: sends everyone its <see cref="MatchOptions"/> (the session screen's MATCH OPTIONS).</summary>
+    /// <summary>
+    /// Port, the host: sends everyone what the match plays of its <see cref="MatchOptions"/> (the session screen's
+    /// MATCH OPTIONS; <see cref="PlayedOptions"/>), and keeps it as <see cref="Played"/>.
+    /// </summary>
     int32_t SendMatchOptions();
 
-    /// <summary>Port: MCAgreedRules among the session's players (with a number).</summary>
+    /// <summary>
+    /// Port, the host: sends its match options again (<see cref="SendMatchOptions"/>) when what the match plays of them
+    /// has changed: a player's rules came, or a player left.
+    /// </summary>
+    void UpdateMatchOptions();
+
+    /// <summary>
+    /// Port, the host: what the match plays of its <see cref="MatchOptions"/> among the session's players now
+    /// (MCPlayedOptions).
+    /// </summary>
+    MCMatchOptions PlayedOptions() const;
+
+    /// <summary>
+    /// Port: MCAgreedRules among the session's other players (with a number); this build plays by its own
+    /// (MCMatchRule::Supported).
+    /// </summary>
     uint32_t AgreedRules(uint32_t wanted) const;
+
+    /// <summary>Port: MCPlayersWithout among the session's other players (with a number).</summary>
+    std::vector<uint32_t> PlayersWithout(uint32_t rule) const;
 
     /// <summary>The server's setup message to <paramref name="toID"/> (0 = everyone): the group ids.</summary>
     int32_t SendPlayerSetup(uint32_t toID, uint32_t innerSphereGroupID, uint32_t clanGroupID);
@@ -370,10 +416,15 @@ public:
     /// </summary>
     uint32_t MatchRules = 0;
     /// <summary>
-    /// Port: the host's match options: its own choices on the host (from its command line's, until it changes them), the
-    /// host's last match options message on a guest (none, the mission's own and the server's PREFS, until one comes).
+    /// Port, the host: its match options, as it chose them (from its command line's, until it changes them); what the
+    /// match plays of them is <see cref="Played"/>.
     /// </summary>
     MCMatchOptions MatchOptions = GameConfiguration.Options;
+    /// <summary>
+    /// Port: the match options the match plays (MCScenarioLoad, the session screen's MATCH OPTIONS): those the host last
+    /// sent, on a guest its last match options message; none (the mission's own, no rules) until then.
+    /// </summary>
+    MCMatchOptions Played;
     /// <summary>Set by the start-planning message: the players are in logistics.</summary>
     bool InLogistics = false;
     /// <summary>Whether a mission runs (UpdateClients only sends then).</summary>

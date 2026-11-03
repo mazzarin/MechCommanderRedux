@@ -47,6 +47,7 @@ auto MCLogOptionList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
 {
     MCLogObject::Init(xPos, yPos, width, height);
     _Rows = rows;
+    _Held.assign(rows.size(), std::string());
     Reset();
 }
 
@@ -77,6 +78,16 @@ auto MCLogOptionList::SetLocked(bool locked, std::string_view hint) -> void
     {
         _Hovered.reset();
     }
+}
+
+auto MCLogOptionList::SetHeld(int32_t row, std::string_view reason) -> void
+{
+    _Held[static_cast<size_t>(row)] = reason;
+}
+
+auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
+{
+    return _Held[static_cast<size_t>(row)];
 }
 
 auto MCLogOptionList::SetSoftwareHint(std::string_view hint) -> void
@@ -195,6 +206,12 @@ auto MCLogOptionList::OptionAt(int32_t xPos, int32_t yPos) -> std::optional<int3
     return row;
 }
 
+auto MCLogOptionList::ChangeableAt(int32_t xPos, int32_t yPos) -> std::optional<int32_t>
+{
+    const std::optional<int32_t> row = OptionAt(xPos, yPos);
+    return row.has_value() && !_Locked && HeldReason(*row).empty() ? row : std::nullopt;
+}
+
 auto MCLogOptionList::SettingCentre(int32_t row) -> std::optional<std::pair<int32_t, int32_t>>
 {
     const std::optional<int32_t> top = RowTop(row);
@@ -219,7 +236,7 @@ auto MCLogOptionList::HandleEvent(MCGuiEvent& event) -> void
         case MCGuiEventType::LeftButtonDown:
         case MCGuiEventType::RightButtonDown:
         {
-            if (const std::optional<int32_t> row = OptionAt(event.X, event.Y); row.has_value() && !_Locked)
+            if (const std::optional<int32_t> row = ChangeableAt(event.X, event.Y); row.has_value())
             {
                 Step(*row, event.Type == MCGuiEventType::LeftButtonDown ? 1 : -1);
             }
@@ -227,7 +244,7 @@ auto MCLogOptionList::HandleEvent(MCGuiEvent& event) -> void
         }
         case MCGuiEventType::MouseMove:
         {
-            _Hovered = _Locked ? std::nullopt : OptionAt(event.X, event.Y);
+            _Hovered = ChangeableAt(event.X, event.Y);
             break;
         }
         case MCGuiEventType::KeyDown:
@@ -251,22 +268,31 @@ auto MCLogOptionList::Leave() -> void
 auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
 {
     const Row& option = _Rows[static_cast<size_t>(row)];
-    const bool shows = CanShow(row);
+    const std::string_view held = HeldReason(row);
+    const bool shows = CanShow(row) && held.empty();
     const int32_t settingLeft = SettingLeft();
     const int32_t nameWidth = settingLeft - SettingGap - NameLeft;
     Write(NameLeft, top + TextOffset, option.Label, shows ? NameColor : DimColor, nameWidth);
 
-    // What it does; when it can't show, what it needs first.
+    // What it does; when it can't show, what it needs first; when held, why instead (in the headings' amber: a held
+    // row is the session screen's, whose palette has none at NeedsColor).
     int32_t left = NameLeft;
-
-    if (!shows)
-    {
-        left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", option.NeedsLabel), NeedsColor,
-                      nameWidth);
-    }
-
     const int32_t descriptionRight = _WideDescriptions ? ScrollBarLeft() - SettingGap / 2 : NameLeft + nameWidth;
-    Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, descriptionRight - left);
+
+    if (!held.empty())
+    {
+        Write(left, top + LineHeight + TextOffset, held, _HeadingColor, descriptionRight - left);
+    }
+    else
+    {
+        if (!shows)
+        {
+            left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", option.NeedsLabel), NeedsColor,
+                          nameWidth);
+        }
+
+        Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, descriptionRight - left);
+    }
 
     // The setting, in its box.
     const int32_t right = settingLeft + _SettingWidth - 1;

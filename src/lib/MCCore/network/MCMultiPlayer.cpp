@@ -92,6 +92,23 @@ namespace
             }
         }
     }
+
+    /// <summary>The session's players with a number, but for this machine's.</summary>
+    std::vector<uint32_t> OtherPlayers(MCSessionManager& manager)
+    {
+        const std::shared_ptr<MCFidpPlayer> me = manager.MyPlayer();
+        std::vector<uint32_t> players;
+
+        for (const auto& player : manager.GetPlayers(nullptr))
+        {
+            if (player->HasPlayerNumber && player != me)
+            {
+                players.push_back(player->Id);
+            }
+        }
+
+        return players;
+    }
 }
 
 std::shared_ptr<MCMultiPlayer> MultiPlayer()
@@ -614,19 +631,44 @@ uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const
     return rules;
 }
 
-uint32_t MCMultiPlayer::AgreedRules(uint32_t wanted) const
+std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> players,
+                                       const std::map<uint32_t, uint32_t>& said)
 {
-    std::vector<uint32_t> players;
+    std::vector<uint32_t> without;
 
-    for (const auto& player : SessionManager->GetPlayers(nullptr))
+    for (const uint32_t player : players)
     {
-        if (player->HasPlayerNumber)
+        if (MCAgreedRules(rule, std::span(&player, 1), said) != rule)
         {
-            players.push_back(player->Id);
+            without.push_back(player);
         }
     }
 
-    return MCAgreedRules(wanted, players, PlayerRules);
+    return without;
+}
+
+MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
+{
+    MCMatchOptions played;
+    played.Weather = (agreed & MCMatchRule::MatchWeather) != 0 ? chosen.Weather : std::nullopt;
+    played.TimeOfDay = (agreed & MCMatchRule::MatchTimeOfDay) != 0 ? chosen.TimeOfDay : std::nullopt;
+    played.Rules = wantedRules & agreed;
+    return played;
+}
+
+uint32_t MCMultiPlayer::AgreedRules(uint32_t wanted) const
+{
+    return MCAgreedRules(wanted, OtherPlayers(*SessionManager), PlayerRules);
+}
+
+std::vector<uint32_t> MCMultiPlayer::PlayersWithout(uint32_t rule) const
+{
+    return MCPlayersWithout(rule, OtherPlayers(*SessionManager), PlayerRules);
+}
+
+MCMatchOptions MCMultiPlayer::PlayedOptions() const
+{
+    return MCPlayedOptions(MatchOptions, WantedRules(), AgreedRules(MCMatchRule::Supported));
 }
 
 bool MCMultiPlayer::AllPlayersCheckedIn()

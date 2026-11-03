@@ -425,7 +425,7 @@ void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg)
     }
 
     const auto options = ReadLinkupMessage<MCMPMatchOptionsMessage>(msg);
-    MCMatchOptions& match = Game().MatchOptions;
+    MCMatchOptions& match = Game().Played;
     match.Weather = options.Weather >= 0 && options.Weather <= static_cast<int8_t>(MCWeatherKind::Blizzard)
                         ? std::optional(static_cast<MCWeatherKind>(options.Weather))
                         : std::nullopt;
@@ -1177,6 +1177,8 @@ void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg)
     // The inquiry's name starts at +0x8 (SendFileInquiry writes it there), not at a file-name message's +0xc.
     const std::string fileName(MessageText(msg, sizeof(MCFIGuaranteedMessageHeader)));
     MCMultiPlayer& game = Game();
+    // Port: this build's rules first, so that a configured match's host has them when every report is in.
+    game.SendPlayerRules();
     constexpr size_t nameOffset = sizeof(MCMPFileNameMessage);
     auto report = game.StartGuaranteedMessage<MCMPFileNameMessage>(MCMPMessageType::FileReport);
 

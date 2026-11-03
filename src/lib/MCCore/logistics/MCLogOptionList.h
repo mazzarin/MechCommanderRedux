@@ -12,8 +12,9 @@
 /// <remarks>
 /// A click on an option's row moves its setting to the next of its choices (after the last, the first); a right click
 /// to the one before. An option that needs another setting on (HD ART, HD LIGHTING, PARTICLES) shows dim while that one
-/// is off, its line saying so; it can still be set. With the SOFTWARE renderer chosen the status line says it draws
-/// none of them. The wheel, the up and down keys and the bar at the right scroll the rows.
+/// is off, its line saying so; it can still be set. A held option (<see cref="SetHeld"/>) shows dim too, its line
+/// saying why, and can't be set. With the SOFTWARE renderer chosen the status line says it draws none of them. The
+/// wheel, the up and down keys and the bar at the right scroll the rows.
 /// </remarks>
 class MCLogOptionList : public MCLogScrollList
 {
@@ -89,6 +90,16 @@ public:
     /// </summary>
     void SetLocked(bool locked, std::string_view hint);
 
+    /// <summary>
+    /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reason"/> why; empty: not held): a click
+    /// changes nothing and its box doesn't light, its name and setting show dim, and its line says the reason instead of
+    /// what it does.
+    /// </summary>
+    void SetHeld(int32_t row, std::string_view reason);
+
+    /// <summary>Why row <paramref name="row"/>'s option is held (<see cref="SetHeld"/>; empty: it isn't).</summary>
+    std::string_view HeldReason(int32_t row) const;
+
     /// <summary>What the status line says with the SOFTWARE renderer chosen (empty: nothing).</summary>
     void SetSoftwareHint(std::string_view hint);
 
@@ -124,6 +135,9 @@ private:
     /// <summary>The setting row <paramref name="row"/> edits.</summary>
     int& Setting(int32_t row) const;
 
+    /// <summary>The option row under the screen point that a click would change, if any: none while locked or held.</summary>
+    std::optional<int32_t> ChangeableAt(int32_t xPos, int32_t yPos);
+
     /// <summary>The left edge of the setting boxes, in the list's pixels.</summary>
     int32_t SettingLeft();
 
@@ -143,6 +157,8 @@ private:
     /// <summary>Clicks change nothing (<see cref="SetLocked"/>), and the status line's hint then.</summary>
     bool _Locked = false;
     std::string _LockedHint;
+    /// <summary>Why each row's option is held (<see cref="SetHeld"/>; empty: not held).</summary>
+    std::vector<std::string> _Held;
     /// <summary>The status line's hint with the SOFTWARE renderer chosen.</summary>
     std::string_view _SoftwareHint;
     /// <summary>The headings' colour.</summary>

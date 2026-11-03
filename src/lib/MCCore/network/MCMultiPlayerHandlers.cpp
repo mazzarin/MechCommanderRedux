@@ -44,6 +44,7 @@
 #include "object/MCWeaponShotInfo.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 
 // The handlers of the game's messages: what the server tells the clients (scenario start and end, the movers',
@@ -413,6 +414,25 @@ void HandleAppSwitchScreen(uint32_t, std::span<const uint8_t> msg)
     {
         GlobalLog()->SetUpSessionScreen();
     }
+}
+
+void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg)
+{
+    if (msg.size() < sizeof(MCMPMatchOptionsMessage))
+    {
+        Dropped("a short match options message", fromID);
+        return;
+    }
+
+    const auto options = ReadLinkupMessage<MCMPMatchOptionsMessage>(msg);
+    MCMatchOptions& match = Game().MatchOptions;
+    match.Weather = options.Weather >= 0 && options.Weather <= static_cast<int8_t>(MCWeatherKind::Blizzard)
+                        ? std::optional(static_cast<MCWeatherKind>(options.Weather))
+                        : std::nullopt;
+    match.TimeOfDay = options.TimeOfDay >= 0 && options.TimeOfDay <= static_cast<int8_t>(MCTimeOfDay::Night)
+                          ? std::optional(static_cast<MCTimeOfDay>(options.TimeOfDay))
+                          : std::nullopt;
+    match.Rules = options.Rules & MCMatchRule::Supported;
 }
 
 void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg)
@@ -1373,6 +1393,7 @@ namespace
             case MCMPMessageType::TechbaseChange:
             case MCMPMessageType::StartMatch:
             case MCMPMessageType::MatchRules:
+            case MCMPMessageType::MatchOptions:
             {
                 const MCMultiPlayer& game = Game();
                 return fromID == game.ServerID || fromID == game.HostID ||
@@ -1649,6 +1670,12 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
                 game.MatchRules = rules & MCMatchRule::Supported;
             }
 
+            break;
+        }
+
+        case MCMPMessageType::MatchOptions:
+        {
+            HandleAppMatchOptions(fromID, bytes);
             break;
         }
 

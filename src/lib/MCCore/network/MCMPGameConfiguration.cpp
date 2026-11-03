@@ -15,6 +15,8 @@
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCFileSystem.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 
 MPGameConfiguration GameConfiguration;
 
@@ -22,6 +24,13 @@ namespace
 {
     /// <summary>How long the host waits for every guest to say it has the mission file.</summary>
     constexpr uint32_t FileReportTimeoutMs = 15000;
+
+    /// <summary>A match option's value for the choice it has without the flag (the mission's own; the PREFS).</summary>
+    constexpr std::string_view MissionOwnValue = "mission";
+    constexpr std::string_view PrefsValue = "prefs";
+    /// <summary>-matchbraking's choices.</summary>
+    constexpr std::string_view OnValue = "on";
+    constexpr std::string_view OffValue = "off";
 
     /// <summary>What a mission file says about its own settings.</summary>
     struct MissionInfo
@@ -190,6 +199,8 @@ namespace
         MCMultiPlayer& game = *MultiPlayer();
         game.SessionManager->LockSession();
         const MPMatchState& match = Pending.Match;
+        // Port: the match options first, so every guest has them before its mission loads.
+        game.SendMatchOptions();
 
         MCMPStartMatchMessage header{};
         header.Tagger.Clear();
@@ -223,6 +234,58 @@ namespace
         Pending.Files.clear();
         EnterMechBay(mission, match);
     }
+}
+
+bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options)
+{
+    if (MCIEquals(flag, MatchWeatherFlag))
+    {
+        if (MCIEquals(value, MissionOwnValue))
+        {
+            options.Weather.reset();
+            return true;
+        }
+
+        if (const std::optional<MCWeatherKind> weather = MCWeather::Named(value); weather.has_value())
+        {
+            options.Weather = weather;
+            return true;
+        }
+    }
+    else if (MCIEquals(flag, MatchTimeFlag))
+    {
+        if (MCIEquals(value, MissionOwnValue))
+        {
+            options.TimeOfDay.reset();
+            return true;
+        }
+
+        if (const std::optional<MCTimeOfDay> time = MCSceneLights::TimeOfDayNamed(value); time.has_value())
+        {
+            options.TimeOfDay = time;
+            return true;
+        }
+    }
+    else if (MCIEquals(flag, MatchBrakingFlag))
+    {
+        const uint32_t others = options.Rules.value_or(0) & ~MCMatchRule::MechBraking;
+
+        if (MCIEquals(value, PrefsValue))
+        {
+            options.Rules.reset();
+            return true;
+        }
+
+        if (MCIEquals(value, OnValue) || MCIEquals(value, OffValue))
+        {
+            options.Rules = others | (MCIEquals(value, OnValue) ? MCMatchRule::MechBraking : 0);
+            return true;
+        }
+    }
+
+    SDL_Log("%.*s: \"%.*s\" is none of its choices; left as it was", static_cast<int>(flag.size()), flag.data(),
+            static_cast<int>(value.size()), value.data());
+    return false;
 }
 
 bool MPGameConfiguration::Validate(std::string& why) const

@@ -58,7 +58,12 @@ enum class MCMPMessageType : uint16_t
     /// Port: the rules the match plays by (a long), from the server before the scenario starts: its own choices that
     /// every player's build plays by.
     /// </summary>
-    MatchRules = 48
+    MatchRules = 48,
+    /// <summary>
+    /// Port: the host's match options (<c>MCMPMatchOptionsMessage</c>), to everyone as the host changes them and before
+    /// the match starts. A build without them ignores it, and shows the mission's own weather and time of day.
+    /// </summary>
+    MatchOptions = 49
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -114,6 +119,24 @@ struct MCMPLongMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPLongMessage) == 0xc);
+
+/// <summary>
+/// Port: the host's match options (guaranteed, <c>MCMatchOptions</c>): the weather and time of day every player sees
+/// (<see cref="MissionOwn"/>: the mission's own; else an <c>MCWeatherKind</c>, an <c>MCTimeOfDay</c>) and the rules the
+/// host wants (<c>MCMatchRule</c> bits). A longer message (a later build's) is read as far as this one goes.
+/// </summary>
+/// <remarks>Fixed layout.</remarks>
+struct MCMPMatchOptionsMessage : public MCFIGuaranteedMessageHeader
+{
+    /// <summary>The weather or time of day of a mission's own choosing.</summary>
+    static constexpr int8_t MissionOwn = -1;
+
+    int8_t Weather = MissionOwn;
+    int8_t TimeOfDay = MissionOwn;
+    uint32_t Rules = 0;
+};
+
+static_assert(sizeof(MCMPMatchOptionsMessage) == 0xe);
 
 /// <summary>Player order (guaranteed, to the server): a tactical order packed into two words.</summary>
 /// <remarks>Fixed layout.</remarks>

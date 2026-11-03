@@ -7,10 +7,32 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+enum class MCWeatherKind : uint8_t;
+enum class MCTimeOfDay : uint8_t;
+
+/// <summary>
+/// Port: what a match's host chose beyond the original's settings (the session screen's MATCH OPTIONS; a launcher's
+/// -matchweather, -matchtime and -matchbraking): the weather and time of day every player sees in place of the mission's
+/// own (a player's HD weather or HD lighting off still shows the original's look), and the rules the host wants, played
+/// by as far as every player's build plays by them (<c>MCAgreedRules</c>).
+/// </summary>
+struct MCMatchOptions
+{
+    /// <summary>The weather every player sees (none: the mission's own).</summary>
+    std::optional<MCWeatherKind> Weather;
+    /// <summary>The time of day every player sees (none: the mission's own). Sight stays the mission's.</summary>
+    std::optional<MCTimeOfDay> TimeOfDay;
+    /// <summary>The rules the host wants (<c>MCMatchRule</c> bits; none: the server's own PREFS).</summary>
+    std::optional<uint32_t> Rules;
+
+    bool operator==(const MCMatchOptions&) const = default;
+};
 
 /// <summary>A player a launcher placed on a team: the name it launches with (-player), the team and the slot.</summary>
 struct MPGamePlayer
@@ -24,8 +46,9 @@ struct MPGamePlayer
 
 /// <summary>
 /// Everything the ready room, the map selector and the settings wait would have collected. Fill it in (the host's
-/// command line does: -matchmap, -team1rp, -team2rp, -team1tech, -team2tech, -slot) and the host starts the match with
-/// <see cref="MPBeginConfiguredMatch"/> once every rostered player has joined.
+/// command line does: -matchmap, -team1rp, -team2rp, -team1tech, -team2tech, -slot, -matchweather, -matchtime,
+/// -matchbraking) and the host starts the match with <see cref="MPBeginConfiguredMatch"/> once every rostered player has
+/// joined.
 /// </summary>
 struct MPGameConfiguration
 {
@@ -39,12 +62,27 @@ struct MPGameConfiguration
     int8_t Team1TechBase = 0;
     int8_t Team2TechBase = 0;
     std::vector<MPGamePlayer> Roster;
+    /// <summary>The match's weather, time of day and rules (-matchweather, -matchtime, -matchbraking).</summary>
+    MCMatchOptions Options;
 
     /// <summary>Whether the configuration can be run, or why not (<paramref name="why"/>).</summary>
     [[nodiscard]] bool Validate(std::string& why) const;
 };
 
 extern MPGameConfiguration GameConfiguration;
+
+/// <summary>The command line's match options (<see cref="MPReadMatchOption"/>).</summary>
+inline constexpr std::string_view MatchWeatherFlag = "-matchweather";
+inline constexpr std::string_view MatchTimeFlag = "-matchtime";
+inline constexpr std::string_view MatchBrakingFlag = "-matchbraking";
+
+/// <summary>
+/// Reads a match option of the command line into <paramref name="options"/>: <paramref name="flag"/> -matchweather
+/// (clear, rain, downpour, lightsnow, snow or blizzard), -matchtime (day, dusk or night) or -matchbraking (on or off),
+/// any of them <c>mission</c> (or for braking <c>prefs</c>) for the choice it would have without, in any case.
+/// </summary>
+/// <returns>Whether <paramref name="value"/> was one of the flag's; another is logged and changes nothing.</returns>
+bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options);
 
 /// <summary>
 /// What the mech bay needs of a match: who is on each team, the tech bases and each team's resource point pool. The

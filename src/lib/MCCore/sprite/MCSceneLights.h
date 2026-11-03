@@ -250,8 +250,15 @@ namespace MCSceneLights
     MCTimeOfDay MissionTime();
 
     /// <summary>
-    /// The time of day the world is shown at: with HD lighting off, day (as drawn); at HD LIGHTING's DUSK or NIGHT, that;
-    /// else the mission's own (<see cref="MissionTime"/>).
+    /// Sets the time of day the match's host chose (MCScenario::Load: MCMatchOptions::TimeOfDay; none outside a match, or
+    /// for the mission's own).
+    /// </summary>
+    void SetMatchTime(std::optional<MCTimeOfDay> time);
+
+    /// <summary>
+    /// The time of day the world is shown at: with HD lighting off, day (as drawn); in a match whose host chose one,
+    /// that (<see cref="SetMatchTime"/>); at HD LIGHTING's DUSK or NIGHT, that; else the mission's own
+    /// (<see cref="MissionTime"/>).
     /// </summary>
     MCTimeOfDay TimeOfDay();
 

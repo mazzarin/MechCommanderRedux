@@ -107,15 +107,32 @@ int32_t MCMultiPlayer::SendPlayerRules()
     return 0;
 }
 
+uint32_t MCMultiPlayer::WantedRules() const
+{
+    return MatchOptions.Rules.value_or(GMechBraking != 0 ? MCMatchRule::MechBraking : 0);
+}
+
 int32_t MCMultiPlayer::SendMatchRules()
 {
-    // The server's own choices (its PREFS), as far as every player's build plays by them.
-    const uint32_t wanted = GMechBraking != 0 ? MCMatchRule::MechBraking : 0;
+    // The host's choices (else the server's own PREFS), as far as every player's build plays by them.
     auto rules = StartGuaranteedMessage<MCMPLongMessage>(MCMPMessageType::MatchRules);
-    rules.Value = static_cast<int32_t>(AgreedRules(wanted));
+    rules.Value = static_cast<int32_t>(AgreedRules(WantedRules()));
     PutMessage(rules);
     SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLongMessage)));
     MatchRules = static_cast<uint32_t>(rules.Value);
+    return 0;
+}
+
+int32_t MCMultiPlayer::SendMatchOptions()
+{
+    auto options = StartGuaranteedMessage<MCMPMatchOptionsMessage>(MCMPMessageType::MatchOptions);
+    options.Weather = MatchOptions.Weather.has_value() ? static_cast<int8_t>(*MatchOptions.Weather)
+                                                       : MCMPMatchOptionsMessage::MissionOwn;
+    options.TimeOfDay = MatchOptions.TimeOfDay.has_value() ? static_cast<int8_t>(*MatchOptions.TimeOfDay)
+                                                           : MCMPMatchOptionsMessage::MissionOwn;
+    options.Rules = WantedRules();
+    PutMessage(options);
+    SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPMatchOptionsMessage)));
     return 0;
 }
 

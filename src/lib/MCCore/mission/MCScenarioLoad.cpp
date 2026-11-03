@@ -211,6 +211,11 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCSceneLights::SetMissionTime(MCSceneLights::ReadTimeOfDay(file));
     // Port-only (HD weather): the weather the map maker set it in; clear without one.
     MCWeather::SetMissionWeather(MCWeather::Read(file));
+    // Port-only: in a match, the time of day and weather its host chose (MATCH OPTIONS), over the mission's own.
+    const MCMatchOptions noMatch;
+    const MCMatchOptions& match = MultiPlayer() != nullptr ? MultiPlayer()->MatchOptions : noMatch;
+    MCSceneLights::SetMatchTime(match.TimeOfDay);
+    MCWeather::SetMatchWeather(match.Weather);
     LoadPalette(file);
     LoadForces(file);
     LoadSettings(file);

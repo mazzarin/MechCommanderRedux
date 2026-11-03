@@ -341,6 +341,17 @@ auto ParseCommandLine(std::string_view commandLine) -> void
                 i += 3;
             }
         }
+        else if (MCIEquals(word, MatchWeatherFlag) || MCIEquals(word, MatchTimeFlag) ||
+                 MCIEquals(word, MatchBrakingFlag))
+        {
+            // Port: the match's options, the host's first choices on the session screen's MATCH OPTIONS (and a
+            // -matchmap match's): "-matchweather <clear|rain|downpour|lightsnow|snow|blizzard|mission>", "-matchtime
+            // <day|dusk|night|mission>", "-matchbraking <on|off|prefs>".
+            if (hasArgument)
+            {
+                MPReadMatchOption(word, words[++i], GameConfiguration.Options);
+            }
+        }
         else if (MCIEquals(word, "-mission"))
         {
             if (hasArgument)
@@ -462,8 +473,11 @@ auto ParseCommandLine(std::string_view commandLine) -> void
 
         if (!why.empty() || !GameConfiguration.Validate(why))
         {
+            // The match options stay the session screen's first choices.
             SDL_Log("-matchmap: %s; running as a normal game", why.c_str());
+            const MCMatchOptions options = GameConfiguration.Options;
             GameConfiguration = MPGameConfiguration{};
+            GameConfiguration.Options = options;
         }
     }
 

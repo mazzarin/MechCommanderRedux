@@ -819,6 +819,7 @@ namespace
     {
         MCWeather::MCWeatherSettings Settings;
         MCWeatherKind MissionWeather = MCWeatherKind::Clear;
+        std::optional<MCWeatherKind> MatchWeather;
         std::vector<Drop> Drops;
         std::vector<Splash> Splashes;
         size_t Most = 0;
@@ -2224,8 +2225,18 @@ auto MCWeather::MissionWeather() -> MCWeatherKind
     return TheState().MissionWeather;
 }
 
+auto MCWeather::SetMatchWeather(std::optional<MCWeatherKind> weather) -> void
+{
+    TheState().MatchWeather = weather;
+}
+
 auto MCWeather::Shown() -> MCWeatherKind
 {
+    if (GHdWeather != HdWeatherOff && TheState().MatchWeather.has_value())
+    {
+        return *TheState().MatchWeather;
+    }
+
     switch (GHdWeather)
     {
         case HdWeatherOff:

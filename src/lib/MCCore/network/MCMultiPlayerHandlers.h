@@ -32,6 +32,11 @@ void HandleAppJoinTeam(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppRPUpdate(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppTechbaseChange(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppSwitchScreen(uint32_t fromID, std::span<const uint8_t> msg);
+/// <summary>
+/// Port: the host's match options: kept as the guest's <c>MatchOptions</c>; a weather or time of day this build doesn't
+/// know is the mission's own, and the rules it doesn't play by are left out.
+/// </summary>
+void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppEndScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg);

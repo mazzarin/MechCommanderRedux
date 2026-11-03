@@ -295,8 +295,15 @@ namespace MCWeather
     MCWeatherKind MissionWeather();
 
     /// <summary>
-    /// The weather the world is shown in: with HD weather off (GHdWeather), clear; at one of its weathers (RAIN,
-    /// DOWNPOUR, LIGHT SNOW, SNOW, BLIZZARD), that; else the mission's own (<see cref="MissionWeather"/>).
+    /// Sets the weather the match's host chose (MCScenario::Load: MCMatchOptions::Weather; none outside a match, or for
+    /// the mission's own).
+    /// </summary>
+    void SetMatchWeather(std::optional<MCWeatherKind> weather);
+
+    /// <summary>
+    /// The weather the world is shown in: with HD weather off (GHdWeather), clear; in a match whose host chose one, that
+    /// (<see cref="SetMatchWeather"/>); at one of HD weather's weathers (RAIN, DOWNPOUR, LIGHT SNOW, SNOW, BLIZZARD),
+    /// that; else the mission's own (<see cref="MissionWeather"/>).
     /// </summary>
     MCWeatherKind Shown();
 

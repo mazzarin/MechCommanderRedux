@@ -15,6 +15,8 @@
 #include "object/MCWeaponFireChunk.h"
 #include "object/MCWeaponShotInfo.h"
 #include "sprite/MCMechStops.h"
+#include "sprite/MCSceneLights.h"
+#include "sprite/MCWeather.h"
 
 // The game's side of multiplayer: the packed world-state and weapon-hit chunks the server sends, the queues they wait
 // in, and the handlers that apply the server's updates on a client.
@@ -797,4 +799,138 @@ TEST_CASE("network: a match plays by the server's rules that every player's buil
     CHECK_EQ(MCAgreedRules(MCMatchRule::MechBraking, both, said), MCMatchRule::MechBraking);
     CHECK_EQ(MCAgreedRules(0, both, said), 0u);
     CHECK_EQ(MCAgreedRules(MCMatchRule::MechBraking, withOld, said), 0u);
+}
+
+/// <summary>
+/// Port: the host's match options (the session screen's MATCH OPTIONS) are taken only from the host or the server, kept
+/// as far as this build knows them (a weather or time of day it doesn't is the mission's own; rules it doesn't play by
+/// are left out), and a short message is dropped. The rules the server then wants are the host's, else its own PREFS.
+/// </summary>
+TEST_CASE("network: a guest keeps the host's match options as far as its build knows them")
+{
+    ClientGame client;
+    MCMultiPlayer& game = *client.Game;
+    game.ServerID = 7;
+    game.HostID = 8;
+    const auto optionsMessage = [](int8_t weather, int8_t time, uint32_t rules)
+    {
+        std::vector<uint8_t> message = Message(MCMPMessageType::MatchOptions, {0, 0, 0, 0, 0, 0});
+        message.push_back(static_cast<uint8_t>(weather));
+        message.push_back(static_cast<uint8_t>(time));
+        PutWord(message, rules);
+        return message;
+    };
+
+    const std::vector<uint8_t> snowyNight = optionsMessage(
+        static_cast<int8_t>(MCWeatherKind::Snow), static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking);
+    Deliver(9, snowyNight);
+    CHECK(game.MatchOptions == MCMatchOptions{});
+
+    Deliver(8, snowyNight);
+    CHECK(game.MatchOptions.Weather == MCWeatherKind::Snow);
+    CHECK(game.MatchOptions.TimeOfDay == MCTimeOfDay::Night);
+    CHECK(game.MatchOptions.Rules == MCMatchRule::MechBraking);
+    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
+
+    std::vector<uint8_t> shortMessage = optionsMessage(static_cast<int8_t>(MCWeatherKind::Rain), 0, 0);
+    shortMessage.pop_back();
+    Deliver(7, shortMessage);
+    CHECK(game.MatchOptions.Weather == MCWeatherKind::Snow);
+
+    // A later build's weather and time of day, and every rule.
+    constexpr int8_t Unknown = 99;
+    Deliver(7, optionsMessage(Unknown, Unknown, 0xffffffff));
+    CHECK(!game.MatchOptions.Weather.has_value());
+    CHECK(!game.MatchOptions.TimeOfDay.has_value());
+    CHECK(game.MatchOptions.Rules == MCMatchRule::Supported);
+
+    Deliver(8, optionsMessage(MCMPMatchOptionsMessage::MissionOwn, MCMPMatchOptionsMessage::MissionOwn, 0));
+    CHECK(!game.MatchOptions.Weather.has_value());
+    CHECK(!game.MatchOptions.TimeOfDay.has_value());
+    CHECK_EQ(game.WantedRules(), 0u);
+
+    // With no choice of the host's, the server's own PREFS.
+    game.MatchOptions.Rules.reset();
+    GMechBraking = 1;
+    CHECK_EQ(game.WantedRules(), MCMatchRule::MechBraking);
+    GMechBraking = 0;
+    CHECK_EQ(game.WantedRules(), 0u);
+}
+
+/// <summary>
+/// Port: a launcher's -matchweather, -matchtime and -matchbraking set the match's options, any of them "mission" (or
+/// braking "prefs") for its choice without, in any case; a value that is none of a flag's changes nothing.
+/// </summary>
+TEST_CASE("network: the command line's match options set the weather, the time of day and braking")
+{
+    MCMatchOptions options;
+    CHECK(MPReadMatchOption(MatchWeatherFlag, "LightSnow", options));
+    CHECK(options.Weather == MCWeatherKind::LightSnow);
+    CHECK(MPReadMatchOption(MatchTimeFlag, "dusk", options));
+    CHECK(options.TimeOfDay == MCTimeOfDay::Dusk);
+    CHECK(MPReadMatchOption(MatchBrakingFlag, "ON", options));
+    CHECK(options.Rules == MCMatchRule::MechBraking);
+    CHECK(MPReadMatchOption(MatchBrakingFlag, "off", options));
+    CHECK(options.Rules == 0u);
+
+    CHECK(!MPReadMatchOption(MatchWeatherFlag, "hail", options));
+    CHECK(!MPReadMatchOption(MatchTimeFlag, "noon", options));
+    CHECK(!MPReadMatchOption(MatchBrakingFlag, "mission", options));
+    CHECK(options.Weather == MCWeatherKind::LightSnow);
+    CHECK(options.TimeOfDay == MCTimeOfDay::Dusk);
+    CHECK(options.Rules == 0u);
+
+    CHECK(MPReadMatchOption(MatchWeatherFlag, "Mission", options));
+    CHECK(MPReadMatchOption(MatchTimeFlag, "mission", options));
+    CHECK(MPReadMatchOption(MatchBrakingFlag, "prefs", options));
+    CHECK(options == MCMatchOptions{});
+}
+
+/// <summary>
+/// Port: in a match, the weather and time of day its host chose are shown over the mission's own and over a player's
+/// own RAIN, SNOW, DUSK or NIGHT for every mission; a player's HD weather or HD lighting off still shows the original's
+/// clear day. Outside a match (none chosen) the player's and the mission's are shown as before.
+/// </summary>
+TEST_CASE("network: a match's weather and time of day are shown over the mission's and the player's own")
+{
+    const int weatherWas = GHdWeather;
+    const int lightingWas = GHdLighting;
+    MCWeather::SetMissionWeather(MCWeatherKind::Rain);
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Dusk);
+
+    MCWeather::SetMatchWeather(MCWeatherKind::Blizzard);
+    MCSceneLights::SetMatchTime(MCTimeOfDay::Night);
+
+    for (const int setting : {HdWeatherOn, HdWeatherDownpour, HdWeatherLightSnow})
+    {
+        GHdWeather = setting;
+        CHECK(MCWeather::Shown() == MCWeatherKind::Blizzard);
+    }
+
+    for (const int setting : {HdLightingOn, HdLightingDusk})
+    {
+        GHdLighting = setting;
+        CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Night);
+    }
+
+    GHdWeather = HdWeatherOff;
+    GHdLighting = HdLightingOff;
+    CHECK(MCWeather::Shown() == MCWeatherKind::Clear);
+    CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Day);
+
+    MCWeather::SetMatchWeather(std::nullopt);
+    MCSceneLights::SetMatchTime(std::nullopt);
+    GHdWeather = HdWeatherOn;
+    GHdLighting = HdLightingOn;
+    CHECK(MCWeather::Shown() == MCWeatherKind::Rain);
+    CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Dusk);
+    GHdWeather = HdWeatherSnow;
+    GHdLighting = HdLightingNight;
+    CHECK(MCWeather::Shown() == MCWeatherKind::Snow);
+    CHECK(MCSceneLights::TimeOfDay() == MCTimeOfDay::Night);
+
+    GHdWeather = weatherWas;
+    GHdLighting = lightingWas;
+    MCWeather::SetMissionWeather(MCWeatherKind::Clear);
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
 }

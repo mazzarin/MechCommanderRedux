@@ -169,8 +169,9 @@ namespace
         size_t GlowTables = 0;
         std::unordered_map<size_t, std::optional<MCSceneLights::MCGlowMeasure>> Glows;
         MCSceneLights::MCLighting Lighting;
-        /// <summary>The time of day of the mission being played.</summary>
+        /// <summary>The time of day of the mission being played, and the one its match's host chose.</summary>
         MCTimeOfDay MissionTime = MCTimeOfDay::Day;
+        std::optional<MCTimeOfDay> MatchTime;
         /// <summary>The window whose world is being drawn.</summary>
         std::weak_ptr<MCWindow> Drawing;
         std::vector<MCSceneLight> Adding;
@@ -668,8 +669,18 @@ auto MCSceneLights::MissionTime() -> MCTimeOfDay
     return TheState().MissionTime;
 }
 
+auto MCSceneLights::SetMatchTime(std::optional<MCTimeOfDay> time) -> void
+{
+    TheState().MatchTime = time;
+}
+
 auto MCSceneLights::TimeOfDay() -> MCTimeOfDay
 {
+    if (GHdLighting != HdLightingOff && TheState().MatchTime.has_value())
+    {
+        return *TheState().MatchTime;
+    }
+
     switch (GHdLighting)
     {
         case HdLightingOff:

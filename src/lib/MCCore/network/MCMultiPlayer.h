@@ -189,9 +189,15 @@ public:
 
     /// <summary>
     /// Port, the server: sends everyone the rules the match plays by, and plays by them (<see cref="AgreedRules"/> of
-    /// its own choices).
+    /// the host's choice, <see cref="MatchOptions"/>, or else its own PREFS).
     /// </summary>
     int32_t SendMatchRules();
+
+    /// <summary>Port: the rules the server wants: the host's choice (<see cref="MatchOptions"/>), else its own PREFS.</summary>
+    uint32_t WantedRules() const;
+
+    /// <summary>Port, the host: sends everyone its <see cref="MatchOptions"/> (the session screen's MATCH OPTIONS).</summary>
+    int32_t SendMatchOptions();
 
     /// <summary>Port: MCAgreedRules among the session's players (with a number).</summary>
     uint32_t AgreedRules(uint32_t wanted) const;
@@ -363,6 +369,11 @@ public:
     /// until the server sends them.
     /// </summary>
     uint32_t MatchRules = 0;
+    /// <summary>
+    /// Port: the host's match options: its own choices on the host (from its command line's, until it changes them), the
+    /// host's last match options message on a guest (none, the mission's own and the server's PREFS, until one comes).
+    /// </summary>
+    MCMatchOptions MatchOptions = GameConfiguration.Options;
     /// <summary>Set by the start-planning message: the players are in logistics.</summary>
     bool InLogistics = false;
     /// <summary>Whether a mission runs (UpdateClients only sends then).</summary>

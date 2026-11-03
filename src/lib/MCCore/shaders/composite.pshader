@@ -17,8 +17,20 @@
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3. A replacement in the
 // shaders folder (composite.spv) must keep them.
 //
+// Port-only (HD lighting): the GPU world's two passes before the composite are this shader built for each alone
+// (COMPOSITE_PASS), whose pixels then don't pay for the registers the composite's lights take:
+// composite_bright.pshader for the bloom's bright pass (Bright), composite_field.pshader for the world's field (Field).
+//
 // HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
 // have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
+
+#define COMPOSITE_SCREEN 0
+#define COMPOSITE_BRIGHT_PASS 1
+#define COMPOSITE_FIELD_PASS 2
+
+#ifndef COMPOSITE_PASS
+#define COMPOSITE_PASS COMPOSITE_SCREEN
+#endif
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
 Texture2D<float4> screenTex : register(t0, space2);
@@ -38,7 +50,7 @@ SamplerState tableSampler : register(s3, space2);
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
 // Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear), in the field
-// pass (FieldPass); over the GPU world, its field (Field): the bloom (rgb) and the clouds' cover (a) at the middle of
+// pass (Field); over the GPU world, its field (Field): the bloom (rgb) and the clouds' cover (a) at the middle of
 // each of those texels, read between them (unused without either).
 Texture2D<float4> bloomTex : register(t5, space2);
 SamplerState bloomSampler : register(s5, space2);
@@ -72,10 +84,9 @@ cbuffer Composite : register(b0, space3)
     float4 shown;
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
-    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone, 2 for the bloom's bright pass of the GPU
-    // world (BrightPass), 3 for its field (FieldPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the
-    // screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen, drawn at the size it's shown; 0
-    // or 1 otherwise).
+    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone. y: 1 when the textures are the GPU renderer's
+    // surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen, drawn at the
+    // size it's shown; 0 or 1 otherwise). The bright and field passes read none of it.
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
     // shows the colour of cycleSources[(i + y) & 7] (one source a component).
@@ -164,9 +175,6 @@ cbuffer Composite : register(b0, space3)
     float4 lights[MaxLights * 3];
 };
 
-// mode.x for the bloom's bright pass, and for the GPU world's field (Field).
-static const float BrightPass = 2.0;
-static const float FieldPass = 3.0;
 // The brightness the relief takes for height, and the grey a light's hue is taken from.
 static const float3 Luma = float3(0.299, 0.587, 0.114);
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
@@ -1377,20 +1385,9 @@ float3 VeiledAt(float3 color, float2 texel)
     return lerp(color, VeilColour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
 }
 
-float4 main(float4 position : SV_Position) : SV_Target
+// The composite's pixel `pixel`: the screen over its underlay's world, or alone.
+float4 Composed(float2 pixel)
 {
-    const float2 pixel = floor(position.xy);
-
-    if (mode.x == BrightPass)
-    {
-        return Bright(pixel);
-    }
-
-    if (mode.x == FieldPass)
-    {
-        return Field(pixel);
-    }
-
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
     // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
     const float2 drawn = max(mode.zw, float2(1.0, 1.0));
@@ -1480,4 +1477,16 @@ float4 main(float4 position : SV_Position) : SV_Target
     }
 
     return Faded(Shown(index));
+}
+
+float4 main(float4 position : SV_Position) : SV_Target
+{
+    const float2 pixel = floor(position.xy);
+#if COMPOSITE_PASS == COMPOSITE_BRIGHT_PASS
+    return Bright(pixel);
+#elif COMPOSITE_PASS == COMPOSITE_FIELD_PASS
+    return Field(pixel);
+#else
+    return Composed(pixel);
+#endif
 }

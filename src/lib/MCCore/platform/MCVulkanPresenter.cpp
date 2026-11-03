@@ -113,10 +113,6 @@ namespace
     constexpr float MinGroundDeterminant = 1e-6f;
     /// <summary>The smallest clouds, in meters (their size divides the ground's meters).</summary>
     constexpr float MinCloudSize = 1.0f;
-    /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
-    constexpr float BrightPassMode = 2.0f;
-    /// <summary>The composite's mode for the GPU world's field (composite.pshader's FieldPass).</summary>
-    constexpr float FieldPassMode = 3.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t7).</summary>
     constexpr size_t CompositeSamplers = 8;
     /// <summary>
@@ -543,31 +539,42 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_QuadShader = std::move(*quad);
-    auto composite = MCVulkanShaders::Load(presenter->_Device, MCVulkanShaders::Composite);
+    // The composite, and the GPU world's passes before it, each composite.pshader built for it alone.
+    const std::array composites{
+        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline},
+        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline},
+        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline},
+    };
 
-    if (!composite)
+    for (const auto& [info, shader, made] : composites)
     {
-        return std::unexpected(composite.error());
-    }
+        auto loaded = MCVulkanShaders::Load(presenter->_Device, *info);
 
-    presenter->_CompositeShader = std::move(*composite);
+        if (!loaded)
+        {
+            return std::unexpected(loaded.error());
+        }
 
-    SDL_GPUColorTargetDescription target{};
-    target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-    pipeline.vertex_shader = presenter->_QuadShader.get();
-    pipeline.fragment_shader = presenter->_CompositeShader.get();
-    pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-    pipeline.target_info.num_color_targets = 1;
-    pipeline.target_info.color_target_descriptions = &target;
-    presenter->_CompositePipeline = MCGpuHandle<SDL_GPUGraphicsPipeline>(
-        SDL_CreateGPUGraphicsPipeline(device, &pipeline), MCGpuRelease{presenter->_Device});
+        *shader = std::move(*loaded);
 
-    if (presenter->_CompositePipeline == nullptr)
-    {
-        return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(composite)"));
+        SDL_GPUColorTargetDescription target{};
+        target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader = presenter->_QuadShader.get();
+        pipeline.fragment_shader = shader->get();
+        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pipeline.target_info.num_color_targets = 1;
+        pipeline.target_info.color_target_descriptions = &target;
+        *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device, &pipeline),
+                                                     MCGpuRelease{presenter->_Device});
+
+        if (*made == nullptr)
+        {
+            return std::unexpected(
+                SdlError(std::format("SDL_CreateGPUGraphicsPipeline({})", MCVulkanShaders::Name(info->Shader))));
+        }
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -668,8 +675,12 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
+    _BrightPipeline.reset();
+    _FieldPipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
+    _BrightShader.reset();
+    _FieldShader.reset();
 
     if (_Claimed)
     {
@@ -1200,13 +1211,11 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         fieldTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
         fieldTarget.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* fieldPass = SDL_BeginGPURenderPass(&commands, &fieldTarget, 1, nullptr);
-        SDL_BindGPUGraphicsPipeline(fieldPass, _CompositePipeline.get());
+        SDL_BindGPUGraphicsPipeline(fieldPass, _FieldPipeline.get());
         const float allocatedWidth = static_cast<float>(field.Width);
         const float allocatedHeight = static_cast<float>(field.Height);
         const SDL_GPUViewport fieldViewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
         SDL_SetGPUViewport(fieldPass, &fieldViewport);
-        CompositeUniforms fieldUniforms = uniforms;
-        fieldUniforms.Mode[0] = FieldPassMode;
         // The pass reads the bloom's mips alone (the world bound for the rest, and for mips it hasn't, unread).
         SDL_GPUTexture* const mips = world.Bloom != nullptr ? world.Bloom : world.Texture;
         const CompositeBindings bindings{{
@@ -1225,7 +1234,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         DrawComposite(commands, *fieldPass, bindings,
                       {{0.0f, 0.0f, static_cast<float>(drawnWidth), static_cast<float>(drawnHeight)},
                        {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
-                      fieldUniforms);
+                      uniforms);
         SDL_EndGPURenderPass(fieldPass);
         drawn.Field = field.Handle.get();
         std::ranges::copy(std::array{static_cast<float>(fieldWidth), static_cast<float>(fieldHeight), allocatedWidth,
@@ -1332,7 +1341,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     target.load_op = SDL_GPU_LOADOP_CLEAR;
     target.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
-    SDL_BindGPUGraphicsPipeline(pass, _CompositePipeline.get());
+    SDL_BindGPUGraphicsPipeline(pass, _BrightPipeline.get());
     const float allocatedWidth = static_cast<float>(bloom.Width);
     const float allocatedHeight = static_cast<float>(bloom.Height);
     const SDL_GPUViewport viewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
@@ -1341,8 +1350,6 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     const float worldWidth = static_cast<float>(width);
     const float worldHeight = static_cast<float>(height);
     std::ranges::copy(std::array{worldWidth, worldHeight, worldWidth, worldHeight}, uniforms.WorldSize);
-    uniforms.Mode[0] = BrightPassMode;
-    uniforms.Mode[1] = 1.0f;
     uniforms.LightLook[2] = lighting.BloomFrom;
     // The pass reads the world alone: it is bound for every texture.
     const CompositeBindings bindings{{

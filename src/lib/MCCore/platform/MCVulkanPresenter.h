@@ -125,6 +125,14 @@ private:
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _CompositeShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _CompositePipeline;
+    /// <summary>
+    /// Port-only (HD lighting): the bloom's bright pass (Bloom) and the GPU world's field pass, each the composite's
+    /// shader built for it alone (shaders/composite_bright.pshader, composite_field.pshader).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _BrightShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _BrightPipeline;
+    MCGpuHandle<SDL_GPUShader> _FieldShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _FieldPipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;

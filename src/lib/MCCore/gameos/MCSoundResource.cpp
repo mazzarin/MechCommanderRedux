@@ -174,6 +174,8 @@ void MCSoundResource::ReadWaveInfo()
 
 uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t depth)
 {
+    const std::unique_lock stream = LockStream();
+
     if (_Flac != nullptr)
     {
         ReadFlac(buffer, loop);
@@ -240,6 +242,8 @@ void MCSoundResource::ReadFlac(std::span<uint8_t> buffer, bool loop)
 
 void MCSoundResource::Rewind()
 {
+    const std::unique_lock stream = LockStream();
+
     if (_Flac != nullptr)
     {
         _Flac->Seek(0);

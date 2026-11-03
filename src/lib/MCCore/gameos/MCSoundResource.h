@@ -47,6 +47,11 @@ public:
     uint32_t Read(std::span<uint8_t> buffer, bool loop, int32_t depth = 1);
     /// <summary>Seeks the stream back to its data.</summary>
     void Rewind();
+    /// <summary>
+    /// Holds the stream's reads and rewinds (<see cref="Read"/> and <see cref="Rewind"/> take it too): the game's thread
+    /// primes a stream while the timer thread may be filling it.
+    /// </summary>
+    [[nodiscard]] std::unique_lock<std::recursive_mutex> LockStream() const { return std::unique_lock(_StreamLock); }
 
     /// <summary>Where the samples come from.</summary>
     MCSoundResourceType Type = MCSoundResourceType::File;
@@ -98,4 +103,6 @@ private:
     int32_t _DataStart = 0;
     /// <summary>The HD music's decoder, when it plays in place of the stream's file.</summary>
     std::unique_ptr<MCFlac> _Flac;
+    /// <summary>Held while the stream is read or rewound (<see cref="LockStream"/>).</summary>
+    mutable std::recursive_mutex _StreamLock;
 };

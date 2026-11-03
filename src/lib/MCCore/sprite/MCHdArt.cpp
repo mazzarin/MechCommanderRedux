@@ -179,6 +179,11 @@ namespace
         /// <summary>The folders frames were looked up in, and each one's index there.</summary>
         std::vector<FrameFolder> Folders;
         std::map<std::filesystem::path, uint32_t> FolderIndices;
+        /// <summary>
+        /// FindShape's folders' indices by their shape table's hash: making a folder's path and finding it among the
+        /// folders' cost more, every draw, than finding its frame.
+        /// </summary>
+        std::unordered_map<uint64_t, uint32_t> ShapeTableFolders;
         std::unordered_map<FrameKey, Cached, FrameKeyHash> Frames;
         /// <summary>The keys of the frames held (those in Frames with one), least recently used first.</summary>
         std::list<FrameKey> Order;
@@ -1026,6 +1031,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Order.clear();
     state.Folders.clear();
     state.FolderIndices.clear();
+    state.ShapeTableFolders.clear();
     state.Bytes = 0;
     state.Logged.clear();
     state.MadeWith.reset();
@@ -1529,8 +1535,14 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindShape(uint64_t hash, int32_t 
         return nullptr;
     }
 
-    return Cache(FrameKey{FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number), NumberedKey(frame, step)},
-                 width, height);
+    const auto [folder, fresh] = TheState().ShapeTableFolders.try_emplace(hash, 0);
+
+    if (fresh)
+    {
+        folder->second = FolderIndex(PackFolder() / ShapeTableFolder(hash), Naming::Number);
+    }
+
+    return Cache(FrameKey{folder->second, NumberedKey(frame, step)}, width, height);
 }
 
 uint64_t MCHdArt::NewFrameId()

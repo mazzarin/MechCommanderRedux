@@ -9,7 +9,15 @@ enum class MCShader : uint8_t
     Composite,
     Instance,
     Draw,
-    Terrain
+    Terrain,
+    /// <summary>Port-only: the draws of the original's own kinds alone (shaders/draw_basic.pshader).</summary>
+    DrawBasic,
+    /// <summary>Port-only: the terrain layer's draws alone (shaders/draw_terrain.pshader).</summary>
+    DrawTerrain,
+    /// <summary>Port-only: the draws of HD art frames alone (shaders/draw_hd.pshader).</summary>
+    DrawHd,
+    /// <summary>Port-only: the kept ground's copy (shaders/ground.pshader).</summary>
+    Ground
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -52,6 +60,10 @@ namespace MCVulkanShaders
     extern const MCShaderInfo Composite;
     extern const MCShaderInfo DrawVertex;
     extern const MCShaderInfo DrawFragment;
+    extern const MCShaderInfo DrawBasicFragment;
+    extern const MCShaderInfo DrawTerrainFragment;
+    extern const MCShaderInfo DrawHdFragment;
+    extern const MCShaderInfo GroundFragment;
     extern const MCShaderInfo TerrainVertex;
 
     /// <summary>

@@ -335,9 +335,9 @@ namespace MCWeather
     /// <summary>
     /// What a drop landing at world point <paramref name="point"/> (not on a unit) splashes on, as <paramref
     /// name="camera"/> shows the ground there: water where the water is drawn (not under a bridge) or a puddle lies,
-    /// else what <see cref="GroundOf"/> takes most of the surface drawn round it for (MCParticles::SurfaceDrawnAt: the
-    /// overlays laid on the ground, such as roads, over its tiles; a few pixels round it vote, as the dirt's art is
-    /// speckled with the rock's colours); hard ground where none is drawn.
+    /// else what <see cref="GroundOf"/> takes most of the surface drawn round it for (MCParticles::DrawnRound's
+    /// surface: the overlays laid on the ground, such as roads, over its tiles; a few pixels round it vote, as the
+    /// dirt's art is speckled with the rock's colours); hard ground where none is drawn.
     /// </summary>
     MCSplashGround GroundAt(const MCVector3D& point, const MCCamera& camera);
 

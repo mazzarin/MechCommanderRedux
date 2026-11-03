@@ -140,6 +140,7 @@ namespace
     /// as dark a grey as a road's asphalt (which, voting for nothing, is hard ground).
     /// </summary>
     constexpr std::array<std::pair<int32_t, int32_t>, 5> GroundVotes{{{0, 0}, {-2, -1}, {2, -1}, {-2, 1}, {2, 1}}};
+    static_assert(GroundVotes[0] == std::pair<int32_t, int32_t>{0, 0}, "GroundUnder takes the first for the point's");
     constexpr uint8_t ShadowDark = 9;
     /// <summary>The kinds of ground (MCWeather::MCSplashGround's).</summary>
     constexpr size_t GroundKinds = 5;
@@ -1165,7 +1166,10 @@ namespace
     MCWeather::MCSplashGround GroundUnder(State& state, const MCWeather::MCWeatherLook& look, float x, float y, float z,
                                           const MCCamera& camera)
     {
-        if (IsWet(state, look, MCParticles::GroundDrawnAt(x, y, z, camera), x, y, z, PuddleMargin))
+        std::array<MCParticles::MCDrawnPixel, GroundVotes.size()> drawn;
+        MCParticles::DrawnRound(x, y, z, camera, GroundVotes, drawn);
+
+        if (IsWet(state, look, drawn[0].Ground, x, y, z, PuddleMargin))
         {
             return MCWeather::MCSplashGround::Water;
         }
@@ -1174,9 +1178,9 @@ namespace
         std::array<int32_t, GroundKinds> votes{};
         std::optional<MCWeather::MCSplashGround> first;
 
-        for (const auto& [right, down] : GroundVotes)
+        for (const MCParticles::MCDrawnPixel& pixel : drawn)
         {
-            const std::optional<uint8_t> surface = MCParticles::SurfaceDrawnAt(x, y, z, camera, right, down);
+            const std::optional<uint8_t> surface = pixel.Surface;
 
             if (!surface.has_value())
             {

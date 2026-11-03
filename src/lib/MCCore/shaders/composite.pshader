@@ -42,6 +42,11 @@ SamplerState bloomSampler : register(s5, space2);
 // premultiplied, the size of its colours), added over the lit world (unused without an underlay).
 Texture2D<float4> glintTex : register(t6, space2);
 SamplerState glintSampler : register(s6, space2);
+// Port-only (HD lighting): the light tiles (lightTiles): for each, the lights whose pool may reach it, a bit a light,
+// in LightWords texels side by side, a word of LightWordBits each (its bytes red to alpha, the first light in red's
+// lowest bit).
+Texture2D<float4> lightTileTex : register(t7, space2);
+SamplerState lightTileSampler : register(s7, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
@@ -134,6 +139,11 @@ cbuffer Composite : register(b0, space3)
     // The lightning (MCWeather::ShownFlash): x, how much it lights the world now (0 none, 1 FlashLight in full); y, the
     // side of the view it struck on (-1 left to 1 right).
     float4 flash;
+    // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
+    // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
+    float4 lightTiles;
+    // The spotlights among the lights, a bit a light (the first 32 in x).
+    uint4 spotLights;
     // One a foot come down in a puddle (MCWeather::ShownPuddleSteps): its ground point (xy, meters, as GroundPointAt),
     // how long ago (z, seconds of the game's time) and how big its splash is (w); then PrintCircles a foot, the circles
     // its footprint's shape is taken as: each one's middle on the ground (xy) and its radius (z, meters).
@@ -161,6 +171,52 @@ static const float LightSoftness = 0.3;
 // ground nearer it than where its beam's middle meets the ground takes at most SpotMost times the light there.
 static const float SpotFull = 0.5;
 static const float SpotMost = 1.5;
+
+uint Byte(float value)
+{
+    return (uint)round(value * 255.0);
+}
+
+// The lights' bits come in words of LightWordBits (lightTileTex, spotLights): the first word's for lights 0 to 31.
+static const uint LightWords = 2;
+static const uint LightWordBits = 32;
+static const uint BitsPerByte = 8;
+
+// The lights shown (lighting.x of them), a bit a light; with the light tiles, by light index, in index order.
+uint2 LightsShown()
+{
+    const uint count = min((uint)lighting.x, MaxLights);
+    const uint first = min(count, LightWordBits);
+    const uint second = count - first;
+    return uint2(first >= LightWordBits ? 0xffffffffu : (1u << first) - 1u,
+                 second >= LightWordBits ? 0xffffffffu : (1u << second) - 1u);
+}
+
+// The lights whose pool may reach world texel `texel` (its light tile's), a bit a light; every light shown without
+// the light tiles. Each is taken in its index's order, as were all of them, so the light is the same.
+uint2 LightsNear(float2 texel)
+{
+    if (lightTiles.x <= 0.0)
+    {
+        return LightsShown();
+    }
+
+    const int2 tile = clamp(int2(floor(texel / lightTiles.x)), int2(0, 0), int2(lightTiles.yz) - 1);
+    uint width;
+    uint height;
+    lightTileTex.GetDimensions(width, height);
+    uint2 near = uint2(0, 0);
+
+    for (uint word = 0; word < LightWords; ++word)
+    {
+        const float2 at = float2(tile.x * (int)LightWords + (int)word, tile.y) + 0.5;
+        const float4 bytes = lightTileTex.SampleLevel(lightTileSampler, at / float2(width, height), 0);
+        near[word] = Byte(bytes.r) | Byte(bytes.g) << BitsPerByte | Byte(bytes.b) << (2 * BitsPerByte) |
+                     Byte(bytes.a) << (3 * BitsPerByte);
+    }
+
+    return near & LightsShown();
+}
 
 // A spotlight's light on the ground off (along the ground) from the ground under it, as a share of its light where its
 // beam's middle meets the ground: the lamp height above the ground, its beam aimed at spot (from the ground under it),
@@ -202,36 +258,33 @@ float3 AirBeamsAt(float2 texel)
     }
 
     float3 sum = float3(0.0, 0.0, 0.0);
-    const uint count = min((uint)lighting.x, MaxLights);
 
-    for (uint i = 0; i < count; ++i)
+    for (uint word = 0; word < LightWords; ++word)
     {
-        const float4 shape = lights[i * 3 + 1];
-        const float4 color = lights[i * 3 + 2];
-
-        if (color.w <= 0.0 || all(shape.zw == 0.0))
+        for (uint bits = spotLights[word] & LightsShown()[word]; bits != 0u; bits &= bits - 1u)
         {
-            continue;
+            const uint i = word * LightWordBits + firstbitlow(bits);
+            const float4 shape = lights[i * 3 + 1];
+            const float4 color = lights[i * 3 + 2];
+            const float2 ground = lights[i * 3].xy;
+            const float2 lamp = ground - float2(0.0, shape.x);
+            const float2 beam = ground + shape.zw - lamp;
+            const float length2 = dot(beam, beam);
+            const float t = dot(texel - lamp, beam) / length2;
+
+            if (t <= 0.0 || t >= AirBeamLength)
+            {
+                continue;
+            }
+
+            // Its half width there: the beam's angle (edge, its cosine) over the way from the lamp.
+            const float spread = sqrt(max(1.0 - color.w * color.w, 0.0)) / color.w;
+            const float width = AirBeamLampWidth + t * sqrt(length2) * spread;
+            const float across = length(texel - (lamp + beam * t)) / width;
+            const float along = 1.0 - t / AirBeamLength;
+            const float shows = 1.0 - smoothstep(AirBeamHideFrom, AirBeamHidden, -beam.y * rsqrt(length2));
+            sum += color.rgb * (along * shows * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
         }
-
-        const float2 ground = lights[i * 3].xy;
-        const float2 lamp = ground - float2(0.0, shape.x);
-        const float2 beam = ground + shape.zw - lamp;
-        const float length2 = dot(beam, beam);
-        const float t = dot(texel - lamp, beam) / length2;
-
-        if (t <= 0.0 || t >= AirBeamLength)
-        {
-            continue;
-        }
-
-        // Its half width there: the beam's angle (edge, its cosine) over the way from the lamp.
-        const float spread = sqrt(max(1.0 - color.w * color.w, 0.0)) / color.w;
-        const float width = AirBeamLampWidth + t * sqrt(length2) * spread;
-        const float across = length(texel - (lamp + beam * t)) / width;
-        const float along = 1.0 - t / AirBeamLength;
-        const float shows = 1.0 - smoothstep(AirBeamHideFrom, AirBeamHidden, -beam.y * rsqrt(length2));
-        sum += color.rgb * (along * shows * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
     }
 
     return sum * airBeams.x * lighting.y;
@@ -243,35 +296,39 @@ float3 AirBeamsAt(float2 texel)
 float3 LightAt(float2 texel, float2 slope)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
-    const uint count = min((uint)lighting.x, MaxLights);
     // Screen heights stretched to the ground distances they show.
     const float2 ground = float2(1.0, lighting.w);
     const float2 at = texel * ground;
+    const uint2 near = LightsNear(texel);
 
-    for (uint i = 0; i < count; ++i)
+    for (uint word = 0; word < LightWords; ++word)
     {
-        const float4 ends = lights[i * 3];
-        const float4 shape = lights[i * 3 + 1];
-        const float2 a = ends.xy * ground;
-        const float2 ab = ends.zw * ground - a;
-        const float length2 = dot(ab, ab);
-        const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
-        const float2 off = at - (a + ab * t);
-        const float d2 = dot(off, off);
-        const float reach2 = max(shape.y * shape.y, 1.0);
-
-        if (d2 < reach2)
+        for (uint bits = near[word]; bits != 0u; bits &= bits - 1u)
         {
-            const float soft = max(shape.x, shape.y * LightSoftness);
-            const float x2 = d2 / reach2;
-            const float fade = 1.0 - x2 * x2;
-            // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
-            const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
-            const float4 color = lights[i * 3 + 2];
-            const float2 spot = shape.zw * ground;
-            const float pool = color.w > 0.0 && any(spot != 0.0) ? SpotPool(off, shape.x, spot, color.w)
-                                                                 : soft * soft / (d2 + soft * soft);
-            sum += color.rgb * (fade * fade * pool * facing);
+            const uint i = word * LightWordBits + firstbitlow(bits);
+            const float4 ends = lights[i * 3];
+            const float4 shape = lights[i * 3 + 1];
+            const float2 a = ends.xy * ground;
+            const float2 ab = ends.zw * ground - a;
+            const float length2 = dot(ab, ab);
+            const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
+            const float2 off = at - (a + ab * t);
+            const float d2 = dot(off, off);
+            const float reach2 = max(shape.y * shape.y, 1.0);
+
+            if (d2 < reach2)
+            {
+                const float soft = max(shape.x, shape.y * LightSoftness);
+                const float x2 = d2 / reach2;
+                const float fade = 1.0 - x2 * x2;
+                // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
+                const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
+                const float4 color = lights[i * 3 + 2];
+                const float2 spot = shape.zw * ground;
+                const float pool = color.w > 0.0 && any(spot != 0.0) ? SpotPool(off, shape.x, spot, color.w)
+                                                                     : soft * soft / (d2 + soft * soft);
+                sum += color.rgb * (fade * fade * pool * facing);
+            }
         }
     }
 
@@ -393,11 +450,6 @@ float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shad
 float4 Faded(float3 color)
 {
     return float4(saturate(color - fade.x), 1.0);
-}
-
-uint Byte(float value)
-{
-    return (uint)round(value * 255.0);
 }
 
 float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)

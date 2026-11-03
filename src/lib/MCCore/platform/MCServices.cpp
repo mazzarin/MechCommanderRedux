@@ -107,6 +107,11 @@ namespace MCSocket
         return Net().ConnectTcp(to, timeoutMs);
     }
 
+    void KeepAlive(Handle socket)
+    {
+        Net().KeepAlive(socket);
+    }
+
     int Send(Handle socket, std::span<const uint8_t> data)
     {
         return Net().Send(socket, data);

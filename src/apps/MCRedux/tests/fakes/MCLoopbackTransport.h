@@ -18,11 +18,15 @@ public:
     /// <summary>Sockets open now.</summary>
     size_t OpenSockets() const;
 
+    /// <summary>Sockets open now that were asked to be kept alive (<see cref="MCSocket::KeepAlive"/>).</summary>
+    size_t KeptAliveSockets() const;
+
     bool Startup() override;
     std::optional<uint32_t> Resolve(std::string_view host) override;
     MCSocket::Handle ListenTcp(uint16_t port) override;
     MCSocket::Handle AcceptTcp(MCSocket::Handle listener, MCSocket::Address& from) override;
     MCSocket::Handle ConnectTcp(const MCSocket::Address& to, int timeoutMs) override;
+    void KeepAlive(MCSocket::Handle socket) override;
     int Send(MCSocket::Handle socket, std::span<const uint8_t> data) override;
     int Receive(MCSocket::Handle socket, std::span<uint8_t> data) override;
     MCSocket::Handle OpenUdp(uint16_t port) override;
@@ -62,6 +66,8 @@ private:
         std::deque<MCSocket::Handle> Pending;
         /// <summary>A UDP socket: datagrams not yet read.</summary>
         std::deque<Datagram> Datagrams;
+        /// <summary>Whether it was asked to be kept alive (nothing here ever goes away unannounced).</summary>
+        bool KeptAlive = false;
     };
 
     /// <summary>Opens a socket of <paramref name="type"/> on <paramref name="port"/> (0 = a free one).</summary>

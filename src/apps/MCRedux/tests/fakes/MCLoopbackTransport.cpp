@@ -34,6 +34,13 @@ size_t MCLoopbackTransport::OpenSockets() const
     return _Sockets.size();
 }
 
+size_t MCLoopbackTransport::KeptAliveSockets() const
+{
+    std::lock_guard lock(_Lock);
+    return static_cast<size_t>(
+        std::ranges::count_if(_Sockets, [](const auto& entry) { return entry.second.KeptAlive; }));
+}
+
 bool MCLoopbackTransport::Startup()
 {
     return true;
@@ -128,6 +135,16 @@ MCSocket::Handle MCLoopbackTransport::ConnectTcp(const MCSocket::Address& to, in
     _Sockets[server].PeerPort = _Sockets[client].Port;
     _Sockets[listenerHandle].Pending.push_back(server);
     return client;
+}
+
+void MCLoopbackTransport::KeepAlive(MCSocket::Handle socket)
+{
+    std::lock_guard lock(_Lock);
+
+    if (const MCOptionalRef<Socket> self = Find(socket))
+    {
+        self->get().KeptAlive = true;
+    }
 }
 
 int MCLoopbackTransport::Send(MCSocket::Handle socket, std::span<const uint8_t> data)

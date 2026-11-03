@@ -350,6 +350,35 @@ TEST_CASE("services: the loopback transport connects, streams, broadcasts and cl
     CHECK_EQ(net.OpenSockets(), static_cast<size_t>(0));
 }
 
+/// <summary>
+/// The operating system's sockets: a connection kept alive is watched for the machine at its other end going, by
+/// MCSocket::LinkKeepAlive's times, at whichever end asked; one not asked keeps the system's default, no watch.
+/// </summary>
+TEST_CASE("services: the operating system watches a kept-alive connection for the other machine going")
+{
+    MCSocketTransport net;
+    REQUIRE(net.Startup());
+    const MCSocket::Handle listener = net.ListenTcp(0);
+    REQUIRE(listener != MCSocket::InvalidHandle);
+    constexpr int connectMs = 1000;
+    const MCSocket::Handle client = net.ConnectTcp({MCSocket::LoopbackIp, net.LocalPort(listener)}, connectMs);
+    REQUIRE(client != MCSocket::InvalidHandle);
+    MCSocket::Address from;
+    MCSocket::Handle server = net.AcceptTcp(listener, from);
+    REQUIRE(server != MCSocket::InvalidHandle);
+
+    CHECK(!MCSocketTransport::KeepAliveOf(client).has_value());
+    CHECK(!MCSocketTransport::KeepAliveOf(server).has_value());
+    net.KeepAlive(server);
+    CHECK(MCSocketTransport::KeepAliveOf(server) == std::optional(MCSocket::LinkKeepAlive));
+    CHECK(!MCSocketTransport::KeepAliveOf(client).has_value());
+    net.KeepAlive(client);
+    CHECK(MCSocketTransport::KeepAliveOf(client) == std::optional(MCSocket::LinkKeepAlive));
+    net.Close(server);
+    net.Close(client);
+    net.Close(listener);
+}
+
 /// <summary>The mock helper records calls and arguments and hands out queued results.</summary>
 TEST_CASE("services: MCMock records calls and returns queued results")
 {

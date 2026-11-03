@@ -52,12 +52,16 @@ namespace
         return directPlay.InitializeConnection(connection, 0);
     }
 
+    /// <summary>The flags the game hosts its sessions with (MCFidpSession).</summary>
+    constexpr uint32_t GameSessionFlags = DPSESSION_KEEPALIVE | DPSESSION_MIGRATEHOST;
+
     /// <summary>Hosts a session named <paramref name="name"/> for up to <paramref name="maxPlayers"/>.</summary>
-    uint32_t Host(MCDirectPlay& directPlay, std::string_view name, uint32_t maxPlayers)
+    uint32_t Host(MCDirectPlay& directPlay, std::string_view name, uint32_t maxPlayers,
+                  uint32_t flags = GameSessionFlags)
     {
         DPSESSIONDESC2 desc{};
         desc.dwSize = sizeof(desc);
-        desc.dwFlags = DPSESSION_KEEPALIVE | DPSESSION_MIGRATEHOST;
+        desc.dwFlags = flags;
         desc.guidApplication = TestApplication;
         desc.dwMaxPlayers = maxPlayers;
         desc.SessionName = name;
@@ -336,7 +340,7 @@ TEST_CASE("directplay: a locked or full session takes no new players")
     // it is refused.
     DPSESSIONDESC2 locked{};
     locked.dwSize = sizeof(locked);
-    locked.dwFlags = DPSESSION_KEEPALIVE | DPSESSION_MIGRATEHOST | DPSESSION_NEWPLAYERSDISABLED;
+    locked.dwFlags = GameSessionFlags | DPSESSION_NEWPLAYERSDISABLED;
     locked.dwMaxPlayers = 2;
     locked.SessionName = "Two only";
     REQUIRE_EQ(host.SetSessionDesc(locked, 0), DP_OK);
@@ -348,6 +352,32 @@ TEST_CASE("directplay: a locked or full session takes no new players")
     CHECK(Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE).empty());
     CHECK_EQ(WithHostRunning(host, [&] { return joiner.Open(sessions[0], DPOPEN_JOIN); }),
              uint32_t{DPERR_NONEWPLAYERS});
+}
+
+/// <summary>
+/// A session that asks DirectPlay to drop players who vanish (DPSESSION_KEEPALIVE, as the game's do) has both ends of
+/// each link to it kept alive (MCSocket::KeepAlive), so either notices the other machine going; one that doesn't
+/// ask has neither.
+/// </summary>
+TEST_CASE("directplay: both ends of a link to a session that asks for keep-alive are kept alive")
+{
+    for (const uint32_t flags : {GameSessionFlags, uint32_t{DPSESSION_MIGRATEHOST}})
+    {
+        MCTestContextScope scope;
+        MCLoopbackTransport& net = scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+        MCDirectPlay host;
+        MCDirectPlay joiner;
+        REQUIRE_EQ(Connect(host, "127.0.0.1:28874"), DP_OK);
+        REQUIRE_EQ(Host(host, "Watched", 6, flags), DP_OK);
+        uint32_t hostPlayer = 0;
+        REQUIRE_EQ(NewPlayer(host, "Commander", hostPlayer), DP_OK);
+        REQUIRE_EQ(Connect(joiner, "127.0.0.1:28874"), DP_OK);
+        const std::vector<DPSESSIONDESC2> sessions = Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE);
+        REQUIRE_EQ(sessions.size(), size_t{1});
+        CHECK_EQ(net.KeptAliveSockets(), size_t{0});
+        REQUIRE_EQ(WithHostRunning(host, [&] { return joiner.Open(sessions[0], DPOPEN_JOIN); }), DP_OK);
+        CHECK_EQ(net.KeptAliveSockets(), (flags & DPSESSION_KEEPALIVE) != 0 ? size_t{2} : size_t{0});
+    }
 }
 
 /// <summary>

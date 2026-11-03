@@ -91,6 +91,48 @@ namespace
     {
         return MCSocket::Address{ntohl(address.sin_addr.s_addr), ntohs(address.sin_port)};
     }
+
+    /// <summary>The TCP option for the quiet seconds before keep-alive's first question (macOS's own name).</summary>
+#ifdef TCP_KEEPIDLE
+    constexpr int KeepIdleOption = TCP_KEEPIDLE;
+#else
+    constexpr int KeepIdleOption = TCP_KEEPALIVE;
+#endif
+
+    /// <summary>
+    /// The TCP option for the seconds sent data may go unacknowledged (macOS's and Windows'; -1 where there is none,
+    /// and the system's own retransmission limit stands).
+    /// </summary>
+#if defined(TCP_RXT_CONNDROPTIME)
+    constexpr int DropOption = TCP_RXT_CONNDROPTIME;
+#elif defined(TCP_MAXRT)
+    constexpr int DropOption = TCP_MAXRT;
+#else
+    constexpr int DropOption = -1;
+#endif
+
+    /// <summary>
+    /// Sets the whole-number option <paramref name="name"/> of <paramref name="level"/>. A system without it keeps its
+    /// own value: the socket works as before.
+    /// </summary>
+    void SetOption(NativeSocket socket, int level, int name, int value)
+    {
+        setsockopt(socket, level, name, reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+
+    /// <summary>The whole-number option <paramref name="name"/> of <paramref name="level"/>, if reported.</summary>
+    std::optional<int> OptionOf(NativeSocket socket, int level, int name)
+    {
+        int value = 0;
+        socklen_t size = sizeof(value);
+
+        if (getsockopt(socket, level, name, reinterpret_cast<char*>(&value), &size) != 0)
+        {
+            return std::nullopt;
+        }
+
+        return value;
+    }
 }
 
 namespace MCSocket
@@ -267,6 +309,35 @@ MCSocket::Handle MCSocketTransport::ConnectTcp(const MCSocket::Address& to, int 
     }
 
     return FromNative(socket);
+}
+
+void MCSocketTransport::KeepAlive(MCSocket::Handle socket)
+{
+    // The three keep-alive times need Windows 10's 2017 updates; an older system asks after its own idle time (hours).
+    const NativeSocket native = ToNative(socket);
+    constexpr MCSocket::KeepAliveTimes times = MCSocket::LinkKeepAlive;
+    SetOption(native, SOL_SOCKET, SO_KEEPALIVE, 1);
+    SetOption(native, IPPROTO_TCP, KeepIdleOption, times.IdleSeconds);
+    SetOption(native, IPPROTO_TCP, TCP_KEEPINTVL, times.IntervalSeconds);
+    SetOption(native, IPPROTO_TCP, TCP_KEEPCNT, times.Probes);
+
+    if constexpr (DropOption >= 0)
+    {
+        SetOption(native, IPPROTO_TCP, DropOption, times.DropSeconds);
+    }
+}
+
+std::optional<MCSocket::KeepAliveTimes> MCSocketTransport::KeepAliveOf(MCSocket::Handle socket)
+{
+    const NativeSocket native = ToNative(socket);
+
+    if (OptionOf(native, SOL_SOCKET, SO_KEEPALIVE).value_or(0) == 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto tcp = [&](int name) { return name >= 0 ? OptionOf(native, IPPROTO_TCP, name).value_or(0) : 0; };
+    return MCSocket::KeepAliveTimes{tcp(KeepIdleOption), tcp(TCP_KEEPINTVL), tcp(TCP_KEEPCNT), tcp(DropOption)};
 }
 
 int MCSocketTransport::Send(MCSocket::Handle socket, std::span<const uint8_t> data)

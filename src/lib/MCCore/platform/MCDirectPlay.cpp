@@ -462,6 +462,19 @@ struct MCDirectPlay::Impl
 
     // ---- framing -------------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Has the operating system watch a link to a session that asked DirectPlay to drop players who vanish
+    /// (DPSESSION_KEEPALIVE, as the game's sessions do): it then fails within half a minute of the machine at its
+    /// other end going, as a closed one does, where a quiet link to it waited for good.
+    /// </summary>
+    static void KeepAliveIfAsked(const DPSESSIONDESC2& desc, MCSocket::Handle socket)
+    {
+        if ((desc.dwFlags & DPSESSION_KEEPALIVE) != 0)
+        {
+            MCSocket::KeepAlive(socket);
+        }
+    }
+
     static void Queue(Link& link, FrameType type, const Writer& payload)
     {
         const uint32_t size = static_cast<uint32_t>(payload.Bytes.size() + 1);
@@ -1005,6 +1018,7 @@ struct MCDirectPlay::Impl
                 continue;
             }
 
+            KeepAliveIfAsked(Session.Desc, socket);
             Link link;
             link.Socket = socket;
             link.AcceptedAt = NowMs();
@@ -1674,6 +1688,8 @@ uint32_t MCDirectPlay::Open(const DPSESSIONDESC2& desc, uint32_t flags)
         SDL_Log("MCDirectPlay: cannot reach %s", MCSocket::ToString(found->Address).c_str());
         return DPERR_NOCONNECTION;
     }
+
+    Impl::KeepAliveIfAsked(found->Info.Desc, impl.Server.Socket);
 
     impl.State = Impl::Mode::Joiner;
     Writer request;

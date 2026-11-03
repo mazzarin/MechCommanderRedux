@@ -116,6 +116,8 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 
 - DirectPlay is replaced by TCP/UDP networking. One player hosts and the others connect to them.
 - LAN games are found automatically. Internet games connect by `host:port`; the default port is 28800.
+- A player whose computer drops out (switched off, asleep, off the network) leaves the game within half a minute, as
+  DirectPlay dropped them. The players' computers check, not the games, so a slow or loading game never drops out.
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.

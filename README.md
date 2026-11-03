@@ -294,6 +294,8 @@ New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain*
 - **Look.** With **WEATHER** set to **ON** (in Preferences, on the HD OPTIONS page), Redux rains or snows on the
   mission, a downpour with thunder, the snow settling as the mission goes on. The player's **RAIN**, **SNOW** and other
   choices show every mission in that weather whatever its own. The original game shows every mission under a clear sky.
+  On a computer that can't draw a snowfall at the screen's rate, its farthest flakes fall as specks instead, and as
+  flakes again once there's time.
 - **Multiplayer.** A match's host can pick another weather for everyone on the session screen's **MATCH OPTIONS** tab
   (or with `-matchweather`, see [Premade Matches](#premade-matches)) when every player's game has it; left at
   **MISSION'S**, the mission's own shows.

@@ -32,8 +32,8 @@ public:
     /// <summary>
     /// How long <see cref="Next"/> waits for a frame after the first: a display frame at 60 Hz, so the wait doesn't
     /// show. One not decoded by then has used up the frames ahead (the machine decodes the movie slower than it plays),
-    /// and the original, which plays underneath throughout, shows on from that frame. With the C code alone, frames
-    /// taking twice as long as on an M4 Pro never wait this long through the opening.
+    /// and the original, which plays underneath throughout, shows on from that frame. With the C code alone on an M4
+    /// Pro's efficiency cores (about three times slower), no frame of the opening waits this long.
     /// </summary>
     static constexpr std::chrono::milliseconds MaxWait{17};
 

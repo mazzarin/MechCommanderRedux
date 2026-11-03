@@ -11,10 +11,11 @@ assembly meson builds for 8 bits: `src/arm/64` (its 8-bit files and the ones the
 `asm-offsets.h`, `cpu.c` and the C headers that hook it in. `config.h` and `vcs_version.h`, which meson generates, are
 written by hand for clang on macOS and MSVC on Windows.
 
-The Mac build assembles the arm64 code (`MC_DAV1D_ASM` turns it on in `config.h`): it decodes the largest movie
-(2560x1392) about three times as fast as the C code alone, 6.5 ms a frame on average on an M4 Pro against 20. Windows
-builds the C code alone; its x86 assembly would need NASM in the build. One frame in eight of the movies takes several
-times as long as the average, which `MCHdMovie` takes up by decoding frames ahead.
+The Mac build assembles the arm64 code (`MC_DAV1D_ASM` turns it on in `config.h`): with the game's 4 threads and the
+pack's movies made for fast decoding, it decodes the largest movie (2560x1392) at 1.7 ms a frame on average on an M4
+Pro, against 4.2 with the C code alone. Windows builds the C code alone; its x86 assembly would need NASM in the build.
+One frame in eight of the movies takes several times as long as the average, which `MCHdMovie` takes up by decoding
+frames ahead.
 
 Builds list the C files in `src/lib/MCCore/MCCore.vcxproj` (their own ItemGroup); `src/mac/CMakeLists.txt` reads them
 from there and lists the arm64 files itself.

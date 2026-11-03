@@ -26,15 +26,19 @@ namespace
     constexpr uint32_t MaxFrameBytes = 64 * 1024 * 1024;
     constexpr int32_t MaxSide = 8192;
     /// <summary>
-    /// dav1d's threads: two decode the largest movie (2560x1392) at about 150 frames a second on an M4 Pro with the
-    /// arm64 assembly, 50 with the C code alone (as on Windows), where it plays at 15. That is on average: one frame in
-    /// eight takes several times as long, with the C code alone up to four times as long as a frame is shown.
+    /// dav1d's threads, and the frames they decode at once (which the frames ahead allow: none is wanted the moment
+    /// it is sent). With the pack's movies made for it (tools/seedvr2/pack_movies.py: fast decoding, 4 tile columns),
+    /// the opening (2560x1392) takes 1.7 ms a frame on average on an M4 Pro with the arm64 assembly and 4.2 with the C
+    /// code alone (as on Windows), against 6.2 and 18.8 two threads took a frame at a time, before; 32 with the C code
+    /// alone on its efficiency cores (about three times slower). Its slowest frames still take several times as long.
     /// </summary>
-    constexpr int DecoderThreads = 2;
+    constexpr int DecoderThreads = 4;
+    constexpr int FramesInFlight = 4;
     /// <summary>
     /// The frames decoded ahead of the one shown, which take up the slow frames' time: 0.8 seconds of a movie, 64 MB of
-    /// the opening's planes. Timed frame by frame on an M4 Pro with the C code alone, the opening never waits for a
-    /// frame with these, nor with frames taking twice as long; with none it waited for one in eleven, up to 260 ms.
+    /// the opening's planes. Played in real time with the C code alone on the M4 Pro's efficiency cores (about three
+    /// times slower), the opening never waits for a frame; decoded as it was shown, two threads a frame at a time, one
+    /// frame in nine held the game past the 67 ms a frame shows, on the performance cores.
     /// </summary>
     constexpr size_t FramesAhead = 12;
     constexpr size_t RgbaBytes = 4;
@@ -105,6 +109,8 @@ struct MCHdMovie::Impl
     /// <summary>The frame read last, until dav1d has taken all of it.</summary>
     Dav1dData Pending{};
     bool FileDone = false;
+    /// <summary>Why the file can't be read on, given once the frames dav1d still decodes are out.</summary>
+    std::optional<std::string> ReadError;
 
     /// <summary>Guards what follows, which <see cref="Worker"/> fills and the frames shown take.</summary>
     std::mutex Lock;
@@ -177,48 +183,64 @@ struct MCHdMovie::Impl
         return true;
     }
 
+    /// <summary>The picture dav1d gives back next, into <paramref name="picture"/>.</summary>
+    /// <returns>Whether it gave one: false once it has none left.</returns>
+    std::expected<bool, std::string> GetPicture(Dav1dPicture& picture) const
+    {
+        const int got = dav1d_get_picture(Decoder, &picture);
+
+        if (got != 0 && got != DAV1D_ERR(EAGAIN))
+        {
+            return std::unexpected(std::format("{}: dav1d couldn't decode a frame (error {})", Name, got));
+        }
+
+        return got == 0;
+    }
+
     /// <summary>Decodes the next picture into <paramref name="picture"/>.</summary>
     /// <returns>False when there are no more.</returns>
     std::expected<bool, std::string> NextPicture(Dav1dPicture& picture)
     {
-        while (true)
+        // Each frame is sent before a picture is asked for, as dav1d's own player does: asked twice with nothing sent
+        // between, dav1d gives back the frames it decodes at once, one by one until it has none, and only then takes
+        // more.
+        while (!FileDone || Pending.sz > 0)
         {
-            const int got = dav1d_get_picture(Decoder, &picture);
-
-            if (got == 0)
-            {
-                return true;
-            }
-
-            if (got != DAV1D_ERR(EAGAIN))
-            {
-                return std::unexpected(std::format("{}: dav1d couldn't decode a frame (error {})", Name, got));
-            }
-
-            // dav1d wants more data: the next frame, or none at the end (it has given every picture back then).
             if (Pending.sz == 0)
             {
-                if (FileDone)
-                {
-                    return false;
-                }
-
                 const std::expected<bool, std::string> read = ReadFrame();
 
-                if (!read)
+                if (!read || !*read)
                 {
-                    return std::unexpected(read.error());
+                    ReadError = read ? std::nullopt : std::optional(read.error());
+                    FileDone = true;
+                    break;
                 }
-
-                FileDone = !*read;
-                continue;
             }
 
             if (const int sent = dav1d_send_data(Decoder, &Pending); sent < 0 && sent != DAV1D_ERR(EAGAIN))
             {
                 return std::unexpected(std::format("{}: dav1d refused a frame (error {})", Name, sent));
             }
+
+            const std::expected<bool, std::string> got = GetPicture(picture);
+
+            if (!got || *got)
+            {
+                return got;
+            }
         }
+
+        // The file's end, or a frame that can't be read: asked with nothing sent, dav1d gives back the frames it still
+        // decodes, one by one; asked then, it has none left.
+        const std::expected<bool, std::string> got = GetPicture(picture);
+
+        if (!got || *got || !ReadError.has_value())
+        {
+            return got;
+        }
+
+        return std::unexpected(*ReadError);
     }
 
     /// <summary>Checks <paramref name="picture"/> is a frame this can show: the header's size, 8-bit 4:2:0.</summary>
@@ -406,8 +428,7 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
     Dav1dSettings settings;
     dav1d_default_settings(&settings);
     settings.n_threads = DecoderThreads;
-    // A picture for each frame sent, as soon as it is: the movie is shown frame by frame as the original plays.
-    settings.max_frame_delay = 1;
+    settings.max_frame_delay = FramesInFlight;
     settings.frame_size_limit = static_cast<unsigned>(MaxSide) * MaxSide;
     settings.logger = {nullptr, Log};
 

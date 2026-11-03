@@ -513,6 +513,49 @@ namespace MCSceneLights
     /// (MCWeather).
     /// </summary>
     std::array<float, 3> LightInAir(std::span<const MCSceneLight> lights, float x, float y, float height, float aspect);
+
+    /// <summary>
+    /// Port-only (HD weather): lights as <see cref="LightInAir"/> takes them, sorted once into the tiles of a window by
+    /// where each can reach, so a point in the air (a blizzard's tens of thousands of flakes a frame) adds only the
+    /// lights of its tile: the same sums, each light's added in the same order.
+    /// </summary>
+    class MCAirLights
+    {
+    public:
+        MCAirLights() = default;
+
+        /// <summary>
+        /// <paramref name="lights"/> (in a world window's pixels) over that window, <paramref name="width"/> by
+        /// <paramref name="height"/> pixels, its ground <paramref name="aspect"/> as LightInAir takes it.
+        /// </summary>
+        MCAirLights(std::vector<MCSceneLight> lights, float width, float height, float aspect);
+
+        /// <summary>Whether there are no lights.</summary>
+        bool Empty() const { return _Lights.empty(); }
+
+        /// <summary>
+        /// <see cref="LightInAir"/> of the lights at window point (<paramref name="x"/>, <paramref name="y"/>),
+        /// <paramref name="height"/> above the ground.
+        /// </summary>
+        std::array<float, 3> At(float x, float y, float height) const;
+
+    private:
+        /// <summary>
+        /// The tile column or row <paramref name="at"/> falls in, of <paramref name="count"/>: the nearest edge's past
+        /// them.
+        /// </summary>
+        static int32_t TileOf(float at, int32_t count);
+
+        std::vector<MCSceneLight> _Lights;
+        float _Aspect = 1.0f;
+        int32_t _Columns = 0;
+        int32_t _Rows = 0;
+        /// <summary>
+        /// Each tile's lights (their indices, in order) are <see cref="_Indices"/> from its start to the next's.
+        /// </summary>
+        std::vector<uint32_t> _Starts;
+        std::vector<uint32_t> _Indices;
+    };
 }
 
 /// <summary>

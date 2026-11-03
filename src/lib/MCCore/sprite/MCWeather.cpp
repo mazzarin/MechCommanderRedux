@@ -1749,15 +1749,14 @@ namespace
     }
 
     /// <summary>
-    /// What the rain's drops and droplets catch of the frame's lights: the lights (the window's pixels), how much of
-    /// their light (MCWeather::CatchGain) and the view's tilt (MCSceneLights::GroundAspect). None caught without
-    /// lights.
+    /// What the rain's drops and droplets catch of the frame's lights: the lights (the window's pixels, binned with the
+    /// view's tilt, MCSceneLights::GroundAspect) and how much of their light (MCWeather::CatchGain). None caught
+    /// without lights.
     /// </summary>
     struct Catching
     {
-        std::vector<MCSceneLight> Lights;
+        MCSceneLights::MCAirLights Lights;
         float Gain = 0.0f;
-        float Aspect = 1.0f;
     };
 
     /// <summary>
@@ -1767,13 +1766,12 @@ namespace
     /// </summary>
     void SetGlint(MCParticleCommand& command, const Catching& catching, float x, float y, float height, float facet)
     {
-        if (catching.Lights.empty() || catching.Gain <= 0.0f)
+        if (catching.Lights.Empty() || catching.Gain <= 0.0f)
         {
             return;
         }
 
-        const std::array<float, 3> glint = MCWeather::Glint(
-            MCSceneLights::LightInAir(catching.Lights, x, y, height, catching.Aspect), catching.Gain, facet);
+        const std::array<float, 3> glint = MCWeather::Glint(catching.Lights.At(x, y, height), catching.Gain, facet);
         command.Glint = static_cast<uint32_t>(Byte(glint[0])) | static_cast<uint32_t>(Byte(glint[1])) << 8 |
                         static_cast<uint32_t>(Byte(glint[2])) << 16;
     }
@@ -2585,11 +2583,12 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     state.Steps.clear();
     state.Landing.clear();
     // Port-only (HD lighting): the drops catch the lights they fall past; at dusk and night, the splashes stay dim.
-    Catching catching{.Gain = CatchGain(), .Aspect = MCSceneLights::GroundAspect()};
+    Catching catching{.Gain = CatchGain()};
 
     if (catching.Gain > 0.0f)
     {
-        catching.Lights = MCSceneLights::Drawing();
+        catching.Lights = MCSceneLights::MCAirLights(MCSceneLights::Drawing(), camera.HalfWidth * 2.0f,
+                                                     camera.HalfHeight * 2.0f, MCSceneLights::GroundAspect());
     }
 
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;

@@ -91,6 +91,11 @@ private:
     std::vector<Group> _Groups;
     /// <summary>The group indices in drawing order: the order they were opened until <see cref="Sort"/>.</summary>
     std::vector<size_t> _DrawOrder;
+    /// <summary>
+    /// <see cref="Sort"/>'s entries (a group's key above its index) and their copy, kept for the next sort.
+    /// </summary>
+    std::vector<uint64_t> _SortEntries;
+    std::vector<uint64_t> _SortScratch;
 };
 
 /// <summary>The frame's draw list (set for the whole scenario).</summary>

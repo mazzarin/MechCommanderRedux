@@ -126,6 +126,13 @@ namespace
     constexpr float LightTileTexels = 32.0f;
     /// <summary>A light's box is this many texels wider each way than its reach, against its tile's rounding.</summary>
     constexpr float LightTilePadding = 1.0f;
+    /// <summary>
+    /// A spotlight's beam in the air (composite.pshader's AirBeamsAt) reaches this far past where its middle meets the
+    /// ground (a share of the way from its lamp), and is this many texels wide at its lamp (AirBeamLength,
+    /// AirBeamLampWidth).
+    /// </summary>
+    constexpr float AirBeamLength = 1.1f;
+    constexpr float AirBeamLampWidth = 1.0f;
     /// <summary>The lights' bits come in words of this many (composite.pshader's LightWordBits).</summary>
     constexpr size_t LightWordBits = 32;
     /// <summary>
@@ -152,8 +159,9 @@ namespace
     /// The light tiles of a world <paramref name="width"/> x <paramref name="height"/> texels for the first
     /// <paramref name="count"/> lights of <paramref name="uniforms"/>: each light in every tile its box meets, the
     /// ground within its reach of its point or beam (composite.pshader's LightAt: heights stretched as the ground's,
-    /// lighting.w; at least a texel), so a tile holds every light that can light one of its texels. A texel off the
-    /// world takes its nearest tile's lights, so a box off it marks the tiles at its edge.
+    /// lighting.w; at least a texel), and a spotlight's also in every tile the box of its beam in the air meets
+    /// (AirBeamsAt), so a tile holds every light that can light one of its texels. A texel off the world takes its
+    /// nearest tile's lights, so a box off it marks the tiles at its edge.
     /// </summary>
     LightTiles MakeLightTiles(const CompositeUniforms& uniforms, size_t count, float width, float height)
     {
@@ -177,21 +185,46 @@ namespace
         for (size_t i = 0; i < count; ++i)
         {
             const std::span<const float, 4> ends = uniforms.Lights[i * 3];
-            const float reach = std::max(uniforms.Lights[i * 3 + 1][1], 1.0f) + LightTilePadding;
+            const std::span<const float, 4> shape = uniforms.Lights[i * 3 + 1];
+            const float reach = std::max(shape[1], 1.0f) + LightTilePadding;
             const float reachDown =
                 stretch > 0.0f ? reach / stretch + LightTilePadding : std::numeric_limits<float>::infinity();
-            const auto [x0, x1] =
-                tilesMet(std::min(ends[0], ends[2]) - reach, std::max(ends[0], ends[2]) + reach, made.Across);
-            const auto [y0, y1] =
-                tilesMet(std::min(ends[1], ends[3]) - reachDown, std::max(ends[1], ends[3]) + reachDown, made.Down);
             const uint32_t bit = 1u << (i % LightWordBits);
-
-            for (uint32_t y = y0; y <= y1; ++y)
+            // Marks the tiles a box from (left, top) to (right, bottom) texels meets.
+            const auto mark = [&](float left, float top, float right, float bottom)
             {
-                for (uint32_t x = x0; x <= x1; ++x)
+                const auto [x0, x1] = tilesMet(left, right, made.Across);
+                const auto [y0, y1] = tilesMet(top, bottom, made.Down);
+
+                for (uint32_t y = y0; y <= y1; ++y)
                 {
-                    made.Tiles[static_cast<size_t>(y) * made.Across + x][i / LightWordBits] |= bit;
+                    for (uint32_t x = x0; x <= x1; ++x)
+                    {
+                        made.Tiles[static_cast<size_t>(y) * made.Across + x][i / LightWordBits] |= bit;
+                    }
                 }
+            };
+
+            mark(std::min(ends[0], ends[2]) - reach, std::min(ends[1], ends[3]) - reachDown,
+                 std::max(ends[0], ends[2]) + reach, std::max(ends[1], ends[3]) + reachDown);
+
+            if ((uniforms.SpotLights[i / LightWordBits] & bit) != 0)
+            {
+                // The beam in the air: from its lamp, its height up the screen from the ground under it, along the way
+                // to where its middle meets the ground, AirBeamLength of it, widening as it spreads (the cosine of its
+                // edge off its middle).
+                const float lampX = ends[0];
+                const float lampY = ends[1] - shape[0];
+                const float beamX = shape[2];
+                const float beamY = shape[3] + shape[0];
+                const float edge = uniforms.Lights[i * 3 + 2][3];
+                const float spread = std::sqrt(std::max(1.0f - edge * edge, 0.0f)) / edge;
+                const float wide =
+                    AirBeamLampWidth + AirBeamLength * std::hypot(beamX, beamY) * spread + LightTilePadding;
+                const float endX = lampX + beamX * AirBeamLength;
+                const float endY = lampY + beamY * AirBeamLength;
+                mark(std::min(lampX, endX) - wide, std::min(lampY, endY) - wide, std::max(lampX, endX) + wide,
+                     std::max(lampY, endY) + wide);
             }
         }
 

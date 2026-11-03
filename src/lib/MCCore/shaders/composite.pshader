@@ -198,8 +198,8 @@ uint2 LightsShown()
                  second >= LightWordBits ? 0xffffffffu : (1u << second) - 1u);
 }
 
-// The lights whose pool may reach world texel `texel` (its light tile's), a bit a light; every light shown without
-// the light tiles. Each is taken in its index's order, as were all of them, so the light is the same.
+// The lights whose pool or beam in the air may reach world texel `texel` (its light tile's), a bit a light; every light
+// shown without the light tiles. Each is taken in its index's order, as were all of them, so the light is the same.
 uint2 LightsNear(float2 texel)
 {
     if (lightTiles.x <= 0.0)
@@ -255,8 +255,8 @@ static const float AirBeamHidden = 0.7;
 
 // The light the spotlights' beams scatter from the air toward the eye at a world texel (airBeams.x of it): each beam on
 // the screen from its lamp (its height above the ground under it) to where its middle meets the ground, widening as its
-// beam does and fading as it goes.
-float3 AirBeamsAt(float2 texel)
+// beam does and fading as it goes. Of the spotlights near it (LightsNear): a beam adds nothing past its tiles.
+float3 AirBeamsAt(float2 texel, uint2 near)
 {
     if (airBeams.x <= 0.0)
     {
@@ -267,7 +267,7 @@ float3 AirBeamsAt(float2 texel)
 
     for (uint word = 0; word < LightWords; ++word)
     {
-        for (uint bits = spotLights[word] & LightsShown()[word]; bits != 0u; bits &= bits - 1u)
+        for (uint bits = spotLights[word] & near[word]; bits != 0u; bits &= bits - 1u)
         {
             const uint i = word * LightWordBits + firstbitlow(bits);
             const float4 shape = lights[i * 3 + 1];
@@ -296,16 +296,15 @@ float3 AirBeamsAt(float2 texel)
     return sum * airBeams.x * lighting.y;
 }
 
-// The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
-// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away; a spotlight's
-// where its beam meets the ground (SpotPool).
-float3 LightAt(float2 texel, float2 slope)
+// The light at a world texel whose ground rises by slope (brightness a texel along the ground): the pool on the ground
+// under it of every light near it (LightsNear), softer the higher it is, more on a slope facing it and less on one
+// facing away; a spotlight's where its beam meets the ground (SpotPool).
+float3 LightAt(float2 texel, float2 slope, uint2 near)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
     // Screen heights stretched to the ground distances they show.
     const float2 ground = float2(1.0, lighting.w);
     const float2 at = texel * ground;
-    const uint2 near = LightsNear(texel);
 
     for (uint word = 0; word < LightWords; ++word)
     {
@@ -430,9 +429,9 @@ float SunFacing(float2 slope)
 // light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
 // unchanged. Port-only (HD weather): the overcast leaves overcast of it (OvercastAt), sparing a light's own pixels alone,
 // as the night does. Port-only: the sun shows sunRelief of the relief (1: all of it; a forest's canopy less,
-// reliefLook.y).
+// reliefLook.y). The lights are those near the texel (LightsNear).
 float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shade, float glint, float3 cloudLight,
-           float3 overcast)
+           float3 overcast, uint2 near)
 {
     const float3 ambient = AmbientLight() * overcast;
 
@@ -447,7 +446,7 @@ float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shad
     const float3 base = own * lerp(ambient * lerp(1.0, SunFacing(slope), sunRelief), 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
-    const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
+    const float3 light = most * (1.0 - exp(-LightAt(texel, slope, near) * lighting.y * shade / most));
     // The light's hue, its colour less its grey: more of it shifts what it lights toward its colour, brightening nothing.
     const float3 hue = light - dot(light, Luma);
     const float3 lit = base + world * (light + hue * lightLook.x) * (1.0 - selfLit) + light * lightTone.x +
@@ -1451,12 +1450,12 @@ float4 main(float4 position : SV_Position) : SV_Target
                 TexelAt(glintTex, glintSampler, clamp(round(hazy), 0.0, worldSize.xy - 1.0), worldSize.zw).rgb;
             // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
             const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
+            const uint2 near = LightsNear(hazy + 0.5);
+            const float3 litWorld =
+                Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast, near) +
+                glint * sunGlint * AmbientLight() * cloudLight;
             const float3 shone =
-                WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast) +
-                                   glint * sunGlint * AmbientLight() * cloudLight,
-                               hazy + 0.5),
-                      seen, hazy) +
-                caught + AirBeamsAt(hazy + 0.5);
+                WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy) + caught + AirBeamsAt(hazy + 0.5, near);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -1475,8 +1474,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         float glint;
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0)) +
-                     glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5));
+        const uint2 near = LightsNear(hazy + 0.5);
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0), near) +
+                     glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5, near));
     }
 
     return Faded(Shown(index));

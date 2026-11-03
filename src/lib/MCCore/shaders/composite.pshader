@@ -16,6 +16,21 @@
 //
 // Bindings (SDL GPU, SPIR-V): textures and samplers in space2, fragment uniforms in space3. A replacement in the
 // shaders folder (composite.spv) must keep them.
+//
+// Port-only (HD lighting): the GPU world's two passes before the composite are this shader built for each alone
+// (COMPOSITE_PASS), whose pixels then don't pay for the registers the composite's lights take:
+// composite_bright.pshader for the bloom's bright pass (Bright), composite_field.pshader for the world's field (Field).
+//
+// HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
+// have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
+
+#define COMPOSITE_SCREEN 0
+#define COMPOSITE_BRIGHT_PASS 1
+#define COMPOSITE_FIELD_PASS 2
+
+#ifndef COMPOSITE_PASS
+#define COMPOSITE_PASS COMPOSITE_SCREEN
+#endif
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
 Texture2D<float4> screenTex : register(t0, space2);
@@ -34,8 +49,9 @@ SamplerState tableSampler : register(s3, space2);
 // The palette, 256 x 1, as shown (gamma applied).
 Texture2D<float4> paletteTex : register(t4, space2);
 SamplerState paletteSampler : register(s4, space2);
-// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear; unused
-// without a bloom).
+// Port-only (HD lighting): the GPU world's bloom, its bright pass at half its size with its mips (linear), in the field
+// pass (Field); over the GPU world, its field (Field): the bloom (rgb) and the clouds' cover (a) at the middle of
+// each of those texels, read between them (unused without either).
 Texture2D<float4> bloomTex : register(t5, space2);
 SamplerState bloomSampler : register(s5, space2);
 // Port-only (HD weather): the light the GPU world's raindrops caught by the lights they fall past (MCWeather::Glint;
@@ -68,9 +84,9 @@ cbuffer Composite : register(b0, space3)
     float4 shown;
     // The world surface's size in pixels (xy); the world texture's allocated size (zw).
     float4 worldSize;
-    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone, 2 for the bloom's bright pass of the GPU
-    // world (BrightPass). y: 1 when the textures are the GPU renderer's surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen,
-    // drawn at the size it's shown; 0 or 1 otherwise).
+    // x: 1 when drawing an underlay's rectangle, 0 for the screen alone. y: 1 when the textures are the GPU renderer's
+    // surfaces. zw: the screen texture's pixels per screen pixel (port-only: above 1 for a sharp screen, drawn at the
+    // size it's shown; 0 or 1 otherwise). The bright and field passes read none of it.
     float4 mode;
     // The colour cycle (the water's, MCColorCycle): x the first index cycled, y the step (-1: none). Index x + i
     // shows the colour of cycleSources[(i + y) & 7] (one source a component).
@@ -97,7 +113,7 @@ cbuffer Composite : register(b0, space3)
     // How the lights colour the world, x: how much more of their hue it takes, its brightness kept. The bloom of the
     // GPU world: y, its strength (0 none); z, the brightness (a pixel's brightest component's) a pixel blooms above.
     float4 lightLook;
-    // The bloom's texture: its size in use (xy, half the world's) and allocated (zw).
+    // The bloom's texture (the field's over the GPU world): its size in use (xy, half the world's) and allocated (zw).
     float4 bloomSize;
     // The heat haze: x, the most a world sample shimmers, and y, the length of its waves (texels); z, the game's time
     // (seconds); w, the fires in heat.
@@ -159,8 +175,6 @@ cbuffer Composite : register(b0, space3)
     float4 lights[MaxLights * 3];
 };
 
-// mode.x for the bloom's bright pass.
-static const float BrightPass = 2.0;
 // The brightness the relief takes for height, and the grey a light's hue is taken from.
 static const float3 Luma = float3(0.299, 0.587, 0.114);
 // A light's pool falls off as a light's at a height does, s^2 / (d^2 + s^2), s its height or, from a light lower than
@@ -192,8 +206,8 @@ uint2 LightsShown()
                  second >= LightWordBits ? 0xffffffffu : (1u << second) - 1u);
 }
 
-// The lights whose pool may reach world texel `texel` (its light tile's), a bit a light; every light shown without
-// the light tiles. Each is taken in its index's order, as were all of them, so the light is the same.
+// The lights whose pool or beam in the air may reach world texel `texel` (its light tile's), a bit a light; every light
+// shown without the light tiles. Each is taken in its index's order, as were all of them, so the light is the same.
 uint2 LightsNear(float2 texel)
 {
     if (lightTiles.x <= 0.0)
@@ -249,8 +263,8 @@ static const float AirBeamHidden = 0.7;
 
 // The light the spotlights' beams scatter from the air toward the eye at a world texel (airBeams.x of it): each beam on
 // the screen from its lamp (its height above the ground under it) to where its middle meets the ground, widening as its
-// beam does and fading as it goes.
-float3 AirBeamsAt(float2 texel)
+// beam does and fading as it goes. Of the spotlights near it (LightsNear): a beam adds nothing past its tiles.
+float3 AirBeamsAt(float2 texel, uint2 near)
 {
     if (airBeams.x <= 0.0)
     {
@@ -261,7 +275,7 @@ float3 AirBeamsAt(float2 texel)
 
     for (uint word = 0; word < LightWords; ++word)
     {
-        for (uint bits = spotLights[word] & LightsShown()[word]; bits != 0u; bits &= bits - 1u)
+        for (uint bits = spotLights[word] & near[word]; bits != 0u; bits &= bits - 1u)
         {
             const uint i = word * LightWordBits + firstbitlow(bits);
             const float4 shape = lights[i * 3 + 1];
@@ -290,16 +304,15 @@ float3 AirBeamsAt(float2 texel)
     return sum * airBeams.x * lighting.y;
 }
 
-// The light at a world texel whose ground rises by slope (brightness a texel along the ground): every light's pool on
-// the ground under it, softer the higher it is, more on a slope facing it and less on one facing away; a spotlight's
-// where its beam meets the ground (SpotPool).
-float3 LightAt(float2 texel, float2 slope)
+// The light at a world texel whose ground rises by slope (brightness a texel along the ground): the pool on the ground
+// under it of every light near it (LightsNear), softer the higher it is, more on a slope facing it and less on one
+// facing away; a spotlight's where its beam meets the ground (SpotPool).
+float3 LightAt(float2 texel, float2 slope, uint2 near)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
     // Screen heights stretched to the ground distances they show.
     const float2 ground = float2(1.0, lighting.w);
     const float2 at = texel * ground;
-    const uint2 near = LightsNear(texel);
 
     for (uint word = 0; word < LightWords; ++word)
     {
@@ -325,8 +338,13 @@ float3 LightAt(float2 texel, float2 slope)
                 const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
                 const float4 color = lights[i * 3 + 2];
                 const float2 spot = shape.zw * ground;
-                const float pool = color.w > 0.0 && any(spot != 0.0) ? SpotPool(off, shape.x, spot, color.w)
-                                                                     : soft * soft / (d2 + soft * soft);
+                float pool = soft * soft / (d2 + soft * soft);
+
+                if (color.w > 0.0 && any(spot != 0.0))
+                {
+                    pool = SpotPool(off, shape.x, spot, color.w);
+                }
+
                 sum += color.rgb * (fade * fade * pool * facing);
             }
         }
@@ -419,9 +437,9 @@ float SunFacing(float2 slope)
 // light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
 // unchanged. Port-only (HD weather): the overcast leaves overcast of it (OvercastAt), sparing a light's own pixels alone,
 // as the night does. Port-only: the sun shows sunRelief of the relief (1: all of it; a forest's canopy less,
-// reliefLook.y).
+// reliefLook.y). The lights are those near the texel (LightsNear).
 float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shade, float glint, float3 cloudLight,
-           float3 overcast)
+           float3 overcast, uint2 near)
 {
     const float3 ambient = AmbientLight() * overcast;
 
@@ -436,7 +454,7 @@ float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shad
     const float3 base = own * lerp(ambient * lerp(1.0, SunFacing(slope), sunRelief), 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
     const float most = max(lightTone.z, 0.001);
-    const float3 light = most * (1.0 - exp(-LightAt(texel, slope) * lighting.y * shade / most));
+    const float3 light = most * (1.0 - exp(-LightAt(texel, slope, near) * lighting.y * shade / most));
     // The light's hue, its colour less its grey: more of it shifts what it lights toward its colour, brightening nothing.
     const float3 hue = light - dot(light, Luma);
     const float3 lit = base + world * (light + hue * lightLook.x) * (1.0 - selfLit) + light * lightTone.x +
@@ -454,7 +472,7 @@ float4 Faded(float3 color)
 
 float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return tex.Sample(samp, (texel + 0.5) / size);
+    return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
 // The GPU world between its texels (from its four nearest, blended), clamped to the surface.
@@ -491,9 +509,10 @@ float4 Bright(float2 texel)
     return float4(sum / (BloomScale * BloomScale), 1.0);
 }
 
-// The bloom's mips added at a world texel: from BloomFirst (its bright pixels' own light left out) to the last of
-// BloomLevels (MCVulkanPresenter's), each spread twice as wide as the one before and weighing BloomFalloff of it (a
-// glow mostly close by). Each is taken from four taps half its texel diagonally each way, which smooths its blocks.
+// The bloom's mips added at a world texel, as a share of their light (lightLook.y's strength left to the field's
+// reader): from BloomFirst (its bright pixels' own light left out) to the last of BloomLevels (MCVulkanPresenter's),
+// each spread twice as wide as the one before and weighing BloomFalloff of it (a glow mostly close by). Each is taken
+// from four taps half its texel diagonally each way, which smooths its blocks.
 static const uint BloomFirst = 1;
 static const uint BloomLevels = 6;
 static const float BloomFalloff = 0.6;
@@ -503,11 +522,6 @@ static const float2 BloomTaps[BloomTapCount] = {float2(-0.5, -0.5), float2(0.5, 
 
 float3 BloomAt(float2 texel)
 {
-    if (lightLook.y <= 0.0)
-    {
-        return float3(0.0, 0.0, 0.0);
-    }
-
     // The texel's centre in the bloom's first level's texels.
     const float2 at = (texel + 0.5) / BloomScale;
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -527,17 +541,17 @@ float3 BloomAt(float2 texel)
         weight *= BloomFalloff;
     }
 
-    return sum * (lightLook.y / (BloomTapCount * weights));
+    return sum / (BloomTapCount * weights);
 }
 
 uint IndexAt(Texture2D<float> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return Byte(tex.Sample(samp, (texel + 0.5) / size));
+    return Byte(tex.SampleLevel(samp, (texel + 0.5) / size, 0));
 }
 
 uint IndexAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
 {
-    return Byte(tex.Sample(samp, (texel + 0.5) / size).r);
+    return Byte(tex.SampleLevel(samp, (texel + 0.5) / size, 0).r);
 }
 
 // The colour index shows, through the colour cycle.
@@ -551,15 +565,21 @@ float3 Shown(uint index)
         index = cycleSources[source >> 2][source & 3u];
     }
 
-    return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
+    return paletteTex.SampleLevel(paletteSampler, float2((index + 0.5) / 256.0, 0.5), 0).rgb;
 }
 
 // The world's colour at a world texel (clamped to the surface), through the palette for the software renderer's.
 float3 WorldAt(float2 texel)
 {
     const float2 at = clamp(texel, 0.0, worldSize.xy - 1.0);
-    const float4 world = worldTex.Sample(worldSampler, (at + 0.5) / worldSize.zw);
-    return mode.y != 0.0 ? world.rgb : Shown(Byte(world.r));
+    const float4 world = worldTex.SampleLevel(worldSampler, (at + 0.5) / worldSize.zw, 0);
+
+    if (mode.y != 0.0)
+    {
+        return world.rgb;
+    }
+
+    return Shown(Byte(world.r));
 }
 
 // The relief's height at a world texel: its brightness, but a light's own pixels stand at centre's height (the texel the
@@ -686,8 +706,13 @@ static const float FoamMost = 0.8;
 uint WorldIndexAt(float2 texel)
 {
     const float2 at = clamp(round(texel), 0.0, worldSize.xy - 1.0);
-    return mode.y != 0.0 ? IndexAt(opTex, opSampler, at, worldSize.zw)
-                         : Byte(TexelAt(worldTex, worldSampler, at, worldSize.zw).r);
+
+    if (mode.y != 0.0)
+    {
+        return IndexAt(opTex, opSampler, at, worldSize.zw);
+    }
+
+    return Byte(TexelAt(worldTex, worldSampler, at, worldSize.zw).r);
 }
 
 bool IsWater(uint index)
@@ -700,7 +725,7 @@ float3 WaterCycleColour(uint entry, uint step)
 {
     const uint source = (entry + step) & (WaterColors - 1u);
     const uint index = cycleSources[source >> 2][source & 3u];
-    return paletteTex.Sample(paletteSampler, float2((index + 0.5) / 256.0, 0.5)).rgb;
+    return paletteTex.SampleLevel(paletteSampler, float2((index + 0.5) / 256.0, 0.5), 0).rgb;
 }
 
 // A value between 0 and 1 for a lattice point, the same every frame.
@@ -953,14 +978,9 @@ static const float CloudEdge = 0.06;
 static const float2 CloudLayerApart = float2(17.3, -9.1);
 static const float3 CloudShadeTint = float3(1.0, 0.97, 0.8);
 
-// The world's own light the clouds leave at a world texel (1 where none lies).
-float3 CloudsAt(float2 texel)
+// How much a cloud covers a world texel (0 to 1).
+float CloudAt(float2 texel)
 {
-    if (clouds.x <= 0.0)
-    {
-        return float3(1.0, 1.0, 1.0);
-    }
-
     const float2 offset = texel - ground.xy;
     const float2 at = float2(dot(groundAxes.xy, offset), dot(groundAxes.zw, offset));
     const float drift = haze.z * clouds.w;
@@ -984,8 +1004,52 @@ float3 CloudsAt(float2 texel)
     }
 
     const float level = 0.5 + CloudSpread * (0.5 - clouds.y);
-    const float cloud = smoothstep(level - 0.5 * CloudEdge, level + 0.5 * CloudEdge, sum / weights);
+    return smoothstep(level - 0.5 * CloudEdge, level + 0.5 * CloudEdge, sum / weights);
+}
+
+// The world's own light a cloud's cover (CloudAt) leaves.
+float3 CloudLight(float cloud)
+{
     return 1.0 - clouds.x * cloud * CloudShadeTint;
+}
+
+// The world's own light the clouds leave at a world texel (1 where none lies).
+float3 CloudsAt(float2 texel)
+{
+    if (clouds.x <= 0.0)
+    {
+        return float3(1.0, 1.0, 1.0);
+    }
+
+    return CloudLight(CloudAt(texel));
+}
+
+// The GPU world's field pass: at the middle of the bloom's texel `texel`, the bloom (BloomAt, rgb) and the clouds'
+// cover (CloudAt, a), each where shown. Both change little from texel to texel, so the world's pixels read them between
+// these (FieldAt) rather than work them out each: a quarter of the work.
+float4 Field(float2 texel)
+{
+    float4 field = float4(0.0, 0.0, 0.0, 0.0);
+
+    // BloomAt's texel at this middle (its world texels BloomScale * texel and the next), and the world's point there.
+    if (lightLook.y > 0.0)
+    {
+        field.rgb = BloomAt(texel * BloomScale + 0.5);
+    }
+
+    if (clouds.x > 0.0)
+    {
+        field.a = CloudAt((texel + 0.5) * BloomScale);
+    }
+
+    return field;
+}
+
+// The field (Field) at a world point (a texel's middle at the texel + 0.5), between the middles of the bloom's texels;
+// off the world (the haze moves its pixels a little), at its edge, which the field's pass draws a texel past.
+float4 FieldAt(float2 at)
+{
+    return bloomTex.SampleLevel(bloomSampler, clamp(at / BloomScale, 0.0, bloomSize.xy) / bloomSize.zw, 0);
 }
 
 // Port-only (HD weather): the light under the overcast, a little blue.
@@ -1321,15 +1385,9 @@ float3 VeiledAt(float3 color, float2 texel)
     return lerp(color, VeilColour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
 }
 
-float4 main(float4 position : SV_Position) : SV_Target
+// The composite's pixel `pixel`: the screen over its underlay's world, or alone.
+float4 Composed(float2 pixel)
 {
-    const float2 pixel = floor(position.xy);
-
-    if (mode.x == BrightPass)
-    {
-        return Bright(pixel);
-    }
-
     const float2 screenPixel = screenMap.xy + floor((pixel + 0.5) * screenMap.zw);
     // A sharp screen's texel holding this pixel's centre; else the screen pixel's.
     const float2 drawn = max(mode.zw, float2(1.0, 1.0));
@@ -1353,12 +1411,34 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float2 hazy = world + HazeAt(world + 0.5);
             float swayLight;
             const float2 swayed = SwayedAt(hazy, swayLight);
-            const float4 lit =
-                any(swayed != world) ? WorldBetween(swayed) : TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            float4 lit;
+
+            if (any(swayed != world))
+            {
+                lit = WorldBetween(swayed);
+            }
+            else
+            {
+                lit = TexelAt(worldTex, worldSampler, world, worldSize.zw);
+            }
+
             float glint;
             const float3 seen = LivingWater(lit.rgb * swayLight, hazy, glint);
-            const float3 bloom = BloomAt(hazy) * (1.0 - SelfLit(seen));
-            const float3 cloudLight = CloudsAt(hazy + 0.5);
+            // The bloom and the clouds' shadows, from the field (Field).
+            float3 bloom = float3(0.0, 0.0, 0.0);
+            float3 cloudLight = float3(1.0, 1.0, 1.0);
+
+            if (lightLook.y > 0.0 || clouds.x > 0.0)
+            {
+                const float4 field = FieldAt(hazy + 0.5);
+                bloom = field.rgb * lightLook.y * (1.0 - SelfLit(seen));
+
+                if (clouds.x > 0.0)
+                {
+                    cloudLight = CloudLight(field.a);
+                }
+            }
+
             // Port-only (HD weather): under the overcast, its light and no sun to glint; the rain's veil; the wet look;
             // the light the drops caught, as it is.
             const float3 overcast = OvercastAt(hazy);
@@ -1367,12 +1447,12 @@ float4 main(float4 position : SV_Position) : SV_Target
                 TexelAt(glintTex, glintSampler, clamp(round(hazy), 0.0, worldSize.xy - 1.0), worldSize.zw).rgb;
             // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
             const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
+            const uint2 near = LightsNear(hazy + 0.5);
+            const float3 litWorld =
+                Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast, near) +
+                glint * sunGlint * AmbientLight() * cloudLight;
             const float3 shone =
-                WetAt(VeiledAt(Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast) +
-                                   glint * sunGlint * AmbientLight() * cloudLight,
-                               hazy + 0.5),
-                      seen, hazy) +
-                caught + AirBeamsAt(hazy + 0.5);
+                WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy) + caught + AirBeamsAt(hazy + 0.5, near);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 
@@ -1391,9 +1471,22 @@ float4 main(float4 position : SV_Position) : SV_Target
         float glint;
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0)) +
-                     glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5));
+        const uint2 near = LightsNear(hazy + 0.5);
+        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0), near) +
+                     glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5, near));
     }
 
     return Faded(Shown(index));
+}
+
+float4 main(float4 position : SV_Position) : SV_Target
+{
+    const float2 pixel = floor(position.xy);
+#if COMPOSITE_PASS == COMPOSITE_BRIGHT_PASS
+    return Bright(pixel);
+#elif COMPOSITE_PASS == COMPOSITE_FIELD_PASS
+    return Field(pixel);
+#else
+    return Composed(pixel);
+#endif
 }

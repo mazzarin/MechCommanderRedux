@@ -888,6 +888,25 @@
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
+    <!-- Port-only: composite.pshader for a pass alone (each includes composite.pshader). -->
+    <CustomBuild Include="shaders\composite_bright.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
+    <CustomBuild Include="shaders\composite_field.pshader">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
+"$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
+      <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)composite.pshader;$(MCDxc)</AdditionalInputs>
+      <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
+      <BuildInParallel>true</BuildInParallel>
+    </CustomBuild>
     <CustomBuild Include="shaders\draw.pshader">
       <FileType>Document</FileType>
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"

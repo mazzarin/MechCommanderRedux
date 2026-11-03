@@ -3,6 +3,8 @@
 #include "platform/MCFileSystem.h"
 #if defined(__APPLE__)
 #include "shaders/composite.msl.h"
+#include "shaders/composite_bright.msl.h"
+#include "shaders/composite_field.msl.h"
 #include "shaders/draw.msl.h"
 #include "shaders/draw_basic.msl.h"
 #include "shaders/draw_hd.msl.h"
@@ -15,6 +17,8 @@
 #define MC_BUILT_IN_SHADER(name) MC_##name##_msl
 #else
 #include "shaders/composite.spv.h"
+#include "shaders/composite_bright.spv.h"
+#include "shaders/composite_field.spv.h"
 #include "shaders/draw.spv.h"
 #include "shaders/draw_basic.spv.h"
 #include "shaders/draw_hd.spv.h"
@@ -31,6 +35,8 @@ namespace MCVulkanShaders
 {
     const MCShaderInfo Quad{MCShader::Quad, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1};
     const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
+    const MCShaderInfo CompositeBright{MCShader::CompositeBright, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
+    const MCShaderInfo CompositeField{MCShader::CompositeField, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
     const MCShaderInfo DrawVertex{MCShader::Instance, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 1};
     const MCShaderInfo DrawFragment{MCShader::Draw, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawBasicFragment{MCShader::DrawBasic, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
@@ -61,6 +67,10 @@ namespace MCVulkanShaders
                 return "draw_hd";
             case MCShader::Ground:
                 return "ground";
+            case MCShader::CompositeBright:
+                return "composite_bright";
+            case MCShader::CompositeField:
+                return "composite_field";
         }
 
         return {};
@@ -88,6 +98,10 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_hd);
             case MCShader::Ground:
                 return MC_BUILT_IN_SHADER(ground);
+            case MCShader::CompositeBright:
+                return MC_BUILT_IN_SHADER(composite_bright);
+            case MCShader::CompositeField:
+                return MC_BUILT_IN_SHADER(composite_field);
         }
 
         return {};

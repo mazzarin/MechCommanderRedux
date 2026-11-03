@@ -113,8 +113,6 @@ namespace
     constexpr float MinGroundDeterminant = 1e-6f;
     /// <summary>The smallest clouds, in meters (their size divides the ground's meters).</summary>
     constexpr float MinCloudSize = 1.0f;
-    /// <summary>The composite's mode for the bloom's bright pass (composite.pshader's BrightPass).</summary>
-    constexpr float BrightPassMode = 2.0f;
     /// <summary>The composite shader's textures (composite.pshader's t0 to t7).</summary>
     constexpr size_t CompositeSamplers = 8;
     /// <summary>
@@ -124,6 +122,65 @@ namespace
     constexpr float LightTileTexels = 32.0f;
     /// <summary>A light's box is this many texels wider each way than its reach, against its tile's rounding.</summary>
     constexpr float LightTilePadding = 1.0f;
+    /// <summary>
+    /// A spotlight's beam in the air (composite.pshader's AirBeamsAt) reaches this far past where its middle meets the
+    /// ground (a share of the way from its lamp), and is this many texels wide at its lamp (AirBeamLength,
+    /// AirBeamLampWidth).
+    /// </summary>
+    constexpr float AirBeamLength = 1.1f;
+    constexpr float AirBeamLampWidth = 1.0f;
+    /// <summary>A spotlight's pool is taken as this many radians wider each way along the ground, against rounding.</summary>
+    constexpr float SpotWedgePadding = 0.02f;
+
+    /// <summary>
+    /// The box (left, top, right, bottom; the ground's units, a texel across and lighting.w of one down) of the ground a
+    /// spotlight's pool can light (composite.pshader's SpotPool: nothing outside its beam): the wedge of its reach
+    /// (<paramref name="reach"/>, from the ground under its lamp at <paramref name="x"/>, <paramref name="y"/>) round the
+    /// way it aims (<paramref name="spotX"/>, <paramref name="spotY"/>, from its lamp <paramref name="height"/> up),
+    /// as wide as its beam (the cosine <paramref name="edge"/> off its middle) spreads along the ground. None when its
+    /// beam takes in the ground right under its lamp, where it lights every way.
+    /// </summary>
+    std::optional<std::array<float, 4>> SpotWedge(float x, float y, float reach, float height, float spotX, float spotY,
+                                                  float edge)
+    {
+        constexpr float QuarterTurn = std::numbers::pi_v<float> / 2.0f;
+        // The beam's half width, and how far below the ground's plane its middle points.
+        const float half = std::acos(std::clamp(edge, -1.0f, 1.0f));
+        const float down = std::atan2(height, std::hypot(spotX, spotY));
+
+        if (half + down + SpotWedgePadding >= QuarterTurn)
+        {
+            return std::nullopt;
+        }
+
+        // A way within `half` of the beam's middle turns at most this far from it along the ground.
+        const float spread = std::asin(std::sin(half) / std::cos(down)) + SpotWedgePadding;
+        const float aim = std::atan2(spotY, spotX);
+        std::array<float, 4> box{x, y, x, y};
+        const auto take = [&](float angle)
+        {
+            const float px = x + reach * std::cos(angle);
+            const float py = y + reach * std::sin(angle);
+            box = {std::min(box[0], px), std::min(box[1], py), std::max(box[2], px), std::max(box[3], py)};
+        };
+
+        take(aim - spread);
+        take(aim + spread);
+
+        // The wedge's arc reaches furthest each way where it crosses a quarter turn.
+        for (int quarter = -4; quarter <= 4; ++quarter)
+        {
+            const float angle = static_cast<float>(quarter) * QuarterTurn;
+
+            if (std::abs(angle - aim) <= spread)
+            {
+                take(angle);
+            }
+        }
+
+        return box;
+    }
+
     /// <summary>The lights' bits come in words of this many (composite.pshader's LightWordBits).</summary>
     constexpr size_t LightWordBits = 32;
     /// <summary>
@@ -150,8 +207,10 @@ namespace
     /// The light tiles of a world <paramref name="width"/> x <paramref name="height"/> texels for the first
     /// <paramref name="count"/> lights of <paramref name="uniforms"/>: each light in every tile its box meets, the
     /// ground within its reach of its point or beam (composite.pshader's LightAt: heights stretched as the ground's,
-    /// lighting.w; at least a texel), so a tile holds every light that can light one of its texels. A texel off the
-    /// world takes its nearest tile's lights, so a box off it marks the tiles at its edge.
+    /// lighting.w; at least a texel; a spotlight's, the wedge of it its beam meets, SpotWedge), and a spotlight's also in
+    /// every tile the box of its beam in the air meets (AirBeamsAt), so a tile holds every light that can light one of
+    /// its texels. A texel off the world takes its
+    /// nearest tile's lights, so a box off it marks the tiles at its edge.
     /// </summary>
     LightTiles MakeLightTiles(const CompositeUniforms& uniforms, size_t count, float width, float height)
     {
@@ -175,21 +234,63 @@ namespace
         for (size_t i = 0; i < count; ++i)
         {
             const std::span<const float, 4> ends = uniforms.Lights[i * 3];
-            const float reach = std::max(uniforms.Lights[i * 3 + 1][1], 1.0f) + LightTilePadding;
+            const std::span<const float, 4> shape = uniforms.Lights[i * 3 + 1];
+            const float reach = std::max(shape[1], 1.0f) + LightTilePadding;
             const float reachDown =
                 stretch > 0.0f ? reach / stretch + LightTilePadding : std::numeric_limits<float>::infinity();
-            const auto [x0, x1] =
-                tilesMet(std::min(ends[0], ends[2]) - reach, std::max(ends[0], ends[2]) + reach, made.Across);
-            const auto [y0, y1] =
-                tilesMet(std::min(ends[1], ends[3]) - reachDown, std::max(ends[1], ends[3]) + reachDown, made.Down);
             const uint32_t bit = 1u << (i % LightWordBits);
-
-            for (uint32_t y = y0; y <= y1; ++y)
+            // Marks the tiles a box from (left, top) to (right, bottom) texels meets.
+            const auto mark = [&](float left, float top, float right, float bottom)
             {
-                for (uint32_t x = x0; x <= x1; ++x)
+                const auto [x0, x1] = tilesMet(left, right, made.Across);
+                const auto [y0, y1] = tilesMet(top, bottom, made.Down);
+
+                for (uint32_t y = y0; y <= y1; ++y)
                 {
-                    made.Tiles[static_cast<size_t>(y) * made.Across + x][i / LightWordBits] |= bit;
+                    for (uint32_t x = x0; x <= x1; ++x)
+                    {
+                        made.Tiles[static_cast<size_t>(y) * made.Across + x][i / LightWordBits] |= bit;
+                    }
                 }
+            };
+
+            // A spotlight's pool lights only the wedge its beam meets (from its point).
+            const bool spot = (uniforms.SpotLights[i / LightWordBits] & bit) != 0;
+            const bool point = ends[0] == ends[2] && ends[1] == ends[3];
+            const std::optional<std::array<float, 4>> wedge =
+                spot && point && stretch > 0.0f ? SpotWedge(ends[0], ends[1] * stretch, reach, shape[0], shape[2],
+                                                            shape[3] * stretch, uniforms.Lights[i * 3 + 2][3])
+                                                : std::nullopt;
+
+            if (wedge.has_value())
+            {
+                const std::array<float, 4>& box = *wedge;
+                mark(box[0] - LightTilePadding, box[1] / stretch - LightTilePadding, box[2] + LightTilePadding,
+                     box[3] / stretch + LightTilePadding);
+            }
+            else
+            {
+                mark(std::min(ends[0], ends[2]) - reach, std::min(ends[1], ends[3]) - reachDown,
+                     std::max(ends[0], ends[2]) + reach, std::max(ends[1], ends[3]) + reachDown);
+            }
+
+            if (spot)
+            {
+                // The beam in the air: from its lamp, its height up the screen from the ground under it, along the way
+                // to where its middle meets the ground, AirBeamLength of it, widening as it spreads (the cosine of its
+                // edge off its middle).
+                const float lampX = ends[0];
+                const float lampY = ends[1] - shape[0];
+                const float beamX = shape[2];
+                const float beamY = shape[3] + shape[0];
+                const float edge = uniforms.Lights[i * 3 + 2][3];
+                const float spread = std::sqrt(std::max(1.0f - edge * edge, 0.0f)) / edge;
+                const float wide =
+                    AirBeamLampWidth + AirBeamLength * std::hypot(beamX, beamY) * spread + LightTilePadding;
+                const float endX = lampX + beamX * AirBeamLength;
+                const float endY = lampY + beamY * AirBeamLength;
+                mark(std::min(lampX, endX) - wide, std::min(lampY, endY) - wide, std::max(lampX, endX) + wide,
+                     std::max(lampY, endY) + wide);
             }
         }
 
@@ -438,31 +539,42 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_QuadShader = std::move(*quad);
-    auto composite = MCVulkanShaders::Load(presenter->_Device, MCVulkanShaders::Composite);
+    // The composite, and the GPU world's passes before it, each composite.pshader built for it alone.
+    const std::array composites{
+        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline},
+        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline},
+        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline},
+    };
 
-    if (!composite)
+    for (const auto& [info, shader, made] : composites)
     {
-        return std::unexpected(composite.error());
-    }
+        auto loaded = MCVulkanShaders::Load(presenter->_Device, *info);
 
-    presenter->_CompositeShader = std::move(*composite);
+        if (!loaded)
+        {
+            return std::unexpected(loaded.error());
+        }
 
-    SDL_GPUColorTargetDescription target{};
-    target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-    pipeline.vertex_shader = presenter->_QuadShader.get();
-    pipeline.fragment_shader = presenter->_CompositeShader.get();
-    pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-    pipeline.target_info.num_color_targets = 1;
-    pipeline.target_info.color_target_descriptions = &target;
-    presenter->_CompositePipeline = MCGpuHandle<SDL_GPUGraphicsPipeline>(
-        SDL_CreateGPUGraphicsPipeline(device, &pipeline), MCGpuRelease{presenter->_Device});
+        *shader = std::move(*loaded);
 
-    if (presenter->_CompositePipeline == nullptr)
-    {
-        return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(composite)"));
+        SDL_GPUColorTargetDescription target{};
+        target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader = presenter->_QuadShader.get();
+        pipeline.fragment_shader = shader->get();
+        pipeline.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        pipeline.target_info.num_color_targets = 1;
+        pipeline.target_info.color_target_descriptions = &target;
+        *made = MCGpuHandle<SDL_GPUGraphicsPipeline>(SDL_CreateGPUGraphicsPipeline(device, &pipeline),
+                                                     MCGpuRelease{presenter->_Device});
+
+        if (*made == nullptr)
+        {
+            return std::unexpected(
+                SdlError(std::format("SDL_CreateGPUGraphicsPipeline({})", MCVulkanShaders::Name(info->Shader))));
+        }
     }
 
     SDL_GPUSamplerCreateInfo sampler{};
@@ -550,7 +662,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_LightTiles})
+    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_Fields, &_LightTiles})
     {
         for (Texture& texture : *textures)
         {
@@ -563,8 +675,12 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
+    _BrightPipeline.reset();
+    _FieldPipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
+    _BrightShader.reset();
+    _FieldShader.reset();
 
     if (_Claimed)
     {
@@ -951,6 +1067,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         CompositeUniforms Uniforms{};
         LightTiles Lights;
         SDL_GPUTexture* LightTileTexture = nullptr;
+        /// <summary>Port-only (HD lighting): the GPU world's field (null: none, without a bloom or clouds).</summary>
+        SDL_GPUTexture* Field = nullptr;
     };
 
     std::vector<std::optional<UnderlayDraw>> underlayDraws(frame.Underlays.size());
@@ -1051,6 +1169,79 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         }
     }
 
+    // Port-only (HD lighting): each GPU world's field (composite.pshader's Field), its bloom and its clouds' cover at
+    // its bloom's texels, which the composite's pass reads. One that can't be made shows its world without either.
+    _Fields.resize(std::max(_Fields.size(), underlayDraws.size()));
+
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
+    {
+        if (!gpuSurfaces || !underlayDraws[i].has_value())
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = *underlayDraws[i];
+        CompositeUniforms& uniforms = drawn.Uniforms;
+
+        if (uniforms.LightLook[1] <= 0.0f && uniforms.Clouds[0] <= 0.0f)
+        {
+            continue;
+        }
+
+        const World& world = worlds[i];
+        Texture& field = _Fields[i];
+        const uint32_t fieldWidth = (static_cast<uint32_t>(world.Size[0]) + BloomScale - 1) / BloomScale;
+        const uint32_t fieldHeight = (static_cast<uint32_t>(world.Size[1]) + BloomScale - 1) / BloomScale;
+
+        if (auto made = Ensure(field, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                               SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, fieldWidth,
+                               fieldHeight, false);
+            !made)
+        {
+            SDL_Log("MCVulkanPresenter: underlay %zu shown without its bloom and clouds' shadows: %s", i,
+                    made.error().c_str());
+            uniforms.LightLook[1] = 0.0f;
+            uniforms.Clouds[0] = 0.0f;
+            continue;
+        }
+
+        SDL_GPUColorTargetInfo fieldTarget{};
+        fieldTarget.texture = field.Handle.get();
+        // Only the texels the composite reads are drawn (FieldAt).
+        fieldTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        fieldTarget.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* fieldPass = SDL_BeginGPURenderPass(&commands, &fieldTarget, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(fieldPass, _FieldPipeline.get());
+        const float allocatedWidth = static_cast<float>(field.Width);
+        const float allocatedHeight = static_cast<float>(field.Height);
+        const SDL_GPUViewport fieldViewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
+        SDL_SetGPUViewport(fieldPass, &fieldViewport);
+        // The pass reads the bloom's mips alone (the world bound for the rest, and for mips it hasn't, unread).
+        SDL_GPUTexture* const mips = world.Bloom != nullptr ? world.Bloom : world.Texture;
+        const CompositeBindings bindings{{
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {mips, _Linear.get()},
+            {world.Texture, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+        }};
+        // The texels in use and the next across and down, which the world's last pixels read toward.
+        const uint32_t drawnWidth = std::min(fieldWidth + 1, field.Width);
+        const uint32_t drawnHeight = std::min(fieldHeight + 1, field.Height);
+        DrawComposite(commands, *fieldPass, bindings,
+                      {{0.0f, 0.0f, static_cast<float>(drawnWidth), static_cast<float>(drawnHeight)},
+                       {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
+                      uniforms);
+        SDL_EndGPURenderPass(fieldPass);
+        drawn.Field = field.Handle.get();
+        std::ranges::copy(std::array{static_cast<float>(fieldWidth), static_cast<float>(fieldHeight), allocatedWidth,
+                                     allocatedHeight},
+                          uniforms.BloomSize);
+    }
+
     SDL_GPUColorTargetInfo target{};
     target.texture = _Frame.Handle.get();
     // The first quad covers every pixel.
@@ -1090,7 +1281,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
                       uniforms);
     };
 
-    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a bloom it hasn't).
+    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't).
     draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
@@ -1107,7 +1298,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
         const UnderlayDraw& drawn = *underlayDraws[i];
         const World& world = worlds[i];
-        draw(drawn.Rect, *world.Texture, world.Bloom != nullptr ? *world.Bloom : *screen, *world.Indices, *world.Glints,
+        draw(drawn.Rect, *world.Texture, drawn.Field != nullptr ? *drawn.Field : *screen, *world.Indices, *world.Glints,
              drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle, drawn.Uniforms);
     }
 
@@ -1150,7 +1341,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     target.load_op = SDL_GPU_LOADOP_CLEAR;
     target.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
-    SDL_BindGPUGraphicsPipeline(pass, _CompositePipeline.get());
+    SDL_BindGPUGraphicsPipeline(pass, _BrightPipeline.get());
     const float allocatedWidth = static_cast<float>(bloom.Width);
     const float allocatedHeight = static_cast<float>(bloom.Height);
     const SDL_GPUViewport viewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
@@ -1159,8 +1350,6 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
     const float worldWidth = static_cast<float>(width);
     const float worldHeight = static_cast<float>(height);
     std::ranges::copy(std::array{worldWidth, worldHeight, worldWidth, worldHeight}, uniforms.WorldSize);
-    uniforms.Mode[0] = BrightPassMode;
-    uniforms.Mode[1] = 1.0f;
     uniforms.LightLook[2] = lighting.BloomFrom;
     // The pass reads the world alone: it is bound for every texture.
     const CompositeBindings bindings{{

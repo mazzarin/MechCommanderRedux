@@ -125,6 +125,14 @@ private:
     MCGpuHandle<SDL_GPUShader> _QuadShader;
     MCGpuHandle<SDL_GPUShader> _CompositeShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _CompositePipeline;
+    /// <summary>
+    /// Port-only (HD lighting): the bloom's bright pass (Bloom) and the GPU world's field pass, each the composite's
+    /// shader built for it alone (shaders/composite_bright.pshader, composite_field.pshader).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _BrightShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _BrightPipeline;
+    MCGpuHandle<SDL_GPUShader> _FieldShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _FieldPipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;
@@ -138,6 +146,11 @@ private:
     std::vector<Texture> _Underlays;
     /// <summary>Port-only (HD lighting): the underlays' blooms (Bloom), in the same order.</summary>
     std::vector<Texture> _Blooms;
+    /// <summary>
+    /// Port-only (HD lighting): the underlays' fields (composite.pshader's Field: the bloom and the clouds' cover at the
+    /// bloom's texels), in the same order.
+    /// </summary>
+    std::vector<Texture> _Fields;
     /// <summary>
     /// Port-only (HD lighting): the underlays' light tiles (composite.pshader's lightTileTex), in the same order, and
     /// one bound where there are none (never read; made empty).

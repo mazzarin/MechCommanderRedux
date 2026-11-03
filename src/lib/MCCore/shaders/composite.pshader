@@ -20,9 +20,9 @@
 // Port-only (HD lighting): the GPU world's two passes before the composite are this shader built for each alone
 // (COMPOSITE_PASS), whose pixels then don't pay for the composite's registers: composite_bright.pshader for the bloom's
 // bright pass (Bright), composite_field.pshader for the world's field (Field). Port-only (HD weather): the composite
-// under neither rain nor falling snow is this shader built without the rain's wet look and the weather's veil
-// (COMPOSITE_RAIN 0, composite_dry.pshader), which leave a colour as it is without them: their reads held 36 of its
-// 192 registers and all of what spilled (before the snow). The settled snow (SnowAt) is in both builds. The
+// under neither rain, falling snow nor settled snow is this shader built without the rain's wet look, the weather's
+// veil and the snow's cover (COMPOSITE_WEATHER 0, composite_dry.pshader), which leave a colour as it is without them:
+// the rain's reads held 36 of its 192 registers and all of what spilled (before the snow), the cover 24 more. The
 // puddles' field is a pass of its own too (composite_puddle.pshader, PuddleCell), read by the wet look: worked out
 // there, each of the up to five texels a puddle's edge looks at took the composite ten reads and most of its registers.
 //
@@ -38,8 +38,8 @@
 #define COMPOSITE_PASS COMPOSITE_SCREEN
 #endif
 
-#ifndef COMPOSITE_RAIN
-#define COMPOSITE_RAIN 1
+#ifndef COMPOSITE_WEATHER
+#define COMPOSITE_WEATHER 1
 #endif
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
@@ -1638,13 +1638,16 @@ float4 Composed(float2 pixel)
             // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
             const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
             const uint2 near = LightsNear(hazy + 0.5);
-            // Port-only (HD weather's snow): the cover laid over the world before it's lit (settled snow outlasts the
-            // falling snow's veil, so both builds lay it).
+            // Port-only (HD weather's snow): the cover laid over the world before it's lit.
+#if COMPOSITE_WEATHER
             const float3 snowy = SnowAt(seen, lit.rgb, hazy);
+#else
+            const float3 snowy = seen;
+#endif
             const float3 litWorld = Lit(snowy, SelfLit(seen), hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint,
                                         cloudLight, overcast, near) +
                                     glint * sunGlint * AmbientLight() * cloudLight;
-#if COMPOSITE_RAIN
+#if COMPOSITE_WEATHER
             const float3 rained = WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy);
 #else
             const float3 rained = litWorld;

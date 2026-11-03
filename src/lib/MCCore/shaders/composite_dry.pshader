@@ -1,6 +1,7 @@
-// Port-only (HD weather): the composite (composite.pshader) under neither rain nor falling snow: built without the
-// rain's wet look and the weather's veil (the rain's or the snow's), which leave a colour as it is without them, so
-// its pixels don't pay for the registers their reads take. MCVulkanPresenter draws with it whenever neither shows.
+// Port-only (HD weather): the composite (composite.pshader) under neither rain, falling snow nor settled snow: built
+// without the rain's wet look, the weather's veil (the rain's or the snow's) and the snow's cover, which leave a
+// colour as it is without them, so its pixels don't pay for the registers their reads take. MCVulkanPresenter draws
+// with it whenever none shows.
 
-#define COMPOSITE_RAIN 0
+#define COMPOSITE_WEATHER 0
 #include "composite.pshader"

@@ -1370,11 +1370,12 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {&puddles, _Nearest.get()},
         }};
 
-        // Port-only (HD weather): without the rain's wet look and the weather's veil (the rain's or the falling snow's)
-        // where neither shows (composite.pshader's WetAt and VeiledAt leave the colour as it is then).
-        if (SDL_GPUGraphicsPipeline* const pipeline = uniforms.WetLook[0] > 0.0f || uniforms.Weather[3] > 0.0f
-                                                          ? _CompositePipeline.get()
-                                                          : _DryPipeline.get();
+        // Port-only (HD weather): without the rain's wet look, the weather's veil (the rain's or the falling snow's)
+        // and the snow's cover where none shows (composite.pshader's WetAt, VeiledAt and SnowAt leave the colour as it
+        // is then).
+        const bool weathered = uniforms.WetLook[0] > 0.0f || uniforms.Weather[3] > 0.0f || uniforms.Snow[2] > 0.0f;
+
+        if (SDL_GPUGraphicsPipeline* const pipeline = weathered ? _CompositePipeline.get() : _DryPipeline.get();
             pipeline != bound)
         {
             SDL_BindGPUGraphicsPipeline(pass, pipeline);

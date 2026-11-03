@@ -138,8 +138,10 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - The session screen has a second tab under MULTIPLAYER CHAT, **MATCH OPTIONS**, where the host picks the match's
   weather (the mission's own, clear, rain, a downpour, light snow, snow or a blizzard), time of day (the mission's own,
   day, dusk or night) and braking. Every player sees the host's weather and time of day over the mission's and over
-  their own WEATHER and HD LIGHTING choices; a player with either off sees the original's clear day. They change only
-  the look: units see as far as the mission sets. Each is played only if every player's game has it, as each says
+  their own WEATHER and HD LIGHTING choices; a player with either off sees the original's clear day. The weather
+  changes only the look; at the host's time of day units see as far as in a mission set then (as the editor's dusk and
+  night missions: 0.8 and 0.6 of the day's sight), whatever the player sees. Each is played only if every player's
+  game has it, as each says
   when the session screen opens: while one lacks it (a game that says nothing, as the original's, lacks them all), the
   match plays the mission's own (braking off) and the host's row says whose game lacks it. The guests see what the
   match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A launcher sets them with

@@ -164,7 +164,7 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-team1tech <is\|clan>`, `-team2tech <is\|clan>` | The team's tech base. Without them the mission's are kept. |
 | `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
 | `-matchweather <weather>`             | The weather every player sees: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. |
-| `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. It changes the look only: units see as far as the mission sets. |
+| `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
 | `-matchbraking <on\|off>`             | Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
@@ -264,8 +264,8 @@ until you change it, as every mission of the original is.
   dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their own time
   whatever the mission's. The original game shows every mission by day.
 - **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
-  tab (or with `-matchtime`) when every player's game has it; it changes the look only, so units still see as far as
-  the mission sets.
+  tab (or with `-matchtime`) when every player's game has it, and units then see as far as in a mission set at that
+  time (by day as far as by day, even in a night mission).
 
 For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
 

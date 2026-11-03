@@ -253,6 +253,31 @@ extern float MineWaitTime;
 inline constexpr int32_t VisualRangeTableSize = 256;
 /// <summary>The <c>VisualRangeTable</c> of the game system file (the scenario may replace it).</summary>
 extern std::array<int32_t, VisualRangeTableSize> VisualRangeTable;
+
+struct MCMatchOptions;
+enum class MCTimeOfDay : uint8_t;
+
+/// <summary>
+/// Port-only: the share of the day's sight a unit has at dusk, and at night, and the least a level keeps, in tiles: as
+/// in the editor's dusk and night missions' tables (MCEditor's MissionTimeOfDay.h, held to these by the tests).
+/// </summary>
+inline constexpr double DuskSight = 0.8;
+inline constexpr double NightSight = 0.6;
+inline constexpr int32_t LeastSight = 1;
+
+/// <summary>
+/// Port-only: the sight table at <paramref name="time"/>, from the day's <paramref name="dayTable"/>: at dusk or night
+/// each level's cut to <see cref="DuskSight"/> or <see cref="NightSight"/> of it.
+/// </summary>
+std::array<int32_t, VisualRangeTableSize> MCSightAt(const std::array<int32_t, VisualRangeTableSize>& dayTable,
+                                                    MCTimeOfDay time);
+
+/// <summary>
+/// Port-only: the sight table a match plays, from the game system's <paramref name="gameSystem"/>: at its host's time
+/// of day when every player's game plays that time's sight (MCMatchRule::TimeOfDaySight); none, the mission's own.
+/// </summary>
+std::optional<std::array<int32_t, VisualRangeTableSize>> MCMatchSight(
+    const MCMatchOptions& match, const std::array<int32_t, VisualRangeTableSize>& gameSystem);
 /// <summary><c>RevealTacMap</c>: the tactical map shows the revealed picture.</summary>
 extern bool DrawRevealedTacMap;
 /// <summary><c>AlwaysDraw</c> from the game system file.</summary>

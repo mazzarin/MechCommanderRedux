@@ -649,10 +649,12 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
 
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
+    // The time of day's rules come with the time of day, not with what the host wants.
+    constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
     MCMatchOptions played;
     played.Weather = (agreed & MCMatchRule::MatchWeather) != 0 ? chosen.Weather : std::nullopt;
-    played.TimeOfDay = (agreed & MCMatchRule::MatchTimeOfDay) != 0 ? chosen.TimeOfDay : std::nullopt;
-    played.Rules = wantedRules & agreed;
+    played.TimeOfDay = (agreed & timeRules) == timeRules ? chosen.TimeOfDay : std::nullopt;
+    played.Rules = (wantedRules & agreed & ~timeRules) | (played.TimeOfDay.has_value() ? timeRules : 0);
     return played;
 }
 

@@ -219,7 +219,15 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     MCWeather::SetMatchWeather(match.Weather);
     LoadPalette(file);
     LoadForces(file);
+    const std::array<int32_t, VisualRangeTableSize> gameSystemSight = VisualRangeTable;
     LoadSettings(file);
+
+    // Port-only: and its units see as far as at that time, over the mission's own sight.
+    if (const std::optional<std::array<int32_t, VisualRangeTableSize>> sight = MCMatchSight(match, gameSystemSight))
+    {
+        VisualRangeTable = *sight;
+    }
+
     LoadSensorContactShapes(file);
 
     if (const int32_t result = LoadSystems(file, maxFiresBurning, maxFireBurnTime); result != 0)
@@ -326,6 +334,32 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     StartUpCountdown = 100;
     _Loaded = true;
     return 0;
+}
+
+auto MCSightAt(const std::array<int32_t, VisualRangeTableSize>& dayTable, MCTimeOfDay time)
+    -> std::array<int32_t, VisualRangeTableSize>
+{
+    if (time == MCTimeOfDay::Day)
+    {
+        return dayTable;
+    }
+
+    const double share = time == MCTimeOfDay::Dusk ? DuskSight : NightSight;
+    std::array<int32_t, VisualRangeTableSize> table{};
+    std::ranges::transform(dayTable, table.begin(), [share](int32_t range)
+                           { return std::max(static_cast<int32_t>(std::lround(range * share)), LeastSight); });
+    return table;
+}
+
+auto MCMatchSight(const MCMatchOptions& match, const std::array<int32_t, VisualRangeTableSize>& gameSystem)
+    -> std::optional<std::array<int32_t, VisualRangeTableSize>>
+{
+    if (!match.TimeOfDay.has_value() || (match.Rules.value_or(0) & MCMatchRule::TimeOfDaySight) == 0)
+    {
+        return std::nullopt;
+    }
+
+    return MCSightAt(gameSystem, *match.TimeOfDay);
 }
 
 auto MCScenario::LoadGameSystem() -> std::pair<int32_t, float>

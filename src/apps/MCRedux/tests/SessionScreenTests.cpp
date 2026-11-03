@@ -338,7 +338,7 @@ namespace
 {
     /// <summary>The MATCH OPTIONS list's rows (logistics/MCMatchOptionsTab.cpp): its headings and its options.</summary>
     constexpr int32_t WeatherRow = 1;
-    constexpr int32_t TimeRow = 2;
+    constexpr int32_t TimeRow = 3;
     constexpr int32_t BrakingRow = 4;
     /// <summary>A point on each tab (MCMatchOptionsTab.cpp's ChatTabArea and OptionsTabArea).</summary>
     constexpr int32_t TabX = 0xca;
@@ -363,9 +363,10 @@ namespace
 /// Port: the session screen's MATCH OPTIONS tab, under MULTIPLAYER CHAT, brings the match's options in front in the
 /// chat's place (its pictures lettered from the art's tabs). The match plays the host's choices as far as every
 /// player's build plays them: while the guest's says nothing (as the original's) every option is held at the mission's
-/// own (or off), saying whose game hasn't it; a build of the braking's round frees braking; one that plays them all,
-/// every option. The host's changes are the match's and go to the guest at once, as do the options when the screen
-/// opens; a guest's list is locked; MULTIPLAYER CHAT brings the chat back.
+/// own (or off), saying whose game hasn't it; a build of the braking's round frees braking; one of the first match
+/// options the weather, not the time of day (its sight is a rule of its own); one that plays them all, every option.
+/// The host's changes are the match's and go to the guest at once, as do the options when the screen opens; a guest's
+/// list is locked; MULTIPLAYER CHAT brings the chat back.
 /// </summary>
 TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match's options and sends them")
 {
@@ -453,7 +454,15 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.HeldReason(TimeRow) == NotInGuests);
     sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
-    // A build that plays them all: the host's choices.
+    // A build of the first match options: the weather, not the time of day (it hasn't its sight).
+    guest.SendRules(hostId, MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay);
+    Settle();
+    CHECK(list.HeldReason(WeatherRow).empty());
+    CHECK(list.ChoiceName(WeatherRow) == "RAIN");
+    CHECK(list.HeldReason(TimeRow) == NotInGuests);
+    sentIs(static_cast<int8_t>(MCWeatherKind::Rain), MissionOwn, MCMatchRule::MechBraking);
+
+    // A build that plays them all: the host's choices, the time of day's sight with it.
     guest.SendRules(hostId, MCMatchRule::Supported);
     Settle();
 
@@ -464,7 +473,8 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
-    sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking);
+    sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night),
+           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
 
     // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off.
     ClickSetting(list, WeatherRow, 1);

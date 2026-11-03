@@ -44,8 +44,8 @@ void DrawMatchTabs(const MCPane& target, const MCLogPort& tabs, MCSessionTab fro
 std::optional<MCSessionTab> MatchTabAt(int32_t xPos, int32_t yPos);
 
 /// <summary>
-/// Makes the MATCH OPTIONS list where the session screen's chat window is (hidden): WEATHER and TIME OF DAY under LOOK,
-/// BRAKING under PLAY.
+/// Makes the MATCH OPTIONS list where the session screen's chat window is (hidden): WEATHER under LOOK, TIME OF DAY
+/// (its sight too) and BRAKING under PLAY.
 /// </summary>
 std::shared_ptr<MCLogOptionList> MakeMatchOptionsList();
 

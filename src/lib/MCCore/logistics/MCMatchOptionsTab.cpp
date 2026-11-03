@@ -312,12 +312,12 @@ namespace
             .Value = &WeatherValue,
             .Choices = WeatherChoices,
             .Changed = WeatherChanged},
+        Row{.Label = "PLAY"},
         Row{.Label = "TIME OF DAY",
-            .Description = "DUSK OR NIGHT FOR EVERYONE.",
+            .Description = "DUSK OR NIGHT: UNITS SEE LESS.",
             .Value = &TimeValue,
             .Choices = TimeChoices,
             .Changed = TimeChanged},
-        Row{.Label = "PLAY"},
         Row{.Label = "BRAKING",
             .Description = "MECHS BRAKE TO A HALT.",
             .Value = &BrakingValue,
@@ -332,7 +332,7 @@ namespace
         uint32_t Rule = 0;
     };
 
-    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::MatchWeather}, RuleRow{2, MCMatchRule::MatchTimeOfDay},
+    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::MatchWeather}, RuleRow{3, MCMatchRule::TimeOfDayRules},
                                      RuleRow{4, MCMatchRule::MechBraking}};
     static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
                   Rows[RuleRows[2].Row].Value == &BrakingValue);

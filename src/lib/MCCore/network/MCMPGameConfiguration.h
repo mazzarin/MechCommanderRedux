@@ -26,7 +26,7 @@ struct MCMatchOptions
 {
     /// <summary>The weather every player sees (none: the mission's own).</summary>
     std::optional<MCWeatherKind> Weather;
-    /// <summary>The time of day every player sees (none: the mission's own). Sight stays the mission's.</summary>
+    /// <summary>The time of day every player sees, and units see as far as then (none: the mission's own).</summary>
     std::optional<MCTimeOfDay> TimeOfDay;
     /// <summary>The rules the host wants (<c>MCMatchRule</c> bits; none: the server's own PREFS).</summary>
     std::optional<uint32_t> Rules;

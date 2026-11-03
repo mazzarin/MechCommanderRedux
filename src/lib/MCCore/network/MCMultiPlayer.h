@@ -38,8 +38,15 @@ namespace MCMatchRule
     inline constexpr uint32_t MatchWeather = 2;
     /// <summary>The time of day the host chose (MCMatchOptions::TimeOfDay, MCSceneLights::SetMatchTime).</summary>
     inline constexpr uint32_t MatchTimeOfDay = 4;
+    /// <summary>
+    /// At the host's time of day, units see as far as a mission set then lets them (MCMatchSight): in the match's
+    /// rules when it plays the host's time of day.
+    /// </summary>
+    inline constexpr uint32_t TimeOfDaySight = 8;
+    /// <summary>What a player's build must play for the match to play the host's time of day: its look and its sight.</summary>
+    inline constexpr uint32_t TimeOfDayRules = MatchTimeOfDay | TimeOfDaySight;
     /// <summary>Every rule this build plays by.</summary>
-    inline constexpr uint32_t Supported = MechBraking | MatchWeather | MatchTimeOfDay;
+    inline constexpr uint32_t Supported = MechBraking | MatchWeather | TimeOfDayRules;
 } // namespace MCMatchRule
 
 /// <summary>
@@ -58,8 +65,8 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
 /// <summary>
 /// Port: what a match plays of the host's <paramref name="chosen"/> options and the rules it wants
 /// (<paramref name="wantedRules"/>), with <paramref name="agreed"/> the rules every player's build plays by: its weather
-/// and time of day only if every build plays the host's (else the mission's own), the rules wanted that every build
-/// plays by.
+/// and time of day only if every build plays the host's (else the mission's own; the time of day's sight with it, a
+/// rule), the rules wanted that every build plays by.
 /// </summary>
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed);
 

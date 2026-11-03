@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCMock.h"
+#include "TestGame.h"
+#include "lib/MCFitIniFile.h"
 #include "linkup/MCFidpMessage.h"
 #include "main/MCGameContext.h"
+#include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
@@ -17,6 +20,8 @@
 #include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+// The editor's dusk and night sight (header-only), for the game's own to be held to.
+#include "../../MCEditor/MissionTimeOfDay.h"
 
 // The game's side of multiplayer: the packed world-state and weapon-hit chunks the server sends, the queues they wait
 // in, and the handlers that apply the server's updates on a client.
@@ -862,28 +867,83 @@ TEST_CASE("network: a guest keeps what the match plays of the host's options as 
 
 /// <summary>
 /// Port: a match plays its host's weather, time of day and rules only as far as every player's build plays them, as its
-/// rules message said: a build of the braking's round (braking alone) keeps the mission's own weather and time of day,
-/// one that said none (the original's) every option. The players without a rule are those whose message left it out or
-/// who sent none.
+/// rules message said: the host's time of day brings its sight's rule with it, and needs both from every build; a build
+/// of the first match options (the time of day's look alone) keeps the mission's own time of day, one of the braking's
+/// round (braking alone) the mission's own weather too, one that said none (the original's) every option. The players
+/// without a rule are those whose message left it out or who sent none.
 /// </summary>
 TEST_CASE("network: a match plays the host's options as far as every player's build plays them")
 {
-    const MCMatchOptions chosen{
-        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MechBraking};
-    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::Supported) == chosen);
+    constexpr uint32_t braking = MCMatchRule::MechBraking;
+    constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
+    constexpr uint32_t firstOptions = braking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay;
+    const MCMatchOptions chosen{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = braking};
+    CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::Supported) == MCMatchOptions{.Weather = MCWeatherKind::Snow,
+                                                                                      .TimeOfDay = MCTimeOfDay::Night,
+                                                                                      .Rules = braking | timeRules}));
     CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) ==
-           MCMatchOptions{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = 0u}));
-    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::MechBraking) ==
-          MCMatchOptions{.Rules = MCMatchRule::MechBraking});
-    CHECK((MCPlayedOptions(chosen, MCMatchRule::MechBraking, MCMatchRule::MatchWeather) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = timeRules}));
+    CHECK((MCPlayedOptions(MCMatchOptions{}, braking | timeRules, MCMatchRule::Supported) ==
+           MCMatchOptions{.Rules = braking}));
+    CHECK((MCPlayedOptions(chosen, braking, firstOptions) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow, .Rules = braking}));
+    CHECK(MCPlayedOptions(chosen, braking, braking) == MCMatchOptions{.Rules = braking});
+    CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) ==
            MCMatchOptions{.Weather = MCWeatherKind::Snow, .Rules = 0u}));
-    CHECK(MCPlayedOptions(chosen, MCMatchRule::MechBraking, 0) == MCMatchOptions{.Rules = 0u});
+    CHECK(MCPlayedOptions(chosen, braking, 0) == MCMatchOptions{.Rules = 0u});
 
-    const std::map<uint32_t, uint32_t> said = {{1, MCMatchRule::Supported}, {2, MCMatchRule::MechBraking}};
-    const std::array<uint32_t, 3> players = {1, 2, 3};
+    const std::map<uint32_t, uint32_t> said = {{1, MCMatchRule::Supported}, {2, braking}, {4, firstOptions}};
+    const std::array<uint32_t, 4> players = {1, 2, 3, 4};
     CHECK((MCPlayersWithout(MCMatchRule::MatchWeather, players, said) == std::vector<uint32_t>{2, 3}));
-    CHECK(MCPlayersWithout(MCMatchRule::MechBraking, players, said) == std::vector<uint32_t>{3});
-    CHECK(MCPlayersWithout(MCMatchRule::MechBraking, std::span(players).first(2), said).empty());
+    CHECK((MCPlayersWithout(timeRules, players, said) == std::vector<uint32_t>{2, 3, 4}));
+    CHECK(MCPlayersWithout(braking, players, said) == std::vector<uint32_t>{3});
+    CHECK(MCPlayersWithout(braking, std::span(players).first(2), said).empty());
+}
+
+/// <summary>
+/// Port: at a match's time of day units see as far as in a mission the editor set then (each level's sight cut to the
+/// same share, rounded the same, the same least), from the game system's table, which is the editor's by day; only when
+/// the match plays its sight's rule (every player's game has it): else, or with the mission's own time of day, the
+/// mission's own table.
+/// </summary>
+TEST_CASE("network: a match's time of day sets how far units see when every player's game plays it")
+{
+    std::array<int32_t, VisualRangeTableSize> day{};
+
+    for (int32_t level = 0; level < VisualRangeTableSize; level++)
+    {
+        day[static_cast<size_t>(level)] = MissionVisualRange(level, MissionTimeOfDay::Day);
+    }
+
+    // The retail game system's, where there is a game.
+    if (MCTestGame::Available())
+    {
+        MCTestGame::OpenFastFiles();
+        MCFitIniFile gameSystem;
+        REQUIRE_EQ(gameSystem.Open(GamePath(MissionPath, "gamesys", ".fit")), 0);
+        REQUIRE_EQ(gameSystem.SeekBlock("General"), 0);
+        std::array<int32_t, VisualRangeTableSize> retail{};
+        REQUIRE(gameSystem.ReadArray<int32_t>("VisualRangeTable", retail).has_value());
+        CHECK(retail == day);
+    }
+
+    CHECK(MCSightAt(day, MCTimeOfDay::Day) == day);
+    const std::array<int32_t, VisualRangeTableSize> dusk = MCSightAt(day, MCTimeOfDay::Dusk);
+    const std::array<int32_t, VisualRangeTableSize> night = MCSightAt(day, MCTimeOfDay::Night);
+
+    for (int32_t level = 0; level < VisualRangeTableSize; level++)
+    {
+        const auto at = static_cast<size_t>(level);
+        CHECK_EQ(dusk[at], MissionVisualRange(level, MissionTimeOfDay::Dusk));
+        CHECK_EQ(night[at], MissionVisualRange(level, MissionTimeOfDay::Night));
+    }
+
+    const MCMatchOptions atNight =
+        MCPlayedOptions(MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night}, 0, MCMatchRule::Supported);
+    CHECK(MCMatchSight(atNight, day) == night);
+    CHECK(!MCMatchSight(MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MatchTimeOfDay}, day));
+    CHECK(!MCMatchSight(MCMatchOptions{.Rules = MCMatchRule::TimeOfDayRules}, day));
+    CHECK(!MCMatchSight(MCMatchOptions{}, day));
 }
 
 /// <summary>

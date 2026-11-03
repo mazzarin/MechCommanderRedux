@@ -6,6 +6,7 @@
 #include "shaders/composite_bright.msl.h"
 #include "shaders/composite_dry.msl.h"
 #include "shaders/composite_field.msl.h"
+#include "shaders/composite_puddle.msl.h"
 #include "shaders/draw.msl.h"
 #include "shaders/draw_basic.msl.h"
 #include "shaders/draw_hd.msl.h"
@@ -21,6 +22,7 @@
 #include "shaders/composite_bright.spv.h"
 #include "shaders/composite_dry.spv.h"
 #include "shaders/composite_field.spv.h"
+#include "shaders/composite_puddle.spv.h"
 #include "shaders/draw.spv.h"
 #include "shaders/draw_basic.spv.h"
 #include "shaders/draw_hd.spv.h"
@@ -36,10 +38,11 @@
 namespace MCVulkanShaders
 {
     const MCShaderInfo Quad{MCShader::Quad, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1};
-    const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
-    const MCShaderInfo CompositeBright{MCShader::CompositeBright, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
-    const MCShaderInfo CompositeField{MCShader::CompositeField, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
-    const MCShaderInfo CompositeDry{MCShader::CompositeDry, SDL_GPU_SHADERSTAGE_FRAGMENT, 8, 1};
+    const MCShaderInfo Composite{MCShader::Composite, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositeBright{MCShader::CompositeBright, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositeField{MCShader::CompositeField, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositeDry{MCShader::CompositeDry, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
+    const MCShaderInfo CompositePuddle{MCShader::CompositePuddle, SDL_GPU_SHADERSTAGE_FRAGMENT, CompositeSamplers, 1};
     const MCShaderInfo DrawVertex{MCShader::Instance, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 1};
     const MCShaderInfo DrawFragment{MCShader::Draw, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawBasicFragment{MCShader::DrawBasic, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
@@ -76,6 +79,8 @@ namespace MCVulkanShaders
                 return "composite_field";
             case MCShader::CompositeDry:
                 return "composite_dry";
+            case MCShader::CompositePuddle:
+                return "composite_puddle";
         }
 
         return {};
@@ -109,6 +114,8 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(composite_field);
             case MCShader::CompositeDry:
                 return MC_BUILT_IN_SHADER(composite_dry);
+            case MCShader::CompositePuddle:
+                return MC_BUILT_IN_SHADER(composite_puddle);
         }
 
         return {};

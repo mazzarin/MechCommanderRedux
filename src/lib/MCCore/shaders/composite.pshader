@@ -21,7 +21,9 @@
 // (COMPOSITE_PASS), whose pixels then don't pay for the composite's registers: composite_bright.pshader for the bloom's
 // bright pass (Bright), composite_field.pshader for the world's field (Field). Port-only (HD weather): the composite
 // without rain is this shader built without the rain's wet look and veil (COMPOSITE_RAIN 0, composite_dry.pshader),
-// which leave a colour as it is without them: their reads hold 36 of its 192 registers and all of what spilled.
+// which leave a colour as it is without them: their reads hold 36 of its 192 registers and all of what spilled. The
+// puddles' field is a pass of its own too (composite_puddle.pshader, PuddleCell), read by the wet look: worked out
+// there, each of the up to five texels a puddle's edge looks at took the composite ten reads and most of its registers.
 //
 // HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
 // have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
@@ -29,6 +31,7 @@
 #define COMPOSITE_SCREEN 0
 #define COMPOSITE_BRIGHT_PASS 1
 #define COMPOSITE_FIELD_PASS 2
+#define COMPOSITE_PUDDLE_PASS 3
 
 #ifndef COMPOSITE_PASS
 #define COMPOSITE_PASS COMPOSITE_SCREEN
@@ -69,6 +72,10 @@ SamplerState glintSampler : register(s6, space2);
 // lowest bit).
 Texture2D<float4> lightTileTex : register(t7, space2);
 SamplerState lightTileSampler : register(s7, space2);
+// Port-only (HD weather): over the GPU world, its puddles' field (the puddle pass's, PuddleCell), PuddleBorder texels
+// past the world each way (unused without puddles).
+Texture2D<float> puddleTex : register(t8, space2);
+SamplerState puddleSampler : register(s8, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
@@ -1248,12 +1255,33 @@ float PuddleFieldAt(float2 texel)
            GrassDry * smoothstep(GrassFrom, GrassTo, green) + cliff;
 }
 
-// Whether a puddle lies at a world texel.
-bool PuddleAt(float2 texel)
+// The puddle pass's field where a texel isn't ground: above any puddles' level, so no puddle lies there.
+static const float NoPuddleField = 1.0e6;
+// The puddle pass reaches this many texels past the world each way, where a puddle's edge at the world's looks.
+static const float PuddleBorder = 1.0;
+
+// The puddle pass's texel: the puddles' field at a world texel where it is ground.
+float PuddleCell(float2 texel)
 {
     float mark;
     ReliefAt(texel, mark);
-    return mark > GroundMark && PuddleFieldAt(texel) < wetLook.y;
+    return mark > GroundMark ? PuddleFieldAt(texel) : NoPuddleField;
+}
+
+// The puddles' field at a world texel (PuddleCell), as the puddle pass left it.
+float PuddleShown(float2 texel)
+{
+    uint width;
+    uint height;
+    puddleTex.GetDimensions(width, height);
+    const float2 at = clamp(round(texel), -PuddleBorder, worldSize.xy - 1.0 + PuddleBorder) + PuddleBorder + 0.5;
+    return puddleTex.SampleLevel(puddleSampler, at / float2(width, height), 0);
+}
+
+// Whether a puddle lies at a world texel.
+bool PuddleAt(float2 texel)
+{
+    return PuddleShown(texel) < wetLook.y;
 }
 
 // How much of wetLook.x's sky wet ground whose relief rises by slope mirrors: a share in steps, more the more its slope
@@ -1354,7 +1382,7 @@ float3 WetAt(float3 color, float3 art, float2 texel)
         return wet;
     }
 
-    const float field = PuddleFieldAt(texel);
+    const float field = PuddleShown(texel);
 
     if (field >= wetLook.y + PuddleNear)
     {
@@ -1496,6 +1524,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     return Bright(pixel);
 #elif COMPOSITE_PASS == COMPOSITE_FIELD_PASS
     return Field(pixel);
+#elif COMPOSITE_PASS == COMPOSITE_PUDDLE_PASS
+    return float4(PuddleCell(pixel - PuddleBorder), 0.0, 0.0, 0.0);
 #else
     return Composed(pixel);
 #endif

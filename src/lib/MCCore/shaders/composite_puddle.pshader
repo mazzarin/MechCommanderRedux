@@ -1,0 +1,6 @@
+// Port-only (HD weather): the GPU world's puddles' field (MCVulkanPresenter's puddle pass; composite.pshader's
+// PuddleCell), alone, which the composite's wet look reads. It is composite.pshader built for that pass, so its pixels
+// don't pay for the composite's registers.
+
+#define COMPOSITE_PASS COMPOSITE_PUDDLE_PASS
+#include "composite.pshader"

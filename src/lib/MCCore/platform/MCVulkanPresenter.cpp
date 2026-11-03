@@ -113,8 +113,13 @@ namespace
     constexpr float MinGroundDeterminant = 1e-6f;
     /// <summary>The smallest clouds, in meters (their size divides the ground's meters).</summary>
     constexpr float MinCloudSize = 1.0f;
-    /// <summary>The composite shader's textures (composite.pshader's t0 to t7).</summary>
-    constexpr size_t CompositeSamplers = 8;
+    using MCVulkanShaders::CompositeSamplers;
+    /// <summary>The puddle pass reaches this many texels past the world each way (composite.pshader's PuddleBorder).</summary>
+    constexpr uint32_t PuddleBorder = 1;
+    /// <summary>
+    /// The puddles' field's format: a puddle's edge is where the field crosses the puddles' level, so it is kept whole.
+    /// </summary>
+    constexpr SDL_GPUTextureFormat PuddleFormat = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
     /// <summary>
     /// The light tiles' side, in the world's texels (composite.pshader's lightTiles): a tile meets few lights, and a
     /// SIMD group's pixels mostly share one.
@@ -540,15 +545,18 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
 
     presenter->_QuadShader = std::move(*quad);
     // The composite, with rain and without, and the GPU world's passes before it, each composite.pshader built for it
-    // alone.
+    // alone, with the format each draws.
+    constexpr SDL_GPUTextureFormat Rgba = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     const std::array composites{
-        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline},
-        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline},
-        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline},
-        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline},
+        std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline, Rgba},
+        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline, Rgba},
+        std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline, Rgba},
+        std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline, Rgba},
+        std::tuple{&MCVulkanShaders::CompositePuddle, &presenter->_PuddleShader, &presenter->_PuddlePipeline,
+                   PuddleFormat},
     };
 
-    for (const auto& [info, shader, made] : composites)
+    for (const auto& [info, shader, made, format] : composites)
     {
         auto loaded = MCVulkanShaders::Load(presenter->_Device, *info);
 
@@ -560,7 +568,7 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
         *shader = std::move(*loaded);
 
         SDL_GPUColorTargetDescription target{};
-        target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        target.format = format;
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader = presenter->_QuadShader.get();
         pipeline.fragment_shader = shader->get();
@@ -664,7 +672,7 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_Fields, &_LightTiles})
+    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_Fields, &_Puddles, &_LightTiles})
     {
         for (Texture& texture : *textures)
         {
@@ -680,11 +688,13 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _DryPipeline.reset();
     _BrightPipeline.reset();
     _FieldPipeline.reset();
+    _PuddlePipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
     _DryShader.reset();
     _BrightShader.reset();
     _FieldShader.reset();
+    _PuddleShader.reset();
 
     if (_Claimed)
     {
@@ -1073,6 +1083,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         SDL_GPUTexture* LightTileTexture = nullptr;
         /// <summary>Port-only (HD lighting): the GPU world's field (null: none, without a bloom or clouds).</summary>
         SDL_GPUTexture* Field = nullptr;
+        /// <summary>Port-only (HD weather): the GPU world's puddles' field (null: none, without puddles).</summary>
+        SDL_GPUTexture* Puddles = nullptr;
     };
 
     std::vector<std::optional<UnderlayDraw>> underlayDraws(frame.Underlays.size());
@@ -1231,6 +1243,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {mips, _Linear.get()},
             {world.Texture, _Nearest.get()},
             {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
         }};
         // The texels in use and the next across and down, which the world's last pixels read toward.
         const uint32_t drawnWidth = std::min(fieldWidth + 1, field.Width);
@@ -1246,6 +1259,70 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
                           uniforms.BloomSize);
     }
 
+    // Port-only (HD weather): each GPU world's puddles' field (composite.pshader's PuddleCell), PuddleBorder texels past
+    // it each way, which the composite's wet look reads. One that can't be made shows its world without puddles.
+    _Puddles.resize(std::max(_Puddles.size(), underlayDraws.size()));
+
+    for (size_t i = 0; i < underlayDraws.size(); ++i)
+    {
+        if (!gpuSurfaces || !underlayDraws[i].has_value())
+        {
+            continue;
+        }
+
+        UnderlayDraw& drawn = *underlayDraws[i];
+        CompositeUniforms& uniforms = drawn.Uniforms;
+
+        if (uniforms.WetLook[0] <= 0.0f || uniforms.WetLook[1] <= 0.0f)
+        {
+            continue;
+        }
+
+        const World& world = worlds[i];
+        Texture& puddles = _Puddles[i];
+        const uint32_t puddlesWidth = static_cast<uint32_t>(world.Size[0]) + 2 * PuddleBorder;
+        const uint32_t puddlesHeight = static_cast<uint32_t>(world.Size[1]) + 2 * PuddleBorder;
+
+        if (auto made = Ensure(puddles, PuddleFormat, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                               puddlesWidth, puddlesHeight, false);
+            !made)
+        {
+            SDL_Log("MCVulkanPresenter: underlay %zu shown without its puddles: %s", i, made.error().c_str());
+            uniforms.WetLook[1] = 0.0f;
+            continue;
+        }
+
+        SDL_GPUColorTargetInfo puddleTarget{};
+        puddleTarget.texture = puddles.Handle.get();
+        // Only the texels the composite reads are drawn (PuddleShown).
+        puddleTarget.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        puddleTarget.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* puddlePass = SDL_BeginGPURenderPass(&commands, &puddleTarget, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(puddlePass, _PuddlePipeline.get());
+        const float allocatedWidth = static_cast<float>(puddles.Width);
+        const float allocatedHeight = static_cast<float>(puddles.Height);
+        const SDL_GPUViewport puddleViewport{0.0f, 0.0f, allocatedWidth, allocatedHeight, 0.0f, 1.0f};
+        SDL_SetGPUViewport(puddlePass, &puddleViewport);
+        // The pass reads the world and its indices alone (the world bound for the rest, unread).
+        const CompositeBindings bindings{{
+            {world.Texture, _Nearest.get()},
+            {world.Indices, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Nearest.get()},
+            {world.Texture, _Linear.get()},
+            {world.Texture, _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+            {_NoLightTiles.Handle.get(), _Nearest.get()},
+        }};
+        DrawComposite(commands, *puddlePass, bindings,
+                      {{0.0f, 0.0f, static_cast<float>(puddlesWidth), static_cast<float>(puddlesHeight)},
+                       {allocatedWidth, allocatedHeight, 0.0f, 0.0f}},
+                      uniforms);
+        SDL_EndGPURenderPass(puddlePass);
+        drawn.Puddles = puddles.Handle.get();
+    }
+
     SDL_GPUColorTargetInfo target{};
     target.texture = _Frame.Handle.get();
     // The first quad covers every pixel.
@@ -1258,7 +1335,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
 
     auto draw = [&](const std::array<float, 4>& rect, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
                     SDL_GPUTexture& indices, SDL_GPUTexture& glints, SDL_GPUTexture& lightTiles,
-                    CompositeUniforms uniforms)
+                    SDL_GPUTexture& puddles, CompositeUniforms uniforms)
     {
         uniforms.Cycle[0] = frame.Cycle.First;
         uniforms.Cycle[1] = frame.Cycle.Step;
@@ -1279,6 +1356,7 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {&bloom, _Linear.get()},
             {&glints, _Nearest.get()},
             {&lightTiles, _Nearest.get()},
+            {&puddles, _Nearest.get()},
         }};
 
         // Port-only (HD weather): without the rain's wet look and veil where neither shows (composite.pshader's WetAt
@@ -1296,8 +1374,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
                       uniforms);
     };
 
-    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't).
-    draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle,
+    // The screen alone, then each underlay's rectangle with its surface (the screen bound for a field it hasn't, and no
+    // light tiles' texture for puddles it hasn't).
+    draw({0.0f, 0.0f, width, height}, *screen, *screen, *ops, *screen, *_NoLightTiles.Handle, *_NoLightTiles.Handle,
          CompositeUniforms{{screenSize[0], screenSize[1], screenSize[2], screenSize[3]},
                            {screenMap[0], screenMap[1], screenMap[2], screenMap[3]},
                            {0.0f, 0.0f, 1.0f, 1.0f},
@@ -1314,7 +1393,8 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
         const UnderlayDraw& drawn = *underlayDraws[i];
         const World& world = worlds[i];
         draw(drawn.Rect, *world.Texture, drawn.Field != nullptr ? *drawn.Field : *screen, *world.Indices, *world.Glints,
-             drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle, drawn.Uniforms);
+             drawn.LightTileTexture != nullptr ? *drawn.LightTileTexture : *_NoLightTiles.Handle,
+             drawn.Puddles != nullptr ? *drawn.Puddles : *_NoLightTiles.Handle, drawn.Uniforms);
     }
 
     SDL_EndGPURenderPass(pass);
@@ -1375,6 +1455,7 @@ SDL_GPUTexture* MCVulkanPresenter::Bloom(SDL_GPUCommandBuffer& commands, size_t 
         {&world, _Nearest.get()},
         {&world, _Linear.get()},
         {&world, _Nearest.get()},
+        {_NoLightTiles.Handle.get(), _Nearest.get()},
         {_NoLightTiles.Handle.get(), _Nearest.get()},
     }};
 

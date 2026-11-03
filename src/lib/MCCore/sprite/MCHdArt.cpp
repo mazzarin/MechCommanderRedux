@@ -132,6 +132,16 @@ namespace
         std::optional<bool> Loose;
         /// <summary>Whether its frames are objects', whose baked shadows are marked (MCHdArt::MarkBakedShadows).</summary>
         bool BakedShadows = false;
+
+        /// <summary>An archive holding a folder's frames, and the start of their entries' names in it.</summary>
+        struct InArchive
+        {
+            MCHdArchive* Archive = nullptr;
+            std::string Prefix;
+        };
+
+        /// <summary>The archive its frames are in (found once: ArchiveOf; none there: null).</summary>
+        std::optional<InArchive> Archived;
     };
 
     /// <summary>
@@ -405,27 +415,54 @@ namespace
     }
 
     /// <summary>
-    /// The frame at <paramref name="key"/> (its path in the pack, without its extension) from the nearest archive standing
-    /// for one of its folders (up to the pack's): its entry <c>&lt;the rest of the path&gt;.hdf</c>, inflated when packed;
-    /// none when there is no such entry.
+    /// The archive standing for the nearest of <paramref name="folder"/>'s folders (up to the pack's) that has one, and
+    /// the start of its frames' entries' names there (the rest of the folder's path), found the first time: frames are
+    /// read without walking the folders' paths.
     /// </summary>
-    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(const std::filesystem::path& key,
-                                                                           int32_t width, int32_t height)
+    const FrameFolder::InArchive& ArchiveOf(FrameFolder& folder)
     {
+        if (folder.Archived.has_value())
+        {
+            return *folder.Archived;
+        }
+
+        FrameFolder::InArchive& found = folder.Archived.emplace();
         const std::filesystem::path pack = MCHdArt::PackFolder();
 
-        for (std::filesystem::path folder = key.parent_path(); folder.has_relative_path() && folder != pack;
-             folder = folder.parent_path())
+        for (std::filesystem::path at = folder.Path; at.has_relative_path() && at != pack; at = at.parent_path())
         {
-            MCHdArchive* archive = ArchiveFor(folder);
-
-            if (archive == nullptr)
+            if (MCHdArchive* archive = ArchiveFor(at); archive != nullptr)
             {
-                continue;
-            }
+                found.Archive = archive;
 
-            std::string name = key.lexically_relative(folder).generic_string();
-            std::ranges::replace(name, '/', ArchiveSeparator);
+                if (at != folder.Path)
+                {
+                    found.Prefix = folder.Path.lexically_relative(at).generic_string();
+                    std::ranges::replace(found.Prefix, '/', ArchiveSeparator);
+                    found.Prefix += ArchiveSeparator;
+                }
+
+                break;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The frame <paramref name="frame"/> of <paramref name="folder"/> from its archive (ArchiveOf): its entry
+    /// <c>&lt;the rest of the folder's path&gt;\&lt;frame&gt;.hdf</c>, inflated when packed; none when there is no such
+    /// entry.
+    /// </summary>
+    std::expected<std::optional<MCHdArt::Frame>, std::string> ReadArchived(FrameFolder& folder, std::string_view frame,
+                                                                           int32_t width, int32_t height)
+    {
+        const FrameFolder::InArchive& archived = ArchiveOf(folder);
+        MCHdArchive* const archive = archived.Archive;
+
+        if (archive != nullptr)
+        {
+            const std::string name = archived.Prefix + std::string(frame);
             const std::optional<int32_t> index = archive->File->Find(name + std::string(HdfExtension));
 
             if (!index.has_value())
@@ -454,14 +491,14 @@ namespace
                 stored = std::move(*inflated);
             }
 
-            auto frame = MCHdArt::DecodeHdf(stored, width, height);
+            auto decoded = MCHdArt::DecodeHdf(stored, width, height);
 
-            if (!frame)
+            if (!decoded)
             {
-                return std::unexpected(frame.error());
+                return std::unexpected(decoded.error());
             }
 
-            return std::optional<MCHdArt::Frame>(std::move(*frame));
+            return std::optional<MCHdArt::Frame>(std::move(*decoded));
         }
 
         return std::optional<MCHdArt::Frame>();
@@ -606,7 +643,7 @@ namespace
 
             if (!loose || !std::filesystem::is_regular_file(colorPath, error))
             {
-                auto archived = ReadArchived(path, width, height);
+                auto archived = ReadArchived(folder, frame, width, height);
 
                 if (!archived)
                 {

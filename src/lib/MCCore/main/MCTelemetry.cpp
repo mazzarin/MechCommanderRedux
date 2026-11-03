@@ -266,7 +266,12 @@ namespace
     public:
         MCJsonObject& Text(std::string_view key, std::string_view value) { return Raw(key, Quote(value)); }
         MCJsonObject& Integer(std::string_view key, int64_t value) { return Raw(key, std::to_string(value)); }
-        MCJsonObject& Number(std::string_view key, double value) { return Raw(key, std::format("{:.2f}", value)); }
+        /// <summary>A number to two decimals, or null when it isn't finite (JSON has no NaN).</summary>
+        MCJsonObject& Number(std::string_view key, double value)
+        {
+            return Raw(key, std::isfinite(value) ? std::format("{:.2f}", value) : std::string("null"));
+        }
+
         MCJsonObject& Flag(std::string_view key, bool value) { return Raw(key, value ? "true" : "false"); }
 
         /// <summary>Adds <paramref name="json"/> as it is (an object or an array).</summary>

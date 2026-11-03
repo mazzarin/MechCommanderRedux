@@ -936,21 +936,39 @@ namespace
         return {x - lift, y + lift};
     }
 
-    /// <summary>The share of the map tile at world point (x, y) that can't be entered (0 off the map or with
-    /// none).</summary>
+    /// <summary>
+    /// The share of the ground at world point (x, y) that can't be entered (cliffs), as the GPU ground holds it
+    /// (draw.pshader's BlockedAt): its map tile's at the tile's middle, blended toward its neighbours' (bilinear between
+    /// the tiles' middles), so it doesn't step at the tiles' seams; a tile off the map counts as none.
+    /// </summary>
     float BlockedShare(float x, float y)
     {
         const MCScenarioMap* const map = LoadedGameMap();
-        int32_t tileR = 0;
-        int32_t tileC = 0;
-        MCScenarioMap::WorldToMapTilePos(MCVector3D(x, y, 0.0f), tileR, tileC);
 
-        if (map == nullptr || !map->OnMap(tileR, tileC))
+        if (map == nullptr)
         {
             return 0.0f;
         }
 
-        return static_cast<float>(map->TileAt(tileR, tileC).BlockedCells()) / (MapCellDim * MapCellDim);
+        // The point among the tiles' middles: tile (row, col)'s middle at (row + 0.5, col + 0.5) of the vertices.
+        const double col = static_cast<double>(MCTerrain::OneOvermetersPerVertex) * x + VerticesMapSideDivTwo() - 0.5;
+        const double row = (static_cast<double>(MetersMapSideDivTwo()) - y) * MCTerrain::OneOvermetersPerVertex - 0.5;
+        const double firstCol = std::floor(col);
+        const double firstRow = std::floor(row);
+        const float acrossCols = static_cast<float>(col - firstCol);
+        const float downRows = static_cast<float>(row - firstRow);
+        const auto share = [map](double tileR, double tileC)
+        {
+            const int32_t r = static_cast<int32_t>(tileR);
+            const int32_t c = static_cast<int32_t>(tileC);
+            return map->OnMap(r, c) ? static_cast<float>(map->TileAt(r, c).BlockedCells()) / (MapCellDim * MapCellDim)
+                                    : 0.0f;
+        };
+
+        const float upper = std::lerp(share(firstRow, firstCol), share(firstRow, firstCol + 1.0), acrossCols);
+        const float lower =
+            std::lerp(share(firstRow + 1.0, firstCol), share(firstRow + 1.0, firstCol + 1.0), acrossCols);
+        return std::lerp(upper, lower, downRows);
     }
 
     /// <summary>

@@ -39,7 +39,8 @@ struct Image
 Texture2D<float4> fogTex : register(t0, space0);
 SamplerState fogSampler : register(s0, space0);
 // Per cell: x the image (0xffffffff: none), y the elevations of its corners (top left, top right, bottom right, bottom
-// left; a byte each), z how many of its map tile's movement cells can't be entered (port-only), w unused.
+// left; a byte each), z how many of its map tile's movement cells can't be entered (port-only), w its eight neighbours'
+// (port-only: MCTerrainMesh::CellBlockedRound).
 StructuredBuffer<uint4> cells : register(t1, space0);
 StructuredBuffer<Image> images : register(t2, space0);
 
@@ -75,6 +76,7 @@ struct Output
     nointerpolation uint4 op : TEXCOORD2;
     nointerpolation int4 span : TEXCOORD3;
     nointerpolation uint4 walk : TEXCOORD4;
+    nointerpolation uint4 ground : TEXCOORD5;
 };
 
 static const float2 quad[6] = {
@@ -95,10 +97,15 @@ static const uint UseColor = 1u << 10;
 static const uint HdColors = 1u << 16;
 // How far the seam pass reaches past a tile's box (window pixels): as far as its B-spline's coverage reaches.
 static const int SeamReach = 2;
-// Port-only (HD weather's puddles): the share of a cell's movement cells that can't be entered (cliffs) rides in
-// span.w's bits from BlockedShift, above the relief map's atlas, as a byte (255: all of its MovementCells;
-// draw.pshader's).
-static const uint BlockedShift = 8;
+// Port-only (HD weather's puddles and snow): with a relief map, where the cell lies on the window and how much of its
+// map tile and its neighbours' can't be entered (cliffs), for draw.pshader's BlockedAt (its ground): x the top corner
+// (vertex (row, col)) on the window, its x in the low 16 bits and y in the high, signed; y how far below it the right
+// corner (row, col + 1) lies, then the left one (row + 1, col); z how far below it the bottom one lies, the step across
+// from it to the right one (from GroundStepShift, GroundStepMask) and the tile's own count of movement cells that can't
+// be entered (from GroundOwnShift); w the neighbours' counts, as the cell's w holds them.
+static const uint GroundStepShift = 16;
+static const uint GroundStepMask = 0xfffu;
+static const uint GroundOwnShift = 28;
 static const uint MovementCells = 9;
 
 // The screen point of map vertex (row, col) at elevation level e.
@@ -146,6 +153,7 @@ Output Nothing()
     output.op = uint4(0, 0, 0, 0);
     output.span = int4(0, 0, 0, 0);
     output.walk = uint4(0, 0, 0, 0);
+    output.ground = uint4(0, 0, 0, 0);
     return output;
 }
 
@@ -225,6 +233,7 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     // The seam pass reads the tile's place in the atlas (walk.zw) and its size (span.xy).
     output.span = seamPass ? int4(image.atlas.zw, 0, 0) : int4(0, 0, 0, 0);
     output.walk = seamPass ? uint4(0, 0, (uint)image.atlas.x, (uint)image.atlas.y) : uint4(0, 0, 0, 0);
+    output.ground = uint4(0, 0, 0, 0);
 
     // The HD art pack's colours for the tile (draw.pshader's HdColors): the scale, and the tile's place to stay in.
     if (mesh.y != 0 && image.hot.z != 0 && (flags & UseColor) == 0)
@@ -237,10 +246,22 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         const uint fields = relief != 0 ? (uint)mesh.y | (uint)pane.w << ReliefScaleShift |
                                               (reliefAt & 0xffffu) << ReliefXShift | (reliefAt >> 16) << ReliefYShift
                                         : (uint)mesh.y;
-        const uint blocked = min(cell.z, MovementCells) * 255u / MovementCells;
         output.op = uint4(flags | HdColors, color, before, fields);
         output.walk = uint4((packed & 0xffffu) * 4u, (packed >> 16) * 4u, (uint)image.atlas.x, (uint)image.atlas.y);
-        output.span = int4(image.atlas.zw, image.hot.z - 1, (int)(relief != 0 ? relief | blocked << BlockedShift : 0u));
+        output.span = int4(image.atlas.zw, image.hot.z - 1, (int)relief);
+
+        if (relief != 0)
+        {
+            // Where the cell lies on the window, and the counts that can't be entered round it (BlockedAt's ground).
+            const int2 top = pane.xy + topLeft;
+            const int right = Point(row, col + 1, e.y).y - topLeft.y;
+            const int left = Point(row + 1, col, e.w).y - topLeft.y;
+            const int bottom = Point(row + 1, col + 1, e.z).y - topLeft.y;
+            output.ground = uint4((uint)top.x & 0xffffu | (uint)top.y << 16, (uint)right & 0xffffu | (uint)left << 16,
+                                  (uint)bottom & 0xffffu | ((uint)steps.x & GroundStepMask) << GroundStepShift |
+                                      min(cell.z, MovementCells) << GroundOwnShift,
+                                  cell.w);
+        }
     }
 
     return output;

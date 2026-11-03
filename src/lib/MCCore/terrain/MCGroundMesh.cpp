@@ -147,6 +147,36 @@ namespace
             }
         }
 
+        // Each cell's neighbours' blocked counts, so the share can be blended across the seams.
+        mesh.CellBlockedRound.resize(mesh.CellTiles.size());
+
+        for (int32_t r = 0; r < mesh.Rows; ++r)
+        {
+            for (int32_t c = 0; c < mesh.Cols; ++c)
+            {
+                uint32_t round = 0;
+
+                for (int32_t dr = -1; dr <= 1; ++dr)
+                {
+                    for (int32_t dc = -1; dc <= 1; ++dc)
+                    {
+                        const int32_t nr = r + dr;
+                        const int32_t nc = c + dc;
+
+                        if ((dr == 0 && dc == 0) || nr < 0 || nc < 0 || nr >= mesh.Rows || nc >= mesh.Cols)
+                        {
+                            continue;
+                        }
+
+                        round |= static_cast<uint32_t>(mesh.CellBlocked[static_cast<size_t>(nr) * mesh.Cols + nc])
+                                 << MCTerrainMesh::BlockedRoundShift(dr, dc);
+                    }
+                }
+
+                mesh.CellBlockedRound[static_cast<size_t>(r) * mesh.Cols + c] = round;
+            }
+        }
+
         GroundMesh = std::move(built);
     }
 

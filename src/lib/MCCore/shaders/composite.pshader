@@ -1211,9 +1211,10 @@ static const float PuddleMirror = 0.28;
 static const float EdgeMirror = 0.2;
 static const float RimDark = 0.9;
 static const float PuddleNear = 0.08;
-// None on cliffs: the field CliffDry higher where BlockedDryFrom to BlockedDryTo of the ground's map tile can't be
-// entered (the share in the index target's alpha, BlockedMarkSpan below 1 where none can: draw.pshader's), as the
-// cliffs between high and low ground can't (the map's heights tell them poorly from rolling ground).
+// None on cliffs: the field CliffDry higher where BlockedDryFrom to BlockedDryTo of the ground can't be entered (the
+// share in the index target's alpha, BlockedMarkSpan below 1 where none can: draw.pshader's BlockedAt, its map tile's
+// blended toward its neighbours', so no seam shows), as the cliffs between high and low ground can't (the map's heights
+// tell them poorly from rolling ground).
 static const float BlockedMarkSpan = 0.25;
 static const float BlockedDryFrom = 0.4;
 static const float BlockedDryTo = 0.7;
@@ -1259,8 +1260,8 @@ float Greenness(float3 color)
     return color.g - max(color.r, color.b);
 }
 
-// The share of the ground's map tile that can't be entered at a world texel, from the index target's alpha there
-// (`mark`, above GroundMark).
+// The share of the ground that can't be entered at a world texel (draw.pshader's BlockedAt), from the index target's
+// alpha there (`mark`, above GroundMark).
 float BlockedShare(float mark)
 {
     return saturate((1.0 - mark) / BlockedMarkSpan);
@@ -1455,7 +1456,8 @@ float3 VeiledAt(float3 color, float2 texel, float sheets)
 // Port-only (HD weather's snow, MCWeather::ShownCover; tools/upscale/rain-proto/render_snow.py, the mock-up). The
 // snow's field (MCWeather.cpp's SnowField: noise SnowSize meters big, two layers, the finer SnowApart off) rises
 // SnowSlope times the square of the ground's relief slope, so the snow settles on the flat first, and SnowCliff more
-// where BlockedDryFrom to BlockedDryTo of the ground's map tile can't be entered (cliffs last). Below snow.y the ground
+// where BlockedDryFrom to BlockedDryTo of the ground can't be entered (cliffs last; BlockedShare, blended across the
+// tiles' seams). Below snow.y the ground
 // lies under thick snow (SnowThick of the snow's colour), below snow.x under a dusting (SnowDusting), in hard steps.
 static const float SnowSize = 30.0;
 static const float2 SnowApart = float2(23.1, -7.9);
@@ -1548,8 +1550,8 @@ float3 SnowColour(float shade)
     return lerp(SnowWhite, SnowShadow, dark) * shade;
 }
 
-// How much snow lies at a world texel whose relief rises by `slope`, `blocked` of its map tile not to be entered: 0, a
-// dusting or thick (SnowDusting, SnowThick).
+// How much snow lies at a world texel whose relief rises by `slope`, `blocked` of the ground there not to be entered
+// (BlockedShare): 0, a dusting or thick (SnowDusting, SnowThick).
 float SnowAmountAt(float2 texel, float2 slope, float blocked)
 {
     const float field = Layered(GroundPointAt(floor(texel) + 0.5) / SnowSize, SnowApart) +

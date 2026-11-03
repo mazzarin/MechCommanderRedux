@@ -41,6 +41,8 @@ struct Output
     nointerpolation uint4 op : TEXCOORD2;
     nointerpolation int4 span : TEXCOORD3;
     nointerpolation uint4 walk : TEXCOORD4;
+    // draw.pshader's ground (terrain.vshader's alone): none.
+    nointerpolation uint4 ground : TEXCOORD5;
 };
 
 static const float2 corners[6] = {
@@ -59,5 +61,6 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     output.op = draw.op;
     output.span = draw.span;
     output.walk = draw.walk;
+    output.ground = uint4(0, 0, 0, 0);
     return output;
 }

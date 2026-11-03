@@ -44,11 +44,16 @@ namespace
     }
 }
 
-MCSoundResource::MCSoundResource(std::span<const uint8_t> image)
-    : Type(MCSoundResourceType::Memory), _Image(image.begin(), image.end())
+MCSoundResource::MCSoundResource(std::span<const uint8_t> image, std::optional<uint64_t> hdId)
+    : Type(MCSoundResourceType::Memory)
 {
-    ReadWaveInfo();
-    TryHdSample();
+    ReadWaveInfo(image);
+
+    // An HD replacement plays from the pack's decoded copy: the original's image isn't kept.
+    if (!TryHdSample(image, hdId))
+    {
+        _Image.assign(image.begin(), image.end());
+    }
 }
 
 MCSoundResource::MCSoundResource(MCSoundResourceType type, std::string_view fileName) : Type(type), _FileName(fileName)
@@ -85,23 +90,28 @@ void MCSoundResource::LoadFile()
     _Image.resize(static_cast<size_t>(file.tellg()));
     file.seekg(0, std::ios::beg);
     file.read(reinterpret_cast<char*>(_Image.data()), static_cast<std::streamsize>(_Image.size()));
-    ReadWaveInfo();
-    TryHdSample();
+    ReadWaveInfo(_Image);
+
+    if (TryHdSample(_Image))
+    {
+        _Image = {};
+    }
 }
 
-void MCSoundResource::TryHdSample()
+bool MCSoundResource::TryHdSample(std::span<const uint8_t> image, std::optional<uint64_t> id)
 {
-    const std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(_Image);
+    std::shared_ptr<const MCHdAudio::Decoded> decoded = MCHdAudio::Sample(image, id);
 
     if (decoded == nullptr)
     {
-        return;
+        return false;
     }
 
     Format = WaveFormatOf(decoded->Format);
-    _Image = decoded->Pcm;
+    WaveSize = static_cast<uint32_t>(decoded->Pcm.size());
     _WaveOffset = 0;
-    WaveSize = static_cast<uint32_t>(_Image.size());
+    _Hd = std::move(decoded);
+    return true;
 }
 
 void MCSoundResource::TryHdStream(uint64_t sourceFrames)
@@ -129,9 +139,8 @@ void MCSoundResource::TryHdStream(uint64_t sourceFrames)
     _Stream.reset();
 }
 
-void MCSoundResource::ReadWaveInfo()
+void MCSoundResource::ReadWaveInfo(std::span<const uint8_t> image)
 {
-    const std::span<const uint8_t> image = _Image;
     const uint32_t riffSize = ReadU32(image, 4);
 
     if (ReadU32(image, 0) != RIFF_ID || ReadU32(image, 8) != WAVE_ID)
@@ -174,6 +183,8 @@ void MCSoundResource::ReadWaveInfo()
 
 uint32_t MCSoundResource::Read(std::span<uint8_t> buffer, bool loop, int32_t depth)
 {
+    const std::unique_lock stream = LockStream();
+
     if (_Flac != nullptr)
     {
         ReadFlac(buffer, loop);
@@ -240,6 +251,8 @@ void MCSoundResource::ReadFlac(std::span<uint8_t> buffer, bool loop)
 
 void MCSoundResource::Rewind()
 {
+    const std::unique_lock stream = LockStream();
+
     if (_Flac != nullptr)
     {
         _Flac->Seek(0);

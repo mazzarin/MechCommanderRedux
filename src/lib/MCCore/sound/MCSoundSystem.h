@@ -45,7 +45,10 @@ struct MCSoundBite
     uint32_t Cache = 0;
     /// <summary>"soundId" (read, not used).</summary>
     uint32_t SoundId = 0;
-    /// <summary>The wave, when loaded (empty while not).</summary>
+    /// <summary>
+    /// The wave, when loaded (empty while not). Port: the sound system keeps its HD audio identity as it loads it, so
+    /// it is loaded only by the sound system.
+    /// </summary>
     std::vector<uint8_t> BiteData;
     /// <summary>"volume" (0..1): the bite's level, 20 * (volume - 1) dB (see <see cref="SoundBiteGain"/>).</summary>
     float Volume = 0.0f;
@@ -160,6 +163,12 @@ public:
     /// <summary>Stops every channel; drops the music streams, the message queue, the radios and the loaded bites.
     /// </summary>
     void PurgeSoundSystem();
+    /// <summary>
+    /// Port-only (HD audio): hands the waves that play the moment they are asked for (the sound file's bites, Betty's
+    /// samples and the radio's static) to MCHdAudio::Prepare, so their HD replacements are decoded ahead on a thread of
+    /// their own; nothing when they were for the pack in use (MCHdAudio::Prepared).
+    /// </summary>
+    void PrepareHdSounds();
     /// <summary>Plays radio static on its channel.</summary>
     void PlayStaticNoise();
     void StopStaticNoise();
@@ -187,6 +196,11 @@ public:
     /// thunder, none till the purge.
     /// </summary>
     void UpdateThunder(float heard, const MCWeather::MCThunderClap* clap);
+    /// <summary>
+    /// Port-only (HD weather): reads the pack's thunder for a mission whose weather shown strikes lightning, under its
+    /// loading bar, so its first clap reads nothing (it is kept till the purge).
+    /// </summary>
+    void PrepareThunder();
     /// <summary>How many claps of thunder are rolling (one fading out under a newer one counts).</summary>
     size_t ThunderRolls() const { return _ThunderRolls.size(); }
     /// <summary>Streams music <paramref name="musicId"/> ("DMS%d", +25 on the second planet), fading from the stream
@@ -236,6 +250,8 @@ public:
     void RemoveCurrentMessage();
     /// <summary>
     /// Queues a message by priority. A priority 1 message cuts off the one playing and the pilot's waiting ones.
+    /// Port-only: a queued message's speech has its HD replacement decoded ahead (MCHdAudio::Prefetch), behind its
+    /// static.
     /// </summary>
     /// <returns>Whether it was queued (the message is dropped when not).</returns>
     bool QueueRadioMessage(std::unique_ptr<MCRadioMessage> message);
@@ -310,9 +326,18 @@ private:
     void SetMusicState(std::optional<MCMusicState> state);
     /// <summary>Whether the music state holds <paramref name="state"/>.</summary>
     bool HasMusicState(MCMusicState state) const { return _MusicState[std::to_underlying(state)]; }
-    /// <summary>Puts a new resource of <paramref name="image"/> on <paramref name="channel"/>, freeing the old one.
+    /// <summary>
+    /// Puts a new resource of <paramref name="image"/> (of <paramref name="hdId"/>, its MCHdAudio::SampleId, when
+    /// known) on <paramref name="channel"/>, freeing the old one.
     /// </summary>
-    void SetChannelImage(int32_t channel, std::span<const uint8_t> image);
+    void SetChannelImage(int32_t channel, std::span<const uint8_t> image, std::optional<uint64_t> hdId = std::nullopt);
+    /// <summary>
+    /// Sound bite <paramref name="biteId"/>'s MCHdAudio::SampleId, worked out once as it was loaded (none: not loaded by
+    /// <see cref="PreloadSoundBite"/>, or not a wave), so a bite played again isn't hashed again.
+    /// </summary>
+    std::optional<uint64_t> BiteHdId(int32_t biteId) const;
+    /// <summary>The Betty sample loaded's MCHdAudio::SampleId, worked out once a sample (none: not a wave).</summary>
+    std::optional<uint64_t> BettyHdId();
     /// <summary>Frees <paramref name="channel"/>'s resource (stopping it).</summary>
     void FreeChannelResource(int32_t channel);
     /// <summary>Steps one music stream's cross-fade.</summary>
@@ -327,7 +352,12 @@ private:
     void UpdateMusicChoice();
     /// <summary>Stops the rain bed and closes its loop.</summary>
     void StopRain();
-    /// <summary>Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest.</summary>
+    /// <summary>Reads the pack's thunder whole, once till the purge (none when the pack has none).</summary>
+    void ReadThunder();
+    /// <summary>
+    /// Starts <paramref name="clap"/>'s thunder as loud as <paramref name="heard"/> at the nearest, from the thunder's
+    /// file read once till the purge.
+    /// </summary>
     void StartThunder(float heard, const MCWeather::MCThunderClap& clap);
 
     /// <summary>
@@ -357,6 +387,23 @@ private:
     std::unique_ptr<MCPacketFile> _BettyDataFile;
     /// <summary>The Betty sample loaded.</summary>
     std::vector<uint8_t> _BettySoundBite;
+    /// <summary>Which Betty sample <see cref="_BettySoundBite"/> holds (-1: none).</summary>
+    int32_t _BettyLoaded = -1;
+    /// <summary>The Betty samples' MCHdAudio::SampleIds, by sample, as each was first played (betty.pak's don't change).
+    /// </summary>
+    std::unordered_map<int32_t, std::optional<uint64_t>> _BettyHdIds;
+    /// <summary>
+    /// A loaded bite's MCHdAudio::SampleId and the bytes it was worked out for (the bite's own, checked when used).
+    /// </summary>
+    struct MCBiteHdId
+    {
+        std::optional<uint64_t> Id;
+        const uint8_t* Data = nullptr;
+        size_t Size = 0;
+    };
+
+    /// <summary>Each sound bite's HD audio identity, as <see cref="PreloadSoundBite"/> loaded it.</summary>
+    std::vector<MCBiteHdId> _BiteHdIds;
     /// <summary>The radio static wave (empty while not loaded).</summary>
     std::vector<uint8_t> _NoiseData;
     /// <summary>Every pilot's radio.</summary>
@@ -377,6 +424,11 @@ private:
     std::vector<MCThunderRoll> _ThunderRolls;
     /// <summary>The thunder's PCM read last.</summary>
     std::vector<uint8_t> _ThunderChunk;
+    /// <summary>The pack's thunder file, read whole at the first clap (null till then, or when it can't be read).
+    /// </summary>
+    std::shared_ptr<const std::vector<uint8_t>> _ThunderBytes;
+    /// <summary>Where it was read from (none: the pack has no thunder).</summary>
+    std::optional<std::filesystem::path> _ThunderPath;
     /// <summary>Set once the pack had no thunder that plays: none is looked for again till the purge.</summary>
     bool _ThunderMissing = false;
 };

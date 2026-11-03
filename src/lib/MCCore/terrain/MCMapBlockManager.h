@@ -45,6 +45,9 @@ public:
     /// or in the off-map block (at the same place within a block) off the map.</summary>
     size_t MapVertexIndex(int32_t row, int32_t col) const;
 
+    /// <summary>Whether (<paramref name="row"/>, <paramref name="col"/>) is on the map (its vertex in a map block).</summary>
+    static bool OnMap(int32_t row, int32_t col);
+
     /// <summary>The map vertex at (<paramref name="row"/>, <paramref name="col"/>) (<see cref="MapVertexIndex"/>).</summary>
     const MCPrecompVertex& MapVertexAt(int32_t row, int32_t col) const { return _Vertices[MapVertexIndex(row, col)]; }
 
@@ -59,6 +62,9 @@ public:
     /// turn).
     /// </summary>
     void RaiseOffMapBlock();
+
+    /// <summary>The level <see cref="RaiseOffMapBlock"/> raises the off-map block to.</summary>
+    static uint8_t RaisedOffMapElevation();
 
     /// <summary>
     /// Recomputes, from the camera position <paramref name="cameraPos"/>, the block and vertex offset of

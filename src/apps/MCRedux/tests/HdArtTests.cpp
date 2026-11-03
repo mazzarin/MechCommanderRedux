@@ -7465,7 +7465,7 @@ namespace
     /// The picture tools' start: mission <c>--mission &lt;n&gt;</c> (default 1) drawn by the GPU in a window of
     /// <c>--window &lt;w&gt;x&lt;h&gt;</c> (default 3024x1890, a Retina MacBook's pixels) with the UI 720 lines tall, and
     /// HD art on with the pack at
-    /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read up front, as a mission's load reads it)
+    /// <paramref name="pack"/> (into <paramref name="hdArt"/>; its ground read and uploaded up front, as a mission's load does)
     /// unless <c>--hd-original 1</c>, and HD lighting as <c>--hd-lighting</c> asks (<see cref="LightingFromOptions"/>),
     /// at the time of day <c>--hd-time-of-day</c> sets (<see cref="TimeOfDayFromOptions"/>), the other HD options as
     /// their flags ask (<see cref="FootprintsFromOptions"/>, <see cref="TurnsFromOptions"/>...).
@@ -7504,7 +7504,6 @@ namespace
         if (!original)
         {
             hdArt.emplace(packFolder);
-            MCTerrainReadHdTiles();
         }
 
         LightingFromOptions();
@@ -7522,6 +7521,15 @@ namespace
         FootprintsFromOptions();
         TurnsFromOptions();
         StopsFromOptions();
+
+        // The ground read and put on the GPU as a mission's load does, with the options (the relief maps') set.
+        MCTerrainReadHdTiles();
+
+        if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+        {
+            FAIL(uploaded.error());
+        }
+
         return original;
     }
 
@@ -8733,6 +8741,62 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
     CHECK(scene->Renderer->HdTerrain());
     CHECK_EQ(MCHdArt::FramesRead(), loaded);
     std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only: the ground goes up to the GPU while the mission loads (MCTerrainUploadGround), as the first frame would
+/// have put it up (the off-map ground raised as on the first turn), so the frames find it there; HD art's ground too,
+/// and its upload keeps no memory. A mesh built again of the same tiles sends its cells alone.
+/// </summary>
+TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, and its upload memory goes back")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCVulkanRenderer> renderer = StartScaledUp(MCGpuDrawing::On);
+
+    if (renderer == nullptr)
+    {
+        return;
+    }
+
+    // The load put it up; the frames since, the mission's first among them, found the mesh they'd build there.
+    CHECK_EQ(renderer->TerrainUploads(), uint64_t{1});
+    CHECK_EQ(renderer->TerrainTileUploads(), 1);
+    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    REQUIRE(mesh != nullptr);
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_ground_upload";
+    std::filesystem::remove_all(scratch);
+    REQUIRE(WriteTerrainPack(scratch / "pack", *mesh, colors) > 0);
+
+    {
+        const MCHdArtOn hdArt(scratch / "pack");
+        MCTerrainReadHdTiles();
+
+        if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+        {
+            FAIL(uploaded.error());
+        }
+
+        CHECK(renderer->HdTerrain());
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(renderer->TerrainUploads(), uint64_t{2});
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        CHECK(renderer->UploadBytesKept() <= 2 * MCVulkanRenderer::KeptUploadBytes);
+
+        MCTerrainForgetMesh();
+        MCTestGame::RunFrame(FrameSeconds);
+        CHECK_EQ(renderer->TerrainUploads(), uint64_t{3});
+        CHECK_EQ(renderer->TerrainTileUploads(), 2);
+        CHECK(renderer->HdTerrain());
+    }
+
+    std::filesystem::remove_all(scratch);
 }
 
 /// <summary>

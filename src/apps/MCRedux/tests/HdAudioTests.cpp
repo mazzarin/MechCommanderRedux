@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCManualClock.h"
 #include "fakes/MCNullAudioDevice.h"
 #include "gameos/MCSoundChannel.h"
 #include "gameos/MCSoundRenderer.h"
@@ -8,7 +9,9 @@
 #include "main/MCGameContext.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCFlac.h"
+#include "object/MCMechWarrior.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCRadioMessage.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCWeather.h"
@@ -57,6 +60,75 @@ namespace
         word(frames, 4);
         wave.resize(44 + frames, 128);
         return wave;
+    }
+
+    /// <summary>The mixer's rate: a stream at it plays sample for sample, so its mix shows each frame exactly.</summary>
+    constexpr uint32_t RampRate = MCAudio::OutputRate;
+    /// <summary>The frames of a quarter second and of a timer tick (50 ms) at the mixer's rate.</summary>
+    constexpr size_t QuarterSecond = RampRate / 4;
+    constexpr size_t TickFrames = RampRate / 20;
+
+    /// <summary>The left sample of a ramp's frame <paramref name="frame"/> (never 0, so silence shows); its right is
+    /// the negation.</summary>
+    int16_t RampSample(size_t frame)
+    {
+        constexpr size_t Steps = 30000;
+        return static_cast<int16_t>(frame % Steps + 1);
+    }
+
+    /// <summary>A 16-bit stereo wave at the mixer's rate of <paramref name="frames"/> ramp frames (RampSample).</summary>
+    std::vector<uint8_t> Ramp(uint32_t frames)
+    {
+        std::vector<uint8_t> wave;
+        const auto word = [&wave](uint32_t value, int bytes)
+        {
+            for (int i = 0; i < bytes; ++i)
+            {
+                wave.push_back(static_cast<uint8_t>(value >> (8 * i)));
+            }
+        };
+
+        const auto tag = [&wave](std::string_view text) { wave.insert(wave.end(), text.begin(), text.end()); };
+        tag("RIFF");
+        word(36 + frames * 4, 4);
+        tag("WAVEfmt ");
+        word(16, 4);
+        word(1, 2);
+        word(2, 2);
+        word(RampRate, 4);
+        word(RampRate * 4, 4);
+        word(4, 2);
+        word(16, 2);
+        tag("data");
+        word(frames * 4, 4);
+
+        for (uint32_t frame = 0; frame < frames; ++frame)
+        {
+            const auto left = static_cast<uint16_t>(RampSample(frame));
+            word(left, 2);
+            word(static_cast<uint16_t>(-static_cast<int16_t>(left)), 2);
+        }
+
+        return wave;
+    }
+
+    /// <summary>
+    /// Mixes <paramref name="frames"/> frames and counts those that are a ramp of <paramref name="length"/> frames,
+    /// looping, from its frame <paramref name="first"/> on (or silence, with no <paramref name="first"/>), in order.
+    /// </summary>
+    size_t MixedAsRamp(MCAudio& mixer, size_t frames, std::optional<size_t> first, size_t length)
+    {
+        std::vector<float> out(2 * frames);
+        mixer.Render(out);
+        size_t matching = 0;
+
+        for (size_t frame = 0; frame < frames; ++frame)
+        {
+            const float left = first.has_value() ? RampSample((*first + frame) % length) / 32768.0f : 0.0f;
+            matching += out[2 * frame] == left && out[2 * frame + 1] == -left;
+        }
+
+        return matching;
     }
 
     void Write(const std::filesystem::path& path, std::span<const uint8_t> bytes)
@@ -310,11 +382,42 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     REQUIRE(first != nullptr);
     CHECK_EQ(first->Pcm.size(), size_t{3840});
 
-    // With the file gone, the decoded copy still plays: nothing is read from disk again.
+    // With the file gone, the decoded copy still plays: nothing is read from disk again, and it isn't copied.
     std::filesystem::remove(fixture.Sample(Original()));
     CHECK(MCHdAudio::Sample(Original()) == first);
     MCSoundResource again(Original());
     CHECK_EQ(again.WaveSize, uint32_t{3840});
+    CHECK(again.WaveData().data() == first->Pcm.data());
+    CHECK(again.SharedWaveData().get() == &first->Pcm);
+
+    // Given the wave's id, kept by its caller (the sound system keeps each loaded bite's), it isn't hashed again: the
+    // id finds it, whatever the bytes.
+    const std::optional<uint64_t> id = MCHdAudio::SampleId(Original());
+    REQUIRE(id.has_value());
+    CHECK(MCHdAudio::SampleId(Original(882)) != id);
+    CHECK(!MCHdAudio::SampleId({}).has_value());
+    CHECK(MCHdAudio::Sample(Original(882), id) == first);
+    MCSoundResource byId(Original(882), id);
+    CHECK(byId.WaveData().data() == first->Pcm.data());
+
+    // A buffer plays it where it is; written to, it takes a copy of its own, and the decoded samples stay as they are.
+    auto mixer = MCAudio::CreateSilent();
+    auto buffer = mixer->CreateBuffer(first->Format, again.SharedWaveData());
+    REQUIRE(buffer.has_value());
+    CHECK_EQ((*buffer)->Size(), uint32_t{3840});
+    (*buffer)->Play(false);
+    std::vector<float> out(2 * 960);
+    mixer->Render(out);
+    CHECK_EQ(out[0], 1000.0f / 32768.0f);
+    CHECK_EQ(out[2 * 959 + 1], -2000.0f / 32768.0f);
+    (*buffer)->Write(0, std::vector<uint8_t>(4, 0));
+    CHECK_EQ((*buffer)->Size(), uint32_t{3840});
+    CHECK_EQ(first->Pcm[0], uint8_t{0xe8});
+    (*buffer)->SetCurrentPosition(0);
+    (*buffer)->Play(false);
+    mixer->Render(out);
+    CHECK_EQ(out[0], 0.0f);
+    CHECK_EQ(out[2], 1000.0f / 32768.0f);
 
     // A wave the pack has nothing for stays without one when a file appears, until the pack is looked at again.
     CHECK(MCHdAudio::Sample(Original(882)) == nullptr);
@@ -322,6 +425,76 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     CHECK(MCHdAudio::Sample(Original(882)) == nullptr);
     MCHdAudio::Forget();
     CHECK(MCHdAudio::Sample(Original()) == nullptr);
+}
+
+/// <summary>
+/// The sounds that play the moment they are asked for are decoded ahead on a thread of their own (Prepare), and kept:
+/// their first plays read nothing. One played before its turn is decoded as it plays, the same sound. With HD audio
+/// off there is nothing to prepare.
+/// </summary>
+TEST_CASE("HD audio: sounds handed over ahead are decoded on a thread of their own, the same as decoded as they play")
+{
+    Fixture fixture;
+    // Three 20 ms waves (the fixture's length), the third without a replacement.
+    auto second = Original();
+    second[44] = 129;
+    auto third = Original();
+    third[44] = 130;
+    Write(fixture.Sample(Original()), Flac());
+    Write(fixture.Sample(second), Flac());
+    CHECK(!MCHdAudio::Prepared());
+    MCHdAudio::Prepare({Original(), second, third});
+    CHECK(MCHdAudio::Prepared());
+    // Played at once: decoded here, or waited for while the thread is on it.
+    const std::shared_ptr<const MCHdAudio::Decoded> early = MCHdAudio::Sample(second);
+    REQUIRE(early != nullptr);
+    CHECK_EQ(early->Pcm.size(), size_t{3840});
+    MCHdAudio::FinishPreparing();
+    CHECK(MCHdAudio::Sample(second) == early);
+
+    // The others were decoded ahead: with the files gone, they still play (and the one the pack hasn't stays without).
+    std::filesystem::remove(fixture.Sample(Original()));
+    std::filesystem::remove(fixture.Sample(second));
+    const std::shared_ptr<const MCHdAudio::Decoded> ahead = MCHdAudio::Sample(Original());
+    REQUIRE(ahead != nullptr);
+    CHECK(ahead->Pcm == early->Pcm);
+    CHECK(MCHdAudio::Sample(third) == nullptr);
+
+    // A new look at the pack forgets them; with HD audio off there is nothing to prepare.
+    MCHdAudio::Forget();
+    CHECK(!MCHdAudio::Prepared());
+    GHdAudio = HdAudioOff;
+    CHECK(MCHdAudio::Prepared());
+    MCHdAudio::Prepare({Original()});
+    MCHdAudio::FinishPreparing();
+    GHdAudio = HdAudioOn;
+    CHECK(!MCHdAudio::Prepared());
+}
+
+/// <summary>
+/// A radio message's speech has its replacement decoded ahead as the message is queued, behind its static: by the time
+/// it plays, it is decoded.
+/// </summary>
+TEST_CASE("HD audio: a queued radio message's speech is decoded ahead, behind its static")
+{
+    Fixture fixture;
+    Write(fixture.Sample(Original()), Flac());
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    const auto pilot = std::make_shared<MCMechWarrior>();
+    auto message = std::make_unique<MCRadioMessage>();
+    message->Pilot = pilot;
+    message->Priority = 2;
+    message->Fragments.push_back(Original());
+    CHECK(sound->QueueRadioMessage(std::move(message)));
+    MCHdAudio::FinishPreparing();
+    std::filesystem::remove(fixture.Sample(Original()));
+    const std::shared_ptr<const MCHdAudio::Decoded> speech = MCHdAudio::Sample(Original());
+    REQUIRE(speech != nullptr);
+    CHECK_EQ(speech->Pcm.size(), size_t{3840});
+    sound->PurgeSoundSystem();
 }
 
 TEST_CASE("HD audio: HD music streams through a sound channel's ring, looping")
@@ -352,6 +525,227 @@ TEST_CASE("HD audio: HD music streams through a sound channel's ring, looping")
 
     CHECK(renderer.IsPlaying(1));
     renderer.Stop(1);
+    renderer.DestroyResource(*music);
+    MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// A music change primes only a quarter second of the stream's 4 s ring on the game's thread (the original filled all
+/// of it there); the rest of the ring stays silent until the timer thread's next tick fills it.
+/// </summary>
+TEST_CASE("HD audio: a music change primes a quarter second of the ring, and the pack's music no more")
+{
+    Fixture fixture;
+    const auto source = fixture.Root / "MUSIC02.WAV";
+    Write(source, Ramp(RampRate * 6));
+    const auto music = fixture.Root / "audio/music/stereo/MUSIC02.flac";
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    MCAudio& mixer = renderer.Mixer();
+    renderer.SetChannelLooping(1, true);
+
+    // The game's music: a quarter second, then the silence of the ring not yet filled.
+    const std::shared_ptr<MCSoundResource> original =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    renderer.Play(1, original);
+    CHECK_EQ(MixedAsRamp(mixer, QuarterSecond, 0, RampRate * 6), QuarterSecond);
+    CHECK_EQ(MixedAsRamp(mixer, TickFrames, std::nullopt, 1), TickFrames);
+    renderer.Stop(1);
+    renderer.DestroyResource(*original);
+
+    // The pack's music likewise (its fixture is 20 ms of a constant 1000, -2000, looped, for a 20 ms original).
+    Write(source, Original());
+    Write(music, Flac());
+    const std::shared_ptr<MCSoundResource> hd = renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    REQUIRE_EQ(hd->Format.nSamplesPerSec, uint32_t{48000});
+    renderer.Play(1, hd);
+    std::vector<float> out(2 * (QuarterSecond + TickFrames));
+    mixer.Render(out);
+    size_t heard = 0;
+
+    for (size_t frame = 0; frame < QuarterSecond + TickFrames; ++frame)
+    {
+        heard += out[2 * frame] == 1000.0f / 32768.0f && out[2 * frame + 1] == -2000.0f / 32768.0f;
+    }
+
+    CHECK_EQ(heard, QuarterSecond);
+    renderer.Stop(1);
+    renderer.DestroyResource(*hd);
+    MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// A stream filled at the timer's ticks plays seamlessly: every frame of the music in order, round the 4 s ring and
+/// round the music's own loop, whether the ticks come every 50 ms or the end checks every 550 ms.
+/// </summary>
+TEST_CASE("HD audio: a stream filled at the timer's ticks plays every frame in order, round its ring and its loop")
+{
+    Fixture fixture;
+    constexpr uint32_t Frames = RampRate * 6;
+    const auto source = fixture.Root / "RAMP.WAV";
+    Write(source, Ramp(Frames));
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    MCAudio& mixer = renderer.Mixer();
+    const std::shared_ptr<MCSoundResource> music =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    renderer.SetChannelLooping(1, true);
+    renderer.Play(1, music);
+
+    // 15 s: nearly four laps of the ring and two and a half of the music; the ends are checked every 11th tick.
+    constexpr int32_t Ticks = 300;
+    size_t played = 0;
+    size_t inOrder = 0;
+
+    for (int32_t tick = 0; tick < Ticks; ++tick)
+    {
+        inOrder += MixedAsRamp(mixer, TickFrames, played, Frames);
+        played += TickFrames;
+        renderer.ServiceStreams(tick % 11 == 10);
+    }
+
+    CHECK_EQ(inOrder, played);
+    CHECK(renderer.IsPlaying(1));
+    renderer.Stop(1);
+    renderer.DestroyResource(*music);
+    MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// A fill that comes after the prime has played out (a timer starved of the processor) doesn't leave the ring a lap
+/// behind: after a short silence the music goes on from where the prime ended, and on seamlessly.
+/// </summary>
+TEST_CASE("HD audio: a stream's fill coming after its prime played out goes on after a moment's silence")
+{
+    Fixture fixture;
+    constexpr uint32_t Frames = RampRate * 6;
+    const auto source = fixture.Root / "RAMP.WAV";
+    Write(source, Ramp(Frames));
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    MCAudio& mixer = renderer.Mixer();
+    const std::shared_ptr<MCSoundResource> music =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    renderer.SetChannelLooping(1, true);
+    renderer.Play(1, music);
+    CHECK_EQ(MixedAsRamp(mixer, QuarterSecond, 0, Frames), QuarterSecond);
+    CHECK_EQ(MixedAsRamp(mixer, TickFrames, std::nullopt, 1), TickFrames);
+
+    // The late fill: the 50 ms just ahead of the play cursor stay silent, then the music from the prime's end on.
+    renderer.ServiceStreams(false);
+    CHECK_EQ(MixedAsRamp(mixer, TickFrames, std::nullopt, 1), TickFrames);
+    size_t played = QuarterSecond;
+    size_t inOrder = 0;
+
+    for (int32_t tick = 0; tick < 100; ++tick)
+    {
+        inOrder += MixedAsRamp(mixer, TickFrames, played, Frames);
+        played += TickFrames;
+        renderer.ServiceStreams(false);
+    }
+
+    CHECK_EQ(inOrder, played - QuarterSecond);
+    renderer.Stop(1);
+    renderer.DestroyResource(*music);
+    MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// A fill taken before the game's thread plays the stream again (or stops it), and written after, reads nothing: the
+/// new play starts from the music's start and goes on seamlessly, as if the old fill never ran.
+/// </summary>
+TEST_CASE("HD audio: a stream's fill taken before a new play or a stop reads nothing of the stream after it")
+{
+    Fixture fixture;
+    constexpr uint32_t Frames = RampRate * 6;
+    const auto source = fixture.Root / "RAMP.WAV";
+    Write(source, Ramp(Frames));
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    MCAudio& mixer = renderer.Mixer();
+    const std::shared_ptr<MCSoundResource> music =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    MCSoundChannel channel(mixer);
+    channel.Looping = true;
+    // As the renderer plays a stream.
+    const auto play = [&]
+    {
+        channel.StopStream();
+        channel.CreateStreamBuffer(music);
+        music->Rewind();
+        channel.PlayStream();
+    };
+
+    play();
+    CHECK_EQ(MixedAsRamp(mixer, TickFrames, 0, Frames), TickFrames);
+    std::optional<MCSoundChannel::MCStreamFill> stale = channel.BeginFill();
+    REQUIRE(stale.has_value());
+    // Taken while a fill is under way, there is none.
+    CHECK(!channel.BeginFill().has_value());
+    play();
+    channel.WriteFill(*stale);
+    CHECK_EQ(stale->Written, uint32_t{0});
+    channel.EndFill(*stale);
+
+    size_t played = 0;
+    size_t inOrder = 0;
+
+    for (int32_t tick = 0; tick < 100; ++tick)
+    {
+        inOrder += MixedAsRamp(mixer, TickFrames, played, Frames);
+        played += TickFrames;
+
+        if (std::optional<MCSoundChannel::MCStreamFill> fill = channel.BeginFill(); fill.has_value())
+        {
+            channel.WriteFill(*fill);
+            channel.EndFill(*fill);
+        }
+    }
+
+    CHECK_EQ(inOrder, played);
+
+    // A stop: the fill taken before it writes nothing, and none is taken after it.
+    CHECK_EQ(MixedAsRamp(mixer, TickFrames, played, Frames), TickFrames);
+    stale = channel.BeginFill();
+    REQUIRE(stale.has_value());
+    channel.StopStream();
+    channel.WriteFill(*stale);
+    CHECK_EQ(stale->Written, uint32_t{0});
+    channel.EndFill(*stale);
+    CHECK(!channel.BeginFill().has_value());
+    renderer.DestroyResource(*music);
+    MCSoundRenderer::Uninstall();
+}
+
+/// <summary>
+/// A stream that doesn't loop stops once its length has played, at the timer's 550 ms end checks only, as the original's
+/// stream timer stopped it; the 50 ms fills between leave it playing.
+/// </summary>
+TEST_CASE("HD audio: a stream that doesn't loop stops at the timer's 550 ms end checks, not at its fills")
+{
+    Fixture fixture;
+    const auto source = fixture.Root / "RAMP.WAV";
+    Write(source, Ramp(RampRate));
+    MCTestContextScope scope;
+    MCManualClock& clock = scope.Context().SetClock(std::make_unique<MCManualClock>());
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    MCSoundRenderer& renderer = MCSoundRenderer::Install(2);
+    MCAudio& mixer = renderer.Mixer();
+    const std::shared_ptr<MCSoundResource> music =
+        renderer.CreateResource(MCSoundResourceType::Stream, source.string());
+    CHECK_EQ(music->DurationMs, uint32_t{1000});
+    renderer.SetChannelLooping(1, false);
+    renderer.Play(1, music);
+    clock.Advance(1100ull * 1000 * 1000);
+    MixedAsRamp(mixer, RampRate, 0, RampRate);
+    renderer.ServiceStreams(false);
+    CHECK(renderer.IsPlaying(1));
+    renderer.ServiceStreams(true);
+    CHECK(!renderer.IsPlaying(1));
     renderer.DestroyResource(*music);
     MCSoundRenderer::Uninstall();
 }
@@ -526,6 +920,12 @@ TEST_CASE(
     sound->UpdateThunder(Heard, &near);
     CHECK_EQ(sound->ThunderRolls(), size_t{2});
 
+    // The thunder's file was read once: with it gone, another clap still rolls.
+    std::filesystem::remove(thunder);
+    sound->UpdateThunder(Heard, &near);
+    CHECK_EQ(sound->ThunderRolls(), size_t{3});
+    Write(thunder, Flac());
+
     // None heard: no clap.
     sound->PurgeSoundSystem();
     sound->UpdateThunder(0.0f, &near);
@@ -541,6 +941,17 @@ TEST_CASE(
     sound->PurgeSoundSystem();
     sound->UpdateThunder(Heard, &near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
+
+    // A mission whose weather strikes lightning reads the thunder as it loads: its first clap reads nothing.
+    sound->PurgeSoundSystem();
+    const int shownWeather = GHdWeather;
+    GHdWeather = HdWeatherDownpour;
+    sound->PrepareThunder();
+    GHdWeather = shownWeather;
+    std::filesystem::remove(thunder);
+    sound->UpdateThunder(Heard, &near);
+    CHECK_EQ(sound->ThunderRolls(), size_t{1});
+    sound->PurgeSoundSystem();
 
     // Only a downpour has lightning; nothing is heard while no rain is drawn.
     CHECK(MCWeather::LookOf(MCWeatherKind::Downpour).Strikes > 0.0f);

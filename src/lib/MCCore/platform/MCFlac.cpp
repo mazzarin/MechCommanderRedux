@@ -6,6 +6,8 @@
 struct MCFlac::Impl
 {
     std::ifstream File;
+    /// <summary>The file's bytes, when it is read from memory.</summary>
+    std::shared_ptr<const std::vector<uint8_t>> Memory;
     drflac* Decoder = nullptr;
 
     ~Impl() { drflac_close(Decoder); }
@@ -51,20 +53,55 @@ std::unique_ptr<MCFlac> MCFlac::Open(const std::filesystem::path& path)
         return nullptr;
     }
 
-    drflac* decoder = drflac_open(Impl::Read, Impl::Seek, Impl::Tell, result->_Impl.get(), nullptr);
-    result->_Impl->Decoder = decoder;
+    result->_Impl->Decoder = drflac_open(Impl::Read, Impl::Seek, Impl::Tell, result->_Impl.get(), nullptr);
+    return result->Opened() ? std::move(result) : nullptr;
+}
+
+std::unique_ptr<MCFlac> MCFlac::Open(std::shared_ptr<const std::vector<uint8_t>> bytes)
+{
+    if (bytes == nullptr)
+    {
+        return nullptr;
+    }
+
+    auto result = std::unique_ptr<MCFlac>(new MCFlac());
+    result->_Impl->Memory = std::move(bytes);
+    const std::vector<uint8_t>& memory = *result->_Impl->Memory;
+    result->_Impl->Decoder = drflac_open_memory(memory.data(), memory.size(), nullptr);
+    return result->Opened() ? std::move(result) : nullptr;
+}
+
+std::shared_ptr<const std::vector<uint8_t>> MCFlac::ReadFile(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    std::error_code error;
+    const uintmax_t size = std::filesystem::file_size(path, error);
+
+    if (!file || error)
+    {
+        return nullptr;
+    }
+
+    auto bytes = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char*>(bytes->data()), static_cast<std::streamsize>(bytes->size()));
+    return file.gcount() == static_cast<std::streamsize>(bytes->size()) ? std::move(bytes) : nullptr;
+}
+
+bool MCFlac::Opened()
+{
+    const drflac* decoder = _Impl->Decoder;
 
     // Require STREAMINFO's exact length. Limit both allocation and maliciously long validation work to ten minutes.
     if (decoder == nullptr || decoder->channels < 1 || decoder->channels > 2 || decoder->sampleRate < 100 ||
         decoder->sampleRate > 200000 || decoder->bitsPerSample > 24 || decoder->totalPCMFrameCount == 0 ||
         decoder->totalPCMFrameCount > static_cast<uint64_t>(decoder->sampleRate) * 600)
     {
-        return nullptr;
+        return false;
     }
 
-    result->_Format = {decoder->sampleRate, static_cast<uint16_t>(decoder->channels), 16};
-    result->_Frames = decoder->totalPCMFrameCount;
-    return result;
+    _Format = {decoder->sampleRate, static_cast<uint16_t>(decoder->channels), 16};
+    _Frames = decoder->totalPCMFrameCount;
+    return true;
 }
 
 size_t MCFlac::Read(std::span<uint8_t> bytes)

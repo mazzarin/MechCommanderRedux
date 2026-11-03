@@ -83,6 +83,14 @@ public:
     /// <summary>A silent buffer of <paramref name="bytes"/> bytes in <paramref name="format"/>, mixed by
     /// <paramref name="core"/>.</summary>
     MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSoundFormat& format, uint32_t bytes);
+    /// <summary>A buffer holding a copy of <paramref name="pcm"/>'s whole sample frames.</summary>
+    MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSoundFormat& format, std::span<const uint8_t> pcm);
+    /// <summary>
+    /// A buffer playing <paramref name="pcm"/>'s whole sample frames where they are, kept while it lives; the first
+    /// <see cref="Lock"/> takes a copy of its own.
+    /// </summary>
+    MCSoundBuffer(Key, std::shared_ptr<MCAudioCore> core, const MCSoundFormat& format,
+                  std::shared_ptr<const std::vector<uint8_t>> pcm);
 
     ~MCSoundBuffer();
     MCSoundBuffer(const MCSoundBuffer&) = delete;
@@ -92,11 +100,12 @@ public:
     const MCSoundFormat& Format() const { return _Format; }
 
     /// <summary>The buffer's size in bytes (dwBufferBytes).</summary>
-    uint32_t Size() const { return static_cast<uint32_t>(_Data.size()); }
+    uint32_t Size() const { return static_cast<uint32_t>(Bytes().size()); }
 
     /// <summary>
     /// Hands out <paramref name="bytes"/> bytes from <paramref name="offset"/> for writing, split in two where they
-    /// wrap round the end of the buffer (<c>Lock</c>). A request larger than the buffer is cut to its size.
+    /// wrap round the end of the buffer (<c>Lock</c>). A request larger than the buffer is cut to its size. A buffer
+    /// playing shared samples copies them first.
     /// </summary>
     MCLockedRegion Lock(uint32_t offset, uint32_t bytes);
 
@@ -161,9 +170,19 @@ private:
     friend class MCAudio;
     friend struct MCAudioCore;
 
+    /// <summary>The samples played: the shared ones while there are, else the buffer's own.</summary>
+    std::span<const uint8_t> Bytes() const
+    {
+        return _Shared != nullptr ? std::span(*_Shared).first(_SharedSize) : std::span<const uint8_t>(_Data);
+    }
+
     std::shared_ptr<MCAudioCore> _Core;
     MCSoundFormat _Format;
     std::vector<uint8_t> _Data;
+    /// <summary>Samples played where they are (a decoded HD replacement), until a Lock copies them.</summary>
+    std::shared_ptr<const std::vector<uint8_t>> _Shared;
+    /// <summary>The shared samples' whole frames, in bytes.</summary>
+    size_t _SharedSize = 0;
 
     // Guarded by the core's lock.
     bool _Playing = false;
@@ -296,6 +315,13 @@ public:
     std::expected<std::shared_ptr<MCSoundBuffer>, std::string> CreateBuffer(const MCSoundFormat& format,
                                                                             std::span<const uint8_t> pcm);
 
+    /// <summary>
+    /// Creates a buffer playing <paramref name="pcm"/> where it is, without a copy (the static channels' HD
+    /// replacements, decoded once and kept); written to, it copies it first.
+    /// </summary>
+    std::expected<std::shared_ptr<MCSoundBuffer>, std::string> CreateBuffer(
+        const MCSoundFormat& format, std::shared_ptr<const std::vector<uint8_t>> pcm);
+
     /// <summary>Creates a buffer from a whole RIFF WAVE file in memory.</summary>
     std::expected<std::shared_ptr<MCSoundBuffer>, std::string> CreateBufferFromWave(std::span<const uint8_t> wave);
 
@@ -332,6 +358,8 @@ public:
 
 private:
     static void SDLCALL Feed(void* user, SDL_AudioStream* stream, int additional, int total);
+    /// <summary>Puts a new buffer in the mix.</summary>
+    std::shared_ptr<MCSoundBuffer> Register(std::shared_ptr<MCSoundBuffer> buffer);
 
     std::shared_ptr<MCAudioCore> _Core;
     MCDeviceStream _Device{nullptr, &SDL_DestroyAudioStream};

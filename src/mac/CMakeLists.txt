@@ -118,13 +118,16 @@ set(MC_BC7ENC_SOURCES ${MC_SRC}/lib/bc7enc_rdo/bc7enc.cpp ${MC_SRC}/lib/bc7enc_r
 target_sources(MCCore PRIVATE ${MC_BC7ENC_SOURCES})
 set_source_files_properties(${MC_BC7ENC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -w)
 target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/bc7enc_rdo)
-# miniz (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++ options.
-add_library(mc_miniz STATIC ${MC_SRC}/lib/miniz-3.0.2/miniz.c)
-target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME MINIZ_NO_STDIO
-                                           MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
-target_compile_options(mc_miniz PRIVATE -w)
-target_include_directories(mc_miniz PUBLIC ${MC_SRC}/lib/miniz-3.0.2)
-target_link_libraries(MCCore PUBLIC mc_miniz)
+# xxHash (sound/MCHdAudio's sound identities), header-only.
+target_include_directories(MCCore PRIVATE ${MC_SRC}/lib/xxHash-0.8.4)
+# libdeflate's decompressor (lib/MCInflate's DEFLATE), in C as on Windows, so a library of its own outside MCCore's C++
+# options; the x86 file builds to nothing here.
+set(MC_LIBDEFLATE_DIR ${MC_SRC}/lib/libdeflate-1.26)
+add_library(mc_libdeflate STATIC ${MC_LIBDEFLATE_DIR}/lib/deflate_decompress.c ${MC_LIBDEFLATE_DIR}/lib/utils.c
+                                 ${MC_LIBDEFLATE_DIR}/lib/x86/cpu_features.c)
+target_compile_options(mc_libdeflate PRIVATE -w)
+target_include_directories(mc_libdeflate PUBLIC ${MC_LIBDEFLATE_DIR})
+target_link_libraries(MCCore PUBLIC mc_libdeflate)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
 add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)

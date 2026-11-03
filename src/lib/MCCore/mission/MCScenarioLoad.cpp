@@ -43,6 +43,7 @@
 #include "object/MCTrain.h"
 #include "object/MCTrainCar.h"
 #include "object/MCTrainManager.h"
+#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCElementalActor.h"
 #include "sprite/MCGVAppearance.h"
@@ -170,6 +171,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     CreatedParts.clear();
 
     UpdateDisplay(false, true, 100, true, 0);
+    // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
+    // own from here to the end of the loading, rather than as each first plays.
+    SoundSystem()->PrepareHdSounds();
     SoundSystem()->PlayStaticNoise();
     const auto [maxFiresBurning, maxFireBurnTime] = LoadGameSystem();
 
@@ -260,6 +264,8 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     ActualTime = 0.0f;
     // Port-only: the HD art pack's ground is read here, under the loading bar, rather than in the mission's first frame.
     MCTerrainReadHdTiles();
+    SoundSystem()->PrepareThunder();
+    MCHdAudio::FinishPreparing();
     UpdateDisplay(false, true, 30, true, 100);
 
     CameraList()->SetEye(CameraList()->ActivateAllReady());
@@ -267,6 +273,13 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     if (MultiPlayer() != nullptr)
     {
         Eye()->ChangeTarget(LockObject(MultiPlayer()->LocalMovers[0]), true);
+    }
+
+    // Port-only: the ground goes up to the GPU here too, under the loading bar, once the cameras have their terrain
+    // windows, rather than in the mission's first frame.
+    if (const std::expected<void, std::string> uploaded = MCTerrainUploadGround(); !uploaded)
+    {
+        Fatal(-1, std::format("The ground can't go up to the GPU: {}", uploaded.error()));
     }
 
     // The 'Mechs start with the damage their loadouts carried over.
@@ -1159,6 +1172,12 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
         if (part.Alignment == HomeTeam()->Alignment)
         {
             actor->PreloadGestures();
+        }
+
+        // Port-only: every side's HD archives open under the loading bar, not when the mech first comes into view.
+        if (actor != nullptr)
+        {
+            actor->PrepareHdArt();
         }
     }
     else if (objectClass == MCObjectClass::Elemental)

@@ -27,6 +27,52 @@ namespace
         return std::format("{}: {}", what, SDL_GetError());
     }
 
+    /// <summary>An upload transfer buffer of <paramref name="size"/> bytes for <paramref name="what"/>, or why not.</summary>
+    std::expected<std::shared_ptr<SDL_GPUTransferBuffer>, std::string> MakeUploadBuffer(
+        const std::shared_ptr<SDL_GPUDevice>& device, size_t size, std::string_view what)
+    {
+        if (size > std::numeric_limits<uint32_t>::max())
+        {
+            return std::unexpected(std::format("{}: {} bytes are more than a transfer buffer holds", what, size));
+        }
+
+        SDL_GPUTransferBufferCreateInfo info{};
+        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        info.size = static_cast<uint32_t>(size);
+        std::shared_ptr<SDL_GPUTransferBuffer> buffer =
+            MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(device.get(), &info), MCGpuRelease{device});
+
+        if (buffer == nullptr)
+        {
+            return std::unexpected(SdlError(std::format("SDL_CreateGPUTransferBuffer({}, {} bytes)", what, size)));
+        }
+
+        return buffer;
+    }
+
+    /// <summary>
+    /// Records the upload of a <paramref name="width"/> x <paramref name="height"/> rectangle of
+    /// <paramref name="texture"/> at (<paramref name="x"/>, <paramref name="y"/>) from <paramref name="from"/> at
+    /// <paramref name="offset"/>, its rows <paramref name="rowPixels"/> apart.
+    /// </summary>
+    void UploadRectangle(SDL_GPUCopyPass* pass, SDL_GPUTransferBuffer* from, size_t offset, uint32_t rowPixels,
+                         SDL_GPUTexture* texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+    {
+        SDL_GPUTextureTransferInfo source{};
+        source.transfer_buffer = from;
+        source.offset = static_cast<uint32_t>(offset);
+        source.pixels_per_row = rowPixels;
+        source.rows_per_layer = height;
+        SDL_GPUTextureRegion destination{};
+        destination.texture = texture;
+        destination.x = x;
+        destination.y = y;
+        destination.w = width;
+        destination.h = height;
+        destination.d = 1;
+        SDL_UploadToGPUTexture(pass, &source, &destination, false);
+    }
+
     /// <summary>A VFX shape's header: where its bounds (from its hot spot) lie, and its size (its rows follow).</summary>
     constexpr size_t ShapeXMinAt = 0x08;
     constexpr size_t ShapeYMinAt = 0x0c;
@@ -137,8 +183,30 @@ namespace
     constexpr uint64_t PictureSweepFrames = 32;
     /// <summary>The bytes the pictures may take before the oldest go.</summary>
     constexpr size_t PictureBudget = 128 * 1024 * 1024;
-    /// <summary>The same for the HD art frames on the GPU.</summary>
-    constexpr size_t HdPictureBudget = 512 * 1024 * 1024;
+    /// <summary>
+    /// The same for the HD art frames on the GPU: this share of the machine's memory (which the GPU shares on Apple
+    /// silicon and with integrated graphics), at least and at most these, as MCHdArt::CacheBudget sizes the frames
+    /// kept on the CPU. It's what may be kept, not what is set aside.
+    /// </summary>
+    constexpr size_t HdPictureMemoryShare = 16;
+    constexpr size_t MinHdPictureBudget = size_t{128} * 1024 * 1024;
+    constexpr size_t MaxHdPictureBudget = size_t{2048} * 1024 * 1024;
+    constexpr size_t BytesPerMegabyte = 1024 * 1024;
+    /// <summary>
+    /// The most bytes of pictures let go in a frame (past their budget or unused for a while; the rest go in the
+    /// frames after), so no frame drops a pile of them at once.
+    /// </summary>
+    constexpr size_t TrimmedBytesPerFrame = 64 * 1024 * 1024;
+
+    /// <summary>The HD art frames' budget on the GPU (HdPictureMemoryShare).</summary>
+    size_t HdPictureBudget()
+    {
+        static const size_t budget =
+            std::clamp(static_cast<size_t>(std::max(SDL_GetSystemRAM(), 0)) * BytesPerMegabyte / HdPictureMemoryShare,
+                       MinHdPictureBudget, MaxHdPictureBudget);
+        return budget;
+    }
+
     /// <summary>
     /// The bytes a pixel of an HD art frame's RGBA8 colours, and of its BC7 colours (a 16-byte block per 4x4; BC5's, a
     /// relief map's, as many).
@@ -202,6 +270,18 @@ namespace
     constexpr int32_t StripWidth = 4096;
     /// <summary>Upload offsets are kept on this boundary (the strictest any backend asks of a texture copy).</summary>
     constexpr size_t UploadAlignment = 512;
+    /// <summary>
+    /// Port-only: the ground's upload (hundreds of megabytes with HD art) is written into transfer buffers this big,
+    /// this many in turn (MCVulkanRenderer::ChunkedUpload).
+    /// </summary>
+    constexpr size_t UploadChunkBytes = 32 * 1024 * 1024;
+    constexpr size_t UploadChunks = 2;
+
+    /// <summary><paramref name="offset"/> rounded up to UploadAlignment.</summary>
+    constexpr size_t AlignUpload(size_t offset)
+    {
+        return (offset + UploadAlignment - 1) & ~(UploadAlignment - 1);
+    }
 
     /// <summary>The draw shader's vertex uniforms (shaders/instance.vshader, cbuffer Batch).</summary>
     struct BatchUniforms
@@ -993,7 +1073,6 @@ MCVulkanRenderer::~MCVulkanRenderer()
 
     _RetiredTransfers.clear();
     _Uploads.clear();
-    _BufferUploads.clear();
     _FramePictures.clear();
     _FrameHdColors.clear();
     Release(_Blank);
@@ -1064,7 +1143,7 @@ std::expected<void, std::string> MCVulkanRenderer::EnsureTexture(Texture& textur
 std::span<uint8_t> MCVulkanRenderer::QueueUpload(std::shared_ptr<SDL_GPUTexture> texture, uint32_t x, uint32_t y,
                                                  uint32_t width, uint32_t height, uint32_t bytesPerPixel)
 {
-    const size_t offset = (_Staging.size() + UploadAlignment - 1) & ~(UploadAlignment - 1);
+    const size_t offset = AlignUpload(_Staging.size());
     const size_t size = static_cast<size_t>(width) * height * bytesPerPixel;
     _Staging.resize(offset + size);
     _Uploads.push_back(Upload{std::move(texture), x, y, width, height, bytesPerPixel, offset});
@@ -1106,9 +1185,9 @@ void MCVulkanRenderer::BeginRecording()
     }
 
     // Pictures go when unused for a while, or, oldest first, when they take more than their budget (pictures drawn
-    // each frame, such as the shape transforms' work buffer, make a new one every frame).
+    // each frame, such as the shape transforms' work buffer, make a new one every frame); a few at a time.
     TrimPictures(_Pictures, _PictureBytes, PictureBudget, 1);
-    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget, HdRgbaBytes);
+    TrimPictures(_HdPictures, _HdPictureBytes, HdPictureBudget(), HdRgbaBytes);
     TrimPictures(_SharpGlyphs, _SharpGlyphBytes, SharpGlyphBudget, HdRgbaBytes);
 
     // Row 0 is the identity; rows dropped before the last frame ran are free now.
@@ -1153,36 +1232,38 @@ void MCVulkanRenderer::ForgetHdPicture(uint64_t id)
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
                                     size_t bytesPerPixel)
 {
-    const auto drop = [&](auto it) { return DropPicture(pictures, it, bytes, bytesPerPixel); };
+    // Those unused for a while (looked for every PictureSweepFrames frames), and past the budget those not drawn in
+    // the last frame (they'd only go up again).
+    const bool sweep = _Frame % PictureSweepFrames == 0;
 
-    if (_Frame % PictureSweepFrames == 0)
+    if (!sweep && bytes <= budget)
     {
-        for (auto it = pictures.begin(); it != pictures.end();)
-        {
-            it = it->second.LastFrame + PictureFrames < _Frame ? drop(it) : std::next(it);
-        }
+        return;
     }
 
-    if (bytes > budget)
-    {
-        std::vector<std::pair<uint64_t, uint64_t>> byAge;
+    const auto idle = [&](uint64_t lastFrame) { return sweep && lastFrame + PictureFrames < _Frame; };
+    std::vector<std::pair<uint64_t, uint64_t>> byAge;
 
-        for (const auto& [key, picture] : pictures)
+    for (const auto& [key, picture] : pictures)
+    {
+        if (idle(picture.LastFrame) || (bytes > budget && picture.LastFrame + 1 < _Frame))
         {
             byAge.emplace_back(picture.LastFrame, key);
         }
+    }
 
-        std::ranges::sort(byAge);
+    // Oldest first, so the idle ones go first; at most TrimmedBytesPerFrame.
+    std::ranges::sort(byAge);
+    const size_t before = bytes;
 
-        for (const auto& [lastFrame, key] : byAge)
+    for (const auto& [lastFrame, key] : byAge)
+    {
+        if ((!idle(lastFrame) && bytes <= budget) || before - bytes >= TrimmedBytesPerFrame)
         {
-            if (bytes <= budget / 2)
-            {
-                break;
-            }
-
-            drop(pictures.find(key));
+            break;
         }
+
+        DropPicture(pictures, pictures.find(key), bytes, bytesPerPixel);
     }
 }
 
@@ -4541,6 +4622,237 @@ void MCVulkanRenderer::Glyph(MCWindow& target, const MCGlyphCommand& command)
 
 // The terrain ---------------------------------------------------------------------------------------------------------
 
+/// <summary>
+/// Port-only: the ground's upload (hundreds of megabytes with HD art). Staged with a frame's uploads, it took that
+/// much twice (the staging, then the transfer buffer) and kept both for the session. Here its bytes are written straight
+/// into UploadChunks transfer buffers of UploadChunkBytes in turn, each sent up on a command buffer of its own as it
+/// fills (the GPU runs them before the frame being recorded), a chunk written again only once the GPU has copied it: it
+/// holds no more than those, and they go once it's done. A span it gives is written in full before the next is asked
+/// for, and only written (transfer memory is write-combined: reading it back is slow).
+/// </summary>
+class MCVulkanRenderer::ChunkedUpload
+{
+public:
+    explicit ChunkedUpload(std::shared_ptr<SDL_GPUDevice> device) : _Device(std::move(device)) {}
+
+    ChunkedUpload(const ChunkedUpload&) = delete;
+    ChunkedUpload& operator=(const ChunkedUpload&) = delete;
+
+    /// <summary>
+    /// Waits for the chunks sent to be copied (a fence goes back to SDL only once its commands have run; copying a
+    /// chunk takes the GPU about a millisecond); a chunk not sent (an error) is dropped.
+    /// </summary>
+    ~ChunkedUpload()
+    {
+        if (_Mapped != nullptr)
+        {
+            SDL_UnmapGPUTransferBuffer(_Device.get(), _Chunks[_Chunk].Transfer.get());
+        }
+
+        for (Chunk& chunk : _Chunks)
+        {
+            WaitFor(chunk);
+        }
+    }
+
+    /// <summary>
+    /// Where to write the bytes of an upload into a rectangle of <paramref name="texture"/>, <paramref name="width"/>
+    /// x <paramref name="height"/> at (<paramref name="x"/>, <paramref name="y"/>), rows <paramref name="width"/>
+    /// apart; or why there's nowhere.
+    /// </summary>
+    std::expected<std::span<uint8_t>, std::string> Texture(std::shared_ptr<SDL_GPUTexture> texture, uint32_t x,
+                                                           uint32_t y, uint32_t width, uint32_t height,
+                                                           uint32_t bytesPerPixel)
+    {
+        Region region;
+        region.Texture = std::move(texture);
+        region.X = x;
+        region.Y = y;
+        region.Width = width;
+        region.Height = height;
+        return Place(std::move(region), static_cast<size_t>(width) * height * bytesPerPixel);
+    }
+
+    /// <summary>Where to write the <paramref name="size"/> bytes of an upload into <paramref name="buffer"/>.</summary>
+    std::expected<std::span<uint8_t>, std::string> Buffer(std::shared_ptr<SDL_GPUBuffer> buffer, uint32_t size)
+    {
+        Region region;
+        region.Buffer = std::move(buffer);
+        return Place(std::move(region), size);
+    }
+
+    /// <summary>Sends up what's written since the last chunk went.</summary>
+    std::expected<void, std::string> Finish() { return Send(); }
+
+private:
+    /// <summary>An upload in the chunk being written: into a texture's rectangle, or into a buffer.</summary>
+    struct Region
+    {
+        std::shared_ptr<SDL_GPUTexture> Texture;
+        std::shared_ptr<SDL_GPUBuffer> Buffer;
+        uint32_t X = 0;
+        uint32_t Y = 0;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        size_t Offset = 0;
+        size_t Size = 0;
+    };
+
+    /// <summary>A transfer buffer, its size, and the fence of the commands copying from it while they may run.</summary>
+    struct Chunk
+    {
+        std::shared_ptr<SDL_GPUTransferBuffer> Transfer;
+        size_t Size = 0;
+        SDL_GPUFence* Sent = nullptr;
+    };
+
+    /// <summary>Waits until <paramref name="chunk"/>'s commands have run (if it was sent), then lets the fence go.</summary>
+    void WaitFor(Chunk& chunk)
+    {
+        if (chunk.Sent == nullptr)
+        {
+            return;
+        }
+
+        // A fence let go before its commands have run may be handed out again and seem done too soon: one that can't
+        // be waited for is kept.
+        if (!SDL_WaitForGPUFences(_Device.get(), true, &chunk.Sent, 1))
+        {
+            SDL_Log("MCVulkanRenderer: the ground's upload can't wait for its copy (%s); its fence is kept",
+                    SDL_GetError());
+        }
+        else
+        {
+            SDL_ReleaseGPUFence(_Device.get(), chunk.Sent);
+        }
+
+        chunk.Sent = nullptr;
+    }
+
+    /// <summary>
+    /// Room for <paramref name="size"/> bytes of <paramref name="region"/> in the chunk being written (the next one,
+    /// once its last copy has run, when they don't fit: this one goes up).
+    /// </summary>
+    std::expected<std::span<uint8_t>, std::string> Place(Region region, size_t size)
+    {
+        size_t offset = AlignUpload(_Used);
+
+        if (_Mapped != nullptr && offset + size > _Chunks[_Chunk].Size)
+        {
+            if (auto sent = Send(); !sent)
+            {
+                return std::unexpected(sent.error());
+            }
+        }
+
+        if (_Mapped == nullptr)
+        {
+            Chunk& chunk = _Chunks[_Chunk];
+            WaitFor(chunk);
+
+            // An upload bigger than a chunk has a chunk of its size.
+            if (chunk.Transfer == nullptr || chunk.Size < size)
+            {
+                const size_t chunkSize = std::max(size, UploadChunkBytes);
+                auto made = MakeUploadBuffer(_Device, chunkSize, "the ground's upload");
+
+                if (!made)
+                {
+                    return std::unexpected(made.error());
+                }
+
+                chunk.Transfer = std::move(*made);
+                chunk.Size = chunkSize;
+            }
+
+            // Not cycled: its last copy has run.
+            void* const memory = SDL_MapGPUTransferBuffer(_Device.get(), chunk.Transfer.get(), false);
+
+            if (memory == nullptr)
+            {
+                return std::unexpected(SdlError("SDL_MapGPUTransferBuffer(the ground's upload)"));
+            }
+
+            _Mapped = static_cast<uint8_t*>(memory);
+            offset = 0;
+        }
+
+        region.Offset = offset;
+        region.Size = size;
+        _Regions.push_back(std::move(region));
+        _Used = offset + size;
+        return std::span(_Mapped + offset, size);
+    }
+
+    /// <summary>Sends the chunk being written up, on a command buffer of its own; the next chunk is written next.</summary>
+    std::expected<void, std::string> Send()
+    {
+        if (_Mapped == nullptr)
+        {
+            return {};
+        }
+
+        Chunk& chunk = _Chunks[_Chunk];
+        SDL_UnmapGPUTransferBuffer(_Device.get(), chunk.Transfer.get());
+        _Mapped = nullptr;
+        SDL_GPUCommandBuffer* const commands = SDL_AcquireGPUCommandBuffer(_Device.get());
+
+        if (commands == nullptr)
+        {
+            return std::unexpected(SdlError("SDL_AcquireGPUCommandBuffer(the ground's upload)"));
+        }
+
+        SDL_GPUCopyPass* const pass = SDL_BeginGPUCopyPass(commands);
+
+        for (const Region& region : _Regions)
+        {
+            if (region.Texture != nullptr)
+            {
+                UploadRectangle(pass, chunk.Transfer.get(), region.Offset, region.Width, region.Texture.get(), region.X,
+                                region.Y, region.Width, region.Height);
+            }
+            else
+            {
+                SDL_GPUTransferBufferLocation source{chunk.Transfer.get(), static_cast<uint32_t>(region.Offset)};
+                SDL_GPUBufferRegion destination{region.Buffer.get(), 0, static_cast<uint32_t>(region.Size)};
+                SDL_UploadToGPUBuffer(pass, &source, &destination, false);
+            }
+        }
+
+        SDL_EndGPUCopyPass(pass);
+        _Regions.clear();
+        _Used = 0;
+        chunk.Sent = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+
+        if (chunk.Sent == nullptr)
+        {
+            return std::unexpected(SdlError("SDL_SubmitGPUCommandBufferAndAcquireFence(the ground's upload)"));
+        }
+
+        _Chunk = (_Chunk + 1) % UploadChunks;
+        return {};
+    }
+
+    std::shared_ptr<SDL_GPUDevice> _Device;
+    std::array<Chunk, UploadChunks> _Chunks;
+    /// <summary>The chunk being written, its memory while mapped, the bytes written in it, and their uploads.</summary>
+    size_t _Chunk = 0;
+    uint8_t* _Mapped = nullptr;
+    size_t _Used = 0;
+    std::vector<Region> _Regions;
+};
+
+std::expected<void, std::string> MCVulkanRenderer::PrepareTerrain(const MCTerrainMesh& mesh)
+{
+    if (_TerrainMesh.Version == mesh.Version && _TerrainMesh.HdPack == HdPackInUse() &&
+        _TerrainMesh.Relief == ReliefMapsInUse())
+    {
+        return {};
+    }
+
+    return UploadTerrainMesh(mesh);
+}
+
 std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target, const MCTerrainFrame& frame)
 {
     if (!frame.Mesh.has_value() || frame.Mesh->get().Cols <= 0 || frame.Mesh->get().Rows <= 0)
@@ -4558,13 +4870,9 @@ std::expected<void, std::string> MCVulkanRenderer::TerrainLayer(MCWindow& target
     const uint16_t surface = SurfaceFor(target);
     const uint16_t fog = SurfaceFor(frame.Fog->get());
 
-    if (_TerrainMesh.Version != mesh.Version || _TerrainMesh.HdPack != HdPackInUse() ||
-        _TerrainMesh.Relief != ReliefMapsInUse())
+    if (auto uploaded = PrepareTerrain(mesh); !uploaded)
     {
-        if (auto uploaded = UploadTerrainMesh(mesh); !uploaded)
-        {
-            return uploaded;
-        }
+        return uploaded;
     }
 
     if (!_TerrainMesh.Usable)
@@ -4620,14 +4928,6 @@ void MCVulkanRenderer::EndTerrainLayer(MCWindow& /*target*/)
     _TerrainLayerSurface = -1;
 }
 
-std::span<uint8_t> MCVulkanRenderer::QueueBufferUpload(std::shared_ptr<SDL_GPUBuffer> buffer, uint32_t size)
-{
-    const size_t offset = (_Staging.size() + UploadAlignment - 1) & ~(UploadAlignment - 1);
-    _Staging.resize(offset + size);
-    _BufferUploads.push_back(BufferUpload{std::move(buffer), size, offset});
-    return std::span(_Staging).subspan(offset, size);
-}
-
 void MCVulkanRenderer::ReleaseTerrainMesh()
 {
     Release(_TerrainMesh.Atlas);
@@ -4640,18 +4940,51 @@ void MCVulkanRenderer::ReleaseTerrainMesh()
 
 std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTerrainMesh& mesh)
 {
-    BeginRecording();
+    if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
+        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
+    {
+        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
+                                           "blocked counts",
+                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
+                                           mesh.CellBlocked.size()));
+    }
+
+    // The mesh's place and cells, and which upload it is (the kept ground's drawn from one).
+    const auto placeMesh = [&]
+    {
+        _TerrainMesh.Version = mesh.Version;
+        _TerrainMesh.Upload = ++_TerrainUploads;
+        _TerrainMesh.FirstRow = mesh.FirstRow;
+        _TerrainMesh.FirstCol = mesh.FirstCol;
+        _TerrainMesh.Cols = mesh.Cols;
+        _TerrainMesh.Rows = mesh.Rows;
+        _TerrainMesh.CellTiles = mesh.CellTiles;
+        _TerrainMesh.CellElevations = mesh.CellElevations;
+    };
+
+    // Port-only: a mesh of the tiles already up, from the same pack and relief maps (the map's heights changed: its
+    // off-map ground is raised on the first turn, after the mission's load put the ground up), keeps them, its images
+    // too; only its cells go up.
+    if (_TerrainMesh.Usable && _TerrainMesh.HdPack == HdPackInUse() && _TerrainMesh.Relief == ReliefMapsInUse() &&
+        _TerrainMesh.Tiles == mesh.Tiles)
+    {
+        placeMesh();
+        ChunkedUpload upload(_Device);
+
+        if (auto sent = UploadTerrainCells(upload, mesh); !sent)
+        {
+            _TerrainMesh.Usable = false;
+            return sent;
+        }
+
+        return upload.Finish();
+    }
+
+    ++_TerrainTileUploads;
     ReleaseTerrainMesh();
-    _TerrainMesh.Version = mesh.Version;
-    _TerrainMesh.Upload = ++_TerrainUploads;
-    _TerrainMesh.CellTiles = mesh.CellTiles;
-    _TerrainMesh.CellElevations = mesh.CellElevations;
+    placeMesh();
     _TerrainMesh.Shapes.resize(mesh.Tiles.size());
     _TerrainMesh.HdPack = HdPackInUse();
-    _TerrainMesh.FirstRow = mesh.FirstRow;
-    _TerrainMesh.FirstCol = mesh.FirstCol;
-    _TerrainMesh.Cols = mesh.Cols;
-    _TerrainMesh.Rows = mesh.Rows;
 
     // The tiles in shelves across the atlas.
     struct Place
@@ -4735,21 +5068,9 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
 
     const auto atlasHeight =
         static_cast<uint32_t>(std::bit_ceil(static_cast<uint32_t>(std::max(shelfY + shelfHeight, 1))));
-    SDL_GPUBufferCreateInfo cellsInfo{};
-    cellsInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-    cellsInfo.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
     SDL_GPUBufferCreateInfo imagesInfo{};
     imagesInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     imagesInfo.size = static_cast<uint32_t>(std::max<size_t>(places.size(), 1) * TerrainImageInts * sizeof(int32_t));
-
-    if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
-        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
-    {
-        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
-                                           "blocked counts",
-                                           mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
-                                           mesh.CellBlocked.size()));
-    }
 
     if (atlasHeight > 16384)
     {
@@ -4764,14 +5085,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         return made;
     }
 
-    _TerrainMesh.Cells =
-        MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &cellsInfo), MCGpuRelease{_Device});
     _TerrainMesh.Images =
         MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &imagesInfo), MCGpuRelease{_Device});
 
-    if (_TerrainMesh.Cells == nullptr || _TerrainMesh.Images == nullptr)
+    if (_TerrainMesh.Images == nullptr)
     {
-        return std::unexpected(SdlError("SDL_CreateGPUBuffer(terrain)"));
+        return std::unexpected(SdlError("SDL_CreateGPUBuffer(the terrain's images)"));
     }
 
     // Port-only: the HD tiles in shelves of their own across up to two atlases (ShelveHdFrames), each place on whole
@@ -4895,28 +5214,39 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                 _TerrainMesh.HdAtlas2.Height, megabytes);
     }
 
+    // Straight to the GPU, a chunk at a time. A tile's texels are decoded here first (its runs read them back).
+    ChunkedUpload upload(_Device);
+    std::vector<uint8_t> texels;
+
     for (size_t i = 0; i < places.size(); ++i)
     {
         const Place& place = places[i];
 
         if (place.Width != 0 && hdTiles[i] != nullptr)
         {
-            UploadHdTile(hdPlaces[i].Atlas == 0 ? _TerrainMesh.HdAtlas : _TerrainMesh.HdAtlas2, *hdTiles[i],
-                         hdPlaces[i].X, hdPlaces[i].Y);
+            if (auto sent = UploadHdTile(upload, hdPlaces[i].Atlas == 0 ? _TerrainMesh.HdAtlas : _TerrainMesh.HdAtlas2,
+                                         *hdTiles[i], hdPlaces[i].X, hdPlaces[i].Y);
+                !sent)
+            {
+                return sent;
+            }
         }
 
         if (place.Width != 0 && reliefTiles[i] != nullptr)
         {
-            UploadHdTile(reliefPlaces[i].Atlas == 0 ? _TerrainMesh.ReliefAtlas : _TerrainMesh.ReliefAtlas2,
-                         *reliefTiles[i], reliefPlaces[i].X, reliefPlaces[i].Y);
+            if (auto sent = UploadHdTile(
+                    upload, reliefPlaces[i].Atlas == 0 ? _TerrainMesh.ReliefAtlas : _TerrainMesh.ReliefAtlas2,
+                    *reliefTiles[i], reliefPlaces[i].X, reliefPlaces[i].Y);
+                !sent)
+            {
+                return sent;
+            }
         }
 
         if (place.Width != 0)
         {
             const int32_t stride = place.Width + runColumns;
-            const std::span<uint8_t> texels =
-                QueueUpload(_TerrainMesh.Atlas.Handle, static_cast<uint32_t>(place.X), static_cast<uint32_t>(place.Y),
-                            static_cast<uint32_t>(stride), static_cast<uint32_t>(place.Height), 2);
+            texels.resize(static_cast<size_t>(stride) * place.Height * 2);
             DecodeTile(mesh.Tiles[i], stride, texels);
             _TerrainMesh.Shapes[i].Colors = TileColors(mesh.Tiles[i]);
 
@@ -4925,18 +5255,27 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                 WriteTileRuns(place.Width, place.Height, texels);
             }
 
+            const auto room = upload.Texture(_TerrainMesh.Atlas.Handle, static_cast<uint32_t>(place.X),
+                                             static_cast<uint32_t>(place.Y), static_cast<uint32_t>(stride),
+                                             static_cast<uint32_t>(place.Height), 2);
+
+            if (!room)
+            {
+                return std::unexpected(room.error());
+            }
+
+            std::ranges::copy(texels, room->begin());
             ++_FrameUploads.AtlasImages;
-            _FrameUploads.AtlasBytes += static_cast<int64_t>(stride) * place.Height * 2;
+            _FrameUploads.AtlasBytes += static_cast<int64_t>(texels.size());
         }
     }
 
-    const std::span<int32_t> images = UploadAs<int32_t>(QueueBufferUpload(_TerrainMesh.Images, imagesInfo.size));
-    std::ranges::fill(images, 0);
+    std::vector<int32_t> images(imagesInfo.size / sizeof(int32_t), 0);
 
     for (size_t i = 0; i < places.size(); ++i)
     {
         const std::vector<uint8_t>& tile = mesh.Tiles[i];
-        const std::span<int32_t> image = images.subspan(i * TerrainImageInts, TerrainImageInts);
+        const std::span<int32_t> image = std::span(images).subspan(i * TerrainImageInts, TerrainImageInts);
         image[0] = places[i].X;
         image[1] = places[i].Y;
         image[2] = places[i].Width;
@@ -4962,7 +5301,50 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         shape.HeaderWidth = image[12];
     }
 
-    const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));
+    const auto room = upload.Buffer(_TerrainMesh.Images, imagesInfo.size);
+
+    if (!room)
+    {
+        return std::unexpected(room.error());
+    }
+
+    std::memcpy(room->data(), images.data(), imagesInfo.size);
+
+    if (auto sent = UploadTerrainCells(upload, mesh); !sent)
+    {
+        return sent;
+    }
+
+    if (auto sent = upload.Finish(); !sent)
+    {
+        return sent;
+    }
+
+    _TerrainMesh.Tiles = mesh.Tiles;
+    _TerrainMesh.Usable = true;
+    return {};
+}
+
+std::expected<void, std::string> MCVulkanRenderer::UploadTerrainCells(ChunkedUpload& upload, const MCTerrainMesh& mesh)
+{
+    SDL_GPUBufferCreateInfo info{};
+    info.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+    info.size = static_cast<uint32_t>(mesh.CellTiles.size() * TerrainCellInts * sizeof(uint32_t));
+    _TerrainMesh.Cells = MCGpuHandle<SDL_GPUBuffer>(SDL_CreateGPUBuffer(_Device.get(), &info), MCGpuRelease{_Device});
+
+    if (_TerrainMesh.Cells == nullptr)
+    {
+        return std::unexpected(SdlError("SDL_CreateGPUBuffer(the terrain's cells)"));
+    }
+
+    const auto room = upload.Buffer(_TerrainMesh.Cells, info.size);
+
+    if (!room)
+    {
+        return std::unexpected(room.error());
+    }
+
+    const std::span<uint32_t> cells = UploadAs<uint32_t>(*room);
 
     for (size_t i = 0; i < mesh.CellTiles.size(); ++i)
     {
@@ -4972,7 +5354,6 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
         cells[i * TerrainCellInts + 3] = 0;
     }
 
-    _TerrainMesh.Usable = true;
     return {};
 }
 
@@ -5010,7 +5391,8 @@ bool MCVulkanRenderer::ReliefMapsInUse()
     return MCSceneLights::ReliefMapsOn();
 }
 
-void MCVulkanRenderer::UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame, uint32_t x, uint32_t y)
+std::expected<void, std::string> MCVulkanRenderer::UploadHdTile(ChunkedUpload& upload, Texture& atlas,
+                                                                const MCHdArt::Frame& frame, uint32_t x, uint32_t y)
 {
     const auto width = static_cast<uint32_t>(MCBc7::Padded(frame.Width));
     const auto height = static_cast<uint32_t>(MCBc7::Padded(frame.Height));
@@ -5026,12 +5408,20 @@ void MCVulkanRenderer::UploadHdTile(Texture& atlas, const MCHdArt::Frame& frame,
     if (blocks.size() != static_cast<size_t>(width) * height * HdBc7Bytes)
     {
         NotSupported("an HD terrain tile whose blocks don't match its size");
-        return;
+        return {};
     }
 
-    std::ranges::copy(blocks, QueueUpload(atlas.Handle, x, y, width, height, HdBc7Bytes).begin());
+    const auto room = upload.Texture(atlas.Handle, x, y, width, height, HdBc7Bytes);
+
+    if (!room)
+    {
+        return std::unexpected(room.error());
+    }
+
+    std::ranges::copy(blocks, room->begin());
     ++_FrameUploads.AtlasImages;
     _FrameUploads.AtlasBytes += static_cast<int64_t>(blocks.size());
+    return {};
 }
 
 void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
@@ -5617,7 +6007,7 @@ std::expected<void, std::string> MCVulkanRenderer::MakeSurfaceTextures(SDL_GPUCo
 std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer& commands,
                                                            std::span<const MCUnderlay> underlays)
 {
-    if (!_Recording && _Uploads.empty() && _BufferUploads.empty())
+    if (!_Recording && _Uploads.empty())
     {
         return {};
     }
@@ -5688,24 +6078,38 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
                     _StripPixels.size());
     }
 
-    // Everything up in one transfer: the uploads, then the draws.
-    const size_t drawOffset = (_Staging.size() + UploadAlignment - 1) & ~(UploadAlignment - 1);
+    // Everything up in one transfer: the uploads, then the draws. Past KeptUploadBytes, through a transfer buffer
+    // of the frame's own, released once the frame has run.
+    const size_t drawOffset = AlignUpload(_Staging.size());
     const size_t drawBytes = _Draws.size() * sizeof(_Draws[0]);
     const size_t total = drawOffset + drawBytes;
+    std::shared_ptr<SDL_GPUTransferBuffer> transfer = _Transfer;
 
-    if (_Transfer == nullptr || _TransferSize < total)
+    if (total > KeptUploadBytes)
     {
-        SDL_GPUTransferBufferCreateInfo info{};
-        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        info.size = static_cast<uint32_t>(total + total / 4);
-        _Transfer = MCGpuHandle<SDL_GPUTransferBuffer>(SDL_CreateGPUTransferBuffer(_Device.get(), &info),
-                                                       MCGpuRelease{_Device});
-        _TransferSize = _Transfer != nullptr ? info.size : 0;
+        auto made = MakeUploadBuffer(_Device, total, "the frame's uploads");
 
-        if (_Transfer == nullptr)
+        if (!made)
         {
-            return std::unexpected(SdlError("SDL_CreateGPUTransferBuffer"));
+            return std::unexpected(made.error());
         }
+
+        transfer = std::move(*made);
+        _RetiredTransfers.push_back(transfer);
+    }
+    else if (_Transfer == nullptr || _TransferSize < total)
+    {
+        const size_t size = std::min(total + total / 4, KeptUploadBytes);
+        auto made = MakeUploadBuffer(_Device, size, "the frames' uploads");
+        _Transfer = made ? std::move(*made) : nullptr;
+        _TransferSize = _Transfer != nullptr ? static_cast<uint32_t>(size) : 0;
+
+        if (!made)
+        {
+            return std::unexpected(made.error());
+        }
+
+        transfer = _Transfer;
     }
 
     if (drawBytes > 0 && (_DrawBuffer == nullptr || _DrawBufferSize < drawBytes))
@@ -5722,7 +6126,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         }
     }
 
-    void* const memory = SDL_MapGPUTransferBuffer(_Device.get(), _Transfer.get(), true);
+    void* const memory = SDL_MapGPUTransferBuffer(_Device.get(), transfer.get(), true);
 
     if (memory == nullptr)
     {
@@ -5737,7 +6141,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         std::memcpy(mapped.subspan(drawOffset, drawBytes).data(), _Draws.data(), drawBytes);
     }
 
-    SDL_UnmapGPUTransferBuffer(_Device.get(), _Transfer.get());
+    SDL_UnmapGPUTransferBuffer(_Device.get(), transfer.get());
     SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(&commands);
 
     for (const Upload& upload : _Uploads)
@@ -5761,32 +6165,15 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             continue;
         }
 
-        SDL_GPUTextureTransferInfo source{};
-        source.transfer_buffer = upload.Buffer != nullptr ? upload.Buffer.get() : _Transfer.get();
-        source.offset = static_cast<uint32_t>(upload.Offset);
-        source.pixels_per_row = upload.RowPixels != 0 ? upload.RowPixels : upload.Width;
-        source.rows_per_layer = upload.Height;
-        SDL_GPUTextureRegion destination{};
-        destination.texture = upload.Texture.get();
-        destination.x = upload.X;
-        destination.y = upload.Y;
-        destination.w = upload.Width;
-        destination.h = upload.Height;
-        destination.d = 1;
-        SDL_UploadToGPUTexture(copyPass, &source, &destination, false);
+        UploadRectangle(copyPass, upload.Buffer != nullptr ? upload.Buffer.get() : transfer.get(), upload.Offset,
+                        upload.RowPixels != 0 ? upload.RowPixels : upload.Width, upload.Texture.get(), upload.X,
+                        upload.Y, upload.Width, upload.Height);
     }
 
     if (drawBytes > 0)
     {
-        SDL_GPUTransferBufferLocation source{_Transfer.get(), static_cast<uint32_t>(drawOffset)};
+        SDL_GPUTransferBufferLocation source{transfer.get(), static_cast<uint32_t>(drawOffset)};
         SDL_GPUBufferRegion destination{_DrawBuffer.get(), 0, static_cast<uint32_t>(drawBytes)};
-        SDL_UploadToGPUBuffer(copyPass, &source, &destination, false);
-    }
-
-    for (const BufferUpload& upload : _BufferUploads)
-    {
-        SDL_GPUTransferBufferLocation source{_Transfer.get(), static_cast<uint32_t>(upload.Offset)};
-        SDL_GPUBufferRegion destination{upload.Buffer.get(), 0, upload.Size};
         SDL_UploadToGPUBuffer(copyPass, &source, &destination, false);
     }
 
@@ -6329,9 +6716,15 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
     _Records.clear();
     _Draws.clear();
     _Uploads.clear();
-    _BufferUploads.clear();
     _TerrainDraws.clear();
     _Staging.clear();
+
+    // A burst's staging goes (KeptUploadBytes).
+    if (_Staging.capacity() > KeptUploadBytes)
+    {
+        _Staging = std::vector<uint8_t>();
+    }
+
     _FramePictures.clear();
     _FrameHdColors.clear();
     _StripPixels.clear();
@@ -6476,7 +6869,7 @@ std::pair<float, float> MCVulkanRenderer::SurfaceScale(const MCWindow& window) c
 
 std::expected<void, std::string> MCVulkanRenderer::Flush(std::span<const MCUnderlay> underlays)
 {
-    if (!_Recording && _Uploads.empty() && _BufferUploads.empty())
+    if (!_Recording && _Uploads.empty())
     {
         return {};
     }

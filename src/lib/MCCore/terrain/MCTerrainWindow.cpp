@@ -269,9 +269,10 @@ auto MCTerrainWindow::Render(int32_t hazeFactor) -> void
     }
 
     // One vertex step across the grid moves the screen point by (stepX, stepY), plus the elevation change.
-    const float elevScreenStep = std::floor(elevStep);
-    const float stepX = std::floor(camera->CosAngle * vertexStep);
-    const float stepY = std::floor(camera->SinAngle * vertexStep);
+    const MCTerrainMeshSteps steps = MCTerrainScreenSteps(*camera);
+    const auto elevScreenStep = static_cast<float>(steps.Up);
+    const auto stepX = static_cast<float>(steps.Across);
+    const auto stepY = static_cast<float>(steps.Down);
 
     if (UseOldProject == 0)
     {

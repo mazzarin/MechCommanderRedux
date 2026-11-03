@@ -66,15 +66,14 @@ namespace
     constexpr float ThunderFadeOut = 1.5f;
 
     /// <summary>
-    /// The HD audio pack's sound at <paramref name="path"/> (none: the pack lacks it) opened into <paramref
-    /// name="file"/>, and a stream playing it through <paramref name="mixer"/> at <paramref name="speed"/> times its
-    /// rate (faster: higher); null, the file closed, when there is none or it won't play (logged, as
+    /// A stream playing <paramref name="file"/> (the HD audio pack's sound at <paramref name="path"/>, opened; null: the
+    /// pack lacks it or it isn't FLAC) through <paramref name="mixer"/> at <paramref name="speed"/> times its rate
+    /// (faster: higher); null, the file closed, when there is none or it won't play (logged, as
     /// <paramref name="what"/>).
     /// </summary>
-    std::shared_ptr<MCAudioStream> OpenPackSound(MCAudio& mixer, const std::optional<std::filesystem::path>& path,
-                                                 std::string_view what, float speed, std::unique_ptr<MCFlac>& file)
+    std::shared_ptr<MCAudioStream> StreamPackSound(MCAudio& mixer, const std::optional<std::filesystem::path>& path,
+                                                   std::string_view what, float speed, std::unique_ptr<MCFlac>& file)
     {
-        file = path.has_value() ? MCFlac::Open(*path) : nullptr;
         std::expected<std::shared_ptr<MCAudioStream>, std::string> stream =
             std::unexpected(file != nullptr ? "it holds no sound" : "not a FLAC file");
 
@@ -308,6 +307,51 @@ void MCSoundSystem::Load(std::string_view soundFileName)
 
     soundFile.Close();
     WholeMsgDone = true;
+    PrepareHdSounds();
+}
+
+void MCSoundSystem::PrepareHdSounds()
+{
+    if (MCHdAudio::Prepared())
+    {
+        return;
+    }
+
+    std::vector<std::vector<uint8_t>> waves;
+    const auto readAll = [&waves](MCPacketFile& file)
+    {
+        for (int32_t packet = 0; file.IsOpen() && packet < file.GetNumPackets(); packet++)
+        {
+            if (file.SeekPacket(packet) != 0 || file.GetPacketSize() <= 0)
+            {
+                continue;
+            }
+
+            std::vector<uint8_t> wave(static_cast<size_t>(file.GetPacketSize()));
+
+            if (file.ReadPacket(packet, wave) == static_cast<int32_t>(wave.size()))
+            {
+                waves.push_back(std::move(wave));
+            }
+        }
+    };
+
+    if (_SoundDataFile != nullptr)
+    {
+        readAll(*_SoundDataFile);
+    }
+
+    if (_BettyDataFile != nullptr)
+    {
+        readAll(*_BettyDataFile);
+    }
+
+    if (MCPacketFile noise; noise.Open(GamePath(CDsoundPath, "noise", ".pak")) == 0)
+    {
+        readAll(noise);
+    }
+
+    MCHdAudio::Prepare(std::move(waves));
 }
 
 bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
@@ -335,7 +379,38 @@ bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
     }
 
     file.ReadPacket(biteId, std::span(bite.BiteData).first(std::min<size_t>(size, bite.BiteData.size())));
+    _BiteHdIds.resize(Sounds.size());
+    _BiteHdIds[biteId] = {MCHdAudio::SampleId(bite.BiteData), bite.BiteData.data(), bite.BiteData.size()};
     return true;
+}
+
+std::optional<uint64_t> MCSoundSystem::BiteHdId(int32_t biteId) const
+{
+    if (biteId < 0 || static_cast<size_t>(biteId) >= _BiteHdIds.size() || static_cast<size_t>(biteId) >= Sounds.size())
+    {
+        return std::nullopt;
+    }
+
+    const MCBiteHdId& known = _BiteHdIds[biteId];
+    const std::vector<uint8_t>& data = Sounds[biteId].BiteData;
+    return known.Data == data.data() && known.Size == data.size() ? known.Id : std::nullopt;
+}
+
+std::optional<uint64_t> MCSoundSystem::BettyHdId()
+{
+    if (_BettyLoaded < 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto [found, added] = _BettyHdIds.try_emplace(_BettyLoaded);
+
+    if (added)
+    {
+        found->second = MCHdAudio::SampleId(_BettySoundBite);
+    }
+
+    return found->second;
 }
 
 std::span<const uint8_t> MCSoundSystem::LoadBettySample(int32_t bettyId)
@@ -355,7 +430,14 @@ std::span<const uint8_t> MCSoundSystem::LoadBettySample(int32_t bettyId)
     }
 
     LastBettyId = bettyId;
-    file.ReadPacket(bettyId, std::span(_BettySoundBite).first(size));
+    const int32_t read = file.ReadPacket(bettyId, std::span(_BettySoundBite).first(size));
+
+    // Port: which sample the bytes are, for its HD audio identity; none known when the packet didn't read whole.
+    if (size != 0)
+    {
+        _BettyLoaded = read == static_cast<int32_t>(size) ? bettyId : -1;
+    }
+
     return _BettySoundBite;
 }
 
@@ -379,14 +461,14 @@ void MCSoundSystem::FreeChannelResource(int32_t channel)
     _ChannelResource[channel].reset();
 }
 
-void MCSoundSystem::SetChannelImage(int32_t channel, std::span<const uint8_t> image)
+void MCSoundSystem::SetChannelImage(int32_t channel, std::span<const uint8_t> image, std::optional<uint64_t> hdId)
 {
     if (const std::shared_ptr<MCSoundResource> resource = _ChannelResource[channel].lock(); resource != nullptr)
     {
         _Renderer.DestroyResource(*resource);
     }
 
-    _ChannelResource[channel] = _Renderer.CreateResource(image);
+    _ChannelResource[channel] = _Renderer.CreateResource(image, hdId);
 }
 
 bool MCSoundSystem::QueueRadioMessage(std::unique_ptr<MCRadioMessage> message)
@@ -397,6 +479,12 @@ bool MCSoundSystem::QueueRadioMessage(std::unique_ptr<MCRadioMessage> message)
     {
         RemoveCurrentMessage();
         RadioQueue.RemovePilot(*message->Pilot.lock());
+    }
+
+    // Port-only: handed over before the push, which may drop the message (OB-061); one refused is decoded for nothing.
+    for (const std::vector<uint8_t>& fragment : message->Fragments)
+    {
+        MCHdAudio::Prefetch(fragment);
     }
 
     return RadioQueue.Push(std::move(message)) == nullptr;
@@ -454,6 +542,8 @@ void MCSoundSystem::PurgeSoundSystem()
     _RainMissing = false;
     _ThunderRolls.clear();
     _ThunderMissing = false;
+    _ThunderBytes.reset();
+    _ThunderPath.reset();
     // The radios go (their pilots keep pointers to them, as in the original), and the files they shared.
     _Radios.clear();
 
@@ -462,9 +552,11 @@ void MCSoundSystem::PurgeSoundSystem()
         bite.BiteData = {};
     }
 
+    _BiteHdIds.clear();
     NoiseFile.reset();
     RadioMessageInfoLoaded = false;
     _BettySoundBite = {};
+    _BettyLoaded = -1;
 }
 
 void MCSoundSystem::PlayStaticNoise()
@@ -810,7 +902,7 @@ void MCSoundSystem::Update()
                 return;
             }
 
-            SetChannelImage(NOISE_CHANNEL, Sounds[FIRE_BITE].BiteData);
+            SetChannelImage(NOISE_CHANNEL, Sounds[FIRE_BITE].BiteData, BiteHdId(FIRE_BITE));
             _Renderer.SetChannelLooping(NOISE_CHANNEL, true);
             _Renderer.SetChannelPanning(NOISE_CHANNEL, 0.0f);
             // OB-181 fixed: the original played the fire at the effects volume, without the bite's own.
@@ -881,7 +973,9 @@ void MCSoundSystem::UpdateRain(float heard)
 
     if (_RainStream == nullptr)
     {
-        _RainStream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::RainLoop(), "rain loop", 1.0f, _RainLoop);
+        const std::optional<std::filesystem::path> path = MCHdAudio::RainLoop();
+        _RainLoop = path.has_value() ? MCFlac::Open(*path) : nullptr;
+        _RainStream = StreamPackSound(_Renderer.Mixer(), path, "rain loop", 1.0f, _RainLoop);
 
         if (_RainStream == nullptr)
         {
@@ -957,11 +1051,31 @@ void MCSoundSystem::UpdateThunder(float heard, const MCWeather::MCThunderClap* c
                   { return (roll.Read && roll.Stream->QueuedFrames() == 0) || roll.Left <= 0.0f; });
 }
 
+void MCSoundSystem::ReadThunder()
+{
+    if (_ThunderBytes == nullptr && !_ThunderMissing)
+    {
+        _ThunderPath = MCHdAudio::Thunder();
+        _ThunderBytes = _ThunderPath.has_value() ? MCFlac::ReadFile(*_ThunderPath) : nullptr;
+    }
+}
+
+void MCSoundSystem::PrepareThunder()
+{
+    if (UseSound != 0 && MCWeather::LookOf(MCWeather::Shown()).Strikes > 0.0f)
+    {
+        ReadThunder();
+    }
+}
+
 void MCSoundSystem::StartThunder(float heard, const MCWeather::MCThunderClap& clap)
 {
+    // The thunder is read once (each clap's reader reads it from memory), till the purge.
+    ReadThunder();
     MCThunderRoll roll;
-    roll.Stream = OpenPackSound(_Renderer.Mixer(), MCHdAudio::Thunder(), "thunder",
-                                std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
+    roll.File = MCFlac::Open(_ThunderBytes);
+    roll.Stream = StreamPackSound(_Renderer.Mixer(), _ThunderPath, "thunder",
+                                  std::lerp(ThunderNearSpeed, ThunderFarSpeed, clap.Far), roll.File);
 
     if (roll.Stream == nullptr)
     {
@@ -1088,7 +1202,7 @@ int32_t MCSoundSystem::PlayBettySample(uint32_t bettyId)
         return -1;
     }
 
-    SetChannelImage(BETTY_CHANNEL, sample);
+    SetChannelImage(BETTY_CHANNEL, sample, BettyHdId());
     SampleChannels[BETTY_CHANNEL].FadeDown = false;
     _Renderer.SetChannelPanning(BETTY_CHANNEL, 0.0f);
     _Renderer.SetChannelVolume(BETTY_CHANNEL, ChannelVolume(RadioLevel));
@@ -1226,7 +1340,7 @@ int32_t MCSoundSystem::PlaySample(uint32_t sampleId, MCOptionalRef<MCGameObject>
 
     if (const std::span<const uint8_t> wave = Sounds[sampleId].BiteData; !wave.empty() && IsWaveImage(wave))
     {
-        _ChannelResource[channel] = _Renderer.CreateResource(wave);
+        _ChannelResource[channel] = _Renderer.CreateResource(wave, BiteHdId(static_cast<int32_t>(sampleId)));
         _Renderer.Play(channel, _ChannelResource[channel].lock());
     }
 

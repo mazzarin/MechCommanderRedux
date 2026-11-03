@@ -476,15 +476,19 @@ void MouseTimerTick()
     }
 
     SoundTicks++;
+    // Port: the streams are filled every tick, so the quarter second a music change primes never runs dry (the
+    // original filled its whole 4 s ring on the game's thread); their ends are still checked every ResultsStepTicks / 2
+    // + 1 ticks (550 ms), as its stream timer serviced them.
+    const bool checkEnds = static_cast<int32_t>(ResultsStepTicks / 2) < SoundTicks;
 
-    if (static_cast<int32_t>(ResultsStepTicks / 2) < SoundTicks)
+    if (checkEnds)
     {
         SoundTicks = 0;
+    }
 
-        if (const std::shared_ptr<MCSoundRenderer> renderer = SoundRenderer(); renderer != nullptr)
-        {
-            renderer->ServiceStreams();
-        }
+    if (const std::shared_ptr<MCSoundRenderer> renderer = SoundRenderer(); renderer != nullptr)
+    {
+        renderer->ServiceStreams(checkEnds);
     }
 
     InTimerThread = false;

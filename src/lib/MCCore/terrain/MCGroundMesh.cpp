@@ -3,6 +3,7 @@
 #include "ai/MCMoveSystem.h"
 #include "camera/MCCamera.h"
 #include "engine/MCByteFlag.h"
+#include "main/MCMissionGlobals.h"
 #include "object/MCElemental.h"
 #include "object/MCElementalType.h"
 #include "object/MCElementalGameSystem.h"
@@ -39,6 +40,8 @@ namespace
 
     std::unique_ptr<MCGroundMesh> GroundMesh;
     uint64_t GroundMeshVersions = 0;
+    /// <summary>The mesh's ring of off-map vertices is a grid's side and this many more wide.</summary>
+    constexpr int32_t RingPastGrid = 2;
 
     /// <summary>
     /// The tile MCTerrainBlock::Draw would draw for <paramref name="textureData"/> (not negative), as the ground mesh keeps
@@ -61,9 +64,10 @@ namespace
 
     /// <summary>
     /// Builds the ground mesh over the map and a ring of <paramref name="ring"/> off-map vertices around it, reading
-    /// every tile it uses.
+    /// every tile it uses; the off-map vertices at <paramref name="offMapElevation"/> when given (else the map's).
     /// </summary>
-    void BuildGroundMesh(int32_t ring, int32_t stepX, int32_t stepY, int32_t elevStep)
+    void BuildGroundMesh(int32_t ring, int32_t stepX, int32_t stepY, int32_t elevStep,
+                         std::optional<uint8_t> offMapElevation = std::nullopt)
     {
         MCMapBlockManager& blocks = *Terrain()->MapBlocks;
         MCTerrainTiles& tileCache = *Terrain()->Tiles;
@@ -82,7 +86,9 @@ namespace
             for (int32_t c = 0; c < side; ++c)
             {
                 const MCPrecompVertex& vertex = blocks.MapVertexAt(r - ring, c - ring);
-                built->Elevations[static_cast<size_t>(r) * side + c] = vertex.Elevation;
+                built->Elevations[static_cast<size_t>(r) * side + c] =
+                    offMapElevation.has_value() && !MCMapBlockManager::OnMap(r - ring, c - ring) ? *offMapElevation
+                                                                                                 : vertex.Elevation;
                 built->Textures[static_cast<size_t>(r) * side + c] = vertex.TextureData;
             }
         }
@@ -144,6 +150,13 @@ namespace
         GroundMesh = std::move(built);
     }
 
+    /// <summary>Whether there's a mesh, placing its vertices by these steps.</summary>
+    bool MeshStepsAre(int32_t stepX, int32_t stepY, int32_t elevStep)
+    {
+        return GroundMesh != nullptr && GroundMesh->StepX == stepX && GroundMesh->StepY == stepY &&
+               GroundMesh->ElevStep == elevStep;
+    }
+
     /// <summary>Whether the mesh's vertices take in the grid's, from (<paramref name="row"/>, <paramref name="col"/>).</summary>
     bool MeshCovers(int32_t row, int32_t col, int32_t perSide)
     {
@@ -192,10 +205,9 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
     const int32_t firstRow = static_cast<int32_t>(firstTile) >> 16;
     const int32_t firstCol = static_cast<int16_t>(firstTile & 0xffff);
 
-    if (GroundMesh == nullptr || GroundMesh->StepX != stepX || GroundMesh->StepY != stepY ||
-        GroundMesh->ElevStep != elevStep || !MeshCovers(firstRow, firstCol, perSide))
+    if (!MeshStepsAre(stepX, stepY, elevStep) || !MeshCovers(firstRow, firstCol, perSide))
     {
-        BuildGroundMesh(perSide + 2, stepX, stepY, elevStep);
+        BuildGroundMesh(perSide + RingPastGrid, stepX, stepY, elevStep);
 
         if (!MeshCovers(firstRow, firstCol, perSide))
         {
@@ -266,7 +278,7 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
             return std::unexpected("the ground mesh doesn't hold the map's data even when built again");
         }
 
-        BuildGroundMesh(perSide + 2, stepX, stepY, elevStep);
+        BuildGroundMesh(perSide + RingPastGrid, stepX, stepY, elevStep);
         rebuilt = true;
     }
 
@@ -359,6 +371,61 @@ void MCTerrainReadHdTiles()
             }
         }
     }
+}
+
+MCTerrainMeshSteps MCTerrainScreenSteps(const MCCamera& camera)
+{
+    return MCTerrainMeshSteps{static_cast<int32_t>(std::floor(camera.CosAngle * MCTerrain::MetersPerVertex)),
+                              static_cast<int32_t>(std::floor(camera.SinAngle * MCTerrain::MetersPerVertex)),
+                              static_cast<int32_t>(std::floor(MCTerrain::MetersPerElevLevel))};
+}
+
+std::expected<void, std::string> MCTerrainUploadGround()
+{
+    const std::shared_ptr<MCTerrain> terrain = Terrain();
+    const std::shared_ptr<MCRenderer> hardware = MCRenderer::Hardware();
+
+    // The ground mesh needs whole-pixel vertex steps (MCTerrainGroundFrame).
+    if (hardware == nullptr || MCRenderer::GpuDrawing() == MCGpuDrawing::Off || UseOldProject != 0 ||
+        terrain == nullptr || terrain->MapBlocks == nullptr || terrain->Tiles == nullptr)
+    {
+        return {};
+    }
+
+    // The first frame's mesh: its terrain pass builds one for the first active camera's grid, with that camera's
+    // steps, where none was built for them (MCTerrainGroundFrame).
+    for (int32_t i = 0; const std::shared_ptr<MCTerrainWindow> window = terrain->GetTerrainWindow(i); ++i)
+    {
+        const std::shared_ptr<MCCamera> camera = window->Camera.lock();
+
+        if (camera == nullptr || !camera->Active)
+        {
+            continue;
+        }
+
+        const MCTerrainMeshSteps steps = MCTerrainScreenSteps(*camera);
+        const int32_t ring = window->Side() + RingPastGrid;
+
+        // The first frame is drawn on the first turn, which raises the off-map ground (MCMapBlockManager::Update): before
+        // it, the mesh has it raised already, as that frame will find it.
+        if (!MeshStepsAre(steps.Across, steps.Down, steps.Up) || GroundMesh->Mesh.FirstRow != -ring)
+        {
+            BuildGroundMesh(ring, steps.Across, steps.Down, steps.Up,
+                            Turn < 1 ? std::optional(MCMapBlockManager::RaisedOffMapElevation()) : std::nullopt);
+        }
+
+        std::expected<void, std::string> uploaded = hardware->PrepareTerrain(GroundMesh->Mesh);
+
+        // The GPU holds the ground's HD tiles now; their copies in memory would only take room from the mission's art.
+        if (uploaded)
+        {
+            MCHdArt::DropGround();
+        }
+
+        return uploaded;
+    }
+
+    return {};
 }
 
 void MCTerrainForgetMesh()

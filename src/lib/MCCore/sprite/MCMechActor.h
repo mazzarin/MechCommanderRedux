@@ -122,6 +122,9 @@ public:
     /// <summary>Loads the tree's stand, walk and run shapes.</summary>
     void PreloadGestures() const;
 
+    /// <summary>Port-only: opens the tree's HD art archives (MCSpriteTree::PrepareHdArt).</summary>
+    void PrepareHdArt() const;
+
     /// <summary>Raises (<paramref name="combatMode"/>) or lowers the arms into the gun pose.</summary>
     void SetCombatMode(bool combatMode);
 

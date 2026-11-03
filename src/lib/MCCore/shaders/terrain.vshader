@@ -43,6 +43,8 @@ SamplerState fogSampler : register(s0, space0);
 StructuredBuffer<uint4> cells : register(t1, space0);
 StructuredBuffer<Image> images : register(t2, space0);
 
+#include "pixels.hlsli"
+
 cbuffer Terrain : register(b0, space1)
 {
     // The target window's size in pixels (xy), and the size its surface is drawn at (zw).
@@ -214,21 +216,9 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         before = seen == 1 ? haze.y : (seen == 2 ? haze.z : haze.w);
     }
 
-    // The rectangle in the window's pixels, scaled to the size the surface is drawn at and grown by a drawn pixel each
-    // way when that differs (instance.vshader's rule).
-    const float2 corner = quad[vertex];
-    const float2 pixel = float2(cut.xy) + corner * float2(cut.zw - cut.xy + 1);
-    float2 ndc = pixel / targetSize.xy * 2.0 - 1.0;
-
-    if (any(targetSize.zw != targetSize.xy))
-    {
-        ndc += (corner * 2.0 - 1.0) * 2.0 / targetSize.zw;
-    }
-
-    ndc.y = -ndc.y;
-
+    // The drawn pixels showing the rectangle (instance.vshader's rule).
     Output output;
-    output.position = float4(ndc, 0.0, 1.0);
+    output.position = float4(DrawnCorner(cut, max(int4(targetSize), 1), quad[vertex]), 0.0, 1.0);
     output.rect = cut;
     output.source = int4(image.atlas.xy + cut.xy - at, 1, 1);
     output.op = uint4(flags, color, before, 0);

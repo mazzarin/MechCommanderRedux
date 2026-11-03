@@ -889,7 +889,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -899,7 +899,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -908,7 +908,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -917,7 +917,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T ps_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;%(RootDir)%(Directory)draw.pshader;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL fragment shader %(Filename).pshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -935,7 +935,7 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
@@ -953,10 +953,12 @@
       <Command>if not exist "$(MCGeneratedDir)shaders\" mkdir "$(MCGeneratedDir)shaders\"
 "$(MCDxc)" -T vs_6_0 -E main -spirv "%(FullPath)" -Fh "$(MCGeneratedDir)shaders\%(Filename).spv.h" -Vn MC_%(Filename)_spirv</Command>
       <Outputs>$(MCGeneratedDir)shaders\%(Filename).spv.h</Outputs>
-      <AdditionalInputs>%(FullPath);$(MCDxc)</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);%(RootDir)%(Directory)pixels.hlsli;$(MCDxc)</AdditionalInputs>
       <Message>Compiling HLSL vertex shader %(Filename).vshader</Message>
       <BuildInParallel>true</BuildInParallel>
     </CustomBuild>
+    <!-- Port-only: the pixel rule the draw shaders and their vertex shaders include. -->
+    <None Include="shaders\pixels.hlsli" />
   </ItemGroup>
   <!-- mimalloc (src\lib\mimalloc-3.3.1): static.c compiles the whole allocator in one unit. It lives outside MCCore,
        so it has its own ItemGroup, which sync_projects.py leaves alone. platform\MCAllocator.cpp wires it in. -->

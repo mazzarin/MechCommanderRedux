@@ -3,8 +3,7 @@
 // Draw), passed on to draw.pshader unchanged, which works out every pixel from it.
 //
 // Draws are in the window's pixels. A surface shown scaled (the world view, drawn at the size it's shown) is drawn at
-// another size: the rectangle is scaled to it, and grown by a drawn pixel each way so the edges are certain to be
-// covered; draw.pshader drops the pixels whose window pixel lies outside the rectangle.
+// another size: the quad covers the drawn pixels whose window pixel lies in the rectangle (pixels.hlsli's DrawnCorner).
 //
 // Bindings (SDL GPU, SPIR-V): the draws as a storage buffer in space0, vertex uniforms in space1.
 
@@ -23,6 +22,8 @@ struct Draw
 };
 
 StructuredBuffer<Draw> draws : register(t0, space0);
+
+#include "pixels.hlsli"
 
 cbuffer Batch : register(b0, space1)
 {
@@ -50,21 +51,9 @@ static const float2 corners[6] = {
 Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
     const Draw draw = draws[batch.x + instance];
-    const float2 topLeft = float2(draw.rect.xy);
-    const float2 size = float2(draw.rect.zw - draw.rect.xy + 1);
-    const float2 pixel = topLeft + corners[vertex] * size;
-    float2 ndc = pixel / targetSize.xy * 2.0 - 1.0;
-
-    if (any(targetSize.zw != targetSize.xy))
-    {
-        ndc += (corners[vertex] * 2.0 - 1.0) * 2.0 / targetSize.zw;
-    }
-
-    // Target rows go down; NDC's y goes up.
-    ndc.y = -ndc.y;
 
     Output output;
-    output.position = float4(ndc, 0.0, 1.0);
+    output.position = float4(DrawnCorner(draw.rect, max(int4(targetSize), 1), corners[vertex]), 0.0, 1.0);
     output.rect = draw.rect;
     output.source = draw.source;
     output.op = draw.op;

@@ -99,8 +99,9 @@ foreach(shader IN LISTS MCCORE_SHADERS)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${MC_GENERATED_DIR}/shaders
     COMMAND ${MC_GLSLANG} -D -V -e main -S ${stage} --target-env vulkan1.0 --quiet -o ${spirv} ${shader}
     COMMAND mc_msl ${spirv} ${header} MC_${name}_msl
-    # A shader may include another (draw_basic.pshader includes draw.pshader): each is made again when any changes.
-    DEPENDS ${MCCORE_SHADERS} mc_msl
+    # A shader may include another (draw_basic.pshader includes draw.pshader, the draw shaders pixels.hlsli): each is
+    # made again when any changes.
+    DEPENDS ${MCCORE_SHADERS} ${MCCORE_SHADER_INCLUDES} mc_msl
     COMMENT "Compiling HLSL shader ${name} to MSL"
     VERBATIM)
   list(APPEND MC_SHADER_HEADERS ${header})

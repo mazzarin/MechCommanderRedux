@@ -18,8 +18,10 @@
 // shaders folder (composite.spv) must keep them.
 //
 // Port-only (HD lighting): the GPU world's two passes before the composite are this shader built for each alone
-// (COMPOSITE_PASS), whose pixels then don't pay for the registers the composite's lights take:
-// composite_bright.pshader for the bloom's bright pass (Bright), composite_field.pshader for the world's field (Field).
+// (COMPOSITE_PASS), whose pixels then don't pay for the composite's registers: composite_bright.pshader for the bloom's
+// bright pass (Bright), composite_field.pshader for the world's field (Field). Port-only (HD weather): the composite
+// without rain is this shader built without the rain's wet look and veil (COMPOSITE_RAIN 0, composite_dry.pshader),
+// which leave a colour as it is without them: their reads hold 36 of its 192 registers and all of what spilled.
 //
 // HLSL's ?: works out both of its sides, so a choice between texture reads or a light's sums is an if. The textures
 // have one level each but the bloom's (its mips), so their reads take level 0 rather than the quad's derivatives.
@@ -30,6 +32,10 @@
 
 #ifndef COMPOSITE_PASS
 #define COMPOSITE_PASS COMPOSITE_SCREEN
+#endif
+
+#ifndef COMPOSITE_RAIN
+#define COMPOSITE_RAIN 1
 #endif
 
 // The screen: one palette index per pixel (red), or the GPU's colours.
@@ -1451,8 +1457,12 @@ float4 Composed(float2 pixel)
             const float3 litWorld =
                 Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast, near) +
                 glint * sunGlint * AmbientLight() * cloudLight;
-            const float3 shone =
-                WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy) + caught + AirBeamsAt(hazy + 0.5, near);
+#if COMPOSITE_RAIN
+            const float3 rained = WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy);
+#else
+            const float3 rained = litWorld;
+#endif
+            const float3 shone = rained + caught + AirBeamsAt(hazy + 0.5, near);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
         }
 

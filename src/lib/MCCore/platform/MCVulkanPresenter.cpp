@@ -539,9 +539,11 @@ std::expected<std::unique_ptr<MCVulkanPresenter>, std::string> MCVulkanPresenter
     }
 
     presenter->_QuadShader = std::move(*quad);
-    // The composite, and the GPU world's passes before it, each composite.pshader built for it alone.
+    // The composite, with rain and without, and the GPU world's passes before it, each composite.pshader built for it
+    // alone.
     const std::array composites{
         std::tuple{&MCVulkanShaders::Composite, &presenter->_CompositeShader, &presenter->_CompositePipeline},
+        std::tuple{&MCVulkanShaders::CompositeDry, &presenter->_DryShader, &presenter->_DryPipeline},
         std::tuple{&MCVulkanShaders::CompositeBright, &presenter->_BrightShader, &presenter->_BrightPipeline},
         std::tuple{&MCVulkanShaders::CompositeField, &presenter->_FieldShader, &presenter->_FieldPipeline},
     };
@@ -675,10 +677,12 @@ MCVulkanPresenter::~MCVulkanPresenter()
     _Nearest.reset();
     _Linear.reset();
     _CompositePipeline.reset();
+    _DryPipeline.reset();
     _BrightPipeline.reset();
     _FieldPipeline.reset();
     _QuadShader.reset();
     _CompositeShader.reset();
+    _DryShader.reset();
     _BrightShader.reset();
     _FieldShader.reset();
 
@@ -1248,9 +1252,9 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
     target.load_op = SDL_GPU_LOADOP_DONT_CARE;
     target.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
-    SDL_BindGPUGraphicsPipeline(pass, _CompositePipeline.get());
     const SDL_GPUViewport viewport{0.0f, 0.0f, width, height, 0.0f, 1.0f};
     SDL_SetGPUViewport(pass, &viewport);
+    SDL_GPUGraphicsPipeline* bound = nullptr;
 
     auto draw = [&](const std::array<float, 4>& rect, SDL_GPUTexture& world, SDL_GPUTexture& bloom,
                     SDL_GPUTexture& indices, SDL_GPUTexture& glints, SDL_GPUTexture& lightTiles,
@@ -1276,6 +1280,17 @@ void MCVulkanPresenter::Composite(SDL_GPUCommandBuffer& commands, const MCFrame&
             {&glints, _Nearest.get()},
             {&lightTiles, _Nearest.get()},
         }};
+
+        // Port-only (HD weather): without the rain's wet look and veil where neither shows (composite.pshader's WetAt
+        // and VeiledAt leave the colour as it is then).
+        if (SDL_GPUGraphicsPipeline* const pipeline = uniforms.WetLook[0] > 0.0f || uniforms.Weather[3] > 0.0f
+                                                          ? _CompositePipeline.get()
+                                                          : _DryPipeline.get();
+            pipeline != bound)
+        {
+            SDL_BindGPUGraphicsPipeline(pass, pipeline);
+            bound = pipeline;
+        }
 
         DrawComposite(commands, *pass, bindings, {{rect[0], rect[1], rect[2], rect[3]}, {width, height, 0.0f, 0.0f}},
                       uniforms);

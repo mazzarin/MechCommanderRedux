@@ -133,6 +133,12 @@ private:
     MCGpuHandle<SDL_GPUGraphicsPipeline> _BrightPipeline;
     MCGpuHandle<SDL_GPUShader> _FieldShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _FieldPipeline;
+    /// <summary>
+    /// Port-only (HD weather): the composite without rain, built without the rain's wet look and veil
+    /// (shaders/composite_dry.pshader), for a quad where neither shows.
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _DryShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _DryPipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;

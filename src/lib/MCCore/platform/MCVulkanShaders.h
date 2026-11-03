@@ -21,7 +21,9 @@ enum class MCShader : uint8_t
     /// <summary>Port-only: the bloom's bright pass alone (shaders/composite_bright.pshader).</summary>
     CompositeBright,
     /// <summary>Port-only: the GPU world's field pass alone (shaders/composite_field.pshader).</summary>
-    CompositeField
+    CompositeField,
+    /// <summary>Port-only: the composite without rain (shaders/composite_dry.pshader).</summary>
+    CompositeDry
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -64,6 +66,7 @@ namespace MCVulkanShaders
     extern const MCShaderInfo Composite;
     extern const MCShaderInfo CompositeBright;
     extern const MCShaderInfo CompositeField;
+    extern const MCShaderInfo CompositeDry;
     extern const MCShaderInfo DrawVertex;
     extern const MCShaderInfo DrawFragment;
     extern const MCShaderInfo DrawBasicFragment;

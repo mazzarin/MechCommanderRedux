@@ -14,6 +14,8 @@
 // - EnumSessions sends a query (to the address given at InitializeConnection, or broadcast on the LAN when none) and
 //   reports the sessions that answered recently (DirectPlay's asynchronous enumeration).
 // - Everything is polled from the game's own calls (Receive, Send, EnumSessions, ...): no thread.
+// - A session flagged DPSESSION_KEEPALIVE (the game's are) has the operating system watch each link to it
+//   (MCSocket::KeepAlive): a machine that vanishes is dropped within about half a minute, as DirectPlay dropped it.
 // Differences from DirectPlay: every message is delivered in order (TCP), the guaranteed flag changes nothing; the
 // host cannot migrate (when it leaves, the others get DPSYS_SESSIONLOST); only the TCP/IP and IPX connections exist
 // (both are this transport; IPX means "search the LAN"); there is no lobby.

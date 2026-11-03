@@ -62,6 +62,35 @@ namespace MCSocket
     /// <returns>The connection, or <see cref="InvalidHandle"/> when it failed or timed out.</returns>
     Handle ConnectTcp(const Address& to, int timeoutMs);
 
+    /// <summary>
+    /// How soon a connection kept alive (<see cref="KeepAlive"/>) fails once the machine at its other end has gone:
+    /// switched off, asleep or off the network. The operating systems ask and answer, never the games, so a game busy
+    /// loading or drawing slowly is never taken for gone.
+    /// </summary>
+    struct KeepAliveTimes
+    {
+        /// <summary>Seconds without a word from the other end before asking whether it is there.</summary>
+        int IdleSeconds = 0;
+        /// <summary>Seconds between the questions.</summary>
+        int IntervalSeconds = 0;
+        /// <summary>Questions left unanswered before the connection fails.</summary>
+        int Probes = 0;
+        /// <summary>Seconds data sent may go unacknowledged before the connection fails.</summary>
+        int DropSeconds = 0;
+
+        friend bool operator==(const KeepAliveTimes&, const KeepAliveTimes&) = default;
+    };
+
+    /// <summary>A machine gone is noticed within about half a minute, the connection quiet or busy.</summary>
+    inline constexpr KeepAliveTimes LinkKeepAlive{10, 5, 4, 30};
+
+    /// <summary>
+    /// Has the operating system watch the TCP connection <paramref name="socket"/> for the machine at its other end
+    /// going (<see cref="LinkKeepAlive"/>); the connection then fails as a closed one does. A system without one of
+    /// the settings keeps its own for it.
+    /// </summary>
+    void KeepAlive(Handle socket);
+
     /// <summary>Sends what the connection takes of <paramref name="data"/> without blocking.</summary>
     /// <returns>The bytes sent (0 when the connection is busy), or -1 when the connection failed.</returns>
     int Send(Handle socket, std::span<const uint8_t> data);
@@ -111,6 +140,8 @@ public:
     virtual MCSocket::Handle AcceptTcp(MCSocket::Handle listener, MCSocket::Address& from) = 0;
     /// <summary>See <see cref="MCSocket::ConnectTcp"/>.</summary>
     virtual MCSocket::Handle ConnectTcp(const MCSocket::Address& to, int timeoutMs) = 0;
+    /// <summary>See <see cref="MCSocket::KeepAlive"/>.</summary>
+    virtual void KeepAlive(MCSocket::Handle socket) = 0;
     /// <summary>See <see cref="MCSocket::Send"/>.</summary>
     virtual int Send(MCSocket::Handle socket, std::span<const uint8_t> data) = 0;
     /// <summary>See <see cref="MCSocket::Receive"/>.</summary>
@@ -136,6 +167,7 @@ public:
     MCSocket::Handle ListenTcp(uint16_t port) override;
     MCSocket::Handle AcceptTcp(MCSocket::Handle listener, MCSocket::Address& from) override;
     MCSocket::Handle ConnectTcp(const MCSocket::Address& to, int timeoutMs) override;
+    void KeepAlive(MCSocket::Handle socket) override;
     int Send(MCSocket::Handle socket, std::span<const uint8_t> data) override;
     int Receive(MCSocket::Handle socket, std::span<uint8_t> data) override;
     MCSocket::Handle OpenUdp(uint16_t port) override;
@@ -143,4 +175,10 @@ public:
     int ReceiveFrom(MCSocket::Handle socket, std::span<uint8_t> data, MCSocket::Address& from) override;
     uint16_t LocalPort(MCSocket::Handle socket) override;
     void Close(MCSocket::Handle socket) override;
+
+    /// <summary>
+    /// The times the operating system watches the TCP connection <paramref name="socket"/> by, as it reports them;
+    /// nothing when it doesn't watch it (as <see cref="KeepAlive"/> left it).
+    /// </summary>
+    static std::optional<MCSocket::KeepAliveTimes> KeepAliveOf(MCSocket::Handle socket);
 };

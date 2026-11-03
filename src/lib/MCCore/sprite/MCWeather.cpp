@@ -1802,23 +1802,36 @@ namespace
                std::min(x0, x1) - reach <= right && std::min(y0, y1) - reach <= bottom;
     }
 
-    /// <summary>Adds <paramref name="command"/> to the draw list at <paramref name="depth"/> if it shows.</summary>
-    void Mark(const MCCamera& camera, const MCParticleCommand& command, int32_t depth)
+    /// <summary>
+    /// The frame's marks, each at its depth, added to the draw list together once all are made (MCParticles::AddMarks):
+    /// drawn as each added alone would be.
+    /// </summary>
+    struct Marks
+    {
+        std::vector<MCParticleCommand> Commands;
+        std::vector<int32_t> Depths;
+    };
+
+    /// <summary>
+    /// Adds <paramref name="command"/> to <paramref name="marks"/> at <paramref name="depth"/> if it shows.
+    /// </summary>
+    void Mark(Marks& marks, const MCCamera& camera, const MCParticleCommand& command, int32_t depth)
     {
         if (InView(camera, command.X0, command.Y0, command.X1, command.Y1,
                    command.Radius + std::max(command.Ring, 0.0f)))
         {
-            MCParticles::AddMark(command, depth);
+            marks.Commands.push_back(command);
+            marks.Depths.push_back(depth);
         }
     }
 
     /// <summary>
-    /// Adds falling flake <paramref name="drop"/> to the draw list, hard edged, upwind of where it lands and above it,
-    /// rocking to each side: far, a dot; between, one twice as wide; near, a plus three wide, brightest where its arms
-    /// cross; in the palette's palest greys, no paler than <paramref name="palest"/>, catching the light by the lights as
-    /// <paramref name="catching"/> says.
+    /// Adds falling flake <paramref name="drop"/> to <paramref name="marks"/>, hard edged, upwind of where it lands and
+    /// above it, rocking to each side: far, a dot; between, one twice as wide; near, a plus three wide, brightest where
+    /// its arms cross; in the palette's palest greys, no paler than <paramref name="palest"/>, catching the light by
+    /// the lights as <paramref name="catching"/> says.
     /// </summary>
-    void AddFlake(const Drop& drop, const MCCamera& camera, const Catching& catching, float palest)
+    void AddFlake(Marks& marks, const Drop& drop, const MCCamera& camera, const Catching& catching, float palest)
     {
         const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera);
         const float left = std::max(drop.Fall - drop.Age * drop.Speed, 0.0f);
@@ -1838,7 +1851,7 @@ namespace
             {
                 command.Radius = FlakeDot;
                 SetColor(command, NoPalerThan(FlakeWhite, palest), drop.Alpha);
-                Mark(camera, command, drop.Depth);
+                Mark(marks, camera, command, drop.Depth);
                 break;
             }
 
@@ -1849,12 +1862,12 @@ namespace
                 SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
                 command.X0 -= MockPixel;
                 command.X1 += MockPixel;
-                Mark(camera, command, drop.Depth);
+                Mark(marks, camera, command, drop.Depth);
                 command.X0 += MockPixel;
                 command.X1 = command.X0;
                 command.Y0 -= MockPixel;
                 command.Y1 += MockPixel;
-                Mark(camera, command, drop.Depth);
+                Mark(marks, camera, command, drop.Depth);
                 break;
             }
 
@@ -1862,23 +1875,23 @@ namespace
             {
                 command.Radius = 2.0f * FlakeDot;
                 SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
-                Mark(camera, command, drop.Depth);
+                Mark(marks, camera, command, drop.Depth);
                 break;
             }
         }
     }
 
     /// <summary>
-    /// Adds the falling drops to the draw list: hard-edged streaks, slanted, their tails toward the wind, catching the
-    /// light by the lights as <paramref name="catching"/> says; flakes as AddFlake draws them.
+    /// Adds the falling drops to <paramref name="marks"/>: hard-edged streaks, slanted, their tails toward the wind,
+    /// catching the light by the lights as <paramref name="catching"/> says; flakes as AddFlake draws them.
     /// </summary>
-    void AddDrops(const State& state, const MCCamera& camera, const Catching& catching, float palest)
+    void AddDrops(Marks& marks, const State& state, const MCCamera& camera, const Catching& catching, float palest)
     {
         for (const Drop& drop : state.Drops)
         {
             if (drop.Flake)
             {
-                AddFlake(drop, camera, catching, palest);
+                AddFlake(marks, drop, camera, catching, palest);
                 continue;
             }
 
@@ -1899,15 +1912,15 @@ namespace
             // Its streak's middle, above the ground it falls to.
             const float middle = left + 0.5f * length;
             SetGlint(command, catching, at.X - middle * drop.Slant, at.Y, middle, Facet(drop.X, drop.Y));
-            Mark(camera, command, drop.Depth);
+            Mark(marks, camera, command, drop.Depth);
         }
     }
 
     /// <summary>
-    /// Adds the splashes' pieces and the drips to the draw list, hard edged, those in the air catching the light by the
-    /// lights as <paramref name="catching"/> says; their colours no paler than <paramref name="palest"/>.
+    /// Adds the splashes' pieces and the drips to <paramref name="marks"/>, hard edged, those in the air catching the
+    /// light by the lights as <paramref name="catching"/> says; their colours no paler than <paramref name="palest"/>.
     /// </summary>
-    void AddSplashes(const State& state, const MCCamera& camera, const Catching& catching, float palest)
+    void AddSplashes(Marks& marks, const State& state, const MCCamera& camera, const Catching& catching, float palest)
     {
         for (const Splash& splash : state.Splashes)
         {
@@ -1996,7 +2009,7 @@ namespace
                          Facet(splash.X + splash.VAcross, splash.Y + splash.VUp));
             }
 
-            Mark(camera, command, splash.Depth);
+            Mark(marks, camera, command, splash.Depth);
 
             // A glint's arm across its tick, through its middle.
             if (splash.Kind == SplashKind::Glint)
@@ -2006,7 +2019,7 @@ namespace
                 command.Y1 = command.Y0;
                 command.X0 -= arm;
                 command.X1 += arm;
-                Mark(camera, command, splash.Depth);
+                Mark(marks, camera, command, splash.Depth);
             }
         }
     }
@@ -2593,8 +2606,10 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
 
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
     const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
-    AddSplashes(state, camera, catching, palest);
-    AddDrops(state, camera, catching, palest);
+    Marks marks;
+    AddSplashes(marks, state, camera, catching, palest);
+    AddDrops(marks, state, camera, catching, palest);
+    MCParticles::AddMarks(marks.Commands, marks.Depths);
 }
 
 auto MCWeather::Clear() -> void

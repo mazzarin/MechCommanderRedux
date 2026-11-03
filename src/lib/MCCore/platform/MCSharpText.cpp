@@ -9,6 +9,12 @@
 namespace
 {
     constexpr int32_t BytesPerPixel = 4;
+    /// <summary>
+    /// The characters the original's fonts leave blank (Windows-1252 0x80-0xBF), some of which the port makes at load
+    /// (gui/MCFontGlyphs: a ¿ turned round, its shadow on the wrong side): not the art's own, so not read for its layers.
+    /// </summary>
+    constexpr int32_t MadeFirst = 0x80;
+    constexpr int32_t MadeLast = 0xbf;
     /// <summary>A stroke's half width, in glyph pixels (strokes are a pixel wide, as the glyph's are).</summary>
     constexpr float StrokeRadius = 0.5f;
     /// <summary>How far from a redrawn pixel's glyph pixel the strokes that may reach it start, in glyph pixels.</summary>
@@ -384,6 +390,11 @@ MCSharpText::MCFontLayers MCSharpText::LayersOf(std::span<const uint8_t> font)
 
     for (int32_t character = 0; character < count; ++character)
     {
+        if (character >= MadeFirst && character <= MadeLast)
+        {
+            continue;
+        }
+
         const auto offset =
             static_cast<uint32_t>(MCVfxRead32(font, FontTableAt + static_cast<size_t>(character) * FontOffsetBytes));
         const int32_t width = MCVfxRead32(font, offset);

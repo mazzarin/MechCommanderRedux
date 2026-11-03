@@ -68,8 +68,8 @@ namespace MCSharpText
     };
 
     /// <summary>
-    /// The layers of the VFX font <paramref name="font"/> (from its header): none placed, no shadow, when its glyphs
-    /// don't fit its data.
+    /// The layers of the VFX font <paramref name="font"/> (from its header), read from the art's own glyphs (not those
+    /// MCFontGlyphs makes for its blanks): none placed, no shadow, when its glyphs don't fit its data.
     /// </summary>
     MCFontLayers LayersOf(std::span<const uint8_t> font);
 

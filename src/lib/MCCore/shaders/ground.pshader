@@ -1,0 +1,85 @@
+// Port-only: the kept ground (MCVulkanRenderer's KeptGround), drawn with quad.vshader over the whole target, at the
+// drawn pixels whose window pixels lie in the terrain's clip. The kept ground is the terrain layer drawn over nothing
+// (transparent): its colours (premultiplied; alpha 1 where the terrain's first pass drew, partly where only its seam
+// pass reached) and indices. Each pixel reads the kept pixel `shift` before it (drawn pixels, clamped to the copy).
+// By mode:
+// - Copy (opaque pipeline): the kept colours and indices as they are, no glints; to move the kept ground.
+// - Clear (opaque pipeline): nothing (transparent, index 0), to draw a part of it again.
+// - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
+//   and the glints under them covered as the colours cover them.
+// - Indices (index-only pipeline): the indices where the first pass drew, which wrote them.
+//
+// Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
+
+Texture2D<float4> colorsTex : register(t0, space2);
+SamplerState colorsSampler : register(s0, space2);
+Texture2D<float4> indicesTex : register(t1, space2);
+SamplerState indicesSampler : register(s1, space2);
+
+cbuffer Ground : register(b0, space3)
+{
+    // xy: how far before the drawn pixel its kept pixel lies (drawn pixels); z: the mode; w unused.
+    int4 shift;
+    // The window pixels written: x0, y0, x1, y1.
+    int4 clip;
+    // The target's size in window pixels (xy) and as drawn (zw).
+    int4 scale;
+};
+
+static const int ModeCopy = 0;
+static const int ModeClear = 1;
+static const int ModeOver = 2;
+static const int ModeIndices = 3;
+
+struct Output
+{
+    float4 color : SV_Target0;
+    float4 index : SV_Target1;
+    float4 glint : SV_Target2;
+};
+
+// The window pixel under drawn pixel p's centre, with sizes s (window xy, drawn zw): draw.pshader's WindowPixel.
+int2 WindowPixel(int2 p, int4 s)
+{
+    return int2((2u * uint2(p) + 1u) * uint2(s.xy) / (2u * uint2(s.zw)));
+}
+
+Output main(float4 position : SV_Position)
+{
+    const int2 target = int2(floor(position.xy));
+    const int2 pixel = WindowPixel(target, scale);
+
+    if (any(pixel < clip.xy) || any(pixel > clip.zw))
+    {
+        discard;
+    }
+
+    Output output;
+    output.color = float4(0.0, 0.0, 0.0, 0.0);
+    output.index = float4(0.0, 0.0, 0.0, 0.0);
+    output.glint = float4(0.0, 0.0, 0.0, 0.0);
+
+    if (shift.z == ModeClear)
+    {
+        return output;
+    }
+
+    uint width;
+    uint height;
+    colorsTex.GetDimensions(width, height);
+    const int2 kept = clamp(target - shift.xy, int2(0, 0), int2(width, height) - 1);
+    const float2 at = (float2(kept) + 0.5) / float2(width, height);
+    output.color = colorsTex.SampleLevel(colorsSampler, at, 0);
+    output.index = indicesTex.SampleLevel(indicesSampler, at, 0);
+
+    if (shift.z == ModeOver)
+    {
+        output.glint = float4(0.0, 0.0, 0.0, output.color.a);
+    }
+    else if (shift.z == ModeIndices && output.color.a < 1.0)
+    {
+        discard;
+    }
+
+    return output;
+}

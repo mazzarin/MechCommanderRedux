@@ -383,6 +383,20 @@ private:
         uint32_t CellCount = 0;
     };
 
+    /// <summary>
+    /// Port-only (the kept ground, KeepGround): a terrain tile as a cell draws it (terrain.vshader's Image): its box's
+    /// size, its hot spot and the width its header gives; and the palette indices its pixels hold.
+    /// </summary>
+    struct TerrainTileShape
+    {
+        int32_t Width = 0;
+        int32_t Height = 0;
+        int32_t HotX = 0;
+        int32_t HotY = 0;
+        int32_t HeaderWidth = 0;
+        std::bitset<256> Colors;
+    };
+
     /// <summary>The terrain mesh on the GPU: its tiles' atlas, its cells and images (shaders/terrain.vshader).</summary>
     struct TerrainMeshState
     {
@@ -413,6 +427,76 @@ private:
         int32_t FirstCol = 0;
         int32_t Cols = 0;
         int32_t Rows = 0;
+        /// <summary>
+        /// Port-only (KeepGround): the cells' tiles and corner elevations as uploaded, and the tiles as they are drawn,
+        /// so the kept ground can tell which cells' draws changed.
+        /// </summary>
+        std::vector<uint32_t> CellTiles;
+        std::vector<uint32_t> CellElevations;
+        std::vector<TerrainTileShape> Shapes;
+        /// <summary>Port-only: which upload this is (TerrainUploads), so the kept ground knows the mesh it was drawn from.</summary>
+        uint64_t Upload = 0;
+    };
+
+    /// <summary>
+    /// Port-only: the ground (the terrain layer drawn over nothing) kept from frame to frame for the surface the
+    /// terrain draws on first, so a frame redraws only the ground that changed: what the view scrolled onto, and the
+    /// cells whose draw changed (fog of war, the water's colour cycle, a tile now dropped or drawn at the view's edges).
+    /// It is in one of two pairs of textures the surface's size (colours, indices); when the view moved, the next
+    /// frame's is made in the other from this one, shifted. A frame then lays it over the surface where the terrain
+    /// layer would be drawn (shaders/ground.pshader): the same pixels wherever the terrain's first pass draws (all but
+    /// the void past the map's ring of off-map cells, where its seams' blends over the surface may round apart). Only
+    /// with HD ground, whose two passes are most of a frame's drawing.
+    /// </summary>
+    struct KeptGround
+    {
+        std::array<Texture, 2> Colors;
+        std::array<Texture, 2> Indices;
+        /// <summary>The glints the terrain's draws write while it is drawn (its pipelines' third target), never read.</summary>
+        Texture Glints;
+        /// <summary>The pair holding the ground, and whether one does.</summary>
+        size_t Current = 0;
+        bool Held = false;
+        /// <summary>The surface (its index and window) and the terrain mesh's upload it was drawn for.</summary>
+        int32_t SurfaceIndex = -1;
+        MCAddressKey SurfaceKey;
+        uint64_t Upload = 0;
+        /// <summary>The terrain layer drawn (the camera's place, the grid), the fog's flags (1: the home side sees the
+        /// vertex; FogColumns a row) and the colour cycle's step.</summary>
+        MCTerrainFrame Frame;
+        std::vector<uint8_t> Seen;
+        int32_t FogColumns = 0;
+        int32_t CycleStep = 0;
+        /// <summary>
+        /// The camera's place the frame before (the origin of the last terrain layer drawn, kept or not): a view moving
+        /// so its pixels can't be kept moved draws its terrain directly until it holds still.
+        /// </summary>
+        std::array<int32_t, 2> LastOrigin{INT32_MIN, INT32_MIN};
+        /// <summary>
+        /// The rest it was drawn with, as bytes (GroundLooks): the sizes, the terrain's steps and clip, the haze's
+        /// tables, the palette (but the cycled colours) and the frame's uniforms (but the cycle's step).
+        /// </summary>
+        std::vector<uint8_t> Looks;
+    };
+
+    /// <summary>Port-only: what shaders/ground.pshader draws of the kept ground (its modes).</summary>
+    enum class KeptGroundMode : int32_t
+    {
+        Copy,
+        Clear,
+        Over,
+        Indices
+    };
+
+    /// <summary>Port-only (KeepGround): how a frame brings the kept ground up to date.</summary>
+    struct GroundPlan
+    {
+        /// <summary>Whether it is drawn again whole (else from the kept one, shifted).</summary>
+        bool Whole = true;
+        /// <summary>How far the kept pixels moved (drawn pixels).</summary>
+        std::array<int32_t, 2> Shift{};
+        /// <summary>The parts drawn again (drawn pixels), when not whole.</summary>
+        std::vector<MCRect> Redrawn;
     };
 
     /// <summary>The surface for <paramref name="window"/> (made on first use); records a resize when its size changed.</summary>
@@ -832,6 +916,29 @@ private:
     /// <summary>Execution: draws a terrain layer in the render pass under way.</summary>
     void DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
                      const TerrainDraw& draw, std::span<const std::byte> frameUniforms);
+    /// <summary>
+    /// Port-only (KeepGround): what the kept ground depends on for <paramref name="draw"/> on
+    /// <paramref name="surface"/> but the camera, the fog and the colour cycle's step, as bytes:
+    /// <paramref name="frameUniforms"/> are the terrain's (the step left out).
+    /// </summary>
+    std::vector<uint8_t> GroundLooks(const Surface& surface, const TerrainDraw& draw,
+                                     std::span<const std::byte> frameUniforms) const;
+    /// <summary>
+    /// Port-only (KeepGround): how to bring the kept ground up to date for <paramref name="draw"/> on surface
+    /// <paramref name="surfaceIndex"/>, drawn with <paramref name="looks"/>, the fog's flags <paramref name="seen"/>
+    /// (<paramref name="fogColumns"/> a row) and colour cycle step <paramref name="cycleStep"/>: drawn whole, or shifted
+    /// and the parts that changed drawn again.
+    /// </summary>
+    GroundPlan PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
+                          std::span<const uint8_t> seen, int32_t fogColumns, int32_t cycleStep) const;
+    /// <summary>
+    /// Port-only (KeepGround): draws kept pair <paramref name="from"/> (none for Clear) as <paramref name="mode"/>
+    /// says, each pixel from the one <paramref name="shift"/> before it (drawn pixels), at the drawn pixels showing
+    /// the terrain's clip in the render pass under way on <paramref name="surface"/>'s size.
+    /// </summary>
+    void DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
+                        const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from = std::nullopt,
+                        std::array<int32_t, 2> shift = {});
     /// <summary>Reads <paramref name="surfaces"/>' indices back (each its texture's size), waiting for the GPU.</summary>
     std::expected<std::vector<std::vector<uint8_t>>, std::string> Download(
         std::span<const std::reference_wrapper<const Surface>> surfaces);
@@ -880,6 +987,18 @@ private:
     /// <summary>Port-only: the terrain's seam pass, blended (shaders/terrain.vshader).</summary>
     MCGpuHandle<SDL_GPUGraphicsPipeline> _TerrainSeamPipeline;
     TerrainMeshState _TerrainMesh;
+    /// <summary>Port-only: the terrain meshes uploaded (TerrainMeshState::Upload).</summary>
+    uint64_t _TerrainUploads = 0;
+    /// <summary>
+    /// Port-only: the kept ground, and the shaders and pipelines that draw it (shaders/ground.pshader): opaque (Copy,
+    /// Clear), blended (Over) and the indices alone (Indices).
+    /// </summary>
+    KeptGround _KeptGround;
+    MCGpuHandle<SDL_GPUShader> _QuadShader;
+    MCGpuHandle<SDL_GPUShader> _GroundShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundPipeline;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundOverPipeline;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _GroundIndexPipeline;
     std::vector<TerrainDraw> _TerrainDraws;
     /// <summary>The surface whose tile commands a terrain layer drew (-1: none).</summary>
     int32_t _TerrainLayerSurface = -1;

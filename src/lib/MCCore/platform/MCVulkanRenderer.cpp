@@ -304,6 +304,16 @@ namespace
                inner.Y1 <= outer.Y1;
     }
 
+    MCRect Intersection(const MCRect& a, const MCRect& b)
+    {
+        return MCRect{std::max(a.X0, b.X0), std::max(a.Y0, b.Y0), std::min(a.X1, b.X1), std::min(a.Y1, b.Y1)};
+    }
+
+    int64_t Area(const MCRect& rect)
+    {
+        return Empty(rect) ? 0 : static_cast<int64_t>(rect.X1 - rect.X0 + 1) * (rect.Y1 - rect.Y0 + 1);
+    }
+
     MCRect Union(const MCRect& a, const MCRect& b)
     {
         if (Empty(a))
@@ -513,6 +523,25 @@ namespace
         }
     }
 
+    /// <summary>Port-only (the kept ground): the palette indices a tile's pixels hold (those DecodeTile draws).</summary>
+    std::bitset<256> TileColors(std::span<const uint8_t> tile)
+    {
+        std::bitset<256> colors;
+
+        for (int32_t row = 0; row < tile[2]; ++row)
+        {
+            const uint32_t offset = TileOffset(tile, row);
+            const int32_t length = static_cast<int32_t>(TileOffset(tile, row + 1) - offset);
+
+            for (int32_t i = 0; i < length - 1; ++i)
+            {
+                colors.set(tile[offset + 1 + i]);
+            }
+        }
+
+        return colors;
+    }
+
     /// <summary>
     /// Port-only (HD ground's seam pass, draw.pshader's PatchMask): with HD ground, the terrain atlas's columns past each
     /// tile's place, which hold its rows' runs (a tile's row is one run, DecodeTile's): red the first column drawn, green
@@ -549,6 +578,44 @@ namespace
             line[width * 2 + 1] = static_cast<uint8_t>(last);
         }
     }
+
+    /// <summary>Port-only (the kept ground): terrain.vshader's SeamReach, how far the seam pass reaches past a tile.</summary>
+    constexpr int32_t TerrainSeamReach = 2;
+    /// <summary>
+    /// Port-only (the kept ground): the most parts a frame draws again (each launches the terrain's grid again; more go
+    /// as their bounds), the share of the clip past which it is drawn again whole, and the drawn pixels two parts' bounds
+    /// may add to them to be drawn as one.
+    /// </summary>
+    constexpr size_t MostGroundParts = 8;
+    constexpr int64_t WholeGroundPercent = 60;
+    constexpr int64_t GroundMergeSlack = 64 * 64;
+    /// <summary>Port-only (the kept ground): a cell's draw in the terrain's first pass and its seam pass, and its haze.</summary>
+    struct GroundCellDraw
+    {
+        bool First = false;
+        bool Seam = false;
+        /// <summary>The corners seen (0-4), or AllHazed for the fill (everything filled).</summary>
+        int32_t Seen = 0;
+
+        bool operator==(const GroundCellDraw&) const = default;
+    };
+
+    constexpr int32_t AllHazed = -1;
+
+    /// <summary>The quad shader's uniforms (shaders/quad.vshader, cbuffer Quad).</summary>
+    struct QuadUniforms
+    {
+        float Rect[4];
+        float TargetSize[4];
+    };
+
+    /// <summary>Port-only: the kept ground's copy's uniforms (shaders/ground.pshader, cbuffer Ground).</summary>
+    struct GroundUniforms
+    {
+        int32_t Shift[4];
+        int32_t Clip[4];
+        int32_t Scale[4];
+    };
 
     /// <summary>The terrain shader's vertex uniforms (shaders/terrain.vshader, cbuffer Terrain).</summary>
     struct TerrainUniforms
@@ -721,6 +788,20 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
 
     renderer->_TerrainShader = std::move(*terrain);
 
+    // Port-only: the kept ground's copy (KeepGround): a rectangle of the target, with its own fragment shader.
+    for (auto [info, shader] : {std::pair{&MCVulkanShaders::Quad, &renderer->_QuadShader},
+                                std::pair{&MCVulkanShaders::GroundFragment, &renderer->_GroundShader}})
+    {
+        auto loaded = MCVulkanShaders::Load(device, *info);
+
+        if (!loaded)
+        {
+            return std::unexpected(loaded.error());
+        }
+
+        *shader = std::move(*loaded);
+    }
+
     // A surface's targets: its colours, its indices and (port-only, HD weather) its glints. Opaque draws write all
     // three; blended draws blend their premultiplied colour over the colours and the glints (ONE, ONE_MINUS_SRC_ALPHA)
     // and leave the indices. A shadow (HD lighting) takes the colours' alpha down by its own (ZERO,
@@ -814,9 +895,17 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         makePipeline(*renderer->_TerrainShader, false, false, false, false, renderer->_TerrainFragmentShader.get());
     renderer->_TerrainSeamPipeline =
         makePipeline(*renderer->_TerrainShader, true, false, false, false, renderer->_TerrainFragmentShader.get());
+    renderer->_GroundPipeline =
+        makePipeline(*renderer->_QuadShader, false, false, false, false, renderer->_GroundShader.get());
+    renderer->_GroundOverPipeline =
+        makePipeline(*renderer->_QuadShader, true, false, false, false, renderer->_GroundShader.get());
+    renderer->_GroundIndexPipeline =
+        makePipeline(*renderer->_QuadShader, false, true, false, false, renderer->_GroundShader.get());
 
     if (!std::ranges::all_of(renderer->_Pipelines, &DrawPipelines::Made) || renderer->_ShadowPipeline == nullptr ||
-        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr)
+        renderer->_TerrainPipeline == nullptr || renderer->_TerrainSeamPipeline == nullptr ||
+        renderer->_GroundPipeline == nullptr || renderer->_GroundOverPipeline == nullptr ||
+        renderer->_GroundIndexPipeline == nullptr)
     {
         return std::unexpected(SdlError("SDL_CreateGPUGraphicsPipeline(draw)"));
     }
@@ -4420,6 +4509,10 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
     BeginRecording();
     ReleaseTerrainMesh();
     _TerrainMesh.Version = mesh.Version;
+    _TerrainMesh.Upload = ++_TerrainUploads;
+    _TerrainMesh.CellTiles = mesh.CellTiles;
+    _TerrainMesh.CellElevations = mesh.CellElevations;
+    _TerrainMesh.Shapes.resize(mesh.Tiles.size());
     _TerrainMesh.HdPack = HdPackInUse();
     _TerrainMesh.FirstRow = mesh.FirstRow;
     _TerrainMesh.FirstCol = mesh.FirstCol;
@@ -4691,6 +4784,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                 QueueUpload(_TerrainMesh.Atlas.Handle, static_cast<uint32_t>(place.X), static_cast<uint32_t>(place.Y),
                             static_cast<uint32_t>(stride), static_cast<uint32_t>(place.Height), 2);
             DecodeTile(mesh.Tiles[i], stride, texels);
+            _TerrainMesh.Shapes[i].Colors = TileColors(mesh.Tiles[i]);
 
             if (runColumns != 0)
             {
@@ -4726,6 +4820,12 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTer
                                                                                    << HalfShift);
         // The width its header gives, which VFX_nTile_draw's test for a tile off the pane reads.
         image[12] = tile[3];
+        TerrainTileShape& shape = _TerrainMesh.Shapes[i];
+        shape.Width = image[2];
+        shape.Height = image[3];
+        shape.HotX = image[4];
+        shape.HotY = image[5];
+        shape.HeaderWidth = image[12];
     }
 
     const std::span<uint32_t> cells = UploadAs<uint32_t>(QueueBufferUpload(_TerrainMesh.Cells, cellsInfo.size));
@@ -4891,6 +4991,353 @@ void MCVulkanRenderer::DrawTerrain(SDL_GPUCommandBuffer& commands, SDL_GPURender
     // The draws that follow read their own buffer.
     SDL_GPUBuffer* const drawBuffer = _DrawBuffer.get();
     SDL_BindGPUVertexStorageBuffers(&pass, 0, &drawBuffer, 1);
+}
+
+std::vector<uint8_t> MCVulkanRenderer::GroundLooks(const Surface& surface, const TerrainDraw& draw,
+                                                   std::span<const std::byte> frameUniforms) const
+{
+    std::vector<uint8_t> looks;
+    const auto add = [&looks](std::span<const std::byte> bytes)
+    {
+        const auto* first = reinterpret_cast<const uint8_t*>(bytes.data());
+        looks.insert(looks.end(), first, first + bytes.size());
+    };
+
+    const auto addValue = [&add](const auto& value) { add(std::as_bytes(std::span(&value, 1))); };
+    const MCTerrainFrame& frame = draw.Frame;
+    const Surface& fog = _Surfaces[draw.FogIndex];
+
+    for (const uint32_t size : {surface.MappedWidth, surface.MappedHeight, surface.Target.Width, surface.Target.Height,
+                                fog.RecordedWidth, fog.RecordedHeight})
+    {
+        addValue(size);
+    }
+
+    for (const int32_t number : {frame.StepX, frame.StepY, frame.ElevStep, frame.MinX, frame.MaxX, frame.MinY,
+                                 frame.MaxY, frame.PaneX, frame.PaneY, frame.Clip.X0, frame.Clip.Y0, frame.Clip.X1,
+                                 frame.Clip.Y1, frame.AllFilled ? 1 : 0, static_cast<int32_t>(draw.FogIndex)})
+    {
+        addValue(number);
+    }
+
+    // The haze's tables as the table texture holds them.
+    for (const uint32_t row : draw.HazeRows)
+    {
+        if (const size_t at = static_cast<size_t>(row) * 256; at + 256 <= _Tables.size())
+        {
+            add(std::as_bytes(std::span(_Tables).subspan(at, 256)));
+        }
+    }
+
+    // The palette, but the colours the cycle shows from others (theirs don't show), and the HD pack's.
+    for (size_t i = 0; i < _Colors.size(); ++i)
+    {
+        const bool cycled = _Cycle.Step >= 0 && i - _Cycle.First < _Cycle.Sources.size();
+        const SDL_Color color = cycled ? SDL_Color{} : _Colors[i];
+        addValue(std::array{color.r, color.g, color.b});
+    }
+
+    addValue(_HdPaletteVersion);
+    add(frameUniforms);
+    return looks;
+}
+
+auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw, std::span<const uint8_t> looks,
+                                  std::span<const uint8_t> seen, int32_t fogColumns, int32_t cycleStep) const
+    -> GroundPlan
+{
+    GroundPlan plan;
+    const KeptGround& kept = _KeptGround;
+    const Surface& surface = _Surfaces[surfaceIndex];
+    const MCTerrainFrame& now = draw.Frame;
+    const MCTerrainFrame& then = kept.Frame;
+
+    if (!kept.Held || kept.SurfaceIndex != surfaceIndex || kept.SurfaceKey != surface.Key ||
+        kept.Upload != _TerrainMesh.Upload || !std::ranges::equal(kept.Looks, looks) ||
+        kept.Seen.size() != seen.size() || kept.FogColumns != fogColumns || fogColumns <= 0 ||
+        (kept.CycleStep < 0) != (cycleStep < 0))
+    {
+        return plan;
+    }
+
+    // The view's move (window pixels). The kept pixels move with it when that is a whole number of drawn pixels: the
+    // pixels showing a window pixel then move with it (draw.pshader's WindowPixel is in whole numbers), and the
+    // shaders' sums there come out the same but for rounding (exactly, when a window pixel is a power of two drawn).
+    const int32_t moveX = now.OriginX - then.OriginX;
+    const int32_t moveY = now.OriginY - then.OriginY;
+    const bool moved = moveX != 0 || moveY != 0;
+    const MCRect& clip = now.Clip;
+    const auto drawnMove = [](int32_t move, uint32_t window, uint32_t drawn) -> std::optional<int32_t>
+    {
+        const int64_t scaled = static_cast<int64_t>(move) * drawn;
+        return window != 0 && scaled % window == 0 ? std::optional(static_cast<int32_t>(scaled / window))
+                                                   : std::nullopt;
+    };
+
+    const std::optional<int32_t> shiftX = drawnMove(moveX, surface.MappedWidth, surface.Target.Width);
+    const std::optional<int32_t> shiftY = drawnMove(moveY, surface.MappedHeight, surface.Target.Height);
+
+    if (moved && (!shiftX.has_value() || !shiftY.has_value() || std::abs(moveX) > clip.X1 - clip.X0 ||
+                  std::abs(moveY) > clip.Y1 - clip.Y0))
+    {
+        return plan;
+    }
+
+    const bool fogChanged = !std::ranges::equal(seen, kept.Seen);
+    const bool cycled = cycleStep != kept.CycleStep;
+    plan.Whole = false;
+    plan.Shift = {*shiftX, *shiftY};
+
+    if (!moved && !fogChanged && !cycled)
+    {
+        return plan;
+    }
+
+    // What the view moved onto (window pixels).
+    std::vector<MCRect> parts;
+
+    if (moveX != 0)
+    {
+        parts.push_back(moveX > 0 ? MCRect{clip.X0, clip.Y0, clip.X0 + moveX - 1, clip.Y1}
+                                  : MCRect{clip.X1 + moveX + 1, clip.Y0, clip.X1, clip.Y1});
+    }
+
+    if (moveY != 0)
+    {
+        parts.push_back(moveY > 0 ? MCRect{clip.X0, clip.Y0, clip.X1, clip.Y0 + moveY - 1}
+                                  : MCRect{clip.X0, clip.Y1 + moveY + 1, clip.X1, clip.Y1});
+    }
+
+    // The indices showing a cycled colour, themselves or through the haze's tables.
+    std::bitset<256> cycledColors;
+
+    for (size_t i = 0; cycled && i < _Cycle.Sources.size() && _Cycle.First + i < cycledColors.size(); ++i)
+    {
+        cycledColors.set(_Cycle.First + i);
+    }
+
+    for (const uint32_t row : draw.HazeRows)
+    {
+        for (size_t i = 0, at = static_cast<size_t>(row) * 256; cycled && i < 256 && at + 256 <= _Tables.size(); ++i)
+        {
+            if (cycledColors.test(_Tables[at + i]))
+            {
+                cycledColors.set(i);
+            }
+        }
+    }
+
+    // A cell's draw in a frame (terrain.vshader's tests), with its haze when the fog changed.
+    const TerrainMeshState& mesh = _TerrainMesh;
+    const int32_t fogRows = static_cast<int32_t>(seen.size()) / fogColumns;
+    const auto seenAt = [fogColumns, fogRows](std::span<const uint8_t> flags, int32_t row, int32_t col)
+    {
+        const auto r = static_cast<uint32_t>(row);
+        const uint32_t c = static_cast<uint32_t>(col) & 0xffffu;
+        const auto columns = static_cast<uint32_t>(fogColumns);
+        const auto rows = static_cast<uint32_t>(fogRows);
+        const uint32_t index = columns * r + c;
+        return r < rows && c <= columns && index < columns * rows ? static_cast<int32_t>(flags[index]) : 0;
+    };
+
+    const auto shapeOf = [&mesh](int32_t row, int32_t col) -> const TerrainTileShape*
+    {
+        const int32_t r = row - mesh.FirstRow;
+        const int32_t c = col - mesh.FirstCol;
+
+        if (r < 0 || c < 0 || r >= mesh.Rows || c >= mesh.Cols)
+        {
+            return nullptr;
+        }
+
+        const uint32_t tile = mesh.CellTiles[static_cast<size_t>(r) * mesh.Cols + c];
+        return tile < mesh.Shapes.size() ? &mesh.Shapes[tile] : nullptr;
+    };
+
+    const auto cornerOf = [&mesh](int32_t row, int32_t col, size_t corner)
+    {
+        const uint32_t elevations =
+            mesh.CellElevations[static_cast<size_t>(row - mesh.FirstRow) * mesh.Cols + (col - mesh.FirstCol)];
+        return static_cast<int32_t>(elevations >> (corner * 8) & 255u);
+    };
+
+    // A cell's box in the window (the seam pass's, the widest), from its top-left vertex's point.
+    const auto boxOf = [](const MCTerrainFrame& frame, const TerrainTileShape& shape, int32_t x, int32_t y)
+    {
+        const int32_t atX = frame.PaneX + x - shape.HotX;
+        const int32_t atY = frame.PaneY + y - shape.HotY;
+        return MCRect{atX - TerrainSeamReach, atY - TerrainSeamReach, atX + shape.Width - 1 + TerrainSeamReach,
+                      atY + shape.Height - 1 + TerrainSeamReach};
+    };
+
+    const auto drawOf = [&](const MCTerrainFrame& frame, std::span<const uint8_t> flags, int32_t row, int32_t col)
+    {
+        GroundCellDraw cell;
+        const TerrainTileShape* const shape = shapeOf(row, col);
+
+        if (shape == nullptr || row < frame.FirstRow || col < frame.FirstCol || row > frame.LastRow ||
+            col > frame.LastCol)
+        {
+            return cell;
+        }
+
+        constexpr std::array<std::array<int32_t, 2>, 4> Corners{{{0, 0}, {0, 1}, {1, 1}, {1, 0}}};
+        std::array<std::array<int32_t, 2>, 4> points{};
+        bool clipped = true;
+
+        for (size_t i = 0; i < Corners.size(); ++i)
+        {
+            const int32_t r = row + Corners[i][0];
+            const int32_t c = col + Corners[i][1];
+            points[i] = {frame.OriginX + (c - r) * frame.StepX,
+                         frame.OriginY + (r + c) * frame.StepY - cornerOf(row, col, i) * frame.ElevStep};
+            clipped = clipped && (points[i][0] < frame.MinX || points[i][0] > frame.MaxX || points[i][1] < frame.MinY ||
+                                  points[i][1] > frame.MaxY);
+        }
+
+        if (clipped)
+        {
+            return cell;
+        }
+
+        const MCRect box = boxOf(frame, *shape, points[0][0], points[0][1]);
+        const MCRect firstBox{box.X0 + TerrainSeamReach, box.Y0 + TerrainSeamReach, box.X1 - TerrainSeamReach,
+                              box.Y1 - TerrainSeamReach};
+        cell.Seam = !Empty(Intersection(box, frame.Clip));
+        cell.First = firstBox.X0 > frame.Clip.X0 - shape->HeaderWidth && !Empty(Intersection(firstBox, frame.Clip));
+        cell.Seen = frame.AllFilled ? AllHazed
+                    : fogChanged    ? seenAt(flags, row, col) + seenAt(flags, row, col + 1) +
+                                          seenAt(flags, row + 1, col + 1) + seenAt(flags, row + 1, col)
+                                    : 0;
+        return cell;
+    };
+
+    // The cells whose draw changed, or whose colours cycled, in either frame's grid.
+    for (int32_t row = std::min(now.FirstRow, then.FirstRow); row <= std::max(now.LastRow, then.LastRow); ++row)
+    {
+        for (int32_t col = std::min(now.FirstCol, then.FirstCol); col <= std::max(now.LastCol, then.LastCol); ++col)
+        {
+            const GroundCellDraw before = drawOf(then, kept.Seen, row, col);
+            const GroundCellDraw after = drawOf(now, seen, row, col);
+            const TerrainTileShape* const shape = shapeOf(row, col);
+
+            if (shape != nullptr &&
+                (before != after || (after.Seam && (shape->Colors & cycledColors).any()) ||
+                 (after.Seam && cycled && (after.Seen == 0 || after.Seen == AllHazed) && cycledColors.test(0x10))))
+            {
+                const int32_t x = now.OriginX + (col - row) * now.StepX;
+                const int32_t y = now.OriginY + (row + col) * now.StepY - cornerOf(row, col, 0) * now.ElevStep;
+                parts.push_back(boxOf(now, *shape, x, y));
+            }
+        }
+    }
+
+    // In drawn pixels, a pixel wider each way (one near a window pixel's edge may show either; drawing more again
+    // changes nothing), in the clip.
+    const auto width = static_cast<int64_t>(surface.Target.Width);
+    const auto height = static_cast<int64_t>(surface.Target.Height);
+    const auto windowWidth = static_cast<int64_t>(std::max(surface.MappedWidth, 1u));
+    const auto windowHeight = static_cast<int64_t>(std::max(surface.MappedHeight, 1u));
+
+    for (const MCRect& part : parts)
+    {
+        const MCRect cut = Intersection(part, clip);
+
+        if (Empty(cut))
+        {
+            continue;
+        }
+
+        plan.Redrawn.push_back(
+            MCRect{static_cast<int32_t>(std::max<int64_t>(cut.X0 * width / windowWidth - 1, 0)),
+                   static_cast<int32_t>(std::max<int64_t>(cut.Y0 * height / windowHeight - 1, 0)),
+                   static_cast<int32_t>(std::min<int64_t>((cut.X1 + 1) * width / windowWidth + 1, width - 1)),
+                   static_cast<int32_t>(std::min<int64_t>((cut.Y1 + 1) * height / windowHeight + 1, height - 1))});
+    }
+
+    // Parts drawn as one where their bounds add little, then as few as MostGroundParts.
+    for (bool merged = true; merged;)
+    {
+        merged = false;
+
+        for (size_t i = 0; i < plan.Redrawn.size() && !merged; ++i)
+        {
+            for (size_t j = i + 1; j < plan.Redrawn.size() && !merged; ++j)
+            {
+                const MCRect both = Union(plan.Redrawn[i], plan.Redrawn[j]);
+
+                if (Area(both) <= Area(plan.Redrawn[i]) + Area(plan.Redrawn[j]) + GroundMergeSlack)
+                {
+                    plan.Redrawn[i] = both;
+                    plan.Redrawn.erase(plan.Redrawn.begin() + static_cast<ptrdiff_t>(j));
+                    merged = true;
+                }
+            }
+        }
+    }
+
+    if (plan.Redrawn.size() > MostGroundParts)
+    {
+        MCRect all{0, 0, -1, -1};
+
+        for (const MCRect& part : plan.Redrawn)
+        {
+            all = Union(all, part);
+        }
+
+        plan.Redrawn.assign(1, all);
+    }
+
+    int64_t redrawn = 0;
+
+    for (const MCRect& part : plan.Redrawn)
+    {
+        redrawn += Area(part);
+    }
+
+    if (redrawn * 100 > width * height * WholeGroundPercent)
+    {
+        return GroundPlan{};
+    }
+
+    return plan;
+}
+
+void MCVulkanRenderer::DrawKeptGround(SDL_GPUCommandBuffer& commands, SDL_GPURenderPass& pass, const Surface& surface,
+                                      const MCRect& clip, KeptGroundMode mode, std::optional<size_t> from,
+                                      std::array<int32_t, 2> shift)
+{
+    const auto width = static_cast<float>(surface.Target.Width);
+    const auto height = static_cast<float>(surface.Target.Height);
+    const QuadUniforms quad{{0.0f, 0.0f, width, height}, {width, height, 0.0f, 0.0f}};
+    const GroundUniforms ground{{shift[0], shift[1], static_cast<int32_t>(mode), 0},
+                                {clip.X0, clip.Y0, clip.X1, clip.Y1},
+                                {static_cast<int32_t>(std::max(surface.MappedWidth, 1u)),
+                                 static_cast<int32_t>(std::max(surface.MappedHeight, 1u)),
+                                 static_cast<int32_t>(std::max(surface.Target.Width, 1u)),
+                                 static_cast<int32_t>(std::max(surface.Target.Height, 1u))}};
+    const SDL_GPUTextureSamplerBinding bindings[2] = {
+        {from.has_value() ? _KeptGround.Colors[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
+        {from.has_value() ? _KeptGround.Indices[*from].Handle.get() : _Blank.Handle.get(), _Nearest.get()},
+    };
+
+    SDL_BindGPUGraphicsPipeline(&pass, mode == KeptGroundMode::Over      ? _GroundOverPipeline.get()
+                                       : mode == KeptGroundMode::Indices ? _GroundIndexPipeline.get()
+                                                                         : _GroundPipeline.get());
+    SDL_BindGPUFragmentSamplers(&pass, 0, bindings, 2);
+    SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+    SDL_PushGPUFragmentUniformData(&commands, 0, &ground, sizeof(ground));
+    SDL_DrawGPUPrimitives(&pass, 6, 1, 0, 0);
+
+    // The draws that follow read their own buffer, bound again. SDL's Metal driver takes this draw, which reads none,
+    // as having bound one, and binds a buffer again only when it is another: so the terrain's goes first.
+    for (SDL_GPUBuffer* const buffer : {_TerrainMesh.Cells.get(), _DrawBuffer.get()})
+    {
+        if (buffer != nullptr)
+        {
+            SDL_BindGPUVertexStorageBuffers(&pass, 0, &buffer, 1);
+        }
+    }
 }
 
 // The frame ----------------------------------------------------------------------------------------------------------
@@ -5270,6 +5717,291 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
         }
     };
 
+    // A pass's frame uniforms: the frame's colours; on a surface shown over an underlay, the key is drawn transparent.
+    const auto framePass = [&](const Surface& surface)
+    {
+        FrameUniforms frame{};
+        frame.Cycle[0] = _Cycle.First;
+        frame.Cycle[1] = _Cycle.Step;
+        frame.Cycle[2] = std::ranges::any_of(underlays, [&](const MCUnderlay& underlay)
+                                             { return surface.Key && TargetSurfaceKey(underlay) == surface.Key; })
+                             ? 1
+                             : 0;
+
+        for (size_t i = 0; i < 8; ++i)
+        {
+            frame.CycleSources[i] = _Cycle.Sources[i];
+        }
+
+        frame.Look[0] =
+            GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
+        frame.Look[1] = GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
+        frame.Look[2] = MCSceneLights::RecastsSunShadows() ? 1.0f : 0.0f;
+        return frame;
+    };
+
+    // The target's scale, and the source's when it is a surface.
+    const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
+    {
+        out[0] = static_cast<int32_t>(std::max(of.MappedWidth, 1u));
+        out[1] = static_cast<int32_t>(std::max(of.MappedHeight, 1u));
+        out[2] = static_cast<int32_t>(std::max(of.Target.Width, 1u));
+        out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
+    };
+
+    // A record's frame uniforms on a surface: the pass's, with the target's scale and the source's.
+    const auto recordFrame = [&](const Surface& surface, const Record& record)
+    {
+        FrameUniforms frame = passFrame;
+        scaleOf(surface, frame.Scale);
+        std::ranges::fill(frame.SourceScale, 1);
+
+        if (record.Source == SourceKind::Surface && _Surfaces[record.SourceIndex].Index.Handle != nullptr)
+        {
+            scaleOf(_Surfaces[record.SourceIndex], frame.SourceScale);
+        }
+        else if (record.Source == SourceKind::TargetCopy)
+        {
+            scaleOf(surface, frame.SourceScale);
+        }
+
+        return frame;
+    };
+
+    // Draws `count` draws from `record`'s first on, which share its bindings, in render pass `into` on `surface`.
+    const auto drawBatch = [&](SDL_GPURenderPass* into, Surface& surface, const Record& record, uint32_t count)
+    {
+        SDL_GPUTexture* source = _Blank.Handle.get();
+
+        switch (record.Source)
+        {
+            case SourceKind::None:
+                break;
+            case SourceKind::Atlas:
+            {
+                source = _Pages[record.SourceIndex].Texture.Handle.get();
+                break;
+            }
+            case SourceKind::Picture:
+            {
+                source = _FramePictures[record.SourceIndex].get();
+                break;
+            }
+            case SourceKind::Surface:
+            {
+                if (_Surfaces[record.SourceIndex].Index.Handle != nullptr)
+                {
+                    source = _Surfaces[record.SourceIndex].Index.Handle.get();
+                }
+                break;
+            }
+            case SourceKind::TargetCopy:
+            {
+                source = surface.Copy.Handle.get();
+                break;
+            }
+            case SourceKind::Strip:
+            {
+                source = _Strip.Handle.get();
+                break;
+            }
+        }
+
+        SDL_GPUTexture* hdColors = _PaletteTexture.Handle.get();
+
+        if (record.Source == SourceKind::Picture)
+        {
+            if (const auto hd = _FrameHdColors.find(record.SourceIndex); hd != _FrameHdColors.end())
+            {
+                hdColors = hd->second.get();
+            }
+        }
+
+        const std::array<SDL_GPUTextureSamplerBinding, DrawSamplers> bindings{{
+            {source, _Nearest.get()},
+            {_TableTexture.Handle.get(), _Nearest.get()},
+            {_AlphaTexture.Handle.get(), _Nearest.get()},
+            {_FitTexture.Handle.get(), _Nearest.get()},
+            {_PaletteTexture.Handle.get(), _Nearest.get()},
+            {hdColors, _Nearest.get()},
+            {hdColors, _Nearest.get()},
+            {_PaletteTexture.Handle.get(), _Nearest.get()},
+            {_PaletteTexture.Handle.get(), _Nearest.get()},
+        }};
+
+        if (SDL_GPUGraphicsPipeline* const pipeline =
+                record.Shadow ? _ShadowPipeline.get() : _Pipelines[static_cast<size_t>(record.Variant)].For(record);
+            pipeline != boundPipeline)
+        {
+            SDL_BindGPUGraphicsPipeline(into, pipeline);
+            boundPipeline = pipeline;
+        }
+
+        const auto sameBinding = [](const SDL_GPUTextureSamplerBinding& a, const SDL_GPUTextureSamplerBinding& b)
+        { return a.texture == b.texture && a.sampler == b.sampler; };
+
+        if (!boundSamplers.has_value() || !std::ranges::equal(*boundSamplers, bindings, sameBinding))
+        {
+            SDL_BindGPUFragmentSamplers(into, 0, bindings.data(), DrawSamplers);
+            boundSamplers = bindings;
+        }
+
+        const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
+                                   static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
+                                  {record.First, 0, 0, 0}};
+        SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
+
+        if (const FrameUniforms frame = recordFrame(surface, record);
+            !pushedFrame.has_value() || std::memcmp(&*pushedFrame, &frame, sizeof(frame)) != 0)
+        {
+            SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
+            pushedFrame = frame;
+        }
+
+        SDL_DrawGPUPrimitives(into, 6, count, 0, 0);
+    };
+
+    // A render pass's start on a surface's size: the viewport, and the draws' buffer.
+    const auto startPass = [&](SDL_GPURenderPass* started, const Surface& surface)
+    {
+        forgetBound();
+        const SDL_GPUViewport viewport{
+            0.0f, 0.0f, static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height),
+            0.0f, 1.0f};
+        SDL_SetGPUViewport(started, &viewport);
+        SDL_GPUBuffer* const drawBuffer = _DrawBuffer.get();
+        SDL_BindGPUVertexStorageBuffers(started, 0, &drawBuffer, 1);
+    };
+
+    // Port-only: the terrain layers each surface draws this frame (the kept ground is a surface's one), and the
+    // surface whose kept ground holds the frame's, for its terrain layer to copy in.
+    std::vector<uint32_t> terrainLayers(_Surfaces.size(), 0);
+    int32_t keptSurface = -1;
+
+    for (const Record& record : _Records)
+    {
+        terrainLayers[record.SurfaceIndex] += record.TerrainDraw >= 0 ? 1 : 0;
+    }
+
+    // Port-only: brings the kept ground up to date for terrain layer `draw` on `surface` (KeptGround), in a render pass
+    // of its own before the surface's; whether it then holds the frame's ground.
+    const auto keepGround = [&](Surface& surface, uint16_t surfaceIndex, const TerrainDraw& draw)
+    {
+        const std::shared_ptr<MCWindow> fog = _Surfaces[draw.FogIndex].Window.lock();
+
+        if (fog == nullptr || fog->Bytes().empty())
+        {
+            return false;
+        }
+
+        std::vector<uint8_t> seen(fog->Bytes().size());
+        std::ranges::transform(fog->Bytes(), seen.begin(),
+                               [](uint8_t flag) { return flag == UINT8_MAX ? uint8_t{1} : uint8_t{0}; });
+        const int32_t fogColumns = fog->XMax + 1;
+        // The terrain's frame uniforms (a record with no source's).
+        const FrameUniforms frame = recordFrame(surface, Record{});
+        FrameUniforms unstepped = frame;
+        unstepped.Cycle[1] = 0;
+        std::vector<uint8_t> looks = GroundLooks(surface, draw, std::as_bytes(std::span(&unstepped, 1)));
+        const GroundPlan plan = PlanGround(surfaceIndex, draw, looks, seen, fogColumns, _Cycle.Step);
+        KeptGround& kept = _KeptGround;
+        const std::array<int32_t, 2> origin{draw.Frame.OriginX, draw.Frame.OriginY};
+        const bool moving = origin != kept.LastOrigin;
+        kept.LastOrigin = origin;
+
+        // Drawn whole while the view moves, the next frame would draw it whole again: drawn directly instead.
+        if (plan.Whole && moving)
+        {
+            return false;
+        }
+
+        const bool shifted = !plan.Whole && (plan.Shift[0] != 0 || plan.Shift[1] != 0);
+
+        if (plan.Whole || shifted || !plan.Redrawn.empty())
+        {
+            // Moved: made in the other pair from this one, shifted; else drawn again in place.
+            const size_t into = shifted ? 1 - kept.Current : kept.Current;
+            constexpr SDL_GPUTextureUsageFlags usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            const uint32_t width = surface.Target.Width;
+            const uint32_t height = surface.Target.Height;
+
+            for (auto made :
+                 {EnsureTexture(kept.Colors[into], SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, usage, width, height),
+                  EnsureTexture(kept.Indices[into], IndexFormat, usage, width, height),
+                  EnsureTexture(kept.Glints, GlintFormat, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, width, height)})
+            {
+                if (!made)
+                {
+                    SDL_Log("MCVulkanRenderer: the ground isn't kept: %s", made.error().c_str());
+
+                    for (size_t i = 0; i < kept.Colors.size(); ++i)
+                    {
+                        Release(kept.Colors[i]);
+                        Release(kept.Indices[i]);
+                    }
+
+                    Release(kept.Glints);
+                    kept.Held = false;
+                    return false;
+                }
+            }
+
+            // Drawn whole over nothing; shifted, every pixel is copied or drawn again; else kept but where drawn again.
+            SDL_GPUColorTargetInfo targets[SurfaceTargets]{};
+            targets[0].texture = kept.Colors[into].Handle.get();
+            targets[1].texture = kept.Indices[into].Handle.get();
+            targets[2].texture = kept.Glints.Handle.get();
+
+            for (SDL_GPUColorTargetInfo& target : targets)
+            {
+                target.load_op = plan.Whole ? SDL_GPU_LOADOP_CLEAR
+                                 : shifted  ? SDL_GPU_LOADOP_DONT_CARE
+                                            : SDL_GPU_LOADOP_LOAD;
+                target.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+                target.store_op = SDL_GPU_STOREOP_STORE;
+            }
+
+            targets[2].load_op = SDL_GPU_LOADOP_DONT_CARE;
+            targets[2].store_op = SDL_GPU_STOREOP_DONT_CARE;
+            SDL_GPURenderPass* const keeping = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
+            startPass(keeping, surface);
+
+            if (shifted)
+            {
+                DrawKeptGround(commands, *keeping, surface, draw.Frame.Clip, KeptGroundMode::Copy, kept.Current,
+                               plan.Shift);
+            }
+
+            if (plan.Whole)
+            {
+                DrawTerrain(commands, *keeping, surface, draw, std::as_bytes(std::span(&frame, 1)));
+            }
+
+            for (const MCRect& part : plan.Redrawn)
+            {
+                const SDL_Rect scissor{part.X0, part.Y0, part.X1 - part.X0 + 1, part.Y1 - part.Y0 + 1};
+                SDL_SetGPUScissor(keeping, &scissor);
+                DrawKeptGround(commands, *keeping, surface, draw.Frame.Clip, KeptGroundMode::Clear);
+                DrawTerrain(commands, *keeping, surface, draw, std::as_bytes(std::span(&frame, 1)));
+            }
+
+            SDL_EndGPURenderPass(keeping);
+            forgetBound();
+            kept.Current = into;
+        }
+
+        kept.Held = true;
+        kept.SurfaceIndex = surfaceIndex;
+        kept.SurfaceKey = surface.Key;
+        kept.Upload = _TerrainMesh.Upload;
+        kept.Frame = draw.Frame;
+        kept.Seen = std::move(seen);
+        kept.FogColumns = fogColumns;
+        kept.CycleStep = _Cycle.Step;
+        kept.Looks = std::move(looks);
+        return true;
+    };
+
     for (size_t k = 0; k < order.size(); ++k)
     {
         const Record& record = _Records[order[k]];
@@ -5336,8 +6068,22 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             // Port-only: a surface's first pass of the frame starting with a fill of all of it (the world view's
             // wipe) needn't load what the surface held, every texel of which the fill writes.
-            const bool overwritten = !begun[record.SurfaceIndex] && FillsSurface(record, surface);
+            const bool firstPass = !begun[record.SurfaceIndex];
+            const bool overwritten = firstPass && FillsSurface(record, surface);
             begun[record.SurfaceIndex] = true;
+            passFrame = framePass(surface);
+
+            // Port-only: with HD ground, a surface's one terrain layer, drawn first on it (over what it held), comes
+            // from the kept ground (KeptGround); not on a surface whose key is drawn transparent, which the kept
+            // ground's coverage would leave out.
+            if (firstPass && record.TerrainDraw >= 0 && _TerrainMesh.HdAtlas.Handle != nullptr &&
+                terrainLayers[record.SurfaceIndex] == 1 && passFrame.Cycle[2] == 0)
+            {
+                keptSurface =
+                    keepGround(surface, record.SurfaceIndex, _TerrainDraws[static_cast<size_t>(record.TerrainDraw)])
+                        ? record.SurfaceIndex
+                        : -1;
+            }
 
             for (SDL_GPUColorTargetInfo& target : targets)
             {
@@ -5347,46 +6093,25 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
 
             pass = SDL_BeginGPURenderPass(&commands, targets, SurfaceTargets, nullptr);
             passSurface = record.SurfaceIndex;
-            forgetBound();
-            const SDL_GPUViewport viewport{
-                0.0f, 0.0f, static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height),
-                0.0f, 1.0f};
-            SDL_SetGPUViewport(pass, &viewport);
-            SDL_GPUBuffer* const drawBuffer = _DrawBuffer.get();
-            SDL_BindGPUVertexStorageBuffers(pass, 0, &drawBuffer, 1);
-
-            // The frame's colours; on a surface shown over an underlay, the key is drawn transparent.
-            passFrame = FrameUniforms{};
-            passFrame.Cycle[0] = _Cycle.First;
-            passFrame.Cycle[1] = _Cycle.Step;
-            passFrame.Cycle[2] =
-                std::ranges::any_of(underlays, [&](const MCUnderlay& underlay)
-                                    { return surface.Key && TargetSurfaceKey(underlay) == surface.Key; })
-                    ? 1
-                    : 0;
-
-            for (size_t i = 0; i < 8; ++i)
-            {
-                passFrame.CycleSources[i] = _Cycle.Sources[i];
-            }
-
-            passFrame.Look[0] =
-                GHdLighting != HdLightingOff ? std::clamp(MCSceneLights::ShownLighting().GlowOvals, 0.0f, 1.0f) : 1.0f;
-            passFrame.Look[1] =
-                GHdSunShadows != 0 ? std::clamp(MCSceneLights::ShownLighting().SunShadow, 0.0f, 1.0f) : 0.0f;
-            passFrame.Look[2] = MCSceneLights::RecastsSunShadows() ? 1.0f : 0.0f;
+            startPass(pass, surface);
         }
 
         if (record.TerrainDraw >= 0)
         {
-            FrameUniforms frame = passFrame;
-            frame.Scale[0] = static_cast<int32_t>(std::max(surface.MappedWidth, 1u));
-            frame.Scale[1] = static_cast<int32_t>(std::max(surface.MappedHeight, 1u));
-            frame.Scale[2] = static_cast<int32_t>(std::max(surface.Target.Width, 1u));
-            frame.Scale[3] = static_cast<int32_t>(std::max(surface.Target.Height, 1u));
-            std::ranges::fill(frame.SourceScale, 1);
-            DrawTerrain(commands, *pass, surface, _TerrainDraws[static_cast<size_t>(record.TerrainDraw)],
-                        std::as_bytes(std::span(&frame, 1)));
+            const TerrainDraw& draw = _TerrainDraws[static_cast<size_t>(record.TerrainDraw)];
+
+            if (keptSurface == record.SurfaceIndex)
+            {
+                DrawKeptGround(commands, *pass, surface, draw.Frame.Clip, KeptGroundMode::Over, _KeptGround.Current);
+                DrawKeptGround(commands, *pass, surface, draw.Frame.Clip, KeptGroundMode::Indices, _KeptGround.Current);
+                keptSurface = -1;
+            }
+            else
+            {
+                const FrameUniforms frame = recordFrame(surface, record);
+                DrawTerrain(commands, *pass, surface, draw, std::as_bytes(std::span(&frame, 1)));
+            }
+
             // The terrain binds and pushes its own.
             forgetBound();
             surface.DrawnSinceCopy.push_back(record.Writes);
@@ -5415,115 +6140,7 @@ std::expected<void, std::string> MCVulkanRenderer::Execute(SDL_GPUCommandBuffer&
             ++last;
         }
 
-        SDL_GPUTexture* source = _Blank.Handle.get();
-
-        switch (record.Source)
-        {
-            case SourceKind::None:
-                break;
-            case SourceKind::Atlas:
-            {
-                source = _Pages[record.SourceIndex].Texture.Handle.get();
-                break;
-            }
-            case SourceKind::Picture:
-            {
-                source = _FramePictures[record.SourceIndex].get();
-                break;
-            }
-            case SourceKind::Surface:
-            {
-                if (_Surfaces[record.SourceIndex].Index.Handle != nullptr)
-                {
-                    source = _Surfaces[record.SourceIndex].Index.Handle.get();
-                }
-                break;
-            }
-            case SourceKind::TargetCopy:
-            {
-                source = surface.Copy.Handle.get();
-                break;
-            }
-            case SourceKind::Strip:
-            {
-                source = _Strip.Handle.get();
-                break;
-            }
-        }
-
-        SDL_GPUTexture* hdColors = _PaletteTexture.Handle.get();
-
-        if (record.Source == SourceKind::Picture)
-        {
-            if (const auto hd = _FrameHdColors.find(record.SourceIndex); hd != _FrameHdColors.end())
-            {
-                hdColors = hd->second.get();
-            }
-        }
-
-        const std::array<SDL_GPUTextureSamplerBinding, DrawSamplers> bindings{{
-            {source, _Nearest.get()},
-            {_TableTexture.Handle.get(), _Nearest.get()},
-            {_AlphaTexture.Handle.get(), _Nearest.get()},
-            {_FitTexture.Handle.get(), _Nearest.get()},
-            {_PaletteTexture.Handle.get(), _Nearest.get()},
-            {hdColors, _Nearest.get()},
-            {hdColors, _Nearest.get()},
-            {_PaletteTexture.Handle.get(), _Nearest.get()},
-            {_PaletteTexture.Handle.get(), _Nearest.get()},
-        }};
-
-        if (SDL_GPUGraphicsPipeline* const pipeline =
-                record.Shadow ? _ShadowPipeline.get() : _Pipelines[static_cast<size_t>(record.Variant)].For(record);
-            pipeline != boundPipeline)
-        {
-            SDL_BindGPUGraphicsPipeline(pass, pipeline);
-            boundPipeline = pipeline;
-        }
-
-        const auto sameBinding = [](const SDL_GPUTextureSamplerBinding& a, const SDL_GPUTextureSamplerBinding& b)
-        { return a.texture == b.texture && a.sampler == b.sampler; };
-
-        if (!boundSamplers.has_value() || !std::ranges::equal(*boundSamplers, bindings, sameBinding))
-        {
-            SDL_BindGPUFragmentSamplers(pass, 0, bindings.data(), DrawSamplers);
-            boundSamplers = bindings;
-        }
-
-        const BatchUniforms batch{{static_cast<float>(surface.MappedWidth), static_cast<float>(surface.MappedHeight),
-                                   static_cast<float>(surface.Target.Width), static_cast<float>(surface.Target.Height)},
-                                  {record.First, 0, 0, 0}};
-        SDL_PushGPUVertexUniformData(&commands, 0, &batch, sizeof(batch));
-
-        // The target's scale, and the source's when it is a surface.
-        const auto scaleOf = [](const Surface& of, std::span<int32_t, 4> out)
-        {
-            out[0] = static_cast<int32_t>(std::max(of.MappedWidth, 1u));
-            out[1] = static_cast<int32_t>(std::max(of.MappedHeight, 1u));
-            out[2] = static_cast<int32_t>(std::max(of.Target.Width, 1u));
-            out[3] = static_cast<int32_t>(std::max(of.Target.Height, 1u));
-        };
-
-        FrameUniforms frame = passFrame;
-        scaleOf(surface, frame.Scale);
-        std::ranges::fill(frame.SourceScale, 1);
-
-        if (record.Source == SourceKind::Surface && _Surfaces[record.SourceIndex].Index.Handle != nullptr)
-        {
-            scaleOf(_Surfaces[record.SourceIndex], frame.SourceScale);
-        }
-        else if (record.Source == SourceKind::TargetCopy)
-        {
-            scaleOf(surface, frame.SourceScale);
-        }
-
-        if (!pushedFrame.has_value() || std::memcmp(&*pushedFrame, &frame, sizeof(frame)) != 0)
-        {
-            SDL_PushGPUFragmentUniformData(&commands, 0, &frame, sizeof(frame));
-            pushedFrame = frame;
-        }
-
-        SDL_DrawGPUPrimitives(pass, 6, count, 0, 0);
+        drawBatch(pass, surface, record, count);
 
         for (size_t i = k; i <= last; ++i)
         {

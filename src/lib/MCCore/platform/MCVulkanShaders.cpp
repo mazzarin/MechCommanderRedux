@@ -7,6 +7,7 @@
 #include "shaders/draw_basic.msl.h"
 #include "shaders/draw_hd.msl.h"
 #include "shaders/draw_terrain.msl.h"
+#include "shaders/ground.msl.h"
 #include "shaders/instance.msl.h"
 #include "shaders/quad.msl.h"
 #include "shaders/terrain.msl.h"
@@ -18,6 +19,7 @@
 #include "shaders/draw_basic.spv.h"
 #include "shaders/draw_hd.spv.h"
 #include "shaders/draw_terrain.spv.h"
+#include "shaders/ground.spv.h"
 #include "shaders/instance.spv.h"
 #include "shaders/quad.spv.h"
 #include "shaders/terrain.spv.h"
@@ -34,6 +36,7 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawBasicFragment{MCShader::DrawBasic, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawTerrainFragment{MCShader::DrawTerrain, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
+    const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
 
     std::string_view Name(MCShader shader)
@@ -56,6 +59,8 @@ namespace MCVulkanShaders
                 return "draw_terrain";
             case MCShader::DrawHd:
                 return "draw_hd";
+            case MCShader::Ground:
+                return "ground";
         }
 
         return {};
@@ -81,6 +86,8 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(draw_terrain);
             case MCShader::DrawHd:
                 return MC_BUILT_IN_SHADER(draw_hd);
+            case MCShader::Ground:
+                return MC_BUILT_IN_SHADER(ground);
         }
 
         return {};

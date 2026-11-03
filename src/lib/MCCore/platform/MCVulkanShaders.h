@@ -15,7 +15,9 @@ enum class MCShader : uint8_t
     /// <summary>Port-only: the terrain layer's draws alone (shaders/draw_terrain.pshader).</summary>
     DrawTerrain,
     /// <summary>Port-only: the draws of HD art frames alone (shaders/draw_hd.pshader).</summary>
-    DrawHd
+    DrawHd,
+    /// <summary>Port-only: the kept ground's copy (shaders/ground.pshader).</summary>
+    Ground
 };
 
 /// <summary>A shader the Vulkan renderer uses, and the resources its bindings declare.</summary>
@@ -61,6 +63,7 @@ namespace MCVulkanShaders
     extern const MCShaderInfo DrawBasicFragment;
     extern const MCShaderInfo DrawTerrainFragment;
     extern const MCShaderInfo DrawHdFragment;
+    extern const MCShaderInfo GroundFragment;
     extern const MCShaderInfo TerrainVertex;
 
     /// <summary>

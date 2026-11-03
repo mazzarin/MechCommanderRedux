@@ -163,6 +163,12 @@ public:
     /// <summary>Stops every channel; drops the music streams, the message queue, the radios and the loaded bites.
     /// </summary>
     void PurgeSoundSystem();
+    /// <summary>
+    /// Port-only (HD audio): hands the waves that play the moment they are asked for (the sound file's bites, Betty's
+    /// samples and the radio's static) to MCHdAudio::Prepare, so their HD replacements are decoded ahead on a thread of
+    /// their own; nothing when they were for the pack in use (MCHdAudio::Prepared).
+    /// </summary>
+    void PrepareHdSounds();
     /// <summary>Plays radio static on its channel.</summary>
     void PlayStaticNoise();
     void StopStaticNoise();
@@ -239,6 +245,8 @@ public:
     void RemoveCurrentMessage();
     /// <summary>
     /// Queues a message by priority. A priority 1 message cuts off the one playing and the pilot's waiting ones.
+    /// Port-only: a queued message's speech has its HD replacement decoded ahead (MCHdAudio::Prefetch), behind its
+    /// static.
     /// </summary>
     /// <returns>Whether it was queued (the message is dropped when not).</returns>
     bool QueueRadioMessage(std::unique_ptr<MCRadioMessage> message);

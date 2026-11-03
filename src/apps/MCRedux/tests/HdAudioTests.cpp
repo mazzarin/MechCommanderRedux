@@ -9,7 +9,9 @@
 #include "main/MCGameContext.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCFlac.h"
+#include "object/MCMechWarrior.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCRadioMessage.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCWeather.h"
@@ -422,6 +424,76 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     CHECK(MCHdAudio::Sample(Original(882)) == nullptr);
     MCHdAudio::Forget();
     CHECK(MCHdAudio::Sample(Original()) == nullptr);
+}
+
+/// <summary>
+/// The sounds that play the moment they are asked for are decoded ahead on a thread of their own (Prepare), and kept:
+/// their first plays read nothing. One played before its turn is decoded as it plays, the same sound. With HD audio
+/// off there is nothing to prepare.
+/// </summary>
+TEST_CASE("HD audio: sounds handed over ahead are decoded on a thread of their own, the same as decoded as they play")
+{
+    Fixture fixture;
+    // Three 20 ms waves (the fixture's length), the third without a replacement.
+    auto second = Original();
+    second[44] = 129;
+    auto third = Original();
+    third[44] = 130;
+    Write(fixture.Sample(Original()), Flac());
+    Write(fixture.Sample(second), Flac());
+    CHECK(!MCHdAudio::Prepared());
+    MCHdAudio::Prepare({Original(), second, third});
+    CHECK(MCHdAudio::Prepared());
+    // Played at once: decoded here, or waited for while the thread is on it.
+    const std::shared_ptr<const MCHdAudio::Decoded> early = MCHdAudio::Sample(second);
+    REQUIRE(early != nullptr);
+    CHECK_EQ(early->Pcm.size(), size_t{3840});
+    MCHdAudio::FinishPreparing();
+    CHECK(MCHdAudio::Sample(second) == early);
+
+    // The others were decoded ahead: with the files gone, they still play (and the one the pack hasn't stays without).
+    std::filesystem::remove(fixture.Sample(Original()));
+    std::filesystem::remove(fixture.Sample(second));
+    const std::shared_ptr<const MCHdAudio::Decoded> ahead = MCHdAudio::Sample(Original());
+    REQUIRE(ahead != nullptr);
+    CHECK(ahead->Pcm == early->Pcm);
+    CHECK(MCHdAudio::Sample(third) == nullptr);
+
+    // A new look at the pack forgets them; with HD audio off there is nothing to prepare.
+    MCHdAudio::Forget();
+    CHECK(!MCHdAudio::Prepared());
+    GHdAudio = HdAudioOff;
+    CHECK(MCHdAudio::Prepared());
+    MCHdAudio::Prepare({Original()});
+    MCHdAudio::FinishPreparing();
+    GHdAudio = HdAudioOn;
+    CHECK(!MCHdAudio::Prepared());
+}
+
+/// <summary>
+/// A radio message's speech has its replacement decoded ahead as the message is queued, behind its static: by the time
+/// it plays, it is decoded.
+/// </summary>
+TEST_CASE("HD audio: a queued radio message's speech is decoded ahead, behind its static")
+{
+    Fixture fixture;
+    Write(fixture.Sample(Original()), Flac());
+    MCTestContextScope scope;
+    scope.Context().SetAudio(std::make_unique<MCNullAudioDevice>());
+    scope.Context().SetSoundSystem(std::make_unique<MCSoundSystem>());
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    const auto pilot = std::make_shared<MCMechWarrior>();
+    auto message = std::make_unique<MCRadioMessage>();
+    message->Pilot = pilot;
+    message->Priority = 2;
+    message->Fragments.push_back(Original());
+    CHECK(sound->QueueRadioMessage(std::move(message)));
+    MCHdAudio::FinishPreparing();
+    std::filesystem::remove(fixture.Sample(Original()));
+    const std::shared_ptr<const MCHdAudio::Decoded> speech = MCHdAudio::Sample(Original());
+    REQUIRE(speech != nullptr);
+    CHECK_EQ(speech->Pcm.size(), size_t{3840});
+    sound->PurgeSoundSystem();
 }
 
 TEST_CASE("HD audio: HD music streams through a sound channel's ring, looping")

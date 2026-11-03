@@ -60,6 +60,23 @@ public:
     /// </summary>
     static std::shared_ptr<const Decoded> Sample(std::span<const uint8_t> wave,
                                                  std::optional<uint64_t> id = std::nullopt);
+    /// <summary>
+    /// Decodes the replacements of <paramref name="waves"/> on a thread of their own, ahead of their first plays, and
+    /// keeps them, beyond the budget, while the pack is in use: the sound file's effects, Betty's samples and the
+    /// radio's static, which play the moment they are asked for. A wave played before its turn is decoded as it plays
+    /// (or, when the thread is on it, waits for it): the same sound either way. Nothing with HD audio off.
+    /// </summary>
+    static void Prepare(std::vector<std::vector<uint8_t>> waves);
+    /// <summary>Whether there is nothing to <see cref="Prepare"/>: HD audio is off, or it was for the pack in use.</summary>
+    static bool Prepared();
+    /// <summary>
+    /// Starts decoding <paramref name="wave"/>'s replacement on that thread, ahead of its play (a radio message's speech,
+    /// behind its static); remembered as one played.
+    /// </summary>
+    static void Prefetch(std::span<const uint8_t> wave);
+    /// <summary>Waits till the thread has decoded every wave handed to <see cref="Prepare"/> and
+    /// <see cref="Prefetch"/> (the end of a mission's loading).</summary>
+    static void FinishPreparing();
     /// <summary>Whether <paramref name="flac"/> lasts as long as the original, to the nearest output frame.</summary>
     static bool MatchesLength(const MCFlac& flac, uint64_t sourceFrames, uint32_t sourceRate);
     /// <summary>Whether the pack folder has HD audio: an audio.cfg of a format this code reads.</summary>

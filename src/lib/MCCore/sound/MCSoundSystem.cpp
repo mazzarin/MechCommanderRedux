@@ -308,6 +308,51 @@ void MCSoundSystem::Load(std::string_view soundFileName)
 
     soundFile.Close();
     WholeMsgDone = true;
+    PrepareHdSounds();
+}
+
+void MCSoundSystem::PrepareHdSounds()
+{
+    if (MCHdAudio::Prepared())
+    {
+        return;
+    }
+
+    std::vector<std::vector<uint8_t>> waves;
+    const auto readAll = [&waves](MCPacketFile& file)
+    {
+        for (int32_t packet = 0; file.IsOpen() && packet < file.GetNumPackets(); packet++)
+        {
+            if (file.SeekPacket(packet) != 0 || file.GetPacketSize() <= 0)
+            {
+                continue;
+            }
+
+            std::vector<uint8_t> wave(static_cast<size_t>(file.GetPacketSize()));
+
+            if (file.ReadPacket(packet, wave) == static_cast<int32_t>(wave.size()))
+            {
+                waves.push_back(std::move(wave));
+            }
+        }
+    };
+
+    if (_SoundDataFile != nullptr)
+    {
+        readAll(*_SoundDataFile);
+    }
+
+    if (_BettyDataFile != nullptr)
+    {
+        readAll(*_BettyDataFile);
+    }
+
+    if (MCPacketFile noise; noise.Open(GamePath(CDsoundPath, "noise", ".pak")) == 0)
+    {
+        readAll(noise);
+    }
+
+    MCHdAudio::Prepare(std::move(waves));
 }
 
 bool MCSoundSystem::PreloadSoundBite(int32_t biteId)
@@ -435,6 +480,12 @@ bool MCSoundSystem::QueueRadioMessage(std::unique_ptr<MCRadioMessage> message)
     {
         RemoveCurrentMessage();
         RadioQueue.RemovePilot(*message->Pilot.lock());
+    }
+
+    // Port-only: handed over before the push, which may drop the message (OB-061); one refused is decoded for nothing.
+    for (const std::vector<uint8_t>& fragment : message->Fragments)
+    {
+        MCHdAudio::Prefetch(fragment);
     }
 
     return RadioQueue.Push(std::move(message)) == nullptr;

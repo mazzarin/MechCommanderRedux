@@ -43,6 +43,7 @@
 #include "object/MCTrain.h"
 #include "object/MCTrainCar.h"
 #include "object/MCTrainManager.h"
+#include "sound/MCHdAudio.h"
 #include "sound/MCSoundSystem.h"
 #include "sprite/MCElementalActor.h"
 #include "sprite/MCGVAppearance.h"
@@ -170,6 +171,9 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     CreatedParts.clear();
 
     UpdateDisplay(false, true, 100, true, 0);
+    // Port-only (HD audio): the pack's sounds that play the moment they are asked for are decoded on a thread of their
+    // own from here to the end of the loading, rather than as each first plays.
+    SoundSystem()->PrepareHdSounds();
     SoundSystem()->PlayStaticNoise();
     const auto [maxFiresBurning, maxFireBurnTime] = LoadGameSystem();
 
@@ -260,6 +264,7 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     ActualTime = 0.0f;
     // Port-only: the HD art pack's ground is read here, under the loading bar, rather than in the mission's first frame.
     MCTerrainReadHdTiles();
+    MCHdAudio::FinishPreparing();
     UpdateDisplay(false, true, 30, true, 100);
 
     CameraList()->SetEye(CameraList()->ActivateAllReady());

@@ -22,6 +22,9 @@ enum class MCWeatherKind : uint8_t
     Clear,
     Rain,
     Downpour,
+    LightSnow,
+    Snow,
+    Blizzard,
 };
 
 /// <summary>
@@ -38,6 +41,11 @@ enum class MCWeatherKind : uint8_t
 /// units nearer the eye cover those falling behind them. With HD lighting, the drops and the droplets they throw up
 /// catch the light of the lights they fall past (MCWeatherSettings::Light): drawn into the GPU world's glints, which the
 /// composite adds over the lit world, so the night doesn't dim it.
+/// Snow (MCWeatherLook::Snows) falls as flakes instead, slowly, drifting before the wind and rocking as they go, under a
+/// paler overcast and a white veil; a flake rests a moment where it lands (on a unit's top too) and is gone on the water.
+/// With the relief maps, the snow settles through the mission (MCWeatherLook::Cover: bare ground at the start, then a
+/// dusting, then white on the flat ground), the composite laying it over the ground (never the water; a forest's lit
+/// leaves a little), and the footprints and craters in it fill in by their age (MCCraterManager's, FilledIn).
 /// Like the particles, the drops never touch the game: they throw their own dice (never the game's), take nothing from
 /// it but where things are and change nothing in it, and move with the game's time (ScenarioTime).
 /// </summary>
@@ -87,6 +95,25 @@ namespace MCWeather
         /// following, see <see cref="LookAt"/>); its puddles spread as it falls, from none at a mission's start.
         /// </summary>
         float Showers = 0.0f;
+        /// <summary>
+        /// Whether it snows: flakes fall rather than drops (<see cref="Drops"/> and <see cref="Sizes"/> are theirs),
+        /// its veil is white, and with the relief maps the snow settles (<see cref="Cover"/>).
+        /// </summary>
+        bool Snows = false;
+        /// <summary>How far the flakes drift downwind as they fall: view pixels across for each they fall.</summary>
+        float Drift = 0.0f;
+        /// <summary>
+        /// The share of the ground the snow covers once it has settled (0: none settles), and how long it takes to settle
+        /// that far, in seconds of the game's time: about two thirds of the way in that long, from bare ground at a
+        /// mission's start (see <see cref="CoverAt"/>).
+        /// </summary>
+        float Cover = 0.0f;
+        float Settle = 0.0f;
+        /// <summary>
+        /// How long a footprint or a crater takes to fill in with the snow, in seconds of the game's time: about two
+        /// thirds of the way in that long (see <see cref="FilledIn"/>).
+        /// </summary>
+        float Fill = 0.0f;
     };
 
     /// <summary>How <paramref name="kind"/> shows, as made (a clear sky: nothing), steadily (its showers left out).</summary>
@@ -140,6 +167,12 @@ namespace MCWeather
         /// alike, droplets thrown up, as the rain first fell; the tools' --hd-splashes sets it).
         /// </summary>
         float Ground = 1.0f;
+        /// <summary>
+        /// How long it had snowed before a mission's start, in seconds of the game's time (0 as made: the ground bare at
+        /// the start), and how fast the snow settles and the prints fill in, 1 as made (the tools' --hd-snow sets both).
+        /// </summary>
+        float Settled = 0.0f;
+        float SettlePace = 1.0f;
     };
 
     /// <summary>How many of each piece the splashes showing are made of.</summary>
@@ -159,6 +192,8 @@ namespace MCWeather
         size_t Glints = 0;
         /// <summary>Drips falling off units.</summary>
         size_t Drips = 0;
+        /// <summary>Flakes resting where they landed.</summary>
+        size_t Flakes = 0;
     };
 
     /// <summary>A strike's thunder: how far off it struck (0 the nearest, 1 the farthest) and to which side (-1 to 1).</summary>
@@ -260,10 +295,13 @@ namespace MCWeather
     MCWeatherKind MissionWeather();
 
     /// <summary>
-    /// The weather the world is shown in: with HD weather off (GHdWeather), clear; at its RAIN or DOWNPOUR, that; else
-    /// the mission's own (<see cref="MissionWeather"/>).
+    /// The weather the world is shown in: with HD weather off (GHdWeather), clear; at one of its weathers (RAIN,
+    /// DOWNPOUR, LIGHT SNOW, SNOW, BLIZZARD), that; else the mission's own (<see cref="MissionWeather"/>).
     /// </summary>
     MCWeatherKind Shown();
+
+    /// <summary>The HD weather setting (GHdWeather) that shows every mission in <paramref name="kind"/> (a clear sky: off).</summary>
+    int SettingOf(MCWeatherKind kind);
 
     /// <summary>How the weather shown looks now (<see cref="LookAt"/> of <see cref="Shown"/>, at ScenarioTime).</summary>
     MCWeatherLook ShownLook();
@@ -289,12 +327,15 @@ namespace MCWeather
     /// </summary>
     std::optional<MCThunderClap> TakeThunder();
 
-    /// <summary>The weather named <paramref name="name"/> ("clear", "rain" or "downpour", in any case); none for another.</summary>
+    /// <summary>
+    /// The weather named <paramref name="name"/> ("clear", "rain", "downpour", "lightsnow", "snow" or "blizzard", in any
+    /// case); none for another.
+    /// </summary>
     std::optional<MCWeatherKind> Named(std::string_view name);
 
     /// <summary>
     /// The weather a scenario file (<paramref name="file"/>) sets its mission in: its block "Environment"'s string
-    /// "Weather" (Clear, Rain or Downpour), clear without one, as the original's missions are. The original game reads
+    /// "Weather" (Clear, Rain, Downpour, LightSnow, Snow or Blizzard), clear without one, as the original's missions are. The original game reads
     /// neither, so a mission that sets it plays there as ever, under a clear sky.
     /// </summary>
     MCWeatherKind Read(MCFitIniFile& file);
@@ -323,6 +364,43 @@ namespace MCWeather
 
     /// <summary>The feet's puddles reacting now (the newest MaxPuddleSteps), oldest first.</summary>
     std::span<const MCPuddleStep> ShownPuddleSteps();
+
+    /// <summary>
+    /// The share of the ground <paramref name="kind"/>'s snow covers at the game's time <paramref name="time"/>
+    /// (ScenarioTime): none at a mission's start (but for MCWeatherSettings::Settled), settling toward its look's Cover
+    /// over its Settle (times MCWeatherSettings::SettlePace); none for a weather that doesn't snow.
+    /// </summary>
+    float CoverAt(MCWeatherKind kind, float time);
+
+    /// <summary>
+    /// The snow's cover as the composite lays it (composite.pshader's SnowFieldAt under them): the levels under which the
+    /// ground lies under a dusting and under thick snow, and the share of the ground covered (all 0: none).
+    /// </summary>
+    struct MCSnowCover
+    {
+        float Dusting = 0.0f;
+        float Thick = 0.0f;
+        float Share = 0.0f;
+    };
+
+    /// <summary>
+    /// The snow's cover shown now (<see cref="CoverAt"/> of the weather shown, at ScenarioTime): none but in snow drawn by
+    /// the GPU with the relief maps (MCSceneLights::ReliefMapsOn, which tell the ground from what stands on it).
+    /// </summary>
+    MCSnowCover ShownCover();
+
+    /// <summary>
+    /// How far a footprint or a crater made <paramref name="age"/> seconds of the game's time ago has filled in with the
+    /// snow shown (0: not at all, as made; 1: as the ground round it), by its look's Fill (times
+    /// MCWeatherSettings::SettlePace); 0 while none settles (<see cref="ShownCover"/>).
+    /// </summary>
+    float FilledIn(float age);
+
+    /// <summary>
+    /// The snow's field's level (composite.pshader's SnowFieldAt, its noise alone) that leaves <paramref name="share"/>
+    /// of the ground under it, measured once.
+    /// </summary>
+    float SnowLevel(float share);
 
     /// <summary>
     /// The ground land drawn in palette entry <paramref name="index"/> is taken for: grass by its green (which the
@@ -372,8 +450,9 @@ namespace MCWeather
 
 /// <summary>
 /// Port-only: PREFS "HDWeather": 0 shows every mission under a clear sky, as the original; 1 in the mission's own
-/// weather (MCWeather::MissionWeather: clear, but for a mission set in rain); 2 every mission in rain; 3 every mission
-/// in a downpour. Off by default.
+/// weather (MCWeather::MissionWeather: clear, but for a mission set in rain or snow); 2 every mission in rain; 3 every
+/// mission in a downpour; 4 every mission in light snow; 5 every mission in snow; 6 every mission in a blizzard. Off by
+/// default.
 /// </summary>
 extern int GHdWeather;
 
@@ -384,4 +463,7 @@ enum MCHdWeatherSetting : int
     HdWeatherOn = 1,
     HdWeatherRain = 2,
     HdWeatherDownpour = 3,
+    HdWeatherLightSnow = 4,
+    HdWeatherSnow = 5,
+    HdWeatherBlizzard = 6,
 };

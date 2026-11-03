@@ -9,7 +9,9 @@
 #include "main/MCGamePaths.h"
 #include "object/MCForces.h"
 #include "platform/MCRenderer.h"
+#include "main/MCMissionGlobals.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
 
 namespace
@@ -164,6 +166,7 @@ auto MCCraterManager::Place(int32_t craterType, const MCVector3D& position, int3
     crater.CraterShapeId = craterType;
     crater.Position = position;
     crater.Rotation = rotation;
+    crater.MadeAt = ScenarioTime;
     _NextSlot = (_NextSlot + 1) % static_cast<int32_t>(_Craters.size());
 }
 
@@ -171,6 +174,8 @@ auto MCCraterManager::Render() -> void
 {
     MCElementBuffer& elements = ElementList();
     elements.OpenGroup(CraterDepth, false);
+    // Port-only (HD weather's snow): the prints and craters fill in under the snow.
+    const bool snowed = MCWeather::ShownCover().Share > 0.0f;
     const int32_t paneWidth = GlobalPane->X1 - GlobalPane->X0;
     const int32_t paneHeight = GlobalPane->Y1 - GlobalPane->Y0;
 
@@ -195,8 +200,15 @@ auto MCCraterManager::Render() -> void
             screenY < static_cast<float>(paneHeight))
         {
             const std::vector<uint8_t>& shape = _Shapes[static_cast<size_t>(crater.CraterShapeId)];
-            elements.Add(elements.Make<MCVfxElement>(std::span<const uint8_t>(shape), screenX, screenY, crater.Rotation,
-                                                     0, std::nullopt, true));
+            MCVfxElement& element = elements.Make<MCVfxElement>(std::span<const uint8_t>(shape), screenX, screenY,
+                                                                crater.Rotation, 0, std::nullopt, true);
+
+            if (snowed)
+            {
+                element.GroundFill = MCWeather::FilledIn(ScenarioTime - crater.MadeAt);
+            }
+
+            elements.Add(element);
         }
     }
 }

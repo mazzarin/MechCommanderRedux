@@ -12,6 +12,8 @@ struct MCCraterData
     MCVector3D Position;
     /// <summary>The frame of the shape drawn (the shapes hold one frame per facing).</summary>
     int32_t Rotation = -1;
+    /// <summary>Port-only (HD weather's snow): the game's time it was made (ScenarioTime), by which the snow fills it in.</summary>
+    float MadeAt = 0.0f;
 };
 
 /// <summary>
@@ -53,7 +55,10 @@ public:
     /// <summary>Puts a crater in the next slot of the ring, over the oldest when every slot is taken.</summary>
     void Place(int32_t craterType, const MCVector3D& position, int32_t rotation);
 
-    /// <summary>Adds a VFX element for every crater on screen, in a group at the bottom of the draw order.</summary>
+    /// <summary>
+    /// Adds a VFX element for every crater on screen, in a group at the bottom of the draw order; port-only, under the
+    /// snow, each filled in by its age (MCWeather::FilledIn).
+    /// </summary>
     void Render();
 
     /// <summary>The slots.</summary>

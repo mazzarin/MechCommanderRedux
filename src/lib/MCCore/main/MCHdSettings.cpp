@@ -50,10 +50,11 @@ namespace
                   .Original = static_cast<int32_t>(MCFleckStyle::Edge),
                   .Personal = static_cast<int32_t>(MCFleckStyle::Edge)},
         MCSetting{.Key = "HDShake", .Value = &GHdShake},
-        // HDWeather shows the missions in their own weather, or every one in rain or a downpour (sprite/MCWeather.h).
+        // HDWeather shows the missions in their own weather, or every one in rain, a downpour, light snow, snow or a
+        // blizzard (sprite/MCWeather.h).
         MCSetting{.Key = "HDWeather",
                   .Value = &GHdWeather,
-                  .Most = HdWeatherDownpour,
+                  .Most = HdWeatherBlizzard,
                   .Boolean = false,
                   .Personal = HdWeatherOn},
         // HDFootprints keeps three times as many footprints and craters on the ground (engine/MCCraterManager.h).

@@ -79,6 +79,11 @@ namespace
         /// <summary>The lightning: how much it lights the world now (0 none) and from which side of the view (-1 to 1).</summary>
         float Flash[4] = {};
         /// <summary>
+        /// The snow: its cover's levels under which the ground lies under a dusting and thick (MCWeather::ShownCover),
+        /// the share of the ground covered (0 none), and 1 when it snows (its veil white).
+        /// </summary>
+        float Snow[4] = {};
+        /// <summary>
         /// Port-only (HD lighting): the light tiles' side in the world's texels (0: none) and how many there are across
         /// and down (LightTiles).
         /// </summary>
@@ -396,6 +401,12 @@ namespace
             const MCWeather::MCFlash flash = MCWeather::ShownFlash();
             uniforms.Flash[0] = std::clamp(flash.Light, 0.0f, 1.0f);
             uniforms.Flash[1] = std::clamp(flash.Side, -1.0f, 1.0f);
+            // The snow's cover (with the relief maps, which tell the ground from what stands on it) and its white veil.
+            const MCWeather::MCSnowCover cover = MCWeather::ShownCover();
+            uniforms.Snow[0] = cover.Dusting;
+            uniforms.Snow[1] = cover.Thick;
+            uniforms.Snow[2] = std::clamp(cover.Share, 0.0f, 1.0f);
+            uniforms.Snow[3] = look.Snows ? 1.0f : 0.0f;
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
             if (MCSceneLights::ReliefMapsOn())

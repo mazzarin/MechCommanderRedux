@@ -160,6 +160,14 @@ namespace
     /// its painted shadow, which shows the ground under it (_BlendMarks: the indices' alpha alone).
     /// </summary>
     constexpr uint32_t Sways = 1u << 24;
+    /// <summary>
+    /// Port-only (HD weather's snow): a footprint's or a crater's draw under the snow (MCRenderer::GroundFillScope),
+    /// filled in as far as the op's bits from GroundFillShift say (of GroundFillMost): it marks its pixels in the index
+    /// target as flat ground filled in so far (shaders/draw.pshader), for the composite to lay the snow over them as far.
+    /// </summary>
+    constexpr uint32_t GroundFill = 1u << 25;
+    constexpr uint32_t GroundFillShift = 26;
+    constexpr uint32_t GroundFillMost = 63;
 
     /// <summary>
     /// Sways for an HD frame's draws when forests sway (GHdSway) and it is a forest's (a frame whose painted shadow the
@@ -1432,6 +1440,13 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
     if (blend && MCRenderer::DrawingGlow())
     {
         op |= Glow;
+    }
+
+    if (const std::optional<float> fill = MCRenderer::DrawingGroundFill(); fill.has_value())
+    {
+        const auto filled =
+            static_cast<uint32_t>(std::lround(std::clamp(*fill, 0.0f, 1.0f) * static_cast<float>(GroundFillMost)));
+        op |= GroundFill | filled << GroundFillShift;
     }
 
     draw[8] = static_cast<int32_t>(op);

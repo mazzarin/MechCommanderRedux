@@ -32,6 +32,9 @@ inline constexpr auto MISSION_WEATHERS = std::to_array<MissionWeather>({
     {MISSION_WEATHER_CLEAR, "Clear", ID_MISSION_WEATHER_CLEAR},
     {1, "Rain", ID_MISSION_WEATHER_RAIN},
     {2, "Downpour", ID_MISSION_WEATHER_DOWNPOUR},
+    {3, "LightSnow", ID_MISSION_WEATHER_LIGHT_SNOW},
+    {4, "Snow", ID_MISSION_WEATHER_SNOW},
+    {5, "Blizzard", ID_MISSION_WEATHER_BLIZZARD},
 });
 
 /// <summary>Port-only: Mission > Weather's first command and its last, the range the view handles.</summary>

@@ -605,6 +605,9 @@ namespace
     /// <summary>The turn a <see cref="MCRenderer::TurnScope"/> is drawing by, none outside one.</summary>
     std::optional<MCSpriteTurn> TurnDrawn;
 
+    /// <summary>How far a <see cref="MCRenderer::GroundFillScope"/>'s draws are filled in, none outside one.</summary>
+    std::optional<float> GroundFillDrawn;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -841,6 +844,21 @@ MCRenderer::TurnScope::~TurnScope()
 const std::optional<MCSpriteTurn>& MCRenderer::DrawingTurn()
 {
     return TurnDrawn;
+}
+
+MCRenderer::GroundFillScope::GroundFillScope(std::optional<float> fill) : _Was(GroundFillDrawn)
+{
+    GroundFillDrawn = fill;
+}
+
+MCRenderer::GroundFillScope::~GroundFillScope()
+{
+    GroundFillDrawn = _Was;
+}
+
+std::optional<float> MCRenderer::DrawingGroundFill()
+{
+    return GroundFillDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

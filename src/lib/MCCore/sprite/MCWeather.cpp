@@ -22,10 +22,13 @@ int GHdWeather = 0;
 namespace
 {
     /// <summary>The weathers by name (a scenario file's Weather, the tools' --hd-weather).</summary>
-    constexpr std::array<std::pair<std::string_view, MCWeatherKind>, 3> Weathers{{
+    constexpr std::array<std::pair<std::string_view, MCWeatherKind>, 6> Weathers{{
         {"Clear", MCWeatherKind::Clear},
         {"Rain", MCWeatherKind::Rain},
         {"Downpour", MCWeatherKind::Downpour},
+        {"LightSnow", MCWeatherKind::LightSnow},
+        {"Snow", MCWeatherKind::Snow},
+        {"Blizzard", MCWeatherKind::Blizzard},
     }};
 
     /// <summary>
@@ -65,6 +68,46 @@ namespace
                                                     .Flash = 0.6f,
                                                     .ThunderHeard = 1.0f,
                                                     .Showers = 0.6f};
+
+    /// <summary>
+    /// Light snow, snow and a blizzard as the mock-up made them (tools/upscale/rain-proto/render_snow.py: its flakes a
+    /// second over its panel, a quarter of a 1920x1080 take at a zoom of 2.25, over the panel's 100-pixel squares of the
+    /// view), each under a paler overcast than the rain's and greyer, its veil white. Snow falls steadily and silently.
+    /// Light snow barely settles (you, 2 Nov: "it would be cool if the snow accumulates over time and maybe it fills in
+    /// footprints"): over ten minutes a dusting in the lowest spots; snow covers about half the flat ground in four, a
+    /// blizzard most of it in a minute and a half, driven before a strong wind; the prints fill in the faster the harder
+    /// it snows.
+    /// </summary>
+    constexpr MCWeather::MCWeatherLook LightSnowLook{.Dark = 0.12f,
+                                                     .Grey = 0.3f,
+                                                     .Veil = 0.06f,
+                                                     .Drops = 126.0f,
+                                                     .Sizes = {0.45f, 0.4f, 0.15f},
+                                                     .Snows = true,
+                                                     .Drift = 0.25f,
+                                                     .Cover = 0.2f,
+                                                     .Settle = 600.0f,
+                                                     .Fill = 180.0f};
+    constexpr MCWeather::MCWeatherLook SnowLook{.Dark = 0.18f,
+                                                .Grey = 0.4f,
+                                                .Veil = 0.12f,
+                                                .Drops = 273.0f,
+                                                .Sizes = {0.45f, 0.4f, 0.15f},
+                                                .Snows = true,
+                                                .Drift = 0.35f,
+                                                .Cover = 0.45f,
+                                                .Settle = 240.0f,
+                                                .Fill = 90.0f};
+    constexpr MCWeather::MCWeatherLook BlizzardLook{.Dark = 0.25f,
+                                                    .Grey = 0.5f,
+                                                    .Veil = 0.28f,
+                                                    .Drops = 756.0f,
+                                                    .Sizes = {0.45f, 0.4f, 0.15f},
+                                                    .Snows = true,
+                                                    .Drift = 1.6f,
+                                                    .Cover = 0.85f,
+                                                    .Settle = 90.0f,
+                                                    .Fill = 30.0f};
 
     /// <summary>The longest step the drops move in one frame, in seconds of the game's time.</summary>
     constexpr float MaxStep = 0.1f;
@@ -235,6 +278,64 @@ namespace
     constexpr size_t NearDrop = 2;
 
     /// <summary>
+    /// A flake's size, as near the eye it falls (as a drop's): how far it falls on screen and how fast (view pixels), how
+    /// far it rocks to each side as it falls and how often (rocks a second), and how strong it shows.
+    /// </summary>
+    struct FlakeSize
+    {
+        float FallLow = 0.0f;
+        float FallHigh = 0.0f;
+        float SpeedLow = 0.0f;
+        float SpeedHigh = 0.0f;
+        float RockLow = 0.0f;
+        float RockHigh = 0.0f;
+        float RateLow = 0.0f;
+        float RateHigh = 0.0f;
+        float AlphaLow = 0.0f;
+        float AlphaHigh = 0.0f;
+    };
+
+    /// <summary>
+    /// Far, between and near (MCWeatherLook::Sizes), as the snow's mock-up drew them at a zoom of 2.25: far a pixel of
+    /// its, between two across, near a plus three across.
+    /// </summary>
+    constexpr std::array<FlakeSize, 3> FlakeSizes{{
+        {.FallLow = 45.0f * MockPixel,
+         .FallHigh = 80.0f * MockPixel,
+         .SpeedLow = 40.0f * MockPixel,
+         .SpeedHigh = 60.0f * MockPixel,
+         .RockLow = 1.0f * MockPixel,
+         .RockHigh = 2.5f * MockPixel,
+         .RateLow = 0.6f,
+         .RateHigh = 1.0f,
+         .AlphaLow = 0.45f,
+         .AlphaHigh = 0.7f},
+        {.FallLow = 75.0f * MockPixel,
+         .FallHigh = 140.0f * MockPixel,
+         .SpeedLow = 60.0f * MockPixel,
+         .SpeedHigh = 95.0f * MockPixel,
+         .RockLow = 2.0f * MockPixel,
+         .RockHigh = 4.0f * MockPixel,
+         .RateLow = 0.5f,
+         .RateHigh = 0.9f,
+         .AlphaLow = 0.6f,
+         .AlphaHigh = 0.85f},
+        {.FallLow = 150.0f * MockPixel,
+         .FallHigh = 260.0f * MockPixel,
+         .SpeedLow = 100.0f * MockPixel,
+         .SpeedHigh = 150.0f * MockPixel,
+         .RockLow = 3.0f * MockPixel,
+         .RockHigh = 6.0f * MockPixel,
+         .RateLow = 0.4f,
+         .RateHigh = 0.8f,
+         .AlphaLow = 0.7f,
+         .AlphaHigh = 0.95f},
+    }};
+    static_assert(FlakeSizes.size() == DropSizes.size(), "a weather's Sizes pick a drop's or a flake's");
+    constexpr size_t FarFlake = 0;
+    constexpr size_t NearFlake = 2;
+
+    /// <summary>
     /// The palette's colours the rain is drawn in (its water ramp, 0x5c to 0x5f, and pale greys, 0x1c and 0x1d);
     /// fitting the ground, wet soil's dark brown (0x91) and a glint's near white (0x1e).
     /// </summary>
@@ -252,6 +353,10 @@ namespace
     constexpr Rgb PaleGrey{220.0f / 255.0f, 220.0f / 255.0f, 220.0f / 255.0f};
     constexpr Rgb SoakBrown{44.0f / 255.0f, 24.0f / 255.0f, 0.0f};
     constexpr Rgb GlintWhite{236.0f / 255.0f, 236.0f / 255.0f, 236.0f / 255.0f};
+    /// <summary>The snow's flakes: the palette's palest greys (0x1d to 0x1f).</summary>
+    constexpr Rgb FlakeGrey = PaleGrey;
+    constexpr Rgb FlakeWhite = GlintWhite;
+    constexpr Rgb FlakeBrightest{252.0f / 255.0f, 252.0f / 255.0f, 252.0f / 255.0f};
 
     /// <summary>
     /// The wind's gusts: each drop's slant (view pixels across, downwind, for each it falls) is the gusts' where and when
@@ -419,6 +524,25 @@ namespace
     constexpr float FacetScale = 8.0f;
     constexpr float GlintDusk = 0.6f;
     constexpr float DayGlint = 0.25f;
+    // The snow's flakes (MCWeatherLook::Snows): each drifting downwind its weather's Drift across for each pixel it falls,
+    // from FlakeCalm of it in a lull of the gusts to FlakeCalm + FlakeGusts at their height, give or take FlakeJitter
+    // (the mock-up's); landing over the view as the drops do, and as far below it as FlakeBelow and upwind of it as the
+    // farthest the nearest drift (their flakes falling into the view from there). A flake landed on land or a unit's top
+    // rests FlakeRest seconds, fading (a pixel of the mock-up's, its brightest), and is gone on the water. At most
+    // MaxFlakes falling and resting on a square of the view DropsArea pixels a side (a blizzard keeps about 1500).
+    constexpr float FlakeCalm = 0.7f;
+    constexpr float FlakeGusts = 0.6f;
+    constexpr float FlakeJitter = 0.08f;
+    constexpr float FlakeBelow = 60.0f;
+    constexpr float FlakeRest = 0.6f;
+    constexpr float MaxFlakes = 1800.0f;
+    constexpr float FlakeDot = 0.5f * MockPixel;
+    // The snow's cover (MCWeather::ShownCover), as composite.pshader lays it (SnowFieldAt): noise SnowSize meters big, two
+    // layers, the finer SnowApart off; of the ground it covers, ThickShare lies thick, the rest under a dusting.
+    constexpr float SnowSize = 30.0f;
+    constexpr float SnowApartX = 23.1f;
+    constexpr float SnowApartY = -7.9f;
+    constexpr float ThickShare = 0.7f;
 
     /// <summary>A value between 0 and 1 for a lattice point, the same every frame (composite.pshader's LatticeHash).</summary>
     float LatticeHash(float x, float y)
@@ -463,6 +587,12 @@ namespace
     float PuddleField(float east, float north)
     {
         return Layered(east / PuddleSize, north / PuddleSize, PuddleApartX, PuddleApartY);
+    }
+
+    /// <summary>The snow's field at a ground point (meters east and north of the map's middle; SnowFieldAt's noise).</summary>
+    float SnowField(float east, float north)
+    {
+        return Layered(east / SnowSize, north / SnowSize, SnowApartX, SnowApartY);
     }
 
     /// <summary>How thick the veil's sheets are at a ground point at the game's time <paramref name="time"/> (SheetsAt's).</summary>
@@ -514,7 +644,10 @@ namespace
         std::mt19937 _Engine;
     };
 
-    /// <summary>A falling drop: where it lands (the world, its height there), its size and look, how far it has fallen.</summary>
+    /// <summary>
+    /// A falling drop or flake: where it lands (the world, its height there), its size and look, how far it has fallen; a
+    /// flake's rocking (how far to each side, how often, from where in a rock).
+    /// </summary>
     struct Drop
     {
         float X = 0.0f;
@@ -522,6 +655,10 @@ namespace
         float Z = 0.0f;
         uint8_t Size = 0;
         bool OnUnit = false;
+        bool Flake = false;
+        float Rock = 0.0f;
+        float RockRate = 0.0f;
+        float Phase = 0.0f;
         float Fall = 0.0f;
         float Speed = 0.0f;
         float Length = 0.0f;
@@ -533,7 +670,7 @@ namespace
 
     /// <summary>
     /// What a splash leaves for a while: a droplet thrown up, a dot, a ring, a drip falling; fitting the ground, a dark
-    /// dot soaking into soil, a puff in grass, a glint on metal.
+    /// dot soaking into soil, a puff in grass, a glint on metal; a flake resting where it landed.
     /// </summary>
     enum class SplashKind : uint8_t
     {
@@ -544,6 +681,7 @@ namespace
         Soak,
         Puff,
         Glint,
+        Flake,
     };
 
     /// <summary>
@@ -701,6 +839,8 @@ namespace
         std::optional<float> Time;
         /// <summary>The puddles' levels for their shares of the ground, measured once (PuddleLevel).</summary>
         std::vector<float> PuddleSamples;
+        /// <summary>The snow's levels for its shares of the ground, measured once (SnowLevel).</summary>
+        std::vector<float> SnowSamples;
         /// <summary>
         /// How far the puddles have spread each PuddleStep seconds of the showers' time from a mission's start (Filled),
         /// for showers as far as FilledFor; taken as far as asked for.
@@ -783,33 +923,40 @@ namespace
         return static_cast<float>(map->TileAt(tileR, tileC).BlockedCells()) / (MapCellDim * MapCellDim);
     }
 
-    /// <summary>The puddles' level that leaves <paramref name="share"/> of the ground under them (composite.pshader's).</summary>
-    float PuddleLevel(State& state, float share)
+    /// <summary>
+    /// The level of a noise field (<paramref name="field"/> of a ground point) that leaves <paramref name="share"/> of the
+    /// ground under it, from <paramref name="samples"/>: the field over a grid, measured the first time and sorted.
+    /// </summary>
+    float LevelOf(std::vector<float>& samples, float (*field)(float, float), float share)
     {
         if (share <= 0.0f)
         {
             return 0.0f;
         }
 
-        if (state.PuddleSamples.empty())
+        if (samples.empty())
         {
-            state.PuddleSamples.reserve(static_cast<size_t>(LevelSamples) * LevelSamples);
+            samples.reserve(static_cast<size_t>(LevelSamples) * LevelSamples);
 
             for (int32_t row = 0; row < LevelSamples; ++row)
             {
                 for (int32_t col = 0; col < LevelSamples; ++col)
                 {
-                    state.PuddleSamples.push_back(
-                        PuddleField(static_cast<float>(col) * LevelStep, static_cast<float>(row) * LevelStep));
+                    samples.push_back(field(static_cast<float>(col) * LevelStep, static_cast<float>(row) * LevelStep));
                 }
             }
 
-            std::ranges::sort(state.PuddleSamples);
+            std::ranges::sort(samples);
         }
 
-        const auto at =
-            static_cast<size_t>(std::clamp(share, 0.0f, 1.0f) * static_cast<float>(state.PuddleSamples.size() - 1));
-        return state.PuddleSamples[at];
+        const auto at = static_cast<size_t>(std::clamp(share, 0.0f, 1.0f) * static_cast<float>(samples.size() - 1));
+        return samples[at];
+    }
+
+    /// <summary>The puddles' level that leaves <paramref name="share"/> of the ground under them (composite.pshader's).</summary>
+    float PuddleLevel(State& state, float share)
+    {
+        return LevelOf(state.PuddleSamples, PuddleField, share);
     }
 
     /// <summary>How far showers come and go in <paramref name="kind"/>, as set (0: it falls steadily).</summary>
@@ -1303,6 +1450,23 @@ namespace
     /// </summary>
     void Throw(State& state, const Drop& drop, const MCCamera& camera)
     {
+        // A flake rests a moment where it lands, a pixel of it, lying on the ground (or on a unit's top); on the water
+        // (not under a bridge) it's gone.
+        if (drop.Flake)
+        {
+            const std::optional<uint8_t> drawn =
+                drop.OnUnit ? std::nullopt : MCParticles::GroundDrawnAt(drop.X, drop.Y, drop.Z, camera);
+
+            if (!drawn.has_value() || !MCParticles::IsWaterColor(*drawn) || MCParticles::BridgedAt(drop.X, drop.Y))
+            {
+                state.Splashes.push_back(MarkOf(drop, SplashKind::Flake, FlakeDot, FlakeRest,
+                                                drop.Size == FarFlake ? FlakeWhite : FlakeBrightest, drop.Alpha,
+                                                drop.OnUnit ? drop.Depth : GroundDepthFixup + drop.Depth));
+            }
+
+            return;
+        }
+
         const DropSize& size = DropSizes[drop.Size];
         MCDice& dice = state.SplashDice;
         const MCWeather::MCWeatherLook look = MCWeather::ShownLook();
@@ -1439,7 +1603,14 @@ namespace
     {
         for (const PendingDrop& pending : state.Landing)
         {
-            Drop drop{.X = pending.Point.X, .Y = pending.Point.Y, .Z = pending.Point.Z, .Size = pending.Size};
+            // In snow, a flake as strong as its size's strongest.
+            const bool flake = MCWeather::ShownLook().Snows;
+            Drop drop{.X = pending.Point.X,
+                      .Y = pending.Point.Y,
+                      .Z = pending.Point.Z,
+                      .Size = pending.Size,
+                      .Flake = flake,
+                      .Alpha = flake ? FlakeSizes[pending.Size].AlphaHigh : 0.0f};
             LandOnUnits(state, drop, camera);
             Throw(state, drop, camera);
         }
@@ -1456,15 +1627,20 @@ namespace
         MCDice& dice = state.Dice;
         const float width = camera.HalfWidth * 2.0f;
         const float height = camera.HalfHeight * 2.0f;
-        const float area = (width + LandLeft + LandRight) * (height + LandBelow);
+        // Flakes fall into the view from farther upwind and below it than drops, the nearest drifting farthest.
+        const float landLeft =
+            look.Snows ? LandLeft + look.Drift * (FlakeCalm + FlakeGusts) * FlakeSizes[NearFlake].FallHigh : LandLeft;
+        const float landBelow = look.Snows ? FlakeBelow : LandBelow;
+        const float area = (width + landLeft + LandRight) * (height + landBelow);
         const float rate = look.Drops * state.Settings.Amount * area / (DropsArea * DropsArea) * SheetMost;
-        state.Most = static_cast<size_t>(MaxDrops * std::max(burst, 1.0f) * area / (DropsArea * DropsArea));
+        const float most = look.Snows ? MaxFlakes : MaxDrops;
+        state.Most = static_cast<size_t>(most * std::max(burst, 1.0f) * area / (DropsArea * DropsArea));
         const int32_t count = dice.Count(rate * step);
 
         for (int32_t i = 0; i < count && state.Drops.size() + state.Splashes.size() < state.Most; ++i)
         {
-            const float viewX = dice.Between(-LandLeft, width + LandRight);
-            const float viewY = dice.Between(0.0f, height + LandBelow);
+            const float viewX = dice.Between(-landLeft, width + LandRight);
+            const float viewY = dice.Between(0.0f, height + landBelow);
             const float thin = dice.Unit() * SheetMost;
             const float pick = dice.Unit();
             const MCVector3D ground = GroundPointAt(viewX, viewY, camera);
@@ -1482,6 +1658,27 @@ namespace
             {
                 ++sizeIndex;
                 sum += look.Sizes[sizeIndex];
+            }
+
+            if (look.Snows)
+            {
+                const FlakeSize& flake = FlakeSizes[sizeIndex];
+                Drop drop{.X = ground.X,
+                          .Y = ground.Y,
+                          .Z = ground.Z,
+                          .Size = sizeIndex,
+                          .Flake = true,
+                          .Rock = dice.Between(flake.RockLow, flake.RockHigh),
+                          .RockRate = dice.Between(flake.RateLow, flake.RateHigh),
+                          .Phase = dice.Between(0.0f, 2.0f * std::numbers::pi_v<float>),
+                          .Fall = dice.Between(flake.FallLow, flake.FallHigh),
+                          .Speed = dice.Between(flake.SpeedLow, flake.SpeedHigh),
+                          .Alpha = dice.Between(flake.AlphaLow, flake.AlphaHigh),
+                          .Slant = look.Drift * (FlakeCalm + FlakeGusts * GustAt(east, north, time)) +
+                                   dice.Between(-FlakeJitter, FlakeJitter)};
+                LandOnUnits(state, drop, camera);
+                state.Drops.push_back(drop);
+                continue;
             }
 
             const DropSize& size = DropSizes[sizeIndex];
@@ -1618,13 +1815,75 @@ namespace
     }
 
     /// <summary>
-    /// Adds the falling drops to the draw list: hard-edged streaks, slanted, their tails toward the wind, catching the
-    /// light by the lights as <paramref name="catching"/> says.
+    /// Adds falling flake <paramref name="drop"/> to the draw list, hard edged, upwind of where it lands and above it,
+    /// rocking to each side: far, a dot; between, one twice as wide; near, a plus three wide, brightest where its arms
+    /// cross; in the palette's palest greys, no paler than <paramref name="palest"/>, catching the light by the lights as
+    /// <paramref name="catching"/> says.
     /// </summary>
-    void AddDrops(const State& state, const MCCamera& camera, const Catching& catching)
+    void AddFlake(const Drop& drop, const MCCamera& camera, const Catching& catching, float palest)
+    {
+        const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera);
+        const float left = std::max(drop.Fall - drop.Age * drop.Speed, 0.0f);
+        const float rock =
+            drop.Rock * std::sin(2.0f * std::numbers::pi_v<float> * drop.RockRate * drop.Age + drop.Phase);
+        MCParticleCommand command;
+        command.X0 = at.X - left * drop.Slant + rock;
+        command.Y0 = at.Y - left;
+        command.X1 = command.X0;
+        command.Y1 = command.Y0;
+        command.Style = MCParticleStyle::Hard;
+        SetGlint(command, catching, command.X0, at.Y, left, Facet(drop.X, drop.Y));
+
+        switch (drop.Size)
+        {
+            case FarFlake:
+            {
+                command.Radius = FlakeDot;
+                SetColor(command, NoPalerThan(FlakeWhite, palest), drop.Alpha);
+                Mark(camera, command, drop.Depth);
+                break;
+            }
+
+            case NearFlake:
+            {
+                // Its arms, across and up, each a pixel of the mock-up's wide, crossing at its middle.
+                command.Radius = FlakeDot;
+                SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
+                command.X0 -= MockPixel;
+                command.X1 += MockPixel;
+                Mark(camera, command, drop.Depth);
+                command.X0 += MockPixel;
+                command.X1 = command.X0;
+                command.Y0 -= MockPixel;
+                command.Y1 += MockPixel;
+                Mark(camera, command, drop.Depth);
+                break;
+            }
+
+            default:
+            {
+                command.Radius = 2.0f * FlakeDot;
+                SetColor(command, NoPalerThan(FlakeGrey, palest), drop.Alpha);
+                Mark(camera, command, drop.Depth);
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds the falling drops to the draw list: hard-edged streaks, slanted, their tails toward the wind, catching the
+    /// light by the lights as <paramref name="catching"/> says; flakes as AddFlake draws them.
+    /// </summary>
+    void AddDrops(const State& state, const MCCamera& camera, const Catching& catching, float palest)
     {
         for (const Drop& drop : state.Drops)
         {
+            if (drop.Flake)
+            {
+                AddFlake(drop, camera, catching, palest);
+                continue;
+            }
+
             const DropSize& size = DropSizes[drop.Size];
             const MCVector2D at = Project(drop.X, drop.Y, drop.Z, camera);
             // How far it has still to fall; its head upwind of where it lands by the slant.
@@ -1702,6 +1961,12 @@ namespace
 
                 case SplashKind::Dot:
                     break;
+
+                case SplashKind::Flake:
+                {
+                    alpha *= 1.0f - age;
+                    break;
+                }
 
                 case SplashKind::Ring:
                 {
@@ -1860,6 +2125,12 @@ auto MCWeather::LookOf(MCWeatherKind kind) -> MCWeatherLook
             return RainLook;
         case MCWeatherKind::Downpour:
             return DownpourLook;
+        case MCWeatherKind::LightSnow:
+            return LightSnowLook;
+        case MCWeatherKind::Snow:
+            return SnowLook;
+        case MCWeatherKind::Blizzard:
+            return BlizzardLook;
         case MCWeatherKind::Clear:
             break;
     }
@@ -1963,9 +2234,36 @@ auto MCWeather::Shown() -> MCWeatherKind
             return MCWeatherKind::Rain;
         case HdWeatherDownpour:
             return MCWeatherKind::Downpour;
+        case HdWeatherLightSnow:
+            return MCWeatherKind::LightSnow;
+        case HdWeatherSnow:
+            return MCWeatherKind::Snow;
+        case HdWeatherBlizzard:
+            return MCWeatherKind::Blizzard;
         default:
             return MissionWeather();
     }
+}
+
+auto MCWeather::SettingOf(MCWeatherKind kind) -> int
+{
+    switch (kind)
+    {
+        case MCWeatherKind::Rain:
+            return HdWeatherRain;
+        case MCWeatherKind::Downpour:
+            return HdWeatherDownpour;
+        case MCWeatherKind::LightSnow:
+            return HdWeatherLightSnow;
+        case MCWeatherKind::Snow:
+            return HdWeatherSnow;
+        case MCWeatherKind::Blizzard:
+            return HdWeatherBlizzard;
+        case MCWeatherKind::Clear:
+            break;
+    }
+
+    return HdWeatherOff;
 }
 
 auto MCWeather::ShownLook() -> MCWeatherLook
@@ -2072,7 +2370,8 @@ auto MCWeather::Read(MCFitIniFile& file) -> MCWeatherKind
         return *weather;
     }
 
-    SDL_Log("MCWeather: the scenario's [Environment] Weather \"%s\" is none of Clear, Rain and Downpour; shown clear",
+    SDL_Log("MCWeather: the scenario's [Environment] Weather \"%s\" is none of Clear, Rain, Downpour, LightSnow, Snow "
+            "and Blizzard; shown clear",
             name->c_str());
     return MCWeatherKind::Clear;
 }
@@ -2222,6 +2521,9 @@ auto MCWeather::Pieces() -> MCSplashPieces
             case SplashKind::Glint:
                 ++pieces.Glints;
                 break;
+            case SplashKind::Flake:
+                ++pieces.Flakes;
+                break;
         }
     }
 
@@ -2291,8 +2593,9 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     }
 
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
-    AddSplashes(state, camera, catching, night ? MCSceneLights::ShownLighting().SelfLit : 1.0f);
-    AddDrops(state, camera, catching);
+    const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
+    AddSplashes(state, camera, catching, palest);
+    AddDrops(state, camera, catching, palest);
 }
 
 auto MCWeather::Clear() -> void
@@ -2309,4 +2612,54 @@ auto MCWeather::Count() -> size_t
 auto MCWeather::PuddleLevel(float share) -> float
 {
     return ::PuddleLevel(TheState(), share);
+}
+
+auto MCWeather::CoverAt(MCWeatherKind kind, float time) -> float
+{
+    const MCWeatherLook look = LookOf(kind);
+    const MCWeatherSettings& settings = TheState().Settings;
+
+    if (!look.Snows || look.Cover <= 0.0f || look.Settle <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const float fallen = (std::isfinite(time) ? std::max(time, 0.0f) : 0.0f) * std::max(settings.SettlePace, 0.0f) +
+                         std::max(settings.Settled, 0.0f);
+    return look.Cover * (1.0f - std::exp(-fallen / look.Settle));
+}
+
+auto MCWeather::ShownCover() -> MCSnowCover
+{
+    if (MCRenderer::GpuDrawing() != MCGpuDrawing::On || !MCSceneLights::ReliefMapsOn())
+    {
+        return {};
+    }
+
+    const float share = CoverAt(Shown(), ScenarioTime);
+
+    if (share <= 0.0f)
+    {
+        return {};
+    }
+
+    return {.Dusting = SnowLevel(share), .Thick = SnowLevel(share * ThickShare), .Share = share};
+}
+
+auto MCWeather::FilledIn(float age) -> float
+{
+    const float fill = LookOf(Shown()).Fill;
+
+    if (fill <= 0.0f || ShownCover().Share <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const float fallen = (std::isfinite(age) ? std::max(age, 0.0f) : 0.0f) * std::max(Settings().SettlePace, 0.0f);
+    return 1.0f - std::exp(-fallen / fill);
+}
+
+auto MCWeather::SnowLevel(float share) -> float
+{
+    return LevelOf(TheState().SnowSamples, SnowField, share);
 }

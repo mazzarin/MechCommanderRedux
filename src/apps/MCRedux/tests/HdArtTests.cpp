@@ -5867,6 +5867,78 @@ TEST_CASE("HD weather: showers come and go over minutes, the same each time, and
 }
 
 /// <summary>
+/// HD weather's snows: light snow, snow and a blizzard fall as flakes, ever more of them, silently and without lightning;
+/// their snow settles from bare ground at a mission's start toward its share of the ground, the heavier the faster
+/// (MCWeather::CoverAt), all at once when it had snowed long before the start (MCWeatherSettings::Settled), never in
+/// rain; their names read as a scenario file and the tools give them, and each HD weather setting shows its own.
+/// </summary>
+TEST_CASE("HD weather: snow falls as flakes and settles through a mission from bare ground, the heavier the faster")
+{
+    struct Restore
+    {
+        MCWeather::MCWeatherSettings Settings = MCWeather::Settings();
+        int Weather = GHdWeather;
+
+        ~Restore()
+        {
+            MCWeather::Settings() = Settings;
+            GHdWeather = Weather;
+        }
+    } restore;
+
+    MCWeather::Settings() = {};
+    constexpr std::array Snows = {MCWeatherKind::LightSnow, MCWeatherKind::Snow, MCWeatherKind::Blizzard};
+    // A minute in, and long after (the snow as settled as it gets).
+    constexpr float Minute = 60.0f;
+    constexpr float LongAfter = 100000.0f;
+    constexpr float Settled = 0.999f;
+    float drops = 0.0f;
+    float cover = 0.0f;
+    float minuteCover = 0.0f;
+
+    for (const MCWeatherKind kind : Snows)
+    {
+        const MCWeather::MCWeatherLook look = MCWeather::LookOf(kind);
+        MCTest::Scope scope(std::format("weather {}", static_cast<int>(kind)));
+        CHECK(look.Snows);
+        CHECK(look.Drops > drops);
+        CHECK(look.Cover > cover);
+        CHECK_EQ(look.Heard, 0.0f);
+        CHECK_EQ(look.Strikes, 0.0f);
+        CHECK_EQ(look.Puddles, 0.0f);
+        CHECK_EQ(MCWeather::CoverAt(kind, 0.0f), 0.0f);
+        CHECK(MCWeather::CoverAt(kind, Minute) > minuteCover);
+        CHECK(MCWeather::CoverAt(kind, 2.0f * Minute) > MCWeather::CoverAt(kind, Minute));
+        CHECK(MCWeather::CoverAt(kind, LongAfter) > Settled * look.Cover);
+        CHECK(MCWeather::CoverAt(kind, LongAfter) <= look.Cover);
+        drops = look.Drops;
+        cover = look.Cover;
+        minuteCover = MCWeather::CoverAt(kind, Minute);
+
+        // Snowed long before the start: settled from the first.
+        MCWeather::Settings().Settled = LongAfter;
+        CHECK(MCWeather::CoverAt(kind, 0.0f) > Settled * look.Cover);
+        MCWeather::Settings().Settled = 0.0f;
+
+        GHdWeather = MCWeather::SettingOf(kind);
+        CHECK(MCWeather::Shown() == kind);
+    }
+
+    CHECK(!MCWeather::LookOf(MCWeatherKind::Downpour).Snows);
+    CHECK_EQ(MCWeather::CoverAt(MCWeatherKind::Downpour, LongAfter), 0.0f);
+    CHECK_EQ(MCWeather::CoverAt(MCWeatherKind::Clear, LongAfter), 0.0f);
+    CHECK(MCWeather::Named("LightSnow") == MCWeatherKind::LightSnow);
+    CHECK(MCWeather::Named("snow") == MCWeatherKind::Snow);
+    CHECK(MCWeather::Named("BLIZZARD") == MCWeatherKind::Blizzard);
+    CHECK(MCWeather::SettingOf(MCWeatherKind::Clear) == HdWeatherOff);
+
+    // The more of the ground covered, the higher the level under which it lies.
+    CHECK(MCWeather::SnowLevel(0.2f) < MCWeather::SnowLevel(0.5f));
+    CHECK(MCWeather::SnowLevel(0.5f) < MCWeather::SnowLevel(0.9f));
+    CHECK_EQ(MCWeather::SnowLevel(0.0f), 0.0f);
+}
+
+/// <summary>
 /// HD weather's splashes fitting the ground (MCWeather::MCWeatherSettings::Ground), on mission 1 drawn by the GPU in a
 /// downpour letting no rain of its own fall, paused, as the game's time goes: a near drop landed (MCWeather::AddDrop)
 /// on hard ground throws droplets up; into soil it soaks, a dark dot, and in grass it puffs, neither throwing any; on
@@ -7313,7 +7385,9 @@ namespace
     /// in a 70-second take); with <c>--hd-rain-light &lt;strength&gt;</c>, the drops catch the lights they fall past
     /// that much, 1 as made (0: none, as before; MCWeatherSettings::Light); with <c>--hd-splashes &lt;strength&gt;</c>,
     /// its drops splashing as the ground takes them that strongly, 1 as made (0: every land alike, as the rain first
-    /// fell; MCWeatherSettings::Ground).
+    /// fell; MCWeatherSettings::Ground). The snows (lightsnow, snow, blizzard): with <c>--hd-snow
+    /// &lt;seconds&gt;[,&lt;pace&gt;]</c>, it had snowed that long before the mission's start (MCWeatherSettings::Settled)
+    /// and settles and fills the prints in that many times as fast (MCWeatherSettings::SettlePace).
     /// </summary>
     void WeatherFromOptions()
     {
@@ -7327,9 +7401,7 @@ namespace
         const size_t comma = given->find(',');
         const std::optional<MCWeatherKind> weather = MCWeather::Named(given->substr(0, comma));
         REQUIRE(weather.has_value());
-        GHdWeather = *weather == MCWeatherKind::Downpour ? HdWeatherDownpour
-                     : *weather == MCWeatherKind::Rain   ? HdWeatherRain
-                                                         : HdWeatherOff;
+        GHdWeather = MCWeather::SettingOf(*weather);
 
         // strtof: libc++ has floating-point from_chars only from macOS 26.
         if (comma != std::string_view::npos)
@@ -7372,6 +7444,20 @@ namespace
         if (const std::optional<std::string_view> splashes = MCTest::Option("hd-splashes"); splashes.has_value())
         {
             MCWeather::Settings().Ground = std::strtof(std::string(*splashes).c_str(), nullptr);
+        }
+
+        if (const std::optional<std::string_view> snow = MCTest::Option("hd-snow"); snow.has_value())
+        {
+            const size_t pace = snow->find(',');
+            MCWeather::Settings().Settled = std::strtof(std::string(snow->substr(0, pace)).c_str(), nullptr);
+
+            if (pace != std::string_view::npos)
+            {
+                MCWeather::Settings().SettlePace = std::strtof(std::string(snow->substr(pace + 1)).c_str(), nullptr);
+            }
+
+            std::cout << std::format("  snow: fallen {:.0f} s before the start, settling {:.2f} times as fast\n",
+                                     MCWeather::Settings().Settled, MCWeather::Settings().SettlePace);
         }
 
         const MCWeather::MCWeatherSettings& settings = MCWeather::Settings();
@@ -9447,6 +9533,322 @@ TEST_CASE_ISOLATED("game: in a downpour a foot coming down in a puddle sprays an
     CHECK(still.Reacting == 0);
     CHECK(stillChanged.Count == 0);
     std::filesystem::remove_all(scene->Scratch);
+}
+
+namespace
+{
+    /// <summary>
+    /// Mission 1's HD ground with its relief maps (which tell the ground from what stands on it) in <paramref
+    /// name="weather"/>, paused, the scene's madcat standing on it; HD art on while the result lives. None (noted) without
+    /// the game or a GPU.
+    /// </summary>
+    struct SnowScene
+    {
+        HdScene Scene;
+        std::unique_ptr<MCHdArtOn> HdArt;
+        int LightingWas = HdLightingOff;
+
+        ~SnowScene()
+        {
+            GHdWeather = HdWeatherOff;
+            MCWeather::Settings() = {};
+            GHdRelief = 0;
+            GHdLighting = LightingWas;
+            GamePaused = false;
+            HdArt.reset();
+            std::filesystem::remove_all(Scene.Scratch);
+        }
+    };
+
+    std::unique_ptr<SnowScene> SetUpSnowScene(int weather)
+    {
+        std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+        if (!scene.has_value())
+        {
+            return nullptr;
+        }
+
+        const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+        REQUIRE(mesh != nullptr);
+        std::array<SDL_Color, 256> colors{};
+        MCInput::Display()->GetShownColors(colors);
+        constexpr int32_t Rise = 20;
+        const std::filesystem::path ground = scene->Scratch / "ground";
+        REQUIRE(WriteTerrainPack(ground, *mesh, colors, Muted) > 0);
+        REQUIRE(WriteReliefPack(ground, *mesh, Rise) > 0);
+        auto made = std::make_unique<SnowScene>();
+        made->Scene = std::move(*scene);
+        made->HdArt = std::make_unique<MCHdArtOn>(ground);
+        made->LightingWas = GHdLighting;
+        GHdLighting = HdLightingOn;
+        GHdRelief = 1;
+        GHdWeather = weather;
+        MCWeather::Settings() = {};
+        GamePaused = true;
+        MCTestGame::RunFrame(FrameSeconds);
+        MCTestGame::RunFrame(FrameSeconds);
+        REQUIRE(MCSceneLights::ReliefMapsOn());
+        return made;
+    }
+
+    /// <summary>The frame shown at the game's time <paramref name="time"/>, the game paused.</summary>
+    std::vector<SDL_Color> ShownAt(float time)
+    {
+        ScenarioTime = time;
+        MCTestGame::RunFrame(FrameSeconds);
+        auto frame = MCInput::Display()->ReadFrame();
+        REQUIRE(frame.has_value());
+        return std::move(*frame);
+    }
+}
+
+/// <summary>
+/// HD weather's snow on mission 1's HD ground with its relief maps, drawn by the GPU, paused, where the world shows clear
+/// of the interface: as the game's time goes flakes fall over the view and rest a moment where they land (no drops,
+/// rings or droplets); while the time holds they hold. With none settled yet the ground shows bare; settled (it had
+/// snowed long before the start), much of it shows white, the same each time, while the snow lets no flakes fall. None
+/// of it throws the game's dice, and with HD weather off the world shows as drawn.
+/// </summary>
+TEST_CASE_ISOLATED("game: snow falls as flakes that rest where they land, and settles white over the ground")
+{
+    const std::unique_ptr<SnowScene> scene = SetUpSnowScene(HdWeatherSnow);
+
+    if (scene == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    constexpr float Step = 1.0f / 30.0f;
+    // Two seconds of frames: the first flakes land, nearer ones still falling.
+    constexpr int32_t Frames = 60;
+    // Settled, at least Whitened of the world shows Whiter (luma) than bare.
+    constexpr float Whitened = 0.15f;
+    constexpr float Whiter = 20.0f;
+    constexpr float LongBefore = 100000.0f;
+
+    struct Run
+    {
+        std::vector<SDL_Color> Last;
+        std::vector<SDL_Color> Held;
+        size_t Count = 0;
+        MCWeather::MCSplashPieces Pieces;
+        float Share = 0.0f;
+    };
+
+    const auto run = [&](int weather, float amount, float settled, float pace)
+    {
+        GHdWeather = weather;
+        MCWeather::Settings().Amount = amount;
+        MCWeather::Settings().Settled = settled;
+        MCWeather::Settings().SettlePace = pace;
+        MCWeather::Clear();
+        Run made;
+
+        for (int32_t frame = 0; frame <= Frames; ++frame)
+        {
+            made.Last = ShownAt(now + Step * static_cast<float>(frame));
+        }
+
+        made.Count = MCWeather::Count();
+        made.Pieces = MCWeather::Pieces();
+        made.Share = MCWeather::ShownCover().Share;
+        made.Held = ShownAt(now + Step * static_cast<float>(Frames));
+        return made;
+    };
+
+    const Run clear = run(HdWeatherOff, 1.0f, 0.0f, 1.0f);
+    const uint32_t dice = MCGameContext::Current().Random().State();
+    // Bare: nothing settles (the pace 0); once without flakes.
+    const Run bare = run(HdWeatherSnow, 1.0f, 0.0f, 0.0f);
+    const Run bareStill = run(HdWeatherSnow, 0.0f, 0.0f, 0.0f);
+    const Run settled = run(HdWeatherSnow, 0.0f, LongBefore, 1.0f);
+    const Run again = run(HdWeatherSnow, 0.0f, LongBefore, 1.0f);
+    CHECK(MCGameContext::Current().Random().State() == dice);
+    const Run after = run(HdWeatherOff, 1.0f, 0.0f, 1.0f);
+    ScenarioTime = now;
+    SaveShownFrame(bare.Last, width, height, "weather_snow_bare");
+    SaveShownFrame(settled.Last, width, height, "weather_snow_settled");
+
+    // The world clear of the interface (as the rain's test).
+    const int32_t left = width / 3;
+    const int32_t top = height / 4;
+    size_t pixels = 0;
+    size_t moved = 0;
+    size_t unlike = 0;
+    size_t leftOver = 0;
+    size_t whiter = 0;
+
+    for (int32_t y = top; y < height; ++y)
+    {
+        for (int32_t x = left; x < width; ++x)
+        {
+            const size_t i = static_cast<size_t>(y) * width + x;
+            ++pixels;
+            moved += SameColor(bare.Held[i], bare.Last[i]) ? 0 : 1;
+            unlike += SameColor(settled.Last[i], again.Last[i]) ? 0 : 1;
+            leftOver += SameColor(after.Last[i], clear.Last[i]) ? 0 : 1;
+            whiter += LumaOf(settled.Last[i]) > LumaOf(bareStill.Last[i]) + Whiter ? 1 : 0;
+        }
+    }
+
+    const auto share = [&](size_t count) { return static_cast<float>(count) / static_cast<float>(pixels); };
+    std::cout << std::format(
+        "  snow: {} flakes falling and resting ({} resting), cover {:.2f} bare and {:.2f} settled; {:.3f} of the world "
+        "whiter settled than bare; {} moved while the time held, {} unlike the second time, {} left once clear\n",
+        bare.Count, bare.Pieces.Flakes, bare.Share, settled.Share, share(whiter), moved, unlike, leftOver);
+    CHECK(clear.Count == 0);
+    CHECK(bare.Count > 0);
+    CHECK(bare.Pieces.Flakes > 0);
+    CHECK(bare.Pieces.Droplets == 0);
+    CHECK(bare.Pieces.Rings == 0);
+    CHECK(bare.Pieces.Dots == 0);
+    CHECK(bare.Share == 0.0f);
+    CHECK(moved == 0);
+    CHECK(settled.Count == 0);
+    CHECK(settled.Share > 0.0f);
+    CHECK(share(whiter) > Whitened);
+    CHECK(unlike == 0);
+    CHECK(after.Count == 0);
+    CHECK(leftOver == 0);
+}
+
+/// <summary>
+/// HD weather's snow filling in the footprints and craters (MCWeather::FilledIn, MCCraterManager's), on mission 1's HD
+/// ground with its relief maps under a settled blizzard letting no flakes fall, drawn by the GPU, paused: a print made
+/// just now shows as made, one made long ago is all but gone under the snow (nothing of it shows more than a phone
+/// shows); with HD weather off both show as made. The newer the print, the less it has filled in.
+/// </summary>
+TEST_CASE_ISOLATED("game: under the snow a footprint fills in by its age, and without snow shows as made")
+{
+    const std::unique_ptr<SnowScene> scene = SetUpSnowScene(HdWeatherBlizzard);
+
+    if (scene == nullptr)
+    {
+        return;
+    }
+
+    constexpr float LongBefore = 100000.0f;
+    MCWeather::Settings().Amount = 0.0f;
+    MCWeather::Settings().Settled = LongBefore;
+    const std::shared_ptr<MCDisplay> display = MCInput::Display();
+    const int32_t width = display->Width();
+    const int32_t height = display->Height();
+    const float now = ScenarioTime;
+    REQUIRE(MCWeather::ShownCover().Share > 0.0f);
+
+    // How far the snow has filled a print in, by its age (a blizzard's prints fill in about two thirds of the way in
+    // half a minute): none just made, all but full long after.
+    constexpr float Old = 600.0f;
+    constexpr float AllButFull = 0.99f;
+    CHECK_EQ(MCWeather::FilledIn(0.0f), 0.0f);
+    CHECK(MCWeather::FilledIn(10.0f) > 0.0f);
+    CHECK(MCWeather::FilledIn(20.0f) > MCWeather::FilledIn(10.0f));
+    CHECK(MCWeather::FilledIn(Old) > AllButFull);
+
+    // The madcat's footprints on a grid over the view's right half below its top quarter (clear of the interface),
+    // Spaced view pixels apart, none by the mech, the first of each pair made long ago and the second just now (a few
+    // pairs, as some lie where the snow has left the ground bare).
+    const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
+    REQUIRE(camera != nullptr);
+    const auto printType = scene->Scene.Player.Mech->TypeAs<MCBattleMechType>().FootprintType;
+    const MCVector3D from = scene->Scene.Player.Mech->GetPosition();
+    const MCVector2D feet = MCParticles::ViewPoint(from.X, from.Y, from.Z, *camera);
+    constexpr float Reach = 400.0f;
+    constexpr float Apart = 6.0f;
+    // A print's box (view pixels round its point), and the prints' least distance from each other and the mech.
+    constexpr int32_t Box = 12;
+    constexpr float Spaced = 40.0f;
+    constexpr size_t Pairs = 6;
+    std::vector<std::pair<MCVector3D, MCVector2D>> places;
+
+    for (float dy = -Reach; dy <= Reach && places.size() < 2 * Pairs; dy += Apart)
+    {
+        for (float dx = -Reach; dx <= Reach && places.size() < 2 * Pairs; dx += Apart)
+        {
+            MCVector3D point(from.X + dx, from.Y + dy, 0.0f);
+            point.Z = MCParticles::GroundAt(point.X, point.Y);
+            const MCVector2D at = MCParticles::ViewPoint(point.X, point.Y, point.Z, *camera);
+            const std::optional<uint8_t> drawn = MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, *camera);
+            const bool inView = at.X > static_cast<float>(width / 2 + Box) && at.X < static_cast<float>(width - Box) &&
+                                at.Y > static_cast<float>(height / 4 + Box) && at.Y < static_cast<float>(height - Box);
+            const bool spaced =
+                std::hypot(at.X - feet.X, at.Y - feet.Y) >= Spaced &&
+                std::ranges::all_of(places, [&](const auto& place)
+                                    { return std::hypot(at.X - place.second.X, at.Y - place.second.Y) >= Spaced; });
+
+            if (inView && spaced && drawn.has_value() && !MCParticles::IsWaterColor(*drawn))
+            {
+                places.emplace_back(point, at);
+            }
+        }
+    }
+
+    REQUIRE(places.size() == 2 * Pairs);
+
+    // The frames before the prints are made, then with them, under the snow and without.
+    const std::vector<SDL_Color> snowNone = ShownAt(now);
+    GHdWeather = HdWeatherOff;
+    const std::vector<SDL_Color> clearNone = ShownAt(now);
+
+    for (size_t i = 0; i < places.size(); ++i)
+    {
+        ScenarioTime = i % 2 == 0 ? now - Old : now;
+        CraterManager().Place(printType, places[i].first, 0);
+    }
+
+    ScenarioTime = now;
+    const std::vector<SDL_Color> clearPrints = ShownAt(now);
+    GHdWeather = HdWeatherBlizzard;
+    const std::vector<SDL_Color> snowPrints = ShownAt(now);
+    SaveShownFrame(snowPrints, width, height, "weather_snow_prints");
+
+    // The pixels the old prints, and the new, changed visibly within their boxes: a component by more than Visible (a
+    // phone shows little under it; a filled print's ground differs from the ground round it by about that).
+    constexpr int32_t Visible = 8;
+    const auto changedRound =
+        [&](const std::vector<SDL_Color>& with, const std::vector<SDL_Color>& without, size_t first)
+    {
+        size_t changed = 0;
+
+        for (size_t k = first; k < places.size(); k += 2)
+        {
+            const MCVector2D& at = places[k].second;
+
+            for (int32_t y = static_cast<int32_t>(at.Y) - Box; y <= static_cast<int32_t>(at.Y) + Box; ++y)
+            {
+                for (int32_t x = static_cast<int32_t>(at.X) - Box; x <= static_cast<int32_t>(at.X) + Box; ++x)
+                {
+                    const size_t i = static_cast<size_t>(y) * width + x;
+                    const int32_t apart =
+                        std::max({std::abs(with[i].r - without[i].r), std::abs(with[i].g - without[i].g),
+                                  std::abs(with[i].b - without[i].b)});
+                    changed += apart > Visible ? 1 : 0;
+                }
+            }
+        }
+
+        return changed;
+    };
+
+    const size_t oldInSnow = changedRound(snowPrints, snowNone, 0);
+    const size_t newInSnow = changedRound(snowPrints, snowNone, 1);
+    const size_t oldClear = changedRound(clearPrints, clearNone, 0);
+    const size_t newClear = changedRound(clearPrints, clearNone, 1);
+    std::cout << std::format("  pixels {} prints changed: under the snow {} made long ago and {} just now; without "
+                             "snow {} and {}\n",
+                             Pairs, oldInSnow, newInSnow, oldClear, newClear);
+    // The prints' least pixels, and a filled-in print's most share of a new one's.
+    constexpr size_t LeastPrints = 20 * Pairs;
+    constexpr size_t FilledShare = 4;
+    CHECK(newClear > LeastPrints);
+    CHECK(oldClear > LeastPrints);
+    CHECK(newInSnow > LeastPrints);
+    CHECK(oldInSnow * FilledShare < newInSnow);
 }
 
 namespace

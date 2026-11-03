@@ -46,6 +46,12 @@ public:
     /// <summary>Whether to draw at 1:1 instead of through <see cref="ScaleDraw"/>.</summary>
     bool NoScaleDraw = false;
 
+    /// <summary>
+    /// Port-only (HD weather's snow): a footprint's or a crater's, how far the snow has filled it in (MCRenderer::
+    /// GroundFillScope); none for every other shape.
+    /// </summary>
+    std::optional<float> GroundFill;
+
 private:
     /// <summary>Clamps <see cref="FrameNum"/> to the table's last frame.</summary>
     void ClampFrame();

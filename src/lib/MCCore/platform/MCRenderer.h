@@ -805,6 +805,31 @@ public:
     /// <summary>The turn the shape draws now are drawn by (<see cref="TurnScope"/>), none outside one.</summary>
     static const std::optional<MCSpriteTurn>& DrawingTurn();
 
+    /// <summary>
+    /// Port-only (HD weather's snow): while one made with a share lives, the draws are a footprint's or a crater's under
+    /// the snow, filled in that far (0 as made, 1 as the ground round it, MCWeather::FilledIn): the hardware renderer
+    /// marks their pixels as ground filled in so far, for the composite to lay the snow over them as far (nothing in
+    /// software). One made with none changes nothing.
+    /// </summary>
+    class GroundFillScope
+    {
+    public:
+        /// <summary>Starts drawing filled in <paramref name="fill"/> far (none: as they are).</summary>
+        explicit GroundFillScope(std::optional<float> fill);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~GroundFillScope();
+
+        GroundFillScope(const GroundFillScope&) = delete;
+        GroundFillScope& operator=(const GroundFillScope&) = delete;
+
+    private:
+        std::optional<float> _Was;
+    };
+
+    /// <summary>How far the draws now are filled in (<see cref="GroundFillScope"/>), none outside one.</summary>
+    static std::optional<float> DrawingGroundFill();
+
     // Frame surfaces ----------------------------------------------------------------------------------------------
 
     /// <summary>

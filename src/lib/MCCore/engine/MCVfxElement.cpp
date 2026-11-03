@@ -2,6 +2,7 @@
 #include "engine/MCVfxElement.h"
 #include "camera/MCCamera.h"
 #include "engine/MCScaleDraw.h"
+#include "platform/MCRenderer.h"
 #include "vfx/MCVfxFunctions.h"
 
 MCVfxElement::MCVfxElement(std::span<const uint8_t> shape, int32_t x, int32_t y, int32_t frame, int32_t reverse,
@@ -45,6 +46,8 @@ auto MCVfxElement::ClampFrame() -> void
 
 auto MCVfxElement::Draw() -> void
 {
+    const MCRenderer::GroundFillScope fill(GroundFill);
+
     if (!NoScaleDraw)
     {
         ScaleDraw(ShapeTable, static_cast<uint32_t>(FrameNum), X, Y, Reverse, FadeTable);

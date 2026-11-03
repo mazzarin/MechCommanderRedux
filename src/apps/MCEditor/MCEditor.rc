@@ -152,6 +152,9 @@ BEGIN
             MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
             MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
             MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
+            MENUITEM "&Light Snow", ID_MISSION_WEATHER_LIGHT_SNOW
+            MENUITEM "&Snow", ID_MISSION_WEATHER_SNOW
+            MENUITEM "&Blizzard", ID_MISSION_WEATHER_BLIZZARD
         END
     END
     POPUP "&Tools"
@@ -265,6 +268,9 @@ BEGIN
         MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
         MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
         MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
+        MENUITEM "&Light Snow", ID_MISSION_WEATHER_LIGHT_SNOW
+        MENUITEM "&Snow", ID_MISSION_WEATHER_SNOW
+        MENUITEM "&Blizzard", ID_MISSION_WEATHER_BLIZZARD
     END
 END
 
@@ -292,6 +298,9 @@ BEGIN
         MENUITEM "&Clear", ID_MISSION_WEATHER_CLEAR
         MENUITEM "&Rain", ID_MISSION_WEATHER_RAIN
         MENUITEM "&Downpour", ID_MISSION_WEATHER_DOWNPOUR
+        MENUITEM "&Light Snow", ID_MISSION_WEATHER_LIGHT_SNOW
+        MENUITEM "&Snow", ID_MISSION_WEATHER_SNOW
+        MENUITEM "&Blizzard", ID_MISSION_WEATHER_BLIZZARD
     END
 END
 
@@ -907,6 +916,9 @@ BEGIN
     ID_MISSION_WEATHER_CLEAR                 "Set the mission under a clear sky.\nClear"
     ID_MISSION_WEATHER_RAIN                  "Set the mission in rain: MCRedux shows it with HD weather on, and nothing in play changes.\nRain"
     ID_MISSION_WEATHER_DOWNPOUR              "Set the mission in a downpour: MCRedux shows heavier rain, with thunder, with HD weather on, and nothing in play changes.\nDownpour"
+    ID_MISSION_WEATHER_LIGHT_SNOW            "Set the mission in light snow: MCRedux shows flakes falling, barely settling, with HD weather on, and nothing in play changes.\nLight Snow"
+    ID_MISSION_WEATHER_SNOW                  "Set the mission in snow: MCRedux shows it settling on the ground as the mission goes, with HD weather on, and nothing in play changes.\nSnow"
+    ID_MISSION_WEATHER_BLIZZARD              "Set the mission in a blizzard: MCRedux shows driven snow soon covering the ground, with HD weather on, and nothing in play changes.\nBlizzard"
     ID_UNDO                                  "Undo the last operation.\nUndo"
     ID_REDO                                  "Redo the previously undone action.\nRedo"
     IDS_ASSIGN_A_SPECIFIC_HEIGHT             "Assign a specific height to all selected vertices.\nSet Height"

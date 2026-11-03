@@ -68,6 +68,23 @@ TEST_CASE_ISOLATED("game: mission 1's game state in a downpour drawn by the GPU 
     }
 }
 
+/// <summary>
+/// Port-only (HD weather's snow): mission 1's game state in a blizzard drawn by the GPU (flakes falling over the battle
+/// and resting where they land, the snow settling, the footprints filling in) is the recorded run: the snow never
+/// touches the game.
+/// </summary>
+TEST_CASE_ISOLATED("game: mission 1's game state in a blizzard drawn by the GPU matches the recorded run")
+{
+    if (MCTestGame::Available())
+    {
+        MCRenderer::RequestGpuDrawing(MCGpuDrawing::On);
+        MissionState(1, 0x9ff2e0b4u, HdWeatherBlizzard);
+        CHECK(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
+        CHECK(MCWeather::Count() > 0);
+        GHdWeather = HdWeatherOff;
+    }
+}
+
 /// <summary>Mission 2's game state over 600 frames is the recorded run.</summary>
 TEST_CASE_ISOLATED("game: mission 2's game state matches the recorded run")
 {

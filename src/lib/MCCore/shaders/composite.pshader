@@ -155,6 +155,9 @@ cbuffer Composite : register(b0, space3)
     // The lightning (MCWeather::ShownFlash): x, how much it lights the world now (0 none, 1 FlashLight in full); y, the
     // side of the view it struck on (-1 left to 1 right).
     float4 flash;
+    // The snow (MCWeather::ShownCover): SnowFieldAt below x lies under a dusting, below y thick; z, the share of the
+    // ground covered (0: none settles); w, 1 when it snows (its veil white, SnowVeil).
+    float4 snow;
     // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
     // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
     float4 lightTiles;
@@ -437,9 +440,10 @@ float SunFacing(float2 slope)
 // light, times WaterLightGlint. The clouds' shadows leave cloudLight of the world's own light (CloudsAt), the lights'
 // unchanged. Port-only (HD weather): the overcast leaves overcast of it (OvercastAt), sparing a light's own pixels alone,
 // as the night does. Port-only: the sun shows sunRelief of the relief (1: all of it; a forest's canopy less,
-// reliefLook.y). The lights are those near the texel (LightsNear).
-float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shade, float glint, float3 cloudLight,
-           float3 overcast, uint2 near)
+// reliefLook.y). The lights are those near the texel (LightsNear). selfLit is how much the colour is a light's own
+// (SelfLit of the colour as drawn: the snow laid over it, SnowAt, is never a light's).
+float3 Lit(float3 world, float selfLit, float2 texel, float2 slope, float sunRelief, float shade, float glint,
+           float3 cloudLight, float3 overcast, uint2 near)
 {
     const float3 ambient = AmbientLight() * overcast;
 
@@ -449,7 +453,6 @@ float3 Lit(float3 world, float2 texel, float2 slope, float sunRelief, float shad
         return world;
     }
 
-    const float selfLit = SelfLit(world);
     const float3 own = lerp(world, dot(world, Luma), ambientLook.w * (1.0 - selfLit));
     const float3 base = own * lerp(ambient * lerp(1.0, SunFacing(slope), sunRelief), 1.0, selfLit) *
                         lerp(cloudLight, 1.0, smoothstep(CloudSpareFrom, 1.0, max(world.r, max(world.g, world.b))));
@@ -1057,6 +1060,8 @@ static const float3 OvercastTint = float3(0.94, 0.98, 1.06);
 // The rain's veil: its grey (in the world's own light); how thick it hangs where its sheets are thinnest (times
 // weather.w), and how much more where they're thickest.
 static const float3 VeilColour = float3(150.0, 160.0, 172.0) / 255.0;
+// Port-only (HD weather's snow): the snow's veil, a cold white.
+static const float3 SnowVeil = float3(206.0, 212.0, 220.0) / 255.0;
 static const float VeilLeast = 0.4;
 static const float VeilSheets = 1.2;
 // The veil's sheets (MCWeather.cpp's SheetsAt, which thins the drops where they're thin): noise SheetSize meters big
@@ -1373,7 +1378,7 @@ float3 WetAt(float3 color, float3 art, float2 texel)
     return SteppedPuddleAt(PuddleAt(texel + up) ? puddle : lerp(puddle, sky, EdgeMirror), texel);
 }
 
-// `color` at a world texel seen through the rain's veil (as it is without one).
+// `color` at a world texel seen through the rain's veil, or the snow's (as it is without one).
 float3 VeiledAt(float3 color, float2 texel)
 {
     if (weather.w <= 0.0)
@@ -1382,7 +1387,157 @@ float3 VeiledAt(float3 color, float2 texel)
     }
 
     const float veil = saturate(weather.w * (VeilLeast + VeilSheets * SheetsAt(GroundPointAt(texel))));
-    return lerp(color, VeilColour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
+    const float3 colour = lerp(VeilColour, SnowVeil, snow.w);
+    return lerp(color, colour * lerp(AmbientLight(), FlashLight, LightningAt(texel)), veil);
+}
+
+// Port-only (HD weather's snow, MCWeather::ShownCover; tools/upscale/rain-proto/render_snow.py, the mock-up). The
+// snow's field (MCWeather.cpp's SnowField: noise SnowSize meters big, two layers, the finer SnowApart off) rises
+// SnowSlope times the square of the ground's relief slope, so the snow settles on the flat first, and SnowCliff more
+// where BlockedDryFrom to BlockedDryTo of the ground's map tile can't be entered (cliffs last). Below snow.y the ground
+// lies under thick snow (SnowThick of the snow's colour), below snow.x under a dusting (SnowDusting), in hard steps.
+static const float SnowSize = 30.0;
+static const float2 SnowApart = float2(23.1, -7.9);
+static const float SnowSlope = 0.3;
+static const float SnowCliff = 0.3;
+static const float SnowDusting = 0.5;
+static const float SnowThick = 0.85;
+// The snow's white is shaded as the ground under it is: the ground's brightness against its SnowShadeSpan texels round,
+// kept from SnowShadeLeast to SnowShadeMost, and from SnowShadeMost down blue-grey (SnowShadow) toward the least, so the
+// ground's grain and its hollows show through.
+static const float3 SnowWhite = float3(236.0, 238.0, 242.0) / 255.0;
+static const float3 SnowShadow = float3(150.0, 164.0, 186.0) / 255.0;
+static const float SnowShadeSpan = 3.0;
+static const float SnowShadeLeast = 0.72;
+static const float SnowShadeMost = 1.15;
+static const float SnowShadeFloor = 0.02;
+// A forest's canopy takes snow on its lit leaves alone (brighter than the canopy LeafSpan texels round), CanopySnow of
+// the snow's colour where the ground under it lies under a dusting or more, times the share of the ground covered.
+static const float LeafSpan = 1.5;
+static const float CanopySnow = 0.6;
+// A footprint or a crater under the snow (draw.pshader's GroundFill) marks the index target's alpha from FilledMarkFrom
+// to FilledMarkFrom + FilledMarkSpan as far as it has filled in, under FilledMarkTop (the ground's own marks lie
+// above); as it fills its colour gives way to the ground's round it (the drawn ground PrintGroundSpans texels away
+// each way, where it isn't a print nor something standing on it) and its shade from its own pixels is eased out, and
+// the snow lies over it that much.
+static const float2 PrintGroundSpans = float2(8.0, 16.0);
+static const float FilledMarkFrom = 0.52;
+static const float FilledMarkSpan = 0.2;
+static const float FilledMarkTop = 0.735;
+
+// How far a footprint or a crater has filled in at a world texel (0 where there's none, or none yet).
+float FilledAt(float2 texel)
+{
+    const float mark = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw).a;
+    return mark > GroundMark && mark < FilledMarkTop ? saturate((mark - FilledMarkFrom) / FilledMarkSpan) : 0.0;
+}
+
+// The brightness of the drawn world at world texel `texel`, a print there taken as `centre` as far as it has filled in
+// (the ground's own under it, as near as is known).
+float GroundLumaAt(float2 texel, float centre)
+{
+    return lerp(dot(WorldAt(texel), Luma), centre, FilledAt(texel));
+}
+
+// The snow's shade at a world texel drawn `art`: its brightness against the drawn world `span` texels round (where a
+// print lies there, the less of it the more it has filled in, so no outline of a filled print shows round it).
+float SnowShade(float3 art, float2 texel, float span)
+{
+    const float2 side = float2(span, 0.0);
+    const float2 up = float2(0.0, span);
+    const float centre = dot(art, Luma);
+    const float round = (GroundLumaAt(texel + side, centre) + GroundLumaAt(texel - side, centre) +
+                         GroundLumaAt(texel + up, centre) + GroundLumaAt(texel - up, centre)) /
+                        4.0;
+    return clamp(centre / max(round, SnowShadeFloor), SnowShadeLeast, SnowShadeMost);
+}
+
+// The colour of the ground round a print at world texel `texel` (`color` where none of it shows).
+float3 GroundRound(float3 color, float2 texel)
+{
+    const float2 ways[4] = {float2(1.0, 0.0), float2(-1.0, 0.0), float2(0.0, 1.0), float2(0.0, -1.0)};
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float count = 0.0;
+
+    for (uint ring = 0; ring < 2; ++ring)
+    {
+        for (uint way = 0; way < 4; ++way)
+        {
+            const float2 at = texel + ways[way] * PrintGroundSpans[ring];
+            const float mark = TexelAt(opTex, opSampler, clamp(round(at), 0.0, worldSize.xy - 1.0), worldSize.zw).a;
+
+            if (mark >= FilledMarkTop)
+            {
+                sum += WorldAt(at);
+                count += 1.0;
+            }
+        }
+    }
+
+    return count > 0.0 ? sum / count : color;
+}
+
+// The snow's colour at `shade` (SnowShade).
+float3 SnowColour(float shade)
+{
+    const float dark = saturate((SnowShadeMost - shade) / (SnowShadeMost - SnowShadeLeast));
+    return lerp(SnowWhite, SnowShadow, dark) * shade;
+}
+
+// How much snow lies at a world texel whose relief rises by `slope`, `blocked` of its map tile not to be entered: 0, a
+// dusting or thick (SnowDusting, SnowThick).
+float SnowAmountAt(float2 texel, float2 slope, float blocked)
+{
+    const float field = Layered(GroundPointAt(floor(texel) + 0.5) / SnowSize, SnowApart) +
+                        SnowSlope * dot(slope, slope) + SnowCliff * smoothstep(BlockedDryFrom, BlockedDryTo, blocked);
+    return field < snow.y ? SnowThick : field < snow.x ? SnowDusting : 0.0;
+}
+
+// `color` at world texel `texel` (drawn as `art`) under the snow's cover: laid over the ground in its steps, shaded as
+// the ground is; over a footprint or a crater as far as it has filled in; a little on a forest's lit leaves; none on
+// the water nor on what stands on the ground. As it is without the cover.
+float3 SnowAt(float3 color, float3 art, float2 texel)
+{
+    if (snow.z <= 0.0 || IsWater(WorldIndexAt(texel)))
+    {
+        return color;
+    }
+
+    float mark;
+    const float2 slope = ReliefAt(texel, mark);
+
+    if (mark <= GroundMark)
+    {
+        if (mark <= CanopyMark)
+        {
+            return color;
+        }
+
+        // A forest's canopy: its lit leaves, brighter than round them.
+        const float shade = SnowShade(art, texel, LeafSpan);
+
+        if (shade <= 1.0)
+        {
+            return color;
+        }
+
+        const float amount = SnowAmountAt(texel, float2(0.0, 0.0), 0.0);
+        return lerp(color, SnowColour(shade), CanopySnow * saturate(amount / SnowDusting) * snow.z);
+    }
+
+    // A footprint or a crater filling in, its own shade eased out as it does; else the ground.
+    const bool print = mark < FilledMarkTop;
+    const float filled = print ? saturate((mark - FilledMarkFrom) / FilledMarkSpan) : 1.0;
+    const float amount = SnowAmountAt(texel, slope, print ? 0.0 : BlockedShare(mark)) * filled;
+
+    if (amount <= 0.0)
+    {
+        return color;
+    }
+
+    const float3 under = print ? lerp(color, GroundRound(color, texel), filled) : color;
+    const float shade = lerp(SnowShade(art, texel, SnowShadeSpan), 1.0, print ? filled : 0.0);
+    return lerp(under, SnowColour(shade), amount);
 }
 
 // The composite's pixel `pixel`: the screen over its underlay's world, or alone.
@@ -1448,9 +1603,11 @@ float4 Composed(float2 pixel)
             // Port-only: the sun's relief spares a forest's canopy as much as reliefLook.y says.
             const float sunRelief = IsCanopy(hazy) ? reliefLook.y : 1.0;
             const uint2 near = LightsNear(hazy + 0.5);
-            const float3 litWorld =
-                Lit(seen, hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint, cloudLight, overcast, near) +
-                glint * sunGlint * AmbientLight() * cloudLight;
+            // Port-only (HD weather's snow): the cover laid over the world before it's lit.
+            const float3 snowy = SnowAt(seen, lit.rgb, hazy);
+            const float3 litWorld = Lit(snowy, SelfLit(seen), hazy + 0.5, SlopeAt(swayed), sunRelief, lit.a, glint,
+                                        cloudLight, overcast, near) +
+                                    glint * sunGlint * AmbientLight() * cloudLight;
             const float3 shone =
                 WetAt(VeiledAt(litWorld, hazy + 0.5), seen, hazy) + caught + AirBeamsAt(hazy + 0.5, near);
             under = 1.0 - (1.0 - saturate(shone)) * (1.0 - bloom);
@@ -1472,7 +1629,8 @@ float4 Composed(float2 pixel)
         const float3 seen = LivingWater(Shown(index), hazy, glint);
         const float3 cloudLight = CloudsAt(hazy + 0.5);
         const uint2 near = LightsNear(hazy + 0.5);
-        return Faded(Lit(seen, hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight, float3(1.0, 1.0, 1.0), near) +
+        return Faded(Lit(seen, SelfLit(seen), hazy + 0.5, SlopeAt(hazy), 1.0, 1.0, glint, cloudLight,
+                         float3(1.0, 1.0, 1.0), near) +
                      glint * SunGlint * AmbientLight() * cloudLight + AirBeamsAt(hazy + 0.5, near));
     }
 

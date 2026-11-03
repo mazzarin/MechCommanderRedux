@@ -205,6 +205,18 @@ static const uint Particle = 1u << 23;
 static const uint Sways = 1u << 24;
 static const uint IndexOnly = 1u << 15;
 static const float SwayMark = 64.0 / 255.0;
+// Port-only (HD weather's snow): a footprint's or a crater's draw under the snow (MCVulkanRenderer's GroundFill), filled
+// in as far as op.x's bits from GroundFillShift say (of GroundFillMost): its pixels in the index target are marked as
+// flat ground (ReliefFlat, both slopes), their alpha FilledMarkFrom to FilledMarkFrom + FilledMarkSpan as far as it has
+// filled in, below the ground's own (BlockedMarkSpan below 1 at the lowest); the composite lays the snow over it as far
+// (composite.pshader's SnowAt).
+static const uint GroundFill = 1u << 25;
+static const uint GroundFillShift = 26;
+static const uint GroundFillMost = 63;
+static const float FilledMarkFrom = 0.52;
+static const float FilledMarkSpan = 0.2;
+// A relief map's flat slope, as stored (the composite's ReliefFlat).
+static const float ReliefFlat = 128.0;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
 static const float EdgeLow = 0.3;
 static const float EdgeHigh = 0.7;
@@ -1842,6 +1854,12 @@ Output main(Input input)
     if ((input.op.x & (Sways | IndexOnly)) == (Sways | IndexOnly))
     {
         output.index.a = SwayMark;
+    }
+
+    if ((input.op.x & GroundFill) != 0)
+    {
+        const float filled = (float)((input.op.x >> GroundFillShift) & GroundFillMost) / (float)GroundFillMost;
+        output.index.gba = float3(ReliefFlat / 255.0, ReliefFlat / 255.0, FilledMarkFrom + FilledMarkSpan * filled);
     }
 
     return output;

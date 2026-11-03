@@ -46,8 +46,13 @@ namespace
                                            Choice{"ORCHESTRAL", HdAudioOrchestral, OrchestralOffered}};
     constexpr std::array HdLightingChoices = {Choice{"OFF", HdLightingOff}, Choice{"ON", HdLightingOn},
                                               Choice{"DUSK", HdLightingDusk}, Choice{"NIGHT", HdLightingNight}};
-    constexpr std::array WeatherChoices = {Choice{"OFF", HdWeatherOff}, Choice{"ON", HdWeatherOn},
-                                           Choice{"RAIN", HdWeatherRain}, Choice{"DOWNPOUR", HdWeatherDownpour}};
+    constexpr std::array WeatherChoices = {Choice{"OFF", HdWeatherOff},
+                                           Choice{"ON", HdWeatherOn},
+                                           Choice{"RAIN", HdWeatherRain},
+                                           Choice{"DOWNPOUR", HdWeatherDownpour},
+                                           Choice{"LIGHT SNOW", HdWeatherLightSnow},
+                                           Choice{"SNOW", HdWeatherSnow},
+                                           Choice{"BLIZZARD", HdWeatherBlizzard}};
     constexpr std::array FleckChoices = {Choice{"EDGE", static_cast<int32_t>(MCFleckStyle::Edge)},
                                          Choice{"FALLING", static_cast<int32_t>(MCFleckStyle::Falling)}};
 
@@ -137,7 +142,7 @@ namespace
             .Key = "HDFootprints",
             .Choices = OffOn},
         Row{.Label = "WEATHER",
-            .Description = "RAIN WHERE A MAP MAKER SETS IT. RAIN OR DOWNPOUR RAINS ON EVERY MISSION.",
+            .Description = "RAIN OR SNOW WHERE A MAP MAKER SETS IT, OR THE WEATHER CHOSEN ON EVERY MISSION.",
             .Key = "HDWeather",
             .Choices = WeatherChoices},
         Row{.Label = "MECHS"},

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCSpriteTree.h"
 #include "main/MCMissionGlobals.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCInBetween.h"
 #include "sprite/MCMechActor.h"
 #include "sprite/MCShape.h"
@@ -200,7 +201,7 @@ auto MCSpriteTree::PreloadGestures() -> void
         {
             const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
-            if (fileNumber == 0xffffffff || spriteManager == nullptr)
+            if (fileNumber == NoFileNumber || spriteManager == nullptr)
             {
                 continue;
             }
@@ -227,6 +228,25 @@ auto MCSpriteTree::PreloadGestures() -> void
     }
 
     GesturesPreloaded = true;
+}
+
+auto MCSpriteTree::PrepareHdArt() const -> void
+{
+    const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
+
+    if (spriteManager == nullptr)
+    {
+        return;
+    }
+
+    for (const MCMechPart part : {MCMechPart::Legs, MCMechPart::Torso, MCMechPart::RightArm, MCMechPart::LeftArm})
+    {
+        // The large art's, as PreloadGestures loads and MCMechActor::Render draws.
+        if (const uint32_t fileNumber = FileNumbers[part]; fileNumber != NoFileNumber)
+        {
+            MCHdArt::Prepare(MCHdArt::MechShapeKey{spriteManager->PartFileName(part, true), fileNumber, 0});
+        }
+    }
 }
 
 auto MCSpriteTree::Load(MCFile& apprFile, uint32_t fileSize) -> MCAppearanceLoad
@@ -455,7 +475,7 @@ auto MCSpriteTree::GetGesture(int32_t gesture, int32_t part, float rotation, int
 
     const std::shared_ptr<MCSpriteManager> spriteManager = SpriteManager();
 
-    if (fileNumber == 0xffffffff || spriteManager == nullptr)
+    if (fileNumber == NoFileNumber || spriteManager == nullptr)
     {
         return nullptr;
     }

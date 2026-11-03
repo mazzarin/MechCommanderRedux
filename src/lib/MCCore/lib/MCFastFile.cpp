@@ -42,22 +42,24 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
 
     // Issue #25: the directory must lie in the file (the original allocated whatever the count said).
     const int32_t count = std::bit_cast<int32_t>(countBytes);
+    // Once: the length is found by seeking, which drops what the stream has read ahead.
+    const uint32_t length = file.Length();
 
-    if (count < 0 ||
-        static_cast<uint64_t>(count) * sizeof(MCFileEntry) > file.Length() - std::min<uint64_t>(file.Length(), 4))
+    if (count < 0 || static_cast<uint64_t>(count) * sizeof(MCFileEntry) > length - std::min<uint64_t>(length, 4))
     {
         return std::unexpected(std::format("{}: a directory of {} entries", fileName, count));
     }
 
-    fastFile->_Entries.assign(static_cast<size_t>(count), MCFileEntry{});
+    // The directory in one read (an HD archive has thousands of entries). The original ignores the byte count; a
+    // short directory leaves the rest zeroed.
+    std::vector<MCFileEntry>& entries = fastFile->_Entries;
+    entries.assign(static_cast<size_t>(count), MCFileEntry{});
+    file.Read(std::span(reinterpret_cast<uint8_t*>(entries.data()), entries.size() * sizeof(MCFileEntry)));
+    fastFile->_Index.reserve(entries.size());
 
-    for (size_t i = 0; i < fastFile->_Entries.size(); ++i)
+    for (size_t i = 0; i < entries.size(); ++i)
     {
-        // The original ignores the byte count; a short directory leaves the rest of the entry zeroed.
-        std::array<uint8_t, sizeof(MCFileEntry)> entryBytes{};
-        file.Read(entryBytes);
-        MCFileEntry& entry = fastFile->_Entries[i];
-        entry = std::bit_cast<MCFileEntry>(entryBytes);
+        MCFileEntry& entry = entries[i];
         entry.Name.back() = 0;
 
         // Its stored bytes lie in the archive, and it unpacks to no more than its LZ data can (each 12-bit code
@@ -65,8 +67,8 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
         const int64_t stored = entry.Size;
         const int64_t unpacked = entry.RealSize;
 
-        if (entry.Offset < 0 || stored < 0 || entry.Offset + stored > static_cast<int64_t>(file.Length()) ||
-            unpacked < 0 || unpacked > (stored == unpacked ? stored : stored * 4096))
+        if (entry.Offset < 0 || stored < 0 || entry.Offset + stored > static_cast<int64_t>(length) || unpacked < 0 ||
+            unpacked > (stored == unpacked ? stored : stored * 4096))
         {
             return std::unexpected(
                 std::format("{}: entry {} ({}) lies outside the archive", fileName, i, entry.GetName()));

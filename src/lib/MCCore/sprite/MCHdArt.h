@@ -65,7 +65,10 @@ namespace MCHdArt
     /// <summary>An HD frame as the GPU takes it.</summary>
     struct Frame
     {
-        /// <summary>A number no other frame read in this run has (the GPU keeps its copy by it).</summary>
+        /// <summary>
+        /// A number no other frame read in this run has, kept when the same frame is read again (the GPU keeps its copy
+        /// by it).
+        /// </summary>
         uint64_t Id = 0;
         /// <summary>The colours' width and height (HD pixels).</summary>
         int32_t Width = 0;
@@ -189,8 +192,14 @@ namespace MCHdArt
 
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
-    /// <summary>The bytes of frames kept in memory before the least recently used go.</summary>
-    inline constexpr size_t CacheBudget = 512u * 1024u * 1024u;
+    /// <summary>
+    /// The bytes of frames kept in memory before the least recently used go: a sixteenth of the machine's memory (512 MB
+    /// on 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
+    /// </summary>
+    size_t CacheBudget();
+
+    /// <summary>Sets the budget (0: the machine's again), dropping frames until the kept ones fit (for the tests).</summary>
+    void SetCacheBudget(size_t bytes);
 
     /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a
@@ -231,6 +240,12 @@ namespace MCHdArt
     /// </summary>
     void Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key);
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
+
+    /// <summary>
+    /// Opens now the pack's archive holding <paramref name="key"/>'s frames, if it has one, so that the first draw of a
+    /// shape loaded from it doesn't read the archive's directory. Does nothing while HD art is off.
+    /// </summary>
+    void Prepare(const MechShapeKey& key);
 
     /// <summary>
     /// Notes that <paramref name="shape"/>'s frames are in its <c>HdFolder</c> (none: nothing), as <see cref="Attach"/>
@@ -397,6 +412,9 @@ namespace MCHdArt
     size_t FramesRead();
     std::chrono::nanoseconds ReadTime();
     size_t CachedBytes();
+
+    /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
+    size_t ArchivesOpen();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

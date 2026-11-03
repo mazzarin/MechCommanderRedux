@@ -966,9 +966,9 @@
     </ClCompile>
   </ItemGroup>
   <!-- dav1d 1.5.4 (src\lib\dav1d-1.5.4, BSD 2-clause): VideoLAN's AV1 decoder, for the HD art pack's movies
-       (sprite\MCHdMovie). Its C code alone, 8 bits a sample (its README.md); the template files are built with
-       BITDEPTH=8, as dav1d's meson build does. Outside MCCore, so its own ItemGroup, which sync_projects.py leaves
-       alone; src\mac\CMakeLists.txt reads the list from here. -->
+       (sprite\MCHdMovie). Here its C code alone (the Mac build adds its arm64 assembly), 8 bits a sample (its
+       README.md); the template files are built with BITDEPTH=8, as dav1d's meson build does. Outside MCCore, so its
+       own ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
   <ItemGroup>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\cdef_apply_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

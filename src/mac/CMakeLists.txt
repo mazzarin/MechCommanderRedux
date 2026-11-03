@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "The oldest macOS the build runs on")
 set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "The architectures to build (Apple Silicon)")
-project(MCReduxMac LANGUAGES C CXX OBJC)
+project(MCReduxMac LANGUAGES C CXX OBJC ASM)
 
 # The port uses C++23 throughout. Apple's libc++ has what it needs from Xcode 16.3 (AppleClang 17), with std::jthread
 # and std::stop_token behind -fexperimental-library before Xcode 26.
@@ -129,13 +129,21 @@ add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)
 target_include_directories(mc_flac PUBLIC ${MC_SRC}/lib/dr_flac)
 target_link_libraries(MCCore PUBLIC mc_flac)
-# dav1d (the HD art pack's movies' AV1 decoder): its C code alone, as on Windows, the files MCCore.vcxproj lists; the
-# template files are built for 8 bits a sample (src/lib/dav1d-1.5.4/README.md).
+# dav1d (the HD art pack's movies' AV1 decoder): its C code, the files MCCore.vcxproj lists, as on Windows; the
+# template files are built for 8 bits a sample (src/lib/dav1d-1.5.4/README.md). Here its arm64 assembly too, the 8-bit
+# files meson builds, which decode the movies about three times as fast (MC_DAV1D_ASM turns it on in config.h).
 set(MC_DAV1D_DIR ${MC_SRC}/lib/dav1d-1.5.4)
 mc_vcxproj_items(MC_DAV1D_ITEMS ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile
                  "\\$\\(MCLibDir\\)dav1d-1\\.5\\.4[^\"]+\\.c")
 list(TRANSFORM MC_DAV1D_ITEMS REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
-add_library(mc_dav1d STATIC ${MC_DAV1D_ITEMS})
+set(MC_DAV1D_ARM ${MC_DAV1D_DIR}/src/arm/cpu.c)
+
+foreach(name cdef filmgrain ipred itx loopfilter looprestoration looprestoration_common mc mc_dotprod msac refmvs)
+  list(APPEND MC_DAV1D_ARM ${MC_DAV1D_DIR}/src/arm/64/${name}.S)
+endforeach()
+
+add_library(mc_dav1d STATIC ${MC_DAV1D_ITEMS} ${MC_DAV1D_ARM})
+target_compile_definitions(mc_dav1d PRIVATE MC_DAV1D_ASM)
 list(FILTER MC_DAV1D_ITEMS INCLUDE REGEX "_tmpl\\.c$")
 set_source_files_properties(${MC_DAV1D_ITEMS} PROPERTIES COMPILE_DEFINITIONS BITDEPTH=8)
 set_target_properties(mc_dav1d PROPERTIES C_STANDARD 11)

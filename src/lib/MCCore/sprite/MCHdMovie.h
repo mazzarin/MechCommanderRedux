@@ -4,13 +4,14 @@
 
 /// <summary>
 /// Port-only: a movie's HD frames from the HD art pack (<see cref="MCHdArt::FindMovie"/>): AV1 in an IVF file, a frame
-/// for each of the Smacker movie's, decoded one after another by dav1d (src/lib/dav1d-1.5.4). The original keeps playing
-/// for its sound, timing and palette; each of its frames is shown from the next HD one, as made.
+/// for each of the Smacker movie's, decoded in order by dav1d (src/lib/dav1d-1.5.4) on a thread of its own, a few
+/// frames ahead of the one shown. The original keeps playing for its sound, timing and palette; each of its frames is
+/// shown from the next HD one, as made.
 /// </summary>
 class MCHdMovie
 {
 public:
-    /// <summary>Opens the movie at <paramref name="path"/>, reading its header.</summary>
+    /// <summary>Opens the movie at <paramref name="path"/>, reading its header, and starts decoding it.</summary>
     static std::expected<std::unique_ptr<MCHdMovie>, std::string> Open(const std::filesystem::path& path);
     ~MCHdMovie();
     MCHdMovie(const MCHdMovie&) = delete;
@@ -29,13 +30,22 @@ public:
     std::optional<int32_t> ScaleOver(int32_t width, int32_t height) const;
 
     /// <summary>
+    /// How long <see cref="Next"/> waits for a frame after the first: a display frame at 60 Hz, so the wait doesn't
+    /// show. One not decoded by then has used up the frames ahead (the machine decodes the movie slower than it plays),
+    /// and the original, which plays underneath throughout, shows on from that frame. With the C code alone on an M4
+    /// Pro's efficiency cores (about three times slower), no frame of the opening waits this long.
+    /// </summary>
+    static constexpr std::chrono::milliseconds MaxWait{17};
+
+    /// <summary>
     /// The next frame over the original's (<paramref name="original"/>: <paramref name="width"/> x
     /// <paramref name="height"/> palette indices, <paramref name="pitch"/> bytes a row): the AV1 frame's colours, and
-    /// the original's indices.
+    /// the original's indices. Waits for it while the decoding is behind: the first as long as it takes, the others up
+    /// to <paramref name="wait"/>, then fails and stops the decoding (it is slower than the movie plays).
     /// </summary>
     std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string> Next(std::span<const uint8_t> original,
-                                                                           int32_t width, int32_t height,
-                                                                           int32_t pitch);
+                                                                           int32_t width, int32_t height, int32_t pitch,
+                                                                           std::chrono::milliseconds wait = MaxWait);
 
     /// <summary>Decodes every frame left (the pack check's).</summary>
     /// <returns>How many there were.</returns>

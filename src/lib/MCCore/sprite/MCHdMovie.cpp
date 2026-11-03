@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCHdMovie.h"
 
+#include <condition_variable>
 #include <dav1d/dav1d.h>
 
 namespace
@@ -25,10 +26,21 @@ namespace
     constexpr uint32_t MaxFrameBytes = 64 * 1024 * 1024;
     constexpr int32_t MaxSide = 8192;
     /// <summary>
-    /// dav1d's threads: two decode the largest movie (2560x1392) at about 50 frames a second on an M4 Pro, where it
-    /// plays at 15.
+    /// dav1d's threads, and the frames they decode at once (which the frames ahead allow: none is wanted the moment
+    /// it is sent). With the pack's movies made for it (tools/seedvr2/pack_movies.py: fast decoding, 4 tile columns),
+    /// the opening (2560x1392) takes 1.7 ms a frame on average on an M4 Pro with the arm64 assembly and 4.2 with the C
+    /// code alone (as on Windows), against 6.2 and 18.8 two threads took a frame at a time, before; 32 with the C code
+    /// alone on its efficiency cores (about three times slower). Its slowest frames still take several times as long.
     /// </summary>
-    constexpr int DecoderThreads = 2;
+    constexpr int DecoderThreads = 4;
+    constexpr int FramesInFlight = 4;
+    /// <summary>
+    /// The frames decoded ahead of the one shown, which take up the slow frames' time: 0.8 seconds of a movie, 64 MB of
+    /// the opening's planes. Played in real time with the C code alone on the M4 Pro's efficiency cores (about three
+    /// times slower), the opening never waits for a frame; decoded as it was shown, two threads a frame at a time, one
+    /// frame in nine held the game past the 67 ms a frame shows, on the performance cores.
+    /// </summary>
+    constexpr size_t FramesAhead = 12;
     constexpr size_t RgbaBytes = 4;
 
     uint16_t Le16(std::span<const uint8_t> bytes, size_t at)
@@ -79,6 +91,14 @@ namespace
         Picture& operator=(const Picture&) = delete;
         ~Picture() { dav1d_picture_unref(&Value); }
     };
+
+    /// <summary>A frame decoded ahead: its three planes, one after another, as SDL converts them.</summary>
+    struct Decoded
+    {
+        std::vector<uint8_t> Planes;
+        /// <summary>How its YUV maps to RGB.</summary>
+        SDL_Colorspace Colorspace = SDL_COLORSPACE_UNKNOWN;
+    };
 }
 
 struct MCHdMovie::Impl
@@ -89,11 +109,34 @@ struct MCHdMovie::Impl
     /// <summary>The frame read last, until dav1d has taken all of it.</summary>
     Dav1dData Pending{};
     bool FileDone = false;
-    /// <summary>A frame's three planes, one after another, as SDL converts them (reused frame to frame).</summary>
-    std::vector<uint8_t> Planes;
+    /// <summary>Why the file can't be read on, given once the frames dav1d still decodes are out.</summary>
+    std::optional<std::string> ReadError;
+
+    /// <summary>Guards what follows, which <see cref="Worker"/> fills and the frames shown take.</summary>
+    std::mutex Lock;
+    /// <summary>Told when a frame is decoded or taken, and when the decoding ends.</summary>
+    std::condition_variable_any Changed;
+    /// <summary>The frames decoded and not yet taken, in order: at most <see cref="FramesAhead"/>.</summary>
+    std::deque<Decoded> Ready;
+    /// <summary>Why the decoding stopped, after <see cref="Ready"/>'s frames, if not at the file's end.</summary>
+    std::optional<std::string> Error;
+    /// <summary>Set when every frame has been decoded (or <see cref="Error"/>).</summary>
+    bool Ended = false;
+    /// <summary>The frames <see cref="MCHdMovie::Next"/> has taken (it waits for the first however long).</summary>
+    uint32_t Taken = 0;
+    /// <summary>Decodes the frames ahead, from <see cref="MCHdMovie::Open"/> until the movie is closed.</summary>
+    std::jthread Worker;
 
     ~Impl()
     {
+        // The worker uses the decoder until it stops, a frame's decoding at most.
+        Worker.request_stop();
+
+        if (Worker.joinable())
+        {
+            Worker.join();
+        }
+
         dav1d_data_unref(&Pending);
         dav1d_close(&Decoder);
     }
@@ -140,48 +183,64 @@ struct MCHdMovie::Impl
         return true;
     }
 
+    /// <summary>The picture dav1d gives back next, into <paramref name="picture"/>.</summary>
+    /// <returns>Whether it gave one: false once it has none left.</returns>
+    std::expected<bool, std::string> GetPicture(Dav1dPicture& picture) const
+    {
+        const int got = dav1d_get_picture(Decoder, &picture);
+
+        if (got != 0 && got != DAV1D_ERR(EAGAIN))
+        {
+            return std::unexpected(std::format("{}: dav1d couldn't decode a frame (error {})", Name, got));
+        }
+
+        return got == 0;
+    }
+
     /// <summary>Decodes the next picture into <paramref name="picture"/>.</summary>
     /// <returns>False when there are no more.</returns>
     std::expected<bool, std::string> NextPicture(Dav1dPicture& picture)
     {
-        while (true)
+        // Each frame is sent before a picture is asked for, as dav1d's own player does: asked twice with nothing sent
+        // between, dav1d gives back the frames it decodes at once, one by one until it has none, and only then takes
+        // more.
+        while (!FileDone || Pending.sz > 0)
         {
-            const int got = dav1d_get_picture(Decoder, &picture);
-
-            if (got == 0)
-            {
-                return true;
-            }
-
-            if (got != DAV1D_ERR(EAGAIN))
-            {
-                return std::unexpected(std::format("{}: dav1d couldn't decode a frame (error {})", Name, got));
-            }
-
-            // dav1d wants more data: the next frame, or none at the end (it has given every picture back then).
             if (Pending.sz == 0)
             {
-                if (FileDone)
-                {
-                    return false;
-                }
-
                 const std::expected<bool, std::string> read = ReadFrame();
 
-                if (!read)
+                if (!read || !*read)
                 {
-                    return std::unexpected(read.error());
+                    ReadError = read ? std::nullopt : std::optional(read.error());
+                    FileDone = true;
+                    break;
                 }
-
-                FileDone = !*read;
-                continue;
             }
 
             if (const int sent = dav1d_send_data(Decoder, &Pending); sent < 0 && sent != DAV1D_ERR(EAGAIN))
             {
                 return std::unexpected(std::format("{}: dav1d refused a frame (error {})", Name, sent));
             }
+
+            const std::expected<bool, std::string> got = GetPicture(picture);
+
+            if (!got || *got)
+            {
+                return got;
+            }
         }
+
+        // The file's end, or a frame that can't be read: asked with nothing sent, dav1d gives back the frames it still
+        // decodes, one by one; asked then, it has none left.
+        const std::expected<bool, std::string> got = GetPicture(picture);
+
+        if (!got || *got || !ReadError.has_value())
+        {
+            return got;
+        }
+
+        return std::unexpected(*ReadError);
     }
 
     /// <summary>Checks <paramref name="picture"/> is a frame this can show: the header's size, 8-bit 4:2:0.</summary>
@@ -199,6 +258,132 @@ struct MCHdMovie::Impl
         }
 
         return {};
+    }
+
+    /// <summary>
+    /// Decodes the next frame, <paramref name="width"/> x <paramref name="height"/>, into <paramref name="decoded"/>.
+    /// </summary>
+    /// <returns>False when there are no more.</returns>
+    std::expected<bool, std::string> DecodeNext(Decoded& decoded, int32_t width, int32_t height)
+    {
+        Picture picture;
+        const std::expected<bool, std::string> got = NextPicture(picture.Value);
+
+        if (!got || !*got)
+        {
+            return got;
+        }
+
+        if (const std::expected<void, std::string> fits = Check(picture.Value, width, height); !fits)
+        {
+            return std::unexpected(fits.error());
+        }
+
+        // SDL converts the three planes one after another (IYUV); dav1d keeps them apart, each with its own stride.
+        const auto lumaWidth = static_cast<size_t>(width);
+        const auto lumaHeight = static_cast<size_t>(height);
+        const size_t chromaWidth = (lumaWidth + 1) / 2;
+        const size_t chromaHeight = (lumaHeight + 1) / 2;
+        decoded.Planes.resize(lumaWidth * lumaHeight + 2 * chromaWidth * chromaHeight);
+        decoded.Colorspace = ColorspaceOf(*picture.Value.seq_hdr);
+        uint8_t* out = decoded.Planes.data();
+        const auto copyPlane = [&](int plane, size_t rowBytes, size_t rows)
+        {
+            const auto* in = static_cast<const uint8_t*>(picture.Value.data[plane]);
+            const auto stride = static_cast<size_t>(picture.Value.stride[plane == 0 ? 0 : 1]);
+
+            for (size_t row = 0; row < rows; ++row, out += rowBytes)
+            {
+                std::memcpy(out, in + row * stride, rowBytes);
+            }
+        };
+
+        copyPlane(0, lumaWidth, lumaHeight);
+        copyPlane(1, chromaWidth, chromaHeight);
+        copyPlane(2, chromaWidth, chromaHeight);
+        return true;
+    }
+
+    /// <summary>
+    /// <see cref="Worker"/>'s work: decodes frame after frame while fewer than <see cref="FramesAhead"/> wait, to the
+    /// file's end, a frame that fails, or <paramref name="stop"/>.
+    /// </summary>
+    void Decode(std::stop_token stop, int32_t width, int32_t height)
+    {
+        while (true)
+        {
+            {
+                std::unique_lock lock(Lock);
+
+                if (!Changed.wait(lock, stop, [this] { return Ready.size() < FramesAhead; }) || stop.stop_requested())
+                {
+                    // Stopped (the movie fell behind, or is closing): a frame asked for after finds the end.
+                    Ended = true;
+                    Changed.notify_all();
+                    return;
+                }
+            }
+
+            Decoded decoded;
+            const std::expected<bool, std::string> made = DecodeNext(decoded, width, height);
+            const bool more = made.value_or(false);
+            {
+                const std::lock_guard lock(Lock);
+
+                if (more)
+                {
+                    Ready.push_back(std::move(decoded));
+                }
+                else
+                {
+                    Error = made ? std::nullopt : std::optional(made.error());
+                    Ended = true;
+                }
+            }
+
+            Changed.notify_all();
+
+            if (!more)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The next frame decoded, waiting for it while the worker is behind: up to <paramref name="within"/>, when given.
+    /// </summary>
+    /// <returns>None at the movie's end.</returns>
+    std::expected<std::optional<Decoded>, std::string> Take(std::optional<std::chrono::milliseconds> within)
+    {
+        std::unique_lock lock(Lock);
+        const auto due = [this] { return !Ready.empty() || Ended; };
+
+        if (!within.has_value())
+        {
+            Changed.wait(lock, due);
+        }
+        else if (!Changed.wait_for(lock, *within, due))
+        {
+            return std::unexpected(
+                std::format("{} fell behind: a frame wasn't decoded in {} ms", Name, within->count()));
+        }
+
+        if (Ready.empty())
+        {
+            if (Error.has_value())
+            {
+                return std::unexpected(*Error);
+            }
+
+            return std::nullopt;
+        }
+
+        Decoded next = std::move(Ready.front());
+        Ready.pop_front();
+        lock.unlock();
+        Changed.notify_all();
+        return next;
     }
 };
 
@@ -243,8 +428,7 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
     Dav1dSettings settings;
     dav1d_default_settings(&settings);
     settings.n_threads = DecoderThreads;
-    // A picture for each frame sent, as soon as it is: the movie is shown frame by frame as the original plays.
-    settings.max_frame_delay = 1;
+    settings.max_frame_delay = FramesInFlight;
     settings.frame_size_limit = static_cast<unsigned>(MaxSide) * MaxSide;
     settings.logger = {nullptr, Log};
 
@@ -253,6 +437,9 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
         return std::unexpected(std::format("{}: dav1d didn't start (error {})", impl.Name, opened));
     }
 
+    // From here the worker alone reads the file and uses the decoder.
+    impl.Worker = std::jthread([&impl, width = movie->_Width, height = movie->_Height](std::stop_token stop)
+                               { impl.Decode(stop, width, height); });
     return movie;
 }
 
@@ -266,7 +453,8 @@ auto MCHdMovie::ScaleOver(int32_t width, int32_t height) const -> std::optional<
     return _Width / width;
 }
 
-auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t height, int32_t pitch)
+auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t height, int32_t pitch,
+                     std::chrono::milliseconds wait)
     -> std::expected<std::shared_ptr<const MCHdArt::Frame>, std::string>
 {
     Impl& impl = *_Impl;
@@ -284,52 +472,34 @@ auto MCHdMovie::Next(std::span<const uint8_t> original, int32_t width, int32_t h
                                            height, original.size()));
     }
 
-    Picture picture;
-    const std::expected<bool, std::string> decoded = impl.NextPicture(picture.Value);
+    const std::expected<std::optional<Decoded>, std::string> decoded =
+        impl.Take(impl.Taken == 0 ? std::nullopt : std::optional(wait));
+    ++impl.Taken;
 
-    if (!decoded || !*decoded)
+    if (!decoded)
+    {
+        // The movie is shown no more: its decoding stops after the frame it is on, rather than decoding frames ahead
+        // that nothing takes while the original plays.
+        impl.Worker.request_stop();
+    }
+
+    if (!decoded || !decoded->has_value())
     {
         return std::unexpected(decoded ? std::format("{} has no more frames", impl.Name) : decoded.error());
     }
 
-    if (const std::expected<void, std::string> fits = impl.Check(picture.Value, _Width, _Height); !fits)
-    {
-        return std::unexpected(fits.error());
-    }
-
-    // SDL converts the three planes one after another (IYUV); dav1d keeps them apart, each with its own stride.
-    const auto lumaWidth = static_cast<size_t>(_Width);
-    const auto lumaHeight = static_cast<size_t>(_Height);
-    const size_t chromaWidth = (lumaWidth + 1) / 2;
-    const size_t chromaHeight = (lumaHeight + 1) / 2;
-    impl.Planes.resize(lumaWidth * lumaHeight + 2 * chromaWidth * chromaHeight);
-    uint8_t* out = impl.Planes.data();
-    const auto copyPlane = [&](int plane, size_t rowBytes, size_t rows)
-    {
-        const auto* in = static_cast<const uint8_t*>(picture.Value.data[plane]);
-        const auto stride = static_cast<size_t>(picture.Value.stride[plane == 0 ? 0 : 1]);
-
-        for (size_t row = 0; row < rows; ++row, out += rowBytes)
-        {
-            std::memcpy(out, in + row * stride, rowBytes);
-        }
-    };
-
-    copyPlane(0, lumaWidth, lumaHeight);
-    copyPlane(1, chromaWidth, chromaHeight);
-    copyPlane(2, chromaWidth, chromaHeight);
-
+    const Decoded& planes = **decoded;
     auto frame = std::make_shared<MCHdArt::Frame>();
     frame->Id = MCHdArt::NewFrameId();
     frame->Width = _Width;
     frame->Height = _Height;
     frame->Scale = *scale;
     frame->Format = MCHdArt::ColorFormat::Rgba8;
-    frame->Colors.resize(lumaWidth * lumaHeight * RgbaBytes);
+    frame->Colors.resize(static_cast<size_t>(_Width) * _Height * RgbaBytes);
 
     // Opaque, so the colours are premultiplied as they are.
-    if (!SDL_ConvertPixelsAndColorspace(_Width, _Height, SDL_PIXELFORMAT_IYUV, ColorspaceOf(*picture.Value.seq_hdr), 0,
-                                        impl.Planes.data(), _Width, SDL_PIXELFORMAT_RGBA32, SDL_COLORSPACE_SRGB, 0,
+    if (!SDL_ConvertPixelsAndColorspace(_Width, _Height, SDL_PIXELFORMAT_IYUV, planes.Colorspace, 0,
+                                        planes.Planes.data(), _Width, SDL_PIXELFORMAT_RGBA32, SDL_COLORSPACE_SRGB, 0,
                                         frame->Colors.data(), _Width * static_cast<int>(RgbaBytes)))
     {
         return std::unexpected(std::format("{}: SDL couldn't convert a frame ({})", impl.Name, SDL_GetError()));
@@ -356,22 +526,16 @@ auto MCHdMovie::Validate() -> std::expected<uint32_t, std::string>
 
     while (true)
     {
-        Picture picture;
-        const std::expected<bool, std::string> decoded = _Impl->NextPicture(picture.Value);
+        const std::expected<std::optional<Decoded>, std::string> decoded = _Impl->Take(std::nullopt);
 
         if (!decoded)
         {
             return std::unexpected(decoded.error());
         }
 
-        if (!*decoded)
+        if (!decoded->has_value())
         {
             return frames;
-        }
-
-        if (const std::expected<void, std::string> fits = _Impl->Check(picture.Value, _Width, _Height); !fits)
-        {
-            return std::unexpected(fits.error());
         }
 
         ++frames;

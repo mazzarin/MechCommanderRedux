@@ -484,6 +484,60 @@ TEST_CASE("hd art: a frame read again keeps its Id")
 }
 
 /// <summary>
+/// Once the ground is on the GPU its kept frames go (MCHdArt::DropGround), and an overlay's stay; a ground tile asked for
+/// again is read again, with its Id.
+/// </summary>
+TEST_CASE("hd art: the ground's kept frames go once it's up, and come back with their Ids")
+{
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const std::vector<uint8_t> tile = {1, 2};
+    const std::vector<uint8_t> overlay = {3, 4};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_drop_ground_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+
+    for (const auto& [name, data] : {std::pair{"terrain.hda", tile}, std::pair{"overlays.hda", overlay}})
+    {
+        const std::vector<uint8_t> archive =
+            BuildArchive({{MCHdArt::TerrainTileName(data) + ".hdf", file, file.size(), std::nullopt}});
+        std::ofstream(pack / name, std::ios::binary)
+            .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    }
+
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    const std::shared_ptr<const MCHdArt::Frame> ground = MCHdArt::FindTerrainTile(tile, Width, Height);
+    REQUIRE(ground != nullptr);
+    const uint64_t groundId = ground->Id;
+    REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
+    const size_t both = MCHdArt::CachedBytes();
+
+    MCHdArt::DropGround();
+    CHECK_EQ(MCHdArt::CachedBytes(), both - ground->Bytes());
+    const size_t read = MCHdArt::FramesRead();
+    REQUIRE(MCHdArt::FindOverlay(overlay, Width, Height) != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read);
+    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindTerrainTile(tile, Width, Height);
+    REQUIRE(again != nullptr);
+    CHECK_EQ(MCHdArt::FramesRead(), read + 1);
+    CHECK_EQ(again->Id, groundId);
+    CHECK_EQ(MCHdArt::CachedBytes(), both);
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
 /// MCHdArt::Prepare opens a mech part's archive (<c>mechs/legs90/5.hda</c>) before any of its shapes is drawn, once, and
 /// nothing for a mech without one or while HD art is off.
 /// </summary>

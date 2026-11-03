@@ -193,13 +193,19 @@ namespace MCHdArt
     std::filesystem::path FolderOf(const IconShapeKey& key);
 
     /// <summary>
-    /// The bytes of frames kept in memory before the least recently used go: a sixteenth of the machine's memory (512 MB
-    /// on 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
+    /// The bytes of frames kept in memory before the least recently used go: an eighth of the machine's memory (1 GB on
+    /// 8 GB), from 128 MB up to 2 GB, unless <see cref="SetCacheBudget"/> set another.
     /// </summary>
     size_t CacheBudget();
 
     /// <summary>Sets the budget (0: the machine's again), dropping frames until the kept ones fit (for the tests).</summary>
     void SetCacheBudget(size_t bytes);
+
+    /// <summary>
+    /// Drops the kept frames of the ground and its relief maps, which nothing reads once the GPU has the ground up
+    /// (MCTerrainUploadGround); one asked for again (the pack or the relief maps changed) is read again, with its Id.
+    /// </summary>
+    void DropGround();
 
     /// <summary>
     /// The pack's folder: the one set, else the user folder's <c>HD</c> when there is one, else the game folder's (a

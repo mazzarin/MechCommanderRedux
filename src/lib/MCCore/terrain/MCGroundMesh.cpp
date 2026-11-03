@@ -414,7 +414,15 @@ std::expected<void, std::string> MCTerrainUploadGround()
                             Turn < 1 ? std::optional(MCMapBlockManager::RaisedOffMapElevation()) : std::nullopt);
         }
 
-        return hardware->PrepareTerrain(GroundMesh->Mesh);
+        std::expected<void, std::string> uploaded = hardware->PrepareTerrain(GroundMesh->Mesh);
+
+        // The GPU holds the ground's HD tiles now; their copies in memory would only take room from the mission's art.
+        if (uploaded)
+        {
+            MCHdArt::DropGround();
+        }
+
+        return uploaded;
     }
 
     return {};

@@ -102,7 +102,7 @@ namespace
     /// <summary>Shapes attached between sweeps of those that are gone.</summary>
     constexpr size_t SweepInterval = 256;
     /// <summary>The frames' budget: the share of the machine's memory, and the least and most it may be.</summary>
-    constexpr size_t MemoryShare = 16;
+    constexpr size_t MemoryShare = 8;
     constexpr size_t MinCacheBudget = 128u * 1024u * 1024u;
     constexpr size_t MaxCacheBudget = 2048u * 1024u * 1024u;
     constexpr size_t BytesPerMegabyte = 1024u * 1024u;
@@ -692,26 +692,33 @@ namespace
         return Finished(std::move(*read), folder, id);
     }
 
+    /// <summary>Drops the kept frame <paramref name="cached"/>; its entry stays, to be read again with its Id.</summary>
+    void Drop(State& state, Cached& cached)
+    {
+        state.Order.erase(cached.InOrder);
+        state.Bytes -= cached.Frame->Bytes();
+        cached.Frame.reset();
+        cached.Looked = false;
+    }
+
     /// <summary>
     /// Drops the least recently used frames, but never the one used last (the frame just read), until the kept ones fit
-    /// the budget. A dropped frame's entry stays, to be read again with its Id.
+    /// the budget.
     /// </summary>
     void Trim()
     {
         State& state = TheState();
-
         const size_t budget = MCHdArt::CacheBudget();
 
         while (state.Bytes > budget && state.Order.size() > 1)
         {
-            const auto oldest = state.Frames.find(state.Order.front());
-            state.Order.pop_front();
-
-            if (oldest != state.Frames.end())
+            if (const auto oldest = state.Frames.find(state.Order.front()); oldest != state.Frames.end())
             {
-                state.Bytes -= oldest->second.Frame->Bytes();
-                oldest->second.Frame.reset();
-                oldest->second.Looked = false;
+                Drop(state, oldest->second);
+            }
+            else
+            {
+                state.Order.pop_front();
             }
         }
     }
@@ -1640,6 +1647,29 @@ std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)
 size_t MCHdArt::FramesRead()
 {
     return TheState().Read;
+}
+
+void MCHdArt::DropGround()
+{
+    State& state = TheState();
+    const std::filesystem::path pack = PackFolder();
+    std::vector<uint32_t> folders;
+
+    for (const std::string_view name : {TerrainFolder, ReliefFolder})
+    {
+        if (const auto found = state.FolderIndices.find(pack / name); found != state.FolderIndices.end())
+        {
+            folders.push_back(found->second);
+        }
+    }
+
+    for (auto& [key, cached] : state.Frames)
+    {
+        if (cached.Frame != nullptr && std::ranges::contains(folders, key.Folder))
+        {
+            Drop(state, cached);
+        }
+    }
 }
 
 size_t MCHdArt::CacheBudget()

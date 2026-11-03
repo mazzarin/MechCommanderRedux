@@ -133,6 +133,18 @@ private:
     MCGpuHandle<SDL_GPUGraphicsPipeline> _BrightPipeline;
     MCGpuHandle<SDL_GPUShader> _FieldShader;
     MCGpuHandle<SDL_GPUGraphicsPipeline> _FieldPipeline;
+    /// <summary>
+    /// Port-only (HD weather): the composite without rain, built without the rain's wet look and veil
+    /// (shaders/composite_dry.pshader), for a quad where neither shows.
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _DryShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _DryPipeline;
+    /// <summary>
+    /// Port-only (HD weather): the GPU world's puddle pass, the composite's shader built for it alone
+    /// (shaders/composite_puddle.pshader).
+    /// </summary>
+    MCGpuHandle<SDL_GPUShader> _PuddleShader;
+    MCGpuHandle<SDL_GPUGraphicsPipeline> _PuddlePipeline;
     MCGpuHandle<SDL_GPUSampler> _Nearest;
     /// <summary>Port-only (HD lighting): linear between texels and mips, for the bloom.</summary>
     MCGpuHandle<SDL_GPUSampler> _Linear;
@@ -151,6 +163,10 @@ private:
     /// bloom's texels), in the same order.
     /// </summary>
     std::vector<Texture> _Fields;
+    /// <summary>
+    /// Port-only (HD weather): the underlays' puddles' fields (composite.pshader's PuddleCell), in the same order.
+    /// </summary>
+    std::vector<Texture> _Puddles;
     /// <summary>
     /// Port-only (HD lighting): the underlays' light tiles (composite.pshader's lightTileTex), in the same order, and
     /// one bound where there are none (never read; made empty).

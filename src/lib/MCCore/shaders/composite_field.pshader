@@ -1,6 +1,6 @@
 // Port-only (HD lighting): the GPU world's field, its bloom and its clouds' cover at the bloom's texels
 // (MCVulkanPresenter's field pass; composite.pshader's Field), alone. It is composite.pshader built for that pass, so
-// its pixels don't pay for the registers the composite's lights take.
+// its pixels don't pay for the composite's registers.
 
 #define COMPOSITE_PASS COMPOSITE_FIELD_PASS
 #include "composite.pshader"

@@ -9,6 +9,7 @@
 // - Over (blend pipeline, indices left): the colours over the target's, as the terrain's draws over it leave them,
 //   and the glints under them covered as the colours cover them.
 // - Indices (index-only pipeline): the indices where the first pass drew, which wrote them.
+// Over and Indices fill the ground's gaps (GapFill), so they cover all the target but the void past the map.
 //
 // Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
 
@@ -28,12 +29,50 @@ static const int ModeClear = 1;
 static const int ModeOver = 2;
 static const int ModeIndices = 3;
 
+// The ground's gaps: where the original's tiles' diamonds don't quite meet (a few pixels a screen, at fixed places on
+// the map) only the seam pass reaches, partly. Under it there the nearest pixel the first pass drew shows, looked for
+// GapReach drawn pixels along a row, a column or a diagonal: the target needn't hold last frame's ground for them
+// (MCVulkanRenderer's surfaces starting blank under the kept ground).
+static const int GapReach = 3;
+static const uint GapWays = 8;
+static const int2 GapSteps[GapWays] = {int2(1, 0),  int2(-1, 0), int2(0, 1),  int2(0, -1),
+                                       int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
+
 struct Output
 {
     float4 color : SV_Target0;
     float4 index : SV_Target1;
     float4 glint : SV_Target2;
 };
+
+// The kept colours and indices at kept pixel `kept` (in a copy `size` big).
+void KeptAt(int2 kept, int2 size, out float4 color, out float4 index)
+{
+    const float2 at = (float2(kept) + 0.5) / float2(size);
+    color = colorsTex.SampleLevel(colorsSampler, at, 0);
+    index = indicesTex.SampleLevel(indicesSampler, at, 0);
+}
+
+// `output` at a kept pixel `kept` in a gap of the ground: over the nearest pixel the first pass drew, if any.
+void GapFill(inout Output output, int2 kept, int2 size)
+{
+    for (int reach = 1; reach <= GapReach; ++reach)
+    {
+        for (uint way = 0; way < GapWays; ++way)
+        {
+            float4 color;
+            float4 index;
+            KeptAt(clamp(kept + reach * GapSteps[way], int2(0, 0), size - 1), size, color, index);
+
+            if (color.a >= 1.0)
+            {
+                output.color = float4(output.color.rgb + (1.0 - output.color.a) * color.rgb, 1.0);
+                output.index = index;
+                return;
+            }
+        }
+    }
+}
 
 Output main(float4 position : SV_Position)
 {
@@ -52,10 +91,14 @@ Output main(float4 position : SV_Position)
     uint width;
     uint height;
     colorsTex.GetDimensions(width, height);
-    const int2 kept = clamp(target - shift.xy, int2(0, 0), int2(width, height) - 1);
-    const float2 at = (float2(kept) + 0.5) / float2(width, height);
-    output.color = colorsTex.SampleLevel(colorsSampler, at, 0);
-    output.index = indicesTex.SampleLevel(indicesSampler, at, 0);
+    const int2 size = int2(width, height);
+    const int2 kept = clamp(target - shift.xy, int2(0, 0), size - 1);
+    KeptAt(kept, size, output.color, output.index);
+
+    if (shift.z != ModeCopy && output.color.a > 0.0 && output.color.a < 1.0)
+    {
+        GapFill(output, kept, size);
+    }
 
     if (shift.z == ModeOver)
     {

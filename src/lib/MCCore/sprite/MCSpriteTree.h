@@ -33,6 +33,9 @@ struct MCGestureData
 /// <summary>A frame number a mech's FIT may leave out.</summary>
 inline constexpr uint32_t NoFrame = 0xffffffff;
 
+/// <summary>A part's file number when the mech has no such part.</summary>
+inline constexpr uint32_t NoFileNumber = 0xffffffff;
+
 /// <summary>A mech's special animation data (FIT "SpecialInfo").</summary>
 struct MCMechSpecialInfo
 {
@@ -143,6 +146,9 @@ public:
     /// <summary>Loads (once) the shapes of the stand, walk and run gestures, every facing of every part.</summary>
     void PreloadGestures();
 
+    /// <summary>Port-only: opens the HD art pack's archives of the mech's parts (MCHdArt::Prepare).</summary>
+    void PrepareHdArt() const;
+
     /// <summary>
     /// The frame rate of gesture <paramref name="gesture"/> (made positive), and whether part
     /// <paramref name="part"/> (the tree's numbering) is drawn mirrored at <paramref name="rotation"/> degrees.
@@ -197,7 +203,7 @@ public:
     /// </summary>
     std::vector<std::weak_ptr<MCShape>> ShapeList;
     /// <summary>FIT "leg/torso/rightArm/leftArmFileNumber": the mech's packet in each part PAK (-1 for none).</summary>
-    MCMechParts<uint32_t> FileNumbers{{0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff}};
+    MCMechParts<uint32_t> FileNumbers{{NoFileNumber, NoFileNumber, NoFileNumber, NoFileNumber}};
     /// <summary>FIT "TransitionArray": the tree's own transition table, when it has one.</summary>
     std::optional<MCTransitionTable> TransitionArray;
     /// <summary>Whether <see cref="PreloadGestures"/> has run.</summary>

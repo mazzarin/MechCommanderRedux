@@ -1325,6 +1325,15 @@ void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey
     }
 }
 
+void MCHdArt::Prepare(const MechShapeKey& key)
+{
+    if (NumberedFolders())
+    {
+        // Finding the folder opens the archive standing for it, as Attach would.
+        static_cast<void>(HasFolder(PackFolder() / FolderOf(key)));
+    }
+}
+
 void MCHdArt::AttachFolder(const std::shared_ptr<MCShape>& shape)
 {
     if (shape != nullptr && !shape->HdFolder.empty())
@@ -1562,6 +1571,12 @@ std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)
 size_t MCHdArt::FramesRead()
 {
     return TheState().Read;
+}
+
+size_t MCHdArt::ArchivesOpen()
+{
+    return static_cast<size_t>(
+        std::ranges::count_if(TheState().Archives, [](const auto& archive) { return archive.second != nullptr; }));
 }
 
 std::chrono::nanoseconds MCHdArt::ReadTime()

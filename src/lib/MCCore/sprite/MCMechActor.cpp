@@ -401,6 +401,11 @@ auto MCMechActor::PreloadGestures() const -> void
     MechTree->PreloadGestures();
 }
 
+auto MCMechActor::PrepareHdArt() const -> void
+{
+    MechTree->PrepareHdArt();
+}
+
 auto MCMechActor::SetGestureGoal(int32_t goal) -> int32_t
 {
     if (GoalPending)

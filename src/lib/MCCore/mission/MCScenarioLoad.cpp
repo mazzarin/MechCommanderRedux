@@ -1160,6 +1160,12 @@ auto MCScenario::CreatePartObject(int32_t partNumber) -> void
         {
             actor->PreloadGestures();
         }
+
+        // Port-only: every side's HD archives open under the loading bar, not when the mech first comes into view.
+        if (actor != nullptr)
+        {
+            actor->PrepareHdArt();
+        }
     }
     else if (objectClass == MCObjectClass::Elemental)
     {

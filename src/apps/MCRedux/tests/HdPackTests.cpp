@@ -435,6 +435,38 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
 }
 
 /// <summary>
+/// MCHdArt::Prepare opens a mech part's archive (<c>mechs/legs90/5.hda</c>) before any of its shapes is drawn, once, and
+/// nothing for a mech without one or while HD art is off.
+/// </summary>
+TEST_CASE("hd art: a mech's archive opens before its shapes are drawn")
+{
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_prepare_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack / "mechs" / "legs90");
+    const std::vector<uint8_t> archive = BuildArchive({{"0\\0.hdf", {1, 2, 3}, 3, std::nullopt}});
+    std::ofstream(pack / "mechs" / "legs90" / "5.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    CHECK_EQ(MCHdArt::ArchivesOpen(), 0);
+
+    MCHdArt::Prepare({"legs90", 5, 0});
+    CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
+    MCHdArt::Prepare({"legs90", 5, 3});
+    MCHdArt::Prepare({"legs90", 6, 0});
+    CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
+
+    GHdArt = 0;
+    MCHdArt::SetPackFolder(pack);
+    MCHdArt::Prepare({"legs90", 5, 0});
+    CHECK_EQ(MCHdArt::ArchivesOpen(), 0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
 /// With no pack folder set, the pack is the user folder's <c>HD</c> when there is one, else the game folder's (a pack
 /// unzipped into the game's folder, as mods are).
 /// </summary>

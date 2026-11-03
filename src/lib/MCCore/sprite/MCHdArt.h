@@ -233,6 +233,12 @@ namespace MCHdArt
     void Attach(const std::shared_ptr<MCShape>& shape, const ObjectShapeKey& key);
 
     /// <summary>
+    /// Opens now the pack's archive holding <paramref name="key"/>'s frames, if it has one, so that the first draw of a
+    /// shape loaded from it doesn't read the archive's directory. Does nothing while HD art is off.
+    /// </summary>
+    void Prepare(const MechShapeKey& key);
+
+    /// <summary>
     /// Notes that <paramref name="shape"/>'s frames are in its <c>HdFolder</c> (none: nothing), as <see cref="Attach"/>
     /// with its key does. Does nothing while HD art is off.
     /// </summary>
@@ -397,6 +403,9 @@ namespace MCHdArt
     size_t FramesRead();
     std::chrono::nanoseconds ReadTime();
     size_t CachedBytes();
+
+    /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
+    size_t ArchivesOpen();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

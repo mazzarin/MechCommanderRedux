@@ -14,6 +14,14 @@ namespace
     constexpr size_t SampleCacheBudget = 64u * 1024u * 1024u;
     /// <summary>The most one replacement may decode to, whatever a corrupt header claims.</summary>
     constexpr uint64_t MaxSampleBytes = 32u * 1024u * 1024u;
+    /// <summary>XXH64's primes.</summary>
+    constexpr uint64_t Xxh64Prime1 = 0x9E3779B185EBCA87ull;
+    constexpr uint64_t Xxh64Prime2 = 0xC2B2AE3D27D4EB4Full;
+    constexpr uint64_t Xxh64Prime3 = 0x165667B19E3779F9ull;
+    constexpr uint64_t Xxh64Prime4 = 0x85EBCA77C2B2AE63ull;
+    constexpr uint64_t Xxh64Prime5 = 0x27D4EB2F165667C5ull;
+    /// <summary>The bytes XXH64 takes at a time: four 8-byte lanes.</summary>
+    constexpr size_t Xxh64Stripe = 32;
     /// <summary>The music names the pack may replace: MUSIC and two digits.</summary>
     constexpr std::string_view MusicPrefix = "MUSIC";
     constexpr size_t MusicNameLength = 7;
@@ -27,11 +35,14 @@ namespace
         bool Readable = false;
         /// <summary>Whether that pack has orchestral music.</summary>
         bool Orchestral = false;
-        /// <summary>The replacements by key (null: the wave has none), and their keys, most recently used first.</summary>
-        std::unordered_map<std::string,
-                           std::pair<std::shared_ptr<const MCHdAudio::Decoded>, std::list<std::string>::iterator>>
+        /// <summary>
+        /// The replacements by the waves' cache keys (CacheKeyOf; null: the wave has none), and the keys, most recently
+        /// used first.
+        /// </summary>
+        std::unordered_map<uint64_t,
+                           std::pair<std::shared_ptr<const MCHdAudio::Decoded>, std::list<uint64_t>::iterator>>
             Samples;
-        std::list<std::string> Order;
+        std::list<uint64_t> Order;
         size_t Bytes = 0;
     };
 
@@ -92,6 +103,108 @@ namespace
     std::optional<std::filesystem::path> Ambience(std::string_view name)
     {
         return Current().Readable ? Existing(MCHdArt::PackFolder() / "audio" / "ambience" / name) : std::nullopt;
+    }
+
+    /// <summary>The little-endian 64-bit value at the front of <paramref name="bytes"/>.</summary>
+    uint64_t Read64(std::span<const uint8_t> bytes)
+    {
+        uint64_t value = 0;
+
+        for (size_t i = 0; i < sizeof(value); ++i)
+        {
+            value |= static_cast<uint64_t>(bytes[i]) << (8 * i);
+        }
+
+        return value;
+    }
+
+    /// <summary>The little-endian 32-bit value at the front of <paramref name="bytes"/>.</summary>
+    uint32_t Read32(std::span<const uint8_t> bytes)
+    {
+        return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+               (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+    }
+
+    uint64_t Xxh64Round(uint64_t accumulator, uint64_t input)
+    {
+        return std::rotl(accumulator + input * Xxh64Prime2, 31) * Xxh64Prime1;
+    }
+
+    uint64_t Xxh64Merge(uint64_t hash, uint64_t lane)
+    {
+        return (hash ^ Xxh64Round(0, lane)) * Xxh64Prime1 + Xxh64Prime4;
+    }
+
+    /// <summary>
+    /// XXH64 (xxHash's 64-bit hash) of <paramref name="data"/>: eight bytes a step on four lanes, where FNV-1a takes one
+    /// byte a step on one, so a wave's cache key costs a small part of its canonical key (KeyOf).
+    /// </summary>
+    uint64_t Xxh64(std::span<const uint8_t> data, uint64_t seed)
+    {
+        uint64_t hash = 0;
+        std::span<const uint8_t> rest = data;
+
+        if (rest.size() >= Xxh64Stripe)
+        {
+            std::array<uint64_t, 4> lanes{seed + Xxh64Prime1 + Xxh64Prime2, seed + Xxh64Prime2, seed,
+                                          seed - Xxh64Prime1};
+
+            while (rest.size() >= Xxh64Stripe)
+            {
+                for (size_t lane = 0; lane < lanes.size(); ++lane)
+                {
+                    lanes[lane] = Xxh64Round(lanes[lane], Read64(rest.subspan(lane * sizeof(uint64_t))));
+                }
+
+                rest = rest.subspan(Xxh64Stripe);
+            }
+
+            hash = std::rotl(lanes[0], 1) + std::rotl(lanes[1], 7) + std::rotl(lanes[2], 12) + std::rotl(lanes[3], 18);
+
+            for (const uint64_t lane : lanes)
+            {
+                hash = Xxh64Merge(hash, lane);
+            }
+        }
+        else
+        {
+            hash = seed + Xxh64Prime5;
+        }
+
+        hash += data.size();
+
+        for (; rest.size() >= sizeof(uint64_t); rest = rest.subspan(sizeof(uint64_t)))
+        {
+            hash = std::rotl(hash ^ Xxh64Round(0, Read64(rest)), 27) * Xxh64Prime1 + Xxh64Prime4;
+        }
+
+        if (rest.size() >= sizeof(uint32_t))
+        {
+            hash = std::rotl(hash ^ (Read32(rest) * Xxh64Prime1), 23) * Xxh64Prime2 + Xxh64Prime3;
+            rest = rest.subspan(sizeof(uint32_t));
+        }
+
+        for (const uint8_t byte : rest)
+        {
+            hash = std::rotl(hash ^ (byte * Xxh64Prime5), 11) * Xxh64Prime1;
+        }
+
+        hash ^= hash >> 33;
+        hash *= Xxh64Prime2;
+        hash ^= hash >> 29;
+        hash *= Xxh64Prime3;
+        return hash ^ (hash >> 32);
+    }
+
+    /// <summary>
+    /// The decoded replacements' key for a wave: XXH64 of its PCM seeded with its format. It names nothing in the pack
+    /// (KeyOf does), so it is only ever compared with itself.
+    /// </summary>
+    uint64_t CacheKeyOf(const MCWaveData& parsed)
+    {
+        const uint64_t format =
+            parsed.Format.Rate | (uint64_t{parsed.Format.Channels} << 32) | (uint64_t{parsed.Format.Bits} << 48);
+        return Xxh64(parsed.Samples, format);
     }
 
     std::string KeyOf(const MCWaveData& parsed)
@@ -208,7 +321,7 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
     }
 
     State& state = Current();
-    std::string key = KeyOf(*parsed);
+    const uint64_t key = CacheKeyOf(*parsed);
 
     if (const auto found = state.Samples.find(key); found != state.Samples.end())
     {
@@ -216,10 +329,10 @@ std::shared_ptr<const MCHdAudio::Decoded> MCHdAudio::Sample(std::span<const uint
         return found->second.first;
     }
 
-    std::shared_ptr<const Decoded> decoded = Decode(*parsed, key);
+    std::shared_ptr<const Decoded> decoded = Decode(*parsed, KeyOf(*parsed));
     state.Bytes += decoded ? decoded->Pcm.size() : 0;
     state.Order.push_front(key);
-    state.Samples.emplace(std::move(key), std::pair(decoded, state.Order.begin()));
+    state.Samples.emplace(key, std::pair(decoded, state.Order.begin()));
 
     // The least recently used go once past the budget (the one just found stays).
     while (state.Bytes > SampleCacheBudget && state.Order.size() > 1)

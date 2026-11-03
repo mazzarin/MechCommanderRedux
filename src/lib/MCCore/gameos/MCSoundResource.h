@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/MCWin32Defs.h"
+#include "sound/MCHdAudio.h"
 
 class MCFile;
 class MCFlac;
@@ -26,7 +27,8 @@ class MCSoundResource
 public:
     /// <summary>
     /// A memory resource of the caller's RIFF WAVE image, copied (the original referred to the caller's memory, which
-    /// had to outlive it; a resource is only read when it is played, right after it is made). Fatal when it isn't one.
+    /// had to outlive it; a resource is only read when it is played, right after it is made), or its HD replacement.
+    /// Fatal when it isn't one.
     /// </summary>
     explicit MCSoundResource(std::span<const uint8_t> image);
     /// <summary>A file resource (read whole) or a stream resource (opened for reading as it plays). Fatal on a file
@@ -55,12 +57,21 @@ public:
 
     /// <summary>Where the samples come from.</summary>
     MCSoundResourceType Type = MCSoundResourceType::File;
-    /// <summary>The data chunk in the image (empty for a stream).</summary>
+    /// <summary>The data chunk in the image, or the HD replacement's decoded samples (empty for a stream).</summary>
     std::span<const uint8_t> WaveData() const
     {
-        return std::span(_Image)
-            .subspan(std::min(_WaveOffset, _Image.size()))
-            .first(std::min<size_t>(WaveSize, _Image.size() - std::min(_WaveOffset, _Image.size())));
+        const std::span<const uint8_t> image = _Hd != nullptr ? std::span(_Hd->Pcm) : std::span(_Image);
+        return image.subspan(std::min(_WaveOffset, image.size()))
+            .first(std::min<size_t>(WaveSize, image.size() - std::min(_WaveOffset, image.size())));
+    }
+
+    /// <summary>
+    /// The HD replacement's decoded samples, shared (null without one): a buffer plays them where they are, as the
+    /// pack's audio keeps them (<see cref="MCHdAudio::Sample"/>).
+    /// </summary>
+    std::shared_ptr<const std::vector<uint8_t>> SharedWaveData() const
+    {
+        return _Hd != nullptr ? std::shared_ptr<const std::vector<uint8_t>>(_Hd, &_Hd->Pcm) : nullptr;
     }
 
     /// <summary>The data chunk's size.</summary>
@@ -74,15 +85,20 @@ private:
     /// <summary>Reads the whole file into memory and finds its format and data. Fatal when it can't open it.
     /// </summary>
     void LoadFile();
-    /// <summary>Walks the image's RIFF WAVE chunks for "fmt " and "data". Fatal when it isn't one.</summary>
-    void ReadWaveInfo();
+    /// <summary>Walks <paramref name="image"/>'s RIFF WAVE chunks for "fmt " and "data". Fatal when it isn't one.
+    /// </summary>
+    void ReadWaveInfo(std::span<const uint8_t> image);
     /// <summary>
     /// Opens the file as a stream: checks RIFF/WAVE and PCM, reads the format, finds the data chunk, and works out
     /// the duration. Fatal on a bad file.
     /// </summary>
     void OpenStream();
-    /// <summary>The HD audio pack's replacement for the wave, when there is one (<see cref="MCHdAudio::Sample"/>).</summary>
-    void TryHdSample();
+    /// <summary>
+    /// Plays the HD audio pack's replacement for the wave <paramref name="image"/>, when there is one
+    /// (<see cref="MCHdAudio::Sample"/>).
+    /// </summary>
+    /// <returns>Whether there is.</returns>
+    bool TryHdSample(std::span<const uint8_t> image);
     /// <summary>
     /// The HD audio pack's music for the stream, when it has some as long as the original's
     /// <paramref name="sourceFrames"/> and not cut short; the original's file is closed then.
@@ -93,8 +109,10 @@ private:
 
     /// <summary>The file name, for a file or stream.</summary>
     std::string _FileName;
-    /// <summary>A file or memory resource's whole wave image.</summary>
+    /// <summary>A file or memory resource's whole wave image (none kept when it plays an HD replacement).</summary>
     std::vector<uint8_t> _Image;
+    /// <summary>The HD replacement played, decoded (the pack's audio keeps it too).</summary>
+    std::shared_ptr<const MCHdAudio::Decoded> _Hd;
     /// <summary>Where the data chunk starts in the image.</summary>
     size_t _WaveOffset = 0;
     /// <summary>A stream's open file.</summary>

@@ -380,11 +380,32 @@ TEST_CASE("HD audio: a sample played again comes from memory, and a wave without
     REQUIRE(first != nullptr);
     CHECK_EQ(first->Pcm.size(), size_t{3840});
 
-    // With the file gone, the decoded copy still plays: nothing is read from disk again.
+    // With the file gone, the decoded copy still plays: nothing is read from disk again, and it isn't copied.
     std::filesystem::remove(fixture.Sample(Original()));
     CHECK(MCHdAudio::Sample(Original()) == first);
     MCSoundResource again(Original());
     CHECK_EQ(again.WaveSize, uint32_t{3840});
+    CHECK(again.WaveData().data() == first->Pcm.data());
+    CHECK(again.SharedWaveData().get() == &first->Pcm);
+
+    // A buffer plays it where it is; written to, it takes a copy of its own, and the decoded samples stay as they are.
+    auto mixer = MCAudio::CreateSilent();
+    auto buffer = mixer->CreateBuffer(first->Format, again.SharedWaveData());
+    REQUIRE(buffer.has_value());
+    CHECK_EQ((*buffer)->Size(), uint32_t{3840});
+    (*buffer)->Play(false);
+    std::vector<float> out(2 * 960);
+    mixer->Render(out);
+    CHECK_EQ(out[0], 1000.0f / 32768.0f);
+    CHECK_EQ(out[2 * 959 + 1], -2000.0f / 32768.0f);
+    (*buffer)->Write(0, std::vector<uint8_t>(4, 0));
+    CHECK_EQ((*buffer)->Size(), uint32_t{3840});
+    CHECK_EQ(first->Pcm[0], uint8_t{0xe8});
+    (*buffer)->SetCurrentPosition(0);
+    (*buffer)->Play(false);
+    mixer->Render(out);
+    CHECK_EQ(out[0], 0.0f);
+    CHECK_EQ(out[2], 1000.0f / 32768.0f);
 
     // A wave the pack has nothing for stays without one when a file appears, until the pack is looked at again.
     CHECK(MCHdAudio::Sample(Original(882)) == nullptr);

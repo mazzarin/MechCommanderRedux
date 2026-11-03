@@ -83,14 +83,6 @@ namespace
         buffer.Unlock(region);
         return read1 + read2;
     }
-
-    /// <summary>Copies the front of <paramref name="source"/> into <paramref name="target"/> (zeros past its end).</summary>
-    void CopyWave(std::span<uint8_t> target, std::span<const uint8_t> source)
-    {
-        const size_t copied = std::min(target.size(), source.size());
-        std::ranges::copy(source.first(copied), target.begin());
-        std::ranges::fill(target.subspan(copied), uint8_t{0});
-    }
 }
 
 MCSoundChannel::MCSoundChannel(MCAudio& mixer) : _Mixer(mixer)
@@ -116,7 +108,7 @@ int32_t MCSoundChannel::BufferVolume(float volume)
 
 MCSoundChannel::~MCSoundChannel() = default;
 
-bool MCSoundChannel::CreateBuffer(uint32_t bytes)
+void MCSoundChannel::DropBuffer()
 {
     // A fill under way holds the old buffer till it ends: it mustn't be heard meanwhile.
     if (_Filling && _Buffer != nullptr && _Buffer->IsPlaying())
@@ -125,6 +117,11 @@ bool MCSoundChannel::CreateBuffer(uint32_t bytes)
     }
 
     _Buffer.reset();
+}
+
+bool MCSoundChannel::CreateBuffer(uint32_t bytes)
+{
+    DropBuffer();
     auto buffer = _Mixer.CreateBuffer(SoundFormat(Resource.lock()->Format), bytes);
 
     if (!buffer)
@@ -146,22 +143,19 @@ void MCSoundChannel::CreateAndLoadBuffer(std::shared_ptr<MCSoundResource> newRes
 {
     NewGeneration();
     Resource = newResource;
+    DropBuffer();
 
-    if (!CreateBuffer(newResource->WaveSize))
+    // The buffer plays an HD replacement's decoded samples where they are; the original's wave is copied in.
+    const MCSoundFormat format = SoundFormat(newResource->Format);
+    auto buffer = newResource->SharedWaveData() != nullptr ? _Mixer.CreateBuffer(format, newResource->SharedWaveData())
+                                                           : _Mixer.CreateBuffer(format, newResource->WaveData());
+
+    if (!buffer)
     {
         Fatal(-1, "CreateSoundBuffer failed!");
     }
 
-    MCSoundBuffer::MCLockedRegion region = _Buffer->Lock(0, newResource->WaveSize);
-    const std::span<const uint8_t> wave = newResource->WaveData();
-    CopyWave(region.First, wave);
-
-    if (!region.Second.empty())
-    {
-        CopyWave(region.Second, wave.subspan(std::min(wave.size(), region.First.size())));
-    }
-
-    _Buffer->Unlock(region);
+    _Buffer = std::move(*buffer);
     ApplyControls();
 }
 

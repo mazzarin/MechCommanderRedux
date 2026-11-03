@@ -49,7 +49,8 @@ public:
     /// <summary>
     /// The pack's replacement for the wave image <paramref name="wave"/>, decoded, or none. Decoded replacements (and
     /// the waves that have none) are remembered, the least recently used going past a budget, so a sound played again
-    /// costs a hash of its PCM and a lookup.
+    /// costs a fast hash of its PCM (XXH64, not the canonical key's FNV-1a) and a lookup; its player shares the decoded
+    /// samples, without a copy.
     /// </summary>
     static std::shared_ptr<const Decoded> Sample(std::span<const uint8_t> wave);
     /// <summary>Whether <paramref name="flac"/> lasts as long as the original, to the nearest output frame.</summary>

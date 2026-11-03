@@ -24,7 +24,10 @@ public:
     MCSoundChannel(const MCSoundChannel&) = delete;
     MCSoundChannel& operator=(const MCSoundChannel&) = delete;
 
-    /// <summary>Makes a buffer the resource's size and copies its whole wave in; applies volume and pan.</summary>
+    /// <summary>
+    /// Makes a buffer of the resource's whole wave (an HD replacement's played where it is, the original's copied in);
+    /// applies volume and pan.
+    /// </summary>
     void CreateAndLoadBuffer(std::shared_ptr<MCSoundResource> newResource);
     /// <summary>Stops a playing buffer and rewinds it.</summary>
     void Stop();
@@ -113,6 +116,8 @@ public:
     std::atomic<bool> Streaming = false;
 
 private:
+    /// <summary>Drops the buffer (stopping it first when a fill under way still holds it).</summary>
+    void DropBuffer();
     /// <summary>Makes a buffer of <paramref name="bytes"/> for the resource.</summary>
     /// <returns>Whether it could.</returns>
     bool CreateBuffer(uint32_t bytes);

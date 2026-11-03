@@ -123,6 +123,7 @@
 #if __has_include("logistics/MCLogTextButton.h")
 // A build with the preferences' CONTROLS panel (the controls branch): the tour shows it.
 #include "logistics/MCLogTextButton.h"
+#include "logistics/MCUpdatePage.h"
 #define MC_AUDIT_CONTROLS 1
 #endif
 #if __has_include(<execinfo.h>) && __has_include(<dlfcn.h>)
@@ -9959,10 +9960,11 @@ namespace
 /// <summary>
 /// Tool: <c>--hd-extract-menus &lt;folder&gt;</c> writes every picture of the menus' and logistics' art for the HD art
 /// generator (tools/upscale/make_menu_pack.py): the TGAs in the install's FastFiles and the GIF packets of the GUI's art
-/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; and the
+/// file, in the logistics palette, each named by its pixels' hash, with a manifest of where each came from; the
 /// pictures of the port's text buttons (MCLogTextButton: the preferences' CONTROLS and the CONTROLS panel's), named as
 /// the art's buttons are (<c>textbutton\b&lt;state&gt;_text_&lt;word&gt;.tga</c>, the state's letter h up, g pressed, n
-/// grayed).
+/// grayed); and the main menu's UPDATE button (logistics/MCUpdatePage.h) as the menu's own are named
+/// (<c>updatebutton\mm_xb&lt;state&gt;_update.tga</c>).
 /// </summary>
 TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD art generator")
 {
@@ -9982,13 +9984,37 @@ TEST_CASE_ISOLATED("tool: --hd-extract-menus writes the menus' art for the HD ar
     std::set<uint64_t> written;
     int32_t pictures = 0;
     int32_t skipped = 0;
+    // UPDATE is drawn in ORIGINAL CINEMA's colours, which its picture holds.
+    constexpr std::string_view cinemaPicture = "mm_xbh08.tga";
+    std::optional<std::array<SDL_Color, 256>> cinemaColors;
     ForEachPicture(colors, skipped,
                    [&](std::string_view source, std::span<const uint8_t> pixels, int32_t width, int32_t height,
                        std::span<const SDL_Color, 256> pictureColors)
                    {
                        WritePicture(folder, manifest, source, pixels, width, height, pictureColors, written);
                        ++pictures;
+                       std::string file(source.substr(source.find_last_of("\\/") + 1));
+                       std::ranges::transform(file, file.begin(),
+                                              [](char c) { return static_cast<char>(std::tolower(c)); });
+
+                       if (file == cinemaPicture)
+                       {
+                           cinemaColors.emplace();
+                           std::ranges::copy(pictureColors, cinemaColors->begin());
+                       }
                    });
+
+    // The main menu's UPDATE button.
+    REQUIRE(cinemaColors.has_value());
+    const MCMenuButtonPictures update = UpdateButtonPictures(GlobalLog()->MainScreen->Palette);
+
+    for (const auto& [state, picture] :
+         {std::pair{'h', update.Up}, std::pair{'g', update.Down}, std::pair{'n', update.Gray}})
+    {
+        WritePicture(folder, manifest, std::format("updatebutton\\mm_xb{}_update.tga", state), picture->Pixels(),
+                     picture->Width(), picture->Height(), *cinemaColors, written);
+        ++pictures;
+    }
 
 #if MC_AUDIT_CONTROLS
     ShowPreferences();

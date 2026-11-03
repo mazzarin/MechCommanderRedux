@@ -139,6 +139,7 @@
     <ClCompile Include="tests\TerrainTests.cpp" />
     <ClCompile Include="tests\TestGame.cpp" />
     <ClCompile Include="tests\TurretTests.cpp" />
+    <ClCompile Include="tests\UpdaterTests.cpp" />
     <ClCompile Include="tests\VfxFontImageTests.cpp" />
     <ClCompile Include="tests\VfxGameHelperTests.cpp" />
     <ClCompile Include="tests\VfxPolygonTests.cpp" />

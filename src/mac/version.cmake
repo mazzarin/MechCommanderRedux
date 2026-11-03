@@ -49,11 +49,40 @@ if(NOT previous STREQUAL header)
   file(WRITE ${OUTPUT} "${header}")
 endif()
 
-# The app's versions are major.minor.patch, as macOS reads them (nbgv's Version adds the commit height).
+# The app's shown version is major.minor.patch, as macOS reads it (nbgv's Version adds the commit height), or
+# version.json's own without nbgv. Its build is the commit count, which every later commit of the branch exceeds:
+# the updater (Sparkle) installs only a higher build.
 if(PLIST)
   string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MC_BUNDLE_VERSION ${version})
+
+  if(version STREQUAL "0.0.0.0" AND EXISTS ${REPO_DIR}/version.json)
+    file(READ ${REPO_DIR}/version.json version_json)
+    string(JSON json_version ERROR_VARIABLE json_error GET "${version_json}" version)
+
+    if(NOT json_error)
+      string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MC_BUNDLE_VERSION ${json_version})
+    endif()
+  endif()
+
+  set(MC_BUNDLE_BUILD 0)
+  find_program(GIT git)
+
+  if(GIT)
+    execute_process(COMMAND ${GIT} rev-list --count HEAD WORKING_DIRECTORY ${REPO_DIR}
+                    RESULT_VARIABLE counted OUTPUT_VARIABLE commits OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+
+    if(counted EQUAL 0)
+      set(MC_BUNDLE_BUILD ${commits})
+    endif()
+  endif()
+
+  if(MC_BUNDLE_VERSION STREQUAL "")
+    set(MC_BUNDLE_VERSION "0.0.0")
+  endif()
+
   set(MC_MIN_MACOS ${MIN_MACOS})
   configure_file(${PLIST_TEMPLATE} ${PLIST} @ONLY)
+  message(STATUS "MechCommander Redux.app ${MC_BUNDLE_VERSION} (build ${MC_BUNDLE_BUILD})")
 endif()
 
 message(STATUS "MechCommander Redux ${version} (${commit})")

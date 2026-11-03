@@ -229,6 +229,9 @@
     <ClCompile Include="tests\TurretTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\UpdaterTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\VfxFontImageTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

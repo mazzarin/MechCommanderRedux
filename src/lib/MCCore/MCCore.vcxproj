@@ -230,6 +230,7 @@
     <ClCompile Include="logistics\MCStoreRow.cpp" />
     <ClCompile Include="logistics\MCTicker.cpp" />
     <ClCompile Include="logistics\MCUnitLimits.cpp" />
+    <ClCompile Include="logistics\MCUpdatePage.cpp" />
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCVehiclePurchaseBlock.cpp" />
     <ClCompile Include="logistics\MCVehicleRepairBlock.cpp" />
@@ -260,6 +261,7 @@
     <ClCompile Include="main\MCMissionGlobals.cpp" />
     <ClCompile Include="main\MCMPPlayerLights.cpp" />
     <ClCompile Include="main\MCSystemConfig.cpp" />
+    <ClCompile Include="main\MCUpdater.cpp" />
     <ClCompile Include="MCPort.cpp" />
     <ClCompile Include="mission\MCDifficultySettings.cpp" />
     <ClCompile Include="mission\MCMission.cpp" />
@@ -650,6 +652,7 @@
     <ClInclude Include="logistics\MCStoreRow.h" />
     <ClInclude Include="logistics\MCTicker.h" />
     <ClInclude Include="logistics\MCUnitLimits.h" />
+    <ClInclude Include="logistics\MCUpdatePage.h" />
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h" />
     <ClInclude Include="logistics\MCVehiclePurchaseBlock.h" />
     <ClInclude Include="logistics\MCVehicleRepairBlock.h" />
@@ -677,6 +680,7 @@
     <ClInclude Include="main\MCMPPlayerLights.h" />
     <ClInclude Include="main\MCOriginalBugFixes.h" />
     <ClInclude Include="main\MCSystemConfig.h" />
+    <ClInclude Include="main\MCUpdater.h" />
     <ClInclude Include="MCCore.h" />
     <ClInclude Include="MCPort.h" />
     <ClInclude Include="mission\MCDifficultySettings.h" />

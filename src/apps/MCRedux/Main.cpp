@@ -10,6 +10,10 @@
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 
+#if defined(__APPLE__)
+#include "MCSparkleUpdater.h"
+#endif
+
 namespace
 {
     /// <summary>What the command line asks for: the two folders and the words passed on to the game.</summary>
@@ -290,8 +294,11 @@ int main(int argc, char** argv)
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
-    // Personal build: the HD options are on unless PREFS.CFG turns them off.
+    // Personal build: the HD options are on unless PREFS.CFG turns them off, and the Mac app updates itself.
     UseHdByDefault();
+#if defined(__APPLE__)
+    MCUpdater::SetBackend(MCMakeSparkleBackend());
+#endif
     const int result = RunGame(options->GameCommandLine);
     SDL_Quit();
     return result;

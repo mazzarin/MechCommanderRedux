@@ -80,6 +80,11 @@ public:
     /// <summary>The cancel button (callback 11).</summary>
     MCGuiOwned<MCLogButton> CancelButton;
     /// <summary>
+    /// Port: the main menu's ORIGINAL CINEMA (callback 5), which becomes UPDATE in a build that updates itself
+    /// (logistics/MCUpdatePage.h).
+    /// </summary>
+    MCGuiOwned<MCLogButton> CinemaButton;
+    /// <summary>
     /// Port: the background art, which the original loaded into the screen's own port (a splash screen's is the art
     /// all splash screens share).
     /// </summary>

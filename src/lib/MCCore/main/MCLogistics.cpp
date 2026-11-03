@@ -38,6 +38,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
+#include "logistics/MCUpdatePage.h"
 #include "logistics/MCUnitLimits.h"
 #include "linkup/MCSessionManager.h"
 #include "main/MCLogisticsShared.h"
@@ -51,6 +52,7 @@
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
 #include "main/MCGameContext.h"
+#include "main/MCUpdater.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCInput.h"
 #include "platform/MCRegistry.h"
@@ -233,6 +235,15 @@ auto MCLogistics::Start() -> void
     SetCurrentScreen(MainScreen);
     LogisticsState = 1;
     InitScreen(*MainScreen, "mainScreen", " No Splash Screen FIT File ", " Unable to start splash screen ");
+
+    // Port (personal): a build that updates itself has UPDATE in ORIGINAL CINEMA's place, and looks for a newer
+    // version once a run (main/MCUpdater.h).
+    if (MCUpdater::Available())
+    {
+        AddUpdatePage(*MainScreen);
+    }
+
+    MCUpdater::CheckAtStart();
 
     if (InDemo == 0)
     {

@@ -4,6 +4,19 @@
 
 namespace
 {
+    /// <summary><paramref name="c"/>'s byte, its ASCII letter upper-cased (no locale's: the same everywhere).</summary>
+    unsigned char AsciiUpper(char c)
+    {
+        const auto byte = static_cast<unsigned char>(c);
+        return byte >= 'a' && byte <= 'z' ? static_cast<unsigned char>(byte - 'a' + 'A') : byte;
+    }
+
+    /// <summary><paramref name="c"/>'s byte, so names compare as unsigned bytes (UTF-8 after ASCII).</summary>
+    unsigned char Byte(char c)
+    {
+        return static_cast<unsigned char>(c);
+    }
+
     std::vector<std::string> SplitGamePath(std::string_view path)
     {
         std::vector<std::string> parts;
@@ -304,6 +317,7 @@ std::vector<MCFoundFile> MCDiskFileSource::FindFileSources(std::string_view game
     }
 
     AddMatches(ResolveFrom(_Root, folder), pattern, files, false);
+    std::ranges::sort(files, MCFileSystem::NameLess, &MCFoundFile::Name);
     return files;
 }
 
@@ -392,6 +406,21 @@ namespace MCFileSystem
         }
 
         return WildcardMatch(pattern.substr(1), name.substr(1));
+    }
+
+    bool NameLess(std::string_view a, std::string_view b)
+    {
+        if (std::ranges::lexicographical_compare(a, b, {}, AsciiUpper, AsciiUpper))
+        {
+            return true;
+        }
+
+        if (std::ranges::lexicographical_compare(b, a, {}, AsciiUpper, AsciiUpper))
+        {
+            return false;
+        }
+
+        return std::ranges::lexicographical_compare(a, b, {}, Byte, Byte);
     }
 
     void SetGameRoot(const std::filesystem::path& root)

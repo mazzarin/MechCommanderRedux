@@ -279,8 +279,8 @@ void SystemInit()
 
         ReadSystemConfig(systemFile);
 
-        // Every *.fst in the game folder is a FastFile (SYSTEM.CFG's [FastFiles] list isn't read). One that doesn't
-        // open is left out, as in the original.
+        // Every *.fst in the game folder is a FastFile (SYSTEM.CFG's [FastFiles] list isn't read), searched in name
+        // order (MCFastFileSet). One that doesn't open is left out, as in the original.
         MCFastFileSet& fastFiles = MCGameContext::Current().FastFiles();
 
         for (const std::string& name : MCFileSystem::FindFiles("*.fst"))

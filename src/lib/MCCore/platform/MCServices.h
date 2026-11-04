@@ -124,7 +124,9 @@ public:
     /// <summary>Deletes an empty folder.</summary>
     virtual bool RemoveDirectory(std::string_view gamePath) = 0;
 
-    /// <summary>The names of the files in a folder that match a DOS wildcard.</summary>
+    /// <summary>
+    /// The names of the files in a folder that match a DOS wildcard, in name order (MCFileSystem::NameLess).
+    /// </summary>
     virtual std::vector<std::string> FindFiles(std::string_view gamePattern) = 0;
 
     /// <summary>The same files as <see cref="FindFiles"/>, each with the folders that have it.</summary>

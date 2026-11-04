@@ -527,6 +527,62 @@ TEST_CASE("file: a relative path never leaves the user or game folder")
 }
 
 /// <summary>
+/// Folders list in name order (MCFileSystem::NameLess: ASCII letters upper-cased, then the bytes; NTFS's order, '_'
+/// after the letters), and FastFiles are searched in that order however they were opened: of archives holding one
+/// name, the first by name gives it, on every system. A loose file still comes first.
+/// </summary>
+TEST_CASE("fastfile: archives are searched in name order, whatever order they're listed or opened in")
+{
+    CHECK(MCFileSystem::NameLess("A.FST", "a2.fst"));
+    CHECK(MCFileSystem::NameLess("b.fst", "_z.fst"));
+    CHECK(MCFileSystem::NameLess("A.FST", "a.fst"));
+    CHECK(!MCFileSystem::NameLess("a.fst", "A.FST"));
+    CHECK(!MCFileSystem::NameLess("A.FST", "A.FST"));
+    CHECK(MCFileSystem::NameLess("z.fst", "\xC3\xA9.fst"));
+
+    ScratchFolder folder("fastfile-order");
+    const std::vector<std::string> sorted = {"A.FST", "a2.fst", "b.fst", "_z.fst"};
+    constexpr std::string_view SharedName = "data\\same.txt";
+
+    for (const std::string& name : sorted | std::views::reverse)
+    {
+        WriteFile(folder.Path() / name, BuildFastFile({{std::string(SharedName), Bytes(name), false}}));
+    }
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+    MCFileSystem::SetGameRoot(folder.Path());
+    CHECK(MCFileSystem::FindFiles("*.fst") == sorted);
+
+    for (const bool backwards : {false, true})
+    {
+        MCTest::Scope opened(backwards ? "opened backwards" : "opened in name order");
+        MCFastFileSet& fastFiles = scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
+        std::vector<std::string> order = sorted;
+
+        if (backwards)
+        {
+            std::ranges::reverse(order);
+        }
+
+        for (const std::string& name : order)
+        {
+            REQUIRE(fastFiles.Open(folder / name).has_value());
+        }
+
+        CHECK(fastFiles.Read(SharedName) == std::optional(Bytes("A.FST")));
+    }
+
+    std::filesystem::create_directories(folder.Path() / "data");
+    WriteFile(folder.Path() / "data" / "same.txt", Bytes("loose"));
+    MCFile file;
+    REQUIRE_EQ(file.Open(SharedName), NO_ERR);
+    std::vector<uint8_t> read(file.GetLength());
+    file.Read(read);
+    CHECK(read == Bytes("loose"));
+}
+
+/// <summary>
 /// Game paths are UTF-8, so names outside the ANSI code page (Windows') resolve, list and open, in an install whose
 /// own folder has such a name too. A missing CD movie path once listed a drive's root holding one and threw.
 /// </summary>

@@ -248,6 +248,7 @@ std::vector<MCFoundFile> MCMemoryFileSource::FindFileSources(std::string_view ga
 
     addLayer(_User, true);
     addLayer(_Install, false);
+    std::ranges::sort(files, MCFileSystem::NameLess, &MCFoundFile::Name);
     return files;
 }
 

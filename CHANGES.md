@@ -166,6 +166,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Data files saved with Unix line endings load correctly, so edited files work.
 - A file name the game gets from a save, a mission or another player can't climb out of these folders with `..` or
   switch drives.
+- **Redux HD.** When two of the game's `.fst` archives hold the same file, the one first by name is read, on every
+  system, as Windows lists them. A loose file still comes before any archive.
 
 ### Mission Editor
 

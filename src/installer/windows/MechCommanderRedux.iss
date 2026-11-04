@@ -83,10 +83,11 @@ SelectDirLabel3={#AppName} plays your copy of MechCommander Gold and installs in
 ReadyMemoDir=MechCommander Gold folder:
 
 [CustomMessages]
+ChooseGameFolder=Choose the folder MechCommander Gold is installed in, the one with {#GameDataFile}.
 NotGameFolder=%1 has no {#GameDataFile}, so it isn't a MechCommander Gold folder.
 FolderProtected=Windows protects %1. Setup will ask Windows to let you change it.
 FolderStillProtected=Setup couldn't get permission to change %1.
-BackupFailed=Setup couldn't move %1 to %2.
+BackupFailed=Setup couldn't copy %1 to %2.
 RestoreFailed=These files couldn't go back into your MechCommander Gold folder, so they're still in %1:%2
 PlayGame=Play {#AppName}
 EditorShortcut={#AppName} Mission Editor
@@ -114,10 +115,10 @@ const
   WriteTestName = 'MechCommander Redux setup.tmp';
 
 var
-  // The folder whose files went into the backup this run, which ones, and whether the install finished: a setup that
-  // stops part way puts them back.
-  BackedUpFolder: String;
-  BackedUpNames: TArrayOfString;
+  // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
+  // that stops part way drops its copies (DropCopies).
+  CopiedFolder: String;
+  CopiedNames: TArrayOfString;
   Installed: Boolean;
 
 // The names of the files [Files] puts in the game folder.
@@ -232,7 +233,12 @@ begin
 
   Folder := WizardDirValue;
 
-  if not IsGameFolder(Folder) then
+  if Folder = '' then
+  begin
+    SuppressibleMsgBox(CustomMessage('ChooseGameFolder'), mbError, MB_OK, IDOK);
+    Result := False;
+  end
+  else if not IsGameFolder(Folder) then
   begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('NotGameFolder'), [Folder]), mbError, MB_OK, IDOK);
     Result := False;
@@ -256,7 +262,48 @@ begin
     Log(Format('Couldn''t put %s back as %s', [Source, Target]));
 end;
 
-// Before the files go in: the ones they replace go into the backup, unless the folder is this setup's own install.
+// Drops the copies this run made in the backup, once the files they were made from are as they were: a copy whose
+// file is back in place (Setup's rollback restores what it replaced) is deleted, one whose file is missing is put
+// back, and one whose file differs stays in the backup.
+procedure DropCopies;
+var
+  Original, Kept: String;
+  Same: Boolean;
+  I: Integer;
+begin
+  for I := 0 to GetArrayLength(CopiedNames) - 1 do
+  begin
+    Original := AddBackslash(CopiedFolder) + CopiedNames[I];
+    Kept := AddBackslash(BackupFolder(CopiedFolder)) + CopiedNames[I];
+
+    if not FileExists(Original) then
+      PutBack(CopiedFolder, CopiedNames[I])
+    else
+    begin
+      try
+        Same := GetSHA256OfFile(Original) = GetSHA256OfFile(Kept);
+      except
+        Log(Format('Couldn''t compare %s with %s: %s', [Original, Kept, GetExceptionMessage]));
+        Same := False;
+      end;
+
+      if not Same then
+        Log(Format('Kept %s: %s differs from it', [Kept, Original]))
+      else if not DeleteFile(Kept) then
+        Log(Format('Couldn''t delete the copy %s', [Kept]));
+    end;
+  end;
+
+  if CopiedFolder <> '' then
+    RemoveDir(BackupFolder(CopiedFolder));
+
+  SetArrayLength(CopiedNames, 0);
+  CopiedFolder := '';
+end;
+
+// Before the files go in: the ones they replace are copied into the backup, unless the folder is this setup's own
+// install. Copied, not moved: the originals stay where Windows' Restart Manager finds a running game by them, and
+// Setup's rollback puts them back if the install fails.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Names: TArrayOfString;
@@ -264,12 +311,14 @@ var
   I: Integer;
 begin
   Result := '';
+  // A second call (the player went back) starts afresh.
+  DropCopies;
   Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
 
   if CompareText(RemoveBackslashUnlessRoot(WizardForm.PrevAppDir), Folder) = 0 then
     Exit;
 
-  BackedUpFolder := Folder;
+  CopiedFolder := Folder;
   Names := ProgramFileNames;
 
   for I := 0 to GetArrayLength(Names) - 1 do
@@ -280,14 +329,17 @@ begin
     // A backup already there is the folder's from before an earlier install, so it stays the one put back.
     if FileExists(Source) and not FileExists(Target) then
     begin
-      if not ForceDirectories(BackupFolder(Folder)) or not RenameFile(Source, Target) then
+      if not ForceDirectories(BackupFolder(Folder)) or not FileCopy(Source, Target, True) then
       begin
         Result := FmtMessage(CustomMessage('BackupFailed'), [Source, Target]);
+        // A copy cut short isn't the file: it mustn't be taken for an earlier install's backup.
+        DeleteFile(Target);
+        DropCopies;
         Exit;
       end;
 
-      Append(BackedUpNames, Names[I]);
-      Log(Format('Kept %s as %s', [Source, Target]));
+      Append(CopiedNames, Names[I]);
+      Log(Format('Copied %s to %s', [Source, Target]));
     end;
   end;
 end;
@@ -299,16 +351,9 @@ begin
 end;
 
 procedure DeinitializeSetup;
-var
-  I: Integer;
 begin
-  if Installed or (BackedUpFolder = '') then
-    Exit;
-
-  for I := 0 to GetArrayLength(BackedUpNames) - 1 do
-    PutBack(BackedUpFolder, BackedUpNames[I]);
-
-  RemoveDir(BackupFolder(BackedUpFolder));
+  if not Installed then
+    DropCopies;
 end;
 
 // After the program's files are gone: everything in the backup goes back, so the folder is as it was.

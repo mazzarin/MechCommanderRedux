@@ -29,8 +29,8 @@ extern int GReports;
 namespace MCTelemetry
 {
     /// <summary>
-    /// The reports' version: a notice or question the player saw for an older one doesn't cover them (raise it when a
-    /// report gains something new).
+    /// The reports' format, sent in each as <c>v</c>. A field added keeps it (the server keeps the fields it knows).
+    /// The player sees the notice or question once, whatever the version: a later one never brings it back.
     /// </summary>
     inline constexpr int32_t ReportVersion = 1;
 
@@ -115,8 +115,13 @@ namespace MCTelemetry
     enum class MCPrompt : uint8_t
     {
         None,
-        /// <summary>Reports are sent: the notice says what, and how to turn them off (OK).</summary>
+        /// <summary>Reports are sent: the notice says what, as anonymous, and how to turn them off (OK).</summary>
         Notice,
+        /// <summary>
+        /// The notice, naming the reports' random ID rather than calling them anonymous: where the law counts a lasting
+        /// ID as personal data but wants no consent first (the UK, Switzerland).
+        /// </summary>
+        NoticeWithId,
         /// <summary>Send reports? (OK or CANCEL: the law where the player is wants consent first.)</summary>
         Ask,
     };
@@ -168,6 +173,12 @@ namespace MCTelemetry
 
     /// <summary>An HD movie fell behind (or failed) and played on as the original.</summary>
     void MovieFellBehind();
+
+    /// <summary>
+    /// The frame about to be measured threw the HD weather's falling pieces, <paramref name="share"/> of them (1 all;
+    /// fewer on a machine that can't keep up, sprite/MCWeatherPace.h).
+    /// </summary>
+    void WeatherDrawn(float share);
 
     /// <summary>A multiplayer message came in (<paramref name="type"/>, <paramref name="bytes"/>), for the black box.</summary>
     void MessageIn(uint16_t type, size_t bytes);

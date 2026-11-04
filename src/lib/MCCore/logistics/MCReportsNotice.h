@@ -1,4 +1,5 @@
 #pragma once
+#include "main/MCTelemetry.h"
 
 // Port-only (the personal build): the reports' notice or question on the main menu (main/MCTelemetry.h), shown once,
 // when one is due and the main menu is up with nothing over it. The notice's OK leaves REPORTS on; the question's OK
@@ -7,6 +8,5 @@
 /// <summary>Shows the notice or the question when one is due and the main menu is free (else it waits).</summary>
 void ShowReportsNotice();
 
-/// <summary>The notice's text, and the question's.</summary>
-std::string_view ReportsNoticeText();
-std::string_view ReportsQuestionText();
+/// <summary>What the main menu says for <paramref name="prompt"/>: a notice's text, or the question's; none, nothing.</summary>
+std::string_view ReportsText(MCTelemetry::MCPrompt prompt);

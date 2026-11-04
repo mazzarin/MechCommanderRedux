@@ -13,13 +13,14 @@ namespace
     using MCTelemetry::MCPrompt;
 
     constexpr std::string_view NoticeText =
-        "MechCommander Redux sends anonymous reports of your computer, how smoothly missions and matches run, and "
-        "crashes, to help it run well on more machines. No name or ID; your IP address isn't kept. REPORTS in HD "
-        "OPTIONS turns them off.";
+        "MechCommander Redux sends anonymous reports of your computer, frame rates, settings and crashes to help it "
+        "run better. Turn this off under REPORTS in HD OPTIONS.";
+    constexpr std::string_view NoticeWithIdText =
+        "MechCommander Redux sends reports of your computer, frame rates, settings and crashes, under a random ID, to "
+        "help it run better.\nNo name or IP address is kept. Turn this off under REPORTS in HD OPTIONS.";
     constexpr std::string_view QuestionText =
-        "Send anonymous reports of your computer, how smoothly missions and matches run, and crashes, to help "
-        "MechCommander Redux run well on more machines? No name or ID; your IP address isn't kept. REPORTS in HD "
-        "OPTIONS changes this later.";
+        "Send reports of your computer, frame rates, settings and crashes, under a random ID, to help MechCommander "
+        "Redux run better?\nNo name or IP address is kept. Change this later under REPORTS in HD OPTIONS.";
 
     /// <summary>The main menu's logistics state.</summary>
     constexpr int32_t MainMenuState = 1;
@@ -44,25 +45,32 @@ void ShowReportsNotice()
         return;
     }
 
-    if (prompt == MCPrompt::Notice)
-    {
-        // However it closes (OK, Enter, Escape), the player has seen it.
-        ShowMenuMessage(NoticeText, [](int32_t) { Answer(true); });
-    }
-    else
+    if (prompt == MCPrompt::Ask)
     {
         AskMenuQuestion(
             *logistics->QuestionDialog, QuestionText, [] { Answer(true); }, [] { Answer(false); }, "bg_cancl.tga",
             true);
     }
+    else
+    {
+        // However it closes (OK, Enter, Escape), the player has seen it.
+        ShowMenuMessage(ReportsText(prompt), [](int32_t) { Answer(true); });
+    }
 }
 
-std::string_view ReportsNoticeText()
+std::string_view ReportsText(MCTelemetry::MCPrompt prompt)
 {
-    return NoticeText;
-}
+    switch (prompt)
+    {
+        case MCPrompt::Notice:
+            return NoticeText;
+        case MCPrompt::NoticeWithId:
+            return NoticeWithIdText;
+        case MCPrompt::Ask:
+            return QuestionText;
+        case MCPrompt::None:
+            break;
+    }
 
-std::string_view ReportsQuestionText()
-{
-    return QuestionText;
+    return {};
 }

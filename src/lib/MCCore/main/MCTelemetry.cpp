@@ -6,6 +6,7 @@
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
 #include "sprite/MCHdArt.h"
+#include <random>
 
 int GReports = 0;
 
@@ -25,6 +26,10 @@ namespace
     constexpr std::string_view RegionPath = "region";
     constexpr std::string_view ReportPath = "report";
     constexpr int32_t HttpOk = 200;
+
+    /// <summary>A copy's ID: 128 random bits, as lowercase hex digits, from 32-bit words of the system's randomness.</summary>
+    constexpr size_t IdDigits = 32;
+    constexpr size_t IdWordDigits = 8;
 
     /// <summary>The frame times' histogram: half-millisecond buckets to 250 ms, the last holding the longer frames.</summary>
     constexpr double BucketMilliseconds = 0.5;
@@ -57,6 +62,11 @@ namespace
         "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE", "IS", "LI", "NO",
         "KR", "CN", "VN", "RU", "TR", "SA", "AE", "QA", "KW", "BH", "OM", "XX", "T1",
     });
+    /// <summary>
+    /// The countries told by notice whose law counts the reports' lasting ID as personal data, as the EEA's does: their
+    /// notice names the ID rather than calling the reports anonymous (the UK, Switzerland).
+    /// </summary>
+    constexpr auto IdNoticeCountries = std::to_array<std::string_view>({"GB", "CH"});
     /// <summary>India's DPDP Act wants consent from the day its duties start.</summary>
     constexpr std::string_view India = "IN";
     constexpr int64_t IndiaConsentDay =
@@ -135,6 +145,10 @@ namespace
         double LoadSeconds = 0.0;
         double WorstMilliseconds = 0.0;
         int32_t MoviesBehind = 0;
+        /// <summary>The seconds the HD weather threw fewer of its pieces to keep up.</summary>
+        double WeatherThinnedSeconds = 0.0;
+        /// <summary>The least share of the HD weather's pieces thrown: 1 never thinned.</summary>
+        float WeatherLeast = 1.0f;
         int32_t Thermal = 0;
         bool Battery = false;
         bool LowPower = false;
@@ -147,6 +161,8 @@ namespace
             LoadSeconds += other.LoadSeconds;
             WorstMilliseconds = std::max(WorstMilliseconds, other.WorstMilliseconds);
             MoviesBehind += other.MoviesBehind;
+            WeatherThinnedSeconds += other.WeatherThinnedSeconds;
+            WeatherLeast = std::min(WeatherLeast, other.WeatherLeast);
             Thermal = std::max(Thermal, other.Thermal);
             Battery = Battery || other.Battery;
             LowPower = LowPower || other.LowPower;
@@ -176,10 +192,17 @@ namespace
     /// <summary>What reports.cfg keeps.</summary>
     struct MCState
     {
-        /// <summary>The report version whose notice or question the player saw (or chose REPORTS since); 0 none.</summary>
+        /// <summary>
+        /// The report version when the player saw the notice or question (or chose REPORTS); 0 never. Once is enough.
+        /// </summary>
         int32_t Seen = 0;
         /// <summary>A report was sent once: the next ones aren't a new player's first.</summary>
         bool FirstSent = false;
+        /// <summary>
+        /// This copy's random ID, in each report so one copy's can be told apart over time: made while REPORTS is on,
+        /// dropped when it goes off (on again, another is made). Empty none.
+        /// </summary>
+        std::string Id;
         /// <summary>The day the missions were last reported (days since 1970); 0 never.</summary>
         int32_t MissionDay = 0;
         /// <summary>The missions (and HD movies) since.</summary>
@@ -224,6 +247,8 @@ namespace
     MCPrompt Pending = MCPrompt::None;
     Clock::time_point RunStart = Clock::now();
     std::optional<Clock::time_point> LastFrame;
+    /// <summary>The share of the HD weather's pieces the frame being measured threw (1: all, or it threw none).</summary>
+    float FrameWeather = 1.0f;
     /// <summary>The black box: in the backend's mapped file, or here without one.</summary>
     MCBlackBox MemoryBox{};
     MCBlackBox* Box = &MemoryBox;
@@ -373,10 +398,47 @@ namespace
         Pending = prompt;
     }
 
-    /// <summary>Whether the player has decided: seen this version's notice or question, or said no to an earlier one.</summary>
+    /// <summary>Whether the player has decided: seen the notice or question once (any version's), or chosen REPORTS.</summary>
     bool Decided()
     {
-        return State.Seen >= MCTelemetry::ReportVersion || (State.Seen > 0 && GReports == 0);
+        return State.Seen > 0;
+    }
+
+    /// <summary>Whether <paramref name="id"/> is a copy's ID as <see cref="KeepId"/> makes them.</summary>
+    bool ValidId(std::string_view id)
+    {
+        return id.size() == IdDigits &&
+               std::ranges::all_of(
+                   id, [](char digit)
+                   { return std::isdigit(static_cast<unsigned char>(digit)) || (digit >= 'a' && digit <= 'f'); });
+    }
+
+    /// <summary>
+    /// Gives this copy an ID while reports go (REPORTS on, and the player decided), and drops it when they don't.
+    /// </summary>
+    /// <returns>Whether it changed (the caller writes reports.cfg).</returns>
+    bool KeepId()
+    {
+        const bool wanted = GReports != 0 && Decided();
+
+        if (wanted == !State.Id.empty())
+        {
+            return false;
+        }
+
+        State.Id.clear();
+
+        if (wanted)
+        {
+            std::random_device random;
+
+            for (size_t digits = 0; digits < IdDigits; digits += IdWordDigits)
+            {
+                State.Id += std::format("{:0{}x}", random(), IdWordDigits);
+            }
+        }
+
+        return true;
     }
 
     MCTally ReadTally(MCFitIniFile& file)
@@ -387,6 +449,8 @@ namespace
         tally.LoadSeconds = file.Read<float>("LoadSeconds").value_or(0.0f);
         tally.WorstMilliseconds = file.Read<float>("Worst").value_or(0.0f);
         tally.MoviesBehind = file.Read<int32_t>("MoviesBehind").value_or(0);
+        tally.WeatherThinnedSeconds = file.Read<float>("WeatherThinned").value_or(0.0f);
+        tally.WeatherLeast = file.Read<float>("WeatherLeast").value_or(1.0f);
         tally.Thermal = file.Read<int32_t>("Thermal").value_or(0);
         tally.Battery = file.Read<bool>("Battery").value_or(false);
         tally.LowPower = file.Read<bool>("LowPower").value_or(false);
@@ -413,6 +477,12 @@ namespace
 
         State.Seen = file.Read<int32_t>("Seen").value_or(0);
         State.FirstSent = file.Read<bool>("FirstSent").value_or(false);
+
+        if (MCFitResult<std::string> id = file.Read<std::string>("Id"); id.has_value() && ValidId(*id))
+        {
+            State.Id = std::move(*id);
+        }
+
         State.MissionDay = file.Read<int32_t>("MissionDay").value_or(0);
         State.Missions = ReadTally(file);
     }
@@ -436,12 +506,20 @@ namespace
         file.WriteBlock(StateBlock);
         file.WriteIdLong("Seen", State.Seen);
         file.WriteIdBoolean("FirstSent", State.FirstSent);
+
+        if (!State.Id.empty())
+        {
+            file.WriteIdString("Id", State.Id);
+        }
+
         file.WriteIdLong("MissionDay", State.MissionDay);
         file.WriteIdLong("Missions", tally.Count);
         file.WriteIdFloat("Seconds", static_cast<float>(tally.Seconds));
         file.WriteIdFloat("LoadSeconds", static_cast<float>(tally.LoadSeconds));
         file.WriteIdFloat("Worst", static_cast<float>(tally.WorstMilliseconds));
         file.WriteIdLong("MoviesBehind", tally.MoviesBehind);
+        file.WriteIdFloat("WeatherThinned", static_cast<float>(tally.WeatherThinnedSeconds));
+        file.WriteIdFloat("WeatherLeast", tally.WeatherLeast);
         file.WriteIdLong("Thermal", tally.Thermal);
         file.WriteIdBoolean("Battery", tally.Battery);
         file.WriteIdBoolean("LowPower", tally.LowPower);
@@ -537,6 +615,9 @@ namespace
             .Flag("fullScreen", (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0)
             .Number("refresh", mode != nullptr ? mode->refresh_rate : 0.0)
             .Text("renderer", display->RendererName())
+            // The GPU was asked for but couldn't start: the CPU draws (MCDisplay's fallback).
+            .Flag("gpuFailed", GRenderer == static_cast<int>(MCRendererKind::Vulkan) &&
+                                   display->RendererKind() != MCRendererKind::Vulkan)
             .Integer("interfaceSize", GInterfaceSize)
             .Close();
     }
@@ -568,11 +649,15 @@ namespace
             .Flag("first", !State.FirstSent)
             .Text("platform", Machine.Platform)
             .Text("app", app)
+            .Text("id", State.Id)
             .Raw("machine", MachineJson());
         return report;
     }
 
-    /// <summary>A tally's play: how much, the loads, the frame times, and the computer's heat and power.</summary>
+    /// <summary>
+    /// A tally's play: how much, the loads, the frame times, what fell back to keep up, and the computer's heat and
+    /// power.
+    /// </summary>
     MCJsonObject PlayJson(const MCTally& tally)
     {
         MCJsonObject play;
@@ -586,6 +671,8 @@ namespace
             .Integer("over33", static_cast<int64_t>(FramesOver(tally.Histogram, HitchMilliseconds)))
             .Integer("over100", static_cast<int64_t>(FramesOver(tally.Histogram, StallMilliseconds)))
             .Integer("moviesBehind", tally.MoviesBehind)
+            .Number("weatherThinnedMinutes", tally.WeatherThinnedSeconds / SecondsPerMinute)
+            .Number("weatherLeast", tally.WeatherLeast)
             .Integer("thermal", tally.Thermal)
             .Flag("battery", tally.Battery)
             .Flag("lowPower", tally.LowPower);
@@ -845,7 +932,9 @@ namespace
                     const std::string_view country = JsonValue(reply, "country").value_or("");
                     const bool ask = JsonValue(reply, "ask").value_or("true") != "false";
                     SDL_Log("Reports: the region is %.*s", static_cast<int>(country.size()), country.data());
-                    SetPrompt(ask || MCTelemetry::AskFirst(country, day) ? MCPrompt::Ask : MCPrompt::Notice);
+                    const MCPrompt notice =
+                        std::ranges::contains(IdNoticeCountries, country) ? MCPrompt::NoticeWithId : MCPrompt::Notice;
+                    SetPrompt(ask || MCTelemetry::AskFirst(country, day) ? MCPrompt::Ask : notice);
                 });
     }
 }
@@ -881,6 +970,13 @@ auto MCTelemetry::Start() -> void
     Started = true;
     Machine = Backend->Machine();
     ReadState();
+
+    // A copy whose reports went before there were IDs gets one now.
+    if (KeepId())
+    {
+        WriteState();
+    }
+
     const std::optional<MCBlackBox> last = OpenBlackBox();
 
     if (last.has_value() && Reporting())
@@ -918,6 +1014,7 @@ auto MCTelemetry::Answered(bool send) -> void
     SDL_Log("Reports: %s", send ? "on" : "off (the player's answer)");
     GReports = send ? 1 : 0;
     State.Seen = ReportVersion;
+    KeepId();
     WriteState();
     SetPrompt(MCPrompt::None);
 }
@@ -930,13 +1027,14 @@ auto MCTelemetry::Chosen() -> void
     }
 
     State.Seen = ReportVersion;
+    KeepId();
     WriteState();
     SetPrompt(MCPrompt::None);
 }
 
 auto MCTelemetry::Reporting() -> bool
 {
-    return Backend != nullptr && Started && GReports != 0 && State.Seen >= ReportVersion;
+    return Backend != nullptr && Started && GReports != 0 && Decided();
 }
 
 auto MCTelemetry::Frame() -> void
@@ -948,15 +1046,22 @@ auto MCTelemetry::Frame() -> void
     {
         Frame(std::chrono::duration<double, std::milli>(now - *last).count());
     }
-    else if (Backend != nullptr)
+    else
     {
         // Nothing to measure from: the first frame, or the first after a load (the load isn't a frame).
-        Tick();
+        FrameWeather = 1.0f;
+
+        if (Backend != nullptr)
+        {
+            Tick();
+        }
     }
 }
 
 auto MCTelemetry::Frame(double milliseconds) -> void
 {
+    const float weather = std::exchange(FrameWeather, 1.0f);
+
     if (Backend == nullptr)
     {
         return;
@@ -972,6 +1077,13 @@ auto MCTelemetry::Frame(double milliseconds) -> void
     MCTally& tally = Play.Tally;
     tally.Histogram[Bucket(milliseconds)]++;
     tally.Seconds += milliseconds / MillisecondsPerSecond;
+
+    if (weather < 1.0f)
+    {
+        tally.WeatherThinnedSeconds += milliseconds / MillisecondsPerSecond;
+        tally.WeatherLeast = std::min(tally.WeatherLeast, weather);
+    }
+
     tally.WorstMilliseconds = std::max(tally.WorstMilliseconds, milliseconds);
     Box->PlaySeconds = static_cast<float>(tally.Seconds);
     Play.SincePower += milliseconds / MillisecondsPerSecond;
@@ -1077,6 +1189,11 @@ auto MCTelemetry::MovieFellBehind() -> void
         State.Missions.MoviesBehind++;
         WriteState();
     }
+}
+
+auto MCTelemetry::WeatherDrawn(float share) -> void
+{
+    FrameWeather = share;
 }
 
 auto MCTelemetry::MessageIn(uint16_t type, size_t bytes) -> void

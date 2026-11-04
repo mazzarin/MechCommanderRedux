@@ -424,10 +424,19 @@ auto MCGuiSystem::Run() -> void
     {
         PerfStartTime = MCPort::PerformanceCounter();
         MCFrameLog::NextFrame();
-        // Port (personal): the reports' frame times, and their server's replies (main/MCTelemetry.h).
+        // Port-only (HD weather's snow): whether the last frame threw the weather's pieces.
+        const bool drewWeather = MCWeather::TakeSnowDrawn();
+
+        // Port (personal): the reports' frame times, with the share of the weather's pieces thrown, and their
+        // server's replies (main/MCTelemetry.h).
+        if (drewWeather)
+        {
+            MCTelemetry::WeatherDrawn(MCWeatherPacing::Share());
+        }
+
         MCTelemetry::Frame();
         // Port-only (HD weather's snow): the frames' pace, which a machine that can't keep up thins it by.
-        MCWeatherPacing::Frame(MCWeather::TakeSnowDrawn());
+        MCWeatherPacing::Frame(drewWeather);
 
         // The PeekMessage / TranslateMessage / DispatchMessage loop, which stopped at WM_QUIT.
         if (MCFrameLog::Scope pump("pump"); !MCInput::PumpMessages())

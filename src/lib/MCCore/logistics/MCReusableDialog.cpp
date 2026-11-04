@@ -20,6 +20,25 @@ namespace
     {
         return MedBlueFont->Height() + 3;
     }
+
+    /// <summary>
+    /// Port: the text's paragraphs, each word-wrapped on lines of its own (a newline ends each but the last). The
+    /// original's texts have none, so they are one paragraph, wrapped as the original wrapped them.
+    /// </summary>
+    std::vector<std::string_view> Paragraphs(std::string_view text)
+    {
+        std::vector<std::string_view> paragraphs;
+        size_t start = 0;
+
+        for (size_t end = text.find('\n'); end != std::string_view::npos; end = text.find('\n', start))
+        {
+            paragraphs.push_back(text.substr(start, end - start));
+            start = end + 1;
+        }
+
+        paragraphs.push_back(text.substr(start));
+        return paragraphs;
+    }
 }
 
 // MCReusableDialog
@@ -96,15 +115,18 @@ auto MCReusableDialog::Draw() -> void
     // The text, word-wrapped to the box: each line ends where the font says the words fit, and the character there
     // (a space) is skipped.
     int32_t lineY = TopPiece->Height() + 2;
-    std::string_view rest = Text;
-    auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
 
-    if (fit == rest.size())
+    for (std::string_view rest : Paragraphs(Text))
     {
-        MedBlueFont->WriteString(_Port->Frame(), 0xc, lineY, rest);
-    }
-    else
-    {
+        auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
+
+        if (fit == rest.size())
+        {
+            MedBlueFont->WriteString(_Port->Frame(), 0xc, lineY, rest);
+            lineY += TextLineHeight();
+            continue;
+        }
+
         while (fit > 0 && fit <= rest.size())
         {
             MedBlueFont->WriteString(_Port->Frame(), 0xc, lineY, rest.substr(0, fit));
@@ -205,15 +227,19 @@ auto MCReusableDialog::SetText(std::string_view newText) -> void
     Text = newText.substr(0, newText.find('\0'));
 
     // Count the wrapped lines; each middle piece holds two.
-    std::string_view rest = Text;
-    auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
-    int32_t lines = 1;
+    int32_t lines = 0;
 
-    while (fit >= 1 && fit < rest.size())
+    for (std::string_view rest : Paragraphs(Text))
     {
-        rest = rest.substr(fit + 1);
+        auto fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
         lines++;
-        fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
+
+        while (fit >= 1 && fit < rest.size())
+        {
+            rest = rest.substr(fit + 1);
+            lines++;
+            fit = static_cast<size_t>(MedBlueFont->CharactersToWidth(rest, WrapWidth(), true));
+        }
     }
 
     NumMiddlePieces = (lines + 1) / 2;

@@ -169,6 +169,16 @@ namespace
         }
     }
 
+    /// <summary>Plays <paramref name="seconds"/> of 16 ms frames, each throwing <paramref name="share"/> of the HD weather's pieces.</summary>
+    void PlayWeather(double seconds, float share)
+    {
+        for (double played = 0.0; played < seconds; played += FrameMilliseconds / 1000.0)
+        {
+            MCTelemetry::WeatherDrawn(share);
+            MCTelemetry::Frame(FrameMilliseconds);
+        }
+    }
+
     /// <summary>Keeps the tests' prefs.cfg as it was: the main menu's answer writes PREFS.</summary>
     class MCKeepPrefs
     {
@@ -206,6 +216,21 @@ namespace
     bool Holds(std::string_view json, std::string_view part)
     {
         return json.find(part) != std::string_view::npos;
+    }
+
+    /// <summary>The copy's ID <paramref name="report"/> holds, or nothing.</summary>
+    std::string IdOf(std::string_view report)
+    {
+        constexpr std::string_view key = R"("id":")";
+        const size_t at = report.find(key);
+
+        if (at == std::string_view::npos)
+        {
+            return {};
+        }
+
+        const size_t start = at + key.size();
+        return std::string(report.substr(start, report.find('"', start) - start));
     }
 
     /// <summary>A dialog's inner panel: its edges' columns, in from the dialog's sides, and the blank inside each.</summary>
@@ -269,6 +294,8 @@ TEST_CASE("reports: the law where the player is decides the question or the noti
     for (const auto& [reply, prompt] : std::to_array<std::pair<std::string_view, MCPrompt>>({
              {R"({"country":"US","ask":false})", MCPrompt::Notice},
              {R"({ "country" : "BR", "ask" : false })", MCPrompt::Notice},
+             {R"({"country":"GB","ask":false})", MCPrompt::NoticeWithId},
+             {R"({"country":"CH","ask":false})", MCPrompt::NoticeWithId},
              {R"({"country":"KR","ask":false})", MCPrompt::Ask},
              {R"({"country":"CA","ask":true})", MCPrompt::Ask},
              {R"({"country":"XX","ask":false})", MCPrompt::Ask},
@@ -285,6 +312,13 @@ TEST_CASE("reports: the law where the player is decides the question or the noti
         reports.Reply(0, HttpOk, std::string(reply));
         CHECK(MCTelemetry::Prompt() == prompt);
     }
+
+    // Only the plain notice calls the reports anonymous; the UK's and the question name their ID.
+    constexpr std::string_view anonymous = "anonymous";
+    CHECK(Holds(ReportsText(MCPrompt::Notice), anonymous));
+    CHECK(!Holds(ReportsText(MCPrompt::NoticeWithId), anonymous));
+    CHECK(!Holds(ReportsText(MCPrompt::Ask), anonymous));
+    CHECK(Holds(ReportsText(MCPrompt::NoticeWithId), "random ID"));
 
     // No answer: nothing shows, and the next start asks again.
     MCFakeReports reports;
@@ -372,6 +406,7 @@ TEST_CASE("reports: a match of two minutes or more is reported at its end, with 
     CHECK(Holds(report, R"("model":"MacBookAir10,1","cpu":"Apple M1","performanceCores":4,"efficiencyCores":4)"));
     CHECK(Holds(report, R"("gpuCores":7,"memoryGb":8,"system":"26.5")"));
     CHECK(Holds(report, R"("p50":16.50,"p95":40.50,"p99":40.50,"worst":40.00)"));
+    CHECK(Holds(report, R"("moviesBehind":0,"weatherThinnedMinutes":0.00,"weatherLeast":1.00)"));
     CHECK(Holds(report, R"("thermal":2,"battery":true,"lowPower":false)"));
     CHECK(Holds(report, R"("mission":"mc2mp_01","players":4,"server":true,"playersLost":1)"));
     CHECK(Holds(report, R"("settings":{"HDArt":)"));
@@ -392,11 +427,14 @@ TEST_CASE("reports: missions are reported at the first, then a week or more afte
 {
     MCFakeReports reports;
     StartReporting(reports);
-    const auto mission = []
+    // A mission of 130 s, the HD weather thrown at <weather> in its first 30.
+    const auto mission = [](float weather = 1.0f)
     {
+        constexpr double weatherSeconds = 30.0;
         MCTelemetry::PlayLoading("mis0101", false);
         MCTelemetry::PlayStarted(1, false);
-        Play(130.0);
+        PlayWeather(weatherSeconds, weather);
+        Play(100.0);
         MCTelemetry::PlayEnded();
     };
 
@@ -405,11 +443,13 @@ TEST_CASE("reports: missions are reported at the first, then a week or more afte
     CHECK(Holds(reports.Log->Requests[0].second, R"("kind":"missions")"));
     CHECK(Holds(reports.Log->Requests[0].second, R"("play":{"count":1,)"));
     CHECK(!Holds(reports.Log->Requests[0].second, "mis0101"));
+    CHECK(Holds(reports.Log->Requests[0].second, R"("weatherThinnedMinutes":0.00,"weatherLeast":1.00)"));
     reports.Reply(0, HttpOk);
 
-    // Six days on: kept for the next report, through a restart.
+    // Six days on: kept for the next report, through a restart, the weather thinned to keep up with it.
+    constexpr float thinned = 0.6f;
     reports.Log->Now += SecondsPerDay * 6;
-    mission();
+    mission(thinned);
     CHECK_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Restart();
     MCTelemetry::Start();
@@ -417,6 +457,7 @@ TEST_CASE("reports: missions are reported at the first, then a week or more afte
     mission();
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     CHECK(Holds(reports.Log->Requests[0].second, R"("play":{"count":2,)"));
+    CHECK(Holds(reports.Log->Requests[0].second, R"("weatherThinnedMinutes":0.50,"weatherLeast":0.60)"));
 
     // Not taken: kept for the next.
     reports.Reply(0, ServerError);
@@ -424,6 +465,38 @@ TEST_CASE("reports: missions are reported at the first, then a week or more afte
     mission();
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{2});
     CHECK(Holds(reports.Log->Requests[1].second, R"("play":{"count":3,)"));
+}
+
+TEST_CASE("reports: each holds the copy's random ID, the same after a restart; REPORTS off drops it, on makes another")
+{
+    constexpr size_t idDigits = 32;
+    MCFakeReports reports;
+    StartReporting(reports);
+    const auto matchId = [&reports]
+    {
+        MCTelemetry::PlayLoading("mc2mp_01", true);
+        MCTelemetry::PlayStarted(2, true);
+        Play(130.0);
+        MCTelemetry::PlayEnded();
+        REQUIRE(!reports.Log->Requests.empty());
+        return IdOf(reports.Log->Requests.back().second);
+    };
+
+    const std::string first = matchId();
+    CHECK_EQ(first.size(), idDigits);
+    CHECK(std::ranges::all_of(first, [](char digit) { return std::isxdigit(digit) && !std::isupper(digit); }));
+
+    reports.Restart();
+    MCTelemetry::Start();
+    CHECK_EQ(matchId(), first);
+
+    GReports = 0;
+    MCTelemetry::Chosen();
+    GReports = 1;
+    MCTelemetry::Chosen();
+    const std::string next = matchId();
+    CHECK_EQ(next.size(), idDigits);
+    CHECK(next != first);
 }
 
 TEST_CASE("reports: the last run's crash is sent at the next start with its black box; a clean quit leaves none")
@@ -517,7 +590,7 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
     MCTestGame::RunFrame(1.0f / 15.0f);
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
     REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string(ReportsNoticeText()));
+    CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Notice)));
     MCScreenInput::SaveShot("reports notice", MCScreenInput::ScreenHash());
     CHECK(TextInsidePanel(dialog));
     MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
@@ -545,7 +618,7 @@ TEST_CASE_ISOLATED("game: where the law wants consent the main menu asks, and CA
     CHECK(reports.Log->Requests.empty());
     MCReusableDialog& dialog = *GlobalLog()->QuestionDialog;
     REQUIRE(dialog.IsShowing());
-    CHECK_EQ(dialog.Text, std::string(ReportsQuestionText()));
+    CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Ask)));
     MCScreenInput::SaveShot("reports question", MCScreenInput::ScreenHash());
     CHECK(TextInsidePanel(dialog));
     MCScreenInput::RealClick(dialog.CancelButton->GlobalX() + dialog.CancelButton->Width() / 2,

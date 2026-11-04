@@ -8,6 +8,7 @@
 #include "logistics/MCVehicleRepairBlock.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
+#include "main/MCWeaponBans.h"
 #include "object/MCObjectTypeManager.h"
 
 MCLogVehicleList::~MCLogVehicleList()
@@ -177,6 +178,8 @@ auto MCLogVehicleList::AddVehicle(MCFitIniFile& file, bool required, bool sorted
     }
 
     vehicle->CalcVehicleCost();
+    // Port: a match's weapon bans take the banned weapons off (MCWeaponBans.h).
+    MCRemoveBannedWeapons(*vehicle, MCPlayedWeaponBans());
 
     // The widgets are made before the vehicle is in the list, as the original did.
     if (widgets)

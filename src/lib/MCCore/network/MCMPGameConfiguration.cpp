@@ -238,37 +238,58 @@ namespace
 
 namespace
 {
-    /// <summary>The rule an on/off ban flag (-matchartillery, -matchprobes, -matchsensors, -matchmines) sets when OFF.</summary>
+    /// <summary>An on/off ban flag and the rule it sets when OFF.</summary>
+    struct BanFlag
+    {
+        std::string_view Flag;
+        uint32_t Rule = 0;
+    };
+
+    constexpr std::array BanFlags = {
+        BanFlag{MatchArtilleryFlag, MCMatchRule::NoArtillery},
+        BanFlag{MatchProbesFlag, MCMatchRule::NoProbes},
+        BanFlag{MatchSensorsFlag, MCMatchRule::NoSensors},
+        BanFlag{MatchMinesFlag, MCMatchRule::NoMines},
+        BanFlag{MatchLrmsFlag, MCMatchRule::NoLrms},
+        BanFlag{MatchSrmsFlag, MCMatchRule::NoSrms},
+        BanFlag{MatchThunderboltsFlag, MCMatchRule::NoThunderbolts},
+        BanFlag{MatchPpcsFlag, MCMatchRule::NoPpcs},
+        BanFlag{MatchLasersFlag, MCMatchRule::NoLasers},
+        BanFlag{MatchPulseLasersFlag, MCMatchRule::NoPulseLasers},
+        BanFlag{MatchFlamersFlag, MCMatchRule::NoFlamers},
+        BanFlag{MatchAutocannonsFlag, MCMatchRule::NoAutocannons},
+        BanFlag{MatchGaussFlag, MCMatchRule::NoGaussRifles},
+        BanFlag{MatchMachineGunsFlag, MCMatchRule::NoMachineGuns},
+        BanFlag{MatchLongTomsFlag, MCMatchRule::NoLongToms},
+    };
+
+    /// <summary>The rule an on/off ban flag (<see cref="BanFlags"/>) sets when OFF.</summary>
     std::optional<uint32_t> BanOf(std::string_view flag)
     {
-        if (MCIEquals(flag, MatchArtilleryFlag))
-        {
-            return MCMatchRule::NoArtillery;
-        }
+        const auto found =
+            std::ranges::find_if(BanFlags, [flag](const BanFlag& ban) { return MCIEquals(flag, ban.Flag); });
+        return found != BanFlags.end() ? std::optional(found->Rule) : std::nullopt;
+    }
 
-        if (MCIEquals(flag, MatchProbesFlag))
-        {
-            return MCMatchRule::NoProbes;
-        }
+    /// <summary>-matchpilot's ranks, by name.</summary>
+    constexpr std::array<std::pair<std::string_view, MCPilotRank>, 4> PilotRankValues = {
+        std::pair{std::string_view("elite"), MCPilotRank::Elite},
+        std::pair{std::string_view("veteran"), MCPilotRank::Veteran},
+        std::pair{std::string_view("regular"), MCPilotRank::Regular},
+        std::pair{std::string_view("green"), MCPilotRank::Green}};
 
-        if (MCIEquals(flag, MatchSensorsFlag))
-        {
-            return MCMatchRule::NoSensors;
-        }
-
-        if (MCIEquals(flag, MatchMinesFlag))
-        {
-            return MCMatchRule::NoMines;
-        }
-
-        return std::nullopt;
+    /// <summary>The chosen rules with <paramref name="rules"/>' bits of <paramref name="mask"/> in their place.</summary>
+    uint32_t WithRules(const MCMatchOptions& options, uint32_t mask, uint32_t rules)
+    {
+        // Without a braking flag before it, braking stays the PREFS' (PREFS may not be read yet).
+        return (options.Rules.value_or(MCMatchRule::BrakingFromPrefs) & ~mask) | rules;
     }
 }
 
 bool MPIsMatchOptionFlag(std::string_view word)
 {
     return MCIEquals(word, MatchWeatherFlag) || MCIEquals(word, MatchTimeFlag) || MCIEquals(word, MatchBrakingFlag) ||
-           BanOf(word).has_value();
+           MCIEquals(word, MatchPilotFlag) || BanOf(word).has_value();
 }
 
 bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options)
@@ -306,9 +327,18 @@ bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOpt
         // ON is the original's: the rule bans the thing when OFF.
         if (MCIEquals(value, OnValue) || MCIEquals(value, OffValue))
         {
-            // Without a braking flag before it, braking stays the PREFS' (PREFS may not be read yet).
-            const uint32_t chosen = options.Rules.value_or(MCMatchRule::BrakingFromPrefs);
-            options.Rules = (chosen & ~*ban) | (MCIEquals(value, OffValue) ? *ban : 0);
+            options.Rules = WithRules(options, *ban, MCIEquals(value, OffValue) ? *ban : 0);
+            return true;
+        }
+    }
+    else if (MCIEquals(flag, MatchPilotFlag))
+    {
+        const auto rank =
+            std::ranges::find_if(PilotRankValues, [value](const auto& named) { return MCIEquals(value, named.first); });
+
+        if (rank != PilotRankValues.end())
+        {
+            options.Rules = WithRules(options, MCMatchRule::PilotRanks, MCPilotRankRules(rank->second));
             return true;
         }
     }

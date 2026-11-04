@@ -39,7 +39,7 @@ public:
     /// <summary>
     /// Whether component <paramref name="masterID"/>, weighing <paramref name="tonnage"/> (with a weapon's ammo), can
     /// go on <paramref name="mech"/>: the mech has the free tonnage, carries no other ECM, sensor or probe when it is
-    /// one, and is one of the mechs a restricted component fits.
+    /// one, and is one of the mechs a restricted component fits; port: and the match's weapon bans don't ban it.
     /// </summary>
     static bool CanMount(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> selected);
 

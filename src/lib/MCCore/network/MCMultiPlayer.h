@@ -65,14 +65,58 @@ namespace MCMatchRule
     /// <summary>Commanders send no sensor probes or camera drones (PROBES OFF; MCCommander).</summary>
     inline constexpr uint32_t NoProbes = 256;
     /// <summary>
+    /// No pilot of a rank for hire (MOST SKILLED PILOT; MCLogistics::SetUpMPPurchasing): elite, veteran, regular. The
+    /// most skilled pilot is the rank under the lowest banned (MCMostSkilledPilot).
+    /// </summary>
+    inline constexpr uint32_t NoElitePilots = 512;
+    inline constexpr uint32_t NoVeteranPilots = 1024;
+    inline constexpr uint32_t NoRegularPilots = 2048;
+    /// <summary>What a player's build must play for the host to cap the pilots' rank.</summary>
+    inline constexpr uint32_t PilotRanks = NoElitePilots | NoVeteranPilots | NoRegularPilots;
+    /// <summary>
+    /// No weapon of a family for sale, mounted or fielded by the players (WEAPONS' rows; MCWeaponFamilyOf): LRMs, SRMs
+    /// (with Streaks), the Heavy Thunderbolt, PPCs, lasers, pulse lasers, flamers, autocannons (with Ultras and LB-Xs),
+    /// Gauss rifles (with the Rail Gun), machine guns, each Inner Sphere's and Clan's, and the artillery pieces (the Long
+    /// Tom and the Sniper; ARTILLERY is the commanders' strikes).
+    /// </summary>
+    inline constexpr uint32_t NoLrms = 1u << 12;
+    inline constexpr uint32_t NoSrms = 1u << 13;
+    inline constexpr uint32_t NoThunderbolts = 1u << 14;
+    inline constexpr uint32_t NoPpcs = 1u << 15;
+    inline constexpr uint32_t NoLasers = 1u << 16;
+    inline constexpr uint32_t NoPulseLasers = 1u << 17;
+    inline constexpr uint32_t NoFlamers = 1u << 18;
+    inline constexpr uint32_t NoAutocannons = 1u << 19;
+    inline constexpr uint32_t NoGaussRifles = 1u << 20;
+    inline constexpr uint32_t NoMachineGuns = 1u << 21;
+    inline constexpr uint32_t NoLongToms = 1u << 22;
+    /// <summary>What a player's build must play for the host to ban a weapon family.</summary>
+    inline constexpr uint32_t WeaponBans = NoLrms | NoSrms | NoThunderbolts | NoPpcs | NoLasers | NoPulseLasers |
+                                           NoFlamers | NoAutocannons | NoGaussRifles | NoMachineGuns | NoLongToms;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by.</summary>
-    inline constexpr uint32_t Supported =
-        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes;
+    inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
+                                          NoMines | NoProbes | PilotRanks | WeaponBans;
 } // namespace MCMatchRule
+
+/// <summary>A pilot's rank (MCPurPilotData::Rank, MCLogWarrior's): the purchase files' PilotCosts order.</summary>
+enum class MCPilotRank : int32_t
+{
+    Green = 0,
+    Regular = 1,
+    Veteran = 2,
+    Elite = 3,
+};
+
+/// <summary>Port: the most skilled pilot for hire under <paramref name="rules"/> (MCMatchRule::PilotRanks).</summary>
+MCPilotRank MCMostSkilledPilot(uint32_t rules);
+
+/// <summary>Port: the rules (MCMatchRule::PilotRanks' bits) that leave <paramref name="rank"/> the most skilled for hire.</summary>
+uint32_t MCPilotRankRules(MCPilotRank rank);
 
 /// <summary>
 /// Port: sets the rules the mission being played plays by (MCScenario::Load: its match's, MCMultiPlayer::Played; none

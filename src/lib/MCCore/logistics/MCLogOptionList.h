@@ -50,7 +50,7 @@ public:
         /// <summary>Called with the new value when a click changes it.</summary>
         void (*Changed)(int32_t value) = nullptr;
 
-        bool IsHeading() const { return Key.empty() && Value == nullptr; }
+        constexpr bool IsHeading() const { return Key.empty() && Value == nullptr; }
     };
 
     /// <summary>The height of a row: a line for the name and one for what it does.</summary>
@@ -97,11 +97,19 @@ public:
     /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reason"/> why; empty: not held): a click
     /// changes nothing and its box doesn't light, its name and setting show dim, and its line says why instead of what
     /// it does, wrapped at spaces over as many lines as it needs (a word wider than a line cut where it fills one).
+    /// A heading held holds every option under it (to the next heading), the reason's lines under the heading and
+    /// the options' own lines still saying what they do.
     /// </summary>
     void SetHeld(int32_t row, std::string_view reason);
 
-    /// <summary>Why row <paramref name="row"/>'s option is held (<see cref="SetHeld"/>; empty: it isn't).</summary>
+    /// <summary>
+    /// Why row <paramref name="row"/>'s option is held (<see cref="SetHeld"/>: its own, else its heading's; empty: it
+    /// isn't).
+    /// </summary>
     std::string_view HeldReason(int32_t row) const;
+
+    /// <summary>The width of an option's name, left of its setting box, in pixels.</summary>
+    int32_t NameWidth();
 
     /// <summary>The lines row <paramref name="row"/>'s held reason is wrapped over (none: it isn't held).</summary>
     std::span<const std::string> HeldLines(int32_t row) const { return _HeldLines[static_cast<size_t>(row)]; }
@@ -133,6 +141,12 @@ public:
     /// <summary>How many rows the list has, headings with them.</summary>
     int32_t OptionRows() const { return static_cast<int32_t>(_Rows.size()); }
 
+    /// <summary>Row <paramref name="row"/>'s option's name, or its heading.</summary>
+    std::string_view Label(int32_t row) const { return _Rows[static_cast<size_t>(row)].Label; }
+
+    /// <summary>Whether row <paramref name="row"/> is a heading.</summary>
+    bool IsHeading(int32_t row) const { return _Rows[static_cast<size_t>(row)].IsHeading(); }
+
     /// <summary>What row <paramref name="row"/>'s option does, as its line says.</summary>
     std::string_view Description(int32_t row) const { return _Rows[static_cast<size_t>(row)].Description; }
 
@@ -162,6 +176,9 @@ private:
 
     /// <summary>The slot showing option or heading <paramref name="row"/> itself.</summary>
     int32_t SlotOf(int32_t row) const;
+
+    /// <summary>The first of row <paramref name="row"/>'s held reason's lines under it: an option's second (its first on its own line), a heading's first.</summary>
+    int32_t FirstHeldMore(int32_t row) const;
 
     /// <summary>Draws slot <paramref name="slot"/>'s lines of its row's held reason with its top at <paramref name="top"/>.</summary>
     void DrawHeldMore(const Slot& slot, int32_t top);

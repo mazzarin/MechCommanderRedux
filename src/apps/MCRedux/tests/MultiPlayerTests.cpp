@@ -905,6 +905,13 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
           MCMatchOptions{.Rules = bans | weatherPlay});
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans, sightOptions | weatherPlay | MCMatchRule::NoMines) ==
           MCMatchOptions{.Rules = MCMatchRule::NoMines | weatherPlay});
+    // A build of the match's first rules (3 Nov, build 524) plays neither MOST SKILLED PILOT nor the weapon bans.
+    constexpr uint32_t pilotsAndWeapons = MCMatchRule::NoElitePilots | MCMatchRule::NoLrms | MCMatchRule::NoLongToms;
+    constexpr uint32_t firstRules = MCMatchRule::Supported & ~(MCMatchRule::PilotRanks | MCMatchRule::WeaponBans);
+    CHECK(MCPlayedOptions(MCMatchOptions{}, bans | pilotsAndWeapons, MCMatchRule::Supported) ==
+          MCMatchOptions{.Rules = bans | pilotsAndWeapons | weatherPlay});
+    CHECK(MCPlayedOptions(MCMatchOptions{}, bans | pilotsAndWeapons, firstRules) ==
+          MCMatchOptions{.Rules = bans | weatherPlay});
     CHECK(MCPlayedOptions(chosen, braking, 0) == MCMatchOptions{.Rules = 0u});
 
     const std::map<uint32_t, uint32_t> said = {
@@ -1156,6 +1163,78 @@ TEST_CASE("network: the command line's match options set the weather, the time o
     CHECK(MPReadMatchOption(MatchTimeFlag, "mission", options));
     CHECK(MPReadMatchOption(MatchBrakingFlag, "prefs", options));
     CHECK(options == MCMatchOptions{});
+}
+
+/// <summary>
+/// Port: -matchpilot sets MOST SKILLED PILOT (elite, the original's, down to green), and each weapon family's flag bans
+/// it when OFF; the other rules kept, a value none of the flag's changing nothing.
+/// </summary>
+TEST_CASE("network: the command line's most skilled pilot and weapon bans")
+{
+    constexpr uint32_t kept = MCMatchRule::MechBraking | MCMatchRule::NoMines;
+    MCMatchOptions options{.Rules = kept};
+    CHECK(MPIsMatchOptionFlag("-MatchPilot"));
+    CHECK(MPReadMatchOption(MatchPilotFlag, "Veteran", options));
+    CHECK(options.Rules == (kept | MCMatchRule::NoElitePilots));
+    CHECK(MPReadMatchOption(MatchPilotFlag, "green", options));
+    CHECK(options.Rules == (kept | MCMatchRule::PilotRanks));
+    CHECK(!MPReadMatchOption(MatchPilotFlag, "ace", options));
+    CHECK(options.Rules == (kept | MCMatchRule::PilotRanks));
+    CHECK(MPReadMatchOption(MatchPilotFlag, "elite", options));
+    CHECK(options.Rules == kept);
+
+    const std::array<std::pair<std::string_view, uint32_t>, 11> families = {{
+        {MatchLrmsFlag, MCMatchRule::NoLrms},
+        {MatchSrmsFlag, MCMatchRule::NoSrms},
+        {MatchThunderboltsFlag, MCMatchRule::NoThunderbolts},
+        {MatchPpcsFlag, MCMatchRule::NoPpcs},
+        {MatchLasersFlag, MCMatchRule::NoLasers},
+        {MatchPulseLasersFlag, MCMatchRule::NoPulseLasers},
+        {MatchFlamersFlag, MCMatchRule::NoFlamers},
+        {MatchAutocannonsFlag, MCMatchRule::NoAutocannons},
+        {MatchGaussFlag, MCMatchRule::NoGaussRifles},
+        {MatchMachineGunsFlag, MCMatchRule::NoMachineGuns},
+        {MatchLongTomsFlag, MCMatchRule::NoLongToms},
+    }};
+    uint32_t banned = 0;
+
+    for (const auto& [flag, rule] : families)
+    {
+        MCTest::Scope scope(flag);
+        CHECK(MPIsMatchOptionFlag(flag));
+        CHECK(MPReadMatchOption(flag, "OFF", options));
+        banned |= rule;
+        CHECK(options.Rules == (kept | banned));
+    }
+
+    CHECK_EQ(banned, MCMatchRule::WeaponBans);
+
+    for (const auto& [flag, rule] : families)
+    {
+        CHECK(MPReadMatchOption(flag, "on", options));
+    }
+
+    CHECK(options.Rules == kept);
+}
+
+/// <summary>
+/// Port: MOST SKILLED PILOT is the rank under the lowest one banned, and each rank's rules leave it the most skilled:
+/// elite (none banned, the original's) to green (every one above banned).
+/// </summary>
+TEST_CASE("network: the most skilled pilot for hire is the rank under the lowest banned")
+{
+    for (const MCPilotRank rank : {MCPilotRank::Elite, MCPilotRank::Veteran, MCPilotRank::Regular, MCPilotRank::Green})
+    {
+        MCTest::Scope scope(std::format("rank {}", static_cast<int32_t>(rank)));
+        CHECK(MCMostSkilledPilot(MCPilotRankRules(rank)) == rank);
+    }
+
+    CHECK_EQ(MCPilotRankRules(MCPilotRank::Elite), 0u);
+    CHECK_EQ(MCPilotRankRules(MCPilotRank::Veteran), MCMatchRule::NoElitePilots);
+    CHECK_EQ(MCPilotRankRules(MCPilotRank::Green), MCMatchRule::PilotRanks);
+    CHECK(MCMostSkilledPilot(0) == MCPilotRank::Elite);
+    CHECK(MCMostSkilledPilot(MCMatchRule::NoVeteranPilots) == MCPilotRank::Regular);
+    CHECK(MCMostSkilledPilot(0xffffffffu) == MCPilotRank::Green);
 }
 
 /// <summary>

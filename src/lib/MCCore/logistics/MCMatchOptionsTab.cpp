@@ -2,6 +2,7 @@
 #include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCLogOptionList.h"
 #include "linkup/MCFidpPlayer.h"
+#include "main/MCWeaponBans.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
 #include "sprite/MCSceneLights.h"
@@ -203,6 +204,14 @@ namespace
     int ProbesValue = 1;
     int SensorsValue = 1;
     int MinesValue = 1;
+    int PilotValue = static_cast<int>(MCPilotRank::Elite);
+    /// <summary>Each weapon family's row (WeaponFamilies' order): 1 ON, the original's, 0 OFF, banned.</summary>
+    std::array<int, WeaponFamilies.size()> WeaponValues = []
+    {
+        std::array<int, WeaponFamilies.size()> on{};
+        on.fill(1);
+        return on;
+    }();
 
     constexpr std::string_view MissionOwnName = "MISSION'S";
     constexpr std::array WeatherChoices = {Choice{MissionOwnName, MissionOwn},
@@ -217,6 +226,11 @@ namespace
                                         Choice{"DUSK", static_cast<int32_t>(MCTimeOfDay::Dusk)},
                                         Choice{"NIGHT", static_cast<int32_t>(MCTimeOfDay::Night)}};
     constexpr std::array OffOn = {Choice{"OFF", 0}, Choice{"ON", 1}};
+    /// <summary>The ranks in the game's own words, the most skilled (any pilot, the original's) first.</summary>
+    constexpr std::array PilotChoices = {Choice{"ELITE", static_cast<int32_t>(MCPilotRank::Elite)},
+                                         Choice{"VETERAN", static_cast<int32_t>(MCPilotRank::Veteran)},
+                                         Choice{"REGULAR", static_cast<int32_t>(MCPilotRank::Regular)},
+                                         Choice{"GREEN", static_cast<int32_t>(MCPilotRank::Green)}};
 
     /// <summary>
     /// The host's change of one option (<paramref name="change"/> of its match options and its game): into its options,
@@ -264,6 +278,16 @@ namespace
             {
                 const bool plays = (value != 0) == OnPlays;
                 options.Rules = (game.WantedRules() & ~Rule) | (plays ? Rule : 0);
+            });
+    }
+
+    void PilotChanged(int32_t value)
+    {
+        HostChanges(
+            [value](MCMatchOptions& options, const MCMultiPlayer& game)
+            {
+                options.Rules =
+                    (game.WantedRules() & ~MCMatchRule::PilotRanks) | MCPilotRankRules(static_cast<MCPilotRank>(value));
             });
     }
 
@@ -317,6 +341,16 @@ namespace
     /// <summary>The headings' amber in the session screen's palette (the preferences' is dark there).</summary>
     constexpr uint8_t HeadingColor = 0xac;
 
+    /// <summary>Weapon family <typeparamref name="Family"/>'s row (WeaponFamilies): ON sells and fields it, OFF bans it.</summary>
+    template <size_t Family> constexpr Row WeaponRow()
+    {
+        return Row{.Label = WeaponFamilies[Family].Label,
+                   .Description = WeaponFamilies[Family].Description,
+                   .Value = &WeaponValues[Family],
+                   .Choices = OffOn,
+                   .Changed = RuleChanged<WeaponFamilies[Family].Rule, false>};
+    }
+
     constexpr std::array Rows = {
         Row{.Label = "PLAY"},
         Row{.Label = "WEATHER",
@@ -354,7 +388,26 @@ namespace
             .Value = &MinesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoMines, false>},
+        Row{.Label = "MOST SKILLED PILOT",
+            .Description = "NONE MORE SKILLED FOR HIRE.",
+            .Value = &PilotValue,
+            .Choices = PilotChoices,
+            .Changed = PilotChanged},
+        Row{.Label = "WEAPONS"},
+        WeaponRow<0>(),
+        WeaponRow<1>(),
+        WeaponRow<2>(),
+        WeaponRow<3>(),
+        WeaponRow<4>(),
+        WeaponRow<5>(),
+        WeaponRow<6>(),
+        WeaponRow<7>(),
+        WeaponRow<8>(),
+        WeaponRow<9>(),
+        WeaponRow<10>(),
     };
+
+    static_assert(WeaponFamilies.size() == 11, "a row for each weapon family");
 
     /// <summary>Each option's row and the rule a player's build must play by for the host to choose it.</summary>
     struct RuleRow
@@ -363,14 +416,22 @@ namespace
         uint32_t Rule = 0;
     };
 
-    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::WeatherRules}, RuleRow{2, MCMatchRule::TimeOfDayRules},
-                                     RuleRow{3, MCMatchRule::MechBraking},  RuleRow{4, MCMatchRule::NoArtillery},
-                                     RuleRow{5, MCMatchRule::NoProbes},     RuleRow{6, MCMatchRule::NoSensors},
-                                     RuleRow{7, MCMatchRule::NoMines}};
+    /// <summary>The WEAPONS heading's row, its families' rows after it: a heading held holds them all.</summary>
+    constexpr int32_t WeaponsRow = 9;
+    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::WeatherRules},
+                                     RuleRow{2, MCMatchRule::TimeOfDayRules},
+                                     RuleRow{3, MCMatchRule::MechBraking},
+                                     RuleRow{4, MCMatchRule::NoArtillery},
+                                     RuleRow{5, MCMatchRule::NoProbes},
+                                     RuleRow{6, MCMatchRule::NoSensors},
+                                     RuleRow{7, MCMatchRule::NoMines},
+                                     RuleRow{8, MCMatchRule::PilotRanks},
+                                     RuleRow{WeaponsRow, MCMatchRule::WeaponBans}};
     static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
                   Rows[RuleRows[2].Row].Value == &BrakingValue && Rows[RuleRows[3].Row].Value == &ArtilleryValue &&
                   Rows[RuleRows[4].Row].Value == &ProbesValue && Rows[RuleRows[5].Row].Value == &SensorsValue &&
-                  Rows[RuleRows[6].Row].Value == &MinesValue);
+                  Rows[RuleRows[6].Row].Value == &MinesValue && Rows[RuleRows[7].Row].Value == &PilotValue &&
+                  Rows[WeaponsRow].IsHeading() && Rows[WeaponsRow + 1].Value == &WeaponValues[0]);
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>
@@ -442,6 +503,13 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     ProbesValue = OnOf(rules, MCMatchRule::NoProbes, false);
     SensorsValue = OnOf(rules, MCMatchRule::NoSensors, false);
     MinesValue = OnOf(rules, MCMatchRule::NoMines, false);
+    PilotValue = static_cast<int>(MCMostSkilledPilot(rules));
+
+    for (size_t family = 0; family < WeaponFamilies.size(); family++)
+    {
+        WeaponValues[family] = OnOf(rules, WeaponFamilies[family].Rule, false);
+    }
+
     const bool host = game->IsHost != 0;
     list.SetLocked(!host, LockedHint);
 

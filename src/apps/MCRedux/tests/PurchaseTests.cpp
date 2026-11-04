@@ -26,6 +26,7 @@
 #include "logistics/MCMainMenu.h"
 #include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
+#include "main/MCWeaponBans.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
@@ -74,6 +75,14 @@ namespace
         }
 
         ~ShopFixture() { SetGlobalLog(_Saved); }
+
+        /// <summary>Makes the test a match playing <paramref name="rules"/> (MultiPlayer()->Played; 0: none).</summary>
+        void PlayMatch(uint32_t rules)
+        {
+            auto game = std::make_shared<MCMultiPlayer>();
+            game->Played.Rules = rules;
+            _Gui.Scope.Context().SetMultiPlayer(rules != 0 ? std::move(game) : nullptr);
+        }
 
     private:
         GuiContext _Gui;
@@ -421,6 +430,240 @@ TEST_CASE("game: a mech mounts a component its free tonnage, one of each equipme
             CHECK(MCCompInventoryBlock::CanMount(restricted, 0.0f, mech));
         }
     }
+}
+
+/// <summary>
+/// Port: MOST SKILLED PILOT takes the pilots for hire more skilled than it off the shop; those hired, and those of its
+/// rank or under, stay as they were. Elite (the original's) takes none.
+/// </summary>
+TEST_CASE("logistics: the most skilled pilot for hire takes the more skilled off the shop")
+{
+    MCLogistics logistics;
+    logistics.PurPilotList = std::make_unique<MCPurPilotList>();
+    MCPurPilotList& pilots = *logistics.PurPilotList;
+
+    for (int32_t rank = 0; rank < 4; rank++)
+    {
+        pilots.Insert(Pilot(rank, std::format("rank {}", rank), rank));
+    }
+
+    std::shared_ptr<MCPurPilotData> hired = Pilot(3, "hired ace", 9);
+    hired->Status = MCPurPilotData::Hired;
+    pilots.Insert(hired);
+    logistics.HidePilotsAbove(MCPilotRank::Elite);
+    CHECK_EQ(pilots.GetVisiblePilotCount(), 4);
+    logistics.HidePilotsAbove(MCPilotRank::Regular);
+
+    for (const std::shared_ptr<MCPurPilotData>& pilot : pilots.Pilots)
+    {
+        MCTest::Scope scope(pilot->Callsign);
+        const int32_t expected = pilot == hired    ? MCPurPilotData::Hired
+                                 : pilot->Rank > 1 ? MCPurPilotData::OffShop
+                                                   : MCPurPilotData::ForHire;
+        CHECK_EQ(pilot->Status, expected);
+    }
+
+    CHECK_EQ(pilots.GetVisiblePilotCount(), 2);
+}
+
+/// <summary>
+/// Port: each of the game's weapons is of its family (MCWeaponFamilyOf), Inner Sphere's and Clan's, by the table's own
+/// names; nothing else is; ammo is banned once every weapon firing it is, and nothing outside a match.
+/// </summary>
+TEST_CASE("game: each weapon is of its family, its ammo banned once every weapon firing it is")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    ShopFixture shop;
+    const std::map<uint32_t, std::set<std::string>> expected = {
+        {MCMatchRule::NoLrms,
+         {"LRM Rack", "LR Missile/15", "LR Missile/20", "C LR Missile Rack", "C LR Missile/15", "C LR Missile/20"}},
+        {MCMatchRule::NoSrms,
+         {"SR Missile Pack", "SR Missile/6", "ST SR Missile Pack", "C SR Missile Pack", "C SR Missile/6",
+          "C ST-SR Missile Pack", "C ST-SR Missile/6"}},
+        {MCMatchRule::NoThunderbolts, {"Heavy Thunderbolt"}},
+        {MCMatchRule::NoPpcs, {"PPC", "ER PPC", "C ER PPC"}},
+        {MCMatchRule::NoLasers,
+         {"Large Laser", "Large ER Laser", "Laser", "C Large ER Laser", "C ER Laser", "Small Laser"}},
+        {MCMatchRule::NoPulseLasers,
+         {"Large X Pulse Laser", "Large PS Laser", "Pulse Laser", "C Large PS Laser", "C Pulse  Laser"}},
+        {MCMatchRule::NoFlamers, {"Heavy Flamer", "C Heavy Flamer"}},
+        {MCMatchRule::NoAutocannons,
+         {"Light Autocannon", "Autocannon", "Hvy Autocannon", "Lt. Ultra Autocannon", "Light LBX Autocannon",
+          "LBX Autocannon", "Heavy LBX Autocannon", "C Lt. Ultra Autocannon", "C  Ultra Autocannon",
+          "C Hvy Ultra Autocannon", "C Light LBX", "C LBX Autocannon", "C Heavy LBX Autocannon"}},
+        {MCMatchRule::NoGaussRifles, {"Rail Gun", "Light Gauss Rifle", "Gauss Rifle", "C Gauss Rifle"}},
+        {MCMatchRule::NoMachineGuns, {"Machine Gun", "C Machine Gun"}},
+        {MCMatchRule::NoLongToms, {"Long Tom", "Sniper Cannon"}},
+    };
+
+    std::map<uint32_t, std::set<std::string>> found;
+    // Each ammo's weapons' families.
+    std::map<int32_t, uint32_t> ammoFamilies;
+
+    for (int32_t id = 0; id < NumMasterComponents(); id++)
+    {
+        const MCMasterComponent& component = MasterComponentList[static_cast<size_t>(id)];
+        const uint32_t family = MCWeaponFamilyOf(component);
+        const bool weapon = component.Form == MCComponentForm::WeaponEnergy ||
+                            component.Form == MCComponentForm::WeaponBallistic ||
+                            component.Form == MCComponentForm::WeaponMissile;
+        MCTest::Scope scope(component.Name);
+        CHECK_EQ(weapon, family != 0);
+
+        if (component.MasterID < 0 || !weapon)
+        {
+            CHECK(component.Form == MCComponentForm::Ammo || !MCComponentBanned(id, MCMatchRule::WeaponBans));
+            continue;
+        }
+
+        found[family].insert(component.Name);
+        CHECK(MCComponentBanned(id, family));
+        CHECK(!MCComponentBanned(id, MCMatchRule::WeaponBans & ~family));
+        CHECK(!MCComponentBanned(id, 0));
+
+        if (component.AmmoMasterId != 0)
+        {
+            ammoFamilies[component.AmmoMasterId] |= family;
+        }
+    }
+
+    CHECK(found == expected);
+    CHECK_EQ(WeaponFamilies.size(), expected.size());
+    REQUIRE(!ammoFamilies.empty());
+
+    for (const auto& [ammo, families] : ammoFamilies)
+    {
+        MCTest::Scope scope(MasterComponentList[static_cast<size_t>(ammo)].Name);
+        CHECK(MasterComponentList[static_cast<size_t>(ammo)].Form == MCComponentForm::Ammo);
+        CHECK(MCComponentBanned(ammo, families));
+        CHECK(!MCComponentBanned(ammo, 0));
+
+        // Any one of its families not banned keeps it.
+        for (const MCWeaponFamily& family : WeaponFamilies)
+        {
+            if ((families & family.Rule) != 0)
+            {
+                CHECK(!MCComponentBanned(ammo, MCMatchRule::WeaponBans & ~family.Rule));
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Port: in a match banning a weapon family, a mech comes without its weapons of it and their ammo: their tonnage free
+/// for others, its value that much less; the shop sells none of them, its mechs for sale cost that much less, a vehicle
+/// carrying one isn't sold, and none mounts on a mech.
+/// </summary>
+TEST_CASE("game: a match's weapon bans take a mech's banned weapons off and off the shop")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    ShopFixture shop;
+    constexpr std::string_view Profile = "PM100100";
+    const std::shared_ptr<MCLogMech> stock = shop.Mechs.AddMech(Profile, false, false, false);
+
+    // The family of the mech's first weapon.
+    uint32_t ban = 0;
+    uint8_t bannedWeapon = 0;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : stock->Inventory->Items)
+    {
+        if (const uint32_t family = MCWeaponFamilyOf(MasterComponentList[item->MasterID]); family != 0)
+        {
+            ban = family;
+            bannedWeapon = item->MasterID;
+            break;
+        }
+    }
+
+    REQUIRE(ban != 0);
+    int32_t removedPoints = 0;
+    float removedTons = 0.0f;
+
+    for (const std::shared_ptr<MCLogInventoryItem>& item : stock->Inventory->Items)
+    {
+        if (MCComponentBanned(item->MasterID, ban))
+        {
+            const MCMasterComponent& master = MasterComponentList[item->MasterID];
+            removedPoints += master.ResourcePoints * static_cast<int32_t>(item->Stats.size());
+            removedTons += master.Tonnage * static_cast<float>(item->Stats.size());
+        }
+    }
+
+    REQUIRE(removedPoints > 0);
+    shop.PlayMatch(ban);
+    const std::shared_ptr<MCLogMech> stripped = shop.Mechs.AddMech(Profile, false, false, false);
+    CHECK(std::ranges::none_of(stripped->Inventory->Items, [ban](const std::shared_ptr<MCLogInventoryItem>& item)
+                               { return MCComponentBanned(item->MasterID, ban); }));
+    CHECK_EQ(stripped->Inventory->NumItems() < stock->Inventory->NumItems(), true);
+    CHECK(std::abs(stripped->UsedTonnage - (stock->UsedTonnage - removedTons)) < 0.001f);
+    CHECK(std::abs(stripped->WeaponTonnage - (stock->WeaponTonnage - removedTons)) < 0.001f);
+    CHECK_EQ(stripped->FreeTonnage, stock->FreeTonnage);
+    CHECK_EQ(stripped->ResourcePoints, stock->ResourcePoints - removedPoints);
+    CHECK(stripped->BattleRating < stock->BattleRating);
+
+    // The banned weapon doesn't mount; one of another family does.
+    uint8_t allowedWeapon = 0;
+
+    for (int32_t id = 0; id < NumMasterComponents() && allowedWeapon == 0; id++)
+    {
+        const uint32_t family = MCWeaponFamilyOf(MasterComponentList[static_cast<size_t>(id)]);
+        allowedWeapon = family != 0 && family != ban ? static_cast<uint8_t>(id) : 0;
+    }
+
+    REQUIRE(allowedWeapon != 0);
+    CHECK(!MCCompInventoryBlock::CanMount(bannedWeapon, 0.0f, *stripped));
+    CHECK(MCCompInventoryBlock::CanMount(allowedWeapon, 0.0f, *stripped));
+
+    // The shop: its mech without them for that much less, the components banned not sold, the vehicles carrying one gone.
+    MCLogistics& logistics = *GlobalLog();
+    logistics.PurMechList = std::make_unique<MCPurMechList>();
+    logistics.PurVehicleList = std::make_unique<MCPurVehicleList>();
+    logistics.PurMechList->AddMech(Profile, 1, Profile, 1, Profile, 1);
+
+    for (const std::string_view name : {"PV20500", "PV20000", "PV21000", "PV20100"})
+    {
+        logistics.PurVehicleList->AddVehicle(name, 1);
+    }
+
+    MCInventoryList& components = *logistics.PurchaseComponents;
+
+    for (const uint8_t id : {bannedWeapon, allowedWeapon})
+    {
+        components.AddItem(id, components.CreateStat(0, 0, 0, 1, 0xff), false);
+    }
+
+    const auto carriesBanned = [ban](const MCInventoryList& inventory)
+    {
+        return std::ranges::any_of(inventory.Items, [ban](const std::shared_ptr<MCLogInventoryItem>& item)
+                                   { return MCComponentBanned(item->MasterID, ban); });
+    };
+
+    const auto vehiclesCarrying =
+        std::ranges::count_if(logistics.PurVehicleList->Vehicles, [&](const std::shared_ptr<MCPurVehicle>& vehicle)
+                              { return carriesBanned(*vehicle->Data->Inventory); });
+    const int32_t vehicles = logistics.PurVehicleList->GetVehicleCount();
+    logistics.HideBannedWeapons(ban);
+
+    for (const std::unique_ptr<MCPurMechData>& variant : logistics.PurMechList->Mechs.front()->Variants)
+    {
+        CHECK_EQ(variant->Cost, ProfilePrice(Profile) - removedPoints);
+        CHECK(!carriesBanned(*variant->Inventory));
+    }
+
+    CHECK_EQ(components.NumItems(), 1);
+    CHECK_EQ(components.GetMasterIDFromIndex(0), allowedWeapon);
+    CHECK_EQ(logistics.PurVehicleList->GetVehicleCount(), vehicles - static_cast<int32_t>(vehiclesCarrying));
+    CHECK(std::ranges::none_of(logistics.PurVehicleList->Vehicles, [&](const std::shared_ptr<MCPurVehicle>& vehicle)
+                               { return carriesBanned(*vehicle->Data->Inventory); }));
+    shop.PlayMatch(0);
 }
 
 TEST_CASE("logistics: armor repair fills the head first, then the most damaged location")

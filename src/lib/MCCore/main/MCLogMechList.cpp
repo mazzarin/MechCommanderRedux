@@ -10,6 +10,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
+#include "main/MCWeaponBans.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCObjectTypeManager.h"
@@ -444,6 +445,8 @@ auto MCLogMechList::AddMech(MCFitIniFile& file, bool required, bool sorted, bool
         }
     }
 
+    // Port: a match's weapon bans take the banned weapons off (MCWeaponBans.h): every mech a player gets.
+    MCRemoveBannedWeapons(*mech, MCPlayedWeaponBans());
     mech->Deployed = false;
 
     if (!mech->Required)

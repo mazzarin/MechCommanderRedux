@@ -14,6 +14,7 @@
 #include "logistics/MCUnitLimits.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
+#include "main/MCWeaponBans.h"
 #include "object/MCMasterComponent.h"
 #include "vfx/MCVfxFunctions.h"
 
@@ -164,7 +165,9 @@ auto MCCompInventoryBlock::CanMount(uint8_t masterID, float tonnage, MCOptionalR
 
     const MCLogMech& mech = *selected;
 
-    if (static_cast<double>(mech.CurTonnage) - mech.UsedTonnage < tonnage)
+    // Port: nothing a match's weapon bans ban (MCWeaponBans.h).
+    if (static_cast<double>(mech.CurTonnage) - mech.UsedTonnage < tonnage ||
+        MCComponentBanned(masterID, MCPlayedWeaponBans()))
     {
         return false;
     }

@@ -24,6 +24,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCLogisticsShared.h"
 #include "main/MCGameStrings.h"
+#include "main/MCWeaponBans.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
@@ -715,6 +716,7 @@ auto MCLogistics::PrepareMultiplayerScenario(std::string_view scenarioName, std:
     // Each part's commander, by part number (ended by 0xff); both sides' slots, part numbers from 1.
     std::vector<int32_t> partCommanders(NumDropSlots * 2 + 2, 0);
     int32_t partNumber = 1;
+    const uint32_t weaponBans = MCPlayedWeaponBans();
 
     for (size_t zoneBase = 0; zoneBase < MaxDropZones; zoneBase += NumLances)
     {
@@ -737,15 +739,19 @@ auto MCLogistics::PrepareMultiplayerScenario(std::string_view scenarioName, std:
             const std::string profileName = std::format("part{}", partNumber);
             const int32_t partType = part->PartType;
 
+            // Port: every machine takes the match's banned weapons off every unit, its own and the others', as the
+            // mission is written, so none fights with one whatever its player's game let it carry (MCWeaponBans.h).
             if (partType == 1)
             {
-                MCMissionLogisticsBridge::LogisticsMechProfileWriter(profileName, static_cast<MCLogMech&>(*part),
-                                                                     false);
+                auto& mech = static_cast<MCLogMech&>(*part);
+                MCRemoveBannedWeapons(mech, weaponBans);
+                MCMissionLogisticsBridge::LogisticsMechProfileWriter(profileName, mech, false);
             }
             else
             {
-                MCMissionLogisticsBridge::LogisticsVehicleProfileWriter(profileName, static_cast<MCLogVehicle&>(*part),
-                                                                        false);
+                auto& vehicle = static_cast<MCLogVehicle&>(*part);
+                MCRemoveBannedWeapons(vehicle, weaponBans);
+                MCMissionLogisticsBridge::LogisticsVehicleProfileWriter(profileName, vehicle, false);
             }
 
             out << "[Part" << partNumber << "]" << '\n';

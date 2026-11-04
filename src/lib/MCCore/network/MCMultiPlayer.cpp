@@ -680,6 +680,43 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
     return without;
 }
 
+namespace
+{
+    /// <summary>Each rank's ban, from the most skilled down: a rank is for hire while neither it nor one under it is banned.</summary>
+    constexpr std::array<std::pair<MCPilotRank, uint32_t>, 3> RankBans = {
+        std::pair{MCPilotRank::Elite, MCMatchRule::NoElitePilots},
+        std::pair{MCPilotRank::Veteran, MCMatchRule::NoVeteranPilots},
+        std::pair{MCPilotRank::Regular, MCMatchRule::NoRegularPilots}};
+}
+
+MCPilotRank MCMostSkilledPilot(uint32_t rules)
+{
+    // The rank under the lowest banned.
+    MCPilotRank most = MCPilotRank::Elite;
+
+    for (const auto& [rank, ban] : RankBans)
+    {
+        if ((rules & ban) != 0)
+        {
+            most = static_cast<MCPilotRank>(static_cast<int32_t>(rank) - 1);
+        }
+    }
+
+    return most;
+}
+
+uint32_t MCPilotRankRules(MCPilotRank rank)
+{
+    uint32_t rules = 0;
+
+    for (const auto& [banned, ban] : RankBans)
+    {
+        rules |= banned > rank ? ban : 0;
+    }
+
+    return rules;
+}
+
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
     // The time of day's rules come with the time of day, not with what the host wants; the weather's play with every

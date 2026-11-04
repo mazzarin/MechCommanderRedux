@@ -13,6 +13,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCMatchOptionsTab.h"
+#include "main/MCWeaponBans.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChatWindow.h"
@@ -368,7 +369,27 @@ namespace
     constexpr int32_t ProbesRow = 5;
     constexpr int32_t SensorsRow = 6;
     constexpr int32_t MinesRow = 7;
-    constexpr std::array RuleRows = {WeatherRow, TimeRow, BrakingRow, ArtilleryRow, ProbesRow, SensorsRow, MinesRow};
+    constexpr int32_t PilotRow = 8;
+    /// <summary>The WEAPONS heading, its families' rows after it (WeaponFamilies' order).</summary>
+    constexpr int32_t WeaponsRow = 9;
+    constexpr int32_t FirstWeaponRow = 10;
+    constexpr int32_t WeaponRows = static_cast<int32_t>(WeaponFamilies.size());
+    constexpr std::array RuleRows = {WeatherRow, TimeRow,  BrakingRow, ArtilleryRow, ProbesRow,
+                                     SensorsRow, MinesRow, PilotRow,   WeaponsRow};
+
+    /// <summary>Every row held when a player's game has no rule of the match's: the rules' rows and the weapons'.</summary>
+    std::vector<int32_t> HeldRows()
+    {
+        std::vector<int32_t> rows(RuleRows.begin(), RuleRows.end());
+
+        for (int32_t row = FirstWeaponRow; row < FirstWeaponRow + WeaponRows; row++)
+        {
+            rows.push_back(row);
+        }
+
+        return rows;
+    }
+
     /// <summary>A point on each tab (MCMatchOptionsTab.cpp's ChatTabArea and OptionsTabArea).</summary>
     constexpr int32_t TabX = 0xca;
     constexpr int32_t ChatTabY = 0x80;
@@ -377,6 +398,19 @@ namespace
     /// <summary>Clicks row <paramref name="row"/>'s setting box of <paramref name="list"/> <paramref name="times"/> times.</summary>
     void ClickSetting(MCLogOptionList& list, int32_t row, int32_t times)
     {
+        // Scrolled until the row shows, as a player would (the list is taller than its window).
+        constexpr int32_t MostScrolls = 64;
+
+        if (!list.SettingCentre(row).has_value())
+        {
+            list.ScrollTo(0);
+
+            for (int32_t scroll = 0; scroll < MostScrolls && !list.SettingCentre(row).has_value(); scroll++)
+            {
+                list.ScrollTo(list.FirstRow() + 1);
+            }
+        }
+
         const std::optional<std::pair<int32_t, int32_t>> centre = list.SettingCentre(row);
         REQUIRE(centre.has_value());
 
@@ -483,16 +517,28 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
     constexpr std::string_view NotInGuests = "TELL GUEST TO UPGRADE.";
 
-    // Every row's line fits it.
+    // Every row's line fits it, and every option's name its place.
+    CHECK_EQ(list.OptionRows(), FirstWeaponRow + WeaponRows);
+    CHECK(list.IsHeading(WeaponsRow));
+
     for (int32_t row = 0; row < list.OptionRows(); row++)
     {
+        MCTest::Scope scope(list.Label(row));
         CHECK(WhiteFont->Width(list.Description(row)) <= list.LineWidth());
+        CHECK((list.IsHeading(row) || WhiteFont->Width(list.Label(row)) <= list.NameWidth()));
     }
 
-    for (const int32_t row : RuleRows)
+    CHECK(list.ChoiceName(PilotRow) == "ELITE");
+
+    for (const int32_t row : HeldRows())
     {
         CHECK(list.HeldReason(row) == NotInGuests);
     }
+
+    // The weapons are held by their heading: it says why, their own lines what they do.
+    CHECK(list.HeldLines(WeaponsRow).size() == 1);
+    CHECK(list.HeldLines(FirstWeaponRow).empty());
+    CHECK(list.ChoiceName(FirstWeaponRow) == "ON");
 
     // A reason too long for a line wraps over more, at spaces, each fitting, every name kept: here every other player of
     // a full session with a long name. A word wider than a line is cut where it fills one.
@@ -554,14 +600,28 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
     sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
 
+    // A build of the match's first rules (3 Nov, 524): neither the most skilled pilot nor the weapons.
+    guest.SendRules(hostId, MCMatchRule::Supported & ~(MCMatchRule::PilotRanks | MCMatchRule::WeaponBans));
+    Settle();
+    CHECK(list.HeldReason(MinesRow).empty());
+    CHECK(list.HeldReason(PilotRow) == NotInGuests);
+    CHECK(list.HeldReason(WeaponsRow) == NotInGuests);
+    CHECK(list.HeldReason(FirstWeaponRow + WeaponRows - 1) == NotInGuests);
+    ClickSetting(list, FirstWeaponRow, 1);
+    CHECK(list.ChoiceName(FirstWeaponRow) == "ON");
+    Settle();
+    SaveShot("match options 1 weapons held", ScreenHash());
+
     // A build that plays them all: the host's choices, the time of day's sight and the weather's play with them.
     guest.SendRules(hostId, MCMatchRule::Supported);
     Settle();
 
-    for (const int32_t row : RuleRows)
+    for (const int32_t row : HeldRows())
     {
         CHECK(list.HeldReason(row).empty());
     }
+
+    CHECK(list.HeldLines(WeaponsRow).empty());
 
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
@@ -588,6 +648,22 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK_EQ(game.WantedRules() & MCMatchRule::MechBraking, 0u);
     sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
            MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery);
+
+    // VETERAN, then REGULAR; the first weapon family off.
+    ClickSetting(list, PilotRow, 1);
+    CHECK(list.ChoiceName(PilotRow) == "VETERAN");
+    ClickSetting(list, PilotRow, 1);
+    CHECK(list.ChoiceName(PilotRow) == "REGULAR");
+    ClickSetting(list, FirstWeaponRow, 1);
+    CHECK(list.ChoiceName(FirstWeaponRow) == "OFF");
+    CHECK(list.ChoiceName(FirstWeaponRow + 1) == "ON");
+    sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
+           MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery | MCPilotRankRules(MCPilotRank::Regular) |
+               WeaponFamilies.front().Rule);
+    SaveShot("match options 2 weapons", ScreenHash());
+    list.ScrollTo(list.OptionRows());
+    Settle();
+    SaveShot("match options 3 weapons to the end", ScreenHash());
     SaveShot("match options 2 options in front", ScreenHash());
 
     // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.

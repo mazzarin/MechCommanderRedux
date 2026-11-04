@@ -33,6 +33,7 @@ class MCSessionScreen;
 class MCSplashScreen;
 class MCTicker;
 struct MCDeployForce;
+enum class MCPilotRank : int32_t;
 
 /// <summary>
 /// The logistics layer: every screen (main menu, multiplayer, load/save, preferences, briefing, purchase, repair,
@@ -146,6 +147,15 @@ public:
 
     /// <summary>Sets up what can be bought in a multiplayer game.</summary>
     void SetUpMPPurchasing(std::string_view purchaseFile);
+
+    /// <summary>Port: takes the pilots for hire more skilled than <paramref name="most"/> off the shop (MOST SKILLED PILOT).</summary>
+    void HidePilotsAbove(MCPilotRank most) const;
+
+    /// <summary>
+    /// Port: takes the components banned by <paramref name="bans"/> (MCWeaponBans.h) off the shop: not sold, off the
+    /// mechs for sale (their price lowered by theirs), and the vehicles carrying one not sold.
+    /// </summary>
+    void HideBannedWeapons(uint32_t bans) const;
 
     /// <summary>Sets up what can be bought from a campaign's purchase packet (its last).</summary>
     void SetUpPurchasing(MCPacketFile& file);

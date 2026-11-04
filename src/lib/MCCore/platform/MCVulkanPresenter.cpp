@@ -106,11 +106,11 @@ namespace
         /// </summary>
         float SpeckFalls[4] = {};
         /// <summary>
-        /// Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky on a tile with
-        /// one, two and three of its corners seen (MCTerrainFogEdgeShades; rgb, 1 where it doesn't).
+        /// Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by how many of a
+        /// tile's corners are seen: 0 none (no edge: 1s), 1 to 3 MCTerrainFogEdgeShades' (rgb, 1 where it doesn't).
         /// </summary>
-        float FogEdge[MCTerrainFogEdgeLevels][4] = {
-            {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
+        float FogEdge[MCTerrainFogEdgeLevels + 1][4] = {
+            {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
         /// <summary>
         /// Port-only (HD lighting): the light tiles' side in the world's texels (0: none) and how many there are across
         /// and down (LightTiles).
@@ -521,7 +521,7 @@ namespace
 
             for (size_t level = 0; level < MCTerrainFogEdgeLevels; ++level)
             {
-                std::copy(fogEdge[level].begin(), fogEdge[level].end(), uniforms.FogEdge[level]);
+                std::copy(fogEdge[level].begin(), fogEdge[level].end(), uniforms.FogEdge[level + 1]);
             }
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.

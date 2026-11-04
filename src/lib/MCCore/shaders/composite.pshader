@@ -197,9 +197,9 @@ cbuffer Composite : register(b0, space3)
     float4 speckSides;
     float4 speckArms;
     float4 speckFalls;
-    // Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky on a tile with one, two
-    // and three of its corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
-    float4 fogEdge[3];
+    // Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by FogEdgeOf's count:
+    // 0 none (1s), 1 to 3 a tile with one, two and three of its corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
+    float4 fogEdge[4];
     // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
     // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
     float4 lightTiles;
@@ -1266,10 +1266,11 @@ uint FogEdgeOf(float4 drawn)
 }
 
 // How the fog of war's edge `edge` (FogEdgeOf) darkens what the weather lays on the ground, as the haze darkens the
-// ground (fogEdge's; none without one).
+// ground (fogEdge's; none without one). Read straight by the count, its 0 undarkened: a choice would read both sides
+// (HLSL's ?:), and fogEdge[edge - 1] at 0 far outside the buffer.
 float3 FogEdgeShade(uint edge)
 {
-    return edge != 0 ? fogEdge[edge - 1].rgb : float3(1.0, 1.0, 1.0);
+    return fogEdge[edge].rgb;
 }
 
 float2 ReliefAt(float2 texel, out float mark, out uint edge)

@@ -319,6 +319,29 @@ namespace MCHdArt
     /// frame's), read the first time; null when HD art is off or the pack has none.
     /// </summary>
     std::shared_ptr<const Frame> FindPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only: keeps <paramref name="frame"/>, numbered anew, as the HD copy of the picture with
+    /// <paramref name="pixels"/>: one the game makes of the pack's pictures (the session screen's MATCH OPTIONS tab,
+    /// lettered from the briefing's tabs), which no pack has. FindPicture finds it until the pack changes.
+    /// </summary>
+    void KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame);
+
+    /// <summary>
+    /// Port-only: a frame of <paramref name="like"/>'s scale and colour format for a picture of
+    /// <paramref name="width"/> x <paramref name="height"/> original pixels, all blank (no colour, no index).
+    /// </summary>
+    Frame BlankFrame(const Frame& like, int32_t width, int32_t height);
+
+    /// <summary>
+    /// Port-only: copies the colours and indices of the <paramref name="width"/> x <paramref name="height"/> original
+    /// pixels at (<paramref name="x"/>, <paramref name="y"/>) of <paramref name="source"/> to (<paramref name="toX"/>,
+    /// <paramref name="toY"/>) of <paramref name="target"/>. False, copying nothing, when the frames' scales or colour
+    /// formats differ, the pixels aren't inside both, or the format's blocks don't fall on original pixels (BC7 at a
+    /// scale that isn't a whole number of its blocks; BC5).
+    /// </summary>
+    bool CopyArea(const Frame& source, int32_t x, int32_t y, int32_t width, int32_t height, Frame& target, int32_t toX,
+                  int32_t toY);
     /// The name the pack keeps terrain tile <paramref name="tile"/> under (its data as the ground mesh keeps it: up to
     /// its last row's end): the data's 64-bit FNV-1a hash in hex, so the same tile in any tile set has one name.
     /// </summary>

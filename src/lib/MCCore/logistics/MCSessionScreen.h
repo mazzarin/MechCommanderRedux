@@ -192,11 +192,21 @@ public:
     /// the tabs' as expected: then there is no MATCH OPTIONS tab).
     /// </summary>
     std::array<std::shared_ptr<MCLogPort>, 2> MatchTabs;
+    /// <summary>
+    /// Port-only: the HD art the tabs were made under (whether it was on, and the pack's version), their HD copy made of
+    /// the pack's pictures then.
+    /// </summary>
+    std::optional<std::pair<bool, uint64_t>> MatchTabsArt;
     /// <summary>Port-only: the chat's lines added when MATCH OPTIONS came in front (more since: MULTIPLAYER CHAT blinks).</summary>
     size_t ChatLinesSeen = 0;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;
+    /// <summary>
+    /// Port-only: makes the tabs' pictures (<see cref="MatchTabs"/>) unless they were made under the HD art there is now:
+    /// their HD copy is made of the pack's pictures, so HD art come on or gone off, or another pack, makes them again.
+    /// </summary>
+    void UpdateMatchTabs();
 
     /// <summary>Port: frees <see cref="MapPicture"/>.</summary>
     void ClearMap();

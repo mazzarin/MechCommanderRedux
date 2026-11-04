@@ -79,6 +79,58 @@ namespace
 
         return rgba;
     }
+
+    /// <summary>
+    /// An RGBA HD frame of <paramref name="width"/> x <paramref name="height"/> original pixels at
+    /// <paramref name="scale"/>, every HD pixel's colour and every index another (from <paramref name="seed"/>).
+    /// </summary>
+    MCHdArt::Frame PatternedFrame(int32_t width, int32_t height, int32_t scale, uint8_t seed)
+    {
+        constexpr int32_t ColumnStep = 9;
+        constexpr int32_t RowStep = 13;
+        MCHdArt::Frame frame;
+        frame.Scale = scale;
+        frame.Width = width * scale;
+        frame.Height = height * scale;
+        frame.Colors.resize(static_cast<size_t>(frame.Width) * frame.Height * Channels);
+
+        for (int32_t y = 0; y < frame.Height; y++)
+        {
+            for (int32_t x = 0; x < frame.Width; x++)
+            {
+                uint8_t* out = frame.Colors.data() + (static_cast<size_t>(y) * frame.Width + x) * Channels;
+                out[0] = static_cast<uint8_t>(x * ColumnStep + seed);
+                out[1] = static_cast<uint8_t>(y * RowStep);
+                out[2] = seed;
+                out[3] = static_cast<uint8_t>(Peak);
+            }
+        }
+
+        frame.Indices.resize(static_cast<size_t>(width) * height * MCHdArt::IndexBytes);
+
+        for (size_t at = 0; at < frame.Indices.size(); at += MCHdArt::IndexBytes)
+        {
+            frame.Indices[at] = static_cast<uint8_t>(seed + at / MCHdArt::IndexBytes);
+            frame.Indices[at + 1] = MCHdArt::HasIndex;
+        }
+
+        return frame;
+    }
+
+    /// <summary><paramref name="frame"/> with its colours as BC7 blocks.</summary>
+    MCHdArt::Frame AsBc7(MCHdArt::Frame frame)
+    {
+        frame.Colors = MCBc7::Encode(frame.Colors, frame.Width, frame.Height);
+        frame.Format = MCHdArt::ColorFormat::Bc7;
+        return frame;
+    }
+
+    /// <summary><paramref name="frame"/>'s colours as RGBA.</summary>
+    std::vector<uint8_t> RgbaOf(const MCHdArt::Frame& frame)
+    {
+        return frame.Format == MCHdArt::ColorFormat::Bc7 ? MCBc7::Decode(frame.Colors, frame.Width, frame.Height)
+                                                         : frame.Colors;
+    }
 }
 
 /// <summary>
@@ -478,6 +530,152 @@ TEST_CASE("hd art: a frame read again keeps its Id")
     CHECK_EQ(again->Id, firstId);
 
     MCHdArt::SetCacheBudget(0);
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// A part of an HD frame copies into another (MCHdArt::CopyArea): its HD pixels, as RGBA or as whole BC7 blocks, and
+/// its indices, the rest of the target as it was. A part outside either frame, frames of another scale or format, and
+/// BC7 blocks holding more than one original pixel (at 2x) are refused, nothing copied. A blank frame is the size its
+/// like's scale makes, nothing in it.
+/// </summary>
+TEST_CASE("hd art: a part of an HD frame copies into another, as RGBA or as BC7 blocks")
+{
+    constexpr int32_t Scale = 4;
+    constexpr int32_t Wide = 5;
+    constexpr int32_t High = 3;
+    constexpr uint8_t SourceSeed = 1;
+    constexpr uint8_t TargetSeed = 100;
+    // Two of the source's columns of its last two rows, to the target's top, three columns in.
+    constexpr MCRect Part = {2, 1, 3, 2};
+    constexpr int32_t ToX = 3;
+    constexpr int32_t ToY = 0;
+    constexpr int32_t PartWidth = Part.X1 - Part.X0 + 1;
+    constexpr int32_t PartHeight = Part.Y1 - Part.Y0 + 1;
+
+    for (const bool bc7 : {false, true})
+    {
+        MCTest::Scope scope(bc7 ? "BC7" : "RGBA");
+        const auto made = [bc7](MCHdArt::Frame frame) { return bc7 ? AsBc7(std::move(frame)) : frame; };
+        const MCHdArt::Frame source = made(PatternedFrame(Wide, High, Scale, SourceSeed));
+        const MCHdArt::Frame before = made(PatternedFrame(Wide + 2, High + 1, Scale, TargetSeed));
+        MCHdArt::Frame target = before;
+        REQUIRE(MCHdArt::CopyArea(source, Part.X0, Part.Y0, PartWidth, PartHeight, target, ToX, ToY));
+        const std::vector<uint8_t> sourceRgba = RgbaOf(source);
+        const std::vector<uint8_t> beforeRgba = RgbaOf(before);
+        const std::vector<uint8_t> targetRgba = RgbaOf(target);
+        const auto inPart = [](int32_t x, int32_t y)
+        { return x >= ToX && x < ToX + PartWidth && y >= ToY && y < ToY + PartHeight; };
+        int32_t wrongPixels = 0;
+
+        for (int32_t y = 0; y < target.Height; y++)
+        {
+            for (int32_t x = 0; x < target.Width; x++)
+            {
+                const bool copied = inPart(x / Scale, y / Scale);
+                const size_t from = copied ? (static_cast<size_t>(y + (Part.Y0 - ToY) * Scale) * source.Width + x +
+                                              (Part.X0 - ToX) * Scale) *
+                                                 Channels
+                                           : (static_cast<size_t>(y) * target.Width + x) * Channels;
+                const std::vector<uint8_t>& expected = copied ? sourceRgba : beforeRgba;
+                const size_t at = (static_cast<size_t>(y) * target.Width + x) * Channels;
+                wrongPixels += std::equal(expected.begin() + static_cast<ptrdiff_t>(from),
+                                          expected.begin() + static_cast<ptrdiff_t>(from + Channels),
+                                          targetRgba.begin() + static_cast<ptrdiff_t>(at))
+                                   ? 0
+                                   : 1;
+            }
+        }
+
+        CHECK_EQ(wrongPixels, 0);
+        int32_t wrongIndices = 0;
+
+        for (int32_t y = 0; y < target.OriginalHeight(); y++)
+        {
+            for (int32_t x = 0; x < target.OriginalWidth(); x++)
+            {
+                const bool copied = inPart(x, y);
+                const MCHdArt::Frame& expected = copied ? source : before;
+                const size_t from = copied ? (static_cast<size_t>(y + Part.Y0 - ToY) * Wide + x + Part.X0 - ToX)
+                                           : static_cast<size_t>(y) * target.OriginalWidth() + x;
+                const size_t at = static_cast<size_t>(y) * target.OriginalWidth() + x;
+                wrongIndices +=
+                    expected.Indices[from * MCHdArt::IndexBytes] == target.Indices[at * MCHdArt::IndexBytes] ? 0 : 1;
+            }
+        }
+
+        CHECK_EQ(wrongIndices, 0);
+
+        // Refused, nothing copied: past the source's right edge, past the target's, from a frame at another scale.
+        MCHdArt::Frame refused = target;
+        CHECK(!MCHdArt::CopyArea(source, Wide - 1, 0, 2, 1, refused, 0, 0));
+        CHECK(!MCHdArt::CopyArea(source, 0, 0, 1, 1, refused, Wide + 2, 0));
+        CHECK(!MCHdArt::CopyArea(made(PatternedFrame(2, 2, Scale * 2, SourceSeed)), 0, 0, 1, 1, refused, 0, 0));
+        CHECK(refused.Colors == target.Colors);
+        CHECK(refused.Indices == target.Indices);
+    }
+
+    // Another format; BC7 at 2x, a block two original pixels wide (RGBA at 2x copies).
+    MCHdArt::Frame rgba = PatternedFrame(Wide, High, Scale, TargetSeed);
+    CHECK(!MCHdArt::CopyArea(AsBc7(PatternedFrame(Wide, High, Scale, SourceSeed)), 0, 0, 1, 1, rgba, 0, 0));
+    constexpr int32_t HalfBlock = 2;
+    MCHdArt::Frame halfBc7 = AsBc7(PatternedFrame(Wide, High, HalfBlock, TargetSeed));
+    CHECK(!MCHdArt::CopyArea(AsBc7(PatternedFrame(Wide, High, HalfBlock, SourceSeed)), 0, 0, 2, 2, halfBc7, 0, 0));
+    MCHdArt::Frame halfRgba = PatternedFrame(Wide, High, HalfBlock, TargetSeed);
+    CHECK(MCHdArt::CopyArea(PatternedFrame(Wide, High, HalfBlock, SourceSeed), 0, 0, 2, 2, halfRgba, 1, 1));
+
+    const MCHdArt::Frame blank = MCHdArt::BlankFrame(AsBc7(PatternedFrame(Wide, High, Scale, SourceSeed)), 3, 2);
+    CHECK(blank.Format == MCHdArt::ColorFormat::Bc7);
+    CHECK_EQ(blank.Scale, Scale);
+    CHECK_EQ(blank.OriginalWidth(), 3);
+    CHECK_EQ(blank.OriginalHeight(), 2);
+    CHECK_EQ(blank.Colors.size(), static_cast<size_t>(3 * 2) * MCBc7::BlockBytes);
+    CHECK(std::ranges::all_of(blank.Colors, [](uint8_t byte) { return byte == 0; }));
+    CHECK_EQ(blank.Indices.size(), static_cast<size_t>(3 * 2) * MCHdArt::IndexBytes);
+    CHECK(std::ranges::all_of(blank.Indices, [](uint8_t byte) { return byte == 0; }));
+}
+
+/// <summary>
+/// A picture the game makes of the pack's (MCHdArt::KeepPicture) is found by its pixels while HD art is on: the frame
+/// kept, numbered; kept again, the new one under a new number. Nothing while HD art is off, nor once the pack is set
+/// again.
+/// </summary>
+TEST_CASE("hd art: a picture the game makes of the pack's is found by its pixels until the pack changes")
+{
+    constexpr int32_t Width = 3;
+    constexpr int32_t Height = 2;
+    constexpr int32_t Scale = 4;
+    const std::vector<uint8_t> pixels = {1, 2, 3, 4, 5, 6};
+    const std::vector<uint8_t> other = {6, 5, 4, 3, 2, 1};
+    const std::filesystem::path pack = std::filesystem::temp_directory_path() / "mc_hd_kept_picture_test";
+    std::filesystem::remove_all(pack);
+    std::filesystem::create_directories(pack);
+    const int previous = GHdArt;
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+
+    const MCHdArt::Frame frame = PatternedFrame(Width, Height, Scale, 1);
+    MCHdArt::KeepPicture(pixels, Width, Height, MCHdArt::Frame(frame));
+    const std::shared_ptr<const MCHdArt::Frame> kept = MCHdArt::FindPicture(pixels, Width, Height);
+    REQUIRE(kept != nullptr);
+    CHECK(kept->Id != 0);
+    CHECK(kept->Colors == frame.Colors);
+    CHECK(MCHdArt::FindPicture(other, Width, Height) == nullptr);
+
+    MCHdArt::KeepPicture(pixels, Width, Height, MCHdArt::Frame(frame));
+    const std::shared_ptr<const MCHdArt::Frame> again = MCHdArt::FindPicture(pixels, Width, Height);
+    REQUIRE(again != nullptr);
+    CHECK(again != kept);
+    CHECK(again->Id != kept->Id);
+
+    GHdArt = 0;
+    CHECK(MCHdArt::FindPicture(pixels, Width, Height) == nullptr);
+    GHdArt = 1;
+    MCHdArt::SetPackFolder(pack);
+    CHECK(MCHdArt::FindPicture(pixels, Width, Height) == nullptr);
+
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     std::filesystem::remove_all(pack);

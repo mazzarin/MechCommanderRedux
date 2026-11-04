@@ -5,6 +5,7 @@
 #include "main/MCWeaponBans.h"
 #include "logistics/MCLogPort.h"
 #include "network/MCMultiPlayer.h"
+#include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
 #include "vfx/MCVfxFunctions.h"
@@ -115,27 +116,31 @@ namespace
         std::copy(sourceRow.begin() + face.first, sourceRow.begin() + face.second + 1, targetRow.begin() + face.first);
     }
 
-    /// <summary>
-    /// The two tabs with the bottom one's word <see cref="MatchOptionsWord"/>, in front (<paramref name="front"/>: as
-    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02); null when the art isn't the tabs' as expected.
-    /// </summary>
-    std::shared_ptr<MCLogPort> LetterTabs(bool front)
+    /// <summary>A row of a tab's face put into the lettered tabs: row <c>From</c> of a picture as row <c>To</c>.</summary>
+    struct FaceRow
     {
-        const std::shared_ptr<MCLogPort> target = LogScreenArt(front ? ChatBehind : ChatInFront);
+        std::string_view Picture;
+        int32_t From = 0;
+        int32_t To = 0;
+    };
 
-        if (!IsTabsPicture(*target))
-        {
-            SDL_Log("MATCH OPTIONS: the tabs' picture is %dx%d, not %dx%d; no tab drawn", target->Width(),
-                    target->Height(), TabsWidth, TabsHeight);
-            return nullptr;
-        }
+    /// <summary>
+    /// The picture the lettered tabs are made on, with MATCH OPTIONS in front (<paramref name="front"/>: lsbdw03,
+    /// MULTIPLAYER CHAT behind) or behind (lsbdw02).
+    /// </summary>
+    std::string_view TabsPictureFor(bool front)
+    {
+        return front ? ChatBehind : ChatInFront;
+    }
 
-        auto tabs = std::make_shared<MCLogPort>();
-        tabs->Init(TabsWidth, TabsHeight);
-        std::ranges::copy(target->Pixels(), tabs->Pixels().begin());
-        const std::pair<int32_t, int32_t> face = front ? FrontFace : BehindFace;
-
-        // MISSION BRIEFING wiped with rows of the face left blank above and below it.
+    /// <summary>
+    /// The face rows that letter <see cref="MatchOptionsWord"/> on <see cref="TabsPictureFor"/>'s picture: MISSION
+    /// BRIEFING wiped with rows of the face left blank above and below it, then the letters, the word centred where
+    /// the old one was.
+    /// </summary>
+    std::vector<FaceRow> LetteredRows(bool front)
+    {
+        const std::string_view tabs = TabsPictureFor(front);
         std::vector<int32_t> blankRows;
 
         for (const auto& [first, last] : BlankFaceRows)
@@ -146,53 +151,163 @@ namespace
             }
         }
 
+        std::vector<FaceRow> rows;
+
         for (int32_t row = OldWordTop; row <= OldWordBottom; row++)
         {
-            CopyFaceRow(*target, blankRows[static_cast<size_t>(row - OldWordTop) % blankRows.size()], *tabs, row, face);
+            rows.push_back({tabs, blankRows[static_cast<size_t>(row - OldWordTop) % blankRows.size()], row});
         }
 
-        // The letters in their place, the word centred where the old one was.
-        int32_t rows = 0;
+        int32_t letterRows = 0;
 
         for (const TabLetters& letters : MatchOptionsLetters)
         {
-            rows += letters.Rows;
+            letterRows += letters.Rows;
         }
 
-        int32_t row = (OldWordTop + OldWordBottom + 1 - rows) / 2;
+        int32_t row = (OldWordTop + OldWordBottom + 1 - letterRows) / 2;
 
         for (const TabLetters& letters : MatchOptionsLetters)
         {
             if (letters.Word.has_value())
             {
-                const std::shared_ptr<MCLogPort> source = LogScreenArt(PictureOf(*letters.Word, front));
-
-                if (!IsTabsPicture(*source))
-                {
-                    SDL_Log("MATCH OPTIONS: %.*s's picture isn't a tabs picture; no tab drawn",
-                            static_cast<int>(letters.Letters.size()), letters.Letters.data());
-                    return nullptr;
-                }
-
                 for (int32_t offset = 0; offset < letters.Rows; offset++)
                 {
-                    CopyFaceRow(*source, letters.Top + offset, *tabs, row + offset, face);
+                    rows.push_back({PictureOf(*letters.Word, front), letters.Top + offset, row + offset});
                 }
             }
 
             row += letters.Rows;
         }
 
-        if (front)
+        return rows;
+    }
+
+    /// <summary>The pictures the lettered tabs are made of, by name.</summary>
+    using TabsArt = std::map<std::string_view, std::shared_ptr<MCLogPort>>;
+
+    /// <summary>
+    /// <paramref name="tabs"/>' picture and those <paramref name="rows"/> are from; none (logged) when one isn't a tabs
+    /// picture.
+    /// </summary>
+    std::optional<TabsArt> ArtOf(std::string_view tabs, std::span<const FaceRow> rows)
+    {
+        TabsArt art{{tabs, nullptr}};
+
+        for (const FaceRow& row : rows)
         {
-            return tabs;
+            art.emplace(row.Picture, nullptr);
+        }
+
+        for (auto& [name, picture] : art)
+        {
+            picture = LogScreenArt(name);
+
+            if (!IsTabsPicture(*picture))
+            {
+                SDL_Log("MATCH OPTIONS: %.*s is %dx%d, not %dx%d as the tabs' pictures are; no tab drawn",
+                        static_cast<int>(name.size()), name.data(), picture->Width(), picture->Height(), TabsWidth,
+                        TabsHeight);
+                return std::nullopt;
+            }
+        }
+
+        return art;
+    }
+
+    /// <summary>
+    /// Port-only: gives the lettered tabs (<paramref name="tabs"/>, the rows from <paramref name="top"/> down of
+    /// <paramref name="base"/>'s picture with <paramref name="rows"/>' faces put in) an HD copy, made as they are of
+    /// the HD art pack's copies of their pictures, for the pack's pictures to show (MCHdArt::KeepPicture). None while HD
+    /// art is off, or when the pack lacks one of the pictures: the tabs show as they are.
+    /// </summary>
+    void KeepHdTabs(const MCLogPort& tabs, int32_t top, const TabsArt& art, std::string_view base,
+                    std::span<const FaceRow> rows, std::pair<int32_t, int32_t> face)
+    {
+        std::map<std::string_view, std::shared_ptr<const MCHdArt::Frame>> hd;
+
+        for (const auto& [name, picture] : art)
+        {
+            std::shared_ptr<const MCHdArt::Frame> frame =
+                MCHdArt::FindPicture(picture->Pixels(), picture->Width(), picture->Height());
+
+            if (frame == nullptr)
+            {
+                return;
+            }
+
+            hd.emplace(name, std::move(frame));
+        }
+
+        const MCHdArt::Frame& made = *hd.at(base);
+        MCHdArt::Frame lettered = made;
+        const int32_t faceWidth = face.second - face.first + 1;
+        const auto copied = [&](const MCHdArt::Frame& from, int32_t x, int32_t y, int32_t width, int32_t height,
+                                MCHdArt::Frame& to, int32_t toX, int32_t toY)
+        {
+            if (MCHdArt::CopyArea(from, x, y, width, height, to, toX, toY))
+            {
+                return true;
+            }
+
+            SDL_Log(
+                "MATCH OPTIONS: the HD art pack's tabs at %dx (format %d) can't be lettered from %dx (format %d); the "
+                "tab shows as it is",
+                to.Scale, static_cast<int>(to.Format), from.Scale, static_cast<int>(from.Format));
+            return false;
+        };
+
+        for (const FaceRow& row : rows)
+        {
+            if (!copied(*hd.at(row.Picture), face.first, row.From, faceWidth, 1, lettered, face.first, row.To))
+            {
+                return;
+            }
+        }
+
+        MCHdArt::Frame shown = MCHdArt::BlankFrame(made, TabsWidth, TabsHeight - top);
+
+        if (!copied(lettered, 0, top, TabsWidth, TabsHeight - top, shown, 0, 0))
+        {
+            return;
+        }
+
+        MCHdArt::KeepPicture(tabs.Pixels(), tabs.Width(), tabs.Height(), std::move(shown));
+    }
+
+    /// <summary>
+    /// The two tabs with the bottom one's word <see cref="MatchOptionsWord"/>, in front (<paramref name="front"/>: as
+    /// lsbdw03, MULTIPLAYER CHAT behind) or behind (as lsbdw02), and their HD copy (KeepHdTabs); null when the art isn't
+    /// the tabs' as expected.
+    /// </summary>
+    std::shared_ptr<MCLogPort> LetterTabs(bool front)
+    {
+        const std::string_view base = TabsPictureFor(front);
+        const std::vector<FaceRow> rows = LetteredRows(front);
+        const std::optional<TabsArt> art = ArtOf(base, rows);
+
+        if (!art.has_value())
+        {
+            return nullptr;
+        }
+
+        const std::pair<int32_t, int32_t> face = front ? FrontFace : BehindFace;
+        MCLogPort lettered;
+        lettered.Init(TabsWidth, TabsHeight);
+        std::ranges::copy(art->at(base)->Pixels(), lettered.Pixels().begin());
+
+        for (const FaceRow& row : rows)
+        {
+            CopyFaceRow(*art->at(row.Picture), row.From, lettered, row.To, face);
         }
 
         // Behind MULTIPLAYER CHAT only the bottom tab is drawn: the background has the one in front.
-        auto behind = std::make_shared<MCLogPort>();
-        behind->Init(TabsWidth, TabsHeight - BehindTop);
-        std::ranges::copy(tabs->Pixels().subspan(static_cast<size_t>(BehindTop * TabsWidth)), behind->Pixels().begin());
-        return behind;
+        const int32_t top = front ? 0 : BehindTop;
+        auto tabs = std::make_shared<MCLogPort>();
+        tabs->Init(TabsWidth, TabsHeight - top);
+        std::ranges::copy(lettered.Pixels().subspan(static_cast<size_t>(top * TabsWidth)), tabs->Pixels().begin());
+        KeepHdTabs(*tabs, top, *art, base, rows, face);
+        return tabs;
     }
 
     /// <summary>The rows' values: a weather or time of day (<see cref="MissionOwn"/>: the mission's own), braking on.</summary>

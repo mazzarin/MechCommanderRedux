@@ -232,6 +232,8 @@ namespace
         std::unordered_set<const uint8_t*> SmoothTables;
         /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
         std::set<std::pair<const uint8_t*, int32_t>> LineArtFrames;
+        /// <summary>The pictures the game made of the pack's (MCHdArt::KeepPicture), by their pixels' hash.</summary>
+        std::unordered_map<uint64_t, std::shared_ptr<const MCHdArt::Frame>> KeptPictures;
     };
 
     State& TheState()
@@ -1101,6 +1103,7 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.MadeWith.reset();
     state.PaletteLooked = false;
     state.Archives.clear();
+    state.KeptPictures.clear();
     ++state.Version;
 }
 
@@ -1528,8 +1531,126 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindPicture(std::span<const uint8
         return nullptr;
     }
 
-    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), PictureHash(pixels, width, height)},
-                 width, height);
+    const uint64_t hash = PictureHash(pixels, width, height);
+
+    if (const auto kept = TheState().KeptPictures.find(hash); kept != TheState().KeptPictures.end())
+    {
+        return kept->second;
+    }
+
+    return Cache(FrameKey{FolderIndex(PackFolder() / PictureFolder, Naming::Hash), hash}, width, height);
+}
+
+void MCHdArt::KeepPicture(std::span<const uint8_t> pixels, int32_t width, int32_t height, Frame&& frame)
+{
+    auto kept = std::make_shared<Frame>(std::move(frame));
+    kept->Id = NewFrameId();
+    TheState().KeptPictures.insert_or_assign(PictureHash(pixels, width, height), std::move(kept));
+}
+
+namespace
+{
+    /// <summary>
+    /// How a frame's colours are laid out, for copying a part of them: the bytes of a unit (a pixel, or a block of
+    /// them), its side in HD pixels, and the units in a row; none for a format whose units can't be copied apart.
+    /// </summary>
+    struct ColorUnits
+    {
+        size_t Bytes = 0;
+        int32_t Side = 1;
+        size_t Wide = 0;
+        size_t High = 0;
+    };
+
+    std::optional<ColorUnits> UnitsOf(const MCHdArt::Frame& frame)
+    {
+        ColorUnits units;
+
+        switch (frame.Format)
+        {
+            case MCHdArt::ColorFormat::Rgba8:
+                units.Bytes = static_cast<size_t>(BytesPerPixel);
+                break;
+            case MCHdArt::ColorFormat::Bc7:
+            {
+                units.Bytes = MCBc7::BlockBytes;
+                units.Side = MCBc7::BlockSide;
+                break;
+            }
+            case MCHdArt::ColorFormat::Bc5:
+            default:
+                return std::nullopt;
+        }
+
+        units.Wide = static_cast<size_t>((frame.Width + units.Side - 1) / units.Side);
+        units.High = static_cast<size_t>((frame.Height + units.Side - 1) / units.Side);
+        return units;
+    }
+}
+
+MCHdArt::Frame MCHdArt::BlankFrame(const Frame& like, int32_t width, int32_t height)
+{
+    Frame blank;
+    blank.Scale = like.Scale;
+    blank.Format = like.Format;
+    blank.Blended = like.Blended;
+    blank.Width = width * like.Scale;
+    blank.Height = height * like.Scale;
+    const std::optional<ColorUnits> units = UnitsOf(blank);
+    blank.Colors.assign(units.has_value() ? units->Wide * units->High * units->Bytes : 0, 0);
+    blank.Indices.assign(static_cast<size_t>(width) * height * IndexBytes, 0);
+    return blank;
+}
+
+bool MCHdArt::CopyArea(const Frame& source, int32_t x, int32_t y, int32_t width, int32_t height, Frame& target,
+                       int32_t toX, int32_t toY)
+{
+    const auto inside = [width, height](const Frame& frame, int32_t left, int32_t top)
+    {
+        return width > 0 && height > 0 && left >= 0 && top >= 0 && left + width <= frame.OriginalWidth() &&
+               top + height <= frame.OriginalHeight() &&
+               frame.Indices.size() == static_cast<size_t>(frame.OriginalWidth()) * frame.OriginalHeight() * IndexBytes;
+    };
+
+    const std::optional<ColorUnits> from = UnitsOf(source);
+    const std::optional<ColorUnits> to = UnitsOf(target);
+
+    if (source.Scale != target.Scale || source.Format != target.Format || !from.has_value() || !to.has_value() ||
+        source.Scale % from->Side != 0 || !inside(source, x, y) || !inside(target, toX, toY) ||
+        source.Colors.size() != from->Wide * from->High * from->Bytes ||
+        target.Colors.size() != to->Wide * to->High * to->Bytes)
+    {
+        return false;
+    }
+
+    // The colours, a row of units at a time: each original pixel's HD pixels are whole units.
+    const auto perPixel = static_cast<size_t>(source.Scale / from->Side);
+    const size_t rowBytes = static_cast<size_t>(width) * perPixel * from->Bytes;
+
+    for (size_t row = 0; row < static_cast<size_t>(height) * perPixel; ++row)
+    {
+        const size_t read =
+            ((static_cast<size_t>(y) * perPixel + row) * from->Wide + static_cast<size_t>(x) * perPixel) * from->Bytes;
+        const size_t write =
+            ((static_cast<size_t>(toY) * perPixel + row) * to->Wide + static_cast<size_t>(toX) * perPixel) * to->Bytes;
+        std::copy_n(source.Colors.begin() + static_cast<ptrdiff_t>(read), rowBytes,
+                    target.Colors.begin() + static_cast<ptrdiff_t>(write));
+    }
+
+    // The indices, an original pixel each.
+    for (int32_t row = 0; row < height; ++row)
+    {
+        const size_t read =
+            (static_cast<size_t>(y + row) * static_cast<size_t>(source.OriginalWidth()) + static_cast<size_t>(x)) *
+            IndexBytes;
+        const size_t write =
+            (static_cast<size_t>(toY + row) * static_cast<size_t>(target.OriginalWidth()) + static_cast<size_t>(toX)) *
+            IndexBytes;
+        std::copy_n(source.Indices.begin() + static_cast<ptrdiff_t>(read), static_cast<size_t>(width) * IndexBytes,
+                    target.Indices.begin() + static_cast<ptrdiff_t>(write));
+    }
+
+    return true;
 }
 
 namespace

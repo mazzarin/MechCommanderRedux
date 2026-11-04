@@ -31,6 +31,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "main/MCInventoryList.h"
 #include "logistics/MCCompInventoryBlock.h"
+#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
@@ -10259,7 +10260,7 @@ namespace
     /// Shows the screens --sharp-menus' first round leaves out, each through <paramref name="shoot"/> (named): the other
     /// inventory tabs of the mech bay and the purchase screen, the briefing's operation tab, the main menu in a campaign, the save and single-mission load screens, the exit question, the multiplayer screens (the
     /// connection menu, the serial and modem screens, the IPX/TCP question, the LAN games, hosting's ready room and
-    /// session screen), the expansion's briefing, then a mission launched from the briefing (its loading screen),
+    /// session screen, its MATCH OPTIONS tab too), the expansion's briefing, then a mission launched from the briefing (its loading screen),
     /// paused, the tactical map's info, objectives and salvage pages, the preferences' CONTROLS panel where the build
     /// has one, the results and debriefing, and logistics after the mission.
     /// </summary>
@@ -12530,6 +12531,8 @@ namespace
         GlobalLog()->ShowLogScreen(true, true);
         GlobalLog()->LogisticsState = SessionState;
         shoot("mp_session");
+        GlobalLog()->SessionScreen->ShowTab(MCSessionTab::Options);
+        shoot("mp_session_match_options");
         DoExit();
         shoot("main_menu_after_mp");
     }
@@ -18227,6 +18230,91 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
         CHECK(pictures > 0);
         CHECK(tracks > 0);
     }
+}
+
+/// <summary>
+/// With HD art on and a pack holding the briefing's tabs pictures (lsbdw00-03), the session screen's MATCH OPTIONS tab,
+/// lettered from them, has an HD copy made of theirs, in front and behind: at the pack's scale, every HD pixel its
+/// original pixel's colour as the pack paints it, every index the tab's; the tab itself as with HD art off, which
+/// has none.
+/// </summary>
+TEST_CASE_ISOLATED("game: HD art letters MATCH OPTIONS' tab from the pack's copies of the briefing's tabs")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    std::array<SDL_Color, 256> colors{};
+    MCInput::Display()->GetShownColors(colors);
+    const std::filesystem::path pack = EmptyPack("mc_tests_hd_match_tabs");
+    std::filesystem::create_directories(PictureFolderOf(pack));
+
+    for (const std::string_view name : {"lsbdw00.tga", "lsbdw01.tga", "lsbdw02.tga", "lsbdw03.tga"})
+    {
+        const std::shared_ptr<MCLogPort> art = LogScreenArt(name);
+        DecodedFrame frame;
+        frame.Width = art->Width();
+        frame.Height = art->Height();
+        frame.Index.assign(art->Pixels().begin(), art->Pixels().end());
+        frame.Drawn.assign(frame.Index.size(), 1);
+        WriteFramePngs(PictureFolderOf(pack) /
+                           MCHdArt::PictureName(MCHdArt::PictureHash(art->Pixels(), art->Width(), art->Height())),
+                       frame, colors, TestPackScale, Inverted, false);
+    }
+
+    for (const MCSessionTab front : {MCSessionTab::Chat, MCSessionTab::Options})
+    {
+        MCTest::Scope scope(front == MCSessionTab::Chat ? "MATCH OPTIONS behind" : "MATCH OPTIONS in front");
+        const std::shared_ptr<MCLogPort> plain = MakeMatchTabs(front);
+        REQUIRE(plain != nullptr);
+        CHECK(MCHdArt::FindPicture(plain->Pixels(), plain->Width(), plain->Height()) == nullptr);
+        std::shared_ptr<MCLogPort> tabs;
+        std::shared_ptr<const MCHdArt::Frame> hd;
+
+        {
+            const MCHdArtOn on(pack);
+            tabs = MakeMatchTabs(front);
+            REQUIRE(tabs != nullptr);
+            hd = MCHdArt::FindPicture(tabs->Pixels(), tabs->Width(), tabs->Height());
+        }
+
+        CHECK(std::ranges::equal(tabs->Pixels(), plain->Pixels()));
+        REQUIRE(hd != nullptr);
+        CHECK_EQ(hd->Scale, TestPackScale);
+        CHECK_EQ(hd->OriginalWidth(), tabs->Width());
+        CHECK_EQ(hd->OriginalHeight(), tabs->Height());
+        REQUIRE(hd->Format == MCHdArt::ColorFormat::Rgba8);
+        int32_t wrongPixels = 0;
+
+        for (int32_t y = 0; y < hd->Height; ++y)
+        {
+            for (int32_t x = 0; x < hd->Width; ++x)
+            {
+                const uint8_t index =
+                    tabs->Pixels()[static_cast<size_t>(y / TestPackScale) * tabs->Width() + x / TestPackScale];
+                const SDL_Color expected = Inverted(colors[index]);
+                const uint8_t* shown = &hd->Colors[(static_cast<size_t>(y) * hd->Width + x) * BytesPerPixel];
+                wrongPixels += shown[0] == expected.r && shown[1] == expected.g && shown[2] == expected.b ? 0 : 1;
+            }
+        }
+
+        CHECK_EQ(wrongPixels, 0);
+        int32_t wrongIndices = 0;
+
+        for (size_t at = 0; at < tabs->Pixels().size(); ++at)
+        {
+            wrongIndices += hd->Indices[at * MCHdArt::IndexBytes] == tabs->Pixels()[at] &&
+                                    hd->Indices[at * MCHdArt::IndexBytes + 1] == MCHdArt::HasIndex
+                                ? 0
+                                : 1;
+        }
+
+        CHECK_EQ(wrongIndices, 0);
+    }
+
+    std::filesystem::remove_all(pack.parent_path());
 }
 
 /// <summary>

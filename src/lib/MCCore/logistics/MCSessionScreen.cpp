@@ -28,6 +28,7 @@
 #include "main/MCGameStrings.h"
 #include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
+#include "sprite/MCHdArt.h"
 #include "vfx/MCVfxFunctions.h"
 #include "logistics/MCBriefingScreen.h"
 
@@ -361,7 +362,7 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     // Port-only: MATCH OPTIONS, the second tab, its list in the chat window's place.
     MatchOptionsList = MakeMatchOptionsList();
     AddChild(MatchOptionsList);
-    MatchTabs = {MakeMatchTabs(MCSessionTab::Chat), MakeMatchTabs(MCSessionTab::Options)};
+    UpdateMatchTabs();
     FrontTab = MCSessionTab::Chat;
 
     SetBackground("ses_bk00.tga");
@@ -396,6 +397,7 @@ auto MCSessionScreen::Destroy() -> void
 
     MatchOptionsList.reset();
     MatchTabs = {};
+    MatchTabsArt.reset();
     DropTargets.clear();
     MissionFile.clear();
     MapName.clear();
@@ -416,6 +418,8 @@ auto MCSessionScreen::Draw() -> void
 
     // Port-only: the tabs, MULTIPLAYER CHAT blinking behind MATCH OPTIONS while new chat waits; the list shows the
     // match's options as they are now, the host's sent again when a player's rules change what the match plays.
+    UpdateMatchTabs();
+
     if (const std::shared_ptr<MCLogPort>& tabs = MatchTabs[static_cast<size_t>(FrontTab)]; tabs != nullptr)
     {
         const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow;
@@ -946,6 +950,19 @@ auto MCSessionScreen::DrawMap(const MCPane& target) const -> void
     }};
 
     VfxMapPolygon(target, corners, MapPicture->Bitmap(), VfxMapTransparent);
+}
+
+auto MCSessionScreen::UpdateMatchTabs() -> void
+{
+    const std::pair hdArt{MCHdArt::Active(), MCHdArt::PackVersion()};
+
+    if (MatchTabsArt == hdArt)
+    {
+        return;
+    }
+
+    MatchTabs = {MakeMatchTabs(MCSessionTab::Chat), MakeMatchTabs(MCSessionTab::Options)};
+    MatchTabsArt = hdArt;
 }
 
 auto MCSessionScreen::ClearMap() -> void

@@ -3,12 +3,16 @@
 #include "MCMock.h"
 #include "TestGame.h"
 #include "ai/MCScenarioMap.h"
+#include "fakes/MCMemoryFileSource.h"
+#include "lib/MCFastFileSet.h"
 #include "lib/MCFitIniFile.h"
+#include "lib/MCPacketFile.h"
 #include "linkup/MCFidpMessage.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
 #include "mission/MCWeatherPlay.h"
+#include "network/MCGameDataHash.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCArtilleryChunk.h"
@@ -1205,4 +1209,286 @@ TEST_CASE("network: a match's weather and time of day are shown over the mission
     GHdLighting = lightingWas;
     MCWeather::SetMissionWeather(MCWeatherKind::Clear);
     MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
+}
+
+namespace
+{
+    /// <summary>The retail game's folders (its SYSTEM.CFG's), set for the scope's lifetime.</summary>
+    class RetailPaths
+    {
+    public:
+        RetailPaths()
+        {
+            for (size_t i = 0; i < Paths.size(); i++)
+            {
+                _Saved[i] = std::exchange(*Paths[i], std::string(Retail[i]));
+            }
+        }
+
+        ~RetailPaths()
+        {
+            for (size_t i = 0; i < Paths.size(); i++)
+            {
+                *Paths[i] = std::move(_Saved[i]);
+            }
+        }
+
+        RetailPaths(const RetailPaths&) = delete;
+        RetailPaths& operator=(const RetailPaths&) = delete;
+
+    private:
+        static constexpr size_t Count = 7;
+        inline static const std::array<std::string*, Count> Paths = {
+            &ObjectPath, &MissionPath, &WarriorPath, &ProfilePath, &TerrainPath, &ShapesPath, &SavePath};
+        static constexpr std::array<std::string_view, Count> Retail = {"data\\objects\\",
+                                                                       "data\\missions\\",
+                                                                       "data\\missions\\warriors\\",
+                                                                       "data\\missions\\profiles\\",
+                                                                       "data\\terrain\\",
+                                                                       "data\\sprites\\",
+                                                                       "data\\savegame\\"};
+        std::array<std::string, Count> _Saved;
+    };
+
+    /// <summary>The small game's mission file (DataGame).</summary>
+    constexpr std::string_view DataMission = "data\\savegame\\TEST.MPK";
+
+    /// <summary>
+    /// A small game's data in memory, as the retail game lays it out: every match's gameplay files, a mission (its
+    /// file, scenario, script, an include and its map) and what doesn't count (art, a map picture, another mission's
+    /// script and map, a mech's pictures, a backup).
+    /// </summary>
+    void AddDataGame(MCMemoryFileSource& files)
+    {
+        files.AddFile("data\\missions\\gamesys.fit", "FITini\n[General]\nf MaxVisualRange = 600.0\nFITend\n");
+        files.AddFile("data\\objects\\compbas.csv", "1,Medium Laser,3\n");
+        files.AddFile("data\\objects\\object2.pak", "objects");
+        files.AddFile("data\\missions\\warriors\\pbrain.abl", "module pbrain;\n#include_ \"UnitConst.abi\"\n");
+        files.AddFile("data\\missions\\warriors\\UnitConst.abi", "const\n");
+        files.AddFile("data\\missions\\warriors\\pbrain.bak", "an old brain");
+        files.AddFile("data\\missions\\profiles\\PM100100.fit", "FITini\nFITend\n");
+        files.AddFile("data\\missions\\orders.abx", "library orders;\n#include_ \"OConst.abi\"\n");
+        files.AddFile("data\\missions\\OConst.abi", "const\n");
+        files.AddFile("data\\missions\\purchase.fit", "FITini\n[PilotCosts]\nl Green = 1\nFITend\n");
+        files.AddFile("data\\missions\\mp0703.fit", "FITini\n[TerrainSystem]\nst TerrainFileName = \"mp0703\"\n"
+                                                    "[Script]\nst ScenarioScript = \"mp0703\"\nFITend\n");
+        files.AddFile("data\\missions\\mp0703.abl", "module mp0703;\n#include_ \"MP7_3VAR.ABI\"\n"
+                                                    "// #include_ \"gone.abi\"\n/* #include \"gone2.abi\" */\n");
+        files.AddFile("data\\missions\\MP7_3VAR.ABI", "var\n");
+        files.AddFile("data\\missions\\other.abl", "module other;\n");
+        files.AddFile("data\\terrain\\mp0703.dat", "cells");
+        files.AddFile("data\\terrain\\mp0703.elv", "heights");
+        files.AddFile("data\\terrain\\mp0703.tga", "a picture");
+        files.AddFile("data\\terrain\\mp0703.log.tga", "the briefing's picture");
+        files.AddFile("data\\terrain\\mp0704.dat", "another map");
+        files.AddFile("data\\sprites\\cm.hsp", "hot spots");
+        files.AddFile("data\\sprites\\cm.inf", "FITini\nFITend\n");
+        files.AddFile("data\\sprites\\legs.pak", "legs");
+        files.AddFile("data\\art\\button.tga", "a button");
+
+        // The mission file: packet 0 its settings (no PurchaseInfo block: the "purchase" list), as the game writes it.
+        MCPacketFile mission;
+        REQUIRE_EQ(mission.Create(DataMission), 0);
+        mission.Reserve(1);
+        constexpr std::string_view Settings = "FITini\n[General]\nst PurchaseFile=\"netpur\"\n"
+                                              "[Multiplayer]\nst MissionName=\"mp0703\"\nFITend\n";
+        mission.WritePacket(0, std::span(reinterpret_cast<const uint8_t*>(Settings.data()), Settings.size()),
+                            MCPacketStorage::Raw);
+        mission.Close();
+    }
+
+    /// <summary>The bytes of <paramref name="text"/>.</summary>
+    std::vector<uint8_t> Bytes(std::string_view text)
+    {
+        return {text.begin(), text.end()};
+    }
+
+    /// <summary>
+    /// The small game's (DataGame) mission's hash, in a context of its own (nothing kept from another, no archives),
+    /// with <paramref name="loose"/> (path, contents) in the user folder over the install's.
+    /// </summary>
+    uint32_t DataGameHash(std::initializer_list<std::pair<std::string_view, std::string_view>> loose = {})
+    {
+        MCTestContextScope scope;
+        MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+        scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
+        AddDataGame(files);
+
+        for (const auto& [path, contents] : loose)
+        {
+            files.AddUserFile(path, Bytes(contents));
+        }
+
+        return MCMissionDataHash(DataMission);
+    }
+}
+
+/// <summary>
+/// Port: a game's file report carries the hash of the mission's and every match's gameplay data as the game finds
+/// them (network/MCGameDataHash.h): the mission's file, purchase list, scenario, script and what it includes, its map
+/// but its pictures; the objects', pilots' and profiles' folders, the game system, the ABL libraries and what they
+/// include, the mechs' shape data. A loose file of the player's own over a gameplay file changes it; one over the art,
+/// a map's picture, another mission's script, a mech's pictures or a backup doesn't. Without the mission file it is 0,
+/// as the original's report; it is never 0 otherwise. Every match's part is worked out once in a context and kept.
+/// </summary>
+TEST_CASE("network: the game data's hash changes with a gameplay file's loose override, not with an art file")
+{
+    const RetailPaths paths;
+
+    {
+        MCTestContextScope scope;
+        MCMemoryFileSource& files = scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+        scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
+        AddDataGame(files);
+        const std::vector<std::string> mission = MCMissionDataFiles(DataMission);
+        CHECK((mission == std::vector<std::string>{"data\\missions\\mp0703.abl", "data\\missions\\mp0703.fit",
+                                                   "data\\missions\\MP7_3VAR.ABI", "data\\missions\\purchase.fit",
+                                                   std::string(DataMission), "data\\terrain\\mp0703.dat",
+                                                   "data\\terrain\\mp0703.elv"}));
+        const std::vector<std::string> shared = MCSharedDataFiles();
+        CHECK((shared == std::vector<std::string>{
+                             "data\\missions\\gamesys.fit", "data\\missions\\OConst.abi", "data\\missions\\orders.abx",
+                             "data\\missions\\profiles\\PM100100.fit", "data\\missions\\warriors\\pbrain.abl",
+                             "data\\missions\\warriors\\UnitConst.abi", "data\\objects\\compbas.csv",
+                             "data\\objects\\object2.pak", "data\\sprites\\cm.hsp", "data\\sprites\\cm.inf"}));
+
+        // Kept once worked out: a file changed later doesn't change it.
+        const uint64_t kept = MCSharedDataHash();
+        files.AddUserFile("data\\missions\\gamesys.fit", Bytes("FITini\nFITend\n"));
+        CHECK_EQ(MCSharedDataHash(), kept);
+    }
+
+    const uint32_t original = DataGameHash();
+    CHECK(original != 0u);
+    CHECK_EQ(DataGameHash(), original);
+
+    for (const std::string_view gameplay :
+         {"data\\missions\\gamesys.fit", "data\\objects\\compbas.csv", "data\\missions\\warriors\\UnitConst.abi",
+          "data\\missions\\OConst.abi", "data\\missions\\MP7_3VAR.ABI", "data\\missions\\mp0703.fit",
+          "data\\terrain\\mp0703.elv", "data\\missions\\purchase.fit", "data\\sprites\\cm.hsp"})
+    {
+        MCTest::Scope scope(gameplay);
+        CHECK(DataGameHash({{gameplay, "the player's own"}}) != original);
+    }
+
+    for (const std::string_view looks :
+         {"data\\art\\button.tga", "data\\terrain\\mp0703.tga", "data\\terrain\\mp0703.log.tga",
+          "data\\missions\\other.abl", "data\\terrain\\mp0704.dat", "data\\sprites\\legs.pak",
+          "data\\missions\\warriors\\pbrain.bak"})
+    {
+        MCTest::Scope scope(looks);
+        CHECK_EQ(DataGameHash({{looks, "the player's own"}}), original);
+    }
+
+    // A file the mission names but the game hasn't counts, as missing (here an include of its script's).
+    constexpr std::string_view Script = "data\\missions\\mp0703.abl";
+    constexpr std::string_view NewInclude = "data\\missions\\MP7_3NEW.ABI";
+    constexpr std::string_view IncludesNew = "#include_ \"MP7_3NEW.ABI\"\n";
+    CHECK(DataGameHash({{Script, IncludesNew}}) != DataGameHash({{Script, IncludesNew}, {NewInclude, "var\n"}}));
+
+    MCTestContextScope scope;
+    scope.Context().SetFiles(std::make_unique<MCMemoryFileSource>());
+    scope.Context().SetFastFiles(std::make_unique<MCFastFileSet>());
+    CHECK_EQ(MCMissionDataHash(DataMission), 0u);
+}
+
+/// <summary>
+/// Port: the host checks a player's file report against its own hash of the mission it asked about: from a build that
+/// says it hashes its data (MCMatchRule::DataHash), the same hash has the same data, another differs; from a build that
+/// doesn't (an older one, or one that said nothing), any report but 0 has the file, unchecked; 0 is no file from any.
+/// </summary>
+TEST_CASE("network: the host checks a file report's hash only from a build that hashes its data")
+{
+    ClientGame client;
+    MCMultiPlayer& game = *client.Game;
+    game.AskedFileHash = 0x12345678;
+    const auto rulesMessage = [](uint32_t rules)
+    {
+        std::vector<uint8_t> message = Message(MCMPMessageType::PlayerRules, {0, 0, 0, 0, 0, 0});
+        PutWord(message, rules);
+        return message;
+    };
+
+    game.PlayerRules[9] = MCMatchRule::Supported;
+    game.PlayerRules[8] = MCMatchRule::Supported & ~MCMatchRule::DataHash;
+    CHECK(game.CheckFileReport(9, 0x12345678) == MCFileCheck::Same);
+    CHECK(game.CheckFileReport(9, 0x12345679) == MCFileCheck::Differs);
+    CHECK(game.CheckFileReport(9, 0) == MCFileCheck::Missing);
+    CHECK(game.CheckFileReport(8, 0x12345679) == MCFileCheck::Unchecked);
+    CHECK(game.CheckFileReport(8, 0) == MCFileCheck::Missing);
+    CHECK(game.CheckFileReport(7, 0x12345678) == MCFileCheck::Unchecked);
+
+    // A player's rules message says it.
+    game.PlayerRules.clear();
+    Deliver(7, rulesMessage(MCMatchRule::DataHash));
+    CHECK(game.CheckFileReport(7, 0x12345678) == MCFileCheck::Same);
+}
+
+/// <summary>
+/// Port: the retail game's gameplay data are the files play reads, not its art: Arena's mission file, purchase list,
+/// scenario, script and its includes, and its map's files but pictures; every match's: the game system, the objects,
+/// pilots, profiles, libraries and the mechs' shape data, nothing from the art, sounds, tiles or sprites' pictures.
+/// </summary>
+TEST_CASE("network: the retail game's gameplay data are the files play reads, not its art")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCTestGame::OpenFastFiles();
+    const RetailPaths paths;
+    MCTestContextScope scope;
+    const auto has = [](const std::vector<std::string>& files, std::string_view file)
+    {
+        return std::ranges::any_of(files, [file](const std::string& name) { return MCPort::StrICmp(name, file) == 0; });
+    };
+
+    const auto none = [](const std::vector<std::string>& files, std::string_view part)
+    {
+        return std::ranges::none_of(files,
+                                    [part](const std::string& name)
+                                    {
+                                        std::string upper = name;
+                                        std::ranges::transform(upper, upper.begin(), [](unsigned char c)
+                                                               { return static_cast<char>(std::toupper(c)); });
+                                        return upper.contains(part);
+                                    });
+    };
+
+    const std::vector<std::string> mission = MCMissionDataFiles("data\\savegame\\ARENA.MPK");
+
+    for (const std::string_view file :
+         {"data\\savegame\\ARENA.MPK", "data\\missions\\purchase.fit", "data\\missions\\MP0703.FIT",
+          "data\\missions\\MP0703.ABL", "data\\missions\\MP7_3VAR.ABI", "data\\missions\\MP7_3MP.ABI",
+          "data\\missions\\misconst.abi", "data\\terrain\\mp0703.FIT", "data\\terrain\\mp0703.dat",
+          "data\\terrain\\mp0703.ELV", "data\\terrain\\mp0703.gmm", "data\\terrain\\mp0703.OBJ",
+          "data\\terrain\\mp0703.bdg", "data\\terrain\\mp0703.pre"})
+    {
+        MCTest::Scope fileScope(file);
+        CHECK(has(mission, file));
+    }
+
+    CHECK(none(mission, ".TGA"));
+    const std::vector<std::string> shared = MCSharedDataFiles();
+
+    for (const std::string_view file :
+         {"data\\missions\\gamesys.fit", "data\\objects\\compbas.csv", "data\\objects\\OBJECT2.PAK",
+          "data\\objects\\allcomp.fit", "data\\missions\\orders.abx", "data\\missions\\OConst.abi",
+          "data\\missions\\warriors\\pbrain.abl", "data\\missions\\warriors\\UBInit.abi",
+          "data\\missions\\profiles\\PM100100.fit", "data\\sprites\\cm.hsp", "data\\sprites\\cm.inf"})
+    {
+        MCTest::Scope fileScope(file);
+        CHECK(has(shared, file));
+    }
+
+    for (const std::string_view part :
+         {"DATA\\ART\\", "DATA\\SOUND\\", "DATA\\TILES\\", "DATA\\SPRITES\\LEGS", ".SHP", ".BAK"})
+    {
+        MCTest::Scope partScope(part);
+        CHECK(none(shared, part));
+    }
+
+    CHECK(MCMissionDataHash("data\\savegame\\ARENA.MPK") != 0u);
+    CHECK(MCMissionDataHash("data\\savegame\\ARENA.MPK") != MCMissionDataHash("data\\savegame\\FORT.MPK"));
 }

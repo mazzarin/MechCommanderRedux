@@ -709,6 +709,23 @@ MCMatchOptions MCMultiPlayer::PlayedOptions() const
     return MCPlayedOptions(MatchOptions, WantedRules(), AgreedRules(MCMatchRule::Supported));
 }
 
+MCFileCheck MCMultiPlayer::CheckFileReport(uint32_t playerId, uint32_t value) const
+{
+    if (value == 0)
+    {
+        return MCFileCheck::Missing;
+    }
+
+    // A build without the hash sends the original's "checksum" (the file's first four bytes): the file is there.
+    if (const auto said = PlayerRules.find(playerId);
+        said == PlayerRules.end() || (said->second & MCMatchRule::DataHash) == 0)
+    {
+        return MCFileCheck::Unchecked;
+    }
+
+    return value == AskedFileHash ? MCFileCheck::Same : MCFileCheck::Differs;
+}
+
 bool MCMultiPlayer::AllPlayersCheckedIn()
 {
     return std::ranges::all_of(SessionManager->GetPlayers(nullptr),

@@ -138,7 +138,7 @@ namespace
             .Key = "HDShake",
             .Choices = OffOn},
         Row{.Label = "FOOTPRINTS",
-            .Description = "FEET PRINT WHERE THEY STEP; THREE TIMES AS MANY PRINTS AND CRATERS STAY.",
+            .Description = "FEET PRINT WHERE THEY STEP, AND MORE PRINTS AND CRATERS STAY.",
             .Key = "HDFootprints",
             .Choices = OffOn},
         Row{.Label = "WEATHER",

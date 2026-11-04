@@ -10,6 +10,11 @@
 #include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "MCVersion.h"
+
+#include <algorithm>
+#include <format>
+#include <string>
 
 // The updater (main/MCUpdater.h), with a stand-in for the Mac app's Sparkle: the check made once a start, each step
 // reported in turn, the player's answers passed on, the feed's text kept to what the fonts write; and the main menu's
@@ -279,4 +284,24 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK(updater.Log->Answers[2] == MCAnswer::Skip);
     CHECK(!UpdatePageShown());
     CHECK(cinema->Disabled);
+}
+
+/// <summary>
+/// Port-only (personal): one version on every platform, from version.json and the branch's count of commits
+/// (src/mac/version.cmake on the Mac, MechCommander.props on Windows): the four-part version is the release and the
+/// build, and the one shown (the game, its reports, the updaters) the release with the build after it in brackets.
+/// </summary>
+TEST_CASE("updater: the version is version.json's release with the commit count as its build, shown as 0.2.1 (518)")
+{
+    constexpr std::ptrdiff_t releaseParts = 3;
+    const std::string version = MC_VERSION;
+    const size_t buildDot = version.rfind('.');
+    REQUIRE(buildDot != std::string::npos);
+    const std::string release = version.substr(0, buildDot);
+
+    CHECK_EQ(std::ranges::count(release, '.') + 1, releaseParts);
+    CHECK_EQ(version.substr(buildDot + 1), std::to_string(MC_VERSION_BUILD));
+    CHECK(MC_VERSION_BUILD > 0);
+    CHECK_EQ(std::string(MC_VERSION_SHOWN), std::format("{} ({})", release, MC_VERSION_BUILD));
+    CHECK_EQ(std::string(MC_VERSION_SEMVER), std::format("{}+{}", release, MC_VERSION_BUILD));
 }

@@ -58,14 +58,15 @@ endif()
 # reports Worker (tools/cloudflare/reports in the workspace); empty, the app sends no reports.
 set(MC_REPORTS_URL "https://mechcommander-redux-reports.mazzarin.workers.dev" CACHE STRING "The reports' server (https), or empty for none")
 
-# MCVersion.h and the app's Info.plist, from nbgv on every build as on Windows (version.cmake).
+# MCVersion.h and the app's Info.plist, from version.json and the commit count on every build as on Windows
+# (version.cmake).
 add_custom_target(mc_version
   COMMAND ${CMAKE_COMMAND} -DREPO_DIR=${MC_SRC}/.. -DOUTPUT=${MC_GENERATED_DIR}/MCVersion.h
           -DPLIST_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in -DPLIST=${MC_GENERATED_DIR}/Info.plist
           -DMIN_MACOS=${CMAKE_OSX_DEPLOYMENT_TARGET} -DMC_REPORTS_URL=${MC_REPORTS_URL}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake
   BYPRODUCTS ${MC_GENERATED_DIR}/MCVersion.h ${MC_GENERATED_DIR}/Info.plist
-  COMMENT "Getting the version from nbgv"
+  COMMENT "Getting the version from version.json and git"
   VERBATIM)
 
 # The GPU renderer's shaders: the HLSL MCCore.vcxproj compiles with dxc on Windows, compiled here with glslang (dxc

@@ -369,11 +369,11 @@ The easiest way to use it is a shortcut: right-click `MCEditor.exe`, choose **Cr
 That's all. SDL3 is included in the repository and built as part of the solution, so nothing else needs to be
 installed.
 
-The version number (`major.minor.release.build`) comes from [Nerdbank.GitVersioning](https://github.com/dotnet/Nerdbank.GitVersioning):
-`version.json` sets the first three parts, and the build number counts the commits since that version was set. The build
-runs it through the **.NET SDK** (8 or later), which Visual Studio usually installs. Without the .NET SDK, or outside a git
-checkout, the build still works but reports version `0.0.0.0`. To start a new version, edit `version.json`; the build number
-starts again from 0.
+The version number (`major.minor.release.build`) is `version.json`'s first three parts with the branch's count of
+commits as the build (`git rev-list --count HEAD`), the same on Windows and the Mac, and the game shows it as
+`0.2.1 (518)`. The build counts through git (Visual Studio's own will do). Outside a git checkout the build still works
+but reports build 0, and a shallow clone counts only the commits it has. To start a new version, edit `version.json`;
+the build number keeps rising, which the updaters need (they install only a higher build).
 
 ### Compiling
 

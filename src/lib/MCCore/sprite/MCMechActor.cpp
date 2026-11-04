@@ -1489,6 +1489,8 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     const auto partsDepth = static_cast<int16_t>(
         static_cast<int32_t>(std::floor(static_cast<double>(static_cast<float>(depthFixup) - ScreenPos.Y))));
     ElementList().OpenGroup(partsDepth, true);
+    // Port-only (HD lighting's headlights): the parts stand on the mech's feet.
+    const std::optional<float> feet = MCSceneLights::FeetRow(*this, mech->Position);
     // Port-only (HDTurns): the legs' turn middle as drawn, which their sun shadow casts too.
     std::optional<MCInBetween> legsMiddle;
 
@@ -1555,6 +1557,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
 
         auto& element = ElementList().Make<MCVfxElement>(drawnShape[part]->FrameList(), ScreenPos.X, ScreenPos.Y,
                                                          drawnFrame[part], drawnReverse[part], fadeTable, 1);
+        element.Feet = feet;
 
         if (part == MCMechPart::Legs)
         {

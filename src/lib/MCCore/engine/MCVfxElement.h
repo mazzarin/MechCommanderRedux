@@ -52,6 +52,12 @@ public:
     /// </summary>
     std::optional<float> GroundFill;
 
+    /// <summary>
+    /// Port-only (HD lighting's headlights): a unit's part's, the window row its feet stand on (MCRenderer::
+    /// StandingScope); none for every other shape.
+    /// </summary>
+    std::optional<float> Feet;
+
 private:
     /// <summary>Clamps <see cref="FrameNum"/> to the table's last frame.</summary>
     void ClampFrame();

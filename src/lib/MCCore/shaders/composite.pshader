@@ -87,6 +87,7 @@ SamplerState puddleSampler : register(s8, space2);
 
 // The most lights (MCSceneLights::MaxLights): lights holds three float4s for each.
 static const uint MaxLights = 64;
+static const uint LightUnits = 6;
 // The most fires in heat (MCSceneLights::MaxHeat).
 static const uint MaxHeat = 16;
 // The most feet's puddles reacting at once (MCWeather::MaxPuddleSteps), and the circles a footprint's shape is taken as
@@ -156,7 +157,8 @@ cbuffer Composite : register(b0, space3)
     // colours lose in it (w: 0 by day).
     float4 ambientLook;
     // Port-only (HD lighting's headlights, MCLighting::AirBeams): x, how much the spotlights' beams show in the air (0
-    // none).
+    // none); y, how much of a spotlight's light the unit in its way hides behind it (MCLighting::Shadow, BeamBlocked);
+    // z, the world's texels a window row (FeetAt).
     float4 airBeams;
     // Port-only (HD lighting's relief maps, MCLighting::ReliefMaps): x, how steeply the HD ground's relief maps stand
     // its bumps (0: the ground is lit by its brightness, as the rest); y (MCLighting::CanopyRelief), how much of the
@@ -218,6 +220,10 @@ cbuffer Composite : register(b0, space3)
     // for a light that shines every way); its colour times its strength (rgb, a spotlight's where its beam's middle
     // meets the ground), and the cosine of the angle off its beam's middle at which a spotlight has faded out (w).
     float4 lights[MaxLights * 3];
+    // Port-only (HD lighting's headlights): LightUnits a light, the units in a spotlight's beam's way (MCSceneLight::
+    // Units), nearest its lamp first; in the world's texels, each one's feet (xy), and the box its sprite may cover: its
+    // half width (z) and height (w; 0: none).
+    float4 lightUnits[MaxLights * LightUnits];
 };
 
 // The brightness the relief takes for height, and the grey a light's hue is taken from.
@@ -280,10 +286,11 @@ uint2 LightsNear(float2 texel)
 // A spotlight's light on the ground off (along the ground) from the ground under it, as a share of its light where its
 // beam's middle meets the ground: the lamp height above the ground, its beam aimed at spot (from the ground under it),
 // fading out at edge (the cosine off its middle). Within the beam, falling off as the square of the distance from the
-// lamp: the ground it lights starts ahead of the lamp and widens as it goes.
-float SpotPool(float2 off, float height, float2 spot, float edge)
+// lamp: the ground it lights starts ahead of the lamp and widens as it goes. A point `up` above the ground there takes
+// it as the ground would at the lamp's height less that.
+float SpotPool(float2 off, float height, float2 spot, float edge, float up)
 {
-    const float3 ray = float3(off, -height);
+    const float3 ray = float3(off, up - height);
     const float3 aim = float3(spot, -height);
     const float lengths = sqrt(dot(ray, ray) * dot(aim, aim));
 
@@ -294,6 +301,153 @@ float SpotPool(float2 off, float height, float2 spot, float edge)
 
     const float beam = smoothstep(edge, lerp(edge, 1.0, SpotFull), dot(ray, aim) / lengths);
     return beam * min(dot(aim, aim) / dot(ray, ray), SpotMost);
+}
+
+float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
+{
+    return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
+}
+
+// The index target's alpha above GroundMark: HD ground where its relief map drew; below it, what stands on the ground:
+// above CanopyMark a forest's canopy (its sway mark), else 0.
+static const float GroundMark = 0.5;
+static const float CanopyMark = 0.125;
+// Port-only (HD lighting's headlights): a unit's pixels in the index target hold the window row its feet stand on in
+// their green (the high byte) and blue, FeetSteps a row and 1 more (draw.pshader's FeetShift; 0: none), where the alpha
+// marks what stands. Two units' feet as near as FeetSame window rows are taken as one's. A unit is taken as UnitDepth
+// window rows deep: a point whose ground is further up the screen than its feet is hidden behind its pixels more and
+// more over that, wholly past it (UnitHides).
+static const float FeetSteps = 4.0;
+static const float FeetSame = 0.5;
+static const float UnitDepth = 4.0;
+static const float NoFeet = -1.0;
+
+// The world texel row the feet stand on of the unit world texel centre `at` shows (airBeams.z texels a window row,
+// taken at the row's middle, as the lights' are), NoFeet where it shows none (the ground, or anything else standing on
+// it).
+float FeetAt(float2 at)
+{
+    const float4 drawn = TexelAt(opTex, opSampler, clamp(round(at - 0.5), 0.0, worldSize.xy - 1.0), worldSize.zw);
+    const uint code = Byte(drawn.g) << BitsPerByte | Byte(drawn.b);
+    return drawn.a <= GroundMark && code != 0u ? ((float)(code - 1u) / FeetSteps + 0.5) * airBeams.z : NoFeet;
+}
+
+// How much the unit whose feet (FeetAt's) are at row `feet` hides a point whose ground is at row `ground` behind its
+// pixels (0 for NoFeet).
+float UnitHides(float feet, float ground)
+{
+    return feet == NoFeet ? 0.0 : smoothstep(0.0, UnitDepth * airBeams.z, feet - ground);
+}
+
+// Whether two units' feet (FeetAt's) are taken as one's.
+bool SameFeet(float feet, float other)
+{
+    return abs(feet - other) <= FeetSame * airBeams.z;
+}
+
+// Port-only (HD lighting's headlights): the camera sees the side of a unit that faces the bottom of the screen, so a
+// spotlight lights what shows of a unit in full from nearer the camera than its feet, about half from beside them, and
+// from beyond them only UnseenSide (the light its far side scatters round). Within SideSoft ground texels of the lamp,
+// about half.
+static const float UnseenSide = 0.15;
+static const float SideSoft = 1.0;
+
+// How much of a spotlight's light shows on a unit's pixels, `off` the way from the ground under the lamp to the unit's
+// feet (along the ground).
+float SideShown(float2 off)
+{
+    const float toward = -off.y * rsqrt(dot(off, off) + SideSoft * SideSoft);
+    return lerp(UnseenSide, 1.0, saturate((toward + 1.0) * 0.5));
+}
+
+// Port-only (HD lighting's headlights): a spotlight's lamp is taken as this many texels across, so the shadow of the
+// unit in its way softens as it goes from the unit.
+static const float BlockLampSize = 3.0;
+
+// How much world texel centre `at` hides a spotlight's lamp as part of the unit whose feet are at row `feet`: 1 where it
+// shows that unit (FeetAt), else 0.
+float BlockerAt(float2 at, float feet)
+{
+    return SameFeet(FeetAt(at), feet) ? 1.0 : 0.0;
+}
+
+// How much of spotlight i's light its unit `block` (one of lightUnits) hides from the point `height` texels above the
+// ground at world texel centre `texel` (its ground the texel's, `height` lower on the screen), 0 to 1: the line from
+// the point to the lamp crosses the upright plane through the unit's feet, across the way from the lamp to them, and
+// where it crosses, the unit's own pixels as the screen shows them (up from its feet, across as the screen's; its box
+// only bounds where to look) hide the lamp, taken over the lamp's size there.
+float UnitBlocks(uint i, float4 block, float2 texel, float height)
+{
+    const float2 ground = float2(1.0, lighting.w);
+    const float2 lamp = lights[i * 3].xy * ground;
+    const float lampHeight = lights[i * 3 + 1].x;
+    const float2 feet = block.xy * ground;
+    const float2 at = (texel + float2(0.0, height)) * ground;
+    const float feetAlong = length(feet - lamp);
+
+    if (feetAlong <= 0.0)
+    {
+        return 0.0;
+    }
+
+    const float2 way = (feet - lamp) / feetAlong;
+    const float along = dot(at - lamp, way);
+
+    if (along <= feetAlong)
+    {
+        return 0.0;
+    }
+
+    // Where the line crosses the plane (a share of the way from the lamp), how high, and how far across it (the
+    // screen's way across for a lamp in front of the unit or behind it); the lamp's size there.
+    const float share = feetAlong / along;
+    const float up = lampHeight + (height - lampHeight) * share;
+    const float2 across = float2(-way.y, way.x) * (way.y > 0.0 ? -1.0 : 1.0);
+    const float side = dot(lamp + (at - lamp) * share - feet, across);
+    const float spread = max(BlockLampSize * (1.0 - share) * 0.5, 0.5);
+
+    if (abs(side) > block.z + spread || up < -spread || up > block.w + spread)
+    {
+        return 0.0;
+    }
+
+    const float2 crossing = float2(block.x + side, block.y - up);
+    const float hidden = BlockerAt(crossing + float2(-spread, -spread), block.y) +
+                         BlockerAt(crossing + float2(spread, -spread), block.y) +
+                         BlockerAt(crossing + float2(-spread, spread), block.y) +
+                         BlockerAt(crossing + float2(spread, spread), block.y);
+    return hidden * 0.25;
+}
+
+// How much of spotlight i's light the units in its way (lightUnits) hide from the point `height` texels above the
+// ground at world texel centre `texel` (UnitBlocks: each its share of what the others leave), but the unit the point is
+// part of (its feet `own`, FeetAt's; NoFeet for the ground or the air), times airBeams.y.
+float BeamBlocked(uint i, float2 texel, float height, float own)
+{
+    if (airBeams.y <= 0.0)
+    {
+        return 0.0;
+    }
+
+    float kept = 1.0;
+
+    for (uint k = 0; k < LightUnits; ++k)
+    {
+        const float4 block = lightUnits[i * LightUnits + k];
+
+        if (block.w > 0.0 && (own == NoFeet || !SameFeet(block.y, own)))
+        {
+            kept *= 1.0 - UnitBlocks(i, block, texel, height);
+        }
+    }
+
+    return airBeams.y * (1.0 - kept);
+}
+
+// Whether the spotlights near world texel centre `texel` (LightsNear's `near`) are any.
+bool SpotlightsNear(uint2 near)
+{
+    return any((near & uint2(spotLights.x, spotLights.y)) != 0u);
 }
 
 // A spotlight's beam in the air fades out this far past where its middle meets the ground (a share of the way from its
@@ -317,6 +471,13 @@ float3 AirBeamsAt(float2 texel, uint2 near)
     }
 
     float3 sum = float3(0.0, 0.0, 0.0);
+    // The unit the texel shows hides the beams behind it from the eye.
+    float feet = NoFeet;
+
+    if (SpotlightsNear(near))
+    {
+        feet = FeetAt(texel);
+    }
 
     for (uint word = 0; word < LightWords; ++word)
     {
@@ -342,7 +503,17 @@ float3 AirBeamsAt(float2 texel, uint2 near)
             const float across = length(texel - (lamp + beam * t)) / width;
             const float along = 1.0 - t / AirBeamLength;
             const float shows = 1.0 - smoothstep(AirBeamHideFrom, AirBeamHidden, -beam.y * rsqrt(length2));
-            sum += color.rgb * (along * shows * (1.0 - smoothstep(AirBeamFull, 1.0, across)));
+            const float lit = along * shows * (1.0 - smoothstep(AirBeamFull, 1.0, across));
+
+            // The air behind the units in its way is dark, and the unit the texel shows hides the beam behind it.
+            const float height = max(shape.x * (1.0 - t), 0.0);
+
+            const float shown = lit * (1.0 - UnitHides(feet, texel.y + height));
+
+            if (shown > 0.0)
+            {
+                sum += color.rgb * (shown * (1.0 - BeamBlocked(i, texel, height, NoFeet)));
+            }
         }
     }
 
@@ -358,6 +529,13 @@ float3 LightAt(float2 texel, float2 slope, uint2 near)
     // Screen heights stretched to the ground distances they show.
     const float2 ground = float2(1.0, lighting.w);
     const float2 at = texel * ground;
+    // The unit the texel shows (its feet, FeetAt's) takes a spotlight's light where it stands.
+    float feet = NoFeet;
+
+    if (SpotlightsNear(near))
+    {
+        feet = FeetAt(texel);
+    }
 
     for (uint word = 0; word < LightWords; ++word)
     {
@@ -366,11 +544,27 @@ float3 LightAt(float2 texel, float2 slope, uint2 near)
             const uint i = word * LightWordBits + firstbitlow(bits);
             const float4 ends = lights[i * 3];
             const float4 shape = lights[i * 3 + 1];
+            const float4 color = lights[i * 3 + 2];
+            const float2 spot = shape.zw * ground;
+            const bool spotlight = color.w > 0.0 && any(spot != 0.0);
             const float2 a = ends.xy * ground;
             const float2 ab = ends.zw * ground - a;
             const float length2 = dot(ab, ab);
             const float t = length2 > 0.0 ? saturate(dot(at - a, ab) / length2) : 0.0;
-            const float2 off = at - (a + ab * t);
+            float2 off = at - (a + ab * t);
+            // A unit the texel shows takes a spotlight's light where it stands: over its feet, as high as the texel is
+            // above them, not on the ground the screen shows behind it; the side of it the camera sees, by where the
+            // lamp is (SideShown).
+            float up = 0.0;
+            float side = 1.0;
+
+            if (spotlight && feet != NoFeet)
+            {
+                off = float2(texel.x, feet) * ground - a;
+                up = feet - texel.y;
+                side = SideShown(off);
+            }
+
             const float d2 = dot(off, off);
             const float reach2 = max(shape.y * shape.y, 1.0);
 
@@ -381,16 +575,20 @@ float3 LightAt(float2 texel, float2 slope, uint2 near)
                 const float fade = 1.0 - x2 * x2;
                 // The slope's rise toward the light (off points away from it), at the light's angle above the ground.
                 const float facing = max(1.0 + lightFacing.x * dot(slope, off) * rsqrt(d2 + soft * soft), 0.0);
-                const float4 color = lights[i * 3 + 2];
-                const float2 spot = shape.zw * ground;
                 float pool = soft * soft / (d2 + soft * soft);
 
-                if (color.w > 0.0 && any(spot != 0.0))
+                if (spotlight)
                 {
-                    pool = SpotPool(off, shape.x, spot, color.w);
+                    pool = SpotPool(off, shape.x, spot, color.w, up);
+
+                    // The units in its way hide it behind them, each but from itself.
+                    if (pool > 0.0)
+                    {
+                        pool *= 1.0 - BeamBlocked(i, texel, up, feet);
+                    }
                 }
 
-                sum += color.rgb * (fade * fade * pool * facing);
+                sum += color.rgb * (fade * fade * pool * facing * side);
             }
         }
     }
@@ -513,11 +711,6 @@ float3 Lit(float3 world, float selfLit, float2 texel, float2 slope, float sunRel
 float4 Faded(float3 color)
 {
     return float4(saturate(color - fade.x), 1.0);
-}
-
-float4 TexelAt(Texture2D<float4> tex, SamplerState samp, float2 texel, float2 size)
-{
-    return tex.SampleLevel(samp, (texel + 0.5) / size, 0);
 }
 
 // The GPU world between its texels (from its four nearest, blended), clamped to the surface.
@@ -1188,10 +1381,6 @@ static const float3 WetSky = float3(168.0, 192.0, 216.0) / 255.0;
 static const float WetSkyGain = 1.25;
 static const float SkySheetLow = 0.4;
 static const float SkySheetSpan = 1.2;
-// The index target's alpha above GroundMark: HD ground where its relief map drew; below it, what stands on the ground:
-// above CanopyMark a forest's canopy (its sway mark), else 0.
-static const float GroundMark = 0.5;
-static const float CanopyMark = 0.125;
 // The sheen: the way to the eye (down the picture and up: its height over the ground's sine is tan 30 degrees),
 // water's reflectance head on, the light of the sky below the horizon (the ground mirrored); from each gloss (against
 // flat ground's) up, the share of wetLook.x wet ground takes, in hard steps.

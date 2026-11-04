@@ -554,6 +554,65 @@ namespace
         return reaching;
     }
 
+    /// <summary>
+    /// A unit's sprite may stand this many times its box (MCAppearance's bounds, the original's) above its feet and to
+    /// each side: the composite looks for its own pixels (their feet, MCRenderer::StandingScope) within it.
+    /// </summary>
+    constexpr float UnitBoxTaller = 2.6f;
+    constexpr float UnitBoxWider = 2.0f;
+
+    /// <summary>
+    /// Each spotlight's units (MCSceneLight::Units), of <paramref name="casters"/> (along the ground, a screen height
+    /// <paramref name="aspect"/> of one; the lamp's own unit, within its half width of the ground under the lamp, left
+    /// out): those in its beam's way (ahead of its lamp, within its reach, their bodies within the beam's spread there),
+    /// the nearest its lamp first.
+    /// </summary>
+    void FindUnits(std::span<MCSceneLight> lights, std::span<const State::Caster> casters, float aspect)
+    {
+        std::vector<std::pair<float, const State::Caster*>> inWay;
+
+        for (MCSceneLight& light : lights)
+        {
+            const float aimX = light.SpotX;
+            const float aimY = light.SpotY / aspect;
+            const float aim = std::hypot(aimX, aimY);
+
+            if (!IsSpot(light) || aim <= 0.0f)
+            {
+                continue;
+            }
+
+            const float wayX = aimX / aim;
+            const float wayY = aimY / aim;
+            const float spread = std::sqrt(std::max(1.0f - light.SpotCos * light.SpotCos, 0.0f)) / light.SpotCos;
+            inWay.clear();
+
+            for (const State::Caster& caster : casters)
+            {
+                const float dx = caster.X - light.X0;
+                const float dy = (caster.Y - light.Y0) / aspect;
+                const float along = dx * wayX + dy * wayY;
+                const float across = std::abs(dx * wayY - dy * wayX);
+
+                if (std::hypot(dx, dy) > caster.HalfWidth && along > caster.HalfWidth && along < light.Reach &&
+                    across <= along * spread + caster.HalfWidth * CasterBody)
+                {
+                    inWay.emplace_back(along, &caster);
+                }
+            }
+
+            const size_t taken = std::min(inWay.size(), light.Units.size());
+            std::ranges::partial_sort(inWay, inWay.begin() + static_cast<std::ptrdiff_t>(taken), {},
+                                      &std::pair<float, const State::Caster*>::first);
+
+            for (size_t k = 0; k < taken; ++k)
+            {
+                const State::Caster& caster = *inWay[k].second;
+                light.Units[k] = {caster.X, caster.Y, caster.HalfWidth * UnitBoxWider, caster.Height * UnitBoxTaller};
+            }
+        }
+    }
+
     /// <summary>Adds to <paramref name="sum"/> what <paramref name="light"/> adds to LightInAir's.</summary>
     void AddInAir(std::array<float, 3>& sum, const MCSceneLight& light, float x, float y, float height, float aspect)
     {
@@ -981,8 +1040,8 @@ auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& 
         return;
     }
 
-    // Its feet on the ground: a jumping unit's are its altitude lower on the screen.
-    const float feet = appearance.ScreenPos.Y + AltitudeOf(position);
+    // HD lighting is on: its feet are known.
+    const float feet = FeetRow(appearance, position).value_or(appearance.ScreenPos.Y);
     const float halfWidth = (appearance.LowerRight.X - appearance.UpperLeft.X) * 0.5f;
     const float height = feet - appearance.UpperLeft.Y;
 
@@ -990,6 +1049,12 @@ auto MCSceneLights::AddCaster(const MCAppearance& appearance, const MCVector3D& 
     {
         state.Casters.push_back({appearance.ScreenPos.X, feet, halfWidth, height});
     }
+}
+
+auto MCSceneLights::FeetRow(const MCAppearance& appearance, const MCVector3D& position) -> std::optional<float>
+{
+    // Its feet on the ground: a jumping unit's are its altitude lower on the screen.
+    return GHdLighting == HdLightingOff ? std::nullopt : std::optional(appearance.ScreenPos.Y + AltitudeOf(position));
 }
 
 auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
@@ -1140,6 +1205,15 @@ auto MCSceneLights::AddShadows() -> void
     }
 
     const float aspect = GroundAspect();
+    // Drawn by the GPU, a unit's pixels are known by its feet (MCRenderer::StandingScope): a spotlight is hidden behind
+    // the units in its way by their own pixels (the composite's), not wedges.
+    const bool unitsKnown = MCRenderer::GpuDrawing() == MCGpuDrawing::On;
+
+    if (unitsKnown)
+    {
+        FindUnits(state.Adding, state.Casters, aspect);
+    }
+
     std::vector<MCShadowCommand> shadows;
     std::vector<std::pair<const MCSceneLight*, Reaching>> reaching;
 
@@ -1162,8 +1236,10 @@ auto MCSceneLights::AddShadows() -> void
 
         for (const auto& [light, reaches] : reaching)
         {
-            // None from a faint light, or one within the unit's sprite (its own fire, its guns' flashes, its headlight).
-            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth)
+            // None from a faint light, one within the unit's sprite (its own fire, its guns' flashes, its headlight), or a
+            // spotlight whose units' shadows are the composite's.
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth ||
+                (unitsKnown && IsSpot(*light)))
             {
                 continue;
             }

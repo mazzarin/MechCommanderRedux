@@ -631,6 +631,9 @@ namespace
     /// <summary>How far a <see cref="MCRenderer::GroundFillScope"/>'s draws are filled in, none outside one.</summary>
     std::optional<float> GroundFillDrawn;
 
+    /// <summary>The row a <see cref="MCRenderer::StandingScope"/>'s unit stands on, none outside one.</summary>
+    std::optional<float> StandingDrawn;
+
     /// <summary>A window's pixels as a span (none for a window without them).</summary>
     std::span<uint8_t> WindowPixels(const MCWindow& window)
     {
@@ -882,6 +885,21 @@ MCRenderer::GroundFillScope::~GroundFillScope()
 std::optional<float> MCRenderer::DrawingGroundFill()
 {
     return GroundFillDrawn;
+}
+
+MCRenderer::StandingScope::StandingScope(std::optional<float> feet) : _Was(StandingDrawn)
+{
+    StandingDrawn = feet;
+}
+
+MCRenderer::StandingScope::~StandingScope()
+{
+    StandingDrawn = _Was;
+}
+
+std::optional<float> MCRenderer::DrawingStanding()
+{
+    return StandingDrawn;
 }
 
 void MCRenderer::AddFrameSurface(std::shared_ptr<MCWindow> window, bool kept)

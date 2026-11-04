@@ -61,7 +61,10 @@ namespace
         float Shake[4] = {};
         /// <summary>The world's own light's colour (times Lighting's), and how much of their colour its colours lose.</summary>
         float AmbientLook[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        /// <summary>How much the spotlights' beams show in the air (0 none).</summary>
+        /// <summary>
+        /// How much the spotlights' beams show in the air (0 none), how much of a spotlight's light the units in its way
+        /// hide behind them, and the texture's pixels a window row (a unit's feet, composite.pshader's FeetAt).
+        /// </summary>
         float AirBeams[4] = {};
         /// <summary>
         /// How steeply the HD ground's relief maps stand its bumps (0: lit by its brightness), and how much of the sun's
@@ -126,6 +129,11 @@ namespace
         float Heat[MCSceneLights::MaxHeat][4] = {};
         /// <summary>Three a light: the ground under it, its height and reach, its colour.</summary>
         float Lights[MCSceneLights::MaxLights * 3][4] = {};
+        /// <summary>
+        /// MCSceneLights::LightUnits a light: the units in a spotlight's way (MCSceneLight::Units), each's feet, its box's
+        /// half width and its height (0: none).
+        /// </summary>
+        float LightUnits[MCSceneLights::MaxLights * MCSceneLights::LightUnits][4] = {};
     };
 
     /// <summary>
@@ -449,6 +457,8 @@ namespace
             std::ranges::copy(lighting.AmbientTint, uniforms.AmbientLook);
             uniforms.AmbientLook[3] = lighting.AmbientGrey;
             uniforms.AirBeams[0] = lighting.AirBeams;
+            uniforms.AirBeams[1] = lighting.Shadow;
+            uniforms.AirBeams[2] = down;
             uniforms.ReliefLook[0] = MCSceneLights::ReliefMapsOn() ? lighting.ReliefMaps : 0.0f;
             uniforms.ReliefLook[1] = lighting.CanopyRelief;
         }
@@ -605,6 +615,16 @@ namespace
             uniforms.Lights[i * 3 + 2][1] = light.Green;
             uniforms.Lights[i * 3 + 2][2] = light.Blue;
             uniforms.Lights[i * 3 + 2][3] = light.SpotCos;
+
+            for (size_t k = 0; k < light.Units.size(); ++k)
+            {
+                const MCSceneUnitBox& unit = light.Units[k];
+                const std::span<float, 4> shown = uniforms.LightUnits[i * MCSceneLights::LightUnits + k];
+                shown[0] = (unit.X + 0.5f) * across;
+                shown[1] = (unit.Y + 0.5f) * down;
+                shown[2] = unit.HalfWidth * across;
+                shown[3] = unit.Height * down;
+            }
 
             // A spotlight: one aimed (composite.pshader's AirBeamsAt), with an angle its beam fades out at.
             if (!(light.SpotCos <= 0.0f) &&

@@ -230,6 +230,13 @@ static const uint GroundFillShift = 26;
 static const uint GroundFillMost = 63;
 static const float FilledMarkFrom = 0.52;
 static const float FilledMarkSpan = 0.2;
+// Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet stand
+// on in op.y's bits from FeetShift (MCVulkanRenderer's FeetBits: a quarter row a step, 1 more; 0 none), which its
+// pixels write in the index target's green (the high byte) and blue, as its HD frame's mark pass does (its pipeline
+// writing those too); everything else writes 0 there. The composite lights the unit's pixels where it stands, and
+// knows them in a beam's way (composite.pshader's FeetAt). Ground's green and blue are its slopes, told by the alpha.
+static const uint FeetShift = 16;
+static const uint BitsPerByte = 8;
 // A relief map's flat slope, as stored (the composite's ReliefFlat).
 static const float ReliefFlat = 128.0;
 // A smooth edge's coverage (the source pixels' smoothed, 0..1) ramps over this range, about a drawn pixel wide.
@@ -1943,6 +1950,16 @@ Output main(Input input)
     {
         const float filled = (float)((input.op.x >> GroundFillShift) & GroundFillMost) / (float)GroundFillMost;
         output.index.gba = float3(ReliefFlat / 255.0, ReliefFlat / 255.0, FilledMarkFrom + FilledMarkSpan * filled);
+    }
+
+    // Only the kinds MCVulkanRenderer's CarriesFeet gives feet: other kinds' colours fill their bits.
+    const uint feet = input.op.y >> FeetShift;
+    const uint kind = input.op.x & 15u;
+
+    if (feet != 0 && (kind == KindTexture || kind == KindTexelWalk || kind == KindHd || kind == KindHdSmooth ||
+                      kind == KindHdMap))
+    {
+        output.index.gb = float2(feet >> BitsPerByte, feet & 255u) / 255.0;
     }
 
     return output;

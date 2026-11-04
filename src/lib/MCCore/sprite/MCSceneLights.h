@@ -17,6 +17,24 @@ struct MCPane;
 struct MCWindow;
 
 /// <summary>
+/// Port-only (HD lighting's headlights): a unit by a spotlight's beam, in the world window's pixels: its feet, and the
+/// box its sprite may cover from them (half its width each way, its height up). A height of 0: none.
+/// </summary>
+struct MCSceneUnitBox
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    float HalfWidth = 0.0f;
+    float Height = 0.0f;
+};
+
+namespace MCSceneLights
+{
+    /// <summary>The most units a spotlight takes account of (MCSceneLight::Units; composite.pshader's LightUnits).</summary>
+    inline constexpr size_t LightUnits = 6;
+}
+
+/// <summary>
 /// Port-only (HD lighting, PREFS "HDLighting"): a light the world view casts this frame. The original draws a light's
 /// glow (MCLight) and a laser's beam but lights nothing around them; the presenter's composite (composite.pshader) adds
 /// these lights to the world under the interface, so the ground and the units by a shot, a fire or an explosion take
@@ -47,6 +65,11 @@ struct MCSceneLight
     float SpotY = 0.0f;
     /// <summary>A spotlight's beam: the cosine of the angle off its middle at which it has faded out (half its width).</summary>
     float SpotCos = 0.0f;
+    /// <summary>
+    /// A spotlight's units in its beam's way (composite.pshader's lightUnits), the nearest its lamp first: each hides the
+    /// ground and the air behind it from the lamp by its own drawn pixels (BeamBlocked).
+    /// </summary>
+    std::array<MCSceneUnitBox, MCSceneLights::LightUnits> Units{};
 };
 
 /// <summary>Port-only (HD lighting): the air over a fire, which shimmers (composite.pshader's heat haze).</summary>
@@ -394,6 +417,13 @@ namespace MCSceneLights
     /// placed itself on the screen (its bounds, its owner's place), its owner at <paramref name="position"/>.
     /// </summary>
     void AddCaster(const MCAppearance& appearance, const MCVector3D& position);
+
+    /// <summary>
+    /// The window row a unit's feet stand on (<paramref name="appearance"/> as it last placed itself on the screen, its
+    /// owner at <paramref name="position"/>; a jumping unit's ground under it), which its parts are drawn standing on
+    /// (MCRenderer::StandingScope); none without HD lighting.
+    /// </summary>
+    std::optional<float> FeetRow(const MCAppearance& appearance, const MCVector3D& position);
 
     /// <summary>
     /// At night (<see cref="TimeOfDay"/>), a unit's headlight (a mech's, a vehicle's): a warm spotlight on the ground

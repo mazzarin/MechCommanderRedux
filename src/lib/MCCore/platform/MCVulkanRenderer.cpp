@@ -168,6 +168,31 @@ namespace
     constexpr uint32_t GroundFill = 1u << 25;
     constexpr uint32_t GroundFillShift = 26;
     constexpr uint32_t GroundFillMost = 63;
+    /// <summary>
+    /// Port-only (HD lighting's headlights): a unit's draw (MCRenderer::StandingScope) carries the window row its feet
+    /// stand on in its colour's bits from FeetShift, FeetSteps a row and 1 more (0: none, so at most FeetMost), which
+    /// its pixels write with their indices (shaders/draw.pshader's FeetShift). Only the kinds whose colour leaves those
+    /// bits free (CarriesFeet) carry it.
+    /// </summary>
+    constexpr uint32_t FeetShift = 16;
+    constexpr float FeetSteps = 4.0f;
+    constexpr int32_t FeetMost = 0xffff;
+
+    /// <summary>Whether a draw of op <paramref name="op"/> carries a unit's feet (FeetShift): a shape's or an HD frame's.</summary>
+    bool CarriesFeet(uint32_t op)
+    {
+        const uint32_t kind = op & KindMask;
+        return (kind == KindTexture || kind == KindTexelWalk || kind == KindHd || kind == KindHdSmooth ||
+                kind == KindHdMap) &&
+               (op & SunShadowDraw) == 0;
+    }
+
+    /// <summary>The bits a draw carries for feet standing on window row <paramref name="feet"/> (FeetShift).</summary>
+    uint32_t FeetBits(float feet)
+    {
+        const auto code = static_cast<int32_t>(std::lround(feet * FeetSteps)) + 1;
+        return static_cast<uint32_t>(std::clamp(code, 1, FeetMost)) << FeetShift;
+    }
 
     /// <summary>
     /// Sways for an HD frame's draws when forests sway (GHdSway) and it is a forest's (a frame whose painted shadow the
@@ -989,11 +1014,14 @@ std::expected<std::unique_ptr<MCVulkanRenderer>, std::string> MCVulkanRenderer::
         }
 
         // Port-only: a forest's HD frame (HDSway) writes the sway mark (the indices' alpha) alone, as an HD frame's
-        // mark pass (indexOnly too) writes what stands on the ground.
+        // mark pass (indexOnly too) writes what stands on the ground, with the feet of the unit it is (green and blue,
+        // shaders/draw.pshader's FeetShift; none for anything else).
         if (marks)
         {
             targets[1].blend_state.enable_color_write_mask = true;
-            targets[1].blend_state.color_write_mask = SDL_GPU_COLORCOMPONENT_A;
+            targets[1].blend_state.color_write_mask =
+                indexOnly ? SDL_GPU_COLORCOMPONENT_G | SDL_GPU_COLORCOMPONENT_B | SDL_GPU_COLORCOMPONENT_A
+                          : SDL_GPU_COLORCOMPONENT_A;
         }
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
@@ -1473,6 +1501,11 @@ bool MCVulkanRenderer::Add(uint16_t surfaceIndex, SourceKind source, uint32_t so
         const auto filled =
             static_cast<uint32_t>(std::lround(std::clamp(*fill, 0.0f, 1.0f) * static_cast<float>(GroundFillMost)));
         op |= GroundFill | filled << GroundFillShift;
+    }
+
+    if (const std::optional<float> feet = MCRenderer::DrawingStanding(); feet.has_value() && CarriesFeet(op))
+    {
+        color |= FeetBits(*feet);
     }
 
     draw[8] = static_cast<int32_t>(op);

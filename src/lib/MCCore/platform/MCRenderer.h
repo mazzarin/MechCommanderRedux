@@ -848,6 +848,31 @@ public:
     /// <summary>How far the draws now are filled in (<see cref="GroundFillScope"/>), none outside one.</summary>
     static std::optional<float> DrawingGroundFill();
 
+    /// <summary>
+    /// Port-only (HD lighting's headlights): while one made with a row lives, the shape draws are a unit's whose feet
+    /// stand on that row of the window drawn on (its pixels, a jumping unit's ground under it): the hardware renderer
+    /// writes it with their indices, for the composite to light their pixels where the unit stands and to know them in
+    /// a beam's way (nothing in software). One made with none changes nothing.
+    /// </summary>
+    class StandingScope
+    {
+    public:
+        /// <summary>Starts drawing a unit standing on row <paramref name="feet"/> (none: as they are).</summary>
+        explicit StandingScope(std::optional<float> feet);
+
+        /// <summary>Draws as before the scope.</summary>
+        ~StandingScope();
+
+        StandingScope(const StandingScope&) = delete;
+        StandingScope& operator=(const StandingScope&) = delete;
+
+    private:
+        std::optional<float> _Was;
+    };
+
+    /// <summary>The row the unit drawn now stands on (<see cref="StandingScope"/>), none outside one.</summary>
+    static std::optional<float> DrawingStanding();
+
     // Frame surfaces ----------------------------------------------------------------------------------------------
 
     /// <summary>

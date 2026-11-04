@@ -195,6 +195,9 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
 
     const auto depth = static_cast<int32_t>(static_cast<float>(depthFixup) - ScreenPos.Y);
     ElementList().OpenGroup(depth, false);
+    // Port-only (HD lighting's headlights): a ground vehicle's parts stand on its feet, as it casts shadows (below).
+    const std::optional<float> feet =
+        objectClass == MCObjectClass::GroundVehicle ? MCSceneLights::FeetRow(*this, obj->Position) : std::nullopt;
     // Port-only (sun shadows): the parts cast as the vehicle's own shadow at dusk.
     std::array<MCSceneLights::MCSunShadowPart, std::tuple_size_v<decltype(shapes)>> sunShadow{};
 
@@ -225,8 +228,10 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
             fadeTable = GamePalette().GetFadeTable(FadeTableIndex);
         }
 
-        ElementList().Add(ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X - offsetX,
-                                                           ScreenPos.Y - offsetY, CurrentFrame[part], 0, fadeTable, 0));
+        auto& element = ElementList().Make<MCVfxElement>(shape->FrameList(), ScreenPos.X - offsetX,
+                                                         ScreenPos.Y - offsetY, CurrentFrame[part], 0, fadeTable, 0);
+        element.Feet = feet;
+        ElementList().Add(element);
         sunShadow[static_cast<size_t>(part)] = {
             shape->FrameList(), ScreenPos.X - offsetX, ScreenPos.Y - offsetY, CurrentFrame[part], 0, 0};
     }

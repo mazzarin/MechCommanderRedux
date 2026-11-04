@@ -21,7 +21,7 @@ Coming soon: one download with the app, MechCommander Gold and the HD pack (abou
 permission of Atari, its licence holder. Without the pack the units, ground, menus, movies and sound are the
 original's; the light, weather and effects show all the same.
 
-**Windows:** not released yet. Redux HD builds and passes its tests on Windows with every change
+**Windows:** not released yet. Redux HD builds and passes its tests on Windows
 ([Actions](https://github.com/mazzarin/MechCommanderRedux/actions/workflows/windows.yml)). MechCommander Redux's own
 [Windows download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest) has none of Redux HD's additions.
 
@@ -457,8 +457,9 @@ macOS too. Its version comes from `version.json` and git, as on Windows.
 **Redux HD:** the Mac app is released on
 [this fork's Releases page](https://github.com/mazzarin/MechCommanderRedux/releases), each with a higher build than
 the last, beside `appcast.xml`, the feed every copy checks for a newer version
-([Sparkle](https://sparkle-project.org); the updates are signed with a key kept off the repository). Each push of this
-branch builds and tests Redux HD on Windows (`.github/workflows/windows.yml`), keeping the exes for a week.
+([Sparkle](https://sparkle-project.org); the updates are signed with a key kept off the repository). This branch's
+commits are checked on Windows by pushing them to `windows-HD`, which builds and tests Redux HD there
+(`.github/workflows/windows.yml`), keeping the exes for a week.
 
 MechCommander Redux's own releases come from the **Release** workflow (Actions → Release → Run workflow), which builds
 `main`, runs the tests, tags the commit `v<version>` and publishes the Windows zip, its symbols and the Mac app on

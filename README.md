@@ -1,38 +1,43 @@
-# MechCommander Redux
+# MechCommander Redux HD
 
-An unofficial recreation of **MechCommander Gold** (FASA Interactive / MicroProse, 1999) for modern 64-bit systems.
+**MechCommander Gold** (FASA Interactive / MicroProse, 1999) for today's computers, with sharper art, light, weather
+and sound.
 
-MechCommander Redux rebuilds MechCommander Gold's game code as 64-bit C++. The original game was a 32-bit Win32 program
-built on DirectDraw, DirectSound, DirectPlay and Smacker video. Redux keeps the game's own classes, functions and logic,
-rewritten as modern C++, and replaces that Windows/DirectX layer with SDL3.
+Redux HD is a build of [MechCommander Redux](https://github.com/RevenantBob/MechCommanderRedux), RevenantBob's rebuild
+of the original game's code as 64-bit C++ on SDL3. It plays the original's missions by the original's rules, and adds
+an HD pack and options that change the look (and, where marked, the play). Every addition is an option: ORIGINAL, on
+the HD OPTIONS page, puts the original's look back.
 
-It is not an emulator and not a patch to the original executable. It is a from-scratch reconstruction that reads the
-data files from your own copy of MechCommander Gold.
+What only Redux HD has is marked **Redux HD** here and in [CHANGES.md](CHANGES.md). The rest is MechCommander Redux's,
+the same as [its own README](https://github.com/RevenantBob/MechCommanderRedux#readme) describes.
 
 ## Download
 
-**[⬇ Download the latest version for Windows (64-bit)](https://github.com/RevenantBob/MechCommanderRedux/releases/latest/download/MechCommanderRedux-win-x64.zip)**
+**Mac** (Apple silicon, macOS 14 or later): **[⬇ the latest version](https://github.com/mazzarin/MechCommanderRedux/releases/latest)**,
+the app alone (about 7 MB). It plays your own copy of MechCommander Gold (see [Installing](#installing)). Once
+installed, it updates itself: when a new version is out, UPDATE on the main menu turns amber.
 
-**[⬇ Download the latest version for Mac (Apple silicon)](https://github.com/RevenantBob/MechCommanderRedux/releases/latest/download/MechCommanderRedux-mac-arm64.zip)**:
-`MechCommander Redux.app`, which finds your copy of the game by itself (see `INSTALL-Mac.txt` in the zip).
+Coming soon: one download with the app, MechCommander Gold and the HD pack (about 6 GB), the game included with the
+permission of Atari, its licence holder. Without the pack the units, ground, menus, movies and sound are the
+original's; the light, weather and effects show all the same.
 
-This is a zip file with the game (`MCRedux.exe`), the Mission Editor (`MCEditor.exe`) and instructions. You also need
-your own copy of MechCommander Gold: see [Running the Game](#running-the-game) and [Mission Editor](#mission-editor)
-for how to set it up. To see what changed in each version, or to download an older one, visit the
-[releases page](https://github.com/RevenantBob/MechCommanderRedux/releases).
+**Windows:** not released yet. Redux HD builds and passes its tests on Windows with every change
+([Actions](https://github.com/mazzarin/MechCommanderRedux/actions/workflows/windows.yml)). MechCommander Redux's own
+[Windows download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest) has none of Redux HD's additions.
 
 ## Table of Contents
 
-- [MechCommander Redux](#mechcommander-redux)
+- [MechCommander Redux HD](#mechcommander-redux-hd)
   - [Download](#download)
-  - [Table of Contents](#table-of-contents)
-    - [Highlights](#highlights)
-    - [Planned Features](#planned-features)
+  - [What Redux HD Adds](#what-redux-hd-adds)
+  - [Coming](#coming)
+  - [Reports](#reports)
   - [Changes, Bug Fixes and Known Issues](CHANGES.md)
   - [Legal Notice](#legal-notice)
   - [Running the Game](#running-the-game)
     - [Installing](#installing)
     - [Command-Line Options](#command-line-options)
+    - [Premade Matches](#premade-matches)
     - [Saves and Settings](#saves-and-settings)
   - [Mission Editor](#mission-editor)
     - [What You Need](#what-you-need)
@@ -45,61 +50,83 @@ for how to set it up. To see what changed in each version, or to download an old
   - [Building](#building)
     - [Requirements](#requirements)
     - [Compiling](#compiling)
+    - [Compiling on macOS](#compiling-on-macos)
+    - [Releases](#releases)
     - [Technologies](#technologies)
     - [Project Layout](#project-layout)
-  
-### Highlights
 
-- Faithful game logic, rebuilt function by function from the original game.
-- Renders at your window's resolution during missions (640x480 minimum) and scales the menu screens to fit.
-- Multiplayer over TCP/UDP, in place of DirectPlay: LAN games are found automatically, and internet games connect by
-  `host:port` (default port 28800).
-- Windows first, with Linux planned.
-- Many bugs in the *original* game were fixed in this recreation. See [CHANGES.md](CHANGES.md) for the changes, bug
-  fixes and known issues.
+## What Redux HD Adds
 
-### Planned Features
+Its options are on by default, each a row on the HD OPTIONS page (PREFERENCES, then OPTIONS under HD).
 
-These are presented in no particular order.
+- **HD art.** The units, buildings, ground, effects, menus and movies, sharper: made larger from the original's own
+  pictures by upscaling models, and checked against them.
+- **Light.** Shots, fires and explosions light the battlefield around them. Dusk darkens a mission, and night darkens
+  it further, the mechs' and vehicles' headlights on. Shadows darken the ground instead of solid black, the sun shows
+  the ground's bumps and slopes, clouds' shadows drift over the battlefield, and forests sway in the wind.
+- **Weather.** Rain, downpours with thunder and lightning, light snow, snow and blizzards. Puddles gather and feet
+  splash in them, the rain catches the lights at dusk and night, and the snow settles as the mission goes on. A
+  mission has the weather its map maker set, or every mission has the weather you choose.
+- **Effects.** Flecks, debris, smoke, embers, splashes and wakes. The biggest blasts shake the screen. Mechs leave
+  footprints where they step, and more prints and craters stay.
+- **Mechs.** They turn smoothly, and a mech held up mid-stride keeps its stride. BRAKING (it changes play) has them
+  brake to a halt through the stopping art the original drew, instead of stopping dead.
+- **Sound.** The HD pack's music, effects and voices, sharper; rain and thunder.
+- **Multiplayer.** The host's MATCH OPTIONS: the weather and time of day everyone plays in (in a match, both change
+  sight, and the weather aim, footing, fires and vehicles' speed), braking, and artillery, probes, sensors and mines on
+  or off. A player whose computer drops out leaves within half a minute.
+- **Mission Editor.** Mission > Time of Day and Mission > Weather.
+- **Menus.** UPDATE on the main menu (the Mac app updates itself), and INTERFACE SIZE on the Preferences screen.
+- **Fixes.** Missiles and cannon shots that hit fly all the way to their target at any frame rate (the original's check
+  holds at 15 frames a second). See [CHANGES.md](CHANGES.md).
 
-- Complete C++23 Integration (Finish modernization object and memory management, code structure, etc.)
-- Complete Hardware Rendering
-  - The original game used software rendering to an offscreen buffer and copied this buffer to the DirectDraw surface. This behavior is still how rendering functions.
-- Port editor to modern C++.
-- Matchmaking/lobby service implementation.
-- Update on menus to allow full screen rendering on different resolutions.
-  - The original game menus were 640x480. Higher resolutions only took over during gameplay.
+## Coming
 
+- The one download per platform: the app, the game and the HD pack.
+- Windows: a release that updates itself, as the Mac's does.
+- Updates to the HD pack, and new missions and maps, downloaded as they change.
 
+## Reports
+
+**Redux HD.** The game can send short reports of how it runs, to make it run well on more computers. It tells you the
+first time it starts (or, where the law requires it, asks you first); REPORTS, on the HD OPTIONS page, turns them off.
+
+- **What:** the computer (its model, processor, graphics, memory and system version), the window and settings, how
+  smoothly missions and matches ran, and crashes with what led up to them.
+- **When:** after each multiplayer match, and after missions: the first, then at most once a week.
+- **Anonymous:** under a random ID your copy of the game makes, with no names, paths, saves, chat or addresses. The
+  server keeps the country a report came from, never the IP address.
 
 ## Legal Notice
 
-MechCommander Redux is an unofficial, non-commercial fan project. It is not affiliated with, endorsed by, or
-sponsored by Microsoft, FASA Interactive, MicroProse, Catalyst Game Labs, or any other holder of the MechCommander,
-BattleTech or MechWarrior trademarks and copyrights.
-
-I do not own the rights to MechCommander Gold or any of its content. MechCommander, BattleTech, MechWarrior and all
+MechCommander Redux and Redux HD are unofficial, non-commercial fan projects. They are not affiliated with, endorsed
+by, or sponsored by Microsoft, Atari, FASA Interactive, MicroProse, Catalyst Game Labs, or any other holder of the
+MechCommander, BattleTech or MechWarrior trademarks and copyrights. MechCommander, BattleTech, MechWarrior and all
 related names, logos and artwork are trademarks or registered trademarks of their respective owners.
 
 This repository contains no game data: no art, audio, video, maps, missions or executables from MechCommander Gold.
-You must supply your own legally obtained copy of the game to play.
+The coming full download includes MechCommander Gold's files free of charge, with the permission of Atari, the game's
+licence holder. The app alone plays your own copy.
 
-**Please do not contact me asking for a copy of the game.** I cannot and will not provide one.
+The HD pack is free and for non-commercial use only: it may not be sold (the licence of NVIDIA's model that sharpened
+the sound effects requires this). The download credits the models that made it.
 
 ## Running the Game
 
-You need a legitimate installation of **MechCommander Gold**. Redux contains none of the game's data, and only reads
-from your installation; it never modifies it.
+The app alone needs a legitimate installation of **MechCommander Gold**. It only reads from your installation; it never
+modifies it.
 
 ### Installing
 
-1. Download the latest MechCommander Redux zip file ([direct link](#download)).
-2. Extract it. Either:
-   - extract it into your MechCommander Gold folder (the one containing `SYSTEM.CFG`), then run `MCRedux.exe`; or
-   - extract it anywhere you like, and point it at your MechCommander Gold folder with `--data` (see below).
+On a Mac, unzip the [download](#download), drag `MechCommander Redux.app` to your Applications folder and open it. The
+first time, macOS stops it, as it isn't signed by an Apple developer account: open System Settings → Privacy &
+Security and click **Open Anyway** (see `INSTALL-Mac.txt` in the zip).
 
-On a Mac, drag `MechCommander Redux.app` to your Applications folder and open it (the first time, allow it under
-System Settings → Privacy & Security; see `INSTALL-Mac.txt`).
+On Windows, [build it](#building), then either put `MCRedux.exe` and `SDL3.dll` in your MechCommander Gold folder (the
+one containing `SYSTEM.CFG`), or run it from anywhere with `--data` (see below).
+
+**Redux HD:** the HD pack is a folder named `HD` in your game folder. One in your user folder (see
+[Saves and Settings](#saves-and-settings)) is used instead, if there is one.
 
 Redux looks for the game's data in the first of these folders that contains `SYSTEM.CFG`:
 
@@ -163,13 +190,13 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-team1rp <n>`, `-team2rp <n>`        | Resource points for **each player** of the team (the session screen's figure is a team's pool, shared out among its players). Without them the mission file's figures are kept. |
 | `-team1tech <is\|clan>`, `-team2tech <is\|clan>` | The team's tech base. Without them the mission's are kept. |
 | `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
-| `-matchweather <weather>`             | The weather every player sees: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. |
-| `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
-| `-matchbraking <on\|off>`             | Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
-| `-matchartillery <on\|off>`           | Off: commanders get no artillery strikes. On (the original's) without it. |
-| `-matchprobes <on\|off>`              | Off: commanders get no sensor probes or camera drones. On without it. |
-| `-matchsensors <on\|off>`             | Off: units find their foes by sight alone: no unit's or sensor tower's sensors (a commander's sensor probe still senses). On without it. |
-| `-matchmines <on\|off>`               | Off: no mines: the map's minefields are cleared and mine layers lay none. On without it. |
+| `-matchweather <weather>`             | **Redux HD.** The match's weather: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. It changes play as [A Mission's Weather](#a-missions-weather) says. |
+| `-matchtime <time>`                   | **Redux HD.** The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
+| `-matchbraking <on\|off>`             | **Redux HD.** Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
+| `-matchartillery <on\|off>`           | **Redux HD.** Off: commanders get no artillery strikes. On (the original's) without it. |
+| `-matchprobes <on\|off>`              | **Redux HD.** Off: commanders get no sensor probes or camera drones. On without it. |
+| `-matchsensors <on\|off>`             | **Redux HD.** Off: units find their foes by sight alone: no unit's or sensor tower's sensors (a commander's sensor probe still senses). On without it. |
+| `-matchmines <on\|off>`               | **Redux HD.** Off: no mines: the map's minefields are cleared and mine layers lay none. On without it. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
 player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
@@ -177,7 +204,7 @@ left on the "Waiting for Players" screen with a log message and can press Go to 
 its own points and tech bases. The game checks only that each player has a file of the mission's name, not that it is the
 same file, so a launcher should check the files match.
 
-The match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER CHAT:
+**Redux HD.** The match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER CHAT:
 WEATHER, TIME OF DAY, BRAKING, ARTILLERY, PROBES, SENSORS and MINES), and a host started with them but no `-matchmap` opens the
 session screen with them chosen. Each is played only if every player's game has it: every build says what it has when
 the session screen opens (and when asked for a mission file), the host passes on what each said, and while a player's
@@ -199,6 +226,10 @@ the old components the original needed: no MFC 4.2 DLLs, no Microsoft Jet or DAO
 runtime, and nothing to register with Windows. Everything it needs is built into the one `.exe` file.
 
 The editor is optional. You don't need it to play the game.
+
+**Redux HD:** its editor adds [Mission > Time of Day](#a-missions-time-of-day) and
+[Mission > Weather](#a-missions-weather). Like the rest of Redux HD on Windows, it's built from source for now (see
+[Building](#building)); MechCommander Redux's own editor has neither.
 
 ### What You Need
 
@@ -261,13 +292,13 @@ untouched.
 
 ### A Mission's Time of Day
 
-New in Redux: **Mission > Time of Day** sets a mission at **Day**, **Dusk** or **Night**. Missions are set by day
+**Redux HD.** **Mission > Time of Day** sets a mission at **Day**, **Dusk** or **Night**. Missions are set by day
 until you change it, as every mission of the original is.
 
 - **Sight.** At dusk units see 80% as far as by day, at night 60%. This works in the original game too.
-- **Look.** With **HD LIGHTING** set to **ON** (in Preferences), Redux shows a dusk mission darker, and a night one
-  dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their own time
-  whatever the mission's. The original game shows every mission by day.
+- **Look.** With **HD LIGHTING** set to **ON** (on the HD OPTIONS page), Redux HD shows a dusk mission darker, and a
+  night one dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their
+  own time whatever the mission's. The original game shows every mission by day.
 - **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
   tab (or with `-matchtime`) when every player's game has it, and units then see as far as in a mission set at that
   time (by day as far as by day, even in a night mission).
@@ -293,10 +324,10 @@ st TimeOfDay = "Night"
 
 ### A Mission's Weather
 
-New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain**, a **Downpour**, **Light Snow**,
+**Redux HD.** **Mission > Weather** sets a mission in **Clear** weather, **Rain**, a **Downpour**, **Light Snow**,
 **Snow** or a **Blizzard**. Missions are clear until you change it, as every mission of the original is.
 
-- **Look.** With **WEATHER** set to **ON** (in Preferences, on the HD OPTIONS page), Redux rains or snows on the
+- **Look.** With **WEATHER** set to **ON** (on the HD OPTIONS page), Redux HD rains or snows on the
   mission, a downpour with thunder, the snow settling as the mission goes on. The player's **RAIN**, **SNOW** and other
   choices show every mission in that weather whatever its own. The original game shows every mission under a clear sky.
   On a computer that can't draw a snowfall at the screen's rate, its farthest flakes fall as specks instead, and as
@@ -305,22 +336,29 @@ New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain*
   (or with `-matchweather`, see [Premade Matches](#premade-matches)) when every player's game has it; left at
   **MISSION'S**, the mission's own shows.
 - **Play.** In a match whose every player's game has it, the weather the match plays (the host's, or the mission's
-  own) changes play; elsewhere it changes nothing, units seeing, moving and fighting as under a clear sky:
+  own) changes play. Everywhere else (single-player missions too) it changes nothing: units see, move and fight as
+  under a clear sky. The first row is the original's, the clear sky's:
 
-  | Weather    | Fires burn | Fires spread | Long-range aim | Sight | A mech's piloting check | Vehicles' speed |
-  |------------|------------|--------------|----------------|-------|-------------------------|-----------------|
-  | Rain       | 0.6        | 5% a touch   |                |       | +5                      | 0.95            |
-  | Downpour   | 0.3        | 2%           | -5             | 0.8   | +10                     | 0.9             |
-  | Light snow | 0.8        | 8%           |                |       | +5                      | 0.95            |
-  | Snow       | 0.6        | 5%           |                | 0.9   | +10                     | 0.85            |
-  | Blizzard   | 0.4        | 3%           | -5             | 0.7   | +15                     | 0.75            |
+  | Weather              | Flames burn | A fire catches what it touches | Hit chance at long range | Sight | Piloting checks | Vehicles' speed |
+  |----------------------|-------------|--------------------------------|--------------------------|-------|-----------------|-----------------|
+  | Clear (the original) | 100%        | 10% of the time                | same                     | 100%  | same            | 100%            |
+  | Rain                 | 60%         | 5%                             | same                     | 100%  | 5 points harder | 95%             |
+  | Downpour             | 30%         | 2%                             | 5 points less            | 80%   | 10 points harder | 90%             |
+  | Light snow           | 80%         | 8%                             | same                     | 100%  | 5 points harder | 95%             |
+  | Snow                 | 60%         | 5%                             | same                     | 90%   | 10 points harder | 85%             |
+  | Blizzard             | 40%         | 3%                             | 5 points less            | 70%   | 15 points harder | 75%             |
 
-  A flame burns for that share of the mission's time, and a fire spreads to what it touches at that chance (clear:
-  10%). Shots at a weapon's long range get that many points off their chance to hit. Units see that share as far (after
-  the time of day's cut). The piloting check's roll gets that much more out of 100, so a mech is likelier to fall when a
-  hit to its legs or gyro, or a jump's landing, asks for one. Sensors see as they do.
+  - **Flames burn** for that share of the mission's burn time, so fires die out sooner.
+  - **A fire catches** a tree, building or anything else that burns, each time it touches one, that share of the time:
+    in rain, half as often as under a clear sky.
+  - **Hit chance at long range:** a shot at a weapon's long range loses that many points of its chance to hit; nearer
+    shots are as before.
+  - **Sight:** units see that share as far (after the time of day's cut). Sensors see as far as ever.
+  - **Piloting checks** are that many points (out of 100) harder, so a mech is likelier to fall when a hit to its legs
+    or gyro, or a jump's landing, calls for one.
+  - **Vehicles** drive at that share of their speed.
 
-For a mission's `.FIT` file, the editor writes this for rain or a downpour (for a clear sky, nothing):
+For a mission's `.FIT` file, the editor writes this for any weather but a clear sky (for that, nothing):
 
 ```
 [Environment]
@@ -369,11 +407,11 @@ The easiest way to use it is a shortcut: right-click `MCEditor.exe`, choose **Cr
 That's all. SDL3 is included in the repository and built as part of the solution, so nothing else needs to be
 installed.
 
-The version number (`major.minor.release.build`) is `version.json`'s first three parts with the branch's count of
-commits as the build (`git rev-list --count HEAD`), the same on Windows and the Mac, and the game shows it as
-`0.2.1 (518)`. The build counts through git (Visual Studio's own will do). Outside a git checkout the build still works
-but reports build 0, and a shallow clone counts only the commits it has. To start a new version, edit `version.json`;
-the build number keeps rising, which the updaters need (they install only a higher build).
+**Redux HD.** The version number (`major.minor.release.build`) is `version.json`'s first three parts with the
+branch's count of commits as the build (`git rev-list --count HEAD`), the same on Windows and the Mac, and the game
+shows it as `0.2.1 (534)`. The build counts through git (Visual Studio's own will do). Outside a git checkout the build
+still works but reports build 0, and a shallow clone counts only the commits it has. To start a new version, edit
+`version.json`; the build number keeps rising, which the updaters need (they install only a higher build).
 
 ### Compiling
 
@@ -411,29 +449,35 @@ cmake --build src/mac/build --parallel "$(sysctl -n hw.ncpu)"
 The output goes to `src/mac/build/`: `MechCommander Redux.app` (the game: open it, or run
 `"MechCommander Redux.app/Contents/MacOS/MechCommander Redux" --data <your MechCommander Gold folder>`) and `mc_tests`
 (the test suite). The source lists come from the Visual Studio projects, so a file added to them builds on
-macOS too. Without the .NET SDK the version is `0.0.0.0`, as on Windows.
+macOS too. Its version comes from `version.json` and git, as on Windows.
 
 ### Releases
 
-Releases come from the **Release** workflow on GitHub (Actions → Release → Run workflow). It builds `main`, runs the
-tests, tags the commit `v<version>` (the same version the build puts in the exe) and publishes a GitHub Release with
-the game zip `MechCommanderRedux-win-x64.zip` (`MCRedux.exe`, `SDL3.dll`, `MCEditor.exe`, and `src/docs/README.txt`
-and `INSTALL.txt`), a symbols zip, `MechCommanderRedux-win-x64-symbols.zip`, and the Mac app,
-`MechCommanderRedux-mac-arm64.zip` (`MechCommander Redux.app` and `src/docs/INSTALL-Mac.txt`, built on a macOS runner;
-signed ad hoc, as there's no Apple developer account). The zips have the same names in every
-release, so the [Download](#download) link always gets the newest one. It refuses to run twice for the same commit, since the tag would already exist.
+**Redux HD:** the Mac app is released on
+[this fork's Releases page](https://github.com/mazzarin/MechCommanderRedux/releases), each with a higher build than
+the last, beside `appcast.xml`, the feed every copy checks for a newer version
+([Sparkle](https://sparkle-project.org); the updates are signed with a key kept off the repository). Each push of this
+branch builds and tests Redux HD on Windows (`.github/workflows/windows.yml`), keeping the exes for a week.
+
+MechCommander Redux's own releases come from the **Release** workflow (Actions → Release → Run workflow), which builds
+`main`, runs the tests, tags the commit `v<version>` and publishes the Windows zip, its symbols and the Mac app on
+[its Releases page](https://github.com/RevenantBob/MechCommanderRedux/releases).
 
 ### Technologies
 
 - **C++23** (MSVC `/std:c++latest`)
 - **SDL3** for windowing, input, audio and timing
-- **SDL3's GPU renderer** (Vulkan where available) to present the game's 8-bit frame buffer, scaled to the window
+- **SDL3's GPU renderer** (Vulkan where available, Metal on the Mac) to present the game's 8-bit frame buffer, scaled
+  to the window, and (Redux HD) to draw the HD pack's art, the light and the weather over it
 - **TCP/UDP sockets** in place of DirectPlay for multiplayer
 - A built-in **Smacker** video decoder for the game's cutscenes
 - **MFC** (linked statically) for the Mission Editor, as the original editor used
 - **SQLite** for the editor's mission database, in place of Microsoft Jet/DAO
 - **miniz** to unpack the editor's files from the CD's InstallShield setup
-- **MSBuild / Visual Studio 2026** (toolset v145)
+- **MSBuild / Visual Studio 2026** (toolset v145), and **CMake** with Xcode on the Mac
+- **mimalloc**, the game's memory allocator
+- Redux HD: **dav1d** (the HD movies, AV1), **libdeflate** (the HD pack's archives), **bc7enc_rdo** (its textures),
+  **dr_flac** (its sound), **xxHash**, and **Sparkle** (the Mac app's updates)
 
 ### Project Layout
 
@@ -446,4 +490,8 @@ release, so the [Download](#download) link always gets the newest one. It refuse
 | `src/apps/MCEditor/`          | The Mission Editor                                                 |
 | `src/lib/sqlite-3.50.4/`      | SQLite, for the editor's mission database                          |
 | `src/lib/miniz-3.0.2/`        | miniz, for unpacking the editor's files from the CD                |
+| `src/lib/mimalloc-3.3.1/`     | mimalloc, the memory allocator                                     |
+| `src/lib/dav1d-1.5.4/`, `libdeflate-1.26/`, `bc7enc_rdo/`, `dr_flac/`, `xxHash-0.8.4/` | Redux HD: the HD pack's movies, archives, textures and sound |
+| `src/lib/Sparkle-2.10.1/`     | Redux HD: the Mac app's updater                                    |
 | `src/mac/`                    | The macOS build (CMake) and its shader translator                  |
+| `HD_AUDIO.md`                 | Redux HD: the HD audio pack's layout, for pack makers              |

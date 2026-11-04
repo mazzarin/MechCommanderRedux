@@ -126,14 +126,14 @@ uses that from then on. The original FitAbl.mdb is left untouched.
 
 A mission's time of day
 
-New in Redux: Mission > Time of Day sets a mission at Day, Dusk or Night. Missions are
+Redux HD only: Mission > Time of Day sets a mission at Day, Dusk or Night. Missions are
 set by day until you change it, as every mission of the original is.
 
 - At dusk units see 80% as far as by day, at night 60%. This works in the original game
   too.
-- With HD LIGHTING set to ON (in Preferences), Redux shows a dusk mission darker, and a
-  night one dark with the mechs' and vehicles' headlights on. The player's DUSK and
-  NIGHT choices show their own time whatever the mission's.
+- With HD LIGHTING set to ON (on the HD OPTIONS page), Redux HD shows a dusk mission
+  darker, and a night one dark with the mechs' and vehicles' headlights on. The
+  player's DUSK and NIGHT choices show their own time whatever the mission's.
 
 In the mission's .FIT file this is [Environment]'s st TimeOfDay ("Day", "Dusk" or
 "Night"), and a VisualRangeTable of 256 entries in [GameScale]; the project's README.md
@@ -142,17 +142,19 @@ has the details.
 
 A mission's weather
 
-New in Redux: Mission > Weather sets a mission in Clear weather, Rain or a Downpour.
-Missions are clear until you change it, as every mission of the original is.
+Redux HD only: Mission > Weather sets a mission in Clear weather, Rain, a Downpour, Light
+Snow, Snow or a Blizzard. Missions are clear until you change it, as every mission of the
+original is.
 
-- With WEATHER set to ON (in Preferences, on the HD OPTIONS page), Redux rains on the
-  mission, a downpour harder, with thunder. The player's RAIN and DOWNPOUR choices rain
-  on every mission whatever its own.
-- The weather changes nothing in play, in Redux or in the original game.
+- With WEATHER set to ON (on the HD OPTIONS page), Redux HD rains or snows on the mission,
+  a downpour with thunder. The player's RAIN, SNOW and other choices show every mission
+  in that weather whatever its own.
+- In a match whose every player's game has it, the weather changes play: fires, sight,
+  long-range aim, mechs' footing and vehicles' speed. Elsewhere it changes nothing.
 
-In the mission's .FIT file this is [Environment]'s st Weather ("Clear", "Rain" or
-"Downpour"), in the same [Environment] block as a dusk or night mission's TimeOfDay; the
-project's README.md has the details.
+In the mission's .FIT file this is [Environment]'s st Weather ("Clear", "Rain",
+"Downpour", "LightSnow", "Snow" or "Blizzard"), in the same [Environment] block as a dusk
+or night mission's TimeOfDay; the project's README.md has the details.
 
 
 If something goes wrong

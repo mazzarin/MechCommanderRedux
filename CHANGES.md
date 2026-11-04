@@ -7,6 +7,9 @@ damage, AI and mission scripts behave as they did in 1999. What changed is the l
 input, networking and files), plus fixes for bugs in the original that could crash the game or corrupt its memory.
 Bugs that have an impact on how the game *plays* may remain in the game, and are listed under [Known Issues](#known-issues).
 
+Lines marked **Redux HD** are in Redux HD only, not in MechCommander Redux. Redux HD's HD pack and the options it
+adds are in the [README](README.md#what-redux-hd-adds).
+
 ## Table of Contents
 
 - [Changes](#changes)
@@ -70,7 +73,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   the size that keeps the original's proportions (the screen's lines over the original's 480: 200% at 1080P), which
   the keys step on from. Alt with the keypad's + and - does the same. The size is kept in `PREFS.CFG`
   (`InterfaceSize`), and the keys can be changed on the CONTROLS screen.
-- The Preferences screen's INTERFACE SIZE sets the same size (AUTO, or 100% to 200%) for the next mission. AUTO
+- **Redux HD.** The Preferences screen's INTERFACE SIZE sets the same size (AUTO, or 100% to 200%) for the next mission. AUTO
   shows the size it picks for the window, e.g. AUTO (200%).
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
   window.
@@ -107,7 +110,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
   - power up and down on P and Shift+P, and eject on Shift+E;
   - zoom on = and -;
   - hold Ctrl, R or H to force an order, a run or a jump.
-- The CONTROLS, DEFAULTS, LAPTOP and DONE buttons are lettered as the game's own buttons are.
+- **Redux HD.** The CONTROLS, DEFAULTS, LAPTOP and DONE buttons are lettered as the game's own buttons are.
 - The system's input methods (an IME, or macOS's accent menu on a held letter) work in text fields only, so they no
   longer hold back or swallow mission keys.
 - The CONTROLS screen names keys as your keyboard types them: on a German keyboard the keys right of 0 show as ß and
@@ -122,32 +125,33 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 
 - DirectPlay is replaced by TCP/UDP networking. One player hosts and the others connect to them.
 - LAN games are found automatically. Internet games connect by `host:port`; the default port is 28800.
-- A player whose computer drops out (switched off, asleep, off the network) leaves the game within half a minute, as
+- **Redux HD.** A player whose computer drops out (switched off, asleep, off the network) leaves the game within half a minute, as
   DirectPlay dropped them. The players' computers check, not the games, so a slow or loading game never drops out.
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
 - A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
-  and tech base, who is on which team, and the match options (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`,
-  `-team2tech`, `-slot`, `-matchweather`, `-matchtime`, `-matchbraking`). Once everyone has joined, the game goes
-  straight from "Waiting for Players" to the mech bay, without the ready room or the map selector. See the
-  [README](README.md#premade-matches).
-- With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
+  and tech base, and who is on which team (`-matchmap`, `-team1rp`, `-team2rp`, `-team1tech`, `-team2tech`, `-slot`).
+  Once everyone has joined, the game goes straight from "Waiting for Players" to the mech bay, without the ready room or
+  the map selector. See the [README](README.md#premade-matches).
+- **Redux HD.** With `MechBraking` in `PREFS.CFG`, mechs brake to a halt through the stopping art the original drew for every mech
   (its walk to stand and run to walk), instead of dropping from mid-stride to standing where a move ends. They stop
   where the original stops them. The expansion's mechs' stops are given the slowing their data leaves out (OB-186). In
   multiplayer the host's choice applies (MATCH OPTIONS' BRAKING, its `MechBraking` until it changes it) once every
   player's build has it; with an older build in the match, mechs stop as the original's.
-- The session screen has a second tab under MULTIPLAYER CHAT, **MATCH OPTIONS**, where the host picks the match's
-  weather (the mission's own, clear, rain, a downpour, light snow, snow or a blizzard), time of day (the mission's own,
-  day, dusk or night) and braking. Every player sees the host's weather and time of day over the mission's and over
-  their own WEATHER and HD LIGHTING choices; a player with either off sees the original's clear day. The weather
-  changes only the look; at the host's time of day units see as far as in a mission set then (as the editor's dusk and
-  night missions: 0.8 and 0.6 of the day's sight), whatever the player sees. Each is played only if every player's
-  game has it, as each says
-  when the session screen opens: while one lacks it (a game that says nothing, as the original's, lacks them all), the
-  match plays the mission's own (braking off) and the host's row says whose game lacks it. The guests see what the
-  match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A launcher sets them with
-  `-matchweather`, `-matchtime` and `-matchbraking`.
+- **Redux HD.** The session screen has a second tab under MULTIPLAYER CHAT, **MATCH OPTIONS**, where the host picks
+  the match's weather (the mission's own, clear, rain, a downpour, light snow, snow or a blizzard), its time of day
+  (the mission's own, day, dusk or night), braking, and whether there are artillery strikes, sensor probes, sensors and
+  mines. Every player sees the host's weather and time of day over the mission's and over their own WEATHER and HD
+  LIGHTING choices; a player with either off sees the original's clear day. Whatever the player sees, units see as far
+  as in a mission set at the host's time of day (as the editor's dusk and night missions: 0.8 and 0.6 of the day's
+  sight), and the weather changes sight, long-range aim, footing, fires and vehicles' speed (see the
+  [README](README.md#a-missions-weather)). Each is played only if every player's game has it, as each says when the
+  session screen opens: while one lacks it (a game that says nothing, as the original's, lacks them all), the match
+  plays the mission's own (braking off; artillery, probes, sensors and mines on) and MATCH OPTIONS names whose games
+  lack it. The guests see what the match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A
+  launcher sets them with `-matchweather`, `-matchtime`, `-matchbraking`, `-matchartillery`, `-matchprobes`,
+  `-matchsensors` and `-matchmines`.
 
 ### Files and Saves
 
@@ -176,10 +180,11 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - On its first run, the editor copies its own files (the `Teditor` folder and its six sounds) from the CD, a mounted
   CD image or an old editor folder. Nothing on the CD is run, and nothing is written to the registry.
 - The editor finds the game in its own folder, or in the folder given with `--data`.
-- New: **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
+- **Redux HD.** **Mission > Time of Day** sets a mission at day, dusk or night. Units see less at dusk and night, and with HD
   lighting on the game shows the mission darker. See the [README](README.md#a-missions-time-of-day).
-- New: **Mission > Weather** sets a mission in clear weather, rain, a downpour, light snow, snow or a blizzard. With
-  HD weather on the game rains or snows on the mission; nothing in play changes. See the [README](README.md#a-missions-weather).
+- **Redux HD.** **Mission > Weather** sets a mission in clear weather, rain, a downpour, light snow, snow or a
+  blizzard. With WEATHER on, the game rains or snows on the mission; in a match whose every player's game has it, the
+  weather changes play too. See the [README](README.md#a-missions-weather).
 - A crash writes a stack trace and `MCEditor.dmp` beside the exe instead of showing a dialog.
 
 ---
@@ -214,7 +219,7 @@ Bugs that have an impact on how the game *plays* may remain in the game, and are
 - Shots now fly to the spot they hit. In the original, bullets, laser beams and Gauss rifle (railgun) bolts flew to a
   point on the target picked by the firing weapon's mount, while the impact played where the shot hit, so hits often
   looked like misses. Damage is unchanged.
-- Missiles and cannon shots that hit now fly all the way to the target at any frame rate. The original's test for a
+- **Redux HD.** Missiles and cannon shots that hit now fly all the way to the target at any frame rate. The original's test for a
   shot reaching its target holds at 15 frames a second; at 60 or 120, the target's sprite shifting between its
   animation frames could end the flight, and the hit landed at once, mid-flight (more than a quarter of LRM hits at
   120). At 15 frames a second or fewer nothing changes.

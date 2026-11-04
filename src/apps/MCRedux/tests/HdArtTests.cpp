@@ -8995,10 +8995,13 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
 }
 
 /// <summary>
-/// Port-only (HD weather's puddles, kept off cliffs): the ground mesh carries how many of each cell's movement cells
-/// can't be entered, as the map has them (none off the map), and the map has ground none of which can be.
+/// Port-only (HD weather's puddles and snow, kept off cliffs): the ground mesh carries how many of each cell's movement
+/// cells can't be entered, as the map has them (none off the map), and its eight neighbours' (draw.pshader's BlockedAt
+/// blends the share between them, so the tiles' seams don't show); the map has ground none of which can be entered,
+/// beside ground that can.
 /// </summary>
-TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter, so the rain's puddles keep off cliffs")
+TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter and its neighbours', so puddles and snow "
+                   "keep off cliffs without showing the tiles")
 {
     std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
 
@@ -9011,10 +9014,16 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter, s
     const MCTerrainMesh* mesh = MCTerrainMeshInUse();
     REQUIRE(mesh != nullptr);
     REQUIRE_EQ(mesh->CellBlocked.size(), mesh->CellTiles.size());
+    REQUIRE_EQ(mesh->CellBlockedRound.size(), mesh->CellTiles.size());
     const MCScenarioMap& map = GameMap();
     constexpr uint32_t AllCells = MapCellDim * MapCellDim;
+    constexpr uint32_t CountMask = (1u << MCTerrainMesh::BlockedRoundBits) - 1u;
+    const auto blockedAt = [&map](int32_t row, int32_t col)
+    { return map.OnMap(row, col) ? map.TileAt(row, col).BlockedCells() : 0u; };
     size_t matching = 0;
+    size_t roundMatching = 0;
     size_t walledOff = 0;
+    size_t besideOpen = 0;
 
     for (int32_t r = 0; r < mesh->Rows; ++r)
     {
@@ -9022,15 +9031,70 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter, s
         {
             const int32_t row = mesh->FirstRow + r;
             const int32_t col = mesh->FirstCol + c;
-            const uint32_t blocked = map.OnMap(row, col) ? map.TileAt(row, col).BlockedCells() : 0;
-            const uint8_t carried = mesh->CellBlocked[static_cast<size_t>(r) * mesh->Cols + c];
-            matching += carried == blocked ? 1 : 0;
+            const size_t cell = static_cast<size_t>(r) * mesh->Cols + c;
+            const uint8_t carried = mesh->CellBlocked[cell];
+            const uint32_t round = mesh->CellBlockedRound[cell];
+            matching += carried == blockedAt(row, col) ? 1 : 0;
             walledOff += carried == AllCells ? 1 : 0;
+            bool roundMatches = true;
+            bool open = false;
+
+            for (int32_t dr = -1; dr <= 1; ++dr)
+            {
+                for (int32_t dc = -1; dc <= 1; ++dc)
+                {
+                    if (dr == 0 && dc == 0)
+                    {
+                        continue;
+                    }
+
+                    const uint32_t neighbour = round >> MCTerrainMesh::BlockedRoundShift(dr, dc) & CountMask;
+                    roundMatches = roundMatches && neighbour == blockedAt(row + dr, col + dc);
+                    open = open || (neighbour == 0 && map.OnMap(row + dr, col + dc));
+                }
+            }
+
+            roundMatching += roundMatches ? 1 : 0;
+            besideOpen += carried == AllCells && open ? 1 : 0;
         }
     }
 
     CHECK_EQ(matching, mesh->CellBlocked.size());
+    CHECK_EQ(roundMatching, mesh->CellBlockedRound.size());
     CHECK(walledOff > 0);
+    CHECK(besideOpen > 0);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
+/// <summary>
+/// Port-only (HD weather at the fog of war's edge): the ground frame measures how each haze table darkens the palette's
+/// pale greys, so the snow and the wet ground's sky there are darkened as the ground is: each channel 0 to 1, and the
+/// edge with the fewest corners seen darker than none.
+/// </summary>
+TEST_CASE_ISOLATED("game: the fog of war's edge darkens the snow and the wet ground as its haze darkens the ground")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> shades = MCTerrainFogEdgeShades();
+    constexpr float Undarkened = 1.0f;
+
+    for (const std::array<float, 3>& shade : shades)
+    {
+        for (const float channel : shade)
+        {
+            CHECK(channel >= 0.0f);
+            CHECK(channel <= Undarkened);
+        }
+    }
+
+    const std::array<float, 3>& fewest = shades.front();
+    CHECK(fewest[0] + fewest[1] + fewest[2] < 3.0f * Undarkened);
     std::filesystem::remove_all(scene->Scratch);
 }
 

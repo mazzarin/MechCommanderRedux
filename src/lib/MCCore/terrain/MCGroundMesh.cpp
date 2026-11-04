@@ -2,6 +2,7 @@
 #include "terrain/MCGroundMesh.h"
 #include "ai/MCMoveSystem.h"
 #include "camera/MCCamera.h"
+#include "color/MCPalette.h"
 #include "engine/MCByteFlag.h"
 #include "main/MCMissionGlobals.h"
 #include "object/MCElemental.h"
@@ -40,6 +41,80 @@ namespace
 
     std::unique_ptr<MCGroundMesh> GroundMesh;
     uint64_t GroundMeshVersions = 0;
+
+    /// <summary>Port-only: MCTerrainFogEdgeShades, as the last ground frame drew the fog's edge.</summary>
+    using FogEdgeShade = std::array<float, 3>;
+    constexpr FogEdgeShade Undarkened{1.0f, 1.0f, 1.0f};
+    std::array<FogEdgeShade, MCTerrainFogEdgeLevels> FogEdgeShades{Undarkened, Undarkened, Undarkened};
+    /// <summary>
+    /// The palette's colours the fog's edge is measured on, as pale as the snow: no darker than FogEdgeLeastLuma and
+    /// no further than FogEdgeMostChroma from grey (0 to 1); all of them in a palette without any.
+    /// </summary>
+    constexpr float FogEdgeLeastLuma = 0.5f;
+    constexpr float FogEdgeMostChroma = 0.12f;
+    constexpr std::array<float, 3> PaletteLuma{0.299f, 0.587f, 0.114f};
+    /// <summary>A palette channel's most (6 bits).</summary>
+    constexpr float PaletteChannelMost = 63.0f;
+
+    /// <summary>
+    /// How haze table <paramref name="table"/> changes the palette's pale greys, each channel (their sum through it over
+    /// their sum, weighted by their brightness); unchanged without a table.
+    /// </summary>
+    FogEdgeShade FogEdgeShadeOf(MCPalette& palette, std::optional<MCColorTable> table)
+    {
+        if (!table.has_value())
+        {
+            return Undarkened;
+        }
+
+        const std::span<MCVfxRgb, MCPalette::ColorCount> colors = palette.Colors();
+        const auto channels = [](const MCVfxRgb& rgb)
+        {
+            return std::array<float, 3>{rgb.R / PaletteChannelMost, rgb.G / PaletteChannelMost,
+                                        rgb.B / PaletteChannelMost};
+        };
+
+        for (const bool greysOnly : {true, false})
+        {
+            std::array<double, 3> through{};
+            std::array<double, 3> plain{};
+
+            for (size_t i = 0; i < colors.size(); ++i)
+            {
+                const std::array<float, 3> own = channels(colors[i]);
+                const float luma = own[0] * PaletteLuma[0] + own[1] * PaletteLuma[1] + own[2] * PaletteLuma[2];
+                const float chroma = std::max({own[0], own[1], own[2]}) - std::min({own[0], own[1], own[2]});
+
+                if (greysOnly && (luma < FogEdgeLeastLuma || chroma > FogEdgeMostChroma))
+                {
+                    continue;
+                }
+
+                const std::array<float, 3> hazed = channels(colors[(*table)[i]]);
+
+                for (size_t c = 0; c < 3; ++c)
+                {
+                    through[c] += luma * hazed[c];
+                    plain[c] += luma * own[c];
+                }
+            }
+
+            if (plain[0] + plain[1] + plain[2] > 0.0)
+            {
+                FogEdgeShade shade{};
+
+                for (size_t c = 0; c < 3; ++c)
+                {
+                    shade[c] = plain[c] > 0.0 ? static_cast<float>(std::clamp(through[c] / plain[c], 0.0, 1.0)) : 1.0f;
+                }
+
+                return shade;
+            }
+        }
+
+        return Undarkened;
+    }
+
     /// <summary>The mesh's ring of off-map vertices is a grid's side and this many more wide.</summary>
     constexpr int32_t RingPastGrid = 2;
 
@@ -144,6 +219,36 @@ namespace
                 }
 
                 mesh.CellTiles[cell] = index;
+            }
+        }
+
+        // Each cell's neighbours' blocked counts, so the share can be blended across the seams.
+        mesh.CellBlockedRound.resize(mesh.CellTiles.size());
+
+        for (int32_t r = 0; r < mesh.Rows; ++r)
+        {
+            for (int32_t c = 0; c < mesh.Cols; ++c)
+            {
+                uint32_t round = 0;
+
+                for (int32_t dr = -1; dr <= 1; ++dr)
+                {
+                    for (int32_t dc = -1; dc <= 1; ++dc)
+                    {
+                        const int32_t nr = r + dr;
+                        const int32_t nc = c + dc;
+
+                        if ((dr == 0 && dc == 0) || nr < 0 || nc < 0 || nr >= mesh.Rows || nc >= mesh.Cols)
+                        {
+                            continue;
+                        }
+
+                        round |= static_cast<uint32_t>(mesh.CellBlocked[static_cast<size_t>(nr) * mesh.Cols + nc])
+                                 << MCTerrainMesh::BlockedRoundShift(dr, dc);
+                    }
+                }
+
+                mesh.CellBlockedRound[static_cast<size_t>(r) * mesh.Cols + c] = round;
             }
         }
 
@@ -353,6 +458,7 @@ std::expected<void, std::string> MCTerrainGroundFrame(const MCTerrainWindow& win
         for (uint32_t seen = 1; seen <= 3; ++seen)
         {
             frame.Haze[seen - 1] = MCTerrainHazePalette(hazeFactor, seen);
+            FogEdgeShades[seen - 1] = FogEdgeShadeOf(GamePalette(), frame.Haze[seen - 1]);
         }
     }
 
@@ -463,6 +569,11 @@ std::expected<void, std::string> MCTerrainUploadGround()
 void MCTerrainForgetMesh()
 {
     GroundMesh.reset();
+}
+
+std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> MCTerrainFogEdgeShades()
+{
+    return FogEdgeShades;
 }
 
 const MCTerrainMesh* MCTerrainMeshInUse()

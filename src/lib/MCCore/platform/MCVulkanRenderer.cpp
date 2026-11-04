@@ -5024,12 +5024,13 @@ void MCVulkanRenderer::ReleaseTerrainMesh()
 std::expected<void, std::string> MCVulkanRenderer::UploadTerrainMesh(const MCTerrainMesh& mesh)
 {
     if (mesh.CellTiles.size() != static_cast<size_t>(mesh.Cols) * mesh.Rows ||
-        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size())
+        mesh.CellElevations.size() != mesh.CellTiles.size() || mesh.CellBlocked.size() != mesh.CellTiles.size() ||
+        mesh.CellBlockedRound.size() != mesh.CellTiles.size())
     {
-        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations and {} "
-                                           "blocked counts",
+        return std::unexpected(std::format("the terrain mesh's {}x{} cells come with {} tiles, {} elevations, {} "
+                                           "blocked counts and {} neighbours' counts",
                                            mesh.Cols, mesh.Rows, mesh.CellTiles.size(), mesh.CellElevations.size(),
-                                           mesh.CellBlocked.size()));
+                                           mesh.CellBlocked.size(), mesh.CellBlockedRound.size()));
     }
 
     // The mesh's place and cells, and which upload it is (the kept ground's drawn from one).
@@ -5434,7 +5435,7 @@ std::expected<void, std::string> MCVulkanRenderer::UploadTerrainCells(ChunkedUpl
         cells[i * TerrainCellInts] = mesh.CellTiles[i];
         cells[i * TerrainCellInts + 1] = mesh.CellElevations[i];
         cells[i * TerrainCellInts + 2] = mesh.CellBlocked[i];
-        cells[i * TerrainCellInts + 3] = 0;
+        cells[i * TerrainCellInts + 3] = mesh.CellBlockedRound[i];
     }
 
     return {};

@@ -5,6 +5,7 @@
 #include "sprite/MCParticles.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
+#include "terrain/MCGroundMesh.h"
 #include "vfx/MCVfx.h"
 
 namespace
@@ -104,6 +105,12 @@ namespace
         /// last, 1 when the index target's alpha tells the ground from what stands on it (MCSceneLights::ReliefMapsOn).
         /// </summary>
         float SpeckFalls[4] = {};
+        /// <summary>
+        /// Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky by how many of a
+        /// tile's corners are seen: 0 none (no edge: 1s), 1 to 3 MCTerrainFogEdgeShades' (rgb, 1 where it doesn't).
+        /// </summary>
+        float FogEdge[MCTerrainFogEdgeLevels + 1][4] = {
+            {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
         /// <summary>
         /// Port-only (HD lighting): the light tiles' side in the world's texels (0: none) and how many there are across
         /// and down (LightTiles).
@@ -510,6 +517,12 @@ namespace
             uniforms.Snow[2] = std::clamp(cover.Share, 0.0f, 1.0f);
             uniforms.Snow[3] = look.Snows ? 1.0f : 0.0f;
             SetSpeckle(uniforms, specks, across, down, width, height);
+            const std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> fogEdge = MCTerrainFogEdgeShades();
+
+            for (size_t level = 0; level < MCTerrainFogEdgeLevels; ++level)
+            {
+                std::copy(fogEdge[level].begin(), fogEdge[level].end(), uniforms.FogEdge[level + 1]);
+            }
 
             // The wet look tells the ground from what stands on it, and its slopes, by the relief maps.
             if (MCSceneLights::ReliefMapsOn())

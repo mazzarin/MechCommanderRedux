@@ -431,13 +431,31 @@ struct MCTerrainMesh
     std::vector<uint32_t> CellElevations;
     /// <summary>
     /// Per cell (port-only): how many of its map tile's movement cells can't be entered (MCMapTile::BlockedCells; 0 off
-    /// the map), so HD weather keeps puddles off the cliffs.
+    /// the map), so HD weather keeps puddles and snow off the cliffs.
     /// </summary>
     std::vector<uint8_t> CellBlocked;
+    /// <summary>
+    /// Per cell (port-only): its eight neighbours' <c>CellBlocked</c> (0 past the mesh), <c>BlockedRoundBits</c> each
+    /// from the low bits, row by row from the top left, its own left out; so HD weather blends the share across the
+    /// tiles' seams (draw.pshader's BlockedAt), as their colours are.
+    /// </summary>
+    std::vector<uint32_t> CellBlockedRound;
     /// <summary>The tiles' data (vfx/vfxtile.cpp's format), copied.</summary>
     std::vector<std::vector<uint8_t>> Tiles;
 
     static constexpr uint32_t NoTile = 0xffffffffu;
+    static constexpr uint32_t BlockedRoundBits = 4;
+
+    /// <summary>
+    /// Where neighbour (<paramref name="dr"/>, <paramref name="dc"/>) (each -1 to 1, not both 0) lies in
+    /// <c>CellBlockedRound</c>: its first bit.
+    /// </summary>
+    static constexpr uint32_t BlockedRoundShift(int32_t dr, int32_t dc)
+    {
+        const int32_t at = (dr + 1) * 3 + (dc + 1);
+        constexpr int32_t Own = 4;
+        return static_cast<uint32_t>(at < Own ? at : at - 1) * BlockedRoundBits;
+    }
 };
 
 /// <summary>

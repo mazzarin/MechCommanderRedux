@@ -112,6 +112,8 @@ struct Input
     nointerpolation uint4 op : TEXCOORD2;
     nointerpolation int4 span : TEXCOORD3;
     nointerpolation uint4 walk : TEXCOORD4;
+    // Port-only: a terrain tile's place and the counts round it that can't be entered (BlockedAt; terrain.vshader's).
+    nointerpolation uint4 ground : TEXCOORD5;
 };
 
 struct Output
@@ -175,11 +177,24 @@ static const uint ReliefScaleShift = 4;
 static const uint ReliefXShift = 8;
 static const uint ReliefYShift = 20;
 static const uint ReliefPlaceMask = 0xfffu;
-// span.w (terrain.vshader): the relief map's atlas in its low byte, the share of the cell that can't be entered in the
-// byte from BlockedShift; the index target's alpha where none of it can is BlockedMarkSpan below 1 (the composite's).
+// span.w (terrain.vshader): the relief map's atlas; the index target's alpha where none of the ground can be entered is
+// BlockedMarkSpan below 1 (the composite's).
 static const int ReliefAtlasMask = 0xff;
-static const uint BlockedShift = 8;
 static const float BlockedMarkSpan = 0.25;
+// A terrain tile's ground (terrain.vshader's, BlockedAt): the step across in z's bits from GroundStepShift, how many of
+// its corners the fog of war leaves seen from GroundFogShift (1 to 3 at its edge, 0 elsewhere), the tile's count of
+// movement cells that can't be entered from GroundOwnShift (of MovementCells); w its neighbours' counts,
+// BlockedRoundBits each (MCTerrainMesh::CellBlockedRound).
+static const uint GroundStepShift = 16;
+static const uint GroundStepMask = 0x3ffu;
+static const uint GroundFogShift = 26;
+static const uint GroundFogMask = 3u;
+static const uint GroundOwnShift = 28;
+static const uint BlockedRoundBits = 4;
+static const uint BlockedRoundMask = 15u;
+static const float MovementCells = 9.0;
+// The least the quadratic BlockedAt solves may divide by (a cell squashed flat on the window: its middle's taken).
+static const float LeastCellSpan = 1e-3;
 static const int BlockSide = 4;
 // A translucent shape whose coverage is taken between its pixels, so its edges are smooth at the output's resolution:
 // walk its place in the source (x0, y0, x1, y1).
@@ -429,9 +444,69 @@ float2 ReliefAt(Input input, int2 target)
     return lerp(top, bottom, f.y);
 }
 
+// A signed 16-bit field of a packed uint: its low half, or its high half.
+int LowHalf(uint packed)
+{
+    return (int)(packed << 16) >> 16;
+}
+
+int HighHalf(uint packed)
+{
+    return (int)packed >> 16;
+}
+
+// How many movement cells of the map tile (dr, dc) from a terrain tile's (each -1 to 1) can't be entered, from its
+// ground (MCTerrainMesh::BlockedRoundShift's order).
+float BlockedCount(uint4 ground, int dr, int dc)
+{
+    if (dr == 0 && dc == 0)
+    {
+        return (float)(ground.z >> GroundOwnShift);
+    }
+
+    const int at = (dr + 1) * 3 + (dc + 1);
+    const uint slot = (uint)(at < 4 ? at : at - 1);
+    return (float)((ground.w >> (slot * BlockedRoundBits)) & BlockedRoundMask);
+}
+
+// Port-only (HD weather): the share of the ground that can't be entered (cliffs) at a terrain tile's pixel: its map
+// tile's at the tile's middle, blended toward its neighbours' (bilinear between the tiles' middles), so it's the same
+// either side of a seam, and a tile whose share differs from its neighbours' doesn't show in the puddles and the snow.
+// Where the pixel lies in its cell (u across its columns, v down its rows) comes from the cell's corners on the window
+// (terrain.vshader's ground): the four corners' x are fixed, so u - v follows from the pixel's x, then u from a
+// quadratic in its y (their heights bend the quad). A pixel past the quad (a tall tile's art) takes its nearest edge.
+float BlockedAt(Input input, int2 target)
+{
+    const uint4 ground = input.ground;
+    const float2 window = (float2(target) + 0.5) * float2(scale.xy) / float2(scale.zw);
+    const float2 top = float2(LowHalf(ground.x), HighHalf(ground.x));
+    const float right = LowHalf(ground.y);
+    const float left = HighHalf(ground.y);
+    const float bottom = LowHalf(ground.z);
+    const float step = max((float)((ground.z >> GroundStepShift) & GroundStepMask), 1.0);
+    // y - top.y = u * right + v * left + u * v * bend, with v = u - across.
+    const float across = (window.x - top.x) / step;
+    const float down = window.y - top.y;
+    const float bend = bottom - right - left;
+    const float b = right + left - across * bend;
+    const float c = across * left + down;
+    const float root = b * b + 4.0 * bend * c;
+    const float span = b + sqrt(max(root, 0.0));
+    const float u = root >= 0.0 && span > LeastCellSpan ? 2.0 * c / span : 0.5 + 0.5 * across;
+    const float2 place = saturate(float2(u, u - across)) - 0.5;
+    const int dc = place.x < 0.0 ? -1 : 1;
+    const int dr = place.y < 0.0 ? -1 : 1;
+    const float2 toward = abs(place);
+    const float row = lerp(BlockedCount(ground, 0, 0), BlockedCount(ground, 0, dc), toward.x);
+    const float next = lerp(BlockedCount(ground, dr, 0), BlockedCount(ground, dr, dc), toward.x);
+    return lerp(row, next, toward.y) / MovementCells;
+}
+
 // A terrain tile's pixel in HD colours (HdTerrainColour), and its index; port-only, with its relief map's slopes beside
-// the index (G, B) and A set where it has one (the composite's SlopeAt): 1 where the cell can be entered, down to
-// BlockedMarkSpan less where none of it can (terrain.vshader's share in span.w: cliffs), still above GroundMark.
+// the index (G, B) and A set where it has one (the composite's SlopeAt): 1 where the ground can be entered, down to
+// BlockedMarkSpan less where none of it can (BlockedAt: cliffs), still above GroundMark. The slopes' bytes keep the fog
+// of war's edge in their low bits (G the first, B the second; the composite's FogEdgeShade), so the weather laid over
+// the ground there is darkened as the haze darkens it.
 Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 {
     Output output;
@@ -441,8 +516,10 @@ Output HdTerrainPixel(Input input, int2 target, uint original, uint value)
 
     if ((input.span.w & ReliefAtlasMask) != 0)
     {
-        const float blocked = (float)(((uint)input.span.w >> BlockedShift) & 255u) / 255.0;
-        output.index.yzw = float3(ReliefAt(input, target), 1.0 - BlockedMarkSpan * blocked);
+        const uint fogEdge = (input.ground.z >> GroundFogShift) & GroundFogMask;
+        const uint2 slopes =
+            (uint2(round(saturate(ReliefAt(input, target)) * 255.0)) & ~uint2(1u, 1u)) | uint2(fogEdge & 1u, fogEdge >> 1);
+        output.index.yzw = float3(float2(slopes) / 255.0, 1.0 - BlockedMarkSpan * BlockedAt(input, target));
     }
 
     return output;

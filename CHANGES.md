@@ -77,6 +77,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
   shows the size it picks for the window, e.g. AUTO (200%).
 - The game still draws in 256 colours as the original did; the GPU (Vulkan where available) scales the picture to the
   window.
+- **Redux HD.** On a computer where Vulkan doesn't start, the CPU draws the game, the Preferences screen's RENDERER
+  says VULKAN (FAILED), and HD OPTIONS shows the options only the GPU draws dimmed, each saying it needs VULKAN.
 - Palette changes appear on the next frame drawn instead of instantly.
 
 ### Mouse

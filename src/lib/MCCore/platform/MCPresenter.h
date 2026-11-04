@@ -22,6 +22,9 @@ std::optional<MCRendererKind> MCRendererKindFromName(std::string_view name);
 /// <summary>The name of a renderer kind, as <see cref="MCRendererKindFromName"/> reads it.</summary>
 std::string_view MCRendererKindName(MCRendererKind kind);
 
+/// <summary>The GPU renderer's name in the menus (the preferences' RENDERER choice, on every platform).</summary>
+inline constexpr std::string_view MCGpuRendererChoice = "VULKAN";
+
 /// <summary>The graphics API the GPU renderer runs on (SDL GPU's driver), as the window's title names it.</summary>
 #if defined(__APPLE__)
 inline constexpr std::string_view MCGpuApiName = "Metal";

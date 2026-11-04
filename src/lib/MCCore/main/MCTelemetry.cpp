@@ -616,8 +616,7 @@ namespace
             .Number("refresh", mode != nullptr ? mode->refresh_rate : 0.0)
             .Text("renderer", display->RendererName())
             // The GPU was asked for but couldn't start: the CPU draws (MCDisplay's fallback).
-            .Flag("gpuFailed", GRenderer == static_cast<int>(MCRendererKind::Vulkan) &&
-                                   display->RendererKind() != MCRendererKind::Vulkan)
+            .Flag("gpuFailed", GpuFellBack())
             .Integer("interfaceSize", GInterfaceSize)
             .Close();
     }

@@ -146,6 +146,14 @@ namespace
     constexpr size_t AutoInterfaceSizeItem = 0;
 
     /// <summary>
+    /// The RENDERER drop-down (the screen owns it), its GPU item's index, and what that item says when this run's GPU
+    /// failed to start.
+    /// </summary>
+    std::weak_ptr<MCLogComboBox> RendererDropDownBox;
+    constexpr size_t GpuRendererItem = 0;
+    constexpr std::string_view GpuFailedNote = "FAILED";
+
+    /// <summary>
     /// The renderer choice, the UI resolution, the interface size, the interface volume, the scroll speed and the HD
     /// settings when the screen opened (for CancelPrefs).
     /// </summary>
@@ -169,6 +177,20 @@ namespace
         {
             dropDown->SetLabel(AutoInterfaceSizeItem,
                                std::format("{} ({}%)", AutoChoice, GuiSystem().AutoInterfaceSizeNow()));
+        }
+    }
+
+    /// <summary>
+    /// RENDERER's VULKAN says "VULKAN (FAILED)" when this run asked for it and it couldn't start (the CPU draws), as
+    /// AUTO says what it picks: the choice stays, for the next start.
+    /// </summary>
+    void LabelGpuRenderer()
+    {
+        if (const std::shared_ptr<MCLogComboBox> dropDown = RendererDropDownBox.lock(); dropDown != nullptr)
+        {
+            dropDown->SetLabel(GpuRendererItem, GpuFellBack()
+                                                    ? std::format("{} ({})", MCGpuRendererChoice, GpuFailedNote)
+                                                    : std::string(MCGpuRendererChoice));
         }
     }
 
@@ -325,10 +347,10 @@ void AddPreferencesPanel(MCGenericScreen& screen)
 
     MCLogGroupBox& renderer = AddBox(screen, panel, RendererBoxPlace, BoxOutlineColor);
     AddLabel(screen, renderer, "RENDERER", BoxTitleLeft, BoxTitleTop);
-    AddDropDown(screen, renderer, GRendererPreference,
-                {{"VULKAN", static_cast<int32_t>(MCRendererKind::Vulkan)},
-                 {"SOFTWARE", static_cast<int32_t>(MCRendererKind::Software)}},
-                RendererChanged);
+    RendererDropDownBox = AddDropDown(screen, renderer, GRendererPreference,
+                                      {{std::string(MCGpuRendererChoice), static_cast<int32_t>(MCRendererKind::Vulkan)},
+                                       {"SOFTWARE", static_cast<int32_t>(MCRendererKind::Software)}},
+                                      RendererChanged);
 
     // UI RESOLUTION: the most lines the in-mission UI is drawn at, from the next scenario on.
     MCLogGroupBox& uiResolution = AddBox(screen, panel, UiResolutionBoxPlace, BoxOutlineColor);
@@ -381,6 +403,11 @@ void AddPreferencesPanel(MCGenericScreen& screen)
     AddControlsPanel(screen, panel, ControlsLeft, ButtonsTop);
 }
 
+std::shared_ptr<MCLogComboBox> PrefsRendererDropDown()
+{
+    return RendererDropDownBox.lock();
+}
+
 void ShowPreferences()
 {
     EnsureRegistryVersion();
@@ -415,6 +442,7 @@ void ShowPreferences()
     }
 
     LabelAutoInterfaceSize();
+    LabelGpuRenderer();
 
     // A difficulty past regular lights hard.
     DifficultyToggle(0)->Toggled = GameDifficulty == 0;

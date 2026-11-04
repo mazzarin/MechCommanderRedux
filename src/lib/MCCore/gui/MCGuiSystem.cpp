@@ -58,6 +58,17 @@ auto HasGuiSystem() -> bool
     return MCGameContext::Current().GuiSystem() != nullptr;
 }
 
+auto GpuFellBack() -> bool
+{
+    if (!HasGuiSystem() || GRenderer != static_cast<int>(MCRendererKind::Vulkan))
+    {
+        return false;
+    }
+
+    const std::shared_ptr<MCDisplay> display = GuiSystem().Display();
+    return display != nullptr && display->RendererKind() != MCRendererKind::Vulkan;
+}
+
 auto ScreenWindow() -> std::shared_ptr<MCGuiObject>
 {
     return HasGuiSystem() ? GuiSystem().Screen : nullptr;

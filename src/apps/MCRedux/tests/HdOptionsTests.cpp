@@ -2,9 +2,11 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCGenericScreen.h"
 #include "logistics/MCHdOptionsPanel.h"
+#include "logistics/MCLogComboBox.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
@@ -14,7 +16,9 @@
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCSystemConfig.h"
+#include "platform/MCDisplay.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCPresenter.h"
 #include "sound/MCHdAudio.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechStops.h"
@@ -22,7 +26,8 @@
 
 // The HD settings PREFS keeps (main/MCHdSettings) and the preferences' HD OPTIONS page that edits them: every setting is
 // read and written, a click and a right click step a setting through its choices, an option that needs another shows
-// dim until it is on, DEFAULTS and ORIGINAL set them all, CANCEL puts them back and ACCEPT writes them.
+// dim until it is on, DEFAULTS and ORIGINAL set them all, CANCEL puts them back and ACCEPT writes them; with the CPU
+// drawing (the GPU failed to start, or SOFTWARE chosen) what only the GPU draws shows dim.
 
 namespace
 {
@@ -219,6 +224,14 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     }
 
     REQUIRE(MCTestGame::StartLogistics());
+
+    // The page as the GPU shows it: on a machine whose GPU couldn't start, the next case's.
+    if (GpuFellBack())
+    {
+        std::cout << "  (skipped: the GPU renderer couldn't start on this machine)\n";
+        return;
+    }
+
     const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
     std::filesystem::remove(prefsPath);
     REQUIRE(MCHdSettings::Now() == OriginalSettings());
@@ -355,4 +368,112 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
 
     std::filesystem::remove(prefsPath);
     MCHdSettings::UseOriginal();
+}
+
+/// <summary>
+/// A run that asked for the GPU renderer and draws on the CPU, the GPU having failed to start (the display's
+/// fallback): the preferences' RENDERER says "VULKAN (FAILED)" and keeps VULKAN for the next start; HD OPTIONS shows
+/// the options only the GPU draws dim, each line saying it needs VULKAN, the status line saying VULKAN didn't start;
+/// they can still be set; the options the CPU keeps (HD AUDIO, FOOTPRINTS, the mechs' motion, BRAKING, REPORTS) show.
+/// With SOFTWARE chosen the status line says the software renderer draws none of them; a run on the software renderer
+/// by choice with VULKAN chosen for the next start shows them all.
+/// </summary>
+TEST_CASE_ISOLATED("game: after the GPU fails to start, HD OPTIONS dims what only the GPU draws and RENDERER says so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // The display opens on the CPU, as it does when the GPU can't start; then the run is one that asked for the GPU.
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    REQUIRE(MCTestGame::StartLogistics());
+    REQUIRE(GuiSystem().Display() != nullptr);
+    REQUIRE(GuiSystem().Display()->RendererKind() == MCRendererKind::Software);
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    std::filesystem::remove(prefsPath);
+    GRenderer = static_cast<int>(MCRendererKind::Vulkan);
+    GRendererPreference = GRenderer;
+    REQUIRE(GpuFellBack());
+    REQUIRE(MCHdSettings::Now() == OriginalSettings());
+
+    // RENDERER: VULKAN, which failed; still the choice.
+    ShowPreferences();
+    Frames();
+    const std::shared_ptr<MCLogComboBox> renderer = PrefsRendererDropDown();
+    REQUIRE(renderer != nullptr);
+    CHECK_EQ(renderer->Items().front().Label, "VULKAN (FAILED)");
+    CHECK_EQ(renderer->Items().front().Value, static_cast<int32_t>(MCRendererKind::Vulkan));
+    CHECK_EQ(renderer->Selected(), 0);
+    MCScreenInput::SaveShot("prefs gpu failed", MCScreenInput::ScreenHash());
+
+    const std::shared_ptr<MCLogTextButton> options = FindTextButton(*GlobalLog()->PrefScreen, "OPTIONS");
+    REQUIRE(options != nullptr);
+    RealClickOn(*options);
+    REQUIRE(HdOptionsShown());
+    const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
+    REQUIRE(list != nullptr);
+    CHECK_EQ(list->Status(), "VULKAN DIDN'T START ON THIS COMPUTER: THE CPU DRAWS THE GAME.");
+
+    // Every setting is one the GPU alone draws or one the CPU keeps.
+    constexpr std::array<std::string_view, 10> gpuOnly = {"HDArt",    "HDLighting", "HDSunShadows", "HDRelief",
+                                                          "HDClouds", "HDSway",     "HDParticles",  "HDFlecks",
+                                                          "HDShake",  "HDWeather"};
+    constexpr std::array<std::string_view, 6> cpuKeeps = {"HDAudio", "HDFootprints", "HDTurns",
+                                                          "HDStops", "MechBraking",  "Reports"};
+    CHECK_EQ(gpuOnly.size() + cpuKeeps.size(), MCHdSettings::All().size());
+
+    // The settings showing as they shouldn't, named.
+    std::string wrong;
+
+    for (const std::string_view key : gpuOnly)
+    {
+        wrong += list->CanShow(RowOf(*list, key)) ? std::format("{} shows; ", key) : "";
+    }
+
+    for (const std::string_view key : cpuKeeps)
+    {
+        wrong += list->CanShow(RowOf(*list, key)) ? "" : std::format("{} dim; ", key);
+    }
+
+    CHECK_EQ(wrong, "");
+
+    // (The mouse kept off the rows, so no box is lit in the screens compared.)
+    constexpr int32_t awayX = 4;
+    constexpr int32_t awayY = 4;
+    MCScreenInput::RealMove(awayX, awayY);
+    Frames();
+    const uint32_t dimShown = MCScreenInput::ScreenHash();
+    MCScreenInput::SaveShot("hd options gpu failed", dimShown);
+
+    // A dim option can still be set (it shows once VULKAN starts).
+    RealClickOption(*list, "HDClouds");
+    CHECK_EQ(GHdClouds, 1);
+    CHECK(!list->CanShow(RowOf(*list, "HDClouds")));
+    RealClickOption(*list, "HDClouds");
+    CHECK_EQ(GHdClouds, 0);
+
+    // SOFTWARE chosen: the status line says the software renderer draws none of them.
+    GRendererPreference = static_cast<int>(MCRendererKind::Software);
+    CHECK_EQ(list->Status(), "THE SOFTWARE RENDERER DRAWS NO OPTION THAT NEEDS VULKAN.");
+    CHECK(!list->CanShow(RowOf(*list, "HDClouds")));
+
+    // On the software renderer by choice, VULKAN chosen for the next start: nothing dims for the GPU, no status.
+    GRenderer = static_cast<int>(MCRendererKind::Software);
+    GRendererPreference = static_cast<int>(MCRendererKind::Vulkan);
+    CHECK(!GpuFellBack());
+    CHECK(list->Status().empty());
+    CHECK(list->CanShow(RowOf(*list, "HDClouds")));
+    CHECK(!list->CanShow(RowOf(*list, "HDRelief")));
+    list->ScrollTo(0);
+    MCScreenInput::RealMove(awayX, awayY);
+    Frames();
+    MCScreenInput::SaveShot("hd options software then vulkan", MCScreenInput::ScreenHash());
+    CHECK(MCScreenInput::ScreenHash() != dimShown);
+
+    HideHdOptions();
+    CancelPrefs();
+    Frames();
+    CHECK(MCHdSettings::Now() == OriginalSettings());
+    std::filesystem::remove(prefsPath);
 }

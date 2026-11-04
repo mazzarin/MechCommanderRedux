@@ -15,9 +15,11 @@
 /// <remarks>
 /// A click on an option's row moves its setting to the next of its choices (after the last, the first); a right click
 /// to the one before. An option that needs another setting on (HD ART, HD LIGHTING, PARTICLES) shows dim while that one
-/// is off, its line saying so; it can still be set. A held option (<see cref="SetHeld"/>) shows dim too, its line
-/// saying why (wrapped over more lines, rows of their own under it, when it needs them), and can't be set. With the SOFTWARE renderer chosen the status line says it draws none of them. The
-/// wheel, the up and down keys and the bar at the right scroll the rows.
+/// is off, its line saying so; it can still be set. So does an option the GPU alone draws while the CPU draws the game
+/// (the SOFTWARE renderer chosen, or the GPU failed to start), its line saying it needs VULKAN, and the status line says
+/// which (<see cref="SetRendererHints"/>). A held option (<see cref="SetHeld"/>) shows dim too, its line saying why
+/// (wrapped over more lines, rows of their own under it, when it needs them), and can't be set. The wheel, the up and
+/// down keys and the bar at the right scroll the rows.
 /// </remarks>
 class MCLogOptionList : public MCLogScrollList
 {
@@ -44,6 +46,8 @@ public:
         int* Value = nullptr;
         /// <summary>Its choices, in the order a click steps through them.</summary>
         std::span<const Choice> Choices;
+        /// <summary>Port: only the GPU renderer draws it (it shows nothing while the CPU draws the game).</summary>
+        bool Gpu = false;
         /// <summary>The setting that must be on for it to show (its key), and that setting's name.</summary>
         std::string_view Needs;
         std::string_view NeedsLabel;
@@ -109,8 +113,11 @@ public:
     /// <summary>The width of a row's second line, what it does (or why it's held), in pixels.</summary>
     int32_t LineWidth();
 
-    /// <summary>What the status line says with the SOFTWARE renderer chosen (empty: nothing).</summary>
-    void SetSoftwareHint(std::string_view hint);
+    /// <summary>
+    /// Whether the status line, with no news, says when the CPU draws the game: the SOFTWARE renderer chosen, or the GPU
+    /// failed to start (<paramref name="shown"/>; on by default).
+    /// </summary>
+    void SetRendererHints(bool shown);
 
     /// <summary>The headings' colour, for a screen whose palette has no amber at the preferences' (HeadingColor).</summary>
     void SetHeadingColor(uint8_t color);
@@ -136,7 +143,10 @@ public:
     /// <summary>What row <paramref name="row"/>'s option does, as its line says.</summary>
     std::string_view Description(int32_t row) const { return _Rows[static_cast<size_t>(row)].Description; }
 
-    /// <summary>Whether row <paramref name="row"/>'s option can show: the setting it needs (if any) is on.</summary>
+    /// <summary>
+    /// Whether row <paramref name="row"/>'s option can show: the GPU draws the game if only the GPU draws it, and the
+    /// setting it needs (if any) is on.
+    /// </summary>
     bool CanShow(int32_t row) const;
 
     /// <summary>The status line's text.</summary>
@@ -169,6 +179,12 @@ private:
     /// <summary>The setting row <paramref name="row"/> edits.</summary>
     int& Setting(int32_t row) const;
 
+    /// <summary>
+    /// What row <paramref name="row"/>'s option needs first to show, as its line names it: VULKAN while the CPU draws an
+    /// option only the GPU draws, else the setting it needs while that is off; empty when it can show.
+    /// </summary>
+    std::string_view Lacks(int32_t row) const;
+
     /// <summary>The option row under the screen point that a click would change, if any: none while locked or held.</summary>
     std::optional<int32_t> ChangeableAt(int32_t xPos, int32_t yPos);
 
@@ -196,8 +212,8 @@ private:
     std::vector<std::vector<std::string>> _HeldLines;
     /// <summary>The rows in the order they scroll, each held reason's further lines after its row.</summary>
     std::vector<Slot> _Slots;
-    /// <summary>The status line's hint with the SOFTWARE renderer chosen.</summary>
-    std::string_view _SoftwareHint;
+    /// <summary>The status line says when the CPU draws the game (<see cref="SetRendererHints"/>).</summary>
+    bool _RendererHints = true;
     /// <summary>The headings' colour.</summary>
     uint8_t _HeadingColor = HeadingColor;
 };

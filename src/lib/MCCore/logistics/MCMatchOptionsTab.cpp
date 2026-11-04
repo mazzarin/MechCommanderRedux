@@ -417,7 +417,7 @@ auto MakeMatchOptionsList() -> std::shared_ptr<MCLogOptionList>
     auto list = MCMakeGui<MCLogOptionList>();
     list->Init(ListLeft, ListTop, ListWidth, ListHeight, Rows);
     list->SetNarrow(SettingWidth);
-    list->SetSoftwareHint({});
+    list->SetRendererHints(false);
     list->SetHeadingColor(HeadingColor);
     list->ShowGuiWindow(false);
     return list;

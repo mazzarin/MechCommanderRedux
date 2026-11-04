@@ -280,6 +280,11 @@ private:
 MCGuiSystem& GuiSystem();
 /// <summary>Whether a GUI system is installed.</summary>
 bool HasGuiSystem();
+/// <summary>
+/// Port-only: whether this run asked for the GPU renderer (<see cref="GRenderer"/>) and the CPU draws instead, the GPU
+/// having failed to start (MCDisplay's fallback): what the GPU alone draws doesn't show.
+/// </summary>
+bool GpuFellBack();
 /// <summary>The window every screen is a child of, or null; the caller keeps it as its pin.</summary>
 std::shared_ptr<MCGuiObject> ScreenWindow();
 /// <summary>The port of the whole screen, or null; the caller keeps it as its pin.</summary>

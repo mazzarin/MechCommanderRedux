@@ -3,6 +3,7 @@
 #include "gui/MCGuiEvent.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
+#include "gui/MCGuiSystem.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCPresenter.h"
 
@@ -28,8 +29,33 @@ namespace
     constexpr std::string_view OptionTitle = "OPTION";
     constexpr std::string_view SettingTitle = "SETTING";
 
-    /// <summary>What the status line says with the SOFTWARE renderer chosen (else nothing, but what a button did).</summary>
-    constexpr std::string_view SoftwareHint = "THE SOFTWARE RENDERER DRAWS NONE OF THESE (HD AUDIO STILL PLAYS).";
+    /// <summary>
+    /// What the status line says while the CPU draws the game (else nothing, but what a button did): with the SOFTWARE
+    /// renderer chosen, and when the GPU failed to start. The options only the GPU draws say they need VULKAN.
+    /// </summary>
+    const std::string& SoftwareHint()
+    {
+        static const std::string hint =
+            std::format("THE SOFTWARE RENDERER DRAWS NO OPTION THAT NEEDS {}.", MCGpuRendererChoice);
+        return hint;
+    }
+
+    const std::string& FallbackHint()
+    {
+        static const std::string hint =
+            std::format("{} DIDN'T START ON THIS COMPUTER: THE CPU DRAWS THE GAME.", MCGpuRendererChoice);
+        return hint;
+    }
+
+    /// <summary>
+    /// Whether the CPU draws the game as the settings stand, which the page describes: SOFTWARE chosen (it draws from
+    /// the next start if not now), or VULKAN chosen and this run's GPU failed to start (as it will again). VULKAN chosen
+    /// on a run the player started on SOFTWARE counts as the GPU's: it is tried at the next start.
+    /// </summary>
+    bool CpuDrawsAsSet()
+    {
+        return GRendererPreference == static_cast<int>(MCRendererKind::Software) || GpuFellBack();
+    }
 
     /// <summary>The sample a change plays.</summary>
     constexpr uint32_t ChangedSound = 15;
@@ -71,8 +97,7 @@ namespace
     }
 }
 
-MCLogOptionList::MCLogOptionList()
-    : MCLogScrollList(RowHeight), _SettingWidth(SettingWidth), _SoftwareHint(SoftwareHint)
+MCLogOptionList::MCLogOptionList() : MCLogScrollList(RowHeight), _SettingWidth(SettingWidth)
 {
 }
 
@@ -161,9 +186,9 @@ auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
     return _Held[static_cast<size_t>(row)];
 }
 
-auto MCLogOptionList::SetSoftwareHint(std::string_view hint) -> void
+auto MCLogOptionList::SetRendererHints(bool shown) -> void
 {
-    _SoftwareHint = hint;
+    _RendererHints = shown;
 }
 
 auto MCLogOptionList::SetHeadingColor(uint8_t color) -> void
@@ -183,7 +208,17 @@ auto MCLogOptionList::Status() const -> std::string_view
         return _LockedHint;
     }
 
-    return GRendererPreference == static_cast<int>(MCRendererKind::Software) ? _SoftwareHint : std::string_view();
+    if (!_RendererHints)
+    {
+        return {};
+    }
+
+    if (GRendererPreference == static_cast<int>(MCRendererKind::Software))
+    {
+        return SoftwareHint();
+    }
+
+    return GpuFellBack() ? std::string_view(FallbackHint()) : std::string_view();
 }
 
 auto MCLogOptionList::Setting(int32_t row) const -> int&
@@ -220,10 +255,26 @@ auto MCLogOptionList::ChoiceName(int32_t row) const -> std::string_view
     return "?";
 }
 
-auto MCLogOptionList::CanShow(int32_t row) const -> bool
+auto MCLogOptionList::Lacks(int32_t row) const -> std::string_view
 {
     const Row& option = _Rows[static_cast<size_t>(row)];
-    return option.Needs.empty() || *MCHdSettings::Find(option.Needs).Value != 0;
+
+    if (option.Gpu && CpuDrawsAsSet())
+    {
+        return MCGpuRendererChoice;
+    }
+
+    if (!option.Needs.empty() && *MCHdSettings::Find(option.Needs).Value == 0)
+    {
+        return option.NeedsLabel;
+    }
+
+    return {};
+}
+
+auto MCLogOptionList::CanShow(int32_t row) const -> bool
+{
+    return Lacks(row).empty();
 }
 
 auto MCLogOptionList::Step(int32_t row, int32_t steps) -> void
@@ -352,13 +403,14 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
 {
     const Row& option = _Rows[static_cast<size_t>(row)];
     const std::string_view held = HeldReason(row);
-    const bool shows = CanShow(row) && held.empty();
+    const std::string_view lacks = Lacks(row);
+    const bool shows = lacks.empty() && held.empty();
     const int32_t settingLeft = SettingLeft();
     const int32_t nameWidth = settingLeft - SettingGap - NameLeft;
     Write(NameLeft, top + TextOffset, option.Label, shows ? NameColor : DimColor, nameWidth);
 
-    // What it does; when it can't show, what it needs first; when held, why instead (in the headings' amber: a held
-    // row is the session screen's, whose palette has none at NeedsColor).
+    // What it does; when it can't show, what it needs first (VULKAN, or another setting); when held, why instead (in the
+    // headings' amber: a held row is the session screen's, whose palette has none at NeedsColor).
     int32_t left = NameLeft;
     const int32_t descriptionRight = NameLeft + LineWidth();
 
@@ -368,10 +420,9 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
     }
     else
     {
-        if (!shows)
+        if (!lacks.empty())
         {
-            left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", option.NeedsLabel), NeedsColor,
-                          nameWidth);
+            left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", lacks), NeedsColor, nameWidth);
         }
 
         Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, descriptionRight - left);

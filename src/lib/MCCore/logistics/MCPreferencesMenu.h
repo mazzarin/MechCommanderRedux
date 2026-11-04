@@ -5,6 +5,7 @@
 class MCGenericScreen;
 class MCGuiEvent;
 class MCGuiObject;
+class MCLogComboBox;
 
 /// <summary>The difficulty (0 easy, 1 regular, 2 hard; starts at 1). An <c>int32_t</c>: the drop-down edits it.</summary>
 extern int32_t GameDifficulty;
@@ -52,7 +53,7 @@ bool StepInterfaceSize(int steps);
 /// Port-only: lays the preferences screen <paramref name="screen"/> out on a panel over its art, with room for more
 /// settings: the brightness slider; the music, radio, sound effects and interface volume sliders; DIFFICULTY as a
 /// drop-down (EASY, REGULAR, HARD; <see cref="GameDifficulty"/>) in place of the original's checks; a RENDERER
-/// drop-down (VULKAN, SOFTWARE; PREFS "Renderer"); a UI RESOLUTION drop-down (NATIVE, 480P .. 1080P; PREFS
+/// drop-down (VULKAN, SOFTWARE; PREFS "Renderer"; "VULKAN (FAILED)" when this run's GPU couldn't start); a UI RESOLUTION drop-down (NATIVE, 480P .. 1080P; PREFS
 /// "UIResolution", <see cref="GUiResolution"/>); a SCROLL SPEED drop-down (AUTO, 1.5X .. 3X; PREFS "ScrollSpeed",
 /// <see cref="GScrollSpeed"/>); an HD box whose OPTIONS button shows the HD OPTIONS page (every HD setting:
 /// MCHdOptionsPanel.h); CONTROLS at the bottom left (MCControlsPanel.h); and ACCEPT and CANCEL side by side at the
@@ -60,6 +61,9 @@ bool StepInterfaceSize(int steps);
 /// another renderer than the running one; the UI resolution at the next scenario.
 /// </summary>
 void AddPreferencesPanel(MCGenericScreen& screen);
+
+/// <summary>Port-only: the preferences' RENDERER drop-down, or null before the panel is made.</summary>
+std::shared_ptr<MCLogComboBox> PrefsRendererDropDown();
 
 /// <summary>The preferences screen's routine (it does nothing).</summary>
 void PrefScreenHandleEvent(MCGuiObject& object, MCGuiEvent& event);

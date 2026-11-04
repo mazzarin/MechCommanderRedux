@@ -1124,6 +1124,20 @@ TEST_CASE("network: the command line's match options set the weather, the time o
     CHECK(bans.Rules == (MCMatchRule::MechBraking | MCMatchRule::NoMines));
     CHECK(!MPReadMatchOption(MatchSensorsFlag, "mission", bans));
     CHECK(MPIsMatchOptionFlag("-MATCHSENSORS"));
+
+    // A ban without a braking flag keeps the PREFS' braking, and the PREFS' braking keeps the bans.
+    MCMatchOptions prefs;
+    CHECK(MPReadMatchOption(MatchMinesFlag, "off", prefs));
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking | MCMatchRule::NoMines);
+    CHECK_EQ(MCWantedRules(prefs.Rules, false), MCMatchRule::NoMines);
+    CHECK(MPReadMatchOption(MatchBrakingFlag, "off", prefs));
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::NoMines);
+    CHECK(MPReadMatchOption(MatchBrakingFlag, "prefs", prefs));
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking | MCMatchRule::NoMines);
+    CHECK(MPReadMatchOption(MatchMinesFlag, "on", prefs));
+    CHECK_EQ(MCWantedRules(prefs.Rules, true), MCMatchRule::MechBraking);
+    CHECK_EQ(MCWantedRules(std::nullopt, true), MCMatchRule::MechBraking);
+    CHECK_EQ(MCWantedRules(std::nullopt, false), 0u);
     CHECK(!MPIsMatchOptionFlag("-matchpilots"));
     CHECK(!MPReadMatchOption(MatchBrakingFlag, "mission", options));
     CHECK(options.Weather == MCWeatherKind::LightSnow);

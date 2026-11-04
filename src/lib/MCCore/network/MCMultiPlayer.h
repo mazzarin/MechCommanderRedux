@@ -62,6 +62,11 @@ namespace MCMatchRule
     inline constexpr uint32_t NoSensors = 64;
     /// <summary>No mines (MINES OFF): the map's are cleared at load (MCScenarioMap::ClearMines), mine layers lay none.</summary>
     inline constexpr uint32_t NoMines = 128;
+    /// <summary>
+    /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
+    /// host's PREFS say (MCWantedRules), with the other rules chosen.
+    /// </summary>
+    inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by.</summary>
     inline constexpr uint32_t Supported =
         MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines;
@@ -75,6 +80,12 @@ void MCSetMatchRulesInForce(uint32_t rules);
 
 /// <summary>Port: whether the mission being played plays by every one of <paramref name="rules"/>.</summary>
 bool MCMatchPlays(uint32_t rules);
+
+/// <summary>
+/// Port: the rules a host wants of its <paramref name="chosen"/> ones (none: braking as its PREFS,
+/// <paramref name="prefsBraking"/>; MCMatchRule::BrakingFromPrefs the same, with the others chosen).
+/// </summary>
+uint32_t MCWantedRules(std::optional<uint32_t> chosen, bool prefsBraking);
 
 /// <summary>
 /// Port: of the rules <paramref name="wanted"/>, those every one of <paramref name="players"/> plays by, as its rules

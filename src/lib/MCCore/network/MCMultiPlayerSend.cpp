@@ -109,7 +109,7 @@ int32_t MCMultiPlayer::SendPlayerRules()
 
 uint32_t MCMultiPlayer::WantedRules() const
 {
-    return MatchOptions.Rules.value_or(GMechBraking != 0 ? MCMatchRule::MechBraking : 0);
+    return MCWantedRules(MatchOptions.Rules, GMechBraking != 0);
 }
 
 int32_t MCMultiPlayer::SendMatchRules()

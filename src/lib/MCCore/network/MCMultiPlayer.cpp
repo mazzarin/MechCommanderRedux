@@ -638,6 +638,19 @@ bool MCMatchPlays(uint32_t rules)
     return (RulesInForce() & rules) == rules;
 }
 
+uint32_t MCWantedRules(std::optional<uint32_t> chosen, bool prefsBraking)
+{
+    const uint32_t rules = chosen.value_or(MCMatchRule::BrakingFromPrefs);
+
+    if ((rules & MCMatchRule::BrakingFromPrefs) == 0)
+    {
+        return rules;
+    }
+
+    return (rules & ~(MCMatchRule::BrakingFromPrefs | MCMatchRule::MechBraking)) |
+           (prefsBraking ? MCMatchRule::MechBraking : 0);
+}
+
 uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said)
 {
     uint32_t rules = wanted & MCMatchRule::Supported;

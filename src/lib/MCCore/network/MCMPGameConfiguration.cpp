@@ -301,17 +301,20 @@ bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOpt
         // ON is the original's: the rule bans the thing when OFF.
         if (MCIEquals(value, OnValue) || MCIEquals(value, OffValue))
         {
-            options.Rules = (options.Rules.value_or(0) & ~*ban) | (MCIEquals(value, OffValue) ? *ban : 0);
+            // Without a braking flag before it, braking stays the PREFS' (PREFS may not be read yet).
+            const uint32_t chosen = options.Rules.value_or(MCMatchRule::BrakingFromPrefs);
+            options.Rules = (chosen & ~*ban) | (MCIEquals(value, OffValue) ? *ban : 0);
             return true;
         }
     }
     else if (MCIEquals(flag, MatchBrakingFlag))
     {
-        const uint32_t others = options.Rules.value_or(0) & ~MCMatchRule::MechBraking;
+        const uint32_t others = options.Rules.value_or(0) & ~(MCMatchRule::MechBraking | MCMatchRule::BrakingFromPrefs);
 
+        // The PREFS' braking, the bans chosen kept (none: nothing chosen).
         if (MCIEquals(value, PrefsValue))
         {
-            options.Rules.reset();
+            options.Rules = others != 0 ? std::optional(others | MCMatchRule::BrakingFromPrefs) : std::nullopt;
             return true;
         }
 

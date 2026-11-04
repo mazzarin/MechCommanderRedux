@@ -76,7 +76,13 @@ namespace
             [&play]
             {
                 MCSetWeatherPlay(play);
-                VisualRangeTable = MCSightCut(VisualRangeTable, play.Sight);
+
+                // As the scenario's load cuts it: not at all at the whole.
+                if (play.Sight != 1.0)
+                {
+                    VisualRangeTable = MCSightCut(VisualRangeTable, play.Sight);
+                }
+
                 REQUIRE(MCTestGame::OrderMissionOneAttack() != nullptr);
             },
             BattleFrames);

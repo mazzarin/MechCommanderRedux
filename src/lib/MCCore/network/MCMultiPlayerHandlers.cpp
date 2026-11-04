@@ -432,7 +432,9 @@ void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg)
     for (const MCMPPlayersRulesMessage::Said& player :
          std::span(said.Players).first(std::min<size_t>(said.Count, said.Players.size())))
     {
-        game.PlayerRules[player.PlayerId] = player.Rules & MCMatchRule::Supported;
+        // Copied first: the map's [] takes its key by reference, and the message's packed fields aren't aligned.
+        const uint32_t playerId = player.PlayerId;
+        game.PlayerRules[playerId] = player.Rules & MCMatchRule::Supported;
     }
 }
 

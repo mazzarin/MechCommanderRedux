@@ -73,3 +73,17 @@ auto ReadRequiredText(MCFitIniFile& file, std::string_view name, size_t maxLengt
     Assert(read, 0, message);
     return text;
 }
+
+auto MPPurchaseFileName(MCFitIniFile& file) -> std::string
+{
+    // The original read the name into a 9-byte buffer.
+    constexpr size_t MaxPurchaseName = 9;
+    std::string purchaseName = "purchase";
+
+    if (file.SeekBlock("PurchaseInfo") != 0)
+    {
+        ReadText(file, "MainPurchaseFile", MaxPurchaseName, purchaseName);
+    }
+
+    return purchaseName;
+}

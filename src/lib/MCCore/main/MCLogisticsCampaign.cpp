@@ -366,15 +366,7 @@ auto MCLogistics::LoadCampaign(std::string_view saveName, std::string_view exten
     }
     else
     {
-        // Original behaviour (OB-100): MainPurchaseFile is read only when the PurchaseInfo block is missing (from the
-        // block the file was on); with the block there, "purchase" is used.
-        std::string purchaseName = "purchase";
-
-        if (file.SeekBlock("PurchaseInfo") != 0)
-        {
-            ReadText(file, "MainPurchaseFile", 9, purchaseName);
-        }
-
+        const std::string purchaseName = MPPurchaseFileName(file);
         MCFitIniFile purchasing;
         result = purchasing.Open(GamePath(MissionPath, purchaseName, ".fit"));
         Assert(result == 0, 0, " could not open purchasing file ");

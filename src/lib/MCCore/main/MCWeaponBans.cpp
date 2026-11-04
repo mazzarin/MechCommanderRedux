@@ -42,6 +42,9 @@ namespace
     struct Removed
     {
         int32_t Copies = 0;
+        /// <summary>Of them, weapons and ammo (a unit's profile counts each: NumWeapons, NumAmmo).</summary>
+        int32_t Weapons = 0;
+        int32_t Ammo = 0;
         int32_t ResourcePoints = 0;
         float Tonnage = 0.0f;
     };
@@ -60,6 +63,7 @@ namespace
                           const MCMasterComponent& master = MasterComponentList[item->MasterID];
                           const auto copies = static_cast<int32_t>(item->Stats.size());
                           removed.Copies += copies;
+                          (master.Form == MCComponentForm::Ammo ? removed.Ammo : removed.Weapons) += copies;
                           removed.ResourcePoints += master.ResourcePoints * copies;
                           removed.Tonnage += master.Tonnage * static_cast<float>(copies);
                           return true;
@@ -195,7 +199,9 @@ void MCRemoveBannedWeapons(MCLogMech& mech, uint32_t rules)
     }
 
     // Weapons and their ammo weigh in the weapons' share too (MCLogMechList::AddMech), so the space for weapons
-    // (FreeTonnage) is as it was.
+    // (FreeTonnage) is as it was. The profile's counts go with them (its writer counts them again).
+    mech.NumWeapons = static_cast<uint8_t>(mech.NumWeapons - removed.Weapons);
+    mech.NumAmmo = static_cast<uint8_t>(mech.NumAmmo - removed.Ammo);
     mech.UsedTonnage -= removed.Tonnage;
     mech.WeaponTonnage -= removed.Tonnage;
     mech.ResourcePoints -= removed.ResourcePoints;
@@ -204,6 +210,15 @@ void MCRemoveBannedWeapons(MCLogMech& mech, uint32_t rules)
 
 void MCRemoveBannedWeapons(MCLogVehicle& vehicle, uint32_t rules)
 {
-    RemoveBanned(*vehicle.Inventory, rules);
+    const Removed removed = RemoveBanned(*vehicle.Inventory, rules);
+
+    if (removed.Copies == 0)
+    {
+        return;
+    }
+
+    // The profile's counts go with them: a vehicle's writer writes them as they are (LogisticsVehicleProfileWriter).
+    vehicle.NumWeapons = static_cast<uint8_t>(vehicle.NumWeapons - removed.Weapons);
+    vehicle.NumAmmo = static_cast<uint8_t>(vehicle.NumAmmo - removed.Ammo);
     vehicle.CalcVehicleCost();
 }

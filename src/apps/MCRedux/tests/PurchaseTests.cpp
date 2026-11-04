@@ -12,6 +12,7 @@
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechPurchaseBlock.h"
 #include "logistics/MCMechRepairBlock.h"
+#include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCPilotInventoryBlock.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCPilotPurchaseBlock.h"
@@ -30,6 +31,7 @@
 #include "network/MCMultiPlayer.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCObjectTypeManager.h"
+#include "platform/MCFileSystem.h"
 
 // The shop and the repair bay (P3-log-2): the shop's lists, prices and stock, the unit limit, what a mech can mount,
 // the repair order, the session screen's player order, and buying and selling by dragging between the panes.
@@ -664,7 +666,53 @@ TEST_CASE("game: a match's weapon bans take a mech's banned weapons off and off 
     CHECK_EQ(logistics.PurVehicleList->GetVehicleCount(), vehicles - static_cast<int32_t>(vehiclesCarrying));
     CHECK(std::ranges::none_of(logistics.PurVehicleList->Vehicles, [&](const std::shared_ptr<MCPurVehicle>& vehicle)
                                { return carriesBanned(*vehicle->Data->Inventory); }));
+
+    // Written as the drop writes a unit's profile and read back, a mech and a vehicle without them are what they were:
+    // the vehicle's counts are its inventory's, also for one whose items aren't its stock ones (a deploy message's).
+    const auto copies = [](const MCInventoryList& inventory)
+    {
+        std::multiset<uint8_t> ids;
+
+        for (const std::shared_ptr<MCLogInventoryItem>& item : inventory.Items)
+        {
+            for (size_t copy = 0; copy < item->Stats.size(); copy++)
+            {
+                ids.insert(item->MasterID);
+            }
+        }
+
+        return ids;
+    };
+
+    constexpr std::string_view SrmCarrier = "PV20500";
+
+    // The temp folder the profiles go in, each of its folders made as the game makes it (in the tests' user folder).
+    for (size_t end = SaveTempPath.find('\\'); end != std::string::npos; end = SaveTempPath.find('\\', end + 1))
+    {
+        MCFileSystem::MakeDirectory(std::string_view(SaveTempPath).substr(0, end));
+    }
+
+    const std::shared_ptr<MCLogVehicle> vehicle = shop.Vehicles.AddVehicle(SrmCarrier, false, false, false);
+    CHECK(!carriesBanned(*vehicle->Inventory));
+    REQUIRE_EQ(MCMissionLogisticsBridge::LogisticsVehicleProfileWriter("banvehicle", *vehicle, false), 0);
+    MCFitIniFile vehicleFile;
+    REQUIRE_EQ(vehicleFile.Open(GamePath(SaveTempPath, "banvehicle", ".fit")), 0);
+    CHECK(copies(*shop.Vehicles.AddVehicle(vehicleFile, false, false, false)->Inventory) ==
+          copies(*vehicle->Inventory));
+    REQUIRE_EQ(MCMissionLogisticsBridge::LogisticsMechProfileWriter("banmech", *stripped, false), 0);
+    MCFitIniFile mechFile;
+    REQUIRE_EQ(mechFile.Open(GamePath(SaveTempPath, "banmech", ".fit")), 0);
+    CHECK(copies(*shop.Mechs.AddMech(mechFile, false, false, false)->Inventory) == copies(*stripped->Inventory));
+
     shop.PlayMatch(0);
+    const std::shared_ptr<MCLogVehicle> received = shop.Vehicles.AddVehicle(SrmCarrier, false, false, false);
+    REQUIRE(carriesBanned(*received->Inventory));
+    MCRemoveBanned(*received->Inventory, ban);
+    REQUIRE_EQ(MCMissionLogisticsBridge::LogisticsVehicleProfileWriter("banreceived", *received, false), 0);
+    MCFitIniFile receivedFile;
+    REQUIRE_EQ(receivedFile.Open(GamePath(SaveTempPath, "banreceived", ".fit")), 0);
+    CHECK(copies(*shop.Vehicles.AddVehicle(receivedFile, false, false, false)->Inventory) ==
+          copies(*received->Inventory));
 }
 
 TEST_CASE("logistics: armor repair fills the head first, then the most damaged location")

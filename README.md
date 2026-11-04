@@ -167,7 +167,8 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
 | `-matchbraking <on\|off>`             | Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
 | `-matchartillery <on\|off>`           | Off: commanders get no artillery strikes. On (the original's) without it. |
-| `-matchsensors <on\|off>`             | Off: units find their foes by sight alone: no unit's or sensor tower's sensors, no sensor probes or camera drones. On without it. |
+| `-matchprobes <on\|off>`              | Off: commanders get no sensor probes or camera drones. On without it. |
+| `-matchsensors <on\|off>`             | Off: units find their foes by sight alone: no unit's or sensor tower's sensors (a commander's sensor probe still senses). On without it. |
 | `-matchmines <on\|off>`               | Off: no mines: the map's minefields are cleared and mine layers lay none. On without it. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
@@ -177,11 +178,11 @@ its own points and tech bases. The game checks only that each player has a file 
 same file, so a launcher should check the files match.
 
 The match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER CHAT:
-WEATHER, TIME OF DAY, BRAKING, ARTILLERY, SENSORS and MINES), and a host started with them but no `-matchmap` opens the
+WEATHER, TIME OF DAY, BRAKING, ARTILLERY, PROBES, SENSORS and MINES), and a host started with them but no `-matchmap` opens the
 session screen with them chosen. Each is played only if every player's game has it: every build says what it has when
 the session screen opens (and when asked for a mission file), the host passes on what each said, and while a player's
-game lacks an option, the match plays the mission's own (braking off; artillery, sensors and mines on) and every
-player's MATCH OPTIONS names whose games lack it. A game that says nothing, as the original's, lacks them all. A player with
+game lacks an option, the match plays the mission's own (braking off; artillery, probes, sensors and mines on) and
+every player's MATCH OPTIONS tells the players whose games lack it to upgrade, by name while the names fit the line. A game that says nothing, as the original's, lacks them all. A player with
 WEATHER or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day.
 
 ### Saves and Settings

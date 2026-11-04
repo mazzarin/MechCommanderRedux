@@ -365,9 +365,10 @@ namespace
     constexpr int32_t TimeRow = 2;
     constexpr int32_t BrakingRow = 3;
     constexpr int32_t ArtilleryRow = 4;
-    constexpr int32_t SensorsRow = 5;
-    constexpr int32_t MinesRow = 6;
-    constexpr std::array RuleRows = {WeatherRow, TimeRow, BrakingRow, ArtilleryRow, SensorsRow, MinesRow};
+    constexpr int32_t ProbesRow = 5;
+    constexpr int32_t SensorsRow = 6;
+    constexpr int32_t MinesRow = 7;
+    constexpr std::array RuleRows = {WeatherRow, TimeRow, BrakingRow, ArtilleryRow, ProbesRow, SensorsRow, MinesRow};
     /// <summary>A point on each tab (MCMatchOptionsTab.cpp's ChatTabArea and OptionsTabArea).</summary>
     constexpr int32_t TabX = 0xca;
     constexpr int32_t ChatTabY = 0x80;
@@ -391,19 +392,19 @@ namespace
 /// Port: why an option is held names every player whose game doesn't have it, then (for a line too narrow for them
 /// all) fewer and the rest counted, down to none named.
 /// </summary>
-TEST_CASE("session screen: a held match option names whose game doesn't have it")
+TEST_CASE("session screen: a held match option tells whose game doesn't have it to upgrade")
 {
-    CHECK(MatchNotInGames({}).empty());
+    CHECK(MatchTellToUpgrade({}).empty());
     const std::array<std::string, 1> one = {"BOB"};
-    CHECK((MatchNotInGames(one) == std::vector<std::string>{"NOT IN BOB'S GAME.", "NOT IN 1 PLAYER'S GAME."}));
+    CHECK((MatchTellToUpgrade(one) == std::vector<std::string>{"TELL BOB TO UPGRADE.", "TELL A PLAYER TO UPGRADE."}));
     const std::array<std::string, 2> two = {"BOB", "ANN"};
-    CHECK((MatchNotInGames(two) == std::vector<std::string>{"NOT IN BOB'S OR ANN'S GAMES.",
-                                                            "NOT IN BOB'S OR 1 OTHER'S GAMES.",
-                                                            "NOT IN 2 PLAYERS' GAMES."}));
-    const std::array<std::string, 3> three = {"BOB", "ANN", "JO"};
-    CHECK((MatchNotInGames(three) ==
-           std::vector<std::string>{"NOT IN BOB'S, ANN'S OR JO'S GAMES.", "NOT IN BOB'S, ANN'S OR 1 OTHER'S GAMES.",
-                                    "NOT IN BOB'S OR 2 OTHERS' GAMES.", "NOT IN 3 PLAYERS' GAMES."}));
+    CHECK((MatchTellToUpgrade(two) == std::vector<std::string>{"TELL BOB AND ANN TO UPGRADE.",
+                                                               "TELL BOB AND 1 OTHER TO UPGRADE.",
+                                                               "TELL 2 PLAYERS TO UPGRADE."}));
+    const std::array<std::string, 3> three = {"BOB", "ANN", "SALLY"};
+    CHECK((MatchTellToUpgrade(three) ==
+           std::vector<std::string>{"TELL BOB, ANN AND SALLY TO UPGRADE.", "TELL BOB, ANN AND 1 OTHER TO UPGRADE.",
+                                    "TELL BOB AND 2 OTHERS TO UPGRADE.", "TELL 3 PLAYERS TO UPGRADE."}));
 }
 
 /// <summary>
@@ -479,17 +480,26 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
     CHECK(list.ChoiceName(BrakingRow) == "OFF");
 
-    for (const int32_t row : {ArtilleryRow, SensorsRow, MinesRow})
+    for (const int32_t row : {ArtilleryRow, ProbesRow, SensorsRow, MinesRow})
     {
         CHECK(list.ChoiceName(row) == "ON");
     }
 
-    constexpr std::string_view NotInGuests = "NOT IN GUEST'S GAME.";
+    constexpr std::string_view NotInGuests = "TELL GUEST TO UPGRADE.";
 
-    // Every row's line fits it.
+    // Every row's line fits it, as does a held line with none named, for up to every other player of a full session.
     for (int32_t row = 0; row < list.OptionRows(); row++)
     {
         CHECK(WhiteFont->Width(list.Description(row)) <= list.LineWidth());
+    }
+
+    constexpr std::string_view LongName = "[WOLF]BLACKBEARSRULE";
+    const std::vector<std::string> others(static_cast<size_t>(MaxLinkupPlayers - 1), std::string(LongName));
+
+    for (size_t count = 1; count <= others.size(); count++)
+    {
+        const std::vector<std::string> lines = MatchTellToUpgrade(std::span(others).first(count));
+        CHECK(WhiteFont->Width(lines.back()) <= list.LineWidth());
     }
 
     for (const int32_t row : RuleRows)
@@ -552,6 +562,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     ClickSetting(list, BrakingRow, 1);
     ClickSetting(list, ArtilleryRow, 1);
     CHECK(list.ChoiceName(ArtilleryRow) == "OFF");
+    CHECK(list.ChoiceName(ProbesRow) == "ON");
     CHECK(list.ChoiceName(SensorsRow) == "ON");
     CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");

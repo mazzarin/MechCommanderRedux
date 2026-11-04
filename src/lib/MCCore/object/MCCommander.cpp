@@ -94,12 +94,12 @@ auto MCCommander::SetNumLargeStrikes(int32_t strikes) -> void
 
 auto MCCommander::SetNumSensorStrikes(int32_t strikes) -> void
 {
-    NumSensorStrikes = Allowed(strikes, MCMatchRule::NoSensors);
+    NumSensorStrikes = Allowed(strikes, MCMatchRule::NoProbes);
     RedrawTacticalMap(*this);
 }
 
 auto MCCommander::SetNumCameraDrones(int32_t drones) -> void
 {
-    NumCameraDrones = Allowed(drones, MCMatchRule::NoSensors);
+    NumCameraDrones = Allowed(drones, MCMatchRule::NoProbes);
     RedrawTacticalMap(*this);
 }

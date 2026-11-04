@@ -200,6 +200,7 @@ namespace
     int TimeValue = MissionOwn;
     int BrakingValue = 0;
     int ArtilleryValue = 1;
+    int ProbesValue = 1;
     int SensorsValue = 1;
     int MinesValue = 1;
 
@@ -282,10 +283,10 @@ namespace
     constexpr std::string_view UnknownPlayer = "A PLAYER";
 
     /// <summary>
-    /// Why the host can't choose what <paramref name="rule"/> covers, longest first (MatchNotInGames): the players whose
-    /// game doesn't have it, by name (none: every player's has it).
+    /// Why the host can't choose what <paramref name="rule"/> covers, longest first (MatchTellToUpgrade): the other
+    /// players whose game doesn't have it, by name (none: every player's has it).
     /// </summary>
-    std::vector<std::string> NotInGames(MCMultiPlayer& game, uint32_t rule)
+    std::vector<std::string> TellToUpgrade(MCMultiPlayer& game, uint32_t rule)
     {
         std::vector<std::string> names;
 
@@ -299,7 +300,7 @@ namespace
             names.push_back(std::move(name));
         }
 
-        return MatchNotInGames(names);
+        return MatchTellToUpgrade(names);
     }
 
     /// <summary>Width of the setting boxes: LIGHT SNOW's in the list's font, with its margins.</summary>
@@ -338,6 +339,11 @@ namespace
             .Value = &ArtilleryValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoArtillery, false>},
+        Row{.Label = "PROBES",
+            .Description = "SENSOR PROBES AND CAMERA DRONES.",
+            .Value = &ProbesValue,
+            .Choices = OffOn,
+            .Changed = RuleChanged<MCMatchRule::NoProbes, false>},
         Row{.Label = "SENSORS",
             .Description = "UNITS SPOT FOES PAST SIGHT.",
             .Value = &SensorsValue,
@@ -359,10 +365,12 @@ namespace
 
     constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::WeatherRules}, RuleRow{2, MCMatchRule::TimeOfDayRules},
                                      RuleRow{3, MCMatchRule::MechBraking},  RuleRow{4, MCMatchRule::NoArtillery},
-                                     RuleRow{5, MCMatchRule::NoSensors},    RuleRow{6, MCMatchRule::NoMines}};
+                                     RuleRow{5, MCMatchRule::NoProbes},     RuleRow{6, MCMatchRule::NoSensors},
+                                     RuleRow{7, MCMatchRule::NoMines}};
     static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
                   Rows[RuleRows[2].Row].Value == &BrakingValue && Rows[RuleRows[3].Row].Value == &ArtilleryValue &&
-                  Rows[RuleRows[4].Row].Value == &SensorsValue && Rows[RuleRows[5].Row].Value == &MinesValue);
+                  Rows[RuleRows[4].Row].Value == &ProbesValue && Rows[RuleRows[5].Row].Value == &SensorsValue &&
+                  Rows[RuleRows[6].Row].Value == &MinesValue);
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>
@@ -431,6 +439,7 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     const uint32_t rules = played.Rules.value_or(0);
     BrakingValue = OnOf(rules, MCMatchRule::MechBraking, true);
     ArtilleryValue = OnOf(rules, MCMatchRule::NoArtillery, false);
+    ProbesValue = OnOf(rules, MCMatchRule::NoProbes, false);
     SensorsValue = OnOf(rules, MCMatchRule::NoSensors, false);
     MinesValue = OnOf(rules, MCMatchRule::NoMines, false);
     const bool host = game->IsHost != 0;
@@ -438,41 +447,36 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
 
     for (const RuleRow& option : RuleRows)
     {
-        list.SetHeld(option.Row, NotInGames(*game, option.Rule));
+        list.SetHeld(option.Row, TellToUpgrade(*game, option.Rule));
     }
 }
 
-auto MatchNotInGames(std::span<const std::string> names) -> std::vector<std::string>
+auto MatchTellToUpgrade(std::span<const std::string> names) -> std::vector<std::string>
 {
     std::vector<std::string> lines;
     const auto players = static_cast<int32_t>(names.size());
 
     for (int32_t named = players; named >= 0 && players > 0; named--)
     {
-        std::vector<std::string> games;
-
-        for (int32_t i = 0; i < named; i++)
-        {
-            games.push_back(std::format("{}'S", names[static_cast<size_t>(i)]));
-        }
+        std::vector<std::string> who(names.begin(), names.begin() + named);
 
         if (const int32_t others = players - named; named == 0)
         {
-            games.push_back(players == 1 ? std::string("1 PLAYER'S") : std::format("{} PLAYERS'", players));
+            who.push_back(players == 1 ? std::string(UnknownPlayer) : std::format("{} PLAYERS", players));
         }
         else if (others > 0)
         {
-            games.push_back(others == 1 ? std::string("1 OTHER'S") : std::format("{} OTHERS'", others));
+            who.push_back(others == 1 ? std::string("1 OTHER") : std::format("{} OTHERS", others));
         }
 
-        std::string joined = games.front();
+        std::string joined = who.front();
 
-        for (size_t i = 1; i < games.size(); i++)
+        for (size_t i = 1; i < who.size(); i++)
         {
-            joined += std::format("{}{}", i + 1 == games.size() ? " OR " : ", ", games[i]);
+            joined += std::format("{}{}", i + 1 == who.size() ? " AND " : ", ", who[i]);
         }
 
-        lines.push_back(std::format("NOT IN {} {}.", joined, players == 1 ? "GAME" : "GAMES"));
+        lines.push_back(std::format("TELL {} TO UPGRADE.", joined));
     }
 
     return lines;

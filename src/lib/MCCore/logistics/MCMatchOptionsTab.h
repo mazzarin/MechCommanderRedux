@@ -61,8 +61,10 @@ std::shared_ptr<MCLogOptionList> MakeMatchOptionsList();
 void ShowMatchOptions(MCLogOptionList& list);
 
 /// <summary>
-/// Why an option is held, longest first, for the players (<paramref name="names"/>, as shown) whose game doesn't have
-/// it: every one named ("NOT IN BOB'S OR ANN'S GAMES."), then fewer and the rest counted ("NOT IN BOB'S OR 2 OTHERS'
-/// GAMES."), down to none named. None for no players.
+/// Why an option is held, longest first, for the other players (<paramref name="names"/>, as shown) whose game doesn't
+/// have it: every one named ("TELL BOB, ANN AND SALLY TO UPGRADE."), then fewer and the rest counted ("TELL BOB AND 2
+/// OTHERS TO UPGRADE."), down to none named ("TELL 3 PLAYERS TO UPGRADE."; one: "TELL A PLAYER TO UPGRADE."). The list
+/// shows the first that fits its line (MCLogOptionList::SetHeld), so a long name is counted rather than wrapped. None
+/// for no players.
 /// </summary>
-std::vector<std::string> MatchNotInGames(std::span<const std::string> names);
+std::vector<std::string> MatchTellToUpgrade(std::span<const std::string> names);

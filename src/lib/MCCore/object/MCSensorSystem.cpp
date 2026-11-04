@@ -152,8 +152,11 @@ auto MCSensorSystem::SetTeam(std::shared_ptr<MCTeam> newTeam) -> void
 
 auto MCSensorSystem::Enabled() const -> int
 {
-    // Port: a match without sensors finds foes by sight alone (MCMatchRule::NoSensors).
-    if (TeamSensorSlot < 0 || MCMatchPlays(MCMatchRule::NoSensors) || LockObject(Owner)->GetExistsAndAwake() == 0)
+    // Port: a match without sensors finds foes by sight alone (MCMatchRule::NoSensors), but for a commander's sensor
+    // probe (an artillery strike's sensor), which is the probes' option (MCMatchRule::NoProbes).
+    if (TeamSensorSlot < 0 ||
+        (MCMatchPlays(MCMatchRule::NoSensors) && LockObject(Owner)->ObjectClass != MCObjectClass::Artillery) ||
+        LockObject(Owner)->GetExistsAndAwake() == 0)
     {
         return 0;
     }

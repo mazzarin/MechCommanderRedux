@@ -56,12 +56,14 @@ namespace MCMatchRule
     /// <summary>Commanders call in no artillery strikes (MATCH OPTIONS' ARTILLERY OFF; MCCommander).</summary>
     inline constexpr uint32_t NoArtillery = 32;
     /// <summary>
-    /// Units find their foes by sight alone (SENSORS OFF): no unit's or tower's sensors (MCSensorSystem::Enabled), no
-    /// sensor probes or camera drones.
+    /// Units and towers find their foes by sight alone (SENSORS OFF): no unit's or tower's sensors
+    /// (MCSensorSystem::Enabled). A commander's sensor probe still senses: that is <see cref="NoProbes"/>'s.
     /// </summary>
     inline constexpr uint32_t NoSensors = 64;
     /// <summary>No mines (MINES OFF): the map's are cleared at load (MCScenarioMap::ClearMines), mine layers lay none.</summary>
     inline constexpr uint32_t NoMines = 128;
+    /// <summary>Commanders send no sensor probes or camera drones (PROBES OFF; MCCommander).</summary>
+    inline constexpr uint32_t NoProbes = 256;
     /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
@@ -69,7 +71,7 @@ namespace MCMatchRule
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by.</summary>
     inline constexpr uint32_t Supported =
-        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines;
+        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes;
 } // namespace MCMatchRule
 
 /// <summary>

@@ -899,7 +899,8 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
     CHECK(MCPlayedOptions(chosen, braking, firstOptions) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, braking) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) == MCMatchOptions{.Rules = 0u});
-    constexpr uint32_t bans = MCMatchRule::NoArtillery | MCMatchRule::NoSensors | MCMatchRule::NoMines;
+    constexpr uint32_t bans =
+        MCMatchRule::NoArtillery | MCMatchRule::NoProbes | MCMatchRule::NoSensors | MCMatchRule::NoMines;
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans, MCMatchRule::Supported) ==
           MCMatchOptions{.Rules = bans | weatherPlay});
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans, sightOptions | weatherPlay | MCMatchRule::NoMines) ==
@@ -1018,11 +1019,12 @@ TEST_CASE("network: a match's weather changes play when every player's game play
 }
 
 /// <summary>
-/// Port: a match without artillery gives commanders no artillery strikes, one without sensors no sensor probes or
-/// camera drones (whatever the mission or its script gives), and one without mines clears the map's (each side's laid
-/// and gone-off mines, and what each knows of them), the tiles' other bits kept; outside such a match, as given.
+/// Port: a match without artillery gives commanders no artillery strikes, one without probes no sensor probes or
+/// camera drones (whatever the mission or its script gives; one without sensors still does), and one without mines
+/// clears the map's (each side's laid and gone-off mines, and what each knows of them), the tiles' other bits kept;
+/// outside such a match, as given.
 /// </summary>
-TEST_CASE("network: a match without artillery, sensors or mines gives none, and clears the map's mines")
+TEST_CASE("network: a match without artillery, probes or mines gives none, and clears the map's mines")
 {
     MCTestContextScope scope;
     MCCommander commander(0);
@@ -1039,10 +1041,12 @@ TEST_CASE("network: a match without artillery, sensors or mines gives none, and 
     CHECK((give() == std::array{3, 2, 4, 1}));
     MCSetMatchRulesInForce(MCMatchRule::NoArtillery);
     CHECK(MCMatchPlays(MCMatchRule::NoArtillery));
-    CHECK(!MCMatchPlays(MCMatchRule::NoArtillery | MCMatchRule::NoSensors));
+    CHECK(!MCMatchPlays(MCMatchRule::NoArtillery | MCMatchRule::NoProbes));
     CHECK((give() == std::array{0, 0, 4, 1}));
-    MCSetMatchRulesInForce(MCMatchRule::NoSensors);
+    MCSetMatchRulesInForce(MCMatchRule::NoProbes);
     CHECK((give() == std::array{3, 2, 0, 0}));
+    MCSetMatchRulesInForce(MCMatchRule::NoSensors);
+    CHECK((give() == std::array{3, 2, 4, 1}));
     MCSetMatchRulesInForce(0);
     CHECK((give() == std::array{3, 2, 4, 1}));
 
@@ -1118,12 +1122,16 @@ TEST_CASE("network: the command line's match options set the weather, the time o
     MCMatchOptions bans{.Rules = MCMatchRule::MechBraking};
     CHECK(MPReadMatchOption(MatchArtilleryFlag, "OFF", bans));
     CHECK(MPReadMatchOption(MatchMinesFlag, "off", bans));
-    CHECK(bans.Rules == (MCMatchRule::MechBraking | MCMatchRule::NoArtillery | MCMatchRule::NoMines));
+    CHECK(MPReadMatchOption(MatchProbesFlag, "off", bans));
+    CHECK(bans.Rules ==
+          (MCMatchRule::MechBraking | MCMatchRule::NoArtillery | MCMatchRule::NoMines | MCMatchRule::NoProbes));
+    CHECK(MPReadMatchOption(MatchProbesFlag, "on", bans));
     CHECK(MPReadMatchOption(MatchArtilleryFlag, "on", bans));
     CHECK(MPReadMatchOption(MatchSensorsFlag, "on", bans));
     CHECK(bans.Rules == (MCMatchRule::MechBraking | MCMatchRule::NoMines));
     CHECK(!MPReadMatchOption(MatchSensorsFlag, "mission", bans));
     CHECK(MPIsMatchOptionFlag("-MATCHSENSORS"));
+    CHECK(MPIsMatchOptionFlag("-matchprobes"));
 
     // A ban without a braking flag keeps the PREFS' braking, and the PREFS' braking keeps the bans.
     MCMatchOptions prefs;

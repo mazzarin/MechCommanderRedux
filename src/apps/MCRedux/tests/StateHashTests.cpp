@@ -5,9 +5,16 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
 #include "mission/MCWeatherPlay.h"
+#include "network/MCMultiPlayer.h"
+#include "object/MCArtillery.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
+#include "object/MCCommander.h"
+#include "object/MCForces.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
+#include "object/MCSensorSystem.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCWeather.h"
 #include "terrain/MCTerrain.h"
@@ -333,4 +340,61 @@ TEST_CASE_ISOLATED("game: a match's blizzard shortens the computer's sight as mu
     MarkSightWith(*uller, blizzard);
     CHECK(uller->LineOfSight(spot) == 0);
     VisualRangeTable = clear;
+}
+
+/// <summary>
+/// Port-only: a match without sensors (SENSORS OFF, MCMatchRule::NoSensors) turns off the units' sensors
+/// (MCSensorSystem::Enabled), but a commander's sensor probe, dropped by the player's mech, still senses: the probes
+/// are their own option (PROBES OFF, MCMatchRule::NoProbes), which gives commanders none.
+/// </summary>
+TEST_CASE_ISOLATED("game: a match without sensors keeps a commander's sensor probe sensing")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    constexpr int32_t PlayerMechPart = 0x200;
+    const std::shared_ptr<MCMover> mech = GetMoverFromPartId(PlayerMechPart);
+    REQUIRE(mech != nullptr);
+    REQUIRE(mech->SensorSystem.lock() != nullptr);
+    const MCSensorSystem& mechSensors = *mech->SensorSystem.lock();
+    CHECK(mechSensors.Enabled() != 0);
+    MCSetMatchRulesInForce(MCMatchRule::NoSensors);
+    CHECK(mechSensors.Enabled() == 0);
+
+    // The commander drops a sensor probe at the mech; it lands and its sensor comes on.
+    const std::shared_ptr<MCCommander> commander = HomeCommander();
+    commander->SetNumSensorStrikes(1);
+    REQUIRE_EQ(commander->NumSensorStrikes, 1);
+    constexpr int32_t SensorProbe = 2;
+    constexpr int32_t ProbeFrames = 15 * 20;
+    CallArtillery(commander->GetId(), SensorProbe, mech->GetPosition(), 0, 0);
+    std::shared_ptr<MCArtillery> probe;
+
+    for (int32_t frame = 0; frame < ProbeFrames && (probe == nullptr || !probe->SensorActive); frame++)
+    {
+        MCTestGame::RunFrame(1.0f / 15.0f);
+
+        for (const std::shared_ptr<MCBaseObject>& object : ObjectList()->DefaultList())
+        {
+            if (object->ObjectClass == MCObjectClass::Artillery)
+            {
+                probe = std::static_pointer_cast<MCArtillery>(object);
+            }
+        }
+    }
+
+    REQUIRE(probe != nullptr);
+    REQUIRE(probe->SensorActive);
+    REQUIRE(probe->SensorSystem.lock() != nullptr);
+    CHECK(probe->SensorSystem.lock()->Enabled() != 0);
+    CHECK(mechSensors.Enabled() == 0);
+
+    // Without probes, the commander has none to drop.
+    MCSetMatchRulesInForce(MCMatchRule::NoProbes);
+    commander->SetNumSensorStrikes(1);
+    CHECK_EQ(commander->NumSensorStrikes, 0);
+    MCSetMatchRulesInForce(0);
 }

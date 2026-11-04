@@ -238,12 +238,17 @@ namespace
 
 namespace
 {
-    /// <summary>The rule an on/off ban flag (-matchartillery, -matchsensors, -matchmines) sets when OFF.</summary>
+    /// <summary>The rule an on/off ban flag (-matchartillery, -matchprobes, -matchsensors, -matchmines) sets when OFF.</summary>
     std::optional<uint32_t> BanOf(std::string_view flag)
     {
         if (MCIEquals(flag, MatchArtilleryFlag))
         {
             return MCMatchRule::NoArtillery;
+        }
+
+        if (MCIEquals(flag, MatchProbesFlag))
+        {
+            return MCMatchRule::NoProbes;
         }
 
         if (MCIEquals(flag, MatchSensorsFlag))

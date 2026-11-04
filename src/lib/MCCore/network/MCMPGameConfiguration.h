@@ -77,6 +77,7 @@ inline constexpr std::string_view MatchTimeFlag = "-matchtime";
 inline constexpr std::string_view MatchBrakingFlag = "-matchbraking";
 inline constexpr std::string_view MatchArtilleryFlag = "-matchartillery";
 inline constexpr std::string_view MatchSensorsFlag = "-matchsensors";
+inline constexpr std::string_view MatchProbesFlag = "-matchprobes";
 inline constexpr std::string_view MatchMinesFlag = "-matchmines";
 
 /// <summary>Whether <paramref name="word"/> is one of the command line's match option flags.</summary>

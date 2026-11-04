@@ -197,6 +197,9 @@ cbuffer Composite : register(b0, space3)
     float4 speckSides;
     float4 speckArms;
     float4 speckFalls;
+    // Port-only (HD weather): how the fog of war's edge darkens the snow and the wet ground's sky on a tile with one, two
+    // and three of its corners seen (rgb; MCTerrainFogEdgeShades, FogEdgeShade).
+    float4 fogEdge[3];
     // Port-only (HD lighting): the light tiles (lightTileTex, MCVulkanPresenter's SetLighting): x their side in the
     // world's texels (0: none, every light is tried everywhere), y and z how many there are across and down.
     float4 lightTiles;
@@ -636,6 +639,13 @@ float HeightAt(float2 texel, float centre)
 static const float ReliefFlat = 128.0;
 static const float ReliefSteps = 127.0;
 
+// The HD ground's slopes' bytes at a texel of the index target (`drawn`), the fog of war's edge kept in their low bits
+// left out (draw.pshader's HdTerrainPixel).
+float2 ReliefBytes(float4 drawn)
+{
+    return float2(uint2(drawn.gb * 255.0 + 0.5) & ~uint2(1u, 1u));
+}
+
 // The slope of the world's relief at a world texel, its own shading taken for height (lightFacing): its brightness's
 // rise a texel along the ground. Port-only: where the HD ground's relief map drew (opTex's alpha), its slopes instead,
 // reliefLook.x as steep, in the brightness's heights. None when the relief is flat, or nothing lights it (no lights, no
@@ -655,7 +665,7 @@ float2 SlopeAt(float2 texel)
         if (drawn.a > 0.5)
         {
             // A texel down the screen is lighting.w texels along the ground.
-            const float2 rise = (drawn.gb * 255.0 - ReliefFlat) / ReliefSteps;
+            const float2 rise = (ReliefBytes(drawn) - ReliefFlat) / ReliefSteps;
             return float2(rise.x, rise.y / lighting.w) * (reliefLook.x / lightFacing.x);
         }
     }
@@ -1247,11 +1257,33 @@ static const float FarFromPrint = 1.0e6;
 
 // The slope of the HD ground's relief map at a world texel (its rise a texel right and a texel down the picture,
 // MCHdArt's relief maps), and the index target's alpha there (above GroundMark, that ground); none elsewhere.
-float2 ReliefAt(float2 texel, out float mark)
+// The fog of war's edge on the HD ground at a texel of the index target (`drawn`): how many of its tile's corners the
+// fog leaves seen, kept in its slopes' low bits (1 to 3; 0 where all are, and off the ground).
+uint FogEdgeOf(float4 drawn)
+{
+    const uint2 bits = uint2(drawn.gb * 255.0 + 0.5) & uint2(1u, 1u);
+    return drawn.a > GroundMark ? bits.x | bits.y << 1 : 0u;
+}
+
+// How the fog of war's edge `edge` (FogEdgeOf) darkens what the weather lays on the ground, as the haze darkens the
+// ground (fogEdge's; none without one).
+float3 FogEdgeShade(uint edge)
+{
+    return edge != 0 ? fogEdge[edge - 1].rgb : float3(1.0, 1.0, 1.0);
+}
+
+float2 ReliefAt(float2 texel, out float mark, out uint edge)
 {
     const float4 drawn = TexelAt(opTex, opSampler, clamp(round(texel), 0.0, worldSize.xy - 1.0), worldSize.zw);
     mark = drawn.a;
-    return mark > GroundMark ? (drawn.gb * 255.0 - ReliefFlat) / ReliefSteps : float2(0.0, 0.0);
+    edge = FogEdgeOf(drawn);
+    return mark > GroundMark ? (ReliefBytes(drawn) - ReliefFlat) / ReliefSteps : float2(0.0, 0.0);
+}
+
+float2 ReliefAt(float2 texel, out float mark)
+{
+    uint edge;
+    return ReliefAt(texel, mark, edge);
 }
 
 // How much greener a colour is than its red and blue.
@@ -1396,16 +1428,20 @@ float3 WetAt(float3 color, float3 art, float2 texel)
         return color;
     }
 
-    const float3 sky =
+    const float3 openSky =
         WetSky * WetSkyGain * SkyLightAt(texel) * (SkySheetLow + SkySheetSpan * SheetsAt(GroundPointAt(texel + 0.5)));
     float mark;
-    const float2 slope = ReliefAt(texel, mark);
+    uint edge;
+    const float2 slope = ReliefAt(texel, mark, edge);
 
     if (mark <= GroundMark)
     {
         const bool metal = mark <= CanopyMark && dot(art, Luma) > BrightMetal && Greenness(art) <= MetalGreen;
-        return metal ? lerp(color, sky, wetLook.z) : color * UnitWet;
+        return metal ? lerp(color, openSky, wetLook.z) : color * UnitWet;
     }
+
+    // The fog of war's edge darkens the sky the ground mirrors as the haze darkens the ground.
+    const float3 sky = openSky * FogEdgeShade(edge);
 
     const float3 wet = lerp(color, sky, saturate(wetLook.x * SheenShare(slope)));
 
@@ -1561,8 +1597,8 @@ float SnowAmountAt(float2 texel, float2 slope, float blocked)
 
 // `color` at world texel `texel` (drawn as `art`) under the snow's cover: laid over the ground in its steps, shaded as
 // the ground is (with the specks round it as `specked` says, SnowShade); over a footprint or a crater as far as it has
-// filled in; a little on a forest's lit leaves; none on the water nor on what stands on the ground. As it is without
-// the cover.
+// filled in; a little on a forest's lit leaves; none on the water nor on what stands on the ground; at the fog of war's
+// edge darkened as the haze darkens the ground (FogEdgeShade). As it is without the cover.
 float3 SnowAt(float3 color, float3 art, float2 texel, float4 specked)
 {
     if (snow.z <= 0.0 || IsWater(WorldIndexAt(texel)))
@@ -1571,7 +1607,8 @@ float3 SnowAt(float3 color, float3 art, float2 texel, float4 specked)
     }
 
     float mark;
-    const float2 slope = ReliefAt(texel, mark);
+    uint edge;
+    const float2 slope = ReliefAt(texel, mark, edge);
 
     if (mark <= GroundMark)
     {
@@ -1604,7 +1641,7 @@ float3 SnowAt(float3 color, float3 art, float2 texel, float4 specked)
 
     const float3 under = print ? lerp(color, GroundRound(color, texel), filled) : color;
     const float shade = lerp(SnowShade(art, texel, SnowShadeSpan, specked), 1.0, print ? filled : 0.0);
-    return lerp(under, SnowColour(shade), amount);
+    return lerp(under, SnowColour(shade) * FogEdgeShade(edge), amount);
 }
 
 // Port-only (HD weather's snow, MCWeather::ShownSpeckle; MCVulkanPresenter's SetSpeckle moves the lattices): a

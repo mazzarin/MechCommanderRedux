@@ -29,6 +29,17 @@ void MCTerrainForgetMesh();
 /// <summary>Port: the ground mesh built last (its tiles, for tests and the HD art tools), or null.</summary>
 const MCTerrainMesh* MCTerrainMeshInUse();
 
+/// <summary>The fog of war's edge's levels: a tile with one, two or three of its corners seen (the haze tables).</summary>
+inline constexpr size_t MCTerrainFogEdgeLevels = 3;
+
+/// <summary>
+/// Port-only (HD weather): how the fog of war's edge darkens what the weather lays on the ground (the snow's white, the
+/// wet ground's sky) on a tile with one, two and three of its corners seen, as the haze tables darken the ground: each
+/// table's change to the palette's pale greys (red, green, blue; 1 where it doesn't darken), as the last ground frame
+/// drew the edge.
+/// </summary>
+std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> MCTerrainFogEdgeShades();
+
 /// <summary>
 /// Port-only, for the HD art tools: the steps the ground mesh built last places its vertices by (across and down a
 /// vertex, and up an elevation level: vertex (row, col) at elevation e lies (col - row) * across, (row + col) * down -

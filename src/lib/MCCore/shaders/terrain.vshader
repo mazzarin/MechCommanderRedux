@@ -101,10 +101,13 @@ static const int SeamReach = 2;
 // map tile and its neighbours' can't be entered (cliffs), for draw.pshader's BlockedAt (its ground): x the top corner
 // (vertex (row, col)) on the window, its x in the low 16 bits and y in the high, signed; y how far below it the right
 // corner (row, col + 1) lies, then the left one (row + 1, col); z how far below it the bottom one lies, the step across
-// from it to the right one (from GroundStepShift, GroundStepMask) and the tile's own count of movement cells that can't
-// be entered (from GroundOwnShift); w the neighbours' counts, as the cell's w holds them.
+// from it to the right one (from GroundStepShift, GroundStepMask), how many of its corners the fog of war leaves seen
+// where it's drawn through a haze table (1 to 3, from GroundFogShift; 0 where all are: draw.pshader keeps it for the
+// composite's FogEdgeShade) and the tile's own count of movement cells that can't be entered (from GroundOwnShift); w
+// the neighbours' counts, as the cell's w holds them.
 static const uint GroundStepShift = 16;
-static const uint GroundStepMask = 0xfffu;
+static const uint GroundStepMask = 0x3ffu;
+static const uint GroundFogShift = 26;
 static const uint GroundOwnShift = 28;
 static const uint MovementCells = 9;
 
@@ -257,9 +260,10 @@ Output main(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
             const int right = Point(row, col + 1, e.y).y - topLeft.y;
             const int left = Point(row + 1, col, e.w).y - topLeft.y;
             const int bottom = Point(row + 1, col + 1, e.z).y - topLeft.y;
+            const uint fogEdge = (flags & TableBefore) != 0 ? seen : 0u;
             output.ground = uint4((uint)top.x & 0xffffu | (uint)top.y << 16, (uint)right & 0xffffu | (uint)left << 16,
                                   (uint)bottom & 0xffffu | ((uint)steps.x & GroundStepMask) << GroundStepShift |
-                                      min(cell.z, MovementCells) << GroundOwnShift,
+                                      fogEdge << GroundFogShift | min(cell.z, MovementCells) << GroundOwnShift,
                                   cell.w);
         }
     }

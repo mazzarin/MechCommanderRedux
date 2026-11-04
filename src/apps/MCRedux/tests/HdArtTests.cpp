@@ -9066,6 +9066,38 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter an
     std::filesystem::remove_all(scene->Scratch);
 }
 
+/// <summary>
+/// Port-only (HD weather at the fog of war's edge): the ground frame measures how each haze table darkens the palette's
+/// pale greys, so the snow and the wet ground's sky there are darkened as the ground is: each channel 0 to 1, and the
+/// edge with the fewest corners seen darker than none.
+/// </summary>
+TEST_CASE_ISOLATED("game: the fog of war's edge darkens the snow and the wet ground as its haze darkens the ground")
+{
+    std::optional<HdScene> scene = SetUpHdScene(MCGpuDrawing::On);
+
+    if (!scene.has_value())
+    {
+        return;
+    }
+
+    MCTestGame::RunFrame(FrameSeconds);
+    const std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> shades = MCTerrainFogEdgeShades();
+    constexpr float Undarkened = 1.0f;
+
+    for (const std::array<float, 3>& shade : shades)
+    {
+        for (const float channel : shade)
+        {
+            CHECK(channel >= 0.0f);
+            CHECK(channel <= Undarkened);
+        }
+    }
+
+    const std::array<float, 3>& fewest = shades.front();
+    CHECK(fewest[0] + fewest[1] + fewest[2] < 3.0f * Undarkened);
+    std::filesystem::remove_all(scene->Scratch);
+}
+
 /// <summary>HD terrain changes only the colours: in mirror mode every palette index stays the software renderer's.</summary>
 TEST_CASE_ISOLATED("game: HD art's ground keeps the original's palette indices")
 {

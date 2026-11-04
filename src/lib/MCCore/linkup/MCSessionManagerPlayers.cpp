@@ -121,9 +121,13 @@ void MCSessionManager::AddPlayerOrGroup(uint32_t playerType, uint32_t id, const 
     {
         GivePlayerAnID(*player);
 
+        // Port fix: a player past the six a session holds (only a host that breaks the rules can announce one) is
+        // left out. The original ended the game ("Could not connect to game.").
         if (player->PlayerNumber < 0 || player->PlayerNumber >= MaxLinkupPlayers)
         {
-            Fatal(player->PlayerNumber, "Could not connect to game.");
+            SDL_Log("MCSessionManager: left out player %u, numbered %d: a session holds %d players", id,
+                    player->PlayerNumber, MaxLinkupPlayers);
+            return;
         }
     }
 

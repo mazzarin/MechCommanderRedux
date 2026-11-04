@@ -75,6 +75,28 @@ namespace
 
         return false;
     }
+
+    /// <summary>
+    /// The first session <paramref name="joiner"/> lists while <paramref name="host"/> pumps (none after 40 tries): the
+    /// enumeration is answered when the host next pumps, and a later call lists the session.
+    /// </summary>
+    std::shared_ptr<MCFidpSession> FindSession(MCSessionManager& host, MCSessionManager& joiner)
+    {
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = joiner.GetSessions();
+
+            if (sessions.has_value() && !sessions->empty())
+            {
+                return sessions->front();
+            }
+
+            host.DirectPlay->Pump();
+            SDL_Delay(5);
+        }
+
+        return nullptr;
+    }
 }
 
 /// <summary>
@@ -319,23 +341,7 @@ TEST_CASE("linkup: a joiner joins the host's session, is numbered, verified, mad
 
     MCSessionManager joiner(TestApplication);
     joiner.ConnectTcp(address);
-    std::shared_ptr<MCFidpSession> found;
-
-    // The enumeration is answered when the host next pumps; a later call lists the session.
-    for (int attempt = 0; attempt < 40 && found == nullptr; attempt++)
-    {
-        const std::optional<std::vector<std::shared_ptr<MCFidpSession>>> sessions = joiner.GetSessions();
-        REQUIRE(sessions.has_value());
-
-        if (!sessions->empty())
-        {
-            found = sessions->front();
-        }
-
-        host.DirectPlay->Pump();
-        SDL_Delay(5);
-    }
-
+    const std::shared_ptr<MCFidpSession> found = FindSession(host, joiner);
     REQUIRE(found != nullptr);
     CHECK_EQ(found->Name, std::string("Solaris VII"));
     const _GUID instance = found->SessionDesc.guidInstance;
@@ -448,4 +454,65 @@ TEST_CASE("linkup: a joiner joins the host's session, is numbered, verified, mad
     CHECK(joiner.MyPlayer() == nullptr);
     REQUIRE(Exchange(host, joiner, [&] { return host.Players.size() == 1; }));
     CHECK(host.GetPlayer(host.MyPlayerID) != nullptr);
+}
+
+/// <summary>
+/// A session holds six players, so only a host that breaks the rules can announce a seventh: a joiner leaves it out and
+/// plays on. The original ended the game ("Could not connect to game."); fuzzing the joiner found it (4 Nov).
+/// </summary>
+TEST_CASE("linkup: a joiner leaves out a seventh player a host announces, where the original's game quit")
+{
+    MCTestContextScope scope;
+    scope.Context().SetNet(std::make_unique<MCLoopbackTransport>());
+    constexpr std::string_view address = "127.0.0.1:28891";
+    // The host's player and the joiner's take numbers 0 and 1; these take 2 to 5, and the last is the seventh.
+    constexpr int32_t extraPlayers = MaxLinkupPlayers - 1;
+
+    MCSessionManager host(TestApplication);
+    host.ConnectTcp(address);
+    MCFidpSession hosted(TestApplication);
+    hosted.SetName("Solaris VII");
+    // The rule broken: the host's DirectPlay takes more players than a session holds.
+    hosted.SessionDesc.dwMaxPlayers = MaxLinkupPlayers + 2;
+    REQUIRE_EQ(host.HostSession(hosted, "Commander"), 0);
+
+    MCSessionManager joiner(TestApplication);
+    joiner.ConnectTcp(address);
+    const std::shared_ptr<MCFidpSession> found = FindSession(host, joiner);
+    REQUIRE(found != nullptr);
+    const _GUID instance = found->SessionDesc.guidInstance;
+    REQUIRE_EQ(WhilePumping(host, [&] { return joiner.JoinSession(instance, "Guest"); }), 0);
+    REQUIRE(Exchange(host, joiner, [&] { return joiner.HasPlayerNumber; }));
+
+    std::vector<std::vector<uint8_t>> joinerReceived;
+    joiner.ApplicationCallback = [&](MCFidpMessage& msg)
+    { joinerReceived.emplace_back(msg.Bytes().begin(), msg.Bytes().end()); };
+
+    // More players on the host's machine, then a message: when it arrives, the joiner has handled every player.
+    std::vector<uint32_t> extras;
+
+    for (int32_t i = 0; i < extraPlayers; i++)
+    {
+        uint32_t id = 0;
+        REQUIRE_EQ(host.DirectPlay->CreatePlayer(id, Name("Extra " + std::to_string(i)), {}, 0), DP_OK);
+        extras.push_back(id);
+    }
+
+    MCFIValueMessage after;
+    after.Header = 20;
+    after.Value = 0x7777;
+    host.SendMessageToGroup(0, LinkupBytes(after));
+    REQUIRE(Exchange(host, joiner, [&] { return !joinerReceived.empty(); }));
+    CHECK_EQ(ReadLinkupMessage<MCFIValueMessage>(joinerReceived.front()).Value, 0x7777u);
+
+    CHECK_EQ(joiner.Players.size(), static_cast<size_t>(MaxLinkupPlayers));
+    CHECK(joiner.GetPlayer(extras.back()) == nullptr);
+    CHECK(joiner.MyPlayer() != nullptr);
+
+    for (int32_t i = 0; i + 1 < extraPlayers; i++)
+    {
+        const std::shared_ptr<MCFidpPlayer> listed = joiner.GetPlayer(extras[static_cast<size_t>(i)]);
+        REQUIRE(listed != nullptr);
+        CHECK_EQ(listed->PlayerNumber, i + 2);
+    }
 }

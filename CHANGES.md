@@ -281,6 +281,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Searching for a host by address lists only that host's game. Before, any machine that answered could show up in its
   place.
 - A message too big for the receive buffer is dropped. In the original it stopped every later message from arriving.
+- A host can no longer make the other players' games quit by announcing more players than a session holds: the extra
+  player is left out.
 - The host turns away floods of connections, drops connections that never join, and answers only so many LAN searches
   each second, so it can't be used to flood another machine.
 - **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose

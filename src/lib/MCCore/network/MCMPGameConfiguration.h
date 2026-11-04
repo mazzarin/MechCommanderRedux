@@ -75,11 +75,18 @@ extern MPGameConfiguration GameConfiguration;
 inline constexpr std::string_view MatchWeatherFlag = "-matchweather";
 inline constexpr std::string_view MatchTimeFlag = "-matchtime";
 inline constexpr std::string_view MatchBrakingFlag = "-matchbraking";
+inline constexpr std::string_view MatchArtilleryFlag = "-matchartillery";
+inline constexpr std::string_view MatchSensorsFlag = "-matchsensors";
+inline constexpr std::string_view MatchMinesFlag = "-matchmines";
+
+/// <summary>Whether <paramref name="word"/> is one of the command line's match option flags.</summary>
+bool MPIsMatchOptionFlag(std::string_view word);
 
 /// <summary>
 /// Reads a match option of the command line into <paramref name="options"/>: <paramref name="flag"/> -matchweather
-/// (clear, rain, downpour, lightsnow, snow or blizzard), -matchtime (day, dusk or night) or -matchbraking (on or off),
-/// any of them <c>mission</c> (or for braking <c>prefs</c>) for the choice it would have without, in any case.
+/// (clear, rain, downpour, lightsnow, snow or blizzard), -matchtime (day, dusk or night), -matchbraking (on or off),
+/// any of them <c>mission</c> (or for braking <c>prefs</c>) for the choice it would have without, or -matchartillery,
+/// -matchsensors or -matchmines (on, as the original, or off), in any case.
 /// </summary>
 /// <returns>Whether <paramref name="value"/> was one of the flag's; another is logged and changes nothing.</returns>
 bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options);

@@ -5,6 +5,7 @@
 /// Without one those tests note that they were skipped and pass.
 /// </summary>
 class MCBattleMech;
+class MCMover;
 class MCSpriteTree;
 
 namespace MCTestGame
@@ -61,6 +62,13 @@ namespace MCTestGame
     /// </summary>
     /// <returns>Whether the scenario is up.</returns>
     bool StartMission(int32_t segment);
+
+    /// <summary>
+    /// Stages mission 1's battle once StartMission(1) is up: the player's three mechs (parts 0x200-0x202) ordered to
+    /// attack the clan's Uller (part 896) and pursue it.
+    /// </summary>
+    /// <returns>The Uller (null when the mission hasn't one).</returns>
+    std::shared_ptr<MCMover> OrderMissionOneAttack();
 
     /// <summary>
     /// Boots the whole game as a plain start does (no <c>-mission</c>): the intro, then logistics' main menu. Runs

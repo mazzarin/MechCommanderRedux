@@ -166,6 +166,9 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-matchweather <weather>`             | The weather every player sees: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. |
 | `-matchtime <time>`                   | The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
 | `-matchbraking <on\|off>`             | Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
+| `-matchartillery <on\|off>`           | Off: commanders get no artillery strikes. On (the original's) without it. |
+| `-matchsensors <on\|off>`             | Off: units find their foes by sight alone: no unit's or sensor tower's sensors, no sensor probes or camera drones. On without it. |
+| `-matchmines <on\|off>`               | Off: no mines: the map's minefields are cleared and mine layers lay none. On without it. |
 
 The players in the session must be exactly the ones named, and the host must be among them. If one is missing, an extra
 player joined, the host lacks the `.mpk`, or a guest says it lacks it (or doesn't answer within 15 seconds), the host is
@@ -173,11 +176,12 @@ left on the "Waiting for Players" screen with a log message and can press Go to 
 its own points and tech bases. The game checks only that each player has a file of the mission's name, not that it is the
 same file, so a launcher should check the files match.
 
-The three match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER
-CHAT), and a host started with them but no `-matchmap` opens the session screen with them chosen. Each is played only if
-every player's game has it: every build says what it has when the session screen opens (and when asked for a mission
-file), and while a player's game lacks an option, the match plays the mission's own (braking: off) and the host's
-MATCH OPTIONS say whose game lacks it. A game that says nothing, as the original's, lacks them all. A player with
+The match options are also the host's own on the session screen's **MATCH OPTIONS** tab (under MULTIPLAYER CHAT:
+WEATHER, TIME OF DAY, BRAKING, ARTILLERY, SENSORS and MINES), and a host started with them but no `-matchmap` opens the
+session screen with them chosen. Each is played only if every player's game has it: every build says what it has when
+the session screen opens (and when asked for a mission file), the host passes on what each said, and while a player's
+game lacks an option, the match plays the mission's own (braking off; artillery, sensors and mines on) and every
+player's MATCH OPTIONS names whose games lack it. A game that says nothing, as the original's, lacks them all. A player with
 WEATHER or HD LIGHTING off (on the HD OPTIONS page) still sees the original's clear day.
 
 ### Saves and Settings
@@ -299,7 +303,21 @@ New in Redux: **Mission > Weather** sets a mission in **Clear** weather, **Rain*
 - **Multiplayer.** A match's host can pick another weather for everyone on the session screen's **MATCH OPTIONS** tab
   (or with `-matchweather`, see [Premade Matches](#premade-matches)) when every player's game has it; left at
   **MISSION'S**, the mission's own shows.
-- **Play.** The weather changes nothing in play: units see, move and fight as under a clear sky.
+- **Play.** In a match whose every player's game has it, the weather the match plays (the host's, or the mission's
+  own) changes play; elsewhere it changes nothing, units seeing, moving and fighting as under a clear sky:
+
+  | Weather    | Fires burn | Fires spread | Long-range aim | Sight | A mech's piloting check | Vehicles' speed |
+  |------------|------------|--------------|----------------|-------|-------------------------|-----------------|
+  | Rain       | 0.6        | 5% a touch   |                |       | +5                      | 0.95            |
+  | Downpour   | 0.3        | 2%           | -5             | 0.8   | +10                     | 0.9             |
+  | Light snow | 0.8        | 8%           |                |       | +5                      | 0.95            |
+  | Snow       | 0.6        | 5%           |                | 0.9   | +10                     | 0.85            |
+  | Blizzard   | 0.4        | 3%           | -5             | 0.7   | +15                     | 0.75            |
+
+  A flame burns for that share of the mission's time, and a fire spreads to what it touches at that chance (clear:
+  10%). Shots at a weapon's long range get that many points off their chance to hit. Units see that share as far (after
+  the time of day's cut). The piloting check's roll gets that much more out of 100, so a mech is likelier to fall when a
+  hit to its legs or gyro, or a jump's landing, asks for one. Sensors see as they do.
 
 For a mission's `.FIT` file, the editor writes this for rain or a downpour (for a clear sky, nothing):
 

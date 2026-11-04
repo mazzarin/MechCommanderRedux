@@ -760,6 +760,9 @@
     <ClCompile Include="mission\MCScenarioPart.cpp">
       <Filter>mission</Filter>
     </ClCompile>
+    <ClCompile Include="mission\MCWeatherPlay.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMPGameConfiguration.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2011,6 +2014,9 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCScenarioReading.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCWeatherPlay.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMPGameConfiguration.h">

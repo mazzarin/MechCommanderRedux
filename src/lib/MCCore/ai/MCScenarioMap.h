@@ -130,6 +130,11 @@ public:
         return Map[static_cast<size_t>(Width * tileR + tileC)];
     }
 
+    /// <summary>
+    /// Port-only: clears every tile's mines, laid and gone off, and what each side knows of them (MCMatchRule::NoMines).
+    /// </summary>
+    void ClearMines();
+
     /// <summary>Whether a mover's path has locked cell (cellR, cellC) of tile (tileR, tileC).</summary>
     bool GetCellPathLocked(int32_t tileR, int32_t tileC, int32_t cellR, int32_t cellC) const
     {

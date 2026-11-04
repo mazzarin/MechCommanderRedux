@@ -236,6 +236,36 @@ namespace
     }
 }
 
+namespace
+{
+    /// <summary>The rule an on/off ban flag (-matchartillery, -matchsensors, -matchmines) sets when OFF.</summary>
+    std::optional<uint32_t> BanOf(std::string_view flag)
+    {
+        if (MCIEquals(flag, MatchArtilleryFlag))
+        {
+            return MCMatchRule::NoArtillery;
+        }
+
+        if (MCIEquals(flag, MatchSensorsFlag))
+        {
+            return MCMatchRule::NoSensors;
+        }
+
+        if (MCIEquals(flag, MatchMinesFlag))
+        {
+            return MCMatchRule::NoMines;
+        }
+
+        return std::nullopt;
+    }
+}
+
+bool MPIsMatchOptionFlag(std::string_view word)
+{
+    return MCIEquals(word, MatchWeatherFlag) || MCIEquals(word, MatchTimeFlag) || MCIEquals(word, MatchBrakingFlag) ||
+           BanOf(word).has_value();
+}
+
 bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOptions& options)
 {
     if (MCIEquals(flag, MatchWeatherFlag))
@@ -263,6 +293,15 @@ bool MPReadMatchOption(std::string_view flag, std::string_view value, MCMatchOpt
         if (const std::optional<MCTimeOfDay> time = MCSceneLights::TimeOfDayNamed(value); time.has_value())
         {
             options.TimeOfDay = time;
+            return true;
+        }
+    }
+    else if (const std::optional<uint32_t> ban = BanOf(flag); ban.has_value())
+    {
+        // ON is the original's: the rule bans the thing when OFF.
+        if (MCIEquals(value, OnValue) || MCIEquals(value, OffValue))
+        {
+            options.Rules = (options.Rules.value_or(0) & ~*ban) | (MCIEquals(value, OffValue) ? *ban : 0);
             return true;
         }
     }

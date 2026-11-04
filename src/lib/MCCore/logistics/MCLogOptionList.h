@@ -2,6 +2,9 @@
 
 #include "logistics/MCLogScrollList.h"
 
+#include <span>
+#include <string>
+
 /// <summary>
 /// Port-only: the HD OPTIONS page's list of settings (<see cref="MCHdSettings"/>). A row per option under headings:
 /// its name, a line under it saying what it does, and its setting in a box at the right; a status line under the rows
@@ -91,14 +94,17 @@ public:
     void SetLocked(bool locked, std::string_view hint);
 
     /// <summary>
-    /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reason"/> why; empty: not held): a click
-    /// changes nothing and its box doesn't light, its name and setting show dim, and its line says the reason instead of
-    /// what it does.
+    /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reasons"/> why, longest first; none: not
+    /// held): a click changes nothing and its box doesn't light, its name and setting show dim, and its line says the
+    /// first reason that fits it (else the last, cut) instead of what it does.
     /// </summary>
-    void SetHeld(int32_t row, std::string_view reason);
+    void SetHeld(int32_t row, std::span<const std::string> reasons);
 
     /// <summary>Why row <paramref name="row"/>'s option is held (<see cref="SetHeld"/>; empty: it isn't).</summary>
     std::string_view HeldReason(int32_t row) const;
+
+    /// <summary>The width of a row's second line, what it does (or why it's held), in pixels.</summary>
+    int32_t LineWidth();
 
     /// <summary>What the status line says with the SOFTWARE renderer chosen (empty: nothing).</summary>
     void SetSoftwareHint(std::string_view hint);
@@ -120,6 +126,12 @@ public:
 
     /// <summary>The name of row <paramref name="row"/>'s setting now (its value's choice).</summary>
     std::string_view ChoiceName(int32_t row) const;
+
+    /// <summary>How many rows the list has, headings with them.</summary>
+    int32_t OptionRows() const { return static_cast<int32_t>(_Rows.size()); }
+
+    /// <summary>What row <paramref name="row"/>'s option does, as its line says.</summary>
+    std::string_view Description(int32_t row) const { return _Rows[static_cast<size_t>(row)].Description; }
 
     /// <summary>Whether row <paramref name="row"/>'s option can show: the setting it needs (if any) is on.</summary>
     bool CanShow(int32_t row) const;

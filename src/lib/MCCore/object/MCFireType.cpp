@@ -2,6 +2,7 @@
 #include "object/MCFireType.h"
 #include "lib/MCDice.h"
 #include "lib/MCFitIniFile.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCBuilding.h"
 #include "object/MCBuildingType.h"
@@ -93,11 +94,14 @@ auto MCFireType::HandleCollision(MCGameObject&, MCGameObject& collider) -> int
         }
     };
 
+    // Port: the match's weather may damp the original's one chance in ten (MCWeatherPlay::Spread).
+    const int32_t spreadChance = MCWeatherPlayNow().Spread;
+
     switch (collider.ObjectClass)
     {
         case MCObjectClass::Building:
         {
-            if (RollDice(10) != 0)
+            if (RollDice(spreadChance) != 0)
             {
                 spread(static_cast<MCBuilding&>(collider),
                        10.0f / static_cast<MCBuildingType&>(*collider.GetObjectType()).TimeToBurnDamage);
@@ -108,7 +112,7 @@ auto MCFireType::HandleCollision(MCGameObject&, MCGameObject& collider) -> int
 
         case MCObjectClass::Tree:
         {
-            if (RollDice(10) != 0)
+            if (RollDice(spreadChance) != 0)
             {
                 spread(static_cast<MCTree&>(collider), 15.0f);
             }
@@ -118,7 +122,7 @@ auto MCFireType::HandleCollision(MCGameObject&, MCGameObject& collider) -> int
 
         case MCObjectClass::MiscTerrainObject:
         {
-            if (RollDice(10) != 0)
+            if (RollDice(spreadChance) != 0)
             {
                 spread(static_cast<MCMiscTerrainObject&>(collider), 15.0f);
             }
@@ -128,7 +132,7 @@ auto MCFireType::HandleCollision(MCGameObject&, MCGameObject& collider) -> int
 
         case MCObjectClass::TreeBuilding:
         {
-            if (RollDice(10) != 0)
+            if (RollDice(spreadChance) != 0)
             {
                 spread(static_cast<MCTreeBuilding&>(collider), 15.0f);
             }

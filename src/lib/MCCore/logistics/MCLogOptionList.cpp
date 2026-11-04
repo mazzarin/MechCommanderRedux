@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCLogOptionList.h"
 #include "gui/MCGuiEvent.h"
+#include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCPresenter.h"
@@ -80,9 +81,20 @@ auto MCLogOptionList::SetLocked(bool locked, std::string_view hint) -> void
     }
 }
 
-auto MCLogOptionList::SetHeld(int32_t row, std::string_view reason) -> void
+auto MCLogOptionList::SetHeld(int32_t row, std::span<const std::string> reasons) -> void
 {
-    _Held[static_cast<size_t>(row)] = reason;
+    std::string& held = _Held[static_cast<size_t>(row)];
+    held.clear();
+
+    for (const std::string& reason : reasons)
+    {
+        held = reason;
+
+        if (WhiteFont->Width(reason) <= LineWidth())
+        {
+            break;
+        }
+    }
 }
 
 auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
@@ -193,6 +205,11 @@ auto MCLogOptionList::SettingLeft() -> int32_t
     return ScrollBarLeft() - SettingGap - _SettingWidth;
 }
 
+auto MCLogOptionList::LineWidth() -> int32_t
+{
+    return _WideDescriptions ? ScrollBarLeft() - SettingGap / 2 - NameLeft : SettingLeft() - SettingGap - NameLeft;
+}
+
 auto MCLogOptionList::OptionAt(int32_t xPos, int32_t yPos) -> std::optional<int32_t>
 {
     const std::optional<int32_t> row = RowAt(yPos);
@@ -277,7 +294,7 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
     // What it does; when it can't show, what it needs first; when held, why instead (in the headings' amber: a held
     // row is the session screen's, whose palette has none at NeedsColor).
     int32_t left = NameLeft;
-    const int32_t descriptionRight = _WideDescriptions ? ScrollBarLeft() - SettingGap / 2 : NameLeft + nameWidth;
+    const int32_t descriptionRight = NameLeft + LineWidth();
 
     if (!held.empty())
     {

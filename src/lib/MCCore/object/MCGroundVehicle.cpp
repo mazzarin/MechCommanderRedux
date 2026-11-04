@@ -170,7 +170,8 @@ auto MCGroundVehicle::Init(std::shared_ptr<MCObjectType> objType) -> int32_t
     }
 
     MineSweeper = vehicleType.MineSweeper;
-    MinesToLay = vehicleType.MinesToLay;
+    // Port: none in a match without mines (MCMatchRule::NoMines).
+    MinesToLay = MCMatchPlays(MCMatchRule::NoMines) ? 0 : vehicleType.MinesToLay;
 
     if (MinesToLay > 0)
     {

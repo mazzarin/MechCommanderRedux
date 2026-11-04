@@ -416,6 +416,26 @@ void HandleAppSwitchScreen(uint32_t, std::span<const uint8_t> msg)
     }
 }
 
+void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg)
+{
+    if (msg.size() < sizeof(MCMPPlayersRulesMessage))
+    {
+        Dropped("a short players' rules message", fromID);
+        return;
+    }
+
+    // The host's word for every player's (a guest hears no other's); the bits this build doesn't know left out.
+    const auto said = ReadLinkupMessage<MCMPPlayersRulesMessage>(msg);
+    MCMultiPlayer& game = Game();
+    game.PlayerRules.clear();
+
+    for (const MCMPPlayersRulesMessage::Said& player :
+         std::span(said.Players).first(std::min<size_t>(said.Count, said.Players.size())))
+    {
+        game.PlayerRules[player.PlayerId] = player.Rules & MCMatchRule::Supported;
+    }
+}
+
 void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg)
 {
     if (msg.size() < sizeof(MCMPMatchOptionsMessage))
@@ -1396,6 +1416,7 @@ namespace
             case MCMPMessageType::StartMatch:
             case MCMPMessageType::MatchRules:
             case MCMPMessageType::MatchOptions:
+            case MCMPMessageType::PlayersRules:
             {
                 const MCMultiPlayer& game = Game();
                 return fromID == game.ServerID || fromID == game.HostID ||
@@ -1666,6 +1687,12 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
             if (type == MCMPMessageType::PlayerRules)
             {
                 game.PlayerRules[fromID] = rules;
+
+                // Port: and the host tells everyone, so every player's MATCH OPTIONS names whose game lacks one.
+                if (game.IsHost)
+                {
+                    game.SendPlayersRules();
+                }
             }
             else
             {
@@ -1678,6 +1705,12 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::MatchOptions:
         {
             HandleAppMatchOptions(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::PlayersRules:
+        {
+            HandleAppPlayersRules(fromID, bytes);
             break;
         }
 

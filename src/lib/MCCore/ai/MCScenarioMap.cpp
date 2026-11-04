@@ -502,3 +502,14 @@ auto MCScenarioMap::GetOverlayWeight(int32_t tileR, int32_t tileC, int32_t cellR
     return OverlayWeightTable[static_cast<size_t>(OverlayWeightIndex(weightOverlay) + level * OverlayWeightLevelSize +
                                                   cellC + cellR * MapCellDim)];
 }
+
+auto MCScenarioMap::ClearMines() -> void
+{
+    // Overlay bits 11-12 and 13-14 (each side's mine layout), 25-28 (the mines each side knows of).
+    constexpr uint32_t MineBits = 0x1E007800u;
+
+    for (MCMapTile& tile : Map)
+    {
+        tile.Overlay &= ~MineBits;
+    }
+}

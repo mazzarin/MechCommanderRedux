@@ -65,7 +65,12 @@ enum class MCMPMessageType : uint16_t
     /// changes and before the match starts. A build without them ignores it, and shows the mission's own weather and
     /// time of day.
     /// </summary>
-    MatchOptions = 49
+    MatchOptions = 49,
+    /// <summary>
+    /// Port: the rules each player's build plays by as the host heard them (<c>MCMPPlayersRulesMessage</c>), to everyone
+    /// as they come: every player's MATCH OPTIONS names whose game lacks an option. A build without it ignores it.
+    /// </summary>
+    PlayersRules = 50
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -140,6 +145,22 @@ struct MCMPMatchOptionsMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPMatchOptionsMessage) == 0xe);
+
+/// <summary>Port: the players' rules as the host heard them (MCMPMessageType::PlayersRules), the first Count used.</summary>
+struct MCMPPlayersRulesMessage : public MCFIGuaranteedMessageHeader
+{
+    /// <summary>A player's id and its build's rules (MCMatchRule bits).</summary>
+    struct Said
+    {
+        uint32_t PlayerId = 0;
+        uint32_t Rules = 0;
+    };
+
+    uint8_t Count = 0;
+    std::array<Said, MaxLinkupPlayers> Players{};
+};
+
+static_assert(sizeof(MCMPPlayersRulesMessage) == 0x39);
 
 /// <summary>Player order (guaranteed, to the server): a tactical order packed into two words.</summary>
 /// <remarks>Fixed layout.</remarks>

@@ -2,10 +2,13 @@
 #include "MCTest.h"
 #include "main/MCGameContext.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCWeatherPlay.h"
 #include "object/MCBullet.h"
 #include "object/MCEffectSystem.h"
 #include "object/MCExplosionType.h"
 #include "object/MCFire.h"
+#include "object/MCFireType.h"
+#include "object/MCTree.h"
 #include "object/MCTrain.h"
 #include "object/MCTrainManager.h"
 #include "object/MCWeaponShotInfo.h"
@@ -46,6 +49,73 @@ namespace
         type->HandleCollision(*explosion, *mover);
         return mover->Hits;
     }
+}
+
+namespace
+{
+    /// <summary>A tree that counts the fire's hits (each spread to it does 25 points).</summary>
+    class CountingTree : public MCTree
+    {
+    public:
+        CountingTree() { ObjectClass = MCObjectClass::Tree; }
+
+        int32_t HandleWeaponHit(MCWeaponShotInfo&, int) override
+        {
+            Hits++;
+            return 0;
+        }
+
+        int32_t Hits = 0;
+    };
+
+    /// <summary>How many of <paramref name="touches"/> touches of a fire spread it to a tree.</summary>
+    int32_t SpreadsOf(int32_t touches)
+    {
+        MCFireType type;
+        MCBigGameObject fire;
+        CountingTree tree;
+
+        for (int32_t i = 0; i < touches; i++)
+        {
+            type.HandleCollision(fire, tree);
+        }
+
+        return tree.Hits;
+    }
+}
+
+/// <summary>
+/// Port-only: a match's weather (MCWeatherPlay) damps fires: a flame burns no longer than its share of the mission's
+/// MaxFireBurnTime, and a fire spreads at its chance a touch (the original's one in ten without one).
+/// </summary>
+TEST_CASE("fires: a match's weather shortens the flames and damps the spread")
+{
+    MCTestContextScope scope;
+    scope.Context().SetEffectSystem(std::make_unique<MCEffectSystem>(4, 5.0f));
+    MCFire fire;
+    fire.Flames.resize(1);
+    fire.AddTimeLeftToBurn(3.0f);
+    CHECK_EQ(fire.Flames[0].TimeLeftToBurn, 3.0f);
+
+    MCSetWeatherPlay({.Burn = 0.4f});
+    fire.Flames[0].TimeLeftToBurn = 0.0f;
+    fire.AddTimeLeftToBurn(3.0f);
+    CHECK_EQ(fire.Flames[0].TimeLeftToBurn, 0.0f);
+    fire.AddTimeLeftToBurn(1.5f);
+    CHECK_EQ(fire.Flames[0].TimeLeftToBurn, 1.5f);
+
+    constexpr int32_t Touches = 400;
+    MCSetWeatherPlay({.Spread = 0});
+    CHECK_EQ(SpreadsOf(Touches), 0);
+    MCSetWeatherPlay({.Spread = 100});
+    CHECK_EQ(SpreadsOf(Touches), Touches);
+    MCSetWeatherPlay({});
+    const int32_t clear = SpreadsOf(Touches);
+    CHECK(clear > Touches / 20);
+    CHECK(clear < Touches / 5);
+    MCSetWeatherPlay(MCWeatherPlayOf(MCWeatherKind::Downpour));
+    CHECK(SpreadsOf(Touches) < clear);
+    MCSetWeatherPlay({});
 }
 
 TEST_CASE("fires: starting a fire past the ring's size burns out the oldest")

@@ -163,25 +163,16 @@ TEST_CASE_ISOLATED("game: mission 1's battle keeps every mover on passable cells
         }
     }
 
-    std::shared_ptr<MCMover> uller = GetMoverFromPartId(896);
+    for (int32_t partId = 0x200; partId < 0x203; partId++)
+    {
+        REQUIRE(GetMoverFromPartId(partId) != nullptr);
+    }
+
+    // The player's attack command, as the interface sends it (icallbk.cpp: attack, any range, pursue).
+    std::shared_ptr<MCMover> uller = MCTestGame::OrderMissionOneAttack();
     REQUIRE(uller != nullptr);
     REQUIRE(uller->ObjectClass == MCObjectClass::BattleMech);
     REQUIRE_EQ(uller->GetAlignment(), -1);
-
-    // The player's attack command, as the interface sends it (icallbk.cpp: attack, any range, pursue).
-    for (int32_t partId = 0x200; partId < 0x203; partId++)
-    {
-        std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId);
-        REQUIRE(mover != nullptr);
-        MCTacticalOrder order;
-        order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
-        order.Target = uller;
-        order.AttackParams.Type = 1;
-        order.AttackParams.Method = 0;
-        order.AttackParams.Range = -1;
-        order.AttackParams.Pursue = -1;
-        mover->HandleTacticalOrder(order, 1, 0);
-    }
 
     constexpr float FrameSeconds = 1.0f / 15.0f;
     constexpr int32_t MaxFrames = 15 * 60 * 10;

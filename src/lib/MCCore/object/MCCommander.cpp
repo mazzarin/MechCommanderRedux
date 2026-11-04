@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "object/MCCommander.h"
 #include "lib/MCFatal.h"
+#include "network/MCMultiPlayer.h"
 #include "object/MCForces.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGameSystem.h"
@@ -70,26 +71,35 @@ auto MCCommander::AddToGui(int visible) -> void
     }
 }
 
+namespace
+{
+    /// <summary>Port: <paramref name="count"/> strikes, or none in a match that bans them (<paramref name="ban"/>).</summary>
+    int32_t Allowed(int32_t count, uint32_t ban)
+    {
+        return MCMatchPlays(ban) ? 0 : count;
+    }
+}
+
 auto MCCommander::SetNumSmallStrikes(int32_t strikes) -> void
 {
-    NumSmallStrikes = strikes;
+    NumSmallStrikes = Allowed(strikes, MCMatchRule::NoArtillery);
     RedrawTacticalMap(*this);
 }
 
 auto MCCommander::SetNumLargeStrikes(int32_t strikes) -> void
 {
-    NumLargeStrikes = strikes;
+    NumLargeStrikes = Allowed(strikes, MCMatchRule::NoArtillery);
     RedrawTacticalMap(*this);
 }
 
 auto MCCommander::SetNumSensorStrikes(int32_t strikes) -> void
 {
-    NumSensorStrikes = strikes;
+    NumSensorStrikes = Allowed(strikes, MCMatchRule::NoSensors);
     RedrawTacticalMap(*this);
 }
 
 auto MCCommander::SetNumCameraDrones(int32_t drones) -> void
 {
-    NumCameraDrones = drones;
+    NumCameraDrones = Allowed(drones, MCMatchRule::NoSensors);
     RedrawTacticalMap(*this);
 }

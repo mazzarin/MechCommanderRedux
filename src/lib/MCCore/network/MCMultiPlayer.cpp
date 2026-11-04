@@ -618,6 +618,26 @@ bool MCMultiPlayer::IsMyTeammate(uint32_t playerID) const
     return players.has_value() && std::ranges::contains(*players, playerID);
 }
 
+namespace
+{
+    /// <summary>The rules the mission being played plays by (MCSetMatchRulesInForce).</summary>
+    uint32_t& RulesInForce()
+    {
+        static uint32_t rules = 0;
+        return rules;
+    }
+}
+
+void MCSetMatchRulesInForce(uint32_t rules)
+{
+    RulesInForce() = rules;
+}
+
+bool MCMatchPlays(uint32_t rules)
+{
+    return (RulesInForce() & rules) == rules;
+}
+
 uint32_t MCAgreedRules(uint32_t wanted, std::span<const uint32_t> players, const std::map<uint32_t, uint32_t>& said)
 {
     uint32_t rules = wanted & MCMatchRule::Supported;
@@ -649,12 +669,15 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
 
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
-    // The time of day's rules come with the time of day, not with what the host wants.
+    // The time of day's rules come with the time of day, not with what the host wants; the weather's play with every
+    // player's build playing it, whatever the weather (the mission's own too).
     constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
+    constexpr uint32_t weatherRules = MCMatchRule::WeatherRules;
     MCMatchOptions played;
-    played.Weather = (agreed & MCMatchRule::MatchWeather) != 0 ? chosen.Weather : std::nullopt;
+    played.Weather = (agreed & weatherRules) == weatherRules ? chosen.Weather : std::nullopt;
     played.TimeOfDay = (agreed & timeRules) == timeRules ? chosen.TimeOfDay : std::nullopt;
-    played.Rules = (wantedRules & agreed & ~timeRules) | (played.TimeOfDay.has_value() ? timeRules : 0);
+    played.Rules = (wantedRules & agreed & ~(timeRules | weatherRules)) |
+                   (played.TimeOfDay.has_value() ? timeRules : 0) | (agreed & MCMatchRule::WeatherPlay);
     return played;
 }
 

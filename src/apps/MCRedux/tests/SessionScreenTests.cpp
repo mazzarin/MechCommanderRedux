@@ -2,13 +2,17 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiFont.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
+#include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogSlider.h"
+#include "logistics/MCMatchOptionsTab.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChatWindow.h"
@@ -150,6 +154,13 @@ namespace
             return _MatchOptions;
         }
 
+        /// <summary>The last players' rules message the host sent, if any.</summary>
+        std::optional<MCMPPlayersRulesMessage> PlayersRules()
+        {
+            const std::lock_guard lock(_Mutex);
+            return _PlayersRules;
+        }
+
         /// <summary>
         /// Says to the host (player <paramref name="hostId"/>) that this guest's build plays by
         /// <paramref name="rules"/>, as a game's rules message does (sent from the listener, which owns the connection).
@@ -171,9 +182,21 @@ namespace
         }
 
     private:
-        /// <summary>Keeps <paramref name="message"/> if it is the host's match options.</summary>
+        /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
         void Keep(std::span<const uint8_t> message)
         {
+            if (message.size() >= sizeof(MCMPPlayersRulesMessage))
+            {
+                const auto players = ReadLinkupMessage<MCMPPlayersRulesMessage>(message);
+
+                if (players.Type() == static_cast<uint16_t>(MCMPMessageType::PlayersRules))
+                {
+                    const std::lock_guard lock(_Mutex);
+                    _PlayersRules = players;
+                    return;
+                }
+            }
+
             if (message.size() < sizeof(MCMPMatchOptionsMessage))
             {
                 return;
@@ -213,6 +236,7 @@ namespace
         std::atomic<bool> _Stop = false;
         std::mutex _Mutex;
         std::optional<MCMPMatchOptionsMessage> _MatchOptions;
+        std::optional<MCMPPlayersRulesMessage> _PlayersRules;
         /// <summary>The host's player id and the rules to say, until the listener sends them.</summary>
         std::optional<std::pair<uint32_t, uint32_t>> _RulesToSend;
     };
@@ -338,8 +362,12 @@ namespace
 {
     /// <summary>The MATCH OPTIONS list's rows (logistics/MCMatchOptionsTab.cpp): its headings and its options.</summary>
     constexpr int32_t WeatherRow = 1;
-    constexpr int32_t TimeRow = 3;
-    constexpr int32_t BrakingRow = 4;
+    constexpr int32_t TimeRow = 2;
+    constexpr int32_t BrakingRow = 3;
+    constexpr int32_t ArtilleryRow = 4;
+    constexpr int32_t SensorsRow = 5;
+    constexpr int32_t MinesRow = 6;
+    constexpr std::array RuleRows = {WeatherRow, TimeRow, BrakingRow, ArtilleryRow, SensorsRow, MinesRow};
     /// <summary>A point on each tab (MCMatchOptionsTab.cpp's ChatTabArea and OptionsTabArea).</summary>
     constexpr int32_t TabX = 0xca;
     constexpr int32_t ChatTabY = 0x80;
@@ -357,6 +385,25 @@ namespace
             Settle();
         }
     }
+}
+
+/// <summary>
+/// Port: why an option is held names every player whose game doesn't have it, then (for a line too narrow for them
+/// all) fewer and the rest counted, down to none named.
+/// </summary>
+TEST_CASE("session screen: a held match option names whose game doesn't have it")
+{
+    CHECK(MatchNotInGames({}).empty());
+    const std::array<std::string, 1> one = {"BOB"};
+    CHECK((MatchNotInGames(one) == std::vector<std::string>{"NOT IN BOB'S GAME.", "NOT IN 1 PLAYER'S GAME."}));
+    const std::array<std::string, 2> two = {"BOB", "ANN"};
+    CHECK((MatchNotInGames(two) == std::vector<std::string>{"NOT IN BOB'S OR ANN'S GAMES.",
+                                                            "NOT IN BOB'S OR 1 OTHER'S GAMES.",
+                                                            "NOT IN 2 PLAYERS' GAMES."}));
+    const std::array<std::string, 3> three = {"BOB", "ANN", "JO"};
+    CHECK((MatchNotInGames(three) ==
+           std::vector<std::string>{"NOT IN BOB'S, ANN'S OR JO'S GAMES.", "NOT IN BOB'S, ANN'S OR 1 OTHER'S GAMES.",
+                                    "NOT IN BOB'S OR 2 OTHERS' GAMES.", "NOT IN 3 PLAYERS' GAMES."}));
 }
 
 /// <summary>
@@ -431,9 +478,21 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
     CHECK(list.ChoiceName(BrakingRow) == "OFF");
+
+    for (const int32_t row : {ArtilleryRow, SensorsRow, MinesRow})
+    {
+        CHECK(list.ChoiceName(row) == "ON");
+    }
+
     constexpr std::string_view NotInGuests = "NOT IN GUEST'S GAME.";
 
-    for (const int32_t row : {WeatherRow, TimeRow, BrakingRow})
+    // Every row's line fits it.
+    for (int32_t row = 0; row < list.OptionRows(); row++)
+    {
+        CHECK(WhiteFont->Width(list.Description(row)) <= list.LineWidth());
+    }
+
+    for (const int32_t row : RuleRows)
     {
         CHECK(list.HeldReason(row) == NotInGuests);
     }
@@ -454,19 +513,26 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.HeldReason(TimeRow) == NotInGuests);
     sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
-    // A build of the first match options: the weather, not the time of day (it hasn't its sight).
+    // A build of the first match options: neither the weather (it hasn't its play) nor the time of day (its sight).
     guest.SendRules(hostId, MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay);
     Settle();
-    CHECK(list.HeldReason(WeatherRow).empty());
-    CHECK(list.ChoiceName(WeatherRow) == "RAIN");
+    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
     CHECK(list.HeldReason(TimeRow) == NotInGuests);
-    sentIs(static_cast<int8_t>(MCWeatherKind::Rain), MissionOwn, MCMatchRule::MechBraking);
+    sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
-    // A build that plays them all: the host's choices, the time of day's sight with it.
+    // A build of the time of day's sight: the time of day, not the weather.
+    guest.SendRules(hostId, MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::TimeOfDayRules);
+    Settle();
+    CHECK(list.HeldReason(WeatherRow) == NotInGuests);
+    CHECK(list.HeldReason(TimeRow).empty());
+    CHECK(list.ChoiceName(TimeRow) == "NIGHT");
+    sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
+
+    // A build that plays them all: the host's choices, the time of day's sight and the weather's play with them.
     guest.SendRules(hostId, MCMatchRule::Supported);
     Settle();
 
-    for (const int32_t row : {WeatherRow, TimeRow, BrakingRow})
+    for (const int32_t row : RuleRows)
     {
         CHECK(list.HeldReason(row).empty());
     }
@@ -474,19 +540,27 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
     sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night),
-           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
+           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay);
+    // The guest heard every player's rules from the host (its own, and the host's).
+    const std::optional<MCMPPlayersRulesMessage> players = guest.PlayersRules();
+    REQUIRE(players.has_value());
+    CHECK_EQ(players->Count, 2);
 
-    // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off.
+    // RAIN, DOWNPOUR; NIGHT, MISSION'S; braking off; artillery off.
     ClickSetting(list, WeatherRow, 1);
     ClickSetting(list, TimeRow, 1);
     ClickSetting(list, BrakingRow, 1);
+    ClickSetting(list, ArtilleryRow, 1);
+    CHECK(list.ChoiceName(ArtilleryRow) == "OFF");
+    CHECK(list.ChoiceName(SensorsRow) == "ON");
     CHECK(list.ChoiceName(WeatherRow) == "DOWNPOUR");
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
     CHECK(list.ChoiceName(BrakingRow) == "OFF");
     CHECK(game.MatchOptions.Weather == MCWeatherKind::Downpour);
     CHECK(!game.MatchOptions.TimeOfDay.has_value());
     CHECK_EQ(game.WantedRules() & MCMatchRule::MechBraking, 0u);
-    sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn, 0);
+    sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
+           MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery);
     SaveShot("match options 2 options in front", ScreenHash());
 
     // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.

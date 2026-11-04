@@ -341,12 +341,12 @@ auto ParseCommandLine(std::string_view commandLine) -> void
                 i += 3;
             }
         }
-        else if (MCIEquals(word, MatchWeatherFlag) || MCIEquals(word, MatchTimeFlag) ||
-                 MCIEquals(word, MatchBrakingFlag))
+        else if (MPIsMatchOptionFlag(word))
         {
             // Port: the match's options, the host's first choices on the session screen's MATCH OPTIONS (and a
             // -matchmap match's): "-matchweather <clear|rain|downpour|lightsnow|snow|blizzard|mission>", "-matchtime
-            // <day|dusk|night|mission>", "-matchbraking <on|off|prefs>".
+            // <day|dusk|night|mission>", "-matchbraking <on|off|prefs>", "-matchartillery", "-matchsensors" and
+            // "-matchmines" <on|off>.
             if (hasArgument)
             {
                 MPReadMatchOption(word, words[++i], GameConfiguration.Options);

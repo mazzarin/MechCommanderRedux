@@ -18,6 +18,7 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCSplashScreen.h"
+#include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
@@ -390,6 +391,31 @@ namespace MCTestGame
         {
             return dynamic_cast<MCManualClock&>(MCGameContext::Current().Clock());
         }
+    }
+
+    std::shared_ptr<MCMover> OrderMissionOneAttack()
+    {
+        constexpr int32_t UllerPart = 896;
+        constexpr int32_t FirstPlayerPart = 0x200;
+        constexpr int32_t PlayerMechs = 3;
+        std::shared_ptr<MCMover> uller = GetMoverFromPartId(UllerPart);
+
+        for (int32_t partId = FirstPlayerPart; uller != nullptr && partId < FirstPlayerPart + PlayerMechs; partId++)
+        {
+            if (const std::shared_ptr<MCMover> mover = GetMoverFromPartId(partId); mover != nullptr)
+            {
+                MCTacticalOrder order;
+                order.Reset(MCOrderOrigin::Player, MCTacticalOrderCode::AttackObject, 0);
+                order.Target = uller;
+                order.AttackParams.Type = 1;
+                order.AttackParams.Method = 0;
+                order.AttackParams.Range = -1;
+                order.AttackParams.Pursue = -1;
+                mover->HandleTacticalOrder(order, 1, 0);
+            }
+        }
+
+        return uller;
     }
 
     bool StartMission(int32_t segment)

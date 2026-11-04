@@ -4,6 +4,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenario.h"
+#include "mission/MCWeatherPlay.h"
 #include "mission/MCDifficultySettings.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCForces.h"
@@ -852,7 +853,8 @@ auto MCMover::CalcAttackChance(std::shared_ptr<MCGameObject> target, int32_t aim
     }
     else if (!(weapon.WeaponRange[3] < metersToTarget))
     {
-        rangeModifier = WeaponFireModifiers[2];
+        // Port: at long range, less the match's weather's (MCWeatherPlay::LongAim; outside a match, nothing).
+        rangeModifier = WeaponFireModifiers[2] + MCWeatherPlayNow().LongAim;
     }
     else
     {

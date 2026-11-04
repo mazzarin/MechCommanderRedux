@@ -278,6 +278,22 @@ std::array<int32_t, VisualRangeTableSize> MCSightAt(const std::array<int32_t, Vi
 /// </summary>
 std::optional<std::array<int32_t, VisualRangeTableSize>> MCMatchSight(
     const MCMatchOptions& match, const std::array<int32_t, VisualRangeTableSize>& gameSystem);
+
+/// <summary>
+/// Port-only: <paramref name="table"/> with each level's range cut to <paramref name="share"/> of it (rounded, no less
+/// than <see cref="LeastSight"/>).
+/// </summary>
+std::array<int32_t, VisualRangeTableSize> MCSightCut(const std::array<int32_t, VisualRangeTableSize>& table,
+                                                     double share);
+
+struct MCWeatherPlay;
+enum class MCWeatherKind : uint8_t;
+
+/// <summary>
+/// Port-only: what the weather changes in a match's play: its host's weather (else <paramref name="missionWeather"/>)
+/// when every player's game plays the weather's play (MCMatchRule::WeatherPlay); none, nothing.
+/// </summary>
+MCWeatherPlay MCMatchWeatherPlay(const MCMatchOptions& match, MCWeatherKind missionWeather);
 /// <summary><c>RevealTacMap</c>: the tactical map shows the revealed picture.</summary>
 extern bool DrawRevealedTacMap;
 /// <summary><c>AlwaysDraw</c> from the game system file.</summary>

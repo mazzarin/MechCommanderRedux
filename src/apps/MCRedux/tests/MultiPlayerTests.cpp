@@ -2,14 +2,17 @@
 #include "MCTest.h"
 #include "MCMock.h"
 #include "TestGame.h"
+#include "ai/MCScenarioMap.h"
 #include "lib/MCFitIniFile.h"
 #include "linkup/MCFidpMessage.h"
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "mission/MCScenario.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCArtilleryChunk.h"
+#include "object/MCCommander.h"
 #include "object/MCBattleMech.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCMechWarrior.h"
@@ -867,34 +870,47 @@ TEST_CASE("network: a guest keeps what the match plays of the host's options as 
 
 /// <summary>
 /// Port: a match plays its host's weather, time of day and rules only as far as every player's build plays them, as its
-/// rules message said: the host's time of day brings its sight's rule with it, and needs both from every build; a build
-/// of the first match options (the time of day's look alone) keeps the mission's own time of day, one of the braking's
-/// round (braking alone) the mission's own weather too, one that said none (the original's) every option. The players
-/// without a rule are those whose message left it out or who sent none.
+/// rules message said: the host's time of day brings its sight's rule with it, and needs both from every build; the
+/// weather's play comes with every build playing it (for the mission's own weather too), and the host's weather needs
+/// its look and its play from every build. A build of the time of day's sight (3 Nov) keeps the mission's own weather,
+/// one of the first match options (the looks alone) the mission's own time of day too, one of the braking's round
+/// (braking alone) both, one that said none (the original's) every option. The players without a rule are those whose
+/// message left it out or who sent none.
 /// </summary>
 TEST_CASE("network: a match plays the host's options as far as every player's build plays them")
 {
     constexpr uint32_t braking = MCMatchRule::MechBraking;
     constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
+    constexpr uint32_t weatherPlay = MCMatchRule::WeatherPlay;
     constexpr uint32_t firstOptions = braking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay;
+    constexpr uint32_t sightOptions = braking | MCMatchRule::MatchWeather | timeRules;
     const MCMatchOptions chosen{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = braking};
-    CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::Supported) == MCMatchOptions{.Weather = MCWeatherKind::Snow,
-                                                                                      .TimeOfDay = MCTimeOfDay::Night,
-                                                                                      .Rules = braking | timeRules}));
-    CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) ==
-           MCMatchOptions{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = timeRules}));
+    CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::Supported) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow,
+                          .TimeOfDay = MCTimeOfDay::Night,
+                          .Rules = braking | timeRules | weatherPlay}));
+    CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) == MCMatchOptions{.Weather = MCWeatherKind::Snow,
+                                                                                .TimeOfDay = MCTimeOfDay::Night,
+                                                                                .Rules = timeRules | weatherPlay}));
     CHECK((MCPlayedOptions(MCMatchOptions{}, braking | timeRules, MCMatchRule::Supported) ==
-           MCMatchOptions{.Rules = braking}));
-    CHECK((MCPlayedOptions(chosen, braking, firstOptions) ==
-           MCMatchOptions{.Weather = MCWeatherKind::Snow, .Rules = braking}));
+           MCMatchOptions{.Rules = braking | weatherPlay}));
+    CHECK((MCPlayedOptions(chosen, braking, sightOptions) ==
+           MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules}));
+    CHECK(MCPlayedOptions(chosen, braking, firstOptions) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, braking) == MCMatchOptions{.Rules = braking});
-    CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) ==
-           MCMatchOptions{.Weather = MCWeatherKind::Snow, .Rules = 0u}));
+    CHECK(MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) == MCMatchOptions{.Rules = 0u});
+    constexpr uint32_t bans = MCMatchRule::NoArtillery | MCMatchRule::NoSensors | MCMatchRule::NoMines;
+    CHECK(MCPlayedOptions(MCMatchOptions{}, bans, MCMatchRule::Supported) ==
+          MCMatchOptions{.Rules = bans | weatherPlay});
+    CHECK(MCPlayedOptions(MCMatchOptions{}, bans, sightOptions | weatherPlay | MCMatchRule::NoMines) ==
+          MCMatchOptions{.Rules = MCMatchRule::NoMines | weatherPlay});
     CHECK(MCPlayedOptions(chosen, braking, 0) == MCMatchOptions{.Rules = 0u});
 
-    const std::map<uint32_t, uint32_t> said = {{1, MCMatchRule::Supported}, {2, braking}, {4, firstOptions}};
-    const std::array<uint32_t, 4> players = {1, 2, 3, 4};
+    const std::map<uint32_t, uint32_t> said = {
+        {1, MCMatchRule::Supported}, {2, braking}, {4, firstOptions}, {5, sightOptions}};
+    const std::array<uint32_t, 5> players = {1, 2, 3, 4, 5};
     CHECK((MCPlayersWithout(MCMatchRule::MatchWeather, players, said) == std::vector<uint32_t>{2, 3}));
+    CHECK((MCPlayersWithout(MCMatchRule::WeatherRules, players, said) == std::vector<uint32_t>{2, 3, 4, 5}));
     CHECK((MCPlayersWithout(timeRules, players, said) == std::vector<uint32_t>{2, 3, 4}));
     CHECK(MCPlayersWithout(braking, players, said) == std::vector<uint32_t>{3});
     CHECK(MCPlayersWithout(braking, std::span(players).first(2), said).empty());
@@ -947,6 +963,139 @@ TEST_CASE("network: a match's time of day sets how far units see when every play
 }
 
 /// <summary>
+/// Port: a match's weather changes play (MCWeatherPlay) only when the match plays the weather's play (every player's
+/// game has it), the host's weather else the mission's own; clear weather changes nothing. Every weather damps fires
+/// and makes a fall likelier, none speeds a vehicle or lengthens sight; a downpour and a blizzard cost long-range aim
+/// and sight. Sight is cut as the time of day cuts it.
+/// </summary>
+TEST_CASE("network: a match's weather changes play when every player's game plays it, clear weather nothing")
+{
+    CHECK(MCWeatherPlayOf(MCWeatherKind::Clear) == MCWeatherPlay{});
+
+    for (const MCWeatherKind kind : {MCWeatherKind::Rain, MCWeatherKind::Downpour, MCWeatherKind::LightSnow,
+                                     MCWeatherKind::Snow, MCWeatherKind::Blizzard})
+    {
+        const MCWeatherPlay play = MCWeatherPlayOf(kind);
+        CHECK(play.Burn > 0.0f);
+        CHECK(play.Burn < 1.0f);
+        CHECK(play.Spread >= 0);
+        CHECK(play.Spread < MCWeatherPlay{}.Spread);
+        CHECK(play.Footing > 0.0);
+        CHECK(play.LongAim <= 0.0f);
+        CHECK(play.Sight > 0.0);
+        CHECK(play.Sight <= 1.0);
+        CHECK(play.VehicleSpeed > 0.0f);
+        CHECK(play.VehicleSpeed <= 1.0f);
+    }
+
+    for (const MCWeatherKind kind : {MCWeatherKind::Downpour, MCWeatherKind::Blizzard})
+    {
+        CHECK(MCWeatherPlayOf(kind).LongAim < 0.0f);
+        CHECK(MCWeatherPlayOf(kind).Sight < 1.0);
+    }
+
+    constexpr uint32_t weatherPlay = MCMatchRule::WeatherPlay;
+    const MCWeatherPlay blizzard = MCWeatherPlayOf(MCWeatherKind::Blizzard);
+    CHECK(MCMatchWeatherPlay(MCMatchOptions{.Weather = MCWeatherKind::Blizzard}, MCWeatherKind::Rain) ==
+          MCWeatherPlay{});
+    CHECK(MCMatchWeatherPlay(MCMatchOptions{.Weather = MCWeatherKind::Blizzard, .Rules = weatherPlay},
+                             MCWeatherKind::Rain) == blizzard);
+    CHECK(MCMatchWeatherPlay(MCMatchOptions{.Rules = weatherPlay}, MCWeatherKind::Rain) ==
+          MCWeatherPlayOf(MCWeatherKind::Rain));
+    CHECK(MCMatchWeatherPlay(MCMatchOptions{.Rules = weatherPlay}, MCWeatherKind::Clear) == MCWeatherPlay{});
+    CHECK(MCMatchWeatherPlay(MCMatchOptions{}, MCWeatherKind::Snow) == MCWeatherPlay{});
+
+    std::array<int32_t, VisualRangeTableSize> table{};
+    table.fill(10);
+    table[0] = 5;
+    table[1] = 1;
+    const std::array<int32_t, VisualRangeTableSize> cut = MCSightCut(table, 0.7);
+    CHECK_EQ(cut[0], 4);
+    CHECK_EQ(cut[1], LeastSight);
+    CHECK_EQ(cut[2], 7);
+    CHECK(MCSightCut(table, 1.0) == table);
+    CHECK(MCSightAt(table, MCTimeOfDay::Night) == MCSightCut(table, NightSight));
+}
+
+/// <summary>
+/// Port: a match without artillery gives commanders no artillery strikes, one without sensors no sensor probes or
+/// camera drones (whatever the mission or its script gives), and one without mines clears the map's (each side's laid
+/// and gone-off mines, and what each knows of them), the tiles' other bits kept; outside such a match, as given.
+/// </summary>
+TEST_CASE("network: a match without artillery, sensors or mines gives none, and clears the map's mines")
+{
+    MCTestContextScope scope;
+    MCCommander commander(0);
+    const auto give = [&commander]
+    {
+        commander.SetNumSmallStrikes(3);
+        commander.SetNumLargeStrikes(2);
+        commander.SetNumSensorStrikes(4);
+        commander.SetNumCameraDrones(1);
+        return std::array{commander.NumSmallStrikes, commander.NumLargeStrikes, commander.NumSensorStrikes,
+                          commander.NumCameraDrones};
+    };
+
+    CHECK((give() == std::array{3, 2, 4, 1}));
+    MCSetMatchRulesInForce(MCMatchRule::NoArtillery);
+    CHECK(MCMatchPlays(MCMatchRule::NoArtillery));
+    CHECK(!MCMatchPlays(MCMatchRule::NoArtillery | MCMatchRule::NoSensors));
+    CHECK((give() == std::array{0, 0, 4, 1}));
+    MCSetMatchRulesInForce(MCMatchRule::NoSensors);
+    CHECK((give() == std::array{3, 2, 0, 0}));
+    MCSetMatchRulesInForce(0);
+    CHECK((give() == std::array{3, 2, 4, 1}));
+
+    MCScenarioMap map(2, 1);
+    map.TileAt(0, 0).Overlay = 0xffffffffu;
+    map.TileAt(0, 1).Overlay = 0x00000801u;
+    map.ClearMines();
+    CHECK_EQ(map.TileAt(0, 0).Overlay, 0xe1ff87ffu);
+    CHECK_EQ(map.TileAt(0, 1).Overlay, 0x00000001u);
+}
+
+/// <summary>
+/// Port: the host's word for every player's rules (MCMPPlayersRulesMessage) is a guest's, for its MATCH OPTIONS: taken
+/// only from the server or host, the bits this build doesn't play left out, a short one dropped.
+/// </summary>
+TEST_CASE("network: a guest keeps the host's word for every player's rules")
+{
+    ClientGame client;
+    MCMultiPlayer& game = *client.Game;
+    game.ServerID = 7;
+    game.HostID = 7;
+    game.PlayerRules = {{9, MCMatchRule::Supported}};
+    const auto playersMessage = [](std::initializer_list<std::pair<uint32_t, uint32_t>> players)
+    {
+        std::vector<uint8_t> message =
+            Message(MCMPMessageType::PlayersRules, {0, 0, 0, 0, 0, 0, static_cast<uint8_t>(players.size())});
+
+        for (const auto& [id, rules] : players)
+        {
+            PutWord(message, id);
+            PutWord(message, rules);
+        }
+
+        message.resize(sizeof(MCMPPlayersRulesMessage), 0);
+        return message;
+    };
+
+    const std::vector<uint8_t> heard = playersMessage({{7, 0xffffffff}, {8, MCMatchRule::MechBraking}});
+    Deliver(8, heard);
+    CHECK((game.PlayerRules == std::map<uint32_t, uint32_t>{{9, MCMatchRule::Supported}}));
+    Deliver(7, heard);
+    CHECK(
+        (game.PlayerRules == std::map<uint32_t, uint32_t>{{7, MCMatchRule::Supported}, {8, MCMatchRule::MechBraking}}));
+
+    std::vector<uint8_t> shortMessage = playersMessage({});
+    shortMessage.pop_back();
+    Deliver(7, shortMessage);
+    CHECK_EQ(game.PlayerRules.size(), 2u);
+    Deliver(7, playersMessage({}));
+    CHECK(game.PlayerRules.empty());
+}
+
+/// <summary>
 /// Port: a launcher's -matchweather, -matchtime and -matchbraking set the match's options, any of them "mission" (or
 /// braking "prefs") for its choice without, in any case; a value that is none of a flag's changes nothing.
 /// </summary>
@@ -964,6 +1113,18 @@ TEST_CASE("network: the command line's match options set the weather, the time o
 
     CHECK(!MPReadMatchOption(MatchWeatherFlag, "hail", options));
     CHECK(!MPReadMatchOption(MatchTimeFlag, "noon", options));
+
+    // ON is the original's; OFF bans the thing, the other rules kept.
+    MCMatchOptions bans{.Rules = MCMatchRule::MechBraking};
+    CHECK(MPReadMatchOption(MatchArtilleryFlag, "OFF", bans));
+    CHECK(MPReadMatchOption(MatchMinesFlag, "off", bans));
+    CHECK(bans.Rules == (MCMatchRule::MechBraking | MCMatchRule::NoArtillery | MCMatchRule::NoMines));
+    CHECK(MPReadMatchOption(MatchArtilleryFlag, "on", bans));
+    CHECK(MPReadMatchOption(MatchSensorsFlag, "on", bans));
+    CHECK(bans.Rules == (MCMatchRule::MechBraking | MCMatchRule::NoMines));
+    CHECK(!MPReadMatchOption(MatchSensorsFlag, "mission", bans));
+    CHECK(MPIsMatchOptionFlag("-MATCHSENSORS"));
+    CHECK(!MPIsMatchOptionFlag("-matchpilots"));
     CHECK(!MPReadMatchOption(MatchBrakingFlag, "mission", options));
     CHECK(options.Weather == MCWeatherKind::LightSnow);
     CHECK(options.TimeOfDay == MCTimeOfDay::Dusk);

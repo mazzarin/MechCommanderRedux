@@ -3,7 +3,10 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 class MCLogOptionList;
 class MCLogPort;
@@ -44,14 +47,22 @@ void DrawMatchTabs(const MCPane& target, const MCLogPort& tabs, MCSessionTab fro
 std::optional<MCSessionTab> MatchTabAt(int32_t xPos, int32_t yPos);
 
 /// <summary>
-/// Makes the MATCH OPTIONS list where the session screen's chat window is (hidden): WEATHER under LOOK, TIME OF DAY
-/// (its sight too) and BRAKING under PLAY.
+/// Makes the MATCH OPTIONS list where the session screen's chat window is (hidden), under PLAY: WEATHER (its play
+/// too, mission/MCWeatherPlay.h), TIME OF DAY (its sight too) and BRAKING.
 /// </summary>
 std::shared_ptr<MCLogOptionList> MakeMatchOptionsList();
 
 /// <summary>
 /// Shows the match's options in <paramref name="list"/>: what the match plays now (MultiPlayer()->Played), the list
-/// locked for a guest; on the host, each option a player's game doesn't have held, saying whose. Called before each
-/// draw, so a guest's list follows the host's messages.
+/// locked for a guest; each option a player's game doesn't have held, naming whose (on every player's screen: each
+/// game tells the others its rules, MCMultiPlayer::SendPlayerRules). Called before each draw, so a guest's list follows
+/// the host's messages.
 /// </summary>
 void ShowMatchOptions(MCLogOptionList& list);
+
+/// <summary>
+/// Why an option is held, longest first, for the players (<paramref name="names"/>, as shown) whose game doesn't have
+/// it: every one named ("NOT IN BOB'S OR ANN'S GAMES."), then fewer and the rest counted ("NOT IN BOB'S OR 2 OTHERS'
+/// GAMES."), down to none named. None for no players.
+/// </summary>
+std::vector<std::string> MatchNotInGames(std::span<const std::string> names);

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "object/MCGroundVehicleDynamics.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCWeatherPlay.h"
 #include "object/MCControl.h"
 #include "object/MCGroundVehicleControlData.h"
 #include "object/MCGroundVehicle.h"
@@ -145,6 +146,9 @@ auto MCGroundVehicleDynamics::Update() -> int32_t
     {
         topSpeed = GvWalkSpeed;
     }
+
+    // Port: as fast as the match's weather lets it (MCWeatherPlay::VehicleSpeed; outside a match, all of it).
+    topSpeed *= MCWeatherPlayNow().VehicleSpeed;
 
     const float speedChange = static_cast<float>(static_cast<double>(topSpeed) * throttle - Velocity);
 

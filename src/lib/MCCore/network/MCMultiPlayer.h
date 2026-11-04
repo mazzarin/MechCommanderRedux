@@ -45,9 +45,36 @@ namespace MCMatchRule
     inline constexpr uint32_t TimeOfDaySight = 8;
     /// <summary>What a player's build must play for the match to play the host's time of day: its look and its sight.</summary>
     inline constexpr uint32_t TimeOfDayRules = MatchTimeOfDay | TimeOfDaySight;
+    /// <summary>
+    /// The weather the match plays changes play (mission/MCWeatherPlay.h: fires, sight, long-range aim, footing,
+    /// vehicles' speed): in the match's rules whenever every player's build plays it, for the host's weather or the
+    /// mission's own.
+    /// </summary>
+    inline constexpr uint32_t WeatherPlay = 16;
+    /// <summary>What a player's build must play for the match to play the host's weather: its look and its play.</summary>
+    inline constexpr uint32_t WeatherRules = MatchWeather | WeatherPlay;
+    /// <summary>Commanders call in no artillery strikes (MATCH OPTIONS' ARTILLERY OFF; MCCommander).</summary>
+    inline constexpr uint32_t NoArtillery = 32;
+    /// <summary>
+    /// Units find their foes by sight alone (SENSORS OFF): no unit's or tower's sensors (MCSensorSystem::Enabled), no
+    /// sensor probes or camera drones.
+    /// </summary>
+    inline constexpr uint32_t NoSensors = 64;
+    /// <summary>No mines (MINES OFF): the map's are cleared at load (MCScenarioMap::ClearMines), mine layers lay none.</summary>
+    inline constexpr uint32_t NoMines = 128;
     /// <summary>Every rule this build plays by.</summary>
-    inline constexpr uint32_t Supported = MechBraking | MatchWeather | TimeOfDayRules;
+    inline constexpr uint32_t Supported =
+        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines;
 } // namespace MCMatchRule
+
+/// <summary>
+/// Port: sets the rules the mission being played plays by (MCScenario::Load: its match's, MCMultiPlayer::Played; none
+/// outside a match).
+/// </summary>
+void MCSetMatchRulesInForce(uint32_t rules);
+
+/// <summary>Port: whether the mission being played plays by every one of <paramref name="rules"/>.</summary>
+bool MCMatchPlays(uint32_t rules);
 
 /// <summary>
 /// Port: of the rules <paramref name="wanted"/>, those every one of <paramref name="players"/> plays by, as its rules
@@ -233,6 +260,13 @@ public:
     /// MATCH OPTIONS; <see cref="PlayedOptions"/>), and keeps it as <see cref="Played"/>.
     /// </summary>
     int32_t SendMatchOptions();
+
+    /// <summary>
+    /// Port, the host: sends everyone the rules each player's build plays by as it heard them (<see cref="PlayerRules"/>,
+    /// its own with them), as one comes: a guest's MATCH OPTIONS then names whose game lacks an option as the host's
+    /// does.
+    /// </summary>
+    void SendPlayersRules();
 
     /// <summary>
     /// Port, the host: sends its match options again (<see cref="SendMatchOptions"/>) when what the match plays of them

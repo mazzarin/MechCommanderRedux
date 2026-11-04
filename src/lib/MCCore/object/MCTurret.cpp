@@ -16,6 +16,7 @@
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
 #include "mission/MCScenario.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCArtillery.h"
 #include "object/MCArtilleryType.h"
@@ -600,7 +601,8 @@ auto MCTurret::CalcAttackChance(std::shared_ptr<MCGameObject> target, int32_t& r
     }
     else if (distance <= weapon.WeaponRange[3])
     {
-        modifier = WeaponFireModifiers[13];
+        // Port: at long range, less the match's weather's (MCWeatherPlay::LongAim; outside a match, nothing).
+        modifier = WeaponFireModifiers[13] + MCWeatherPlayNow().LongAim;
     }
     else
     {

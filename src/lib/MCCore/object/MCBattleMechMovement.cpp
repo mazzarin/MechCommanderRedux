@@ -11,6 +11,7 @@
 #include "lib/MCFatal.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCScenario.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCAIControl.h"
 #include "object/MCMiscTerrainObject.h"
@@ -142,7 +143,8 @@ auto MCBattleMech::PilotingCheck(uint32_t situation, float modifier) -> void
         return;
     }
 
-    double roll = RandomNumber(100);
+    // Port: the match's weather's footing makes a fall likelier (MCWeatherPlay::Footing; outside a match, nothing).
+    double roll = RandomNumber(100) + MCWeatherPlayNow().Footing;
 
     if ((situation & 2) != 0)
     {

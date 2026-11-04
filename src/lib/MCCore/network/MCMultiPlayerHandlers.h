@@ -37,6 +37,8 @@ void HandleAppSwitchScreen(uint32_t fromID, std::span<const uint8_t> msg);
 /// know is the mission's own, and the rules it doesn't play by are left out.
 /// </summary>
 void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg);
+/// <summary>Port: the host's players' rules (MCMPPlayersRulesMessage): a guest's PlayerRules, for its MATCH OPTIONS.</summary>
+void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppEndScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg);

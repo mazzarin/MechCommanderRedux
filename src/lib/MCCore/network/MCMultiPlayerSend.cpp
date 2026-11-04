@@ -140,6 +140,29 @@ int32_t MCMultiPlayer::SendMatchOptions()
     return 0;
 }
 
+void MCMultiPlayer::SendPlayersRules()
+{
+    // Every field set: the buffer holds the last message's bytes past the header.
+    auto said = StartGuaranteedMessage<MCMPPlayersRulesMessage>(MCMPMessageType::PlayersRules);
+    said.Count = 0;
+    said.Players = {};
+    std::map<uint32_t, uint32_t> players = PlayerRules;
+    players[SessionManager->MyPlayer()->Id] = MCMatchRule::Supported;
+
+    for (const auto& [id, rules] : players)
+    {
+        if (said.Count == said.Players.size())
+        {
+            break;
+        }
+
+        said.Players[said.Count++] = {.PlayerId = id, .Rules = rules};
+    }
+
+    PutMessage(said);
+    SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPPlayersRulesMessage)));
+}
+
 void MCMultiPlayer::UpdateMatchOptions()
 {
     if (IsHost && PlayedOptions() != Played)

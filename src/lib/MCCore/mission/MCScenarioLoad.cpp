@@ -23,6 +23,7 @@
 #include "mission/MCDifficultySettings.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenarioReading.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
 #include "object/MCCollisionSystem.h"
@@ -217,6 +218,11 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     const MCMatchOptions& match = MultiPlayer() != nullptr ? MultiPlayer()->Played : noMatch;
     MCSceneLights::SetMatchTime(match.TimeOfDay);
     MCWeather::SetMatchWeather(match.Weather);
+    // Port-only: and what that weather changes in play, where every player's build plays it (outside a match, nothing).
+    const MCWeatherPlay weatherPlay = MCMatchWeatherPlay(match, MCWeather::MissionWeather());
+    MCSetWeatherPlay(weatherPlay);
+    // Port-only: and the match's rules (no artillery, sensors or mines), for the forces, sensors and map read below.
+    MCSetMatchRulesInForce(match.Rules.value_or(0));
     LoadPalette(file);
     LoadForces(file);
     const std::array<int32_t, VisualRangeTableSize> gameSystemSight = VisualRangeTable;
@@ -228,6 +234,12 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
         VisualRangeTable = *sight;
     }
 
+    // Port-only: as far as the weather lets them, after the time of day's or the mission's own.
+    if (weatherPlay.Sight != 1.0)
+    {
+        VisualRangeTable = MCSightCut(VisualRangeTable, weatherPlay.Sight);
+    }
+
     LoadSensorContactShapes(file);
 
     if (const int32_t result = LoadSystems(file, maxFiresBurning, maxFireBurnTime); result != 0)
@@ -236,6 +248,13 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     }
 
     LoadTerrain(file, terrainName);
+
+    // Port-only: a match without mines clears the map's.
+    if (MCMatchPlays(MCMatchRule::NoMines))
+    {
+        GameMap().ClearMines();
+    }
+
     LoadScript(file);
     LoadWarriors(file);
     LoadParts(file);
@@ -344,11 +363,26 @@ auto MCSightAt(const std::array<int32_t, VisualRangeTableSize>& dayTable, MCTime
         return dayTable;
     }
 
-    const double share = time == MCTimeOfDay::Dusk ? DuskSight : NightSight;
-    std::array<int32_t, VisualRangeTableSize> table{};
-    std::ranges::transform(dayTable, table.begin(), [share](int32_t range)
+    return MCSightCut(dayTable, time == MCTimeOfDay::Dusk ? DuskSight : NightSight);
+}
+
+auto MCSightCut(const std::array<int32_t, VisualRangeTableSize>& table, double share)
+    -> std::array<int32_t, VisualRangeTableSize>
+{
+    std::array<int32_t, VisualRangeTableSize> cut{};
+    std::ranges::transform(table, cut.begin(), [share](int32_t range)
                            { return std::max(static_cast<int32_t>(std::lround(range * share)), LeastSight); });
-    return table;
+    return cut;
+}
+
+auto MCMatchWeatherPlay(const MCMatchOptions& match, MCWeatherKind missionWeather) -> MCWeatherPlay
+{
+    if ((match.Rules.value_or(0) & MCMatchRule::WeatherPlay) == 0)
+    {
+        return {};
+    }
+
+    return MCWeatherPlayOf(match.Weather.value_or(missionWeather));
 }
 
 auto MCMatchSight(const MCMatchOptions& match, const std::array<int32_t, VisualRangeTableSize>& gameSystem)

@@ -199,6 +199,9 @@ namespace
     int WeatherValue = MissionOwn;
     int TimeValue = MissionOwn;
     int BrakingValue = 0;
+    int ArtilleryValue = 1;
+    int SensorsValue = 1;
+    int MinesValue = 1;
 
     constexpr std::string_view MissionOwnName = "MISSION'S";
     constexpr std::array WeatherChoices = {Choice{MissionOwnName, MissionOwn},
@@ -249,14 +252,24 @@ namespace
                     { options.TimeOfDay = ChosenOf<MCTimeOfDay>(value); });
     }
 
-    void BrakingChanged(int32_t value)
+    /// <summary>
+    /// The host's change of an option played by <typeparamref name="Rule"/>: the rule wanted when the option is ON
+    /// (<typeparamref name="OnPlays"/>, as BRAKING) or when it is OFF (as ARTILLERY: the rule bans it).
+    /// </summary>
+    template <uint32_t Rule, bool OnPlays> void RuleChanged(int32_t value)
     {
         HostChanges(
             [value](MCMatchOptions& options, const MCMultiPlayer& game)
             {
-                options.Rules =
-                    (game.WantedRules() & ~MCMatchRule::MechBraking) | (value != 0 ? MCMatchRule::MechBraking : 0);
+                const bool plays = (value != 0) == OnPlays;
+                options.Rules = (game.WantedRules() & ~Rule) | (plays ? Rule : 0);
             });
+    }
+
+    /// <summary>A row's value (1 ON, 0 OFF) for an option played by <paramref name="rule"/> in <paramref name="rules"/>.</summary>
+    int OnOf(uint32_t rules, uint32_t rule, bool onPlays)
+    {
+        return ((rules & rule) != 0) == onPlays ? 1 : 0;
     }
 
     /// <summary>A row's value from a weather or time of day the match plays (none: <see cref="MissionOwn"/>).</summary>
@@ -265,30 +278,28 @@ namespace
         return played.has_value() ? static_cast<int>(*played) : MissionOwn;
     }
 
+    /// <summary>A player the session doesn't know, as named in why an option is held.</summary>
+    constexpr std::string_view UnknownPlayer = "A PLAYER";
+
     /// <summary>
-    /// Why the host can't choose what <paramref name="rule"/> covers: the players whose game doesn't have it, named when
-    /// one (empty: every player's has it).
+    /// Why the host can't choose what <paramref name="rule"/> covers, longest first (MatchNotInGames): the players whose
+    /// game doesn't have it, by name (none: every player's has it).
     /// </summary>
-    std::string NotInGames(MCMultiPlayer& game, uint32_t rule)
+    std::vector<std::string> NotInGames(MCMultiPlayer& game, uint32_t rule)
     {
-        const std::vector<uint32_t> without = game.PlayersWithout(rule);
+        std::vector<std::string> names;
 
-        if (without.empty())
+        for (const uint32_t id : game.PlayersWithout(rule))
         {
-            return {};
+            const std::shared_ptr<MCFidpPlayer> player = game.SessionManager->GetPlayer(id);
+            std::string name = player != nullptr ? player->Name : std::string(UnknownPlayer);
+            // Through unsigned char: a player's name may hold any byte, and toupper takes only those and EOF.
+            std::ranges::transform(name, name.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            names.push_back(std::move(name));
         }
 
-        const std::shared_ptr<MCFidpPlayer> player = game.SessionManager->GetPlayer(without.front());
-
-        if (without.size() > 1 || player == nullptr)
-        {
-            return std::format("NOT IN {} PLAYERS' GAMES.", without.size());
-        }
-
-        // Through unsigned char: a player's name may hold any byte, and toupper takes only those and EOF.
-        std::string name = player->Name;
-        std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        return std::format("NOT IN {}'S GAME.", name);
+        return MatchNotInGames(names);
     }
 
     /// <summary>Width of the setting boxes: LIGHT SNOW's in the list's font, with its margins.</summary>
@@ -306,13 +317,12 @@ namespace
     constexpr uint8_t HeadingColor = 0xac;
 
     constexpr std::array Rows = {
-        Row{.Label = "LOOK"},
+        Row{.Label = "PLAY"},
         Row{.Label = "WEATHER",
-            .Description = "RAIN OR SNOW FOR EVERYONE.",
+            .Description = "RAIN OR SNOW HAMPERS THE FIGHT.",
             .Value = &WeatherValue,
             .Choices = WeatherChoices,
             .Changed = WeatherChanged},
-        Row{.Label = "PLAY"},
         Row{.Label = "TIME OF DAY",
             .Description = "DUSK OR NIGHT: UNITS SEE LESS.",
             .Value = &TimeValue,
@@ -322,7 +332,22 @@ namespace
             .Description = "MECHS BRAKE TO A HALT.",
             .Value = &BrakingValue,
             .Choices = OffOn,
-            .Changed = BrakingChanged},
+            .Changed = RuleChanged<MCMatchRule::MechBraking, true>},
+        Row{.Label = "ARTILLERY",
+            .Description = "COMMANDERS CALL IN STRIKES.",
+            .Value = &ArtilleryValue,
+            .Choices = OffOn,
+            .Changed = RuleChanged<MCMatchRule::NoArtillery, false>},
+        Row{.Label = "SENSORS",
+            .Description = "UNITS SPOT FOES PAST SIGHT.",
+            .Value = &SensorsValue,
+            .Choices = OffOn,
+            .Changed = RuleChanged<MCMatchRule::NoSensors, false>},
+        Row{.Label = "MINES",
+            .Description = "MINEFIELDS, AND MINE LAYERS.",
+            .Value = &MinesValue,
+            .Choices = OffOn,
+            .Changed = RuleChanged<MCMatchRule::NoMines, false>},
     };
 
     /// <summary>Each option's row and the rule a player's build must play by for the host to choose it.</summary>
@@ -332,10 +357,12 @@ namespace
         uint32_t Rule = 0;
     };
 
-    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::MatchWeather}, RuleRow{3, MCMatchRule::TimeOfDayRules},
-                                     RuleRow{4, MCMatchRule::MechBraking}};
+    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::WeatherRules}, RuleRow{2, MCMatchRule::TimeOfDayRules},
+                                     RuleRow{3, MCMatchRule::MechBraking},  RuleRow{4, MCMatchRule::NoArtillery},
+                                     RuleRow{5, MCMatchRule::NoSensors},    RuleRow{6, MCMatchRule::NoMines}};
     static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
-                  Rows[RuleRows[2].Row].Value == &BrakingValue);
+                  Rows[RuleRows[2].Row].Value == &BrakingValue && Rows[RuleRows[3].Row].Value == &ArtilleryValue &&
+                  Rows[RuleRows[4].Row].Value == &SensorsValue && Rows[RuleRows[5].Row].Value == &MinesValue);
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>
@@ -397,17 +424,56 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
         return;
     }
 
-    // What the match plays; on the host, an option a player's game doesn't have held at the mission's own (or off),
-    // saying whose.
+    // What the match plays; an option a player's game doesn't have held at the mission's own (or off), naming whose.
     const MCMatchOptions& played = game->Played;
     WeatherValue = ValueOf(played.Weather);
     TimeValue = ValueOf(played.TimeOfDay);
-    BrakingValue = (played.Rules.value_or(0) & MCMatchRule::MechBraking) != 0 ? 1 : 0;
+    const uint32_t rules = played.Rules.value_or(0);
+    BrakingValue = OnOf(rules, MCMatchRule::MechBraking, true);
+    ArtilleryValue = OnOf(rules, MCMatchRule::NoArtillery, false);
+    SensorsValue = OnOf(rules, MCMatchRule::NoSensors, false);
+    MinesValue = OnOf(rules, MCMatchRule::NoMines, false);
     const bool host = game->IsHost != 0;
     list.SetLocked(!host, LockedHint);
 
     for (const RuleRow& option : RuleRows)
     {
-        list.SetHeld(option.Row, host ? NotInGames(*game, option.Rule) : std::string());
+        list.SetHeld(option.Row, NotInGames(*game, option.Rule));
     }
+}
+
+auto MatchNotInGames(std::span<const std::string> names) -> std::vector<std::string>
+{
+    std::vector<std::string> lines;
+    const auto players = static_cast<int32_t>(names.size());
+
+    for (int32_t named = players; named >= 0 && players > 0; named--)
+    {
+        std::vector<std::string> games;
+
+        for (int32_t i = 0; i < named; i++)
+        {
+            games.push_back(std::format("{}'S", names[static_cast<size_t>(i)]));
+        }
+
+        if (const int32_t others = players - named; named == 0)
+        {
+            games.push_back(players == 1 ? std::string("1 PLAYER'S") : std::format("{} PLAYERS'", players));
+        }
+        else if (others > 0)
+        {
+            games.push_back(others == 1 ? std::string("1 OTHER'S") : std::format("{} OTHERS'", others));
+        }
+
+        std::string joined = games.front();
+
+        for (size_t i = 1; i < games.size(); i++)
+        {
+            joined += std::format("{}{}", i + 1 == games.size() ? " OR " : ", ", games[i]);
+        }
+
+        lines.push_back(std::format("NOT IN {} {}.", joined, players == 1 ? "GAME" : "GAMES"));
+    }
+
+    return lines;
 }

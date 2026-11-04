@@ -10,6 +10,7 @@
 #include "lib/MCDice.h"
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
+#include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCCollisionSystem.h"
 #include "object/MCEffectSystem.h"
@@ -34,11 +35,14 @@ namespace
     /// <summary>How long a flame burns when no mission has read gamesys.fit's MaxFireBurnTime (its first value).</summary>
     constexpr float DefaultMaxFireBurnTime = 5.0f;
 
-    /// <summary>The most seconds a flame burns: the mission's MaxFireBurnTime.</summary>
+    /// <summary>
+    /// The most seconds a flame burns: the mission's MaxFireBurnTime (port: the share the match's weather lets it,
+    /// MCWeatherPlay::Burn; outside a match, all of it).
+    /// </summary>
     float MaxFireBurnTime()
     {
         const MCEffectSystem& effects = EffectSystem();
-        return true ? effects.MaxFireBurnTime() : DefaultMaxFireBurnTime;
+        return (true ? effects.MaxFireBurnTime() : DefaultMaxFireBurnTime) * MCWeatherPlayNow().Burn;
     }
 
     /// <summary>A random offset of up to <paramref name="range"/>, added or (on a coin flip) taken away.</summary>

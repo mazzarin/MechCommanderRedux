@@ -2,6 +2,7 @@
 #include "object/MCSensorSystem.h"
 #include "lib/MCFatal.h"
 #include "main/MCMissionGlobals.h"
+#include "network/MCMultiPlayer.h"
 #include "object/MCBigGameObject.h"
 #include "object/MCContactSystem.h"
 #include "object/MCForces.h"
@@ -151,7 +152,8 @@ auto MCSensorSystem::SetTeam(std::shared_ptr<MCTeam> newTeam) -> void
 
 auto MCSensorSystem::Enabled() const -> int
 {
-    if (TeamSensorSlot < 0 || LockObject(Owner)->GetExistsAndAwake() == 0)
+    // Port: a match without sensors finds foes by sight alone (MCMatchRule::NoSensors).
+    if (TeamSensorSlot < 0 || MCMatchPlays(MCMatchRule::NoSensors) || LockObject(Owner)->GetExistsAndAwake() == 0)
     {
         return 0;
     }

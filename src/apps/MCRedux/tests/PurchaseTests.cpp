@@ -569,21 +569,20 @@ TEST_CASE("game: a match's weapon bans take a mech's banned weapons off and off 
     constexpr std::string_view Profile = "PM100100";
     const std::shared_ptr<MCLogMech> stock = shop.Mechs.AddMech(Profile, false, false, false);
 
-    // The family of the mech's first weapon.
-    uint32_t ban = 0;
+    // The Commando's SRMs (four SRM/2s and their ammo; a medium laser stays), which one of the vehicles carries too.
+    constexpr uint32_t ban = MCMatchRule::NoSrms;
     uint8_t bannedWeapon = 0;
+    bool bannedAmmo = false;
 
     for (const std::shared_ptr<MCLogInventoryItem>& item : stock->Inventory->Items)
     {
-        if (const uint32_t family = MCWeaponFamilyOf(MasterComponentList[item->MasterID]); family != 0)
-        {
-            ban = family;
-            bannedWeapon = item->MasterID;
-            break;
-        }
+        const MCMasterComponent& master = MasterComponentList[item->MasterID];
+        bannedWeapon = MCWeaponFamilyOf(master) == ban ? item->MasterID : bannedWeapon;
+        bannedAmmo = bannedAmmo || (master.Form == MCComponentForm::Ammo && MCComponentBanned(item->MasterID, ban));
     }
 
-    REQUIRE(ban != 0);
+    REQUIRE(bannedWeapon != 0);
+    REQUIRE(bannedAmmo);
     int32_t removedPoints = 0;
     float removedTons = 0.0f;
 
@@ -650,6 +649,8 @@ TEST_CASE("game: a match's weapon bans take a mech's banned weapons off and off 
         std::ranges::count_if(logistics.PurVehicleList->Vehicles, [&](const std::shared_ptr<MCPurVehicle>& vehicle)
                               { return carriesBanned(*vehicle->Data->Inventory); });
     const int32_t vehicles = logistics.PurVehicleList->GetVehicleCount();
+    REQUIRE(vehiclesCarrying > 0);
+    REQUIRE(vehiclesCarrying < vehicles);
     logistics.HideBannedWeapons(ban);
 
     for (const std::unique_ptr<MCPurMechData>& variant : logistics.PurMechList->Mechs.front()->Variants)

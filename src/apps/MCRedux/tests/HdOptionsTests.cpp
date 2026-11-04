@@ -2,6 +2,7 @@
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCGenericScreen.h"
@@ -20,6 +21,7 @@
 #include "platform/MCFileSystem.h"
 #include "platform/MCPresenter.h"
 #include "sound/MCHdAudio.h"
+#include "sound/MCSoundSystem.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCMechStops.h"
 #include "sprite/MCSceneLights.h"
@@ -210,6 +212,113 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
 }
 
 /// <summary>
+/// PREFS keeps its format and only the settings that differ from their defaults: a PREFS from a build that wrote every
+/// setting, read and saved again, keeps the player's changes (the music turned down, HD LIGHTING at NIGHT) and the
+/// player's own answers (REPORTS), and loses the rest; then a release that changes the defaults (here the personal
+/// build's) reaches every setting left out, while HD LIGHTING keeps NIGHT.
+/// </summary>
+TEST_CASE_ISOLATED("game: PREFS keeps only what differs from the defaults, so a changed default reaches the rest")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    constexpr int32_t QuietMusic = MCPrefsDefaults::MusicVolume / 2;
+    const std::filesystem::path prefsPath = MCFileSystem::UserRoot() / "prefs.cfg";
+    const auto readHd = [&]
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        MCHdSettings::Read(prefs);
+    };
+
+    // An older build's PREFS: every HD setting, at its default but HD LIGHTING.
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Create(MCFileSystem::ToUtf8(prefsPath)), 0);
+        prefs.WriteBlock("MechCommander");
+
+        for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
+        {
+            prefs.WriteIdLong(setting.Key,
+                              setting.Key == "HDLighting" ? HdLightingNight : MCHdSettings::Default(setting));
+        }
+    }
+
+    readHd();
+    REQUIRE_EQ(GHdLighting, static_cast<int>(HdLightingNight));
+
+    // The rest of PREFS at the defaults, but the music.
+    GuiSystem().PaletteCycle = MCPrefsDefaults::PaletteCycle ? 1 : 0;
+    GuiSystem().GammaLevel = MCPrefsDefaults::Gamma;
+    GFullScreen = MCPrefsDefaults::FullScreen ? 1 : 0;
+    Force16MB = MCPrefsDefaults::Force16Mb;
+    Force32MB = MCPrefsDefaults::Force32Mb;
+    GameDifficulty = MCPrefsDefaults::Difficulty;
+    const std::shared_ptr<MCSoundSystem> sound = SoundSystem();
+    REQUIRE(sound != nullptr);
+    sound->MusicLevel = static_cast<uint8_t>(QuietMusic);
+    sound->RadioLevel = static_cast<uint8_t>(MCPrefsDefaults::RadioVolume);
+    sound->DigitalMasterVolume = static_cast<uint8_t>(MCPrefsDefaults::SfxVolume);
+    sound->InterfaceLevel = static_cast<uint8_t>(MCPrefsDefaults::SfxVolume);
+    GStretchToFit = MCPrefsDefaults::StretchToFit ? 1 : 0;
+    GSoftwareCursor = MCPrefsDefaults::SoftwareCursor ? 1 : 0;
+    GRendererPreference = static_cast<int>(MCRendererKind::Vulkan);
+    GUiResolution = MCPrefsDefaults::UiResolution;
+    GScrollSpeed = AutoScrollSpeed;
+    GInterfaceSize = AutoInterfaceSize;
+    GShowFpsPreference = MCPrefsDefaults::ShowFps ? 1 : 0;
+    SavePrefs();
+
+    // Every key the saved PREFS holds, by name.
+    std::set<std::string> keys;
+    {
+        std::ifstream text(prefsPath);
+        REQUIRE(text.is_open());
+
+        for (std::string line; std::getline(text, line);)
+        {
+            const size_t space = line.find(' ');
+            const size_t equals = line.find('=');
+
+            if (space != std::string::npos && equals != std::string::npos && space < equals)
+            {
+                keys.insert(line.substr(space + 1, equals - space - 1));
+            }
+        }
+    }
+
+    const std::set<std::string> kept = {"HDLighting", "MusicVolume", "PrefsVersion", "Reports"};
+    CHECK(keys == kept);
+
+    {
+        MCFitIniFile prefs;
+        REQUIRE_EQ(prefs.Open(MCFileSystem::ToUtf8(prefsPath)), 0);
+        REQUIRE_EQ(prefs.SeekBlock("MechCommander"), 0);
+        CHECK_EQ(prefs.Read<int32_t>("PrefsVersion"), MCFitResult<int32_t>(PrefsVersion));
+        CHECK_EQ(prefs.Read<int32_t>("MusicVolume"), MCFitResult<int32_t>(QuietMusic));
+    }
+
+    // A release with other defaults: what PREFS leaves out follows them; HD LIGHTING stays at NIGHT.
+    UseHdByDefault();
+    readHd();
+    CHECK_EQ(GHdLighting, static_cast<int>(HdLightingNight));
+
+    for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
+    {
+        if (setting.Key != "HDLighting" && !setting.Player)
+        {
+            CHECK_EQ(*setting.Value, setting.Personal);
+        }
+    }
+
+    std::filesystem::remove(prefsPath);
+}
+
+/// <summary>
 /// The HD OPTIONS page with a player's mouse: HD AUDIO's ORCHESTRAL without the pack's shows as ON; OPTIONS in the
 /// preferences' HD box shows the page; a click steps a setting on
 /// through its choices and round to the first, a right click back; HD AUDIO offers no ORCHESTRAL without the pack's;
@@ -354,7 +463,7 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     Frames();
     CHECK_EQ(list->FirstRow(), 0);
 
-    // Set again, ACCEPT keeps them and writes every one.
+    // Set again, ACCEPT keeps them and writes the ones off their defaults.
     RealClickOption(*list, "HDSunShadows");
     RealClickOption(*list, "HDFlecks");
     RealClickOption(*list, "HDParticles");
@@ -364,7 +473,8 @@ TEST_CASE_ISOLATED("game: the HD OPTIONS page sets the HD settings with a player
     CHECK_EQ(SavedSetting(prefsPath, "HDSunShadows"), std::optional<int32_t>(1));
     CHECK_EQ(SavedSetting(prefsPath, "HDParticles"), std::optional<int32_t>(1));
     CHECK_EQ(SavedSetting(prefsPath, "HDFlecks"), std::optional<int32_t>(1));
-    CHECK_EQ(SavedSetting(prefsPath, "HDClouds"), std::optional<int32_t>(0));
+    // HD CLOUDS, at its default, isn't written: PREFS without it reads the default.
+    CHECK(!SavedSetting(prefsPath, "HDClouds").has_value());
 
     std::filesystem::remove(prefsPath);
     MCHdSettings::UseOriginal();

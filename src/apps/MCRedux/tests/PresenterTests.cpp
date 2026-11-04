@@ -542,7 +542,8 @@ TEST_CASE_ISOLATED("game: alt+= and alt+- step the interface size in a mission a
     MCScreenInput::RealChord(SDL_SCANCODE_LALT, SDL_KMOD_LALT, SDL_SCANCODE_EQUALS);
     MCTestGame::RunFrame(1.0f / 15.0f);
     CHECK_EQ(GInterfaceSize, AutoInterfaceSize);
-    CHECK_EQ(SavedInterfaceSize(), MCFitResult<int32_t>(AutoInterfaceSize));
+    // AUTO, the default, isn't written: PREFS without the key reads as AUTO.
+    CHECK(!SavedInterfaceSize().has_value());
     GInterfaceSize = OriginalInterfaceSize;
     MCTestGame::RunFrame(1.0f / 15.0f);
 

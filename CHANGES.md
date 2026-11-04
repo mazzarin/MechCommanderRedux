@@ -165,6 +165,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Saves, preferences and temporary files go to `%APPDATA%\MechCommander Redux\`, or to the folder given with `--user`.
   Saves left in the MechCommander Gold folder still show up, and deleting or overwriting one in the game removes it
   from there.
+- **Redux HD.** `prefs.cfg` keeps only the settings you changed from their defaults, so a later version's new
+  defaults reach the ones you left alone.
 - Data files saved with Unix line endings load correctly, so edited files work.
 - A file name the game gets from a save, a mission or another player can't climb out of these folders with `..` or
   switch drives.

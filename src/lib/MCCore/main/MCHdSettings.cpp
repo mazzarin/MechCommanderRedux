@@ -127,6 +127,12 @@ auto MCHdSettings::Write(MCFitIniFile& file) -> void
 {
     for (const MCSetting& setting : Settings)
     {
+        // A setting at its default isn't written, so it follows the build; the player's own answers always are.
+        if (!setting.Player && *setting.Value == Default(setting))
+        {
+            continue;
+        }
+
         if (setting.Boolean)
         {
             file.WriteIdBoolean(setting.Key, *setting.Value != 0);

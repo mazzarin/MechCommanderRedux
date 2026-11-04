@@ -46,7 +46,11 @@ namespace MCHdSettings
     /// <summary>Reads every HD setting from <paramref name="file"/>'s current block (a missing key: its default).</summary>
     void Read(MCFitIniFile& file);
 
-    /// <summary>Writes every HD setting into <paramref name="file"/>'s current block.</summary>
+    /// <summary>
+    /// Writes into <paramref name="file"/>'s current block the HD settings that differ from their defaults (a missing
+    /// key follows the build, so a changed default reaches players who never picked otherwise) and the player's own
+    /// answers, always.
+    /// </summary>
     void Write(MCFitIniFile& file);
 
     /// <summary>Every HD setting's value now, in <see cref="All"/>'s order (for <see cref="Restore"/>).</summary>

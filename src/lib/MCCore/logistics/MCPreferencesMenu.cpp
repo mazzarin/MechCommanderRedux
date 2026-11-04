@@ -17,6 +17,7 @@
 #include "logistics/MCRegistrySettings.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
+#include "main/MCSystemConfig.h"
 #include "platform/MCDisplay.h"
 #include "platform/MCPresenter.h"
 #include "platform/MCRenderer.h"
@@ -486,6 +487,27 @@ void WritePrefs()
     Cancel();
 }
 
+namespace
+{
+    /// <summary>Writes <paramref name="key"/> only when <paramref name="value"/> isn't its default.</summary>
+    void WriteChanged(MCFitIniFile& prefs, std::string_view key, bool value, bool byDefault)
+    {
+        if (value != byDefault)
+        {
+            prefs.WriteIdBoolean(key, value);
+        }
+    }
+
+    /// <summary>Writes <paramref name="key"/> only when <paramref name="value"/> isn't its default.</summary>
+    void WriteChanged(MCFitIniFile& prefs, std::string_view key, int32_t value, int32_t byDefault)
+    {
+        if (value != byDefault)
+        {
+            prefs.WriteIdLong(key, value);
+        }
+    }
+}
+
 void SavePrefs()
 {
     MCFitIniFile prefs;
@@ -496,27 +518,37 @@ void SavePrefs()
         return;
     }
 
+    // Port: the format, then only the settings that differ from their defaults (MCPrefsDefaults), so a missing key
+    // follows the build and a release that changes a default reaches every player who never picked otherwise. The
+    // original wrote them all, Use90Pixel and Force45Pixel too, which the port doesn't read.
     prefs.WriteBlock("MechCommander");
-    prefs.WriteIdBoolean("PaletteCycle", GuiSystem().PaletteCycle);
-    prefs.WriteIdBoolean("DirectDraw", GFullScreen != 0);
-    prefs.WriteIdBoolean("Use90Pixel", Use90PixelSprite);
-    prefs.WriteIdBoolean("Force45Pixel", Only45Pixel);
-    prefs.WriteIdBoolean("Force16Mb", Force16MB);
-    prefs.WriteIdBoolean("Force32Mb", Force32MB);
-    prefs.WriteIdLong("Difficulty", GameDifficulty);
-    prefs.WriteIdLong("Brightness", GuiSystem().GammaLevel);
-    prefs.WriteIdLong("MusicVolume", SoundSystem()->MusicLevel);
-    prefs.WriteIdLong("RadioVolume", SoundSystem()->RadioLevel);
-    prefs.WriteIdLong("SFXVolume", SoundSystem()->DigitalMasterVolume);
-    // Port: keep the port-only keys. Original behaviour (OB-101): the hidden "Resolution" key is not written back.
-    prefs.WriteIdLong("InterfaceVolume", SoundSystem()->InterfaceLevel);
-    prefs.WriteIdBoolean("StretchToFit", GStretchToFit != 0);
-    prefs.WriteIdBoolean("SoftwareCursor", GSoftwareCursor != 0);
-    prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
-    prefs.WriteIdLong("UIResolution", GUiResolution);
-    prefs.WriteIdLong("ScrollSpeed", GScrollSpeed);
-    prefs.WriteIdLong("InterfaceSize", GInterfaceSize);
-    prefs.WriteIdBoolean("ShowFps", GShowFpsPreference != 0);
+    prefs.WriteIdLong("PrefsVersion", PrefsVersion);
+    WriteChanged(prefs, "PaletteCycle", GuiSystem().PaletteCycle != 0, MCPrefsDefaults::PaletteCycle);
+    WriteChanged(prefs, "DirectDraw", GFullScreen != 0, MCPrefsDefaults::FullScreen);
+    WriteChanged(prefs, "Force16Mb", Force16MB, MCPrefsDefaults::Force16Mb);
+    WriteChanged(prefs, "Force32Mb", Force32MB, MCPrefsDefaults::Force32Mb);
+    WriteChanged(prefs, "Difficulty", GameDifficulty, MCPrefsDefaults::Difficulty);
+    WriteChanged(prefs, "Brightness", GuiSystem().GammaLevel, MCPrefsDefaults::Gamma);
+    WriteChanged(prefs, "MusicVolume", int32_t{SoundSystem()->MusicLevel}, MCPrefsDefaults::MusicVolume);
+    WriteChanged(prefs, "RadioVolume", int32_t{SoundSystem()->RadioLevel}, MCPrefsDefaults::RadioVolume);
+    const int32_t effectsVolume = SoundSystem()->DigitalMasterVolume;
+    WriteChanged(prefs, "SFXVolume", effectsVolume, MCPrefsDefaults::SfxVolume);
+    // Port: the port-only keys. Original behaviour (OB-101): the hidden "Resolution" key is not written back.
+    // The interface sounds play at the effects' volume when PREFS lacks theirs.
+    WriteChanged(prefs, "InterfaceVolume", int32_t{SoundSystem()->InterfaceLevel}, effectsVolume);
+    WriteChanged(prefs, "StretchToFit", GStretchToFit != 0, MCPrefsDefaults::StretchToFit);
+    WriteChanged(prefs, "SoftwareCursor", GSoftwareCursor != 0, MCPrefsDefaults::SoftwareCursor);
+
+    // VULKAN, the default, is where GRenderer starts.
+    if (GRendererPreference != static_cast<int>(MCRendererKind::Vulkan))
+    {
+        prefs.WriteIdString("Renderer", MCRendererKindName(static_cast<MCRendererKind>(GRendererPreference)));
+    }
+
+    WriteChanged(prefs, "UIResolution", GUiResolution, MCPrefsDefaults::UiResolution);
+    WriteChanged(prefs, "ScrollSpeed", GScrollSpeed, AutoScrollSpeed);
+    WriteChanged(prefs, "InterfaceSize", GInterfaceSize, AutoInterfaceSize);
+    WriteChanged(prefs, "ShowFps", GShowFpsPreference != 0, MCPrefsDefaults::ShowFps);
     // Port: never a debug console's art mode (MCArtModes.h), but the player's own.
     {
         const MCPlayersArtScope playersArt;

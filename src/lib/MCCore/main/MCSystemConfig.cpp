@@ -169,29 +169,29 @@ void ReadPreferences(MCFitIniFile& file)
         Fatal(result, "Could not find MechCommander Prefs.");
     }
 
-    GuiSystem().PaletteCycle = file.Read<bool>("PaletteCycle").value_or(false) ? 1 : 0;
-    GuiSystem().GammaLevel = file.Read<int32_t>("Gamma").value_or(0);
+    GuiSystem().PaletteCycle = file.Read<bool>("PaletteCycle").value_or(MCPrefsDefaults::PaletteCycle) ? 1 : 0;
+    GuiSystem().GammaLevel = file.Read<int32_t>("Gamma").value_or(MCPrefsDefaults::Gamma);
     // One sprite size wins: 90-pixel sprites unless 45 is forced; without 90, 45 only. Port: the full-size (90-pixel)
     // mech art is always loaded and used: the camera stays at scale 100 and the zoom scales the world view instead (the
     // prefs only mattered for machines short of memory). Use90Pixel and Force45Pixel are not read.
     Use90PixelSprite = 1;
     Only45Pixel = false;
-    Force32MB = file.Read<bool>("Force32Mb").value_or(false);
+    Force32MB = file.Read<bool>("Force32Mb").value_or(MCPrefsDefaults::Force32Mb);
 
     // Both forced: 16 MB wins.
-    Force16MB = file.Read<bool>("Force16Mb").value_or(false);
+    Force16MB = file.Read<bool>("Force16Mb").value_or(MCPrefsDefaults::Force16Mb);
 
     if (Force16MB)
     {
         Force32MB = false;
     }
 
-    GFullScreen = file.Read<bool>("DirectDraw").value_or(false) ? 1 : 0;
+    GFullScreen = file.Read<bool>("DirectDraw").value_or(MCPrefsDefaults::FullScreen) ? 1 : 0;
     // Port-only keys: the picture keeps 4:3 with bars unless StretchToFit is set; the cursor is the system's unless
     // SoftwareCursor is; ShowFps shows the frame counter in the top-right corner (the command line's -fps sets it too).
-    GStretchToFit = file.Read<bool>("StretchToFit").value_or(false) ? 1 : 0;
-    GSoftwareCursor = file.Read<bool>("SoftwareCursor").value_or(false) ? 1 : 0;
-    const bool showFps = file.Read<bool>("ShowFps").value_or(false);
+    GStretchToFit = file.Read<bool>("StretchToFit").value_or(MCPrefsDefaults::StretchToFit) ? 1 : 0;
+    GSoftwareCursor = file.Read<bool>("SoftwareCursor").value_or(MCPrefsDefaults::SoftwareCursor) ? 1 : 0;
+    const bool showFps = file.Read<bool>("ShowFps").value_or(MCPrefsDefaults::ShowFps);
     GShowFpsPreference = showFps ? 1 : 0;
     GShowFps = showFps ? 1 : GShowFps;
     // Port-only: the HD settings, from HDArt to MechBraking (main/MCHdSettings.h).
@@ -209,7 +209,7 @@ void ReadPreferences(MCFitIniFile& file)
     GRendererPreference = GRenderer;
 
     // Port-only: the in-mission UI's lines (0 native, else one of UiResolutions).
-    const int32_t uiResolution = file.Read<int32_t>("UIResolution").value_or(0);
+    const int32_t uiResolution = file.Read<int32_t>("UIResolution").value_or(MCPrefsDefaults::UiResolution);
     GUiResolution = std::ranges::contains(UiResolutions, uiResolution) ? uiResolution : 0;
 
     // Port-only: the battlefield's scroll speed, in percent of the original's pace (one of ScrollSpeeds, else AUTO).
@@ -251,12 +251,12 @@ void ReadPreferences(MCFitIniFile& file)
     }
 
     LanguageOffset = file.Read<int32_t>("Language").value_or(0);
-    GameDifficulty = file.Read<int32_t>("Difficulty").value_or(1);
+    GameDifficulty = file.Read<int32_t>("Difficulty").value_or(MCPrefsDefaults::Difficulty);
     // OB-168: Brightness goes to the same field as Gamma, so it wins (and its absence resets gamma to 0).
-    GuiSystem().GammaLevel = file.Read<int32_t>("Brightness").value_or(0);
-    MusicVolume = file.Read<int32_t>("MusicVolume").value_or(0x40);
-    RadioVolume = file.Read<int32_t>("RadioVolume").value_or(0x40);
-    SfxVolume = file.Read<int32_t>("SFXVolume").value_or(0x60);
+    GuiSystem().GammaLevel = file.Read<int32_t>("Brightness").value_or(MCPrefsDefaults::Gamma);
+    MusicVolume = file.Read<int32_t>("MusicVolume").value_or(MCPrefsDefaults::MusicVolume);
+    RadioVolume = file.Read<int32_t>("RadioVolume").value_or(MCPrefsDefaults::RadioVolume);
+    SfxVolume = file.Read<int32_t>("SFXVolume").value_or(MCPrefsDefaults::SfxVolume);
     // Port: the interface sounds' own volume; a PREFS.CFG without it plays them at the effects volume, as before.
     InterfaceVolume = file.Read<int32_t>("InterfaceVolume").value_or(SfxVolume);
 

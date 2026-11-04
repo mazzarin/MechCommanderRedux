@@ -16,7 +16,7 @@
 /// A click on an option's row moves its setting to the next of its choices (after the last, the first); a right click
 /// to the one before. An option that needs another setting on (HD ART, HD LIGHTING, PARTICLES) shows dim while that one
 /// is off, its line saying so; it can still be set. A held option (<see cref="SetHeld"/>) shows dim too, its line
-/// saying why, and can't be set. With the SOFTWARE renderer chosen the status line says it draws none of them. The
+/// saying why (wrapped over more lines, rows of their own under it, when it needs them), and can't be set. With the SOFTWARE renderer chosen the status line says it draws none of them. The
 /// wheel, the up and down keys and the bar at the right scroll the rows.
 /// </remarks>
 class MCLogOptionList : public MCLogScrollList
@@ -94,14 +94,17 @@ public:
     void SetLocked(bool locked, std::string_view hint);
 
     /// <summary>
-    /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reasons"/> why, longest first; none: not
-    /// held): a click changes nothing and its box doesn't light, its name and setting show dim, and its line says the
-    /// first reason that fits it (else the last, cut) instead of what it does.
+    /// Holds row <paramref name="row"/>'s option at its setting (<paramref name="reason"/> why; empty: not held): a click
+    /// changes nothing and its box doesn't light, its name and setting show dim, and its line says why instead of what
+    /// it does, wrapped at spaces over as many lines as it needs (a word wider than a line cut where it fills one).
     /// </summary>
-    void SetHeld(int32_t row, std::span<const std::string> reasons);
+    void SetHeld(int32_t row, std::string_view reason);
 
     /// <summary>Why row <paramref name="row"/>'s option is held (<see cref="SetHeld"/>; empty: it isn't).</summary>
     std::string_view HeldReason(int32_t row) const;
+
+    /// <summary>The lines row <paramref name="row"/>'s held reason is wrapped over (none: it isn't held).</summary>
+    std::span<const std::string> HeldLines(int32_t row) const { return _HeldLines[static_cast<size_t>(row)]; }
 
     /// <summary>The width of a row's second line, what it does (or why it's held), in pixels.</summary>
     int32_t LineWidth();
@@ -140,10 +143,29 @@ public:
     std::string_view Status() const;
 
 protected:
-    /// <summary>The number of rows.</summary>
-    int32_t RowCount() override { return static_cast<int32_t>(_Rows.size()); }
+    /// <summary>The number of rows shown in turn: each option or heading, and each held reason's further lines'.</summary>
+    int32_t RowCount() override { return static_cast<int32_t>(_Slots.size()); }
 
 private:
+    /// <summary>
+    /// A row as the list scrolls it: option or heading <see cref="Row"/> itself (<see cref="Part"/> 0), or the next two
+    /// lines of its held reason (1 on).
+    /// </summary>
+    struct Slot
+    {
+        int32_t Row = 0;
+        int32_t Part = 0;
+    };
+
+    /// <summary>Lays the slots out again from the rows and their held reasons' lines, the scroll kept in range.</summary>
+    void Relayout();
+
+    /// <summary>The slot showing option or heading <paramref name="row"/> itself.</summary>
+    int32_t SlotOf(int32_t row) const;
+
+    /// <summary>Draws slot <paramref name="slot"/>'s lines of its row's held reason with its top at <paramref name="top"/>.</summary>
+    void DrawHeldMore(const Slot& slot, int32_t top);
+
     /// <summary>The setting row <paramref name="row"/> edits.</summary>
     int& Setting(int32_t row) const;
 
@@ -169,8 +191,11 @@ private:
     /// <summary>Clicks change nothing (<see cref="SetLocked"/>), and the status line's hint then.</summary>
     bool _Locked = false;
     std::string _LockedHint;
-    /// <summary>Why each row's option is held (<see cref="SetHeld"/>; empty: not held).</summary>
+    /// <summary>Why each row's option is held (<see cref="SetHeld"/>; empty: not held), and the lines it wraps over.</summary>
     std::vector<std::string> _Held;
+    std::vector<std::vector<std::string>> _HeldLines;
+    /// <summary>The rows in the order they scroll, each held reason's further lines after its row.</summary>
+    std::vector<Slot> _Slots;
     /// <summary>The status line's hint with the SOFTWARE renderer chosen.</summary>
     std::string_view _SoftwareHint;
     /// <summary>The headings' colour.</summary>

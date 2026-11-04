@@ -8,8 +8,10 @@
 
 namespace
 {
-    /// <summary>The height of a line: a row is two, its name's and what it does.</summary>
-    constexpr int32_t LineHeight = MCLogOptionList::RowHeight / 2;
+    /// <summary>The lines in a row: its name's and what it does.</summary>
+    constexpr int32_t LinesPerRow = 2;
+    /// <summary>The height of a line.</summary>
+    constexpr int32_t LineHeight = MCLogOptionList::RowHeight / LinesPerRow;
 
     /// <summary>
     /// What it does (grey); an option that can't show: its name and setting (dim), and what it needs (amber).
@@ -37,6 +39,36 @@ namespace
     {
         return choice.Offered == nullptr || choice.Offered();
     }
+
+    /// <summary>
+    /// The lines <paramref name="text"/> wraps over at <paramref name="width"/> pixels in the white font: broken at
+    /// spaces, a word wider than a line cut where it fills one.
+    /// </summary>
+    std::vector<std::string> WrapLines(std::string_view text, int32_t width)
+    {
+        std::vector<std::string> lines;
+
+        while (!text.empty())
+        {
+            int32_t fits = WhiteFont->CharactersToWidth(text, width, true);
+
+            if (fits <= 0)
+            {
+                // At least a letter a line, so the wrap ends even in a line too narrow for one.
+                fits = std::max(WhiteFont->CharactersToWidth(text, width, false), 1);
+            }
+
+            lines.emplace_back(text.substr(0, static_cast<size_t>(fits)));
+            text.remove_prefix(static_cast<size_t>(fits));
+
+            while (text.starts_with(' '))
+            {
+                text.remove_prefix(1);
+            }
+        }
+
+        return lines;
+    }
 }
 
 MCLogOptionList::MCLogOptionList()
@@ -49,6 +81,8 @@ auto MCLogOptionList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     MCLogObject::Init(xPos, yPos, width, height);
     _Rows = rows;
     _Held.assign(rows.size(), std::string());
+    _HeldLines.assign(rows.size(), {});
+    Relayout();
     Reset();
 }
 
@@ -81,20 +115,45 @@ auto MCLogOptionList::SetLocked(bool locked, std::string_view hint) -> void
     }
 }
 
-auto MCLogOptionList::SetHeld(int32_t row, std::span<const std::string> reasons) -> void
+auto MCLogOptionList::SetHeld(int32_t row, std::string_view reason) -> void
 {
     std::string& held = _Held[static_cast<size_t>(row)];
-    held.clear();
 
-    for (const std::string& reason : reasons)
+    if (held == reason)
     {
-        held = reason;
+        return;
+    }
 
-        if (WhiteFont->Width(reason) <= LineWidth())
+    held = reason;
+    _HeldLines[static_cast<size_t>(row)] = WrapLines(reason, LineWidth());
+    Relayout();
+}
+
+auto MCLogOptionList::Relayout() -> void
+{
+    _Slots.clear();
+
+    for (size_t row = 0; row < _Rows.size(); row++)
+    {
+        const auto option = static_cast<int32_t>(row);
+        _Slots.push_back(Slot{.Row = option});
+        // The first line is the row's own; the rest go two to a slot under it.
+        const auto further = std::max(static_cast<int32_t>(_HeldLines[row].size()) - 1, 0);
+
+        for (int32_t part = 1; part <= (further + LinesPerRow - 1) / LinesPerRow; part++)
         {
-            break;
+            _Slots.push_back(Slot{.Row = option, .Part = part});
         }
     }
+
+    ScrollTo(FirstRow());
+}
+
+auto MCLogOptionList::SlotOf(int32_t row) const -> int32_t
+{
+    const auto found =
+        std::ranges::find_if(_Slots, [row](const Slot& slot) { return slot.Row == row && slot.Part == 0; });
+    return static_cast<int32_t>(std::distance(_Slots.begin(), found));
 }
 
 auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
@@ -212,10 +271,17 @@ auto MCLogOptionList::LineWidth() -> int32_t
 
 auto MCLogOptionList::OptionAt(int32_t xPos, int32_t yPos) -> std::optional<int32_t>
 {
-    const std::optional<int32_t> row = RowAt(yPos);
+    const std::optional<int32_t> slot = RowAt(yPos);
     const int32_t localX = xPos - GlobalX();
 
-    if (!row.has_value() || _Rows[static_cast<size_t>(*row)].IsHeading() || localX < 1 || localX >= ScrollBarLeft())
+    if (!slot.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const int32_t row = _Slots[static_cast<size_t>(*slot)].Row;
+
+    if (_Rows[static_cast<size_t>(row)].IsHeading() || localX < 1 || localX >= ScrollBarLeft())
     {
         return std::nullopt;
     }
@@ -231,7 +297,7 @@ auto MCLogOptionList::ChangeableAt(int32_t xPos, int32_t yPos) -> std::optional<
 
 auto MCLogOptionList::SettingCentre(int32_t row) -> std::optional<std::pair<int32_t, int32_t>>
 {
-    const std::optional<int32_t> top = RowTop(row);
+    const std::optional<int32_t> top = RowTop(SlotOf(row));
 
     if (!top.has_value())
     {
@@ -298,7 +364,7 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
 
     if (!held.empty())
     {
-        Write(left, top + LineHeight + TextOffset, held, _HeadingColor, descriptionRight - left);
+        Write(left, top + LineHeight + TextOffset, HeldLines(row).front(), _HeadingColor, descriptionRight - left);
     }
     else
     {
@@ -319,6 +385,19 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
           _SettingWidth - 2 * BoxTextLeft);
 }
 
+auto MCLogOptionList::DrawHeldMore(const Slot& slot, int32_t top) -> void
+{
+    const std::span<const std::string> lines = HeldLines(slot.Row);
+    // Part 1 holds the reason's second and third lines (its first is on the row), and so on.
+    const int32_t first = (slot.Part - 1) * LinesPerRow + 1;
+
+    for (int32_t line = 0; line < LinesPerRow && first + line < static_cast<int32_t>(lines.size()); line++)
+    {
+        Write(NameLeft, top + line * LineHeight + TextOffset, lines[static_cast<size_t>(first + line)], _HeadingColor,
+              LineWidth());
+    }
+}
+
 auto MCLogOptionList::Draw() -> void
 {
     if (!_Port->ViewOpen())
@@ -332,13 +411,20 @@ auto MCLogOptionList::Draw() -> void
     Write(HeadingLeft, TitleTop, OptionTitle, TitleColor, SettingLeft() - HeadingLeft);
     Write(SettingLeft() + BoxTextLeft, TitleTop, SettingTitle, TitleColor, _SettingWidth);
 
-    // The rows shown: a heading on its second line, a space above it.
-    const int32_t rows = std::min(VisibleRows(), RowCount() - FirstRow());
+    // The rows shown: a heading on its second line, a space above it; a held reason's further lines under its row.
+    const int32_t slots = std::min(VisibleRows(), RowCount() - FirstRow());
 
-    for (int32_t shown = 0; shown < rows; shown++)
+    for (int32_t shown = 0; shown < slots; shown++)
     {
-        const int32_t row = FirstRow() + shown;
+        const Slot& slot = _Slots[static_cast<size_t>(FirstRow() + shown)];
+        const int32_t row = slot.Row;
         const int32_t top = RowsTop + shown * RowHeight;
+
+        if (slot.Part > 0)
+        {
+            DrawHeldMore(slot, top);
+            continue;
+        }
 
         if (_Rows[static_cast<size_t>(row)].IsHeading())
         {

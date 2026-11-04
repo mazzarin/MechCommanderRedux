@@ -396,15 +396,11 @@ TEST_CASE("session screen: a held match option tells whose game doesn't have it 
 {
     CHECK(MatchTellToUpgrade({}).empty());
     const std::array<std::string, 1> one = {"BOB"};
-    CHECK((MatchTellToUpgrade(one) == std::vector<std::string>{"TELL BOB TO UPGRADE.", "TELL A PLAYER TO UPGRADE."}));
+    CHECK(MatchTellToUpgrade(one) == "TELL BOB TO UPGRADE.");
     const std::array<std::string, 2> two = {"BOB", "ANN"};
-    CHECK((MatchTellToUpgrade(two) == std::vector<std::string>{"TELL BOB AND ANN TO UPGRADE.",
-                                                               "TELL BOB AND 1 OTHER TO UPGRADE.",
-                                                               "TELL 2 PLAYERS TO UPGRADE."}));
+    CHECK(MatchTellToUpgrade(two) == "TELL BOB AND ANN TO UPGRADE.");
     const std::array<std::string, 3> three = {"BOB", "ANN", "SALLY"};
-    CHECK((MatchTellToUpgrade(three) ==
-           std::vector<std::string>{"TELL BOB, ANN AND SALLY TO UPGRADE.", "TELL BOB, ANN AND 1 OTHER TO UPGRADE.",
-                                    "TELL BOB AND 2 OTHERS TO UPGRADE.", "TELL 3 PLAYERS TO UPGRADE."}));
+    CHECK(MatchTellToUpgrade(three) == "TELL BOB, ANN AND SALLY TO UPGRADE.");
 }
 
 /// <summary>
@@ -487,25 +483,45 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
     constexpr std::string_view NotInGuests = "TELL GUEST TO UPGRADE.";
 
-    // Every row's line fits it, as does a held line with none named, for up to every other player of a full session.
+    // Every row's line fits it.
     for (int32_t row = 0; row < list.OptionRows(); row++)
     {
         CHECK(WhiteFont->Width(list.Description(row)) <= list.LineWidth());
-    }
-
-    constexpr std::string_view LongName = "[WOLF]BLACKBEARSRULE";
-    const std::vector<std::string> others(static_cast<size_t>(MaxLinkupPlayers - 1), std::string(LongName));
-
-    for (size_t count = 1; count <= others.size(); count++)
-    {
-        const std::vector<std::string> lines = MatchTellToUpgrade(std::span(others).first(count));
-        CHECK(WhiteFont->Width(lines.back()) <= list.LineWidth());
     }
 
     for (const int32_t row : RuleRows)
     {
         CHECK(list.HeldReason(row) == NotInGuests);
     }
+
+    // A reason too long for a line wraps over more, at spaces, each fitting, every name kept: here every other player of
+    // a full session with a long name. A word wider than a line is cut where it fills one.
+    constexpr std::string_view LongName = "[WOLF]BLACKBEARSRULE";
+    const std::vector<std::string> others(static_cast<size_t>(MaxLinkupPlayers - 1), std::string(LongName));
+    const std::string longReason = MatchTellToUpgrade(others);
+    list.SetHeld(MinesRow, longReason);
+    CHECK(list.HeldReason(MinesRow) == longReason);
+    CHECK(list.HeldLines(MinesRow).size() > 1);
+    std::string rejoined;
+
+    for (const std::string& line : list.HeldLines(MinesRow))
+    {
+        CHECK(WhiteFont->Width(line) <= list.LineWidth());
+        rejoined += rejoined.empty() ? line : " " + line;
+    }
+
+    CHECK(rejoined == longReason);
+    const std::string unbroken(80, 'W');
+    list.SetHeld(MinesRow, unbroken);
+    CHECK(list.HeldLines(MinesRow).size() > 1);
+
+    for (const std::string& line : list.HeldLines(MinesRow))
+    {
+        CHECK(WhiteFont->Width(line) <= list.LineWidth());
+    }
+
+    list.SetHeld(MinesRow, NotInGuests);
+    CHECK(list.HeldLines(MinesRow).size() == 1);
 
     // A held option's click changes nothing.
     ClickSetting(list, WeatherRow, 1);

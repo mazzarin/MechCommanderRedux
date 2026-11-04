@@ -283,10 +283,10 @@ namespace
     constexpr std::string_view UnknownPlayer = "A PLAYER";
 
     /// <summary>
-    /// Why the host can't choose what <paramref name="rule"/> covers, longest first (MatchTellToUpgrade): the other
-    /// players whose game doesn't have it, by name (none: every player's has it).
+    /// Why the host can't choose what <paramref name="rule"/> covers (MatchTellToUpgrade): the other players whose game
+    /// doesn't have it, by name (empty: every player's has it).
     /// </summary>
-    std::vector<std::string> TellToUpgrade(MCMultiPlayer& game, uint32_t rule)
+    std::string TellToUpgrade(MCMultiPlayer& game, uint32_t rule)
     {
         std::vector<std::string> names;
 
@@ -451,33 +451,19 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     }
 }
 
-auto MatchTellToUpgrade(std::span<const std::string> names) -> std::vector<std::string>
+auto MatchTellToUpgrade(std::span<const std::string> names) -> std::string
 {
-    std::vector<std::string> lines;
-    const auto players = static_cast<int32_t>(names.size());
-
-    for (int32_t named = players; named >= 0 && players > 0; named--)
+    if (names.empty())
     {
-        std::vector<std::string> who(names.begin(), names.begin() + named);
-
-        if (const int32_t others = players - named; named == 0)
-        {
-            who.push_back(players == 1 ? std::string(UnknownPlayer) : std::format("{} PLAYERS", players));
-        }
-        else if (others > 0)
-        {
-            who.push_back(others == 1 ? std::string("1 OTHER") : std::format("{} OTHERS", others));
-        }
-
-        std::string joined = who.front();
-
-        for (size_t i = 1; i < who.size(); i++)
-        {
-            joined += std::format("{}{}", i + 1 == who.size() ? " AND " : ", ", who[i]);
-        }
-
-        lines.push_back(std::format("TELL {} TO UPGRADE.", joined));
+        return {};
     }
 
-    return lines;
+    std::string joined = names.front();
+
+    for (size_t i = 1; i < names.size(); i++)
+    {
+        joined += std::format("{}{}", i + 1 == names.size() ? " AND " : ", ", names[i]);
+    }
+
+    return std::format("TELL {} TO UPGRADE.", joined);
 }

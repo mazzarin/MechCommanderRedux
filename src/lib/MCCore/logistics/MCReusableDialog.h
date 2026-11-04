@@ -41,7 +41,10 @@ public:
     /// </summary>
     void Deactivate(int32_t result);
 
-    /// <summary>Sets the text and resizes the dialog to fit it (a middle piece for each two lines).</summary>
+    /// <summary>
+    /// Sets the text and resizes the dialog to fit it (a middle piece for each two lines). Port: a newline starts a
+    /// line.
+    /// </summary>
     void SetText(std::string_view newText);
 
     /// <summary>Shows or hides the Cancel button and places the buttons.</summary>

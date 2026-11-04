@@ -1908,9 +1908,15 @@ Output DrawnOutput(Input input)
 
     // Drawn through the blend pipeline, full coverage replaces the pixel's colour; a smooth edge's partial coverage
     // blends that colour in.
+    // An if, not ?: (HLSL 2021's, dxc's, takes no structs).
+    if (opaque && coverage < 1.0)
+    {
+        return Blended(float4(Shown(value), 1.0) * coverage);
+    }
+
     if (opaque)
     {
-        return coverage < 1.0 ? Blended(float4(Shown(value), 1.0) * coverage) : Opaque(value);
+        return Opaque(value);
     }
 
     return Blended(blend * coverage);

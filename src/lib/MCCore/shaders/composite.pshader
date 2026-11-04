@@ -1869,7 +1869,11 @@ float4 SpecksAt(float2 texel, float sheets, float caught, out float4 round, out 
         {
             const float2 at = texel + 0.5 + speckSheets.yz * ((float(taken) + 0.5) / float(SpeckSheetSamples));
             along += SheetsAt(GroundPointAt(at));
-            fell = points == float(taken + 1) ? along / float(taken + 1) : fell;
+            // Each layer's own choice: HLSL 2021's ?: (dxc's) takes only a scalar condition.
+            const float last = float(taken + 1);
+            const float mean = along / last;
+            fell = float4(points.x == last ? mean : fell.x, points.y == last ? mean : fell.y,
+                          points.z == last ? mean : fell.z, points.w == last ? mean : fell.w);
         }
     }
 

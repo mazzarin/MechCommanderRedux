@@ -1079,12 +1079,14 @@
   <!-- dav1d 1.5.4 (src\lib\dav1d-1.5.4, BSD 2-clause): VideoLAN's AV1 decoder, for the HD art pack's movies
        (sprite\MCHdMovie). Here its C code alone (the Mac build adds its arm64 assembly), 8 bits a sample (its
        README.md); the template files are built with BITDEPTH=8, as dav1d's meson build does. Outside MCCore, so its
-       own ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
+       own ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. Without
+       /sdl, as dav1d's own builds: it makes C4703 (a pointer maybe used unset, which dav1d's flow rules out) an error. -->
   <ItemGroup>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\cdef_apply_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1092,6 +1094,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1099,42 +1102,49 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\cpu.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\ctx.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\data.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\decode.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\dequant_tables.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\fg_apply_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1142,6 +1152,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1149,18 +1160,21 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\intra_edge.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\ipred_prepare_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1168,6 +1182,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1175,12 +1190,14 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\itx_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1188,6 +1205,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1195,24 +1213,28 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\lib.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\log.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\loopfilter_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1220,6 +1242,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1227,6 +1250,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1234,6 +1258,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1241,42 +1266,49 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\msac.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\obu.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\pal.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\picture.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\qm.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\recon_tmpl.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BITDEPTH=8;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -1284,48 +1316,56 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\refmvs.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\scan.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\tables.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\thread_task.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\warpmv.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\wedge.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="$(MCLibDir)dav1d-1.5.4\src\win32\thread.c">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
       <AdditionalIncludeDirectories>$(MCLibDir)dav1d-1.5.4;$(MCLibDir)dav1d-1.5.4\include;$(MCLibDir)dav1d-1.5.4\include\compat\msvc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemGroup>

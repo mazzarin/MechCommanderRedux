@@ -16258,10 +16258,12 @@ TEST_CASE_ISOLATED("game: a terrain overlay is drawn from the HD art pack")
     hdArt.reset();
     GamePaused = false;
 
+    // As int64_t: MSVC counts an iota of size_t in a 128-bit type std::format doesn't take.
     const auto differing = [](const std::vector<SDL_Color>& a, const std::vector<SDL_Color>& b)
     {
-        return std::ranges::count_if(std::views::iota(size_t{0}, a.size()), [&](size_t i)
-                                     { return a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b; });
+        return static_cast<int64_t>(
+            std::ranges::count_if(std::views::iota(size_t{0}, a.size()),
+                                  [&](size_t i) { return a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b; }));
     };
 
     const auto changed = differing(original, hd);
@@ -17869,9 +17871,10 @@ TEST_CASE_ISOLATED("game: a shape table loaded outside the sprite files is drawn
     hdArt.reset();
     GamePaused = false;
 
-    const auto changed = std::ranges::count_if(
+    // As int64_t: MSVC counts an iota of size_t in a 128-bit type std::format doesn't take.
+    const auto changed = static_cast<int64_t>(std::ranges::count_if(
         std::views::iota(size_t{0}, original.size()),
-        [&](size_t i) { return original[i].r != hd[i].r || original[i].g != hd[i].g || original[i].b != hd[i].b; });
+        [&](size_t i) { return original[i].r != hd[i].r || original[i].g != hd[i].g || original[i].b != hd[i].b; }));
     std::cout << std::format("  forest.shp frame 0: {}x{}, {} shown pixels changed\n", table->Frames.Frames[0].Width,
                              table->Frames.Frames[0].Height, changed);
     CHECK(changed > 0);

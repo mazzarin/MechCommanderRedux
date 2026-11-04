@@ -65,8 +65,8 @@ namespace
         MCSetting{.Key = "HDStops", .Value = &GHdStops},
         // MechBraking (gameplay) has mechs brake to a halt through their stopping art (sprite/MCMechStops.h).
         MCSetting{.Key = "MechBraking", .Value = &GMechBraking},
-        // Reports sends anonymous reports of the computer, how the game runs and its crashes, once the player has seen
-        // what they hold (main/MCTelemetry.h): off until then, whatever the build.
+        // Reports sends reports of the computer, how the game runs, its settings and its crashes, under a random ID, once
+        // the player has seen what they hold (main/MCTelemetry.h): off until then, whatever the build.
         MCSetting{.Key = "Reports", .Value = &GReports, .Personal = 0, .Player = true},
     };
 

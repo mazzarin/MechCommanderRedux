@@ -160,7 +160,7 @@ namespace
             .Choices = OffOn},
         Row{.Label = "PRIVACY"},
         Row{.Label = "REPORTS",
-            .Description = "ANONYMOUS REPORTS OF YOUR COMPUTER, HOW SMOOTHLY THE GAME RUNS, AND CRASHES.",
+            .Description = "REPORTS OF YOUR COMPUTER, FRAME RATES, SETTINGS AND CRASHES, UNDER A RANDOM ID.",
             .Key = "Reports",
             .Choices = OffOn,
             .Changed = ReportsChanged},

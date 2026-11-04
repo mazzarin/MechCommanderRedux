@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-// Port-only (the personal build): anonymous reports of the player's computer, how smoothly the game runs on it, and its
-// crashes, sent to the project's own server (a Cloudflare Worker) for the performance targets; PLAN.md's "Telemetry"
+// Port-only (the personal build): reports of the player's computer, how smoothly the game runs on it (frame times, what
+// fell back to keep up), its settings and its crashes, under the copy's random ID, sent to the project's own server (a Cloudflare Worker) for the performance targets; PLAN.md's "Telemetry"
 // has the design. A backend the app sets before the game starts (the Mac app's, apps/MCRedux/MCTelemetryMac.mm;
 // Windows', MCTelemetryWin.cpp) reads the machine and sends; this keeps the player's consent, measures the play, keeps
 // the black box and makes the reports. Nothing is sent before the player has seen the notice or answered the question
@@ -20,8 +20,9 @@
 // Reports: a multiplayer match's at its end; single-player missions' at the end of the first, then of the first a week
 // or more after the last, covering every mission since; a crash's at the next start, with the black box: the last
 // moments' state and events (the match's phases, its messages by type and size, players lost), kept in a file mapped
-// into memory so a crash leaves it behind. Play under two minutes counts for nothing. No ID, name, path or address is
-// in any report. Everything runs on the main thread: the backend's replies wait for the next frame.
+// into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
+// any report; the copy's random ID (made while REPORTS is on, dropped when it goes off) lets one copy's reports be
+// followed across updates. Everything runs on the main thread: the backend's replies wait for the next frame.
 
 /// <summary>REPORTS (PREFS' "Reports", HD OPTIONS): 1 sends reports once the player has seen what they hold.</summary>
 extern int GReports;

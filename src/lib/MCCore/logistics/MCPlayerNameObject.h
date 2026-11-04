@@ -27,6 +27,10 @@ public:
         Waiting = 0,
         Missing = 1,
         Present = 2,
+        /// <summary>Port: the file is there, but the player's game data differ from the host's (as good as missing).</summary>
+        Differs = 3,
+        /// <summary>Port: the file is there; the player's build says nothing of its game data (it plays).</summary>
+        Unchecked = 4,
     };
 
     ~MCPlayerNameObject() override { Destroy(); }

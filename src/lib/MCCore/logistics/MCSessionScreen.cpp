@@ -96,6 +96,11 @@ namespace
         return std::string(dot == std::string_view::npos ? name : name.substr(0, dot));
     }
 
+    /// <summary>Port: names the players whose game data differ from the host's (as good as without the mission).</summary>
+    constexpr std::string_view DiffersText = "These players' game data differs from yours: {}";
+    /// <summary>Port: names the players whose builds can't check their game data (older ones), who play.</summary>
+    constexpr std::string_view UncheckedText = "Can't check these players' game data: {}. Tell them to upgrade.";
+
     /// <summary>The dialog's Cancel: drops the loaded mission.</summary>
     void MPCancel()
     {
@@ -1013,7 +1018,7 @@ auto MCSessionScreen::ShowDialog(std::string_view text, std::function<void()> on
     dialog.Activate();
 }
 
-auto MCSessionScreen::FileReport(uint32_t playerId, bool haveFile) -> void
+auto MCSessionScreen::FileReport(uint32_t playerId, MCFileCheck check) -> void
 {
     using Status = MCPlayerNameObject::MCFileStatus;
 
@@ -1025,8 +1030,33 @@ auto MCSessionScreen::FileReport(uint32_t playerId, bool haveFile) -> void
 
     if (std::shared_ptr<MCPlayerNameObject> reporter = NameOf(playerId); reporter != nullptr)
     {
-        reporter->FileStatus = haveFile ? Status::Present : Status::Missing;
+        constexpr auto statusOf = [](MCFileCheck said)
+        {
+            switch (said)
+            {
+                case MCFileCheck::Same:
+                    return Status::Present;
+                case MCFileCheck::Differs:
+                    return Status::Differs;
+                case MCFileCheck::Unchecked:
+                    return Status::Unchecked;
+                case MCFileCheck::Missing:
+                    break;
+            }
+
+            return Status::Missing;
+        };
+
+        reporter->FileStatus = statusOf(check);
     }
+
+    // Port: the names of the players whose file is so.
+    const auto named = [this](Status status)
+    {
+        return MCNamedPlayers(
+            PlayerNames, [status](const auto& name) { return name->FileStatus == status; },
+            [](const auto& name) -> const std::string& { return name->PlayerName; });
+    };
 
     bool allHave = true;
 
@@ -1037,7 +1067,7 @@ auto MCSessionScreen::FileReport(uint32_t playerId, bool haveFile) -> void
             return;
         }
 
-        if (nameObject->FileStatus == Status::Missing)
+        if (nameObject->FileStatus == Status::Missing || nameObject->FileStatus == Status::Differs)
         {
             allHave = false;
         }
@@ -1045,6 +1075,15 @@ auto MCSessionScreen::FileReport(uint32_t playerId, bool haveFile) -> void
 
     if (allHave)
     {
+        // Port: a player whose build can't check its game data (an older one) plays, as before; the host is told whose,
+        // and its OK goes on to the load.
+        if (const std::string unchecked = named(Status::Unchecked); !unchecked.empty())
+        {
+            ShowDialog(std::format(UncheckedText, unchecked), nullptr, "bh_okay.tga", "bg_okay.tga", MPLoadWorked);
+            CheckGoodToGo();
+            return;
+        }
+
         // Everyone has it: the waiting dialog closes itself.
         MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
         GuiSystem().AddTimer(dialog.weak_from_this(), 0, 1000, 0, 0, false);
@@ -1053,17 +1092,24 @@ auto MCSessionScreen::FileReport(uint32_t playerId, bool haveFile) -> void
         return;
     }
 
-    // Name the players missing the file.
-    std::string text = LoadGameString(0xab, 0xfe);
+    // Name the players missing the file (the original's text, the names run together). Port: and, on a line of their
+    // own, those whose game data differ from this game's.
+    std::string text;
+    const std::string differing = named(Status::Differs);
 
     for (const auto& nameObject : PlayerNames)
     {
         if (nameObject->FileStatus == Status::Missing)
         {
-            text += nameObject->PlayerName;
+            text += text.empty() ? LoadGameString(0xab, 0xfe) + nameObject->PlayerName : nameObject->PlayerName;
         }
 
         nameObject->FileStatus = Status::NotAsked;
+    }
+
+    if (!differing.empty())
+    {
+        text += (text.empty() ? "" : "\n") + std::format(DiffersText, differing);
     }
 
     ShowDialog(text, MPCancel, "bh_okay.tga", "bg_okay.tga", nullptr);

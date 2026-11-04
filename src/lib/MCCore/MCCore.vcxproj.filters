@@ -763,6 +763,9 @@
     <ClCompile Include="mission\MCWeatherPlay.cpp">
       <Filter>mission</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCGameDataHash.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMPGameConfiguration.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2018,6 +2021,9 @@
     </ClInclude>
     <ClInclude Include="mission\MCWeatherPlay.h">
       <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCGameDataHash.h">
+      <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMPGameConfiguration.h">
       <Filter>network</Filter>

@@ -74,6 +74,13 @@ public:
     /// <summary>The FastFiles the game has open.</summary>
     MCFastFileSet& FastFiles() const;
 
+    /// <summary>
+    /// Port: the hash of every match's gameplay data (network/MCGameDataHash.h), kept once worked out: the files don't
+    /// change while the game runs. This context's own, never the one it was installed over's, so a test's files are
+    /// hashed afresh.
+    /// </summary>
+    std::optional<uint64_t>& SharedDataHash() { return _SharedDataHash; }
+
     /// <summary>The palette the game shows (asserted: there is one from the interface's start).</summary>
     MCPalette& Palette() const;
 
@@ -352,6 +359,7 @@ private:
     std::shared_ptr<MCAudioDevice> _Audio;
     std::unique_ptr<MCNetTransport> _Net;
     std::unique_ptr<MCFastFileSet> _FastFiles;
+    std::optional<uint64_t> _SharedDataHash;
     std::unique_ptr<MCPalette> _Palette;
     std::unique_ptr<MCElementBuffer> _ElementList;
     std::unique_ptr<MCCraterManager> _CraterManager;

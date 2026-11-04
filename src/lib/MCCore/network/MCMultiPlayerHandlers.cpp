@@ -9,13 +9,13 @@
 #include "gui/MCGuiSystem.h"
 #include "iface/MCCommandParser.h"
 #include "lib/MCFatal.h"
-#include "lib/MCFile.h"
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "network/MCGameDataHash.h"
 #include "network/MCMPGameConfiguration.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCGameSession.h"
@@ -1174,24 +1174,6 @@ void HandleAppPlayerUpdate(uint32_t, std::span<const uint8_t>)
     Assert(Game().IsServer, 0, " Sending player update to non-server ");
 }
 
-uint32_t GetCheckSum(std::string_view fileName)
-{
-    MCFile file;
-
-    if (file.Open(fileName) != 0)
-    {
-        return 0;
-    }
-
-    std::vector<uint8_t> contents(file.GetLength());
-    file.Read(contents);
-    file.Close();
-    // Only the file's first four bytes: the "checksum" tells little more than the file's existence.
-    uint32_t checkSum = 0;
-    std::memcpy(&checkSum, contents.data(), std::min<size_t>(contents.size(), 4));
-    return checkSum;
-}
-
 void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg)
 {
     // The inquiry's name starts at +0x8 (SendFileInquiry writes it there), not at a file-name message's +0xc.
@@ -1211,7 +1193,9 @@ void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg)
         Dropped("an inquiry about a file outside the game", fromID);
     }
 
-    report.Value = missionFile ? static_cast<int32_t>(GetCheckSum(fileName)) : 0;
+    // Port: the hash of the mission's and the shared gameplay data (MCMatchRule::DataHash; 0 still none), where the
+    // original sent the file's first four bytes, which told little more than that it was there.
+    report.Value = missionFile ? static_cast<int32_t>(MCMissionDataHash(fileName)) : 0;
     game.PutMessage(report);
     const size_t length = std::min(fileName.size(), MCMultiPlayer::MsgBufferSize - nameOffset - 1);
     std::memcpy(game.MsgBuffer.data() + nameOffset, fileName.data(), length);
@@ -1222,17 +1206,25 @@ void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg)
 
 void HandleAppFileReport(uint32_t fromID, std::span<const uint8_t> msg)
 {
-    const bool haveFile = ReadLinkupMessage<MCMPLongMessage>(msg).Value != 0;
+    // Port: a player whose mission or gameplay data differ from this game's is as good as without the file; one whose
+    // build says nothing of them (an older one) has it, unchecked.
+    const auto value = static_cast<uint32_t>(ReadLinkupMessage<MCMPLongMessage>(msg).Value);
+    const MCFileCheck check = Game().CheckFileReport(fromID, value);
+
+    if (check == MCFileCheck::Differs)
+    {
+        SDL_Log("Multiplayer: player %u's mission or game data differ from this game's", fromID);
+    }
 
     // Port: a configured match asked (it has no session screen to count the answers).
-    if (MPConfiguredMatchFileReport(fromID, haveFile))
+    if (MPConfiguredMatchFileReport(fromID, check))
     {
         return;
     }
 
     if (GlobalLog() != nullptr && GlobalLog()->SessionScreen != nullptr)
     {
-        GlobalLog()->SessionScreen->FileReport(fromID, haveFile);
+        GlobalLog()->SessionScreen->FileReport(fromID, check);
     }
 }
 

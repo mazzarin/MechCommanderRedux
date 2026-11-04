@@ -65,14 +65,55 @@ namespace MCMatchRule
     /// <summary>Commanders send no sensor probes or camera drones (PROBES OFF; MCCommander).</summary>
     inline constexpr uint32_t NoProbes = 256;
     /// <summary>
+    /// Not a rule the match plays by: the build's file report carries the hash of the mission's and the shared
+    /// gameplay data (MCMissionDataHash), which the host checks against its own (MCMultiPlayer::CheckFileReport); a
+    /// build without it sends the original's "checksum", which says only that the file is there.
+    /// </summary>
+    inline constexpr uint32_t DataHash = 1u << 23;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
-    /// <summary>Every rule this build plays by.</summary>
+    /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported =
-        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes;
+        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes | DataHash;
 } // namespace MCMatchRule
+
+/// <summary>
+/// Port: what a player's file report says of the mission file the host asked about (MCMultiPlayer::CheckFileReport).
+/// </summary>
+enum class MCFileCheck : uint8_t
+{
+    /// <summary>The player hasn't the file.</summary>
+    Missing,
+    /// <summary>The player has the file and the same gameplay data as the host.</summary>
+    Same,
+    /// <summary>The player's mission or gameplay data differ from the host's: as good as missing.</summary>
+    Differs,
+    /// <summary>The player has the file; its build says nothing of its data (an older one, upstream's), so it plays.</summary>
+    Unchecked,
+};
+
+/// <summary>
+/// Port: the names (<paramref name="nameOf"/>) of those of <paramref name="players"/> that <paramref name="wanted"/>
+/// takes, a comma between: the players a message or the log names.
+/// </summary>
+template <std::ranges::input_range Players, typename Wanted, typename NameOf>
+std::string MCNamedPlayers(const Players& players, Wanted wanted, NameOf nameOf)
+{
+    std::string names;
+
+    for (const auto& player : players)
+    {
+        if (wanted(player))
+        {
+            names += std::format("{}{}", names.empty() ? "" : ", ", nameOf(player));
+        }
+    }
+
+    return names;
+}
 
 /// <summary>
 /// Port: sets the rules the mission being played plays by (MCScenario::Load: its match's, MCMultiPlayer::Played; none
@@ -345,7 +386,18 @@ public:
 
     int32_t SendWorldStateUpdate();
 
+    /// <summary>
+    /// Asks every player whether it has mission file <paramref name="fileName"/>. Port: first works out this game's own
+    /// hash of it (<see cref="AskedFileHash"/>), for the answers to be checked against.
+    /// </summary>
     int32_t SendFileInquiry(std::string_view fileName);
+
+    /// <summary>
+    /// Port, the host: what player <paramref name="playerId"/>'s file report (<paramref name="value"/>) says of the file
+    /// last asked about: 0 none; from a build that hashes its data (its rules message has MCMatchRule::DataHash) the
+    /// same data only as <see cref="AskedFileHash"/>; from any other, the file is there, unchecked.
+    /// </summary>
+    [[nodiscard]] MCFileCheck CheckFileReport(uint32_t playerId, uint32_t value) const;
 
     /// <summary>The server's per-frame sends: world state and weapons, movers and turrets, each on its timer.</summary>
     int32_t UpdateClients();
@@ -464,6 +516,11 @@ public:
     std::array<int32_t, MaxLinkupPlayers> PlayerSessionCheckIn{};
     /// <summary>Port: the rules each player's build plays by (its rules message), by player id.</summary>
     std::map<uint32_t, uint32_t> PlayerRules;
+    /// <summary>
+    /// Port: this game's MCMissionDataHash of the mission file it last asked the players about (SendFileInquiry); 0
+    /// before.
+    /// </summary>
+    uint32_t AskedFileHash = 0;
     /// <summary>
     /// Port: the rules the match plays by (MCMatchRule bits; the server's rules message): none, the original's game,
     /// until the server sends them.

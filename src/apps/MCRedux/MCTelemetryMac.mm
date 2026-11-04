@@ -1,5 +1,6 @@
 // Built without the precompiled header: Objective-C++, and Foundation and MCCore's Win32 stand-ins can't meet.
 #include "MCTelemetryBackend.h"
+#include "MCVersion.h"
 
 #import <Foundation/Foundation.h>
 #include <IOKit/IOKitLib.h>
@@ -25,8 +26,6 @@ namespace
 {
     /// <summary>The Info.plist key naming the server (empty: no reports).</summary>
     NSString* const ServerKey = @"MCReportsURL";
-    NSString* const ShownVersionKey = @"CFBundleShortVersionString";
-    NSString* const BuildKey = @"CFBundleVersion";
     /// <summary>The black box's file in the user folder.</summary>
     constexpr std::string_view BlackBoxName = "blackbox.bin";
     /// <summary>The system's crash reports, and the time zones' countries.</summary>
@@ -291,11 +290,11 @@ namespace
 
         MCTelemetry::MCMachine Machine() override
         {
-            NSDictionary* info = NSBundle.mainBundle.infoDictionary;
             const NSOperatingSystemVersion system = NSProcessInfo.processInfo.operatingSystemVersion;
             MCTelemetry::MCMachine machine;
             machine.Platform = "mac";
-            machine.AppVersion = std::format("{} ({})", Utf8(info[ShownVersionKey]), Utf8(info[BuildKey]));
+            // As shown, "0.2.1 (528)", as Windows' is: version.cmake writes it with the Info.plist's version and build.
+            machine.AppVersion = MC_VERSION_SHOWN;
             machine.Model = SysctlText("hw.model");
             machine.Cpu = SysctlText("machdep.cpu.brand_string");
             machine.PerformanceCores = SysctlNumber<int32_t>("hw.perflevel0.physicalcpu");
@@ -463,11 +462,29 @@ std::unique_ptr<MCTelemetry::MCBackend> MCMakeTelemetryBackend(const std::filesy
             return nullptr;
         }
 
-        NSURL* url = [NSURL URLWithString:server];
+        auto backend = MCMakeTelemetryBackend(userFolder, Utf8(server));
+
+        if (backend == nullptr)
+        {
+            SDL_Log("Reports: the Info.plist's %s isn't an https address: no reports", ServerKey.UTF8String);
+        }
+
+        return backend;
+    }
+}
+
+std::unique_ptr<MCTelemetry::MCBackend> MCMakeTelemetryBackend(const std::filesystem::path& userFolder,
+                                                               std::string_view server)
+{
+    @autoreleasepool
+    {
+        NSString* address = [[NSString alloc] initWithBytes:server.data()
+                                                     length:server.size()
+                                                   encoding:NSUTF8StringEncoding];
+        NSURL* url = address != nil ? [NSURL URLWithString:address] : nil;
 
         if (url == nil || ![url.scheme isEqualToString:@"https"])
         {
-            SDL_Log("Reports: the Info.plist's %s isn't an https address: no reports", ServerKey.UTF8String);
             return nullptr;
         }
 

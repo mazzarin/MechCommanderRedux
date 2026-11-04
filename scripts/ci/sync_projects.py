@@ -31,7 +31,8 @@ PROJECTS = [
                                       "MCGameFolder.cpp", "MCGameFolder.h", "MCTelemetryBackend.h",
                                       "MCTelemetryWin.cpp", "stdafx.cpp", "stdafx.h"]),
     ("apps/MCRedux/mc_tests.vcxproj", ["MCConsole.cpp", "MCConsole.h", "MCCrashTrace.cpp", "MCCrashTrace.h",
-                                       "MCGameFolder.cpp", "MCGameFolder.h", "stdafx.cpp", "stdafx.h", "tests/"]),
+                                       "MCGameFolder.cpp", "MCGameFolder.h", "MCTelemetryBackend.h",
+                                       "MCTelemetryWin.cpp", "stdafx.cpp", "stdafx.h", "tests/"]),
     ("apps/MCEditor/MCEditor.vcxproj", "tree"),
 ]
 

@@ -35,6 +35,7 @@
 namespace
 {
     constexpr std::string_view ServerUrl = MC_REPORTS_URL;
+    constexpr std::string_view SecureScheme = "https://";
     /// <summary>The black box's file, and MCCrashTrace's record of a crash, in the user folder.</summary>
     constexpr std::wstring_view BlackBoxName = L"blackbox.bin";
     constexpr std::wstring_view CrashRecordName = L"crash-record.txt";
@@ -216,8 +217,14 @@ namespace
     class MCWindowsBackend final : public MCTelemetry::MCBackend
     {
     public:
-        explicit MCWindowsBackend(std::filesystem::path userFolder) : _UserFolder(std::move(userFolder))
+        MCWindowsBackend(std::string server, std::filesystem::path userFolder)
+            : _Server(std::move(server)), _UserFolder(std::move(userFolder))
         {
+            if (!_Server.ends_with('/'))
+            {
+                _Server += '/';
+            }
+
             // A crash's stack goes to a record of module names and offsets too, which the next start sends.
             MCCrashTrace::SetRecordPath(_UserFolder / CrashRecordName);
         }
@@ -304,20 +311,13 @@ namespace
         void Request(std::string path, std::string body,
                      std::function<void(int32_t status, std::string reply)> done) override
         {
-            std::string base(ServerUrl);
-
-            if (!base.ends_with('/'))
-            {
-                base += '/';
-            }
-
             // A thread of its own: WinHTTP's calls wait; the reply goes to the reports' inbox from there.
             auto reply = std::make_shared<std::function<void(int32_t, std::string)>>(std::move(done));
 
             try
             {
                 std::thread(
-                    [url = Wide(base + path), body = std::move(body), reply]
+                    [url = Wide(_Server + path), body = std::move(body), reply]
                     {
                         auto [status, text] = Send(url, body);
                         (*reply)(status, std::move(text));
@@ -391,6 +391,8 @@ namespace
         }
 
     private:
+        /// <summary>The server's address, ending in a slash.</summary>
+        std::string _Server;
         std::filesystem::path _UserFolder;
         HANDLE _File = INVALID_HANDLE_VALUE;
         HANDLE _Mapping = nullptr;
@@ -400,12 +402,18 @@ namespace
 
 std::unique_ptr<MCTelemetry::MCBackend> MCMakeTelemetryBackend(const std::filesystem::path& userFolder)
 {
-    if (!ServerUrl.starts_with("https://"))
+    return MCMakeTelemetryBackend(userFolder, ServerUrl);
+}
+
+std::unique_ptr<MCTelemetry::MCBackend> MCMakeTelemetryBackend(const std::filesystem::path& userFolder,
+                                                               std::string_view server)
+{
+    if (!server.starts_with(SecureScheme))
     {
         return nullptr;
     }
 
-    return std::make_unique<MCWindowsBackend>(userFolder);
+    return std::make_unique<MCWindowsBackend>(std::string(server), userFolder);
 }
 
 #endif

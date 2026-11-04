@@ -206,7 +206,8 @@ add_custom_command(TARGET MCRedux POST_BUILD
   COMMENT "Signing MechCommander Redux.app (ad hoc), Sparkle inside"
   VERBATIM)
 
-add_executable(mc_tests ${MCTESTS_SOURCES})
+# The tests run the Mac's real reports backend too (TelemetryBackendTests.cpp).
+add_executable(mc_tests ${MCTESTS_SOURCES} ${MC_TELEMETRY_BACKEND})
 target_include_directories(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux)
 target_precompile_headers(mc_tests PRIVATE ${MC_SRC}/apps/MCRedux/stdafx.h)
-target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics")
+target_link_libraries(mc_tests PRIVATE MCCore "-framework CoreGraphics" "-framework Foundation" "-framework IOKit")

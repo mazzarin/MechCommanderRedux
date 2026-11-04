@@ -35,9 +35,10 @@ jobs:
         shell: pwsh
         run: Get-Content src\build\generated\MCVersion.h
 
-      # The game: tests need the retail install (--game), which the runner doesn't have; they pass with a note.
+      # The game: tests need the retail install (--game), which the runner doesn't have; they pass with a note. The
+      # reports' backend asks the live reports Worker its region and sends it a report it refuses (nothing kept).
       - name: Test
-        run: src\build\bin\x64\Release\mc_tests.exe
+        run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
 
       - name: Keep the build
         if: success() || failure()

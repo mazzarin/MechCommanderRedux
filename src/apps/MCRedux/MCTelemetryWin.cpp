@@ -256,7 +256,7 @@ namespace
             const auto [performance, efficiency] = Cores();
             MCTelemetry::MCMachine machine;
             machine.Platform = "windows";
-            machine.AppVersion = MC_VERSION;
+            machine.AppVersion = MC_VERSION_SHOWN;
             machine.Model = std::format("{} {}", MachineValue(bios, L"SystemManufacturer"),
                                         MachineValue(bios, L"SystemProductName"));
             machine.Cpu = MachineValue(processor, L"ProcessorNameString");

@@ -28,7 +28,7 @@ namespace
 
     /// <summary>The command line's help text.</summary>
     constexpr std::string_view UsageText =
-        "MechCommander Redux " MC_VERSION_SEMVER " (build " MC_VERSION ", commit " MC_VERSION_COMMIT ")\n\n"
+        "MechCommander Redux " MC_VERSION_SHOWN ", commit " MC_VERSION_COMMIT "\n\n"
         "MCRedux [-d|--data <install folder>] [--user <save folder>] [game options]\n\n"
         "  -d, --data     - The MechCommander Gold install; without it, or when it has no\n"
         "                   SYSTEM.CFG, the current folder, then the executable's folder;\n"

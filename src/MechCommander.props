@@ -64,54 +64,61 @@
     </ClCompile>
   </ItemDefinitionGroup>
 
-  <!-- Version: Nerdbank.GitVersioning (nbgv, a local dotnet tool in dotnet-tools.json) computes it from version.json
-       and the git history: major.minor.release come from version.json, and the build number is the count of commits
-       since version.json's version last changed. MCCore (which every app references, so it builds first) writes it
-       to build\generated\MCVersion.h; the file is only rewritten when the version changes, so unchanged builds stay
-       incremental. Without dotnet or git (a source zip), the version falls back to 0.0.0.0. -->
+  <!-- Version (personal build): version.json's major.minor.patch and the branch's count of commits as the build, the
+       same on every platform ("0.2.1 (518)"; src/mac/version.cmake on the Mac). The updaters (Sparkle, WinSparkle)
+       install only a higher build, and the count rises with every commit; nbgv's build (upstream's) counts only the
+       commits since version.json's version changed, so it starts over at each version and differs between branches.
+       MCCore (which every app references, so it builds first) writes it to build\generated\MCVersion.h; the file is
+       only rewritten when it changes, so unchanged builds stay incremental. Without git (a source zip) the build is 0;
+       a shallow clone counts short, so it warns. -->
   <Target Name="MCGenerateVersionHeader" BeforeTargets="PrepareForBuild" Condition="'$(MCGenerateVersion)'=='true'">
     <PropertyGroup>
       <_MCRepoDir>$(MSBuildThisFileDirectory)..\</_MCRepoDir>
+      <_MCVersionJson Condition="Exists('$(_MCRepoDir)version.json')">$([System.IO.File]::ReadAllText('$(_MCRepoDir)version.json'))</_MCVersionJson>
+      <_MCRelease>$([System.Text.RegularExpressions.Regex]::Match('$(_MCVersionJson)', '(?&lt;="version"\s*:\s*")\d+\.\d+\.\d+').Value)</_MCRelease>
+      <_MCRelease Condition="'$(_MCRelease)'==''">0.0.0</_MCRelease>
     </PropertyGroup>
-    <Exec Command="dotnet tool restore" WorkingDirectory="$(_MCRepoDir)" StandardOutputImportance="low"
-          ContinueOnError="true" IgnoreExitCode="true">
-      <Output TaskParameter="ExitCode" PropertyName="_MCRestoreExitCode" />
+    <Exec Command="git rev-list --count HEAD 2&gt;nul" WorkingDirectory="$(_MCRepoDir)" ConsoleToMSBuild="true"
+          StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_MCBuild" />
+      <Output TaskParameter="ExitCode" PropertyName="_MCBuildExitCode" />
     </Exec>
-    <Exec Command="dotnet nbgv get-version -v Version" WorkingDirectory="$(_MCRepoDir)" ConsoleToMSBuild="true"
+    <Exec Command="git rev-parse --short=8 HEAD 2&gt;nul" WorkingDirectory="$(_MCRepoDir)" ConsoleToMSBuild="true"
           StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true"
-          Condition="'$(_MCRestoreExitCode)'=='0'">
-      <Output TaskParameter="ConsoleOutput" PropertyName="_MCVersion" />
-      <Output TaskParameter="ExitCode" PropertyName="_MCVersionExitCode" />
-    </Exec>
-    <Exec Command="dotnet nbgv get-version -v SemVer2" WorkingDirectory="$(_MCRepoDir)" ConsoleToMSBuild="true"
-          StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true"
-          Condition="'$(_MCVersionExitCode)'=='0'">
-      <Output TaskParameter="ConsoleOutput" PropertyName="_MCSemVer" />
-    </Exec>
-    <Exec Command="dotnet nbgv get-version -v GitCommitIdShort" WorkingDirectory="$(_MCRepoDir)"
-          ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true"
-          Condition="'$(_MCVersionExitCode)'=='0'">
+          Condition="'$(_MCBuildExitCode)'=='0'">
       <Output TaskParameter="ConsoleOutput" PropertyName="_MCCommit" />
     </Exec>
-    <Warning Text="Could not get the version from nbgv (needs the .NET SDK and a git checkout); using 0.0.0.0."
-             Condition="'$(_MCVersionExitCode)'!='0'" />
-    <PropertyGroup Condition="'$(_MCVersionExitCode)'!='0'">
-      <_MCVersion>0.0.0.0</_MCVersion>
-      <_MCSemVer>0.0.0-unknown</_MCSemVer>
+    <Exec Command="git rev-parse --is-shallow-repository 2&gt;nul" WorkingDirectory="$(_MCRepoDir)"
+          ConsoleToMSBuild="true" StandardOutputImportance="low" ContinueOnError="true" IgnoreExitCode="true"
+          Condition="'$(_MCBuildExitCode)'=='0'">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_MCShallow" />
+    </Exec>
+    <Warning Text="A shallow clone: the build ($(_MCBuild)) counts only the commits fetched; fetch the whole history."
+             Condition="'$(_MCShallow)'=='true'" />
+    <Warning Text="Could not count the commits (needs git and a checkout); the build is 0."
+             Condition="'$(_MCBuildExitCode)'!='0'" />
+    <PropertyGroup Condition="'$(_MCBuildExitCode)'!='0'">
+      <_MCBuild>0</_MCBuild>
       <_MCCommit>unknown</_MCCommit>
+    </PropertyGroup>
+    <PropertyGroup>
+      <_MCVersion>$(_MCRelease).$(_MCBuild)</_MCVersion>
     </PropertyGroup>
     <ItemGroup>
       <_MCVersionLine Include="// Generated by MechCommander.props from version.json and the git history. Do not edit." />
       <_MCVersionLine Include="#pragma once" />
       <_MCVersionLine Include="#define MC_VERSION &quot;$(_MCVersion)&quot;" />
       <_MCVersionLine Include="#define MC_VERSION_COMMAS $(_MCVersion.Replace('.', ','))" />
-      <_MCVersionLine Include="#define MC_VERSION_SEMVER &quot;$(_MCSemVer)&quot;" />
+      <_MCVersionLine Include="#define MC_VERSION_SEMVER &quot;$(_MCRelease)+$(_MCBuild)&quot;" />
       <_MCVersionLine Include="#define MC_VERSION_COMMIT &quot;$(_MCCommit)&quot;" />
+      <_MCVersionLine Include="// Port-only (personal): the version as the game, its reports and the updaters show it, and the build alone." />
+      <_MCVersionLine Include="#define MC_VERSION_SHOWN &quot;$(_MCRelease) ($(_MCBuild))&quot;" />
+      <_MCVersionLine Include="#define MC_VERSION_BUILD $(_MCBuild)" />
     </ItemGroup>
     <MakeDir Directories="$(MCVersionDir)" />
     <WriteLinesToFile File="$(MCVersionDir)MCVersion.h" Lines="@(_MCVersionLine)" Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
-    <Message Importance="high" Text="MechCommander Redux $(_MCVersion) ($(_MCCommit))" />
+    <Message Importance="high" Text="MechCommander Redux $(_MCRelease) ($(_MCBuild)) ($(_MCCommit))" />
   </Target>
 
   <!-- Fetches the pinned dxc (see MCDxcVersion) before a project's shaders compile, when it isn't there yet. The zip

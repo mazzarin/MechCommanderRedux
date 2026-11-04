@@ -754,7 +754,7 @@ BEGIN
             VALUE "InternalName", "MCEditor"
             VALUE "OriginalFilename", "MCEditor.exe"
             VALUE "ProductName", "MechCommander Redux"
-            VALUE "ProductVersion", MC_VERSION_SEMVER
+            VALUE "ProductVersion", MC_VERSION_SHOWN
         END
     END
     BLOCK "VarFileInfo"

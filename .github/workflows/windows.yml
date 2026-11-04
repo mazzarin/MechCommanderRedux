@@ -1,0 +1,54 @@
+# Port-only (the personal build): builds the game, the editor and the tests on Windows and runs the tests, as
+# checks.yml's build job does for pull requests, on every push of the fork's HD branch and its windows-* work branches
+# (or by hand from the Actions tab). The exes, the version header and MSBuild's log are kept as the run's artifact.
+name: Windows (personal)
+
+on:
+  push:
+    branches: [HD, 'windows-*']
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # The release build's image and configuration (release.yml, checks.yml).
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          # The build number is the count of commits (src/MechCommander.props), so it needs the whole history.
+          fetch-depth: 0
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props).
+      - name: Build
+        run: msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -m "-flp:logfile=msbuild.log;verbosity=normal"
+
+      - name: Version
+        if: success() || failure()
+        shell: pwsh
+        run: Get-Content src\build\generated\MCVersion.h
+
+      # The game: tests need the retail install (--game), which the runner doesn't have; they pass with a note.
+      - name: Test
+        run: src\build\bin\x64\Release\mc_tests.exe
+
+      - name: Keep the build
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            src/build/bin/x64/Release/MCRedux.exe
+            src/build/bin/x64/Release/SDL3.dll
+            src/build/bin/x64/Release/MCEditor.exe
+            src/build/generated/MCVersion.h
+            msbuild.log

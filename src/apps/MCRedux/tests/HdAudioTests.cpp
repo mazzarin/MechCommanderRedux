@@ -312,7 +312,8 @@ TEST_CASE("HD audio: music selection, streaming silence and short seamless loops
     // The preferences offer ORCHESTRAL only once the pack has orchestral music.
     GHdAudio = HdAudioOrchestral;
     CHECK(!MCHdAudio::HasOrchestral());
-    CHECK_EQ(MCHdAudio::Music(source.string())->string(), music.string());
+    // Compared normalised: Windows writes the pack's path with its own separators.
+    CHECK_EQ(MCHdAudio::Music(source.string())->lexically_normal().string(), music.lexically_normal().string());
     Write(fixture.Root / "audio/music/orchestral/MUSIC02.flac", Flac());
     MCHdAudio::Forget();
     CHECK(MCHdAudio::HasOrchestral());

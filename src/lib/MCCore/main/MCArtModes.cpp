@@ -6,6 +6,7 @@
 #include "iface/MCTacticalInterface.h"
 #include "main/MCGameContext.h"
 #include "main/MCLogistics.h"
+#include "platform/MCUtf8Path.h"
 #include "sprite/MCHdArt.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
@@ -68,7 +69,7 @@ auto ShowArtMode(const MCArtMode& mode) -> std::expected<void, std::string>
     if (!drawable)
     {
         return std::unexpected(std::format("{} needs an HD art pack: there is none readable at {}", mode.Name,
-                                           MCHdArt::PackFolder().string()));
+                                           MCFileSystem::ToUtf8(MCHdArt::PackFolder())));
     }
 
     if (!PlayersOwn.has_value())

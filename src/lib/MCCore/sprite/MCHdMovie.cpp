@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sprite/MCHdMovie.h"
 #include "main/MCTelemetry.h"
+#include "platform/MCUtf8Path.h"
 
 #include <condition_variable>
 #include <dav1d/dav1d.h>
@@ -398,7 +399,7 @@ auto MCHdMovie::Open(const std::filesystem::path& path) -> std::expected<std::un
 {
     auto movie = std::unique_ptr<MCHdMovie>(new MCHdMovie());
     Impl& impl = *movie->_Impl;
-    impl.Name = path.filename().string();
+    impl.Name = MCFileSystem::ToUtf8(path.filename());
     impl.File.open(path, std::ios::binary);
     std::array<uint8_t, IvfHeaderBytes> header;
     impl.File.read(reinterpret_cast<char*>(header.data()), header.size());

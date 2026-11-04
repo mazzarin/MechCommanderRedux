@@ -10,6 +10,7 @@
 #include "logistics/MCPlayerNameObject.h"
 
 class MCGuiEvent;
+enum class MCFileCheck : uint8_t;
 
 /// <summary>
 /// The multiplayer session (ready room) screen: the players and the two teams, each team's resource points and
@@ -86,8 +87,12 @@ public:
     /// <summary>A player has the mission: when all have, the start button lights.</summary>
     void SomeoneCheckedIn();
 
-    /// <summary>Player <paramref name="playerId"/> reports whether it has the mission file (<paramref name="haveFile"/>).</summary>
-    void FileReport(uint32_t playerId, bool haveFile);
+    /// <summary>
+    /// Player <paramref name="playerId"/> reports whether it has the mission file (<paramref name="check"/>, as the host
+    /// checked it). When every player has: the load goes on (port: once the host is told whose game couldn't check its
+    /// data); else the players without it are named, and (port) those whose data differ from the host's.
+    /// </summary>
+    void FileReport(uint32_t playerId, MCFileCheck check);
 
     /// <summary>Loads mission <paramref name="fileName"/> chosen by the host and tells the others.</summary>
     void LoadMission(std::string_view fileName);

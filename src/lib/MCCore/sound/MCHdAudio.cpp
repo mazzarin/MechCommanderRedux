@@ -2,6 +2,7 @@
 #include "sound/MCHdAudio.h"
 #include "lib/MCFitIniFile.h"
 #include "platform/MCFlac.h"
+#include "platform/MCUtf8Path.h"
 #include "sprite/MCHdArt.h"
 #include <condition_variable>
 #include <unordered_set>
@@ -92,7 +93,7 @@ namespace
         }
 
         MCFitIniFile file;
-        return file.Open(path.string()) == 0 && file.SeekBlock("HDAudioPack") == 0 &&
+        return file.Open(MCFileSystem::ToUtf8(path)) == 0 && file.SeekBlock("HDAudioPack") == 0 &&
                file.Read<int32_t>("Format") == PackFormat;
     }
 

@@ -74,7 +74,8 @@ Its options are on by default, each a row on the HD OPTIONS page (PREFERENCES, t
 - **Sound.** The HD pack's music, effects and voices, sharper; rain and thunder.
 - **Multiplayer.** The host's MATCH OPTIONS: the weather and time of day everyone plays in (in a match, both change
   sight, and the weather aim, footing, fires and vehicles' speed), braking, and artillery, probes, sensors and mines on
-  or off. A player whose computer drops out leaves within half a minute.
+  or off. A player whose computer drops out leaves within half a minute. The host checks that everyone has its mission
+  and game data, and names whoever doesn't.
 - **Mission Editor.** Mission > Time of Day and Mission > Weather.
 - **Menus.** UPDATE on the main menu (the Mac app updates itself), and INTERFACE SIZE on the Preferences screen.
 - **Fixes.** Missiles and cannon shots that hit fly all the way to their target at any frame rate (the original's check

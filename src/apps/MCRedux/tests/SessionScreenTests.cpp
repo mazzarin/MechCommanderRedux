@@ -5,6 +5,7 @@
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
+#include "lib/MCFile.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
@@ -16,11 +17,17 @@
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChatWindow.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
+#include "main/MCGameContext.h"
+#include "main/MCGamePaths.h"
+#include "main/MCGameStrings.h"
 #include "main/MCLogistics.h"
+#include "network/MCGameDataHash.h"
 #include "network/MCMultiPlayer.h"
 #include "platform/MCDirectPlay.h"
 #include "platform/MCDisplay.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCWeather.h"
@@ -33,6 +40,8 @@ namespace
     constexpr std::string_view HostAddress = "127.0.0.1:28877";
     /// <summary>The MATCH OPTIONS test's, so it can run beside the frames test (--jobs).</summary>
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
+    /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
 
     /// <summary>Selects the TCP/IP connection to <paramref name="address"/> ("host:port").</summary>
     uint32_t Connect(MCDirectPlay& directPlay, std::string_view address)
@@ -136,7 +145,10 @@ namespace
 
                         while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
                         {
-                            Keep(std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size())));
+                            const auto message =
+                                std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size()));
+                            Answer(from, message);
+                            Keep(message);
                         }
 
                         SendWaitingRules();
@@ -171,6 +183,18 @@ namespace
             _RulesToSend = std::pair(hostId, rules);
         }
 
+        /// <summary>The guest's player id.</summary>
+        uint32_t Id() const { return _Id; }
+
+        /// <summary>
+        /// Answers the host's file inquiries from now on with <paramref name="value"/>, as a game's file report does
+        /// (0: no file).
+        /// </summary>
+        void AnswerFiles(uint32_t value) { _FileAnswer = value; }
+
+        /// <summary>The host's messages telling this guest to load a mission, so far.</summary>
+        int32_t MissionsLoaded() const { return _MissionsLoaded; }
+
         ~Guest()
         {
             _Stop = true;
@@ -182,6 +206,47 @@ namespace
         }
 
     private:
+        /// <summary>
+        /// Answers <paramref name="message"/> from player <paramref name="from"/> if it is a file inquiry (the file
+        /// report: <see cref="AnswerFiles"/>'s value and the name asked about), and counts a load mission. The host sends
+        /// a guaranteed message again until it is acknowledged, which this guest never does: each is taken once.
+        /// </summary>
+        void Answer(uint32_t from, std::span<const uint8_t> message)
+        {
+            constexpr size_t NameOffset = sizeof(MCFIGuaranteedMessageHeader);
+
+            if (message.size() <= NameOffset)
+            {
+                return;
+            }
+
+            const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
+
+            if ((type != static_cast<uint16_t>(MCMPMessageType::LoadMission) &&
+                 type != static_cast<uint16_t>(MCMPMessageType::FileInquiry)) ||
+                !_Taken.emplace(message.begin(), message.end()).second)
+            {
+                return;
+            }
+
+            if (type == static_cast<uint16_t>(MCMPMessageType::LoadMission))
+            {
+                _MissionsLoaded++;
+                return;
+            }
+
+            const std::span<const uint8_t> rest = message.subspan(NameOffset);
+            const std::string name(rest.begin(), std::ranges::find(rest, uint8_t{0}));
+            MCMPFileNameMessage report{};
+            report.Header = PlainHeader(MCMPMessageType::FileReport);
+            report.Value = static_cast<int32_t>(_FileAnswer.load());
+            std::vector<uint8_t> bytes(sizeof(report));
+            std::memcpy(bytes.data(), &report, sizeof(report));
+            bytes.insert(bytes.end(), name.begin(), name.end());
+            bytes.push_back(0);
+            _DirectPlay.Send(_Id, from, 0, bytes);
+        }
+
         /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
         void Keep(std::span<const uint8_t> message)
         {
@@ -239,6 +304,12 @@ namespace
         std::optional<MCMPPlayersRulesMessage> _PlayersRules;
         /// <summary>The host's player id and the rules to say, until the listener sends them.</summary>
         std::optional<std::pair<uint32_t, uint32_t>> _RulesToSend;
+        /// <summary>What the guest's file reports say (<see cref="AnswerFiles"/>).</summary>
+        std::atomic<uint32_t> _FileAnswer = 0;
+        /// <summary>The load missions the host sent.</summary>
+        std::atomic<int32_t> _MissionsLoaded = 0;
+        /// <summary>The inquiries and load missions taken (the listener's own).</summary>
+        std::set<std::vector<uint8_t>> _Taken;
     };
 
     /// <summary>Runs frames for two seconds of game time, giving the network a moment each; the last frame's hash.</summary>
@@ -610,4 +681,168 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(screen.FrontTab == MCSessionTab::Chat);
     CHECK(!list.ShowWindow);
     CHECK(GlobalLog()->ChatWindow->ShowWindow);
+}
+
+namespace
+{
+    /// <summary>Runs <see cref="Settle"/> until <paramref name="done"/> says so, at most a few times; whether it did.</summary>
+    bool SettleUntil(const std::function<bool()>& done)
+    {
+        constexpr int32_t MostSettles = 5;
+
+        for (int32_t settle = 0; settle < MostSettles && !done(); settle++)
+        {
+            Settle();
+        }
+
+        return done();
+    }
+
+    /// <summary>
+    /// The hash a game's file report gives <paramref name="missionFile"/> when its user folder holds a gamesys.fit of
+    /// its own (the install's and a line more), worked out in a context of its own over the game's archives.
+    /// </summary>
+    uint32_t HashWithOwnGameSystem(std::string_view missionFile)
+    {
+        const std::string gameSystem = GamePath(MissionPath, "gamesys", ".fit");
+        MCFile original;
+        REQUIRE_EQ(original.Open(gameSystem), 0);
+        std::vector<uint8_t> contents(original.GetLength());
+        original.Read(contents);
+        const std::filesystem::path folder = std::filesystem::temp_directory_path() / "mc_tests_own_gamesys";
+        std::filesystem::create_directories(folder / "data" / "missions");
+        {
+            std::ofstream own(folder / "data" / "missions" / "gamesys.fit", std::ios::binary);
+            own.write(reinterpret_cast<const char*>(contents.data()), static_cast<std::streamsize>(contents.size()));
+            own << "\r\n// the player's own\r\n";
+        }
+
+        const std::filesystem::path gameRoot = MCFileSystem::GameRoot();
+        uint32_t hash = 0;
+        {
+            MCTestContextScope scope;
+            MCFileSource& files = scope.Context().SetFiles(std::make_unique<MCDiskFileSource>());
+            files.SetGameRoot(gameRoot);
+            files.SetUserRoot(folder);
+            hash = MCMissionDataHash(missionFile);
+        }
+
+        std::error_code error;
+        std::filesystem::remove_all(folder, error);
+        return hash;
+    }
+
+    /// <summary>The original's "checksum" of <paramref name="missionFile"/> (an older build's report): its first four bytes.</summary>
+    uint32_t FirstFourBytes(std::string_view missionFile)
+    {
+        MCFile file;
+        REQUIRE_EQ(file.Open(missionFile), 0);
+        uint32_t value = 0;
+        file.Read(std::span(reinterpret_cast<uint8_t*>(&value), sizeof(value)));
+        return value;
+    }
+
+    /// <summary>Clicks <paramref name="dialog"/>'s OK.</summary>
+    void ClickOk(MCReusableDialog& dialog)
+    {
+        MCLogDialogButton& ok = *dialog.OkButton;
+        Click(ok.GlobalX() + ok.Width() / 2, ok.GlobalY() + ok.Height() / 2);
+    }
+}
+
+/// <summary>
+/// Port: the host checks every player's mission and gameplay data against its own (network/MCGameDataHash.h; a build
+/// with MCMatchRule::DataHash sends the hash in its file report). A guest with the same data gets the mission as
+/// before; one whose data differ (here its own gamesys.fit) is named and the mission is called off, as for a player
+/// without the file; one whose build sends no hash (an older one: the original's first four bytes) is named, and plays.
+/// </summary>
+TEST_CASE_ISOLATED("game: the session screen names a guest whose game data differ, and one whose game can't check them")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(DataHostAddress);
+    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
+    GlobalLog()->MultiplayerScreen->ShowGuiWindow(0);
+    lanScreen.ShowGuiWindow(1);
+    lanScreen.ShowBlock(0);
+    GlobalLog()->SetCurrentScreen(lanScreen);
+    GlobalLog()->LogisticsState = 0xb;
+    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
+    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Data game");
+    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+    CreateSession();
+    Settle();
+    REQUIRE(manager.DirectPlay != nullptr);
+
+    Guest guest;
+    REQUIRE(guest.Join(*manager.DirectPlay, DataHostAddress));
+    Settle();
+    Go();
+    Settle();
+    // The guest's game joins the group the inquiries go to as the host's setup arrives; the test's guest doesn't.
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
+
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    constexpr std::string_view Mission = "ARENA";
+    const std::string missionFile = GamePath(SavePath, Mission, ".mpk");
+    const uint32_t same = MCMissionDataHash(missionFile);
+    const uint32_t ownGameSystem = HashWithOwnGameSystem(missionFile);
+    REQUIRE(same != 0);
+    REQUIRE(ownGameSystem != 0);
+    REQUIRE(ownGameSystem != same);
+
+    // The same data: the check closes itself and the guest is told to load the mission.
+    guest.SendRules(hostId, MCMatchRule::Supported);
+    guest.AnswerFiles(same);
+    Settle();
+    screen.LoadMission(Mission);
+    CHECK(SettleUntil([&] { return guest.MissionsLoaded() == 1; }));
+    CHECK(!dialog.IsShowing());
+
+    // Its own gamesys.fit: named, as good as without the mission, which is called off.
+    guest.AnswerFiles(ownGameSystem);
+    screen.LoadMission(Mission);
+    CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
+    CHECK(dialog.IsShowing());
+    CHECK_EQ(dialog.Text, std::string("These players' game data differs from yours: Guest"));
+    SaveShot("data check 0 differs", ScreenHash());
+    ClickOk(dialog);
+    Settle();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(guest.MissionsLoaded(), 1);
+
+    // An older build (no hash, the original's first four bytes): named, and the mission loads on the host's OK.
+    guest.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::DataHash);
+    guest.AnswerFiles(FirstFourBytes(missionFile));
+    Settle();
+    screen.LoadMission(Mission);
+    CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
+    CHECK(dialog.IsShowing());
+    CHECK_EQ(dialog.Text, std::string("Can't check these players' game data: Guest. Tell them to upgrade."));
+    SaveShot("data check 1 unchecked", ScreenHash());
+    CHECK_EQ(guest.MissionsLoaded(), 1);
+    ClickOk(dialog);
+    CHECK(SettleUntil([&] { return guest.MissionsLoaded() == 2; }));
+    CHECK(!dialog.IsShowing());
+
+    // Without the file, as before: the original's text.
+    guest.SendRules(hostId, MCMatchRule::Supported);
+    guest.AnswerFiles(0);
+    Settle();
+    screen.LoadMission(Mission);
+    CHECK(SettleUntil([&] { return dialog.Text != LoadGameString(0xac, 0xfe); }));
+    CHECK_EQ(dialog.Text, LoadGameString(0xab, 0xfe) + "Guest");
+    ClickOk(dialog);
+    Settle();
+    CHECK_EQ(guest.MissionsLoaded(), 2);
 }

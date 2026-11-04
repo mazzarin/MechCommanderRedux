@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+enum class MCFileCheck : uint8_t;
 enum class MCWeatherKind : uint8_t;
 enum class MCTimeOfDay : uint8_t;
 
@@ -128,10 +129,11 @@ void MPBeginConfiguredMatch();
 void MPPollConfiguredMatch();
 
 /// <summary>
-/// A guest's (or the host's own) report of whether it has the mission file. Returns true when a configured match was
-/// waiting for it (the session screen then ignores it).
+/// A guest's (or the host's own) report of whether it has the mission file (<paramref name="check"/>, the host's
+/// MCMultiPlayer::CheckFileReport: a player whose data differ from the host's hasn't it). Returns true when a
+/// configured match was waiting for it (the session screen then ignores it).
 /// </summary>
-bool MPConfiguredMatchFileReport(uint32_t playerId, bool haveFile);
+bool MPConfiguredMatchFileReport(uint32_t playerId, MCFileCheck check);
 
 /// <summary>
 /// Guest: the host's start-match message (see <c>MCMPStartMatchMessage</c>): takes the teams, tech bases and points,

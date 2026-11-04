@@ -75,3 +75,10 @@ bool ReadText(MCFitIniFile& file, std::string_view name, size_t maxLength, std::
 /// (<paramref name="message"/>) and what was read is returned.
 /// </summary>
 std::string ReadRequiredText(MCFitIniFile& file, std::string_view name, size_t maxLength, std::string_view message);
+
+/// <summary>
+/// The purchase list (a FIT under <c>MissionPath</c>, no extension) a multiplayer mission file names, with
+/// <paramref name="file"/> on its General block: "purchase". Original behaviour (OB-100): MainPurchaseFile is read only
+/// when the PurchaseInfo block is missing (from the block the file was on); with the block there, "purchase" is used.
+/// </summary>
+std::string MPPurchaseFileName(MCFitIniFile& file);

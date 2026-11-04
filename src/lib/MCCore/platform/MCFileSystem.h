@@ -24,6 +24,13 @@ namespace MCFileSystem
     /// <summary>Case-insensitive DOS wildcard match (<c>*</c> and <c>?</c>) of a whole name.</summary>
     bool WildcardMatch(std::string_view pattern, std::string_view name);
 
+    /// <summary>
+    /// Whether <paramref name="a"/> comes before <paramref name="b"/> in the order the game lists files and searches
+    /// FastFiles: by the names with their ASCII letters upper-cased, then by their bytes; the same on every system and
+    /// in every locale. It is NTFS's own order for ASCII names (<c>_</c> after the letters): Windows lists as before.
+    /// </summary>
+    bool NameLess(std::string_view a, std::string_view b);
+
     /// <summary>Sets the folder of the retail install (the one holding MCX.EXE's data: ART.FST, DATA\, ...).</summary>
     void SetGameRoot(const std::filesystem::path& root);
 
@@ -67,7 +74,9 @@ namespace MCFileSystem
 
     /// <summary>
     /// The files in a folder whose names match a DOS wildcard (<c>*</c>, <c>?</c>; case ignored), as the CRT's
-    /// <c>_findfirst</c>/<c>_findnext</c> list them: names only, user folder and install merged.
+    /// <c>_findfirst</c>/<c>_findnext</c> list them: names only, user folder and install merged. Port: in name order
+    /// (<see cref="NameLess"/>), whatever order the system lists the folder in (APFS's and NTFS's differ, and neither
+    /// promises one).
     /// </summary>
     std::vector<std::string> FindFiles(std::string_view gamePattern);
 

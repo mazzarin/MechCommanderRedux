@@ -253,7 +253,7 @@ namespace
     {
         if (TheState().Logged.insert(folder).second)
         {
-            SDL_Log("HD art: %s (%s)", problem.c_str(), folder.string().c_str());
+            SDL_Log("HD art: %s (%s)", problem.c_str(), MCFileSystem::ToUtf8(folder).c_str());
         }
     }
 
@@ -268,18 +268,20 @@ namespace
     /// <summary>The PNG at <paramref name="path"/> as RGBA (rows <c>4 * width</c> bytes), or what went wrong.</summary>
     std::expected<Rgba, std::string> LoadRgba(const std::filesystem::path& path)
     {
-        const MCSdlHandle<SDL_Surface> loaded(SDL_LoadPNG(path.string().c_str()));
+        const MCSdlHandle<SDL_Surface> loaded(SDL_LoadPNG(MCFileSystem::ToUtf8(path).c_str()));
 
         if (loaded == nullptr)
         {
-            return std::unexpected(std::format("{} can't be read: {}", path.filename().string(), SDL_GetError()));
+            return std::unexpected(
+                std::format("{} can't be read: {}", MCFileSystem::ToUtf8(path.filename()), SDL_GetError()));
         }
 
         const MCSdlHandle<SDL_Surface> rgba(SDL_ConvertSurface(loaded.get(), SDL_PIXELFORMAT_RGBA32));
 
         if (rgba == nullptr)
         {
-            return std::unexpected(std::format("{} can't be converted: {}", path.filename().string(), SDL_GetError()));
+            return std::unexpected(
+                std::format("{} can't be converted: {}", MCFileSystem::ToUtf8(path.filename()), SDL_GetError()));
         }
 
         Rgba image{rgba->w, rgba->h, {}};
@@ -364,7 +366,8 @@ namespace
 
         if (error || size > limit)
         {
-            return std::unexpected(std::format("{} can't be read or is too large", path.filename().string()));
+            return std::unexpected(
+                std::format("{} can't be read or is too large", MCFileSystem::ToUtf8(path.filename())));
         }
 
         std::vector<uint8_t> bytes(static_cast<size_t>(size));
@@ -372,7 +375,7 @@ namespace
 
         if (!in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
         {
-            return std::unexpected(std::format("{} can't be read", path.filename().string()));
+            return std::unexpected(std::format("{} can't be read", MCFileSystem::ToUtf8(path.filename())));
         }
 
         return bytes;
@@ -396,7 +399,7 @@ namespace
             return nullptr;
         }
 
-        auto file = MCFastFile::Create(path.string());
+        auto file = MCFastFile::Create(MCFileSystem::ToUtf8(path));
 
         if (!file)
         {
@@ -440,7 +443,8 @@ namespace
 
                 if (at != folder.Path)
                 {
-                    found.Prefix = folder.Path.lexically_relative(at).generic_string();
+                    // In UTF-8 with the system's separators ('\' on Windows already), then the archive's.
+                    found.Prefix = MCFileSystem::ToUtf8(folder.Path.lexically_relative(at));
                     std::ranges::replace(found.Prefix, '/', ArchiveSeparator);
                     found.Prefix += ArchiveSeparator;
                 }
@@ -527,7 +531,7 @@ namespace
             if (const MCHdArchive* archive = ArchiveFor(ancestor); archive != nullptr)
             {
                 const std::filesystem::path rest = folder.lexically_relative(ancestor);
-                return !rest.empty() && archive->Folders.contains(Upper(rest.begin()->string()));
+                return !rest.empty() && archive->Folders.contains(Upper(MCFileSystem::ToUtf8(*rest.begin())));
             }
         }
 
@@ -745,8 +749,9 @@ auto MCHdArt::FrameFromPngs(const std::filesystem::path& colorPath, const std::f
         index->Width != color->Width || index->Height != color->Height)
     {
         return std::unexpected(std::format("{} and {} are {}x{} and {}x{}: not one size, a whole {} times the original",
-                                           colorPath.filename().string(), indexPath.filename().string(), color->Width,
-                                           color->Height, index->Width, index->Height, scale));
+                                           MCFileSystem::ToUtf8(colorPath.filename()),
+                                           MCFileSystem::ToUtf8(indexPath.filename()), color->Width, color->Height,
+                                           index->Width, index->Height, scale));
     }
 
     Frame made;
@@ -1209,7 +1214,7 @@ namespace
 
         MCFitIniFile file;
 
-        if (file.Open(path.string()) != 0 || file.SeekBlock(PackBlock) != 0)
+        if (file.Open(MCFileSystem::ToUtf8(path)) != 0 || file.SeekBlock(PackBlock) != 0)
         {
             state.PackFormatReadable = false;
             LogOnce(path, std::format("{} has no {} block", PackFile, PackBlock));
@@ -1312,9 +1317,9 @@ std::expected<void, std::string> MCHdArt::WritePackFile(const std::filesystem::p
     const std::filesystem::path path = folder / PackFile;
     MCFitIniFile file;
 
-    if (file.Create(path.string()) != 0)
+    if (file.Create(MCFileSystem::ToUtf8(path)) != 0)
     {
-        return std::unexpected(std::format("{} can't be written", path.string()));
+        return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
     }
 
     file.WriteBlock(PackBlock);
@@ -1360,23 +1365,24 @@ namespace
 
 std::filesystem::path MCHdArt::FolderOf(const MechShapeKey& key)
 {
-    return std::filesystem::path(MechFolder) / key.PartFile / std::to_string(key.MechNum) / std::to_string(key.Packet);
+    return std::filesystem::path(MechFolder) / MCFileSystem::FromUtf8(key.PartFile) / std::to_string(key.MechNum) /
+           std::to_string(key.Packet);
 }
 
 std::filesystem::path MCHdArt::FolderOf(const ObjectShapeKey& key)
 {
-    return std::filesystem::path(ObjectFolder) / key.ShapeFile / std::to_string(key.Appearance) /
-           std::to_string(key.Packet);
+    return std::filesystem::path(ObjectFolder) / MCFileSystem::FromUtf8(key.ShapeFile) /
+           std::to_string(key.Appearance) / std::to_string(key.Packet);
 }
 
 std::filesystem::path MCHdArt::FolderOf(const CraterShapeKey& key)
 {
-    return std::filesystem::path(CraterFolder) / key.CraterFile / std::to_string(key.Packet);
+    return std::filesystem::path(CraterFolder) / MCFileSystem::FromUtf8(key.CraterFile) / std::to_string(key.Packet);
 }
 
 std::filesystem::path MCHdArt::FolderOf(const IconShapeKey& key)
 {
-    return std::filesystem::path(IconFolder) / key.File;
+    return std::filesystem::path(IconFolder) / MCFileSystem::FromUtf8(key.File);
 }
 
 void MCHdArt::Attach(const std::shared_ptr<MCShape>& shape, const MechShapeKey& key)
@@ -1633,7 +1639,8 @@ std::optional<std::filesystem::path> MCHdArt::FindMovie(std::string_view movie)
     // The file's name without its folders (a game path may use either separator) or extension.
     const std::string_view file = movie.substr(movie.find_last_of("/\\") + 1);
     const std::string name = Upper(file.substr(0, file.find_last_of('.')));
-    const std::filesystem::path path = PackFolder() / MovieFolder / (name + std::string(MovieExtension));
+    const std::filesystem::path path =
+        PackFolder() / MovieFolder / MCFileSystem::FromUtf8(name + std::string(MovieExtension));
     std::error_code error;
 
     if (name.empty() || !std::filesystem::is_regular_file(path, error))

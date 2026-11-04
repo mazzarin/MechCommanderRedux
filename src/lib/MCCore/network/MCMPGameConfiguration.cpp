@@ -105,8 +105,8 @@ namespace
     {
         uint32_t PlayerId = 0;
         std::string Name;
-        /// <summary>0 waiting, 1 has the file, 2 does not.</summary>
-        int8_t State = 0;
+        /// <summary>What the player's report said of the file (none: waiting).</summary>
+        std::optional<MCFileCheck> State;
     };
 
     struct HostMatch
@@ -495,7 +495,7 @@ void MPBeginConfiguredMatch()
     {
         if (player->Id != manager.MyPlayer()->Id && player->Id != manager.ServerID)
         {
-            Pending.Files.push_back({player->Id, player->Name, 0});
+            Pending.Files.push_back({player->Id, player->Name, std::nullopt});
         }
     }
 
@@ -518,7 +518,7 @@ void MPPollConfiguredMatch()
     }
 }
 
-bool MPConfiguredMatchFileReport(uint32_t playerId, bool haveFile)
+bool MPConfiguredMatchFileReport(uint32_t playerId, MCFileCheck check)
 {
     if (Pending.Current != Step::AwaitingFiles)
     {
@@ -529,29 +529,36 @@ bool MPConfiguredMatchFileReport(uint32_t playerId, bool haveFile)
     {
         if (file.PlayerId == playerId)
         {
-            file.State = haveFile ? 1 : 2;
+            file.State = check;
         }
     }
 
-    std::string missing;
-    bool waiting = false;
-
-    for (const FileState& file : Pending.Files)
+    // The names of the players whose report said so.
+    const auto named = [](MCFileCheck said)
     {
-        waiting = waiting || file.State == 0;
+        return MCNamedPlayers(
+            Pending.Files, [said](const FileState& file) { return file.State == said; },
+            [](const FileState& file) -> const std::string& { return file.Name; });
+    };
 
-        if (file.State == 2)
-        {
-            missing += (missing.empty() ? "" : ", ") + file.Name;
-        }
-    }
+    const bool waiting = std::ranges::any_of(Pending.Files, [](const FileState& file) { return !file.State; });
+    const std::string missing = named(MCFileCheck::Missing);
+    const std::string differing = named(MCFileCheck::Differs);
 
-    if (!missing.empty())
+    if (!missing.empty() || !differing.empty())
     {
-        GiveUp(std::format("{} do not have the mission file", missing));
+        const std::string lacking = missing.empty() ? "" : std::format("{} do not have the mission file", missing);
+        const std::string other = differing.empty() ? "" : std::format("{} have other mission or game data", differing);
+        GiveUp(lacking.empty() || other.empty() ? lacking + other : std::format("{}; {}", lacking, other));
     }
     else if (!waiting)
     {
+        // Older builds say nothing of their data: they play, as before.
+        if (const std::string unchecked = named(MCFileCheck::Unchecked); !unchecked.empty())
+        {
+            SDL_Log("Match: %s can't check their game data against this game's", unchecked.c_str());
+        }
+
         StartMatch();
     }
 

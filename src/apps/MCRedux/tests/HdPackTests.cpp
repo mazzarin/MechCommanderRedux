@@ -8,6 +8,8 @@
 #include "sprite/MCBc7.h"
 #include "sprite/MCHdArt.h"
 #include "platform/MCFileSystem.h"
+#include "platform/MCSdlHandle.h"
+#include "sound/MCHdAudio.h"
 
 namespace
 {
@@ -432,6 +434,71 @@ TEST_CASE("hd art: frames load from an archive, packed or stored, duplicates sha
     GHdArt = previous;
     MCHdArt::SetPackFolder({});
     std::filesystem::remove_all(pack);
+}
+
+/// <summary>
+/// A pack in a folder whose name Windows' ANSI code page can't spell (a user name outside it) is read: its pack.cfg,
+/// archive, PNG frames and audio.cfg are opened by the name's UTF-8, and a broken archive is logged, not thrown over.
+/// Any name passes on the Mac; the Windows build is the one that once read these through the code page.
+/// </summary>
+TEST_CASE("hd art: a pack in a folder named outside the ANSI code page is read")
+{
+    constexpr int32_t Width = 8;
+    constexpr int32_t Height = 4;
+    MCHdArt::Frame frame;
+    frame.Width = Width;
+    frame.Height = Height;
+    frame.Scale = 1;
+    frame.Colors = SpriteLike(frame.Width, frame.Height);
+    frame.Indices.assign(static_cast<size_t>(Width) * Height * MCHdArt::IndexBytes, MCHdArt::HasIndex);
+    const std::vector<uint8_t> file = MCHdArt::EncodeHdf(frame);
+    const std::vector<uint8_t> tile = {1, 2, 3};
+    const std::vector<uint8_t> overlay = {4, 5, 6};
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_hd_unicode_test";
+    const std::filesystem::path pack = scratch / u8"Pilóto 測試";
+    const std::filesystem::path rain = pack / "audio" / "ambience" / "rain.flac";
+    const std::filesystem::path colorPng = pack / "0.png";
+    const std::filesystem::path indexPng = pack / "0_idx.png";
+    std::filesystem::remove_all(scratch);
+    std::filesystem::create_directories(rain.parent_path());
+    const std::vector<uint8_t> archive =
+        BuildArchive({{MCHdArt::TerrainTileName(tile) + ".hdf", StoredDeflate(file), file.size(), std::nullopt}});
+    std::ofstream(pack / "terrain.hda", std::ios::binary)
+        .write(reinterpret_cast<const char*>(archive.data()), static_cast<std::streamsize>(archive.size()));
+    std::ofstream(pack / "overlays.hda", std::ios::binary).put('\0');
+    std::ofstream(pack / "audio" / "audio.cfg") << "FITini\n[HDAudioPack]\nl Format=1\nFITend\n";
+    std::ofstream(rain).put('\0');
+
+    for (const std::filesystem::path& png : {colorPng, indexPng})
+    {
+        const MCSdlHandle<SDL_Surface> surface(SDL_CreateSurface(Width, Height, SDL_PIXELFORMAT_RGBA32));
+        REQUIRE(surface != nullptr);
+        REQUIRE(SDL_FillSurfaceRect(surface.get(), nullptr, 0xff808080));
+        REQUIRE(SDL_SavePNG(surface.get(), MCFileSystem::ToUtf8(png).c_str()));
+    }
+
+    const int previous = GHdArt;
+    GHdArt = 1;
+    REQUIRE(MCHdArt::WritePackFile(pack).has_value());
+    CHECK(std::filesystem::is_regular_file(pack / "pack.cfg"));
+    MCHdArt::SetPackFolder(pack);
+    MCHdAudio::Forget();
+
+    CHECK(MCHdArt::Active());
+    const std::shared_ptr<const MCHdArt::Frame> read = MCHdArt::FindTerrainTile(tile, Width, Height);
+    REQUIRE(read != nullptr);
+    CHECK(read->Indices == frame.Indices);
+    CHECK_EQ(MCHdArt::ArchivesOpen(), 1);
+    CHECK(MCHdArt::FindOverlay(overlay, Width, Height) == nullptr);
+    const auto pngs = MCHdArt::FrameFromPngs(colorPng, indexPng, 1);
+    REQUIRE(pngs.has_value());
+    CHECK_EQ(pngs->Width, Width);
+    CHECK_EQ(MCHdAudio::RainLoop(), std::optional(rain));
+
+    GHdArt = previous;
+    MCHdArt::SetPackFolder({});
+    MCHdAudio::Forget();
+    std::filesystem::remove_all(scratch);
 }
 
 /// <summary>

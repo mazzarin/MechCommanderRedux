@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "lib/MCFastFileSet.h"
+#include "platform/MCFileSystem.h"
 
 std::expected<void, std::string> MCFastFileSet::Open(std::string_view fileName)
 {
@@ -10,7 +11,11 @@ std::expected<void, std::string> MCFastFileSet::Open(std::string_view fileName)
         return std::unexpected(std::move(fastFile.error()));
     }
 
-    _Files.push_back(std::move(*fastFile));
+    // Port: in name order, so which archive's copy of a name is read doesn't hang on the folder listing.
+    std::string name(fileName.substr(fileName.find_last_of("\\/") + 1));
+    const auto at = std::ranges::upper_bound(_Names, name, MCFileSystem::NameLess);
+    _Files.insert(_Files.begin() + (at - _Names.begin()), std::move(*fastFile));
+    _Names.insert(at, std::move(name));
     return {};
 }
 

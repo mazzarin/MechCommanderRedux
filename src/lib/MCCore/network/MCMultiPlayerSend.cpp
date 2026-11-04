@@ -10,6 +10,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCTelemetry.h"
+#include "network/MCGameDataHash.h"
 #include "object/MCArtilleryChunk.h"
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
@@ -700,6 +701,7 @@ int32_t MCMultiPlayer::SendWorldStateUpdate()
 
 int32_t MCMultiPlayer::SendFileInquiry(std::string_view fileName)
 {
+    AskedFileHash = MCMissionDataHash(fileName);
     StartGuaranteedMessage(MCMPMessageType::FileInquiry);
     fileName = fileName.substr(0, MsgBufferSize - sizeof(MCFIGuaranteedMessageHeader) - 1);
     std::memcpy(MsgBuffer.data() + sizeof(MCFIGuaranteedMessageHeader), fileName.data(), fileName.size());

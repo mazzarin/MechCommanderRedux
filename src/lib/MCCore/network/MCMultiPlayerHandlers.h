@@ -56,12 +56,6 @@ void HandleAppWeaponHitUpdate(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppWorldStateUpdate(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerUpdate(uint32_t fromID, std::span<const uint8_t> msg);
 
-/// <summary>
-/// A "checksum" of file <paramref name="fileName"/> (to check the players have the same mission files): its first
-/// four bytes, 0 when it can't be read.
-/// </summary>
-uint32_t GetCheckSum(std::string_view fileName);
-
 void HandleAppFileInquiry(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppFileReport(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppLoadMission(uint32_t fromID, std::span<const uint8_t> msg);

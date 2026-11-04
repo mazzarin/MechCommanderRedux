@@ -166,6 +166,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Data files saved with Unix line endings load correctly, so edited files work.
 - A file name the game gets from a save, a mission or another player can't climb out of these folders with `..` or
   switch drives.
+- **Redux HD.** When two of the game's `.fst` archives hold the same file, the one first by name is read, on every
+  system, as Windows lists them. A loose file still comes before any archive.
 
 ### Mission Editor
 
@@ -281,6 +283,13 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - A message too big for the receive buffer is dropped. In the original it stopped every later message from arriving.
 - The host turns away floods of connections, drops connections that never join, and answers only so many LAN searches
   each second, so it can't be used to flood another machine.
+- **Redux HD.** The host checks that every player has the same mission and game data as its own, so players whose
+  files differ no longer start a match that drifts apart. The original only checked that the mission file was there.
+  Each game sends a hash of the mission's files (its scenario, script, map and purchase list) and of the data every
+  match plays by (the game system, components, objects, pilots, units and scripts), as the game finds them, loose files
+  first; never the art, sounds, movies or HD pack. A player whose data differ is named on the session screen and the
+  mission isn't loaded, as for a player without the file. A player whose game sends no hash (an older one) is named
+  and plays.
 
 ### Graphics and Text
 

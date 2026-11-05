@@ -44,6 +44,9 @@
     <ClCompile Include="tests\ConsoleTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ContentSwapTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ContentUpdateTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

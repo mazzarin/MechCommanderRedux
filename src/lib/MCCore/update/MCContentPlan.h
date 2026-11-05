@@ -45,8 +45,10 @@ namespace MCContentPlan
         /// <summary>The listed file (none removing), and the patch applied.</summary>
         const MCContentList::MCFile* File = nullptr;
         const MCContentList::MCPatch* Patch = nullptr;
-        /// <summary>The hash on disk (none: missing).</summary>
+        /// <summary>The hash on disk (none: missing), and the file's size and time written as found.</summary>
         std::optional<MCSha256::MCDigest> Found;
+        uint64_t FoundSize = 0;
+        int64_t FoundWritten = 0;
     };
 
     struct MCPlan

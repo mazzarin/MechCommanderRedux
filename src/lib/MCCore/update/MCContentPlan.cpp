@@ -136,6 +136,8 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                 }
 
                 step.Found = hashed->Sha256;
+                step.FoundSize = hashed->Size;
+                step.FoundWritten = hashed->Written;
 
                 if (hashed->Sha256 == file.Sha256)
                 {
@@ -205,7 +207,9 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                                         .OnDisk = found.Path,
                                         .File = nullptr,
                                         .Patch = nullptr,
-                                        .Found = hashed->Sha256});
+                                        .Found = hashed->Sha256,
+                                        .FoundSize = hashed->Size,
+                                        .FoundWritten = hashed->Written});
         }
     }
 

@@ -1,5 +1,15 @@
 #pragma once
 
+// Standard headers only: update/MCUpdateDisk.cpp includes this without the precompiled header on Windows.
+#include <array>
+#include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+
 /// <summary>
 /// Port-only: SHA-256, which names an update's files and checks every one the game downloads, stages or keeps
 /// (update/). libsodium computes it (src/lib/libsodium-1.0.22).

@@ -467,9 +467,15 @@
     <ClCompile Include="update\MCContentFolder.cpp" />
     <ClCompile Include="update\MCContentList.cpp" />
     <ClCompile Include="update\MCContentPlan.cpp" />
+    <ClCompile Include="update\MCContentSwap.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
+    <ClCompile Include="update\MCUpdateDisk.cpp">
+      <!-- The update's file operations include windows.h, which must not meet the game's Win32 stand-ins in the
+           precompiled header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="update\MCUpdateJson.cpp" />
     <ClCompile Include="vfx\MCAgEllipse.cpp" />
     <ClCompile Include="vfx\MCAgShapeDraw.cpp" />
@@ -898,9 +904,11 @@
     <ClInclude Include="update\MCContentFolder.h" />
     <ClInclude Include="update\MCContentList.h" />
     <ClInclude Include="update\MCContentPlan.h" />
+    <ClInclude Include="update\MCContentSwap.h" />
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSignedFile.h" />
+    <ClInclude Include="update\MCUpdateDisk.h" />
     <ClInclude Include="update\MCUpdateJson.h" />
     <ClInclude Include="vfx\MCAgShape.h" />
     <ClInclude Include="vfx\MCVfx.h" />

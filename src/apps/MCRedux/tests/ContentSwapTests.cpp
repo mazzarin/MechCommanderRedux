@@ -12,6 +12,7 @@
 
 namespace
 {
+    using MCContentSwap::MCKeep;
     using MCContentSwap::MCOutcome;
 
     /// <summary>The machine stopping: thrown by the disk at the step a test picks.</summary>
@@ -279,9 +280,9 @@ namespace
     }
 
     /// <summary>
-    /// An update of six files: one replaced, one added in a new folder, one removed, one replaced in HD, and two an
-    /// update didn't place (one replaced, one removed: both kept in Redux backup); with each old file, the staged new
-    /// ones and ready.json on the disk, all safe.
+    /// An update of seven files: one replaced, one added in a new folder, one removed, one replaced in HD, two an
+    /// update didn't place (one replaced, one removed: both kept in Redux backup), and one of a set taken out (deleted);
+    /// with each old file, the staged new ones and ready.json on the disk, all safe.
     /// </summary>
     struct MCUpdate
     {
@@ -291,8 +292,9 @@ namespace
             Add("data/missions/new.fit", std::nullopt, "a new mission");
             Add("data/old.fit", "removed in v2", std::nullopt);
             Add("HD/terrain.hda", "terrain v1, bigger", "terrain v2");
-            Add("data/mod.fit", "the folder's own mod", "mod v2", true);
-            Add("data/dropped/own.fit", "the folder's own, dropped", std::nullopt, true);
+            Add("data/mod.fit", "the folder's own mod", "mod v2", MCKeep::Always);
+            Add("data/dropped/own.fit", "the folder's own, dropped", std::nullopt, MCKeep::Always);
+            Add("HD/taken/out.hda", "a set taken out", std::nullopt, MCKeep::Never);
             Before.Release = 1;
             After.Release = 2;
             After.List = MCSha256::Of("list 2");
@@ -303,9 +305,10 @@ namespace
             Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(Journal()), 1};
         }
 
-        void Add(std::string path, std::optional<std::string> old, std::optional<std::string> now, bool backup = false)
+        void Add(std::string path, std::optional<std::string> old, std::optional<std::string> now,
+                 MCKeep keep = MCKeep::IfChanged)
         {
-            MCContentSwap::MCMove move{.Path = path, .Backup = backup};
+            MCContentSwap::MCMove move{.Path = path, .Keep = keep};
             const std::string folded = MCContentList::FoldedPath(path);
 
             if (old)
@@ -319,7 +322,7 @@ namespace
                                         .Sha256 = *move.Old,
                                         .Size = old->size(),
                                         .Written = move.OldWritten,
-                                        .Placed = !backup};
+                                        .Placed = keep != MCKeep::Always};
             }
 
             if (now)
@@ -378,7 +381,7 @@ namespace
 
             for (const MCContentSwap::MCMove& move : Moves)
             {
-                if (move.Backup && Old.at(move.Path))
+                if (move.Keep == MCKeep::Always && Old.at(move.Path))
                 {
                     wanted[GamePath(std::string(MCContentList::BackupFolder) + "/" + move.Path)] = *Old.at(move.Path);
                 }
@@ -684,6 +687,16 @@ TEST_CASE("content swap: a later copy of a path already in Redux backup is kept 
     CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod.fit")).Bytes, std::string("kept by an earlier update"));
     CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod (2).fit")).Bytes, std::string("kept by the one after"));
     CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod (3).fit")).Bytes, std::string("the folder's own mod"));
+}
+
+TEST_CASE("content swap: a set taken out is deleted, a file of it changed since staging too")
+{
+    MCUpdate update;
+    update.Files[GamePath("HD/taken/out.hda")] = {"changed since staging", 9};
+    MCCrashDisk disk(update.Files);
+    REQUIRE(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK(!disk.Files().contains(GamePath("HD/taken/out.hda")));
+    CHECK(update.BackupKept(disk.Files()));
 }
 
 TEST_CASE("content swap: a folder put in a file's place since staging puts the old set back")

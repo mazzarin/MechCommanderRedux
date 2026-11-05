@@ -19,8 +19,8 @@ class MCUpdateLock;
 /// 3. Each new file is moved from <c>staged/</c> into place; the folders flushed.
 /// 4. The installed record is written durably: the swap is committed. The old files an update didn't place, as placed
 ///    (the folder's own, or the player's: planned so, or changed since staging), move from <c>replaced/</c> into
-///    <c>Redux backup/</c> at their paths, the folders flushed; then <c>replaced/</c> and <c>staged/</c> go, then
-///    the journal.
+///    <c>Redux backup/</c> at their paths, the folders flushed, but those of a set taken out (<see cref="MCKeep"/>);
+///    then <c>replaced/</c> and <c>staged/</c> go, then the journal.
 ///
 /// A crash at any step leaves the journal, and the next start finishes the swap, judging each file by what's at its
 /// path (its size, else its hash): old, new, missing, or another (the player's, set aside and kept as an old one is).
@@ -52,6 +52,17 @@ namespace MCContentSwap
     /// </summary>
     constexpr std::chrono::seconds QuittingWait{5};
 
+    /// <summary>Whether a file the swap sets aside is kept in <c>Redux backup/</c> once the swap is committed.</summary>
+    enum class MCKeep : uint8_t
+    {
+        /// <summary>Only when it isn't the old file planned (the player's, changed since staging): an update placed it.</summary>
+        IfChanged,
+        /// <summary>Always: an update didn't place it as it is (the folder's own, a mod, a change, damage).</summary>
+        Always,
+        /// <summary>Never: its set was taken out (HD OPTIONS' REMOVE), which deletes its files whatever they hold.</summary>
+        Never,
+    };
+
     /// <summary>A file the swap moves: added (no old), replaced, or removed (no new).</summary>
     struct MCMove
     {
@@ -63,8 +74,8 @@ namespace MCContentSwap
         int64_t OldWritten = 0;
         std::optional<MCSha256::MCDigest> New;
         uint64_t NewSize = 0;
-        /// <summary>The old file is kept in <c>Redux backup/</c> once the swap is committed: an update didn't place it.</summary>
-        bool Backup = false;
+        /// <summary>Whether the old file, set aside, is kept in <c>Redux backup/</c>.</summary>
+        MCKeep Keep = MCKeep::IfChanged;
     };
 
     struct MCJournal

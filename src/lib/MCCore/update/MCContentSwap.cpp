@@ -25,7 +25,10 @@ namespace
     constexpr std::string_view OldWrittenKey = "oldWritten";
     constexpr std::string_view NewKey = "new";
     constexpr std::string_view NewSizeKey = "newSize";
-    constexpr std::string_view BackupKey = "backup";
+    /// <summary>A move's MCKeep, when not IfChanged: "always" or "never".</summary>
+    constexpr std::string_view KeepKey = "keep";
+    constexpr std::string_view KeepAlways = "always";
+    constexpr std::string_view KeepNever = "never";
     /// <summary>A later copy kept in Redux backup beside a path's first: "name (2).ext", then "(3)", up to the last.</summary>
     constexpr int FirstNumberedCopy = 2;
     constexpr int LastNumberedCopy = 999;
@@ -360,8 +363,8 @@ namespace
 
         /// <summary>
         /// Once committed: each file set aside that an update didn't place, as placed (planned so, or another found at
-        /// the swap: the player's), moves from replaced/ into Redux backup at its path; the rest goes with replaced/.
-        /// Empty, or what failed (the next start tries again).
+        /// the swap: the player's), moves from replaced/ into Redux backup at its path; the rest, and every file of a
+        /// set taken out, goes with replaced/. Empty, or what failed (the next start tries again).
         /// </summary>
         std::string KeepSetAside()
         {
@@ -372,7 +375,12 @@ namespace
                     continue;
                 }
 
-                if (!move.Backup)
+                if (move.Keep == MCKeep::Never)
+                {
+                    continue;
+                }
+
+                if (move.Keep == MCKeep::IfChanged)
                 {
                     const auto at = What(Replaced(move), move);
 
@@ -506,9 +514,9 @@ namespace
             json[std::string(NewSizeKey)] = move.NewSize;
         }
 
-        if (move.Backup)
+        if (move.Keep != MCKeep::IfChanged)
         {
-            json[std::string(BackupKey)] = true;
+            json[std::string(KeepKey)] = move.Keep == MCKeep::Always ? KeepAlways : KeepNever;
         }
 
         return json;
@@ -544,16 +552,16 @@ namespace
             move.NewSize = Count(json, NewSizeKey);
         }
 
-        if (json.contains(BackupKey))
+        if (json.contains(KeepKey))
         {
-            const MCJson& backup = Member(json, BackupKey);
+            const std::string keep = Text(json, KeepKey);
 
-            if (!backup.is_boolean())
+            if (keep != KeepAlways && keep != KeepNever)
             {
-                Fail("\"{}\" isn't true or false", BackupKey);
+                Fail("\"{}\" is \"{}\", not \"{}\" or \"{}\"", KeepKey, keep, KeepAlways, KeepNever);
             }
 
-            move.Backup = backup.get<bool>();
+            move.Keep = keep == KeepAlways ? MCKeep::Always : MCKeep::Never;
         }
 
         if (!move.Old && !move.New)

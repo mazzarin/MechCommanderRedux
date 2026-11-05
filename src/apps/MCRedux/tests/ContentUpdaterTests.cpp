@@ -711,8 +711,9 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CHECK(!release.Armed());
 }
 
-TEST_CASE("content updater: HD removed and got again at the release installed, its size recorded; the player's version "
-          "of an HD file kept in Redux backup, a file of their own left")
+TEST_CASE(
+    "content updater: HD removed and got again at the release installed, its size recorded; removed, the player's "
+    "version of an HD file is deleted too, a file of their own left")
 {
     MCHostedRelease release("sets");
     const std::filesystem::path& game = release.Game.Path();
@@ -757,23 +758,15 @@ TEST_CASE("content updater: HD removed and got again at the release installed, i
     CHECK(InstalledSets(release) == WithHd);
     CHECK_EQ(MCInstalled::Read(game)->Files.size(), size_t{4});
 
-    // The player's version of an HD file goes when HD goes, kept in Redux backup; a file of their own in the folder
-    // stays, and so does the folder.
+    // HD removed deletes the player's version of an HD file too, keeping nothing (GET downloads it again); a file of
+    // their own in the folder stays, and so does the folder.
     Write(game / "HD" / "terrain.hda", "my own terrain");
     Write(game / "HD" / "mine.hda", "added by the player");
     ChangeSets(release, WithoutHd);
     CHECK(!std::filesystem::exists(game / "HD" / "terrain.hda"));
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK(!std::filesystem::exists(game / "Redux backup"));
     CHECK_EQ(Read(game / "HD" / "mine.hda"), std::string("added by the player"));
     CHECK(InstalledSets(release) == WithoutHd);
-
-    // Again: the backup's first copy stays (the uninstall puts it back), the later one kept beside it.
-    ChangeSets(release, WithHd);
-    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
-    Write(game / "HD" / "terrain.hda", "my terrain again");
-    ChangeSets(release, WithoutHd);
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain (2).hda"), std::string("my terrain again"));
 
     // A sets file that can't be read is left aside: the copy keeps the sets its record has.
     Write(game / "Redux update" / "sets.json", "not json");

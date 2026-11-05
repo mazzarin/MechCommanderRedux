@@ -245,7 +245,7 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
     REQUIRE(plan.has_value());
     const auto count = [&](MCAction action)
     { return std::ranges::count(plan->Steps, action, &MCContentPlan::MCStep::Action); };
-    const auto backedUp = std::ranges::count(plan->Steps, true, &MCContentPlan::MCStep::Backup);
+    const auto backedUp = std::ranges::count(plan->Steps, MCContentSwap::MCKeep::Always, &MCContentPlan::MCStep::Keep);
     std::cout << std::format("  release {} ({}): {} kept, {} patched, {} fetched, {} removed, {} to Redux backup; {} "
                              "bytes to download in {} zips\n",
                              release.Number, release.Version, count(MCAction::Keep), count(MCAction::Patch),

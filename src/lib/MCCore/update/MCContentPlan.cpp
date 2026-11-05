@@ -54,6 +54,12 @@ namespace
         return had != nullptr && had->Placed && had->Sha256 == hash;
     }
 
+    /// <summary>Whether the file found, replaced or removed, is kept in Redux backup: when an update didn't place it.</summary>
+    MCContentSwap::MCKeep KeepUnlessPlaced(const MCInstalled::MCFile* had, const MCSha256::MCDigest& hash)
+    {
+        return PlacedAsIs(had, hash) ? MCContentSwap::MCKeep::IfChanged : MCContentSwap::MCKeep::Always;
+    }
+
     const MCInstalled::MCFile* Recorded(const MCInstalled::MCRecord& installed, std::string_view folded)
     {
         const auto found = installed.Files.find(folded);
@@ -148,7 +154,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                     const auto patch = std::ranges::find(file.Patches, hashed->Sha256, &MCContentList::MCPatch::From);
                     step.Action = patch != file.Patches.end() ? MCAction::Patch : MCAction::Fetch;
                     step.Patch = patch != file.Patches.end() ? &*patch : nullptr;
-                    step.Backup = !PlacedAsIs(had, hashed->Sha256);
+                    step.Keep = KeepUnlessPlaced(had, hashed->Sha256);
                 }
 
                 break;
@@ -200,7 +206,9 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                                     .Found = hashed->Sha256,
                                     .FoundSize = hashed->Size,
                                     .FoundWritten = hashed->Written,
-                                    .Backup = !PlacedAsIs(&had, hashed->Sha256)});
+                                    // A set taken out goes whole: GET downloads it again.
+                                    .Keep = sets.contains(had.Set) ? KeepUnlessPlaced(&had, hashed->Sha256)
+                                                                   : MCContentSwap::MCKeep::Never});
     }
 
     for (const MCContentList::MCZip& zip : list.Zips)

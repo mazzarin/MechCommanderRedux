@@ -1,6 +1,7 @@
 #pragma once
 
 #include "update/MCContentList.h"
+#include "update/MCContentSwap.h"
 #include "update/MCInstalled.h"
 
 class MCContentFolder;
@@ -15,7 +16,8 @@ class MCContentFolder;
 ///
 /// A recorded file the release no longer lists, or whose set the copy no longer has, is removed. A file replaced or
 /// removed that isn't one an update placed, as placed (the folder's own, or one changed since), is kept in
-/// <c>Redux backup</c> (update/MCContentSwap.h); unlisted files are never touched. Only the zips holding a fetched file
+/// <c>Redux backup</c> (update/MCContentSwap.h), but a set taken out (HD OPTIONS' REMOVE) is deleted whatever its
+/// files hold; unlisted files are never touched. Only the zips holding a fetched file
 /// are downloaded. A copy several releases behind plans the same way, against the current list alone.
 /// </summary>
 namespace MCContentPlan
@@ -46,8 +48,8 @@ namespace MCContentPlan
         std::optional<MCSha256::MCDigest> Found;
         uint64_t FoundSize = 0;
         int64_t FoundWritten = 0;
-        /// <summary>Replaced or removed, the file found is kept in <c>Redux backup</c>: an update didn't place it.</summary>
-        bool Backup = false;
+        /// <summary>Replaced or removed, whether the file found is kept in <c>Redux backup</c>.</summary>
+        MCContentSwap::MCKeep Keep = MCContentSwap::MCKeep::IfChanged;
     };
 
     struct MCPlan

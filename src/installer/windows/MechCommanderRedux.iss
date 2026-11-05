@@ -185,8 +185,13 @@ Type: dirifempty; Name: "{app}"
 
 [Code]
 const
-  // Written and deleted to learn whether the player can change the folder.
-  WriteTestName = 'MechCommander Redux setup.tmp';
+  // Written and deleted to learn whether the player can change the folder: a name of its own each time (the time to the
+  // millisecond and a random number), one that isn't there, so nothing put in the folder beforehand can make the test
+  // fail and the setup ask for an administrator's rights it doesn't need.
+  WriteTestName = 'MechCommander Redux setup %s %d.tmp';
+  WriteTestTime = 'yyyymmddhhnnsszzz';
+  WriteTestRange = 1000000000;
+  WriteTestTries = 8;
   // The bytes in a GB, decimal, as the game's own screens show sizes (MCUpdateWork::SizeText).
   BytesPerGB = 1000000000;
   // Waiting for a process to end: OpenProcess's SYNCHRONIZE, and WaitForSingleObject's WAIT_OBJECT_0.
@@ -492,12 +497,27 @@ end;
 function CanChange(const Folder: String): Boolean;
 var
   TestFile: String;
+  Attempt: Integer;
 begin
-  TestFile := AddBackslash(Folder) + WriteTestName;
-  Result := SaveStringToFile(TestFile, '', False);
+  Result := False;
 
-  if Result and not DeleteFile(TestFile) then
-    Log(Format('Couldn''t delete the write test %s', [TestFile]));
+  for Attempt := 1 to WriteTestTries do
+  begin
+    TestFile := AddBackslash(Folder) +
+                Format(WriteTestName, [GetDateTimeString(WriteTestTime, '-', '-'), Random(WriteTestRange)]);
+
+    if not FileOrDirExists(TestFile) then
+    begin
+      Result := SaveStringToFile(TestFile, '', False);
+
+      if Result and not DeleteFile(TestFile) then
+        Log(Format('Couldn''t delete the write test %s', [TestFile]));
+
+      Exit;
+    end;
+  end;
+
+  Log(Format('No free name for the write test in %s', [Folder]));
 end;
 
 // Folder quoted for a command line: a backslash just before the closing quote would escape it.
@@ -778,8 +798,10 @@ end;
 // as FolderRefusal's folders not the game's own: FolderRefusal reads the path's text, and a link on the way to it
 // (LinkOnTheWay) would lead the grant elsewhere, into Windows' folder say.
 // Known: a folder on the way swapped for a link after this look (while Windows' prompt asks) isn't seen. Setup asks only
-// when the player can't change the nearest folder of the way that is there (ExistingFolder), so the folders Setup makes
-// in it aren't the player's to swap.
+// when the player can't change the nearest folder of the way that is there (ExistingFolder: its write test can't be
+// made to fail, CanChange), so the folders Setup makes in it aren't the player's to swap; a folder above that one could
+// be swapped only by a program already running as the player, which Windows' prompt (not a security boundary between a
+// user's programs and that user's own rights) doesn't keep out anyway.
 function MayGrant(const Folder: String): Boolean;
 begin
   Result := not LinkOnTheWay(Folder);

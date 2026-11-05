@@ -493,6 +493,10 @@ int main(int argc, char** argv)
             options->GameCommandLine = std::move(*rejoin);
         }
     }
+    else if (StartsInLobby(options->GameCommandLine))
+    {
+        MCRejoinNote::Discard(options->UserFolder);
+    }
 
     // A build that updates its content carries the root keys (none until the root key is made).
     std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();

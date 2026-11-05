@@ -906,6 +906,28 @@ auto MCUpdater::RunningVersion() -> std::string
     return Backend != nullptr ? Backend->RunningVersion() : std::string();
 }
 
+auto MCUpdater::ExpectedBuild() -> std::optional<uint64_t>
+{
+    if (Content)
+    {
+        return Offer && Offer->ProgramBuild ? *Offer->ProgramBuild : Content->RunningBuild;
+    }
+
+    // The backend's version as shown, "0.2.2 (480)": the build in its brackets.
+    const std::string& shown = Current.Version;
+    const size_t open = shown.rfind('(');
+
+    if (open == std::string::npos || !shown.ends_with(')'))
+    {
+        return std::nullopt;
+    }
+
+    const char* const last = shown.data() + shown.size() - 1;
+    uint64_t build = 0;
+    const auto [end, error] = std::from_chars(shown.data() + open + 1, last, build);
+    return error == std::errc() && end == last ? std::optional<uint64_t>(build) : std::nullopt;
+}
+
 auto MCUpdater::CheckAtStart() -> void
 {
     if (!Available() || CheckedAtStart)

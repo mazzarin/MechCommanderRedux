@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "main/MCMissionGlobals.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFatal.h"
@@ -263,60 +264,65 @@ int32_t MCMultiPlayer::SetupLobbyGame()
 
     if (result == 0)
     {
-        IsMPlayerGame = true;
-        IsServer = SessionManager->IsHost;
-        IsHost = IsServer;
-
-        if (SessionManager->MyPlayer() != nullptr)
-        {
-            if (IsServer)
-            {
-                ServerID = SessionManager->MyPlayer()->Id;
-                HostID = ServerID;
-            }
-            else
-            {
-                ServerID = SessionManager->ServerID;
-            }
-        }
-
-        if (SessionManager->CurrentConnection != MCNetProtocol::Lobby)
-        {
-            NumLanPlayers = static_cast<int32_t>(SessionManager->GetPlayers(nullptr).size());
-        }
-
-        if (IsServer)
-        {
-            SessionManager->CreateGroup(AllPlayerGroupID, AllPlayerGroupName, {}, 0);
-            SessionManager->CreateGroup(InnerSphereGroupID, InnerSphereGroupName, {}, 0);
-            SessionManager->CreateGroup(ClanGroupID, ClanGroupName, {}, 0);
-
-            if (HomeTeam == 0)
-            {
-                SessionManager->AddPlayerToGroup(InnerSphereGroupID, 0);
-                HomeTeamGroupID = InnerSphereGroupID;
-                EnemyTeamGroupID = ClanGroupID;
-            }
-            else if (HomeTeam == 1)
-            {
-                SessionManager->AddPlayerToGroup(ClanGroupID, 0);
-                HomeTeamGroupID = ClanGroupID;
-                EnemyTeamGroupID = InnerSphereGroupID;
-            }
-
-            if (CheckInId == -1)
-            {
-                CheckInId = 0;
-            }
-
-            InitUpdateFrequencies();
-            HandleOwnMessages = true;
-            SendPlayerSetup(0, InnerSphereGroupID, ClanGroupID);
-            HandleOwnMessages = false;
-        }
+        StartLobbyGame();
     }
 
     return static_cast<int32_t>(result);
+}
+
+void MCMultiPlayer::StartLobbyGame()
+{
+    IsMPlayerGame = true;
+    IsServer = SessionManager->IsHost;
+    IsHost = IsServer;
+
+    if (SessionManager->MyPlayer() != nullptr)
+    {
+        if (IsServer)
+        {
+            ServerID = SessionManager->MyPlayer()->Id;
+            HostID = ServerID;
+        }
+        else
+        {
+            ServerID = SessionManager->ServerID;
+        }
+    }
+
+    if (SessionManager->CurrentConnection != MCNetProtocol::Lobby)
+    {
+        NumLanPlayers = static_cast<int32_t>(SessionManager->GetPlayers(nullptr).size());
+    }
+
+    if (IsServer)
+    {
+        SessionManager->CreateGroup(AllPlayerGroupID, AllPlayerGroupName, {}, 0);
+        SessionManager->CreateGroup(InnerSphereGroupID, InnerSphereGroupName, {}, 0);
+        SessionManager->CreateGroup(ClanGroupID, ClanGroupName, {}, 0);
+
+        if (HomeTeam == 0)
+        {
+            SessionManager->AddPlayerToGroup(InnerSphereGroupID, 0);
+            HomeTeamGroupID = InnerSphereGroupID;
+            EnemyTeamGroupID = ClanGroupID;
+        }
+        else if (HomeTeam == 1)
+        {
+            SessionManager->AddPlayerToGroup(ClanGroupID, 0);
+            HomeTeamGroupID = ClanGroupID;
+            EnemyTeamGroupID = InnerSphereGroupID;
+        }
+
+        if (CheckInId == -1)
+        {
+            CheckInId = 0;
+        }
+
+        InitUpdateFrequencies();
+        HandleOwnMessages = true;
+        SendPlayerSetup(0, InnerSphereGroupID, ClanGroupID);
+        HandleOwnMessages = false;
+    }
 }
 
 // ---- rosters -------------------------------------------------------------------------------------------------------
@@ -840,25 +846,14 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
 
     if (!InLogistics)
     {
-        if (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
-            GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen)
+        // Port (personal): a player restarting into an update comes back (network/MCLobbyUpdate.h).
+        if ((GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
+             GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen) &&
+            !MCLobbyUpdate::LeftToUpdate(playerID))
         {
-            const std::string reason = LoadGameString(!LaunchedFromLobby ? 0x35f : 0x365, 0xfe);
-            const auto player = SessionManager->GetPlayer(playerID);
             // Port fix: the player is already gone when DirectPlay reports it; the original printed its freed name.
-            MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-            dialog.SetText(std::format("{} {}", player != nullptr ? player->Name : std::string(), reason));
-            dialog.SetTwoButton(false);
-            dialog.Callback = CancelBool;
-            dialog.OkButton->Callback().SetExec(nullptr);
-            char upArt[] = "bh_okay.tga";
-            char downArt[] = "bg_okay.tga";
-            dialog.OkButton->SetUpPicture(upArt);
-            dialog.OkButton->SetDownPicture(downArt);
-            dialog.OkButton->Disabled = false;
-            dialog.OkButton->Draw();
-            dialog.Timeout = 15000;
-            dialog.Activate();
+            const auto player = SessionManager->GetPlayer(playerID);
+            ShowPlayerLeft(player != nullptr ? player->Name : std::string());
         }
 
         return;
@@ -974,6 +969,24 @@ void MCMultiPlayer::StartPlainMessage(MCMPMessageType type)
 }
 
 // ---- the lobby's status dialog -------------------------------------------------------------------------------------
+
+void ShowPlayerLeft(std::string_view name)
+{
+    const std::string reason = LoadGameString(!LaunchedFromLobby ? 0x35f : 0x365, 0xfe);
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    dialog.SetText(std::format("{} {}", name, reason));
+    dialog.SetTwoButton(false);
+    dialog.Callback = CancelBool;
+    dialog.OkButton->Callback().SetExec(nullptr);
+    char upArt[] = "bh_okay.tga";
+    char downArt[] = "bg_okay.tga";
+    dialog.OkButton->SetUpPicture(upArt);
+    dialog.OkButton->SetDownPicture(downArt);
+    dialog.OkButton->Disabled = false;
+    dialog.OkButton->Draw();
+    dialog.Timeout = 15000;
+    dialog.Activate();
+}
 
 void ShowConnectStatus()
 {

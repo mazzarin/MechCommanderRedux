@@ -23,6 +23,9 @@ namespace
 {
     using namespace MCDirectPlayGuids;
 
+    /// <summary>TryLobbyJoin's result when no room to join was found (yet).</summary>
+    constexpr int32_t LobbyRoomNotFound = 1;
+
     /// <summary>The enumeration flags GetSessions and Dial ask DirectPlay for.</summary>
     constexpr uint32_t EnumSessionFlags =
         DPENUMSESSIONS_AVAILABLE | DPENUMSESSIONS_ASYNC | DPENUMSESSIONS_PASSWORDREQUIRED | DPENUMSESSIONS_RETURNSTATUS;
@@ -365,53 +368,20 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
             showStatus();
         }
 
-        std::shared_ptr<MCFidpSession> targetSession;
         // A press from before the wait doesn't cancel it.
         MCInput::GetAsyncKeyState(VK_ESCAPE);
 
         for (int attempt = 0; attempt < 30; ++attempt)
         {
-            const auto sessions = GetSessions();
-
-            if (sessions.has_value() && !sessions->empty())
+            if (const int32_t tried = TryLobbyJoin(playerName); tried != LobbyRoomNotFound)
             {
-                if (!LobbyLaunchArgs.SessionName.empty())
+                if (hideStatus)
                 {
-                    for (const auto& s : *sessions)
-                    {
-                        if (s->Name == LobbyLaunchArgs.SessionName)
-                        {
-                            targetSession = s;
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    targetSession = sessions->front();
+                    hideStatus();
                 }
 
-                if (targetSession != nullptr)
-                {
-                    // A session that refuses the join (full, or gone) is not tried again.
-                    const int32_t joinResult = JoinSession(targetSession->SessionDesc.guidInstance, playerName);
-
-                    if (hideStatus)
-                    {
-                        hideStatus();
-                    }
-
-                    if (joinResult != 0)
-                    {
-                        SDL_Log("SetupLobbyConnection: could not join \"%s\" (result %d)", targetSession->Name.c_str(),
-                                joinResult);
-                        return DPERR_NOSESSIONS;
-                    }
-
-                    IsHost = false;
-                    SDL_Log("SetupLobbyConnection: joined session \"%s\"", targetSession->Name.c_str());
-                    return DP_OK;
-                }
+                // A session that refuses the join (full, or gone) is not tried again.
+                return tried == 0 ? DP_OK : DPERR_NOSESSIONS;
             }
 
             // The window stays responsive while it waits, and Escape (or closing it) gives up.
@@ -434,8 +404,116 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
         }
 
         SDL_Log("SetupLobbyConnection: timed out connecting to %s", targetAddr.c_str());
+        LastRoomRefusal = LobbyRoomRefusal();
         return DPERR_NOSESSIONS;
     }
+}
+
+int32_t MCSessionManager::TryLobbyJoin(std::string_view playerName)
+{
+    const auto sessions = GetSessions();
+
+    if (!sessions.has_value() || sessions->empty())
+    {
+        return LobbyRoomNotFound;
+    }
+
+    std::shared_ptr<MCFidpSession> targetSession;
+
+    if (!LobbyLaunchArgs.SessionName.empty())
+    {
+        const auto named = std::ranges::find_if(*sessions, [](const std::shared_ptr<MCFidpSession>& session)
+                                                { return session->Name == LobbyLaunchArgs.SessionName; });
+        targetSession = named != sessions->end() ? *named : nullptr;
+    }
+    else
+    {
+        targetSession = sessions->front();
+    }
+
+    if (targetSession == nullptr)
+    {
+        return LobbyRoomNotFound;
+    }
+
+    const int32_t joinResult = JoinSession(targetSession->SessionDesc.guidInstance, playerName);
+
+    if (joinResult != 0)
+    {
+        SDL_Log("SetupLobbyConnection: could not join \"%s\" (result %d)", targetSession->Name.c_str(), joinResult);
+        LastRoomRefusal = LobbyRoomRefusal();
+        return joinResult == LobbyRoomNotFound ? -1 : joinResult;
+    }
+
+    IsHost = false;
+    SDL_Log("SetupLobbyConnection: joined session \"%s\"", targetSession->Name.c_str());
+    return 0;
+}
+
+MCRoomRefusal MCSessionManager::LobbyRoomRefusal()
+{
+    if (DirectPlay == nullptr)
+    {
+        return MCRoomRefusal::Gone;
+    }
+
+    // Every session there, whatever its state: the available ones alone are what GetSessions lists.
+    std::optional<DPSESSIONDESC2> room;
+    DPSESSIONDESC2 desc{};
+    desc.dwSize = sizeof(DPSESSIONDESC2);
+    desc.guidApplication = _AppGuid;
+    DirectPlay->EnumSessions(
+        desc, 0,
+        [&](const DPSESSIONDESC2& session, uint32_t flags)
+        {
+            if ((flags & DPESC_TIMEDOUT) != 0)
+            {
+                return false;
+            }
+
+            if (LobbyLaunchArgs.SessionName.empty() || session.SessionName == LobbyLaunchArgs.SessionName)
+            {
+                room = session;
+                return false;
+            }
+
+            return true;
+        },
+        EnumSessionFlags & ~DPENUMSESSIONS_AVAILABLE);
+
+    if (!room.has_value())
+    {
+        return MCRoomRefusal::Gone;
+    }
+
+    if ((room->dwFlags & (DPSESSION_NEWPLAYERSDISABLED | DPSESSION_JOINDISABLED)) != 0)
+    {
+        return MCRoomRefusal::Started;
+    }
+
+    return room->dwCurrentPlayers >= room->dwMaxPlayers ? MCRoomRefusal::Full : MCRoomRefusal::Gone;
+}
+
+void MCSessionManager::AdmitNewPlayers(bool admit)
+{
+    const std::shared_ptr<MCFidpSession> session = CurrentSession();
+
+    if (session == nullptr || !IsHost || DirectPlay == nullptr)
+    {
+        return;
+    }
+
+    // The game's own lock (_SessionLocked: how its messages go out once the room is closed) stays as it is.
+    if (admit)
+    {
+        session->SessionDesc.dwFlags &= ~DPSESSION_NEWPLAYERSDISABLED;
+    }
+    else
+    {
+        session->SessionDesc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
+    }
+
+    DirectPlay->SetSessionDesc(session->SessionDesc, 0);
 }
 
 int32_t MCSessionManager::Dial()

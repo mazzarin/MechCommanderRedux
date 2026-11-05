@@ -775,6 +775,9 @@
     <ClCompile Include="network\MCGameDataHash.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCLobbyUpdate.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMPGameConfiguration.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -2080,6 +2083,9 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="network\MCGameDataHash.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCLobbyUpdate.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMPGameConfiguration.h">

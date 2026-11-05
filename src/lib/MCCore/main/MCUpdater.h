@@ -197,6 +197,12 @@ namespace MCUpdater
     /// <summary>The version running, as shown, or empty without a backend.</summary>
     std::string RunningVersion();
 
+    /// <summary>
+    /// The build the game starts as once the update ready goes in (RESTART): the program's new build, or the one running
+    /// for content alone; none when it can't be told (the program's backend alone, its version shown without one).
+    /// </summary>
+    std::optional<uint64_t> ExpectedBuild();
+
     /// <summary>The game started: looks for a newer version (once a run).</summary>
     void CheckAtStart();
 

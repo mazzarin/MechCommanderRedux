@@ -39,6 +39,7 @@
 #include "main/MCGameStrings.h"
 #include "mission/MCMissionResultsScreen.h"
 #include "mission/MCScenario.h"
+#include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
 #include "main/MCGameContext.h"
 #include "object/MCGameSystemReader.h"
@@ -377,16 +378,8 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
 
         if (MultiPlayer()->SetupLobbyGame() != 0)
         {
-            std::string text = LoadGameString(0x370, 0xfe);
-            MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-            dialog.SetText(text.data());
-            dialog.SetTwoButton(false);
-            dialog.OkButton->Callback().SetExec(CancelToMPlayer);
-            dialog.OkButton->SetUpPicture(const_cast<char*>("bh_okay.tga"));
-            dialog.OkButton->SetDownPicture(const_cast<char*>("bg_okay.tga"));
-            dialog.OkButton->Disabled = false;
-            dialog.OkButton->Draw();
-            dialog.Activate();
+            // The original's message; port (personal): a rejoin's says why (network/MCLobbyUpdate.h). OK ends the game.
+            MCLobbyUpdate::JoinFailed();
             GlobalLog()->SetCurrentScreen(GlobalLog()->MainScreen);
             GlobalLog()->LogisticsState = 1;
             GlobalLog()->ShowLogScreen(false, false);
@@ -513,8 +506,10 @@ auto MCMission::Run() -> int32_t
                 Logistics->ShowLogScreen(true, false);
             }
 
-            // Port (personal): the reports' notice or question, once due and the main menu is free.
+            // Port (personal): the reports' notice or question, once due and the main menu is free; a lobby's room
+            // through a restart into an update (network/MCLobbyUpdate.h).
             ShowReportsNotice();
+            MCLobbyUpdate::Frame();
 
             EscapedSmackerMovie = 0;
             MovieOver = 0;

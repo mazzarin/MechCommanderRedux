@@ -229,6 +229,12 @@ public:
     /// <summary>Connects the lobby's session; the server creates the groups and sends its setup.</summary>
     int32_t SetupLobbyGame();
 
+    /// <summary>
+    /// Port: SetupLobbyGame once the lobby's session is joined or hosted (also a guest's rejoin, network/MCLobbyUpdate.h):
+    /// this game's part, and the server's groups and setup.
+    /// </summary>
+    void StartLobbyGame();
+
     /// <summary>Adds a mover this machine controls (at most 12); stores its index in the mover.</summary>
     void AddToLocalMovers(std::shared_ptr<MCMover> mover);
 
@@ -584,6 +590,12 @@ public:
 
 /// <summary>The multiplayer game, or null in a single-player game.</summary>
 std::shared_ptr<MCMultiPlayer> MultiPlayer();
+
+/// <summary>
+/// Player <paramref name="name"/> left the session screen: says so, and (OK, or 15 seconds) back to the main menu, or
+/// out of a lobby's game.
+/// </summary>
+void ShowPlayerLeft(std::string_view name);
 
 /// <summary>Shows the "connecting" dialog of the logistics screen.</summary>
 void ShowConnectStatus();

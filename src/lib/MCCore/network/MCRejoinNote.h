@@ -49,6 +49,12 @@ namespace MCRejoinNote
     /// </summary>
     std::optional<std::string> TakeAtStart(const std::filesystem::path& userFolder, uint64_t build, int64_t now);
 
+    /// <summary>
+    /// A lobby's start with its own words (an update with no program restarts the game as it was started): any note in
+    /// <paramref name="userFolder"/> was for it, and goes.
+    /// </summary>
+    void Discard(const std::filesystem::path& userFolder);
+
     /// <summary>Now, in seconds since 1970 (the system's clock, as the note keeps it).</summary>
     int64_t Now();
 }

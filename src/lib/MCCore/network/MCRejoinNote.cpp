@@ -179,6 +179,17 @@ auto MCRejoinNote::TakeAtStart(const std::filesystem::path& userFolder, uint64_t
     return note->CommandLine;
 }
 
+auto MCRejoinNote::Discard(const std::filesystem::path& userFolder) -> void
+{
+    const std::filesystem::path path = userFolder / FileName;
+    std::error_code error;
+
+    if (std::filesystem::exists(path, error))
+    {
+        Delete(path, "a lobby's start with its own words");
+    }
+}
+
 auto MCRejoinNote::Now() -> int64_t
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())

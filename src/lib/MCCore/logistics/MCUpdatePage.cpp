@@ -13,6 +13,7 @@
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
 #include "main/MCUpdater.h"
+#include "network/MCLobbyUpdate.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -630,7 +631,15 @@ namespace
                                    static_cast<double>(status.Expected) / Megabyte);
             }
             case MCStage::Ready:
+            {
+                // In a lobby's room, what RESTART does there (network/MCLobbyUpdate.h).
+                if (std::string room = MCLobbyUpdate::ReadyText(); !room.empty())
+                {
+                    return room;
+                }
+
                 return "DOWNLOADED: IT INSTALLS WHEN THE GAME RESTARTS OR QUITS.";
+            }
             case MCStage::Installing:
                 return "INSTALLING: THE GAME STARTS AGAIN BY ITSELF.";
             case MCStage::Failed:
@@ -923,10 +932,19 @@ namespace
         ShowButton(RestartButton, stage == MCStage::Ready);
     }
 
-    /// <summary>INSTALL (the download starts) and RESTART (the game quits so the update installs).</summary>
+    /// <summary>INSTALL: the download starts.</summary>
     void Install()
     {
         MCUpdater::Answer(MCAnswer::Install);
+    }
+
+    /// <summary>RESTART: the game quits so the update installs; in a lobby's room, it comes back to the room.</summary>
+    void Restart()
+    {
+        if (!MCLobbyUpdate::Restart())
+        {
+            MCUpdater::Answer(MCAnswer::Install);
+        }
     }
 
     /// <summary>SKIP: this version is never offered again, and the page closes.</summary>
@@ -976,7 +994,7 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     constexpr std::array<MCPageButton, 3> buttons = {
         MCPageButton{InstallLabel, Install},
         MCPageButton{SkipLabel, Skip},
-        MCPageButton{RestartLabel, Install},
+        MCPageButton{RestartLabel, Restart},
     };
 
     std::vector<std::weak_ptr<MCLogTextButton>> made;

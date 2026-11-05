@@ -6,9 +6,11 @@
 #include "TestGame.h"
 #include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
+#include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogTextButton.h"
+#include "logistics/MCPlayerNameObject.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
@@ -199,10 +201,10 @@ namespace
     }
 
     /// <summary>
-    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guest"/> join it, and opens the
-    /// session screen (the host's GO).
+    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guests"/> join it, and opens the
+    /// session screen (the host's GO, which closes the room).
     /// </summary>
-    bool HostLobbyRoom(std::string_view port, Guest& guest)
+    bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
     {
         if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
             MultiPlayer()->SessionManager->DirectPlay == nullptr)
@@ -210,9 +212,12 @@ namespace
             return false;
         }
 
-        if (!guest.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", port)))
+        for (Guest& guest : guests)
         {
-            return false;
+            if (!guest.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", port)))
+            {
+                return false;
+            }
         }
 
         Settle();
@@ -236,7 +241,7 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
 
     MCFakeUpdater updater;
     Guest guest("ANN");
-    REQUIRE(HostLobbyRoom("28883", guest));
+    REQUIRE(HostLobbyRoom("28883", {guest}));
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     REQUIRE(screen.UpdateLine != nullptr);
     const auto [lineX, lineY] = Middle(*screen.UpdateLine);
@@ -268,4 +273,116 @@ TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line o
     CHECK(!UpdatePageShown());
     CHECK(screen.FindObject(lineX, lineY) == screen.UpdateLine);
     CHECK(screen.FindObject(startX, startY) == screen.StartButton);
+}
+
+namespace
+{
+    /// <summary>The build the found update (<see cref="NewVersion"/>) brings.</summary>
+    constexpr uint64_t NewBuild = 480;
+
+    /// <summary>The update found, downloaded and ready: RESTART installs it.</summary>
+    void UpdateReady()
+    {
+        MCUpdater::Found(std::string(NewVersion), std::string(NewNotes));
+        MCUpdater::Answer(MCAnswer::Install);
+        MCUpdater::Ready();
+        Settle();
+    }
+
+    /// <summary>Whether the room this game hosts takes new players.</summary>
+    bool RoomOpen()
+    {
+        return (MultiPlayer()->SessionManager->CurrentSession()->SessionDesc.dwFlags & DPSESSION_NEWPLAYERSDISABLED) ==
+               0;
+    }
+
+    /// <summary>Whether the session screen shows player <paramref name="id"/>.</summary>
+    bool Shows(const MCSessionScreen& screen, uint32_t id)
+    {
+        return std::ranges::any_of(screen.PlayerNames, [id](const auto& name)
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+    }
+}
+
+/// <summary>
+/// A lobby's host restarting into an update: its page says how many of the other players join again (the guests whose
+/// builds wait for it); RESTART tells them, writes the rejoin note with the lobby's words for the update's build, and
+/// then the update installs; the guests leaving as it goes don't stop it with "has left the game".
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's host restarting into an update tells the guests that wait for it, and leaves the "
+                   "rejoin note")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCFakeUpdater updater;
+    Guest ann("ANN");
+    Guest cal("CAL");
+    REQUIRE(HostLobbyRoom("28885", {ann, cal}));
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    cal.SendRules(hostId, MCMatchRule::Supported & ~MCMatchRule::RejoinsHost);
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    UpdateReady();
+    ShowUpdatePageOver(screen);
+    Settle();
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, 1 OF 2 PLAYERS JOINS AGAIN."));
+    MCScreenInput::SaveShot("lobby host 0 ready", MCScreenInput::ScreenHash());
+
+    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
+    REQUIRE(restart != nullptr);
+    ClickOn(*restart);
+    CHECK(SettleUntil([&] { return ann.Updatings() == 1; }));
+    CHECK_EQ(cal.Updatings(), 0);
+    REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
+    CHECK(updater.Log->Answers.back() == MCAnswer::Install);
+
+    const std::optional<std::string> note =
+        MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
+    REQUIRE(note.has_value());
+    CHECK_EQ(*note, std::string("-host -port 28885 -player BOB -maxplayers 6 -rejoin"));
+
+    ann.Leave();
+    cal.Leave();
+    Settle();
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+}
+
+/// <summary>
+/// A lobby's guest restarting into an update: its Updating message has the host keep its place, with no "has left the
+/// game" (which would end a lobby's game), the room open to it until it's back; once it has joined again the host shows
+/// everyone the room again, the guest in it, and closes the room.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update keeps its place in the room, and is shown the room "
+                   "when it's back")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Guest ann("ANN");
+    REQUIRE(HostLobbyRoom("28887", {ann}));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    CHECK(!RoomOpen());
+    CHECK(Shows(screen, ann.Id()));
+
+    ann.SendUpdating(hostId);
+    CHECK(SettleUntil(RoomOpen));
+    ann.Leave();
+    Settle();
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    MCScreenInput::SaveShot("lobby guest 0 updating", MCScreenInput::ScreenHash());
+
+    Guest back("ANN");
+    REQUIRE(back.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28887"));
+    CHECK(SettleUntil([&] { return back.SessionScreens() > 0; }));
+    CHECK(Shows(screen, back.Id()));
+    CHECK(!Shows(screen, ann.Id()));
+    CHECK(!RoomOpen());
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    MCScreenInput::SaveShot("lobby guest 1 back", MCScreenInput::ScreenHash());
 }

@@ -131,10 +131,10 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
         }
     }
 
-    // Let go first: its file goes with the update folder.
+    // Let go first: its file goes with the update folder. A file that couldn't go keeps the record, for another try.
     lock.reset();
 
-    if (!disk.Remove(update))
+    if (failed.empty() && !disk.Remove(update))
     {
         failed = std::format("{} can't be removed", MCFileSystem::ToUtf8(update));
         SDL_Log("Removing the content: %s", failed.c_str());

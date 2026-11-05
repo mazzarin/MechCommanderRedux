@@ -5,6 +5,7 @@
 #include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
+#include "update/MCUpdateLock.h"
 
 #include <mutex>
 #include <thread>
@@ -205,6 +206,12 @@ namespace
             return std::unexpected(refused);
         }
 
+        // Let go of meanwhile (Later): never armed.
+        if (stop.stop_requested())
+        {
+            return std::unexpected("stopped");
+        }
+
         const MCArmed armed{.Build = program.Build, .Sha256 = *program.Sha256, .Arguments = program.Silent};
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
@@ -335,12 +342,13 @@ namespace
             }
 
             // Skip once ready (the content couldn't be armed), or Later: the setup isn't run.
-            if (_State == MCState::Ready)
+            StopDownload();
+
+            if (_State == MCState::Ready || _State == MCState::Downloading)
             {
                 Disarm(_GameFolder);
             }
 
-            StopDownload();
             _State = MCState::Idle;
             Report([] { MCUpdater::Closed(); });
         }
@@ -507,6 +515,13 @@ bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64
         }
 
         ClearDone(gameFolder, runningBuild);
+        return false;
+    }
+
+    // Another copy running is at its own update's READY, or playing on: the setup waits for it to quit.
+    if (const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(gameFolder, MCUpdateLock::GameLock);
+        lock == nullptr || !lock->TryExclusive())
+    {
         return false;
     }
 

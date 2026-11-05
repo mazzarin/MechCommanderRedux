@@ -74,15 +74,22 @@ std::expected<void, std::string> MCUpdatePlace::FitPaths(const std::filesystem::
 
     const std::filesystem::path* longest = nullptr;
     size_t longestLength = 0;
+    // What's said of it: the file's length and limit, or its folder's when that's what's too long.
+    size_t shownLength = 0;
+    size_t shownLimit = 0;
 
     for (const std::filesystem::path& path : paths)
     {
         const size_t length = Utf16Length(path);
+        const size_t folderLength = Utf16Length(path.parent_path());
 
-        if ((length > fileLimit || Utf16Length(path.parent_path()) > folderLimit) && length > longestLength)
+        if ((length > fileLimit || folderLength > folderLimit) && length > longestLength)
         {
+            const bool file = length > fileLimit;
             longest = &path;
             longestLength = length;
+            shownLength = file ? length : folderLength;
+            shownLimit = file ? fileLimit : folderLimit;
         }
     }
 
@@ -90,7 +97,7 @@ std::expected<void, std::string> MCUpdatePlace::FitPaths(const std::filesystem::
     {
         return std::unexpected(std::format("{}'s path is too long for Windows ({} characters, at most {}): install "
                                            "the game in a folder with a shorter path",
-                                           MCFileSystem::ToUtf8(*longest), longestLength, fileLimit));
+                                           MCFileSystem::ToUtf8(*longest), shownLength, shownLimit));
     }
 
     return {};

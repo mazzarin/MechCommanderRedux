@@ -75,7 +75,9 @@
     <ClCompile Include="MCRestart.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="MCSetupRunWin.cpp" />
+    <ClCompile Include="MCSetupRunWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

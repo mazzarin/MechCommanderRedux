@@ -1050,7 +1050,7 @@ TEST_CASE("updater on Windows: a setup that isn't release.json's, or that Window
 }
 
 TEST_CASE("updater on Windows: quitting with the update ready runs the setup; one armed and never run (the game ended "
-          "first) runs at the next start, once; once in, its files go")
+          "first) runs at the next start, once, when no other copy runs; once in, its files go")
 {
     MCHostedRelease release("setup-quit");
     PublishSetup(release, SetupBytes);
@@ -1077,6 +1077,17 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
 
     REQUIRE(std::filesystem::exists(ArmedRecord(release)));
     const auto log = std::make_shared<MCSetupLog>();
+
+    // Another copy running (at its own READY, or playing on): the setup waits for it to quit.
+    {
+        const std::unique_ptr<MCUpdateLock> running = MCUpdateLock::Open(release.Game.Path(), MCUpdateLock::GameLock);
+        REQUIRE(running != nullptr);
+        REQUIRE(running->Shared());
+        CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
+        CHECK(log->Started.empty());
+        CHECK(std::filesystem::exists(ArmedRecord(release)));
+    }
+
     CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
     REQUIRE_EQ(log->Started.size(), size_t{1});
     CHECK(std::get<0>(log->Started.front()) == Downloaded(release));

@@ -10,7 +10,8 @@
 /// Finding the player's MechCommander Gold when MCRedux isn't started from it: the folder chosen last time (kept in
 /// the user folder), the places a copy is usually kept, and otherwise the player's choice from a folder dialog. On
 /// macOS the usual places are beside the app, the folders in /Applications and ~/Applications, the Windows drives of
-/// Wine wrappers there (Wineskin, Porting Kit) and CrossOver's bottles; elsewhere there are none yet.
+/// Wine wrappers there (Wineskin, Porting Kit) and CrossOver's bottles; on Windows the folders the original's installer
+/// recorded (its own registry key, and DirectPlay's entry for lobbies, which MechCommander Online writes too).
 /// </summary>
 namespace MCGameFolder
 {
@@ -53,6 +54,20 @@ namespace MCGameFolder
     /// Gold.app"), else its CrossOver bottle's ("MCG bottle"), else its folder's.
     /// </summary>
     std::string Label(const std::filesystem::path& install);
+
+    /// <summary>
+    /// Windows: where Windows kept what the original wrote into <paramref name="folder"/> (its VirtualStore copy: the
+    /// original, an old program, was redirected there when it wrote into Program Files), or empty when there's none.
+    /// </summary>
+    std::filesystem::path VirtualStore(const std::filesystem::path& folder);
+
+    /// <summary>
+    /// Once, copies into <paramref name="userFolder"/> the files of <paramref name="store"/> it lacks: what the
+    /// original wrote (its settings, saves and missions), so the game sees the folder as the original did. A file in
+    /// the user folder marks it done, so a save deleted in Redux stays deleted.
+    /// </summary>
+    /// <returns>Empty, or what couldn't be copied.</returns>
+    std::string CarryOver(const std::filesystem::path& store, const std::filesystem::path& userFolder);
 
     /// <summary>Whether the player asks to choose the game again (holding Option on macOS as the app opens).</summary>
     bool ChoiceRequested();

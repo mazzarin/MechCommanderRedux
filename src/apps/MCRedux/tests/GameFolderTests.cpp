@@ -43,6 +43,13 @@ namespace
 
         return folder;
     }
+
+    /// <summary>The whole of a small file, or empty when it can't be read.</summary>
+    std::string ReadAll(const std::filesystem::path& file)
+    {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
 }
 
 /// <summary>
@@ -104,6 +111,58 @@ TEST_CASE("launcher: the chosen game folder is remembered for the next start")
     const std::filesystem::path other = scratch.Path() / "MCG";
     CHECK(MCGameFolder::Remember(user, other).empty());
     CHECK(MCGameFolder::Remembered(user) == other);
+}
+
+/// <summary>
+/// The first start copies what the original wrote (Windows' VirtualStore copy of the game folder) into the user folder,
+/// never over the user folder's own files; later starts copy nothing, so a save deleted in Redux stays deleted. Off
+/// Windows there's no VirtualStore.
+/// </summary>
+TEST_CASE("launcher: the first start carries over the original's settings and saves")
+{
+    const ScratchFolder scratch("carry-over");
+    const std::filesystem::path store = scratch.Path() / "store";
+    const std::filesystem::path user = scratch.Path() / "user";
+    const std::filesystem::path saves = std::filesystem::path("data") / "savegame";
+    std::filesystem::create_directories(store / saves);
+    std::filesystem::create_directories(user / saves);
+    std::ofstream(store / "prefs.cfg") << "the original's settings";
+    std::ofstream(store / saves / "mine.sav") << "the original's save";
+    std::ofstream(store / saves / "both.sav") << "the original's other save";
+    std::ofstream(user / saves / "both.sav") << "Redux's save";
+
+    CHECK(MCGameFolder::CarryOver(store, user).empty());
+    CHECK_EQ(ReadAll(user / "prefs.cfg"), std::string("the original's settings"));
+    CHECK_EQ(ReadAll(user / saves / "mine.sav"), std::string("the original's save"));
+    CHECK_EQ(ReadAll(user / saves / "both.sav"), std::string("Redux's save"));
+
+    // A later start, the user folder without a PREFS.CFG of its own even.
+    std::filesystem::remove(user / saves / "mine.sav");
+    std::filesystem::remove(user / "prefs.cfg");
+    CHECK(MCGameFolder::CarryOver(store, user).empty());
+    CHECK(!std::filesystem::exists(user / saves / "mine.sav"));
+    CHECK(!std::filesystem::exists(user / "prefs.cfg"));
+
+    const std::filesystem::path game = scratch.Path() / "game";
+    std::filesystem::create_directories(game);
+    CHECK(MCGameFolder::VirtualStore(game).empty());
+
+#if defined(_WIN32)
+    // On Windows, a folder on the system drive (the temp folder's) whose VirtualStore copy exists has it.
+    const std::filesystem::path virtualStore = MCFileSystem::FromUtf8(SDL_getenv("LOCALAPPDATA")) / "VirtualStore";
+    const std::filesystem::path copy = virtualStore / game.relative_path();
+    // The outermost folder the test makes there, removed after.
+    std::filesystem::path made = copy;
+
+    while (made.parent_path() != virtualStore && !std::filesystem::exists(made.parent_path()))
+    {
+        made = made.parent_path();
+    }
+
+    std::filesystem::create_directories(copy);
+    CHECK(MCGameFolder::VirtualStore(game) == copy);
+    std::filesystem::remove_all(made);
+#endif
 }
 
 /// <summary>Copies are named by their Wine wrapper, their CrossOver bottle, or else their folder.</summary>

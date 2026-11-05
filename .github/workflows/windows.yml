@@ -1,7 +1,7 @@
 # Port-only (the personal build): builds the game, the editor and the tests on Windows and runs the tests, as
 # checks.yml's build job does for pull requests, on a push of the fork's windows-* branches (or by hand from the Actions
-# tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes, the version
-# header and MSBuild's log are kept as the run's artifact.
+# tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes (the launcher
+# MCX.exe too), the setup, the version header and MSBuild's log are kept as the run's artifact.
 name: Windows (personal)
 
 on:
@@ -27,9 +27,60 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props).
+      # A run starts from the last run's build folder (GitHub's cache), so only what changed since compiles. The
+      # runner image's version is in the key: objects from another compiler aren't reused.
+      - name: Name the build cache
+        id: cache-name
+        shell: pwsh
+        run: '"prefix=windows-build-$env:ImageVersion-" >> $env:GITHUB_OUTPUT'
+
+      - name: Restore the last build
+        uses: actions/cache/restore@v4
+        with:
+          path: src/build
+          key: ${{ steps.cache-name.outputs.prefix }}${{ github.sha }}
+          restore-keys: ${{ steps.cache-name.outputs.prefix }}
+
+      # The checkout dates every file now, newer than the cached objects. Unchanged files are dated back and the ones
+      # changed since the cached build's commit (build-commit.txt) dated now, so MSBuild compiles only those. A cache
+      # from a commit this clone doesn't have is dropped: a full build.
+      - name: Date the sources for the cached build
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $stamp = 'src\build\build-commit.txt'
+          if (-not (Test-Path $stamp)) { "No cached build: a full build."; exit 0 }
+          $cached = (Get-Content -Raw $stamp).Trim()
+          git cat-file -e "$cached^{commit}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            "The cached build's commit $cached isn't in this clone: a full build."
+            Remove-Item -Recurse -Force src\build
+            exit 0
+          }
+          $old = [DateTime]::new(2000, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+          $now = [DateTime]::UtcNow
+          $files = @(git -c core.quotepath=off ls-files)
+          foreach ($file in $files) { if (Test-Path -LiteralPath $file -PathType Leaf) { [IO.File]::SetLastWriteTimeUtc($file, $old) } }
+          $changed = @(git -c core.quotepath=off diff --name-only $cached HEAD | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+          foreach ($file in $changed) { [IO.File]::SetLastWriteTimeUtc($file, $now) }
+          "Built before at $cached; $($changed.Count) of $($files.Count) files changed since."
+
+      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). Without whole-program
+      # optimization, which took half the build (link-time code generation): a work branch's check, not a release.
       - name: Build
-        run: msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -m "-flp:logfile=msbuild.log;verbosity=normal"
+        run: msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -p:WholeProgramOptimization=false -m "-flp:logfile=msbuild.log;verbosity=normal"
+
+      - name: Keep the build for the next run
+        if: success()
+        shell: pwsh
+        run: Set-Content -NoNewline src\build\build-commit.txt $env:GITHUB_SHA
+
+      - name: Save the build
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: src/build
+          key: ${{ steps.cache-name.outputs.prefix }}${{ github.sha }}
 
       - name: Version
         if: success() || failure()
@@ -40,6 +91,23 @@ jobs:
       # reports' backend asks the live reports Worker its region and sends it a report it refuses (nothing kept).
       - name: Test
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
+
+      # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
+      # built into them. Inno Setup 6 is on the runner's image.
+      - name: Setup
+        shell: pwsh
+        run: |
+          $header = Get-Content -Raw src\build\generated\MCVersion.h
+          $number = [regex]::Match($header, '#define MC_VERSION "([0-9.]+)"').Groups[1].Value
+          $shown = [regex]::Match($header, '#define MC_VERSION_SHOWN "([^"]+)"').Groups[1].Value
+          if (-not $number -or -not $shown) { throw "MCVersion.h has no MC_VERSION or MC_VERSION_SHOWN." }
+          $licences = "$pwd\src\build\setup\licences.txt"
+          & src\installer\windows\make_licences.ps1 -LibDir "$pwd\src\lib" -Out $licences
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "No Inno Setup 6 on this runner ($iscc)." }
+          & $iscc "/DAppVersionNumber=$number" "/DAppVersionShown=$shown" "/DBinDir=$pwd\src\build\bin\x64\Release" `
+            "/DDocsDir=$pwd\src\docs" "/DLicencesFile=$licences" "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
 
       - name: Keep the build
         if: success() || failure()
@@ -52,5 +120,7 @@ jobs:
             src/build/bin/x64/Release/MCRedux.exe
             src/build/bin/x64/Release/SDL3.dll
             src/build/bin/x64/Release/MCEditor.exe
+            src/build/bin/x64/Release/MCX.exe
             src/build/generated/MCVersion.h
+            dist/MechCommander-Redux-Setup.exe
             msbuild.log

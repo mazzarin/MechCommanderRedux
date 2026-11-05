@@ -259,6 +259,121 @@ TEST_CASE("update files: a rollout reaches its share of copies and no others; wi
     CHECK(!MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(tooMuch)).has_value());
 }
 
+TEST_CASE("update files: a key list of a later epoch starts release.json's issues again and its releases come after "
+          "any earlier; an earlier epoch, or a key list below the build's lowest issue, is refused")
+{
+    const KeyPair root(13);
+    const KeyPair stolen(14);
+    const KeyPair replacement(15);
+    const std::array<MCSignedFile::MCPublicKey, 1> roots = {root.Public};
+    constexpr uint64_t TooHigh = std::numeric_limits<uint64_t>::max() - 1;
+
+    // A stolen release key signs release.json numbered too high to outbid, and a copy takes it.
+    const auto poisoned =
+        MCReleaseFile::Check(KeyList(root, 2, {stolen.Public}), Releases(stolen, TooHigh, TooHigh), roots, {});
+    REQUIRE(poisoned.has_value());
+    CHECK_EQ(poisoned->Releases.Current.Epoch, uint64_t{0});
+    MCReleaseFile::MCKept kept = MCReleaseFile::Keep({}, *poisoned);
+    kept.Skipped = 9;
+    CHECK(!MCReleaseFile::Check(KeyList(root, 3, {replacement.Public}, 5), Releases(replacement, 1, 5), roots, kept)
+               .has_value());
+
+    // The root signs a key list of the next epoch: its release.json starts the issues again, and its releases come
+    // after the earlier epoch's, still no lower than the list's lowest.
+    const std::string recovered = KeyList(root, 3, {replacement.Public}, 5, 1);
+    const auto taken = MCReleaseFile::Check(recovered, Releases(replacement, 1, 5), roots, kept);
+    REQUIRE(taken.has_value());
+    CHECK_EQ(taken->Releases.Current.Epoch, uint64_t{1});
+    CHECK(MCReleaseFile::OrderOf(taken->Releases.Current) > MCReleaseFile::OrderOf(poisoned->Releases.Current));
+    CHECK(!MCReleaseFile::Check(recovered, Releases(replacement, 1, 4), roots, kept).has_value());
+    const MCReleaseFile::MCKept afterwards = MCReleaseFile::Keep(kept, *taken);
+    CHECK_EQ(afterwards.Epoch, uint64_t{1});
+    CHECK_EQ(afterwards.ReleaseIssue, uint64_t{1});
+    CHECK_EQ(afterwards.KeyListIssue, uint64_t{3});
+    CHECK_EQ(afterwards.Skipped, uint64_t{0});
+
+    // Within the epoch everything is as before; an earlier epoch's list, however high its issue, is refused.
+    CHECK(!MCReleaseFile::Check(recovered, Releases(stolen, 2, 6), roots, afterwards).has_value());
+    CHECK(!MCReleaseFile::Check(KeyList(root, 4, {replacement.Public}, 5, 1), Releases(replacement, 0, 6), roots,
+                                afterwards)
+               .has_value());
+    const auto earlier =
+        MCReleaseFile::Check(KeyList(root, 9, {replacement.Public}, 5), Releases(replacement, 2, 6), roots, afterwards);
+    REQUIRE(!earlier.has_value());
+    CHECK(earlier.error().find("epoch") != std::string::npos);
+
+    // update.json keeps the epoch; one written before epochs reads as epoch 0, as does a key list without one.
+    const auto reread = MCReleaseFile::ReadKept(MCReleaseFile::KeptText(afterwards));
+    REQUIRE(reread.has_value());
+    CHECK(*reread == afterwards);
+    const auto before = MCReleaseFile::ReadKept(R"({"keyListIssue": 2, "releaseIssue": 7})");
+    REQUIRE(before.has_value());
+    CHECK_EQ(before->Epoch, uint64_t{0});
+    const auto noEpoch = MCReleaseFile::ReadKeyList(std::format(R"({{"format": 1, "issue": 1, "releaseKeys": ["{}"], )"
+                                                                R"("lowestRelease": 0}})",
+                                                                MCUpdateJson::ToBase64(root.Public)));
+    REQUIRE(noEpoch.has_value());
+    CHECK_EQ(noEpoch->Epoch, uint64_t{0});
+
+    // A fresh copy keeps nothing: the build's own lowest issue refuses the older key lists.
+    const auto belowBuild =
+        MCReleaseFile::Check(KeyList(root, 2, {stolen.Public}), Releases(stolen, 1, 5), roots, {}, 3);
+    REQUIRE(!belowBuild.has_value());
+    CHECK(belowBuild.error().find("lowest this build takes") != std::string::npos);
+    CHECK(MCReleaseFile::Check(recovered, Releases(replacement, 1, 5), roots, {}, 3).has_value());
+}
+
+TEST_CASE("update files: the Mac's program is held to release.json's: its build, newer than the one running, its "
+          "archive's signature and size, and no delta updates")
+{
+    MCReleaseFile::MCEdSignature signature{};
+    signature.fill(7);
+    MCReleaseFile::MCEdSignature other = signature;
+    other.back() = 8;
+    MCReleaseFile::MCEdSignature retired = signature;
+    retired.front() = 1;
+    // Both release keys' signatures while one is replaced: either archive item is the one release.json names.
+    const MCReleaseFile::MCProgram held{.Build = 600, .Size = 7'000'000, .EdSignatures = {retired, signature}};
+    const MCReleaseFile::MCFeedItem item{
+        .Build = "600", .EdSignature = MCUpdateJson::ToBase64(signature), .Size = 7'000'000};
+    CHECK_EQ(MCReleaseFile::FeedItemProblem(held, "500", item), std::string());
+
+    const auto refused = [&](std::string_view running, const MCReleaseFile::MCFeedItem& changed,
+                             const MCReleaseFile::MCProgram& program = {})
+    { return !MCReleaseFile::FeedItemProblem(program.Build != 0 ? program : held, running, changed).empty(); };
+
+    CHECK(refused("500", {.Build = "601", .EdSignature = item.EdSignature, .Size = item.Size}));
+    CHECK(refused("500", {.Build = "0600", .EdSignature = item.EdSignature, .Size = item.Size}));
+    CHECK(refused("600", item));
+    CHECK(refused("700", item));
+    CHECK(refused("", item));
+    CHECK(refused("5x0", item));
+    CHECK(refused("500", {.Build = "600", .EdSignature = MCUpdateJson::ToBase64(other), .Size = item.Size}));
+    CHECK(refused("500", {.Build = "600", .EdSignature = " " + item.EdSignature, .Size = item.Size}));
+    CHECK(refused("500", {.Build = "600", .EdSignature = "", .Size = item.Size}));
+    CHECK(refused("500", {.Build = "600", .EdSignature = item.EdSignature, .Size = item.Size + 1}));
+    CHECK(refused("500", {.Build = "600", .EdSignature = item.EdSignature, .Size = item.Size, .Deltas = 1}));
+    CHECK(refused("500", {.Build = "600", .EdSignature = item.EdSignature, .Size = item.Size, .Delta = true}));
+    CHECK(refused("500", item, {.Build = 600, .Size = 7'000'000}));
+    CHECK_EQ(MCReleaseFile::FeedItemProblem(
+                 held, "500", {.Build = "600", .EdSignature = MCUpdateJson::ToBase64(retired), .Size = item.Size}),
+             std::string());
+
+    // release.json carries it, in base64; one that isn't 64 bytes is refused.
+    MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = Release(7)};
+    releases.Current.Programs["mac"].EdSignatures = held.EdSignatures;
+    const auto read = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(releases));
+    REQUIRE(read.has_value());
+    CHECK(read->Current.Programs.at("mac").EdSignatures == held.EdSignatures);
+    CHECK(read->Current.Programs.at("windows").EdSignatures.empty());
+    MCUpdateJson::MCJson json = MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(releases));
+    json["current"]["programs"]["mac"]["edSignatures"] =
+        MCUpdateJson::MCJson::array({MCUpdateJson::ToBase64(std::span(signature).first(63))});
+    CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("63 bytes") != std::string::npos);
+    json["current"]["programs"]["mac"]["edSignatures"] = MCUpdateJson::ToBase64(signature);
+    CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("isn't an array") != std::string::npos);
+}
+
 TEST_CASE("content list: paths outside the folder, alike but for case, or that Windows can't hold are refused")
 {
     for (const std::string_view good :
@@ -474,6 +589,59 @@ TEST_CASE("content plan: a file as recorded keeps its hash; one changed since is
     CHECK(ActionFor(*dropped, "HD/terrain.hda") == MCAction::Remove);
     CHECK(StepFor(*dropped, "HD/terrain.hda")->Keep == MCKeep::Never);
     CHECK(!dropped->Record.Sets.contains(std::string(MCContentList::HdSet)));
+}
+
+TEST_CASE("content plan: on Windows the program's own files are left to it, never planned or recorded; on the Mac "
+          "they're content")
+{
+    const ScratchFolder scratch("plan-program");
+    const std::filesystem::path& root = scratch.Path();
+    // The Windows setup put the launcher in MCX.EXE's place and Redux's editor in MCEditor.exe's; the release lists the
+    // original's, and an earlier copy recorded the launcher as placed.
+    WriteText(root / "MCX.EXE", "the launcher");
+    WriteText(root / "MCEditor.exe", "Redux's editor");
+    WriteText(root / "data" / "m01.fit", "mission v1");
+    MCInstalled::MCRecord installed;
+    installed.Release = 1;
+    installed.Sets = GameOnly;
+    installed.Files["MCX.EXE"] = {.Path = "MCX.EXE", .Set = "game", .Sha256 = MCSha256::Of("the launcher"), .Size = 12};
+    MCContentList::MCList list{.Format = 1, .Release = 2};
+    list.Zips = {{"base-1.zip", 1000, MCSha256::Of("z1")}};
+    list.Files.push_back(Listed("MCX.EXE", "the original", "base-1.zip"));
+    list.Files.push_back(Listed("mceditor.EXE", "the original editor", "base-1.zip"));
+    list.Files.push_back(Listed("data/m01.fit", "mission v2", "base-1.zip"));
+
+    MCContentFolder windowsFolder(root);
+    const auto windows = MCContentPlan::Make(windowsFolder, installed, list, MCSha256::Of("list"), GameOnly, {},
+                                             MCReleaseFile::WindowsPlatform);
+    REQUIRE(windows.has_value());
+    CHECK(StepFor(*windows, "MCX.EXE") == nullptr);
+    CHECK(StepFor(*windows, "mceditor.EXE") == nullptr);
+    CHECK(ActionFor(*windows, "data/m01.fit") == MCAction::Fetch);
+    CHECK_EQ(windows->Steps.size(), size_t{1});
+    CHECK(!windows->Record.Files.contains("MCX.EXE"));
+    CHECK(!windows->Record.Files.contains("MCEDITOR.EXE"));
+    CHECK_EQ(windows->Record.SetBytes.at("game"), uint64_t{10});
+    CHECK(!windows->Hashes.contains("MCX.EXE"));
+
+    // HD OPTIONS' REMOVE from such a record leaves them too.
+    MCContentFolder removalFolder(root);
+    const auto removal = MCContentPlan::Removal(removalFolder, installed, GameOnly, {}, MCReleaseFile::WindowsPlatform);
+    REQUIRE(removal.has_value());
+    CHECK(removal->Steps.empty());
+    CHECK(!removal->Record.Files.contains("MCX.EXE"));
+
+    // On the Mac the game folder holds no program: MCX.EXE and MCEditor.exe are the release's.
+    MCContentFolder macFolder(root);
+    const auto mac =
+        MCContentPlan::Make(macFolder, installed, list, MCSha256::Of("list"), GameOnly, {}, MCReleaseFile::MacPlatform);
+    REQUIRE(mac.has_value());
+    CHECK(ActionFor(*mac, "MCX.EXE") == MCAction::Fetch);
+    CHECK(ActionFor(*mac, "mceditor.EXE") == MCAction::Fetch);
+    CHECK(mac->Record.Files.contains("MCX.EXE"));
+    CHECK(MCContentPlan::LeftToProgram(MCReleaseFile::WindowsPlatform, "mechcommander redux README.txt"));
+    CHECK(!MCContentPlan::LeftToProgram(MCReleaseFile::MacPlatform, "MCX.EXE"));
+    CHECK(!MCContentPlan::LeftToProgram(MCReleaseFile::WindowsPlatform, "data/MCX.EXE"));
 }
 
 TEST_CASE("content plan: a folder or link in a file's place stops the plan, naming it")

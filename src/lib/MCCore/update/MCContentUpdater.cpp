@@ -31,28 +31,31 @@ namespace
         return setup.UserFolder / MCFileSystem::FromUtf8(MCReleaseFile::KeptFile);
     }
 
-    /// <summary><c>update.json</c> as kept: none yet is new, and one that can't be read starts again (logged).</summary>
-    MCReleaseFile::MCKept ReadKept(const MCSetup& setup, MCUpdateDisk& disk)
+    /// <summary>
+    /// <c>update.json</c> as kept: none yet is new. One that can't be read, or isn't as it must be, is never taken for
+    /// none, which would lower the issues kept: the check stops, saying why, and the file stays as it is.
+    /// </summary>
+    std::expected<MCReleaseFile::MCKept, std::string> ReadKept(const MCSetup& setup, MCUpdateDisk& disk)
     {
         const std::filesystem::path path = KeptPath(setup);
         const auto kept = MCUpdateJson::ReadFile(disk, path, MCReleaseFile::ReadKept);
 
         if (!kept)
         {
-            SDL_Log("Updates: %s can't be read (%s): it starts again", MCFileSystem::ToUtf8(path).c_str(),
-                    kept.error().c_str());
-            return {};
+            return std::unexpected(std::format("what updates keep can't be read ({}): {} is left as it is",
+                                               kept.error(), MCFileSystem::ToUtf8(path)));
         }
 
         return kept->value_or(MCReleaseFile::MCKept{});
     }
 
+    /// <summary>Writes <c>update.json</c> durably, its folder made.</summary>
     std::expected<void, std::string> WriteKept(const MCSetup& setup, MCUpdateDisk& disk,
                                                const MCReleaseFile::MCKept& kept)
     {
         const std::filesystem::path path = KeptPath(setup);
 
-        if (!WriteDurably(disk, path, MCReleaseFile::KeptText(kept)))
+        if (!disk.MakeFolders(path.parent_path()) || !WriteDurably(disk, path, MCReleaseFile::KeptText(kept)))
         {
             return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
         }
@@ -60,12 +63,16 @@ namespace
         return {};
     }
 
-    /// <summary>The content list a plan reads: its hash (its name on the host), its size when known, its release.</summary>
+    /// <summary>
+    /// The content list a plan reads: its hash (its name on the host), its size when known, its release, and the epoch of
+    /// the key list the release was taken under (for the record).
+    /// </summary>
     struct MCListRef
     {
         MCSha256::MCDigest Hash{};
         std::optional<uint64_t> Size;
         uint64_t Release = 0;
+        uint64_t Epoch = 0;
     };
 
     /// <summary>A list's file name, on the host and kept: its hash.</summary>
@@ -231,8 +238,9 @@ namespace
 
     /// <summary>
     /// Plans <paramref name="content"/>'s list for the copy: <paramref name="sets"/> against what
-    /// <paramref name="installed"/> records, and the hashes the last plan kept; this plan's are kept in their place.
-    /// <paramref name="goOn"/> is asked as it hashes (MCContentPlan::Make).
+    /// <paramref name="installed"/> records, and the hashes the last plan kept; this plan's are kept in their place. The
+    /// program's own files on this platform are left to it (MCContentPlan::LeftToProgram). <paramref name="goOn"/> is
+    /// asked as it hashes (MCContentPlan::Make).
     /// </summary>
     std::expected<void, std::string> PlanFor(const MCSetup& setup, MCUpdateDisk& disk, MCContent& content,
                                              const MCListRef& list, const MCInstalled::MCRecord& installed,
@@ -240,7 +248,7 @@ namespace
     {
         const MCContentPlan::MCHashes hashes = ReadHashes(setup, disk);
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes, goOn);
+        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes, setup.Platform, goOn);
 
         if (!plan)
         {
@@ -263,6 +271,7 @@ namespace
         }
 
         content.Plan = std::move(*plan);
+        content.Plan.Record.Epoch = list.Epoch;
         return {};
     }
 
@@ -304,13 +313,20 @@ namespace
 
     /// <summary>
     /// The key list and <c>release.json</c> read from <paramref name="source"/> and checked, kept in
-    /// <c>update.json</c>, and the release this copy's rollout number gives it.
+    /// <c>update.json</c>, and the release this copy's rollout number gives it. What's kept is written durably before the
+    /// game acts on the release: if it can't be, the check fails.
     /// </summary>
     std::expected<MCReleaseFor, std::string> ReleaseFor(const MCSetup& setup, MCUpdateDisk& disk,
                                                         MCContentStage::MCSource& source)
     {
-        const MCReleaseFile::MCKept before = ReadKept(setup, disk);
-        MCReleaseFile::MCKept kept = before;
+        const auto before = ReadKept(setup, disk);
+
+        if (!before)
+        {
+            return std::unexpected(before.error());
+        }
+
+        MCReleaseFile::MCKept kept = *before;
 
         if (!kept.RolloutNumber)
         {
@@ -332,7 +348,7 @@ namespace
             return std::unexpected(releases.error());
         }
 
-        const auto trusted = MCReleaseFile::Check(*keyList, *releases, setup.RootKeys, kept);
+        const auto trusted = MCReleaseFile::Check(*keyList, *releases, setup.RootKeys, kept, setup.LowestKeyListIssue);
 
         if (!trusted)
         {
@@ -341,16 +357,37 @@ namespace
 
         kept = MCReleaseFile::Keep(kept, *trusted);
 
-        if (kept != before)
+        if (kept != *before)
         {
-            // The check goes on without it: the next start reads the files again.
             if (const auto written = WriteKept(setup, disk, kept); !written)
             {
-                SDL_Log("Updates: %s", written.error().c_str());
+                return std::unexpected(written.error());
             }
         }
 
         return MCReleaseFor{MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber), kept};
+    }
+
+    /// <summary>Where the release <paramref name="installed"/> records comes in the order releases are taken.</summary>
+    MCReleaseFile::MCOrder InstalledOrder(const MCInstalled::MCRecord& installed)
+    {
+        return {.Epoch = installed.Epoch, .Release = installed.Release};
+    }
+
+    /// <summary>
+    /// Why <paramref name="release"/> can't be installed over <paramref name="installed"/>, or empty: one that comes
+    /// before the installed release (MCReleaseFile::MCOrder) never is, so a release served again can't take a copy back.
+    /// </summary>
+    std::string OlderProblem(const MCReleaseFile::MCRelease& release, const MCInstalled::MCRecord& installed)
+    {
+        if (MCReleaseFile::OrderOf(release) >= InstalledOrder(installed))
+        {
+            return {};
+        }
+
+        return std::format(
+            "release.json's release {} (epoch {}) is older than release {} (epoch {}), the one installed",
+            release.Number, release.Epoch, installed.Release, installed.Epoch);
     }
 
     std::filesystem::path ChosenPath(const std::filesystem::path& gameFolder)
@@ -398,8 +435,18 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
     if (const auto program = release.Programs.find(setup.Platform);
         program != release.Programs.end() && program->second.Build > setup.RunningBuild)
     {
-        offer.ProgramBuild = program->second.Build;
-        offer.ProgramBytes = program->second.Size;
+        // The Mac's program is held to its archive's signature (MCReleaseFile::FeedItemProblem): without one, none.
+        if (setup.Platform == MCReleaseFile::MacPlatform && program->second.EdSignatures.empty())
+        {
+            SDL_Log("Updates: release %llu gives no signature for the Mac's build %llu: the program isn't offered",
+                    static_cast<unsigned long long>(release.Number),
+                    static_cast<unsigned long long>(program->second.Build));
+        }
+        else
+        {
+            offer.ProgramBuild = program->second.Build;
+            offer.ProgramBytes = program->second.Size;
+        }
     }
 
     const auto installed = MCInstalled::Read(disk, setup.GameFolder);
@@ -409,7 +456,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         return std::unexpected(installed.error());
     }
 
-    const bool newContent = release.Number > installed->Release;
+    const bool newContent = MCReleaseFile::OrderOf(release) > InstalledOrder(*installed);
 
     if (!newContent && !offer.ProgramBuild)
     {
@@ -434,8 +481,8 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 
     if (newContent)
     {
-        auto content = PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number}, *installed,
-                                   Wanted(disk, setup.GameFolder, *installed),
+        auto content = PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number, release.Epoch},
+                                   *installed, Wanted(disk, setup.GameFolder, *installed),
                                    offer.ProgramBuild.value_or(setup.RunningBuild), goOn);
 
         if (!content)
@@ -493,13 +540,13 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected(writable.error());
     }
 
-    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
+    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List, .Epoch = installed->Epoch}};
 
     // Sets taken out alone (HD OPTIONS' REMOVE): planned from the record, so neither the host nor a list is needed.
     if (std::ranges::includes(installed->Sets, sets))
     {
         MCContentFolder folder(setup.GameFolder);
-        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk), goOn);
+        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk), setup.Platform, goOn);
 
         if (!removal)
         {
@@ -513,8 +560,9 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return offer;
     }
 
-    auto content = PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release}, *installed,
-                               sets, setup.RunningBuild, goOn);
+    auto content =
+        PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release, installed->Epoch},
+                    *installed, sets, setup.RunningBuild, goOn);
 
     if (!content)
     {
@@ -557,7 +605,21 @@ namespace
         }
 
         const MCReleaseFile::MCRelease& release = chosen->Release;
-        const MCListRef list{release.List, release.ListSize, release.Number};
+
+        // Never a release older than the one installed, checked before anything is given up (a repair's swap).
+        const auto had = MCInstalled::Read(setup.GameFolder);
+
+        if (!had)
+        {
+            return std::unexpected(had.error());
+        }
+
+        if (const std::string older = OlderProblem(release, *had); !older.empty())
+        {
+            return std::unexpected(older);
+        }
+
+        const MCListRef list{release.List, release.ListSize, release.Number, release.Epoch};
         auto content = FetchList(setup, disk, source, list, setup.RunningBuild);
 
         if (!content)
@@ -737,9 +799,15 @@ std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCU
 
 std::expected<void, std::string> MCContentUpdater::Skip(const MCSetup& setup, MCUpdateDisk& disk, const MCOffer& offer)
 {
-    MCReleaseFile::MCKept kept = ReadKept(setup, disk);
-    kept.Skipped = offer.Release.Number;
-    return WriteKept(setup, disk, kept);
+    auto kept = ReadKept(setup, disk);
+
+    if (!kept)
+    {
+        return std::unexpected(kept.error());
+    }
+
+    kept->Skipped = offer.Release.Number;
+    return WriteKept(setup, disk, *kept);
 }
 
 MCContentUpdater::MCSets MCContentUpdater::SetsFound(const std::filesystem::path& gameFolder)

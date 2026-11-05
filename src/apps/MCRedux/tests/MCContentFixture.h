@@ -385,10 +385,13 @@ namespace MCContentFixture
 
     /// <summary>The key list naming <paramref name="releaseKeys"/>, signed by <paramref name="root"/>.</summary>
     inline std::string KeyList(const KeyPair& root, uint64_t issue, std::vector<MCSignedFile::MCPublicKey> releaseKeys,
-                               uint64_t lowestRelease = 0)
+                               uint64_t lowestRelease = 0, uint64_t epoch = 0)
     {
-        MCReleaseFile::MCKeyList keys{
-            .Format = 1, .Issue = issue, .ReleaseKeys = std::move(releaseKeys), .LowestRelease = lowestRelease};
+        MCReleaseFile::MCKeyList keys{.Format = 1,
+                                      .Issue = issue,
+                                      .ReleaseKeys = std::move(releaseKeys),
+                                      .LowestRelease = lowestRelease,
+                                      .Epoch = epoch};
         return root.Envelope(MCSignedFile::KeyListType, MCReleaseFile::KeyListPayload(keys));
     }
 }

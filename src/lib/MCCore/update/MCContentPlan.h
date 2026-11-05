@@ -22,11 +22,33 @@ class MCContentFolder;
 ///
 /// A file found is hashed only when neither the record nor the hashes kept from the last plan (<see cref="MCHashes"/>)
 /// have it at its size and time: a copy with no record yet (one the program reached first) hashes its files once.
+///
+/// The program's own files in the game folder are left to the program (<see cref="LeftToProgram"/>): on Windows the
+/// launcher and Redux's editor take the paths of the original's MCX.EXE and MCEditor.exe, which the release lists.
 /// </summary>
 namespace MCContentPlan
 {
     /// <summary>The hashes kept from the last plan, in the game folder.</summary>
     constexpr std::string_view HashesFile = MCContentList::InUpdateFolder<"hashes.json">;
+
+    /// <summary>
+    /// The files the Windows program's setup puts in the game folder (src/installer/windows/MechCommanderRedux.iss's
+    /// [Files]), folded (MCContentList::FoldedPath): the game, SDL, the editor, the launcher in MCX.EXE's place, and the
+    /// README and licences.
+    /// </summary>
+    constexpr std::array<std::string_view, 6> WindowsProgramFiles = {"MCREDUX.EXE",
+                                                                     "SDL3.DLL",
+                                                                     "MCEDITOR.EXE",
+                                                                     "MCX.EXE",
+                                                                     "MECHCOMMANDER REDUX README.TXT",
+                                                                     "MECHCOMMANDER REDUX LICENCES.TXT"};
+
+    /// <summary>
+    /// Whether the file at <paramref name="path"/> is the program's own on <paramref name="platform"/> (release.json's
+    /// name for it; none: no platform's): never planned, so never fetched, checked, replaced, kept aside, removed or
+    /// recorded. On the Mac the program is the app, outside the game folder, so every listed file is content.
+    /// </summary>
+    bool LeftToProgram(std::string_view platform, std::string_view path);
 
     /// <summary>A file found and hashed, as found.</summary>
     struct MCHash
@@ -104,8 +126,9 @@ namespace MCContentPlan
     /// <summary>
     /// The plan to bring <paramref name="folder"/> from <paramref name="installed"/> to <paramref name="list"/>'s
     /// files of <paramref name="sets"/>; <paramref name="listHash"/> is the list's own hash, for the record;
-    /// <paramref name="hashes"/> those the last plan kept. <paramref name="goOn"/>, when given, is asked before each file
-    /// and between a hash's reads, and returns false to stop (a copy's first plan may read gigabytes).
+    /// <paramref name="hashes"/> those the last plan kept. The program's own files on <paramref name="platform"/> are
+    /// left out, listed or recorded (<see cref="LeftToProgram"/>). <paramref name="goOn"/>, when given, is asked
+    /// before each file and between a hash's reads, and returns false to stop (a copy's first plan may read gigabytes).
     /// </summary>
     /// <returns>
     /// The plan, or why there's none (a file can't be read, a folder can't be listed, a link or folder in a file's
@@ -114,20 +137,22 @@ namespace MCContentPlan
     std::expected<MCPlan, std::string> Make(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                             const MCContentList::MCList& list, const MCSha256::MCDigest& listHash,
                                             const std::set<std::string, std::less<>>& sets, const MCHashes& hashes = {},
-                                            const std::function<bool()>& goOn = {});
+                                            std::string_view platform = {}, const std::function<bool()>& goOn = {});
 
     /// <summary>
     /// The plan taking out of <paramref name="folder"/> every set <paramref name="installed"/> records but
     /// <paramref name="sets"/> (HD OPTIONS' REMOVE), from the record alone: no list is read. Each recorded file of a
-    /// set taken out is removed, deleted whatever it holds; those of the sets kept stay as recorded. <paramref
-    /// name="goOn"/> as for <see cref="Make"/>.
+    /// set taken out is removed, deleted whatever it holds; those of the sets kept stay as recorded. The program's own
+    /// files on <paramref name="platform"/> are left out of it (<see cref="LeftToProgram"/>). <paramref name="goOn"/> as
+    /// for <see cref="Make"/>.
     /// </summary>
     /// <returns>
     /// The plan, or why there's none (a file can't be read, a folder can't be listed; MCSha256::StoppedError: stopped).
     /// </returns>
     std::expected<MCPlan, std::string> Removal(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                                const std::set<std::string, std::less<>>& sets,
-                                               const MCHashes& hashes = {}, const std::function<bool()>& goOn = {});
+                                               const MCHashes& hashes = {}, std::string_view platform = {},
+                                               const std::function<bool()>& goOn = {});
 
     /// <summary>The hashes kept as text (JSON).</summary>
     std::string HashesText(const MCHashes& hashes);

@@ -24,6 +24,7 @@ namespace
     constexpr std::string_view WrittenKey = "written";
     constexpr std::string_view PlacedKey = "placed";
     constexpr std::string_view SwapKey = "swap";
+    constexpr std::string_view EpochKey = "epoch";
     constexpr uint64_t RecordFormat = 1;
     /// <summary>The due note's keys (its release is ReleaseKey's) and format.</summary>
     constexpr std::string_view LowestProgramKey = "lowestProgram";
@@ -36,6 +37,12 @@ namespace
         record.Release = Count(json, ReleaseKey);
         record.List = Digest(json, ListKey);
         record.Swap = TextOr(json, SwapKey, "");
+
+        // Recorded since a key list could raise its epoch: an earlier record has none.
+        if (json.contains(EpochKey))
+        {
+            record.Epoch = Count(json, EpochKey);
+        }
 
         for (std::string& set : MCUpdateJson::Strings(json, SetsKey))
         {
@@ -116,10 +123,9 @@ MCUpdateJson::MCJson MCInstalled::ToJson(const MCRecord& record)
         setBytes[set] = bytes;
     }
 
-    return MCJson{
-        {FormatKey, RecordFormat},   {ReleaseKey, record.Release},       {ListKey, MCSha256::Hex(record.List)},
-        {SetsKey, record.Sets},      {SetBytesKey, std::move(setBytes)}, {SwapKey, record.Swap},
-        {FilesKey, std::move(files)}};
+    return MCJson{{FormatKey, RecordFormat}, {ReleaseKey, record.Release}, {ListKey, MCSha256::Hex(record.List)},
+                  {EpochKey, record.Epoch},  {SetsKey, record.Sets},       {SetBytesKey, std::move(setBytes)},
+                  {SwapKey, record.Swap},    {FilesKey, std::move(files)}};
 }
 
 std::string MCInstalled::Text(const MCRecord& record)

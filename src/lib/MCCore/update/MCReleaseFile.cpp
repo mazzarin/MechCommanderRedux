@@ -2,6 +2,8 @@
 #include "update/MCReleaseFile.h"
 #include "update/MCUpdateJson.h"
 
+#include <charconv>
+
 namespace
 {
     using namespace MCUpdateJson;
@@ -29,6 +31,8 @@ namespace
     constexpr std::string_view ReleaseIssueKey = "releaseIssue";
     constexpr std::string_view RolloutNumberKey = "rolloutNumber";
     constexpr std::string_view SkippedKey = "skipped";
+    constexpr std::string_view EpochKey = "epoch";
+    constexpr std::string_view EdSignaturesKey = "edSignatures";
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -47,6 +51,22 @@ namespace
         }
 
         return format;
+    }
+
+    /// <summary>The Ed25519 signature the base64 <paramref name="text"/> spells, for <paramref name="platform"/>'s program.</summary>
+    MCEdSignature EdSignatureOf(std::string_view text, std::string_view platform)
+    {
+        const std::vector<uint8_t> bytes = Base64(text, EdSignaturesKey);
+
+        if (bytes.size() != EdSignatureBytes)
+        {
+            Fail("the program for \"{}\" has a signature of {} bytes, not {}", platform, bytes.size(),
+                 EdSignatureBytes);
+        }
+
+        MCEdSignature signature{};
+        std::ranges::copy(bytes, signature.begin());
+        return signature;
     }
 
     MCRelease ReadRelease(const MCJson& json)
@@ -77,6 +97,18 @@ namespace
 
             program.Url = TextOr(entry, UrlKey, "");
             program.Silent = TextOr(entry, SilentKey, "");
+
+            for (const MCJson& signature : Array(entry, EdSignaturesKey, false))
+            {
+                if (!signature.is_string() || program.EdSignatures.size() == MaxReleaseKeys)
+                {
+                    Fail("the program for \"{}\" has signatures that aren't up to {} strings", platform,
+                         MaxReleaseKeys);
+                }
+
+                program.EdSignatures.push_back(EdSignatureOf(signature.get_ref<const std::string&>(), platform));
+            }
+
             release.Programs.emplace(platform, std::move(program));
         }
 
@@ -106,6 +138,18 @@ namespace
                 entry[std::string(SilentKey)] = program.Silent;
             }
 
+            if (!program.EdSignatures.empty())
+            {
+                MCJson signatures = MCJson::array();
+
+                for (const MCEdSignature& signature : program.EdSignatures)
+                {
+                    signatures.push_back(ToBase64(signature));
+                }
+
+                entry[std::string(EdSignaturesKey)] = std::move(signatures);
+            }
+
             programs[platform] = std::move(entry);
         }
 
@@ -127,6 +171,12 @@ std::expected<MCKeyList, std::string> MCReleaseFile::ReadKeyList(std::string_vie
                     keys.Format = FormatOf(json);
                     keys.Issue = Count(json, IssueKey);
                     keys.LowestRelease = Count(json, LowestReleaseKey);
+
+                    if (json.contains(EpochKey))
+                    {
+                        keys.Epoch = Count(json, EpochKey);
+                    }
+
                     const MCJson& list = Array(json, ReleaseKeysKey);
 
                     if (list.empty() || list.size() > MaxReleaseKeys)
@@ -187,7 +237,7 @@ std::expected<MCReleases, std::string> MCReleaseFile::ReadReleases(std::string_v
 
 std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyList, std::string_view releases,
                                                            std::span<const MCSignedFile::MCPublicKey> rootKeys,
-                                                           const MCKept& kept)
+                                                           const MCKept& kept, uint64_t lowestKeyListIssue)
 {
     const auto keyPayload = MCSignedFile::Open(keyList, MCSignedFile::KeyListType, rootKeys);
 
@@ -209,6 +259,18 @@ std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyL
             std::format("the key list is issue {}, older than issue {} read before", keys->Issue, kept.KeyListIssue));
     }
 
+    if (keys->Issue < lowestKeyListIssue)
+    {
+        return std::unexpected(std::format("the key list is issue {}, older than issue {}, the lowest this build takes",
+                                           keys->Issue, lowestKeyListIssue));
+    }
+
+    if (keys->Epoch < kept.Epoch)
+    {
+        return std::unexpected(
+            std::format("the key list is epoch {}, older than epoch {} read before", keys->Epoch, kept.Epoch));
+    }
+
     const auto releasePayload = MCSignedFile::Open(releases, MCSignedFile::ReleaseType, keys->ReleaseKeys);
 
     if (!releasePayload)
@@ -223,10 +285,11 @@ std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyL
         return std::unexpected(read.error());
     }
 
-    if (read->Issue < kept.ReleaseIssue)
+    // A later epoch starts release.json's issues again: a release key that signed one too high to outbid is put right.
+    if (const uint64_t lowestIssue = keys->Epoch > kept.Epoch ? 0 : kept.ReleaseIssue; read->Issue < lowestIssue)
     {
         return std::unexpected(
-            std::format("release.json is issue {}, older than issue {} read before", read->Issue, kept.ReleaseIssue));
+            std::format("release.json is issue {}, older than issue {} read before", read->Issue, lowestIssue));
     }
 
     if (read->Current.Number < keys->LowestRelease)
@@ -235,15 +298,36 @@ std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyL
                                            read->Current.Number, keys->LowestRelease));
     }
 
+    read->Current.Epoch = keys->Epoch;
+
+    if (read->Rollout)
+    {
+        read->Rollout->Epoch = keys->Epoch;
+    }
+
     return MCTrusted{std::move(*keys), std::move(*read)};
 }
 
 MCKept MCReleaseFile::Keep(const MCKept& kept, const MCTrusted& trusted)
 {
     MCKept taken = kept;
+
+    if (trusted.Keys.Epoch > kept.Epoch)
+    {
+        // The earlier epoch's issue and skip are of files and numbers that no longer count.
+        taken.Epoch = trusted.Keys.Epoch;
+        taken.ReleaseIssue = 0;
+        taken.Skipped = 0;
+    }
+
     taken.KeyListIssue = std::max(kept.KeyListIssue, trusted.Keys.Issue);
-    taken.ReleaseIssue = std::max(kept.ReleaseIssue, trusted.Releases.Issue);
+    taken.ReleaseIssue = std::max(taken.ReleaseIssue, trusted.Releases.Issue);
     return taken;
+}
+
+MCOrder MCReleaseFile::OrderOf(const MCRelease& release)
+{
+    return {.Epoch = release.Epoch, .Release = release.Number};
 }
 
 std::expected<MCKept, std::string> MCReleaseFile::ReadKept(std::string_view text)
@@ -255,6 +339,11 @@ std::expected<MCKept, std::string> MCReleaseFile::ReadKept(std::string_view text
                     MCKept kept;
                     kept.KeyListIssue = Count(json, KeyListIssueKey);
                     kept.ReleaseIssue = Count(json, ReleaseIssueKey);
+
+                    if (json.contains(EpochKey))
+                    {
+                        kept.Epoch = Count(json, EpochKey);
+                    }
 
                     if (json.contains(RolloutNumberKey))
                     {
@@ -279,7 +368,7 @@ std::expected<MCKept, std::string> MCReleaseFile::ReadKept(std::string_view text
 
 std::string MCReleaseFile::KeptText(const MCKept& kept)
 {
-    MCJson json{{KeyListIssueKey, kept.KeyListIssue}, {ReleaseIssueKey, kept.ReleaseIssue}};
+    MCJson json{{KeyListIssueKey, kept.KeyListIssue}, {ReleaseIssueKey, kept.ReleaseIssue}, {EpochKey, kept.Epoch}};
 
     if (kept.RolloutNumber)
     {
@@ -292,6 +381,51 @@ std::string MCReleaseFile::KeptText(const MCKept& kept)
     }
 
     return json.dump(2);
+}
+
+std::string MCReleaseFile::FeedItemProblem(const MCProgram& held, std::string_view runningBuild, const MCFeedItem& item)
+{
+    if (item.Build != std::to_string(held.Build))
+    {
+        return std::format("it's build {}, not {}, the one release.json gives", item.Build, held.Build);
+    }
+
+    uint64_t running = 0;
+
+    if (const auto [end, error] =
+            std::from_chars(runningBuild.data(), runningBuild.data() + runningBuild.size(), running);
+        runningBuild.empty() || error != std::errc() || end != runningBuild.data() + runningBuild.size())
+    {
+        return std::format("the running build, \"{}\", isn't a number", runningBuild);
+    }
+
+    if (held.Build <= running)
+    {
+        return std::format("build {} isn't newer than build {}, the one running", held.Build, running);
+    }
+
+    if (item.Deltas != 0 || item.Delta)
+    {
+        return "it comes with delta updates, which release.json doesn't sign for";
+    }
+
+    if (held.EdSignatures.empty())
+    {
+        return "release.json gives no signature for the Mac's program";
+    }
+
+    if (const auto signature = Read(EdSignaturesKey, [&] { return EdSignatureOf(item.EdSignature, MacPlatform); });
+        !signature || std::ranges::find(held.EdSignatures, *signature) == held.EdSignatures.end())
+    {
+        return "its archive's signature isn't one release.json gives";
+    }
+
+    if (item.Size != held.Size)
+    {
+        return std::format("its archive is {} bytes, not {}, the size release.json gives", item.Size, held.Size);
+    }
+
+    return {};
 }
 
 const MCRelease& MCReleaseFile::For(const MCReleases& releases, uint32_t rolloutNumber)
@@ -316,7 +450,8 @@ std::string MCReleaseFile::KeyListPayload(const MCKeyList& keys)
     return MCJson{{FormatKey, keys.Format},
                   {IssueKey, keys.Issue},
                   {ReleaseKeysKey, std::move(list)},
-                  {LowestReleaseKey, keys.LowestRelease}}
+                  {LowestReleaseKey, keys.LowestRelease},
+                  {EpochKey, keys.Epoch}}
         .dump(2);
 }
 

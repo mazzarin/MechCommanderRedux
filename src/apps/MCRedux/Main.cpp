@@ -65,6 +65,13 @@ namespace
     constexpr std::array<std::string_view, 0> RootKeys = {};
 
     /// <summary>
+    /// The lowest key list issue this build takes, even on a fresh install with none kept (SPEC-install-and-updates.md's
+    /// Signing keys): a release fixing a security bug comes with a key list raising its lowest release, and raises this
+    /// to that list's issue, so the older files can't be served to it again.
+    /// </summary>
+    constexpr uint64_t LowestKeyListIssue = 0;
+
+    /// <summary>
     /// The lowest content release this program plays (SPEC-install-and-updates.md's The content list; 0: any): a copy
     /// with an older one gets the release at its start, before anything opens, as a first start does.
     /// </summary>
@@ -506,6 +513,7 @@ namespace
         return {.GameFolder = options.DataFolder,
                 .UserFolder = options.UserFolder,
                 .RootKeys = std::move(rootKeys),
+                .LowestKeyListIssue = LowestKeyListIssue,
                 .Platform = std::string(ReleasePlatform),
                 .RunningBuild = MC_VERSION_BUILD,
                 .RunningVersion = MC_VERSION_SHOWN};

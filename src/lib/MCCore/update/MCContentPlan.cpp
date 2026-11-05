@@ -2,6 +2,7 @@
 #include "update/MCContentPlan.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentFolder.h"
+#include "update/MCReleaseFile.h"
 #include "update/MCUpdateJson.h"
 
 namespace
@@ -163,6 +164,12 @@ namespace
     }
 }
 
+bool MCContentPlan::LeftToProgram(std::string_view platform, std::string_view path)
+{
+    return platform == MCReleaseFile::WindowsPlatform &&
+           std::ranges::find(WindowsProgramFiles, FoldedPath(path)) != WindowsProgramFiles.end();
+}
+
 bool MCContentPlan::MCPlan::Changes() const
 {
     return std::ranges::any_of(Steps,
@@ -177,7 +184,8 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                                                        const MCContentList::MCList& list,
                                                        const MCSha256::MCDigest& listHash,
                                                        const std::set<std::string, std::less<>>& sets,
-                                                       const MCHashes& hashes, const std::function<bool()>& goOn)
+                                                       const MCHashes& hashes, std::string_view platform,
+                                                       const std::function<bool()>& goOn)
 {
     MCPlan plan;
     plan.Record.Release = list.Release;
@@ -191,12 +199,15 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
     for (const MCContentList::MCFile& file : list.Files)
     {
-        plan.Record.SetBytes[file.Set] += file.Size;
+        if (!LeftToProgram(platform, file.Path))
+        {
+            plan.Record.SetBytes[file.Set] += file.Size;
+        }
     }
 
     for (const MCContentList::MCFile& file : list.Files)
     {
-        if (!sets.contains(file.Set))
+        if (!sets.contains(file.Set) || LeftToProgram(platform, file.Path))
         {
             continue;
         }
@@ -293,7 +304,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
     for (const auto& [folded, had] : installed.Files)
     {
-        if (listed.contains(folded))
+        if (listed.contains(folded) || LeftToProgram(platform, had.Path))
         {
             continue;
         }
@@ -319,7 +330,8 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folder,
                                                           const MCInstalled::MCRecord& installed,
                                                           const std::set<std::string, std::less<>>& sets,
-                                                          const MCHashes& hashes, const std::function<bool()>& goOn)
+                                                          const MCHashes& hashes, std::string_view platform,
+                                                          const std::function<bool()>& goOn)
 {
     MCPlan plan;
     plan.Record = installed;
@@ -328,6 +340,11 @@ std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folde
 
     for (const auto& [folded, had] : installed.Files)
     {
+        if (LeftToProgram(platform, had.Path))
+        {
+            continue;
+        }
+
         if (sets.contains(had.Set))
         {
             plan.Record.Files.insert_or_assign(folded, had);

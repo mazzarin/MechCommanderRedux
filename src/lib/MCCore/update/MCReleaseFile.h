@@ -1,6 +1,13 @@
 #pragma once
 
+// Standard headers and lib/MCSha256.h only: the Mac's Sparkle backend (apps/MCRedux/MCSparkleUpdater.mm) includes this
+// without the precompiled header.
 #include "lib/MCSha256.h"
+
+#include <compare>
+#include <map>
+#include <vector>
+
 #include "update/MCSignedFile.h"
 
 /// <summary>
@@ -14,13 +21,19 @@
 ///   program.
 ///
 /// Each file carries an issue number that only rises: the game keeps the highest it has read (in the user folder) and
-/// takes no file older, so an old file served again can't hold copies back. Formats only grow: a newer format adds
-/// fields, which this one ignores.
+/// takes no file older, so an old file served again can't hold copies back; a build also carries the lowest key list
+/// issue it takes. The key list's epoch, raised by the root only to recover from a release key that signed numbers too
+/// high to outbid, starts <c>release.json</c>'s issues and the releases' order afresh. Formats only grow: a newer
+/// format adds fields, which this one ignores.
 /// </summary>
 namespace MCReleaseFile
 {
     /// <summary>The format this game reads; a file of a higher one adds what it doesn't know.</summary>
     constexpr uint64_t KnownFormat = 1;
+
+    /// <summary>The platforms' names in <c>release.json</c>.</summary>
+    constexpr std::string_view MacPlatform = "mac";
+    constexpr std::string_view WindowsPlatform = "windows";
 
     /// <summary>The key list.</summary>
     struct MCKeyList
@@ -31,7 +44,17 @@ namespace MCReleaseFile
         std::vector<MCSignedFile::MCPublicKey> ReleaseKeys;
         /// <summary>The lowest release number taken, whatever <c>release.json</c> says.</summary>
         uint64_t LowestRelease = 0;
+        /// <summary>
+        /// Its epoch (0 without one), which only rises: a list of a later epoch than the copy read before starts
+        /// <c>release.json</c>'s issues again, and its releases come after any of an earlier epoch, whatever their
+        /// numbers (<see cref="MCOrder"/>).
+        /// </summary>
+        uint64_t Epoch = 0;
     };
+
+    /// <summary>The bytes of an Ed25519 signature.</summary>
+    constexpr size_t EdSignatureBytes = 64;
+    using MCEdSignature = std::array<uint8_t, EdSignatureBytes>;
 
     /// <summary>A platform's program in a release.</summary>
     struct MCProgram
@@ -44,6 +67,13 @@ namespace MCReleaseFile
         std::optional<MCSha256::MCDigest> Sha256;
         std::string Url;
         std::string Silent;
+        /// <summary>
+        /// The Mac's: its archive's EdDSA signatures as Sparkle's feed gives them (<c>sparkle:edSignature</c>), one for
+        /// each release key the feed signs it with (two while a key is replaced). Ed25519 signs deterministically, so
+        /// each pins the archive's bytes: Sparkle installs only that archive (<see cref="FeedItemProblem"/>). Without
+        /// one the Mac takes no program from the release.
+        /// </summary>
+        std::vector<MCEdSignature> EdSignatures;
     };
 
     /// <summary>A release.</summary>
@@ -60,6 +90,17 @@ namespace MCReleaseFile
         uint64_t ListSize = 0;
         /// <summary>Each platform's program ("mac", "windows").</summary>
         std::map<std::string, MCProgram, std::less<>> Programs;
+        /// <summary>The epoch of the key list it was taken under (<see cref="Check"/> sets it: release.json has none).</summary>
+        uint64_t Epoch = 0;
+    };
+
+    /// <summary>Where a release comes in the order releases are taken: by its key list's epoch, then its number.</summary>
+    struct MCOrder
+    {
+        uint64_t Epoch = 0;
+        uint64_t Release = 0;
+
+        auto operator<=>(const MCOrder&) const = default;
     };
 
     /// <summary><c>release.json</c>.</summary>
@@ -80,6 +121,8 @@ namespace MCReleaseFile
         /// <summary>The highest issues read; none is taken lower.</summary>
         uint64_t KeyListIssue = 0;
         uint64_t ReleaseIssue = 0;
+        /// <summary>The epoch of the key list last taken: <see cref="ReleaseIssue"/> and <see cref="Skipped"/> are its.</summary>
+        uint64_t Epoch = 0;
         /// <summary>The copy's rollout number (<see cref="For"/>), made once at random and never sent; none yet.</summary>
         std::optional<uint32_t> RolloutNumber;
         /// <summary>The release the player skipped (0: none): it isn't offered again, and a higher one is.</summary>
@@ -106,16 +149,49 @@ namespace MCReleaseFile
 
     /// <summary>
     /// Checks the key list (<paramref name="keyList"/>, an envelope) against <paramref name="rootKeys"/>, then
-    /// <c>release.json</c> (<paramref name="releases"/>) against the release keys it names; refuses either older than
-    /// <paramref name="kept"/>, and releases below the list's lowest.
+    /// <c>release.json</c> (<paramref name="releases"/>) against the release keys it names. Refuses a key list older
+    /// than <paramref name="kept"/>'s or than <paramref name="lowestKeyListIssue"/> (the build's own floor), or of an
+    /// earlier epoch; <c>release.json</c> older than <paramref name="kept"/>'s within the list's epoch (a later epoch
+    /// starts its issues again); and releases below the list's lowest. The releases carry the list's epoch.
     /// </summary>
     /// <returns>Both, or why they aren't taken.</returns>
     std::expected<MCTrusted, std::string> Check(std::string_view keyList, std::string_view releases,
-                                                std::span<const MCSignedFile::MCPublicKey> rootKeys,
-                                                const MCKept& kept);
+                                                std::span<const MCSignedFile::MCPublicKey> rootKeys, const MCKept& kept,
+                                                uint64_t lowestKeyListIssue = 0);
 
-    /// <summary>What <paramref name="kept"/> becomes once <paramref name="trusted"/> is taken.</summary>
+    /// <summary>
+    /// What <paramref name="kept"/> becomes once <paramref name="trusted"/> is taken: the higher issues; under a key list
+    /// of a later epoch, that epoch, its release.json's issue and no skip.
+    /// </summary>
     MCKept Keep(const MCKept& kept, const MCTrusted& trusted);
+
+    /// <summary>Where <paramref name="release"/> comes in the order releases are taken.</summary>
+    MCOrder OrderOf(const MCRelease& release);
+
+    /// <summary>An update the Mac's Sparkle found in its feed, as the game checks it (apps/MCRedux/MCSparkleUpdater.mm).</summary>
+    struct MCFeedItem
+    {
+        /// <summary>The build it installs (its <c>sparkle:version</c>, the app's CFBundleVersion).</summary>
+        std::string Build;
+        /// <summary>Its archive's EdDSA signature in base64, as the feed spells it (<c>sparkle:edSignature</c>), and its length.</summary>
+        std::string EdSignature;
+        uint64_t Size = 0;
+        /// <summary>
+        /// Its delta updates, and whether it's one itself: Sparkle takes a delta over the archive chosen, and checks a
+        /// delta only against the app's own key.
+        /// </summary>
+        size_t Deltas = 0;
+        bool Delta = false;
+    };
+
+    /// <summary>
+    /// Why the Mac's Sparkle may not install <paramref name="item"/> over build <paramref name="runningBuild"/> (the
+    /// running app's CFBundleVersion), or empty: only the program <paramref name="held"/>, the one release.json gives
+    /// this copy, goes in: its build, newer than the one running, with no delta updates, its archive's size and one of
+    /// its signatures as held (Sparkle then checks the signature against the app's key, so the archive is the one
+    /// release.json names).
+    /// </summary>
+    std::string FeedItemProblem(const MCProgram& held, std::string_view runningBuild, const MCFeedItem& item);
 
     /// <summary>
     /// The release for a copy whose rollout number is <paramref name="rolloutNumber"/> (made once, at random): the

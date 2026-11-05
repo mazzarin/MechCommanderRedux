@@ -1,5 +1,6 @@
 // Built without the precompiled header: Objective-C++, and Foundation and MCCore's Win32 stand-ins can't meet.
 #include "MCSparkleUpdater.h"
+#include "update/MCReleaseFile.h"
 
 #import <Foundation/Foundation.h>
 #import <Sparkle/Sparkle.h>
@@ -11,6 +12,17 @@ namespace
     NSString* const FeedKey = @"SUFeedURL";
     NSString* const ShownVersionKey = @"CFBundleShortVersionString";
     NSString* const BuildKey = @"CFBundleVersion";
+
+    /// <summary>
+    /// An item's enclosure in its properties, and the enclosure's signature, as Sparkle 2.10.1 parses the feed: it checks
+    /// the archive against that signature (trimmed, from base64), so the game reads the same text.
+    /// </summary>
+    NSString* const EnclosureKey = @"enclosure";
+    NSString* const EdSignatureKey = @"sparkle:edSignature";
+
+    /// <summary>Why Sparkle won't take an update, as its delegate tells it.</summary>
+    NSString* const RefusedDomain = @"MechCommanderRedux.Updater";
+    constexpr NSInteger HeldElsewhere = 1;
 
     /// <summary>A version as the game shows it: "0.2.1 (468)".</summary>
     std::string ShownVersion(NSString* shown, NSString* build)
@@ -53,6 +65,35 @@ namespace
         }
 
         return Utf8([notes stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);
+    }
+
+    /// <summary>What the game checks of <paramref name="item"/> (MCReleaseFile::FeedItemProblem).</summary>
+    MCReleaseFile::MCFeedItem FeedItem(SUAppcastItem* item)
+    {
+        const id enclosure = item.propertiesDictionary[EnclosureKey];
+        const id signature = [enclosure isKindOfClass:NSDictionary.class] ? enclosure[EdSignatureKey] : nil;
+        return {.Build = Utf8(item.versionString),
+                .EdSignature = [signature isKindOfClass:NSString.class] ? Utf8(signature) : std::string(),
+                .Size = item.contentLength,
+                .Deltas = item.deltaUpdates.count,
+                .Delta = item.isDeltaUpdate == YES};
+    }
+
+    /// <summary>
+    /// Why <paramref name="updater"/>'s Sparkle may not install <paramref name="item"/> when held to
+    /// <paramref name="program"/> (none: nothing is taken), or empty.
+    /// </summary>
+    std::string HeldProblem(const std::optional<MCReleaseFile::MCProgram>& program, SPUUpdater* updater,
+                            SUAppcastItem* item)
+    {
+        if (!program)
+        {
+            return "release.json gives this copy no program for the Mac";
+        }
+
+        const id running = [updater.hostBundle objectForInfoDictionaryKey:BuildKey];
+        return MCReleaseFile::FeedItemProblem(*program, [running isKindOfClass:NSString.class] ? Utf8(running) : "",
+                                              FeedItem(item));
     }
 }
 
@@ -207,15 +248,37 @@ namespace
 @end
 
 /// <summary>
-/// Sparkle's delegate: no permission asked (the game looks at each start), the session's end logged, and the update
-/// held to the build release.json gives this copy when the game's own updater asks for one (main/MCUpdater.h).
+/// Sparkle's delegate: no permission asked (the game looks at each start), the session's end logged, and, when the
+/// game's own updater asks for an update (main/MCUpdater.h), Sparkle held to the program release.json gives this copy:
+/// that build alone, its archive the one release.json signs for (MCReleaseFile::FeedItemProblem). Unheld (no content
+/// updater), Sparkle takes its own newest.
 /// </summary>
 @interface MCSparkleDelegate : NSObject <SPUUpdaterDelegate>
-/// <summary>The build to take (its CFBundleVersion), or nil for Sparkle's own newest.</summary>
-@property(nonatomic, copy) NSString* heldBuild;
+/// <summary>Holds Sparkle to <paramref name="program"/> (null: nothing it finds is taken).</summary>
+- (void)hold:(const MCReleaseFile::MCProgram*)program;
+/// <summary>Lets Sparkle take its own newest.</summary>
+- (void)letGo;
 @end
 
 @implementation MCSparkleDelegate
+{
+    /// <summary>Whether Sparkle is held to release.json's program, and the program (none: nothing is taken).</summary>
+    bool _Held;
+    std::optional<MCReleaseFile::MCProgram> _Program;
+}
+
+- (void)hold:(const MCReleaseFile::MCProgram*)program
+{
+    _Held = true;
+    _Program = program != nullptr ? std::optional(*program) : std::nullopt;
+}
+
+- (void)letGo
+{
+    _Held = false;
+    _Program.reset();
+}
+
 - (BOOL)updaterShouldPromptForPermissionToCheckForUpdates:(SPUUpdater*)updater
 {
     return NO;
@@ -223,20 +286,49 @@ namespace
 
 - (SUAppcastItem*)bestValidUpdateInAppcast:(SUAppcast*)appcast forUpdater:(SPUUpdater*)updater
 {
-    if (self.heldBuild == nil)
+    if (!_Held)
     {
         return nil;
     }
 
     for (SUAppcastItem* item in appcast.items)
     {
-        if ([item.versionString isEqualToString:self.heldBuild])
+        const std::string problem = HeldProblem(_Program, updater, item);
+
+        if (problem.empty())
         {
             return item;
         }
+
+        SDL_Log("Updater: the feed's build %s isn't taken: %s", Utf8(item.versionString).c_str(), problem.c_str());
     }
 
     return SUAppcastItem.emptyAppcastItem;
+}
+
+- (BOOL)updater:(SPUUpdater*)updater
+    shouldProceedWithUpdate:(SUAppcastItem*)updateItem
+                updateCheck:(SPUUpdateCheck)updateCheck
+                      error:(NSError* __autoreleasing*)error
+{
+    // The item Sparkle goes on with, checked again: it would take a delta over the item chosen.
+    const std::string problem = _Held ? HeldProblem(_Program, updater, updateItem) : std::string();
+
+    if (problem.empty())
+    {
+        return YES;
+    }
+
+    SDL_Log("Updater: Sparkle's update isn't the one release.json gives: %s", problem.c_str());
+
+    if (error != nullptr)
+    {
+        *error = [NSError errorWithDomain:RefusedDomain
+                                     code:HeldElsewhere
+                                 userInfo:@{NSLocalizedDescriptionKey : @(problem.c_str())}];
+    }
+
+    return NO;
 }
 
 - (void)updater:(SPUUpdater*)updater didAbortWithError:(NSError*)error
@@ -268,10 +360,20 @@ namespace
                                 [bundle objectForInfoDictionaryKey:BuildKey]);
         }
 
+        void Offered(const MCReleaseFile::MCProgram& program) override { _Offered = program; }
+
         void Check(std::optional<uint64_t> build) override
         {
-            _Delegate.heldBuild = build ? [NSString stringWithFormat:@"%llu", static_cast<unsigned long long>(*build)]
-                                        : nil;
+            // Held to the build release.json gives this copy, as offered (none offered, or another: nothing is taken).
+            if (build)
+            {
+                [_Delegate hold:_Offered && _Offered->Build == *build ? &*_Offered : nullptr];
+            }
+            else
+            {
+                [_Delegate letGo];
+            }
+
             [_Updater checkForUpdatesInBackground];
         }
 
@@ -282,6 +384,8 @@ namespace
         MCSparkleDriver* _Driver;
         /// <summary>Kept: Sparkle holds its delegate weakly.</summary>
         MCSparkleDelegate* _Delegate;
+        /// <summary>The program release.json gave this copy, last told (<see cref="Offered"/>).</summary>
+        std::optional<MCReleaseFile::MCProgram> _Offered;
     };
 }
 

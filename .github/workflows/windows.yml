@@ -27,14 +27,23 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # A run starts from the last run's build folder (GitHub's cache), so only what changed since compiles. The
-      # runner image's version is in the key: objects from another compiler aren't reused.
+      # A run starts from the last run's build folder (GitHub's cache, one per branch), so only what changed since
+      # compiles. The key starts with the compiler's version, since objects and precompiled headers from another
+      # compiler can't be reused (not the runner image's: images roll out over days, so runners alternate between two
+      # and each would miss the other's), and ends with the commit the folder was built from.
       - name: Name the build cache
         id: cache-name
         shell: pwsh
-        run: '"prefix=windows-build-$env:ImageVersion-" >> $env:GITHUB_OUTPUT'
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $tools = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          if (-not $tools) { throw "No MSVC tools version under $vs." }
+          "MSVC $tools"
+          "prefix=windows-build-msvc-$tools-" >> $env:GITHUB_OUTPUT
 
       - name: Restore the last build
+        id: restore
         uses: actions/cache/restore@v4
         with:
           path: src/build
@@ -42,19 +51,22 @@ jobs:
           restore-keys: ${{ steps.cache-name.outputs.prefix }}
 
       # The checkout dates every file now, newer than the cached objects. Unchanged files are dated back and the ones
-      # changed since the cached build's commit (build-commit.txt) dated now, so MSBuild compiles only those. A cache
-      # from a commit this clone doesn't have is dropped: a full build.
+      # changed since the cached build's commit (the end of the key restored) dated now, so MSBuild compiles only those.
+      # A cache from a commit this clone doesn't have, or one that brought no files, is dropped: a full build.
       - name: Date the sources for the cached build
         shell: pwsh
+        env:
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          KEY_PREFIX: ${{ steps.cache-name.outputs.prefix }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          $stamp = 'src\build\build-commit.txt'
-          if (-not (Test-Path $stamp)) { "No cached build: a full build."; exit 0 }
-          $cached = (Get-Content -Raw $stamp).Trim()
+          if (-not $env:MATCHED_KEY) { "No cached build: a full build."; exit 0 }
+          $cached = $env:MATCHED_KEY.Substring($env:KEY_PREFIX.Length)
+          $restored = @(Get-ChildItem -LiteralPath src\build -Recurse -File -ErrorAction SilentlyContinue).Count
           git cat-file -e "$cached^{commit}" 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            "The cached build's commit $cached isn't in this clone: a full build."
-            Remove-Item -Recurse -Force src\build
+          if ($LASTEXITCODE -ne 0 -or $restored -eq 0) {
+            "The cached build of $cached ($restored files) can't be used: a full build."
+            Remove-Item -LiteralPath src\build -Recurse -Force -ErrorAction SilentlyContinue
             exit 0
           }
           $old = [DateTime]::new(2000, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
@@ -63,17 +75,14 @@ jobs:
           foreach ($file in $files) { if (Test-Path -LiteralPath $file -PathType Leaf) { [IO.File]::SetLastWriteTimeUtc($file, $old) } }
           $changed = @(git -c core.quotepath=off diff --name-only $cached HEAD | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
           foreach ($file in $changed) { [IO.File]::SetLastWriteTimeUtc($file, $now) }
-          "Built before at $cached; $($changed.Count) of $($files.Count) files changed since."
+          "Built before at $cached ($restored files restored); $($changed.Count) of $($files.Count) files changed since."
 
       # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). Without whole-program
-      # optimization, which took half the build (link-time code generation): a work branch's check, not a release.
+      # optimization (a work branch's check, not a release), so a run after the first compiles only what changed and
+      # links quickly. A full build takes longer without it (MCCore 10 min, not 4: every function is compiled, not
+      # only those the programs reach).
       - name: Build
         run: msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -p:WholeProgramOptimization=false -m "-flp:logfile=msbuild.log;verbosity=normal"
-
-      - name: Keep the build for the next run
-        if: success()
-        shell: pwsh
-        run: Set-Content -NoNewline src\build\build-commit.txt $env:GITHUB_SHA
 
       - name: Save the build
         if: success()

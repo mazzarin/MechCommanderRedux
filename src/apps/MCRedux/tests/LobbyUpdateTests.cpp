@@ -546,7 +546,8 @@ TEST_CASE_ISOLATED("game: a lobby's room lets a guest away updating go after its
 /// <summary>
 /// A kept place holds the room's start and opens the room, so the room keeps one only for a guest whose build says it
 /// rejoins (its rules), and once a room: a guest that never said its rules, or whose build doesn't rejoin, is ignored;
-/// another player's RestartOff leaves the place be; and an Updating after the guest's minute is over keeps nothing.
+/// another player's RestartOff leaves the place be; and an Updating after the guest's minute is over, or after its own
+/// RestartOff, keeps nothing (no guest holds the start again and again).
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's room keeps a guest's place only for a build that rejoins, and once")
 {
@@ -595,6 +596,18 @@ TEST_CASE_ISOLATED("game: a lobby's room keeps a guest's place only for a build 
     CHECK(!screen.StartButton->Disabled);
     CHECK(screen.StartWaits.empty());
     CHECK(!MCLobbyUpdate::LeftToUpdate(cal.Id()));
+
+    // ANN's, called off by its RestartOff before its minute is over: its next Updating keeps nothing either.
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    ann.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    ann.SendRestartOff(hostId);
+    REQUIRE(SettleUntil([] { return !RoomOpen(); }));
+    ann.SendUpdating(hostId);
+    Settle();
+    CHECK(!RoomOpen());
+    CHECK(!screen.StartButton->Disabled);
+    CHECK(!MCLobbyUpdate::LeftToUpdate(ann.Id()));
 }
 
 namespace

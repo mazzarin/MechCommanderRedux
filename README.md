@@ -78,8 +78,6 @@ Its options are on by default, each a row on the HD OPTIONS page (PREFERENCES, t
   and game data, and names whoever doesn't.
 - **Mission Editor.** Mission > Time of Day and Mission > Weather.
 - **Menus.** UPDATE on the main menu (the Mac app updates itself), and INTERFACE SIZE on the Preferences screen.
-- **Fixes.** Missiles and cannon shots that hit fly all the way to their target at any frame rate (the original's check
-  holds at 15 frames a second). See [CHANGES.md](CHANGES.md).
 
 ## Coming
 

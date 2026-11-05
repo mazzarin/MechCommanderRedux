@@ -44,8 +44,8 @@ jobs:
         if: inputs.commit
         shell: pwsh
         run: |
-          if ($env:RELEASE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw "The commit isn't 40 hex characters: $env:RELEASE_COMMIT" }
-          if ($env:GAME_BYTES -notmatch '^[1-9][0-9]*$' -or $env:HD_BYTES -notmatch '^[1-9][0-9]*$') {
+          if ($env:RELEASE_COMMIT -cnotmatch '^[0-9a-f]{40}\z') { throw "The commit isn't 40 hex characters: $env:RELEASE_COMMIT" }
+          if ($env:GAME_BYTES -notmatch '^[1-9][0-9]*\z' -or $env:HD_BYTES -notmatch '^[1-9][0-9]*\z') {
             throw "A release's setup needs both sets' sizes in bytes (game $env:GAME_BYTES, HD $env:HD_BYTES)."
           }
 

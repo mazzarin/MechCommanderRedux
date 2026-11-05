@@ -223,7 +223,14 @@ namespace
                 }
 
                 // Only one file is ever set aside at a path: the next start's put back finds it there.
-                if (_Disk.Stat(Replaced(move)).Exists)
+                const auto setAside = IsThere(_Disk, Replaced(move));
+
+                if (!setAside)
+                {
+                    return setAside.error();
+                }
+
+                if (*setAside)
                 {
                     return std::format("{} can't be moved aside: another copy is already set aside", move.Path);
                 }
@@ -251,7 +258,14 @@ namespace
                     return std::string(TooLateError);
                 }
 
-                if (_Disk.Stat(Destination(move)).Exists)
+                const auto inPlace = IsThere(_Disk, Destination(move));
+
+                if (!inPlace)
+                {
+                    return inPlace.error();
+                }
+
+                if (*inPlace)
                 {
                     const auto at = Classify(move);
 
@@ -273,8 +287,14 @@ namespace
                     continue;
                 }
 
-                if (const MCUpdateDisk::MCStat staged = _Disk.Stat(Staged(move));
-                    !staged.Exists || staged.Folder || staged.Size != move.NewSize)
+                const MCUpdateDisk::MCStat staged = _Disk.Stat(Staged(move));
+
+                if (!staged.Error.empty())
+                {
+                    return staged.Error;
+                }
+
+                if (!staged.Exists || staged.Folder || staged.Size != move.NewSize)
                 {
                     return std::format("{}'s staged copy is missing or the wrong size", move.Path);
                 }
@@ -302,8 +322,9 @@ namespace
         {
             for (const MCMove& move : std::views::reverse(_Journal.Moves))
             {
-                if (move.New && _Disk.Stat(Destination(move)).Exists)
+                if (move.New)
                 {
+                    // A new file in place goes back to staged/; anything else there is left as it is.
                     const auto at = Classify(move);
 
                     if (!at)
@@ -317,17 +338,17 @@ namespace
                     }
                 }
 
-                if (_Disk.Stat(Replaced(move)).Exists)
-                {
-                    if (_Disk.Stat(Destination(move)).Exists)
-                    {
-                        return std::format("{} can't be put back: something else is in its place", move.Path);
-                    }
+                const auto setAside = IsThere(_Disk, Replaced(move));
 
-                    if (!Move(Replaced(move), Destination(move)))
-                    {
-                        return std::format("{} can't be put back", move.Path);
-                    }
+                if (!setAside)
+                {
+                    return setAside.error();
+                }
+
+                if (*setAside && !Move(Replaced(move), Destination(move)))
+                {
+                    return std::format("{} can't be put back: something else is in its place, or it can't move",
+                                       move.Path);
                 }
             }
 
@@ -368,6 +389,11 @@ namespace
         std::expected<MCAt, std::string> What(const std::filesystem::path& path, const MCMove& move)
         {
             const MCUpdateDisk::MCStat stat = _Disk.Stat(path);
+
+            if (!stat.Error.empty())
+            {
+                return std::unexpected(stat.Error);
+            }
 
             if (!stat.Exists)
             {
@@ -413,7 +439,14 @@ namespace
         {
             for (const MCMove& move : _Journal.Moves)
             {
-                if (!_Disk.Stat(Replaced(move)).Exists)
+                const auto setAside = IsThere(_Disk, Replaced(move));
+
+                if (!setAside)
+                {
+                    return setAside.error();
+                }
+
+                if (!*setAside)
                 {
                     continue;
                 }
@@ -454,11 +487,11 @@ namespace
                 }
             }
 
-            const std::optional<std::filesystem::path> kept = KeptAt(move);
+            const auto kept = KeptAt(move);
 
             if (!kept)
             {
-                return std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder);
+                return kept.error();
             }
 
             if (!Move(Replaced(move), *kept))
@@ -524,38 +557,41 @@ namespace
 
         /// <summary>
         /// Where a file set aside is kept: its path in Redux backup, the folder's own copy there staying (the uninstall
-        /// puts it back), so a later one goes beside it as "name (2).ext", "name (3).ext" and on; none when all are taken.
+        /// puts it back), so a later one goes beside it as "name (2).ext", "name (3).ext" and on; or why none (all are
+        /// taken, or a name can't be looked at).
         /// </summary>
-        std::optional<std::filesystem::path> KeptAt(const MCMove& move) const
+        std::expected<std::filesystem::path, std::string> KeptAt(const MCMove& move) const
         {
             const std::filesystem::path first = At(MCContentList::BackupFolder) / MCFileSystem::FromUtf8(move.Path);
-
-            if (!_Disk.Stat(first).Exists)
-            {
-                return first;
-            }
-
             const std::string stem = MCFileSystem::ToUtf8(first.stem());
             const std::string extension = MCFileSystem::ToUtf8(first.extension());
 
-            for (int copy = FirstNumberedCopy; copy <= LastNumberedCopy; ++copy)
+            for (int copy = FirstNumberedCopy - 1; copy <= LastNumberedCopy; ++copy)
             {
-                const std::filesystem::path numbered =
-                    first.parent_path() / MCFileSystem::FromUtf8(std::format("{} ({}){}", stem, copy, extension));
+                const std::filesystem::path name =
+                    copy < FirstNumberedCopy
+                        ? first
+                        : first.parent_path() / MCFileSystem::FromUtf8(std::format("{} ({}){}", stem, copy, extension));
+                const auto taken = IsThere(_Disk, name);
 
-                if (!_Disk.Stat(numbered).Exists)
+                if (!taken)
                 {
-                    return numbered;
+                    return std::unexpected(taken.error());
+                }
+
+                if (!*taken)
+                {
+                    return name;
                 }
             }
 
-            return std::nullopt;
+            return std::unexpected(std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder));
         }
 
-        /// <summary>Moves a file, noting both folders for the next flush.</summary>
+        /// <summary>Moves a file where nothing is (never replacing one), noting both folders for the next flush.</summary>
         bool Move(const std::filesystem::path& from, const std::filesystem::path& to)
         {
-            if (!_Disk.MakeFolders(to.parent_path()) || !_Disk.Rename(from, to))
+            if (!_Disk.MakeFolders(to.parent_path()) || !_Disk.Move(from, to))
             {
                 return false;
             }
@@ -788,17 +824,32 @@ namespace
     {
         const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
         const std::filesystem::path readyPath = gameFolder / MCFileSystem::FromUtf8(ReadyFile);
-        const bool begun = disk.Stat(journalPath).Exists;
-
-        if (!begun && !disk.Stat(readyPath).Exists)
-        {
-            return {};
-        }
-
-        const auto text = disk.ReadText(begun ? journalPath : readyPath);
-        auto journal = text ? ReadJournal(*text) : std::unexpected(text.error());
+        const auto begun = IsThere(disk, journalPath);
 
         if (!begun)
+        {
+            return {MCOutcome::Stuck, begun.error()};
+        }
+
+        if (!*begun)
+        {
+            const auto ready = IsThere(disk, readyPath);
+
+            if (!ready)
+            {
+                return {MCOutcome::PutBack, ready.error()};
+            }
+
+            if (!*ready)
+            {
+                return {};
+            }
+        }
+
+        const auto text = disk.ReadText(*begun ? journalPath : readyPath);
+        auto journal = text ? ReadJournal(*text) : std::unexpected(text.error());
+
+        if (!*begun)
         {
             if (journal)
             {
@@ -886,18 +937,39 @@ std::expected<void, std::string> MCContentSwap::Abandon(MCUpdateDisk& disk, cons
 
     // The journal becomes the repair's first, so from here the game doesn't play the files until a swap is committed. One
     // already there was given up before (a journal now is the repair's own swap, stopped midway).
-    if (disk.Stat(journalPath).Exists && (!disk.Rename(journalPath, repairPath) || !disk.FlushFolder(updateFolder)))
+    const auto begun = IsThere(disk, journalPath);
+
+    if (!begun)
+    {
+        return std::unexpected(begun.error());
+    }
+
+    if (*begun && (!disk.Rename(journalPath, repairPath) || !disk.FlushFolder(updateFolder)))
     {
         return std::unexpected("the update's journal can't be set aside for the repair");
     }
 
-    if (!disk.Stat(repairPath).Exists)
+    const auto repairing = IsThere(disk, repairPath);
+
+    if (!repairing)
+    {
+        return std::unexpected(repairing.error());
+    }
+
+    if (!*repairing)
     {
         return {};
     }
 
     // The repair's own update, put back whole: its files wait in staged/, where the next staging finds them.
-    if (disk.Stat(readyPath).Exists && (!disk.Remove(readyPath) || !disk.FlushFolder(updateFolder)))
+    const auto ready = IsThere(disk, readyPath);
+
+    if (!ready)
+    {
+        return std::unexpected(ready.error());
+    }
+
+    if (*ready && (!disk.Remove(readyPath) || !disk.FlushFolder(updateFolder)))
     {
         return std::unexpected("the update put back can't be cleared for the repair");
     }

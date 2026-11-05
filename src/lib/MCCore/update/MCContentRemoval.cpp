@@ -17,7 +17,19 @@ namespace
     /// <returns>Empty, or what's left undone: then nothing may go, as the player's originals may still be set aside.</returns>
     std::string FinishUnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
     {
-        if (disk.Stat(gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile)).Exists)
+        const auto begun = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile));
+        const auto setAside = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::ReplacedFolder));
+        const auto repairing = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::RepairFile));
+
+        for (const auto* seen : {&begun, &setAside, &repairing})
+        {
+            if (!*seen)
+            {
+                return seen->error();
+            }
+        }
+
+        if (*begun)
         {
             // A committed swap whose clearing failed says so too: what it set aside is still in replaced/.
             if (const MCContentSwap::MCResult swap = MCContentSwap::Run(disk, gameFolder);
@@ -30,8 +42,7 @@ namespace
         }
 
         // The journal becomes repair.json before the files set aside are sorted: replaced/ still there, it isn't done.
-        if (MCContentSwap::Repairing(disk, gameFolder) &&
-            disk.Stat(gameFolder / MCFileSystem::FromUtf8(MCContentSwap::ReplacedFolder)).Exists)
+        if (*repairing && *setAside)
         {
             if (const auto given = MCContentSwap::Abandon(disk, gameFolder); !given)
             {
@@ -75,8 +86,14 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
     MCUpdateDisk& disk, const std::filesystem::path& gameFolder, std::chrono::milliseconds wait)
 {
     const std::filesystem::path update = gameFolder / MCFileSystem::FromUtf8(MCContentSwap::UpdateFolder);
+    const auto hasUpdate = IsThere(disk, update);
 
-    if (!disk.Stat(update).Exists)
+    if (!hasUpdate)
+    {
+        return std::unexpected(hasUpdate.error());
+    }
+
+    if (!*hasUpdate)
     {
         return MCRemoved{};
     }

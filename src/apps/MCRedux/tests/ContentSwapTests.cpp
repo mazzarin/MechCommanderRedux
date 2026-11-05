@@ -57,6 +57,14 @@ namespace
         /// <summary>The folder flush right after a file moves into <paramref name="path"/> fails, once.</summary>
         void FailFlushAfterMoveTo(std::string path) { _FailFlushAfter = std::move(path); }
 
+        /// <summary>What's at <paramref name="path"/> can't be looked at (a drive failing; empty: none).</summary>
+        void FailStat(std::string path) { _Unseen = std::move(path); }
+
+        /// <summary>
+        /// The player puts <paramref name="bytes"/> at <paramref name="path"/> just as the next file is moved there (once).
+        /// </summary>
+        void AppearAt(std::string path, std::string bytes) { _Appearing = {std::move(path), std::move(bytes)}; }
+
         /// <summary>
         /// The machine stops and starts again: the safe changes stay, and each unsafe one stays when
         /// <paramref name="keep"/> says so (by its order), applied in order, skipping one whose file is gone.
@@ -85,6 +93,11 @@ namespace
         MCStat Stat(const std::filesystem::path& path) override
         {
             const std::string key = Key(path);
+
+            if (key == _Unseen)
+            {
+                return {.Error = key + " can't be looked at"};
+            }
 
             if (const auto found = _Seen.find(key); found != _Seen.end())
             {
@@ -152,6 +165,24 @@ namespace
 
             _LastMovedTo = Key(to);
             return Record({MCKind::Rename, Key(from), Key(to), {}, {Parent(from), Parent(to)}, true});
+        }
+
+        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            if (_Appearing && _Appearing->first == Key(to))
+            {
+                const auto [path, bytes] = *std::exchange(_Appearing, std::nullopt);
+                Record({MCKind::Write, path, {}, bytes, {Parent(to)}, true});
+            }
+
+            // Never over a file, nor a folder.
+            if (Stat(to).Exists)
+            {
+                Step();
+                return false;
+            }
+
+            return Rename(from, to);
         }
 
         bool Remove(const std::filesystem::path& path) override
@@ -289,6 +320,8 @@ namespace
         std::string _Held;
         std::string _FailFlushAfter;
         std::string _LastMovedTo;
+        std::string _Unseen;
+        std::optional<std::pair<std::string, std::string>> _Appearing;
     };
 
     /// <summary>The scratch folders' group, for the tests on a real disk.</summary>
@@ -823,6 +856,26 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(disk->FlushFolder(folder / "a"));
     CHECK(disk->FlushFile(folder / "c.json"));
     CHECK(!disk->Stat(folder / "a" / "b.json").Exists);
+
+    // An update's files move only where nothing is.
+    REQUIRE(WriteDurably(*disk, folder / "d.json", "third"));
+    CHECK(!disk->Move(folder / "c.json", folder / "d.json"));
+    CHECK_EQ(*disk->ReadText(folder / "d.json"), std::string("third"));
+    CHECK(disk->Move(folder / "c.json", folder / "a" / "e.json"));
+    CHECK_EQ(*disk->ReadText(folder / "a" / "e.json"), std::string("second"));
+
+    // Missing is only what isn't there: a file in a folder that can't be read can't be looked at.
+    const MCUpdateDisk::MCStat missing = disk->Stat(folder / "none.json");
+    CHECK(!missing.Exists);
+    CHECK(missing.Error.empty());
+#ifndef _WIN32
+    std::filesystem::permissions(folder / "a", std::filesystem::perms::none, error);
+    const MCUpdateDisk::MCStat unseen = disk->Stat(folder / "a" / "e.json");
+    std::filesystem::permissions(folder / "a", std::filesystem::perms::owner_all, error);
+    CHECK(!unseen.Exists);
+    CHECK(!unseen.Error.empty());
+    CHECK(IsThere(*disk, folder / "a" / "e.json").value_or(false));
+#endif
     CHECK(disk->Remove(folder));
     CHECK(!disk->Stat(folder).Exists);
 }
@@ -1189,4 +1242,70 @@ TEST_CASE("content swap at a start: another copy holding the lock exclusive make
         other->Release();
         CHECK(other->TryExclusive());
     }
+}
+
+TEST_CASE("content swap: a file the player puts in a new file's place as it moves in is never replaced: the old set "
+          "goes back")
+{
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.AppearAt(GamePath("data/missions/new.fit"), "the player's own mission");
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game);
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("data/missions/new.fit") != std::string::npos);
+    CHECK_EQ(disk.Files().at(GamePath("data/missions/new.fit")).Bytes, std::string("the player's own mission"));
+    CHECK_EQ(disk.Files().at(GamePath("ART.FST")).Bytes, std::string("art v1"));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
+
+    // The next start sets the player's file aside, kept in Redux backup, and swaps the update in.
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK(update.WhichSet(disk.Files(), update.New));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/missions/new.fit")).Bytes,
+             std::string("the player's own mission"));
+}
+
+TEST_CASE("content swap: a file set aside that can't be looked at once the swap is committed stays set aside, never "
+          "taken for gone")
+{
+    const MCUpdate update;
+    const std::string setAside = GamePath(std::string(MCContentSwap::ReplacedFolder) + "/data/mod.fit");
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    bool tried = false;
+
+    // Stopped once committed, with the folder's own mod still set aside.
+    for (int step = 0; step < measure.Changes() && !tried; ++step)
+    {
+        MCCrashDisk disk(update.Files);
+        disk.CutAt(step);
+
+        try
+        {
+            MCContentSwap::Run(disk, Game);
+        }
+        catch (const MCPowerCut&)
+        {
+        }
+
+        disk.Cut([](size_t) { return true; });
+        const auto record = MCInstalled::FromText(disk.Files().at(GamePath(MCInstalled::RecordPath)).Bytes);
+
+        if (!record || record->Swap != update.After.Swap || !disk.Files().contains(setAside))
+        {
+            continue;
+        }
+
+        tried = true;
+        disk.FailStat(setAside);
+        const MCContentSwap::MCResult unseen = MCContentSwap::Run(disk, Game);
+        CHECK(unseen.Outcome == MCOutcome::Swapped);
+        CHECK(unseen.Error.find("data/mod.fit") != std::string::npos);
+        CHECK_EQ(disk.Files().at(setAside).Bytes, std::string("the folder's own mod"));
+
+        disk.FailStat({});
+        CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+        CHECK(update.IsNew(disk.Files()));
+    }
+
+    CHECK(tried);
 }

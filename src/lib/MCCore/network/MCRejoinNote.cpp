@@ -76,14 +76,15 @@ namespace
 
 auto MCRejoinNote::LobbyCommandLine(const MCLobbyLaunchArgs& args) -> std::string
 {
-    // A rejoin's start has the switch already.
+    // The lobby's own words alone: the note starts nothing else (a file written, a mission loaded). A rejoin's start
+    // has the switch already.
+    const std::string words = LobbyWords(args.CommandLine);
+
     if (args.Rejoin)
     {
-        return args.CommandLine;
+        return words;
     }
 
-    const size_t end = args.CommandLine.find_last_not_of(" \t");
-    const std::string_view words = std::string_view(args.CommandLine).substr(0, end == std::string::npos ? 0 : end + 1);
     return words.empty() ? std::string(RejoinSwitch) : std::format("{} {}", words, RejoinSwitch);
 }
 
@@ -127,8 +128,10 @@ auto MCRejoinNote::TakeAtStart(const std::filesystem::path& userFolder, uint64_t
     }
 
     const auto note = Read(path);
+    // Only the lobby's own words, again: anything that can write to the user folder can write a note.
+    const std::string words = note ? LobbyWords(note->CommandLine) : std::string();
 
-    if (!note || !StartsInLobby(note->CommandLine))
+    if (!note || !StartsInLobby(words))
     {
         Delete(path, note ? std::string("not a lobby's words") : note.error());
         return std::nullopt;
@@ -150,8 +153,8 @@ auto MCRejoinNote::TakeAtStart(const std::filesystem::path& userFolder, uint64_t
     }
 
     Delete(path, "taken");
-    SDL_Log("Rejoin: starting as the note says: %s", note->CommandLine.c_str());
-    return note->CommandLine;
+    SDL_Log("Rejoin: starting as the note says: %s", words.c_str());
+    return words;
 }
 
 auto MCRejoinNote::Discard(const std::filesystem::path& userFolder) -> void

@@ -60,6 +60,13 @@ namespace
         Clock::time_point Until;
     };
 
+    /// <summary>A guest whose place the room has kept, by its id and its name (it comes back with another id).</summary>
+    struct MCKept
+    {
+        uint32_t Id = 0;
+        std::string Name;
+    };
+
     /// <summary>A guest's wait for its host, restarting into an update.</summary>
     struct MCHostWait
     {
@@ -76,6 +83,17 @@ namespace
     bool NoteUnwritten = false;
     /// <summary>The guests restarting into an update, by the order they said so.</summary>
     std::vector<MCComing> Coming;
+    /// <summary>
+    /// The guests whose places the room has kept: once each a room, so no game holds the room's start again and again
+    /// with its Updating (one after its wait was over, or after it came back, is ignored).
+    /// </summary>
+    std::vector<MCKept> KeptOnce;
+    /// <summary>
+    /// Whether this guest's room has kept its place once already: it said it restarts and called it off, or it is back
+    /// from its update (unset: as the game started, with -rejoin or not). Its next update then installs after the match,
+    /// as the room would keep no place for it. A host restarting makes a new room.
+    /// </summary>
+    std::optional<bool> OwnPlaceKept;
     /// <summary>The host shows its room again once a guest back from its update has settled.</summary>
     std::optional<Clock::time_point> RefreshAt;
     std::optional<MCHostWait> HostWait;
@@ -156,6 +174,19 @@ namespace
         return said != MultiPlayer()->PlayerRules.end() && (said->second & MCMatchRule::RejoinsHost) != 0;
     }
 
+    /// <summary>Whether this game is a guest whose room has kept its place once already (OwnPlaceKept).</summary>
+    bool OwnPlaceUsed()
+    {
+        return !MultiPlayer()->IsHost && OwnPlaceKept.value_or(LobbyLaunchArgs.Rejoin);
+    }
+
+    /// <summary>Whether the room has kept a place for <paramref name="player"/> before, by its id or its name.</summary>
+    bool KeptBefore(const MCFidpPlayer& player)
+    {
+        return std::ranges::any_of(KeptOnce, [&](const MCKept& kept)
+                                   { return kept.Id == player.Id || kept.Name == player.Name; });
+    }
+
     /// <summary>Sends this game's <paramref name="type"/> (Updating or RestartOff, a header alone) to every player.</summary>
     void SendToRoom(MCMPMessageType type)
     {
@@ -201,7 +232,10 @@ namespace
         GlobalLog()->DestroyMultiplayer();
         game.LeaveSession();
         game.PlayerRules.clear();
+        // The host's new version opens a new room, which has kept no one's place.
         Coming.clear();
+        KeptOnce.clear();
+        OwnPlaceKept = false;
         RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
@@ -320,6 +354,12 @@ namespace
 
         SendToRoom(MCMPMessageType::RestartOff);
 
+        // The room kept this guest's place once: it keeps none again.
+        if (!MultiPlayer()->IsHost)
+        {
+            OwnPlaceKept = true;
+        }
+
         if (MultiPlayer()->IsHost && !RoomAtRestart.empty())
         {
             const Clock::time_point until = Now() + MCLobbyUpdate::RejoinWait;
@@ -375,8 +415,9 @@ auto MCLobbyUpdate::ReadyText() -> std::string
 auto MCLobbyUpdate::CanRestart() -> bool
 {
     // A guest away updating can't be told: the room restarts only once it is back. The new version comes back only
-    // with the note, which needs the build it starts as.
-    return InRoom() && !MatchUnderWay() && Coming.empty() && !NoteUnwritten && MCUpdater::ExpectedBuild().has_value() &&
+    // with the note, which needs the build it starts as. A room keeps a guest's place once.
+    return InRoom() && !MatchUnderWay() && Coming.empty() && !NoteUnwritten && !OwnPlaceUsed() &&
+           MCUpdater::ExpectedBuild().has_value() &&
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
@@ -520,7 +561,22 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
         return;
     }
 
+    // A kept place holds the room's start and opens the room: only for a build that comes back (its rules said so), and
+    // once a room, so no guest holds the start again and again.
+    if (!Rejoins(*player))
+    {
+        SDL_Log("Lobby updates: %s's Updating ignored: its game isn't known to rejoin", player->Name.c_str());
+        return;
+    }
+
+    if (KeptBefore(*player))
+    {
+        SDL_Log("Lobby updates: %s's Updating ignored: the room has kept its place once already", player->Name.c_str());
+        return;
+    }
+
     SDL_Log("Lobby updates: %s restarts into an update; the room keeps its place", player->Name.c_str());
+    KeptOnce.push_back({.Id = fromId, .Name = player->Name});
     Coming.push_back({.Id = fromId, .Name = player->Name, .Until = Now() + RejoinWait});
 
     if (game.IsHost)
@@ -538,6 +594,7 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
 
 auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
 {
+    // Only the sender's own place, by its id (a session never numbers two players alike).
     const auto coming = std::ranges::find(Coming, fromId, &MCComing::Id);
 
     if (!InRoom() || GlobalLog() == nullptr || coming == Coming.end())

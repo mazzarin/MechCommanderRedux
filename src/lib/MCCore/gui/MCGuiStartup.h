@@ -18,3 +18,11 @@ void ParseCommandLine(std::string_view commandLine);
 
 /// <summary>Whether the command line starts the game in a multiplayer lobby's room (<c>-host</c> or <c>-join</c>).</summary>
 bool StartsInLobby(std::string_view commandLine);
+
+/// <summary>
+/// Port-only (the personal build): the lobby's own words in <paramref name="commandLine"/>, each with the words it takes
+/// as ParseCommandLine reads them (<c>-host</c>, <c>-join</c>, <c>-port</c>, <c>-player</c>, <c>-session</c>,
+/// <c>-maxplayers</c>, <c>-rejoin</c>, the match's options, <c>-matchmap</c>, <c>-slot</c> and the teams'), for the
+/// rejoin note (network/MCRejoinNote.h): any other word is left out, and logged.
+/// </summary>
+std::string LobbyWords(std::string_view commandLine);

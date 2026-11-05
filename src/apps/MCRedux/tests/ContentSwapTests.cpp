@@ -888,8 +888,8 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     std::error_code error;
     std::filesystem::remove_all(folder, error);
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-    REQUIRE(WriteDurably(*disk, folder / "a" / "b.json", "first"));
-    REQUIRE(WriteDurably(*disk, folder / "a" / "b.json", "second"));
+    REQUIRE(WriteDurably(*disk, folder, folder / "a" / "b.json", "first"));
+    REQUIRE(WriteDurably(*disk, folder, folder / "a" / "b.json", "second"));
     CHECK_EQ(*disk->ReadText(folder / "a" / "b.json"), std::string("second"));
     CHECK(!disk->Stat(folder / "a" / "b.json.writing").Exists);
     CHECK(disk->Stat(folder / "a").Folder);
@@ -901,7 +901,7 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(!disk->Stat(folder / "a" / "b.json").Exists);
 
     // An update's files move only where nothing is.
-    REQUIRE(WriteDurably(*disk, folder / "d.json", "third"));
+    REQUIRE(WriteDurably(*disk, folder, folder / "d.json", "third"));
     CHECK(!disk->Move(folder / "c.json", folder / "d.json"));
     CHECK_EQ(*disk->ReadText(folder / "d.json"), std::string("third"));
     CHECK(disk->Move(folder / "c.json", folder / "a" / "e.json"));
@@ -909,7 +909,7 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
 
     // The same on a volume that can't move a file only where nothing is (SMB, NFS, FAT): it looks first.
     const std::unique_ptr<MCUpdateDisk> lookingFirst = MakeDisk(MCMoves::LookingFirst);
-    REQUIRE(WriteDurably(*lookingFirst, folder / "f.json", "fourth"));
+    REQUIRE(WriteDurably(*lookingFirst, folder, folder / "f.json", "fourth"));
     CHECK(!lookingFirst->Move(folder / "f.json", folder / "d.json"));
     CHECK(!lookingFirst->Move(folder / "f.json", folder / "a"));
     CHECK_EQ(*lookingFirst->ReadText(folder / "d.json"), std::string("third"));
@@ -1419,7 +1419,8 @@ TEST_CASE("content swap at a start: another copy holding the lock exclusive make
     {
         if (midway)
         {
-            REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCContentSwap::JournalFile), "{}"));
+            REQUIRE(WriteDurably(*disk, game.Path(), game.Path() / MCFileSystem::FromUtf8(MCContentSwap::JournalFile),
+                                 "{}"));
         }
 
         const auto before = std::chrono::steady_clock::now();
@@ -1695,7 +1696,7 @@ TEST_CASE("content at a start: a first start, a release older than the program p
 
     // A note that can't be read waits for nothing.
     record.Release = 3;
-    REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile), "{ damaged"));
+    REQUIRE(WriteDurably(*disk, game.Path(), game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile), "{ damaged"));
     CHECK(!MCInstalled::ReadDue(*disk, game.Path()).has_value());
     CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
 }

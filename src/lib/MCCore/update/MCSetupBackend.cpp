@@ -195,7 +195,7 @@ namespace
 
         const MCArmed armed{.Build = program.Build, .Sha256 = *program.Sha256, .Arguments = program.Silent};
 
-        if (!WriteDurably(*disk, In(gameFolder, MCSetupBackend::ArmedFile), ArmedText(armed)))
+        if (!WriteDurably(*disk, gameFolder, In(gameFolder, MCSetupBackend::ArmedFile), ArmedText(armed)))
         {
             return std::unexpected(std::format("{} can't be written", MCSetupBackend::ArmedFile));
         }

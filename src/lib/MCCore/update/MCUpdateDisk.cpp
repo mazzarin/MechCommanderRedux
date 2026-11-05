@@ -690,25 +690,28 @@ bool MCNewFile::Close()
     return closed;
 }
 
-bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& path, std::string_view bytes)
+bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& within, const std::filesystem::path& path,
+                  std::string_view bytes)
 {
     std::filesystem::path temporary = path;
     temporary += std::string(TemporarySuffix);
+    MCNoLinks noLinks(disk, within);
 
-    if (!disk.MakeFolders(path.parent_path()))
+    // No link on its way below the folder (Redux update put in as one, say) takes the write elsewhere: looked at before
+    // its folders are made, so none is made through one, and again after. The file itself is made anew, never through a
+    // link (WriteFlushed), and the rename replaces a link at its name rather than follow it.
+    const auto clear = [&]
     {
-        return false;
-    }
+        const auto checked = noLinks.Check(path.parent_path());
 
-    // Its folder never a link: one put in its place (Redux update swapped for a link, say) would take the write
-    // elsewhere. The file itself is made anew, never through a link (WriteFlushed), and the rename replaces a link at
-    // its name rather than follow it.
-    if (const auto link = disk.IsLink(path.parent_path()); !link || *link)
-    {
-        SDL_Log("Updates: %s isn't written: %s", MCFileSystem::ToUtf8(path).c_str(),
-                link ? "its folder is a link, which updates don't follow" : link.error().c_str());
-        return false;
-    }
+        if (!checked)
+        {
+            SDL_Log("Updates: %s isn't written: %s", MCFileSystem::ToUtf8(path).c_str(), checked.error().c_str());
+        }
 
-    return disk.WriteFlushed(temporary, bytes) && disk.Rename(temporary, path) && disk.FlushFolder(path.parent_path());
+        return checked.has_value();
+    };
+
+    return clear() && disk.MakeFolders(path.parent_path()) && clear() && disk.WriteFlushed(temporary, bytes) &&
+           disk.Rename(temporary, path) && disk.FlushFolder(path.parent_path());
 }

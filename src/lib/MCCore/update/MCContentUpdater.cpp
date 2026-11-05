@@ -55,7 +55,7 @@ namespace
     {
         const std::filesystem::path path = KeptPath(setup);
 
-        if (!disk.MakeFolders(path.parent_path()) || !WriteDurably(disk, path, MCReleaseFile::KeptText(kept)))
+        if (!WriteDurably(disk, setup.UserFolder, path, MCReleaseFile::KeptText(kept)))
         {
             return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
         }
@@ -129,7 +129,7 @@ namespace
         const std::filesystem::path folder = KeptListsPath(setup);
         const std::string name = ListFileName(list.Hash);
 
-        if (!disk.MakeFolders(folder) || !WriteDurably(disk, folder / MCFileSystem::FromUtf8(name), text))
+        if (!WriteDurably(disk, setup.GameFolder, folder / MCFileSystem::FromUtf8(name), text))
         {
             SDL_Log("Updates: release %llu's list can't be kept in %s: it's fetched again at the next check",
                     static_cast<unsigned long long>(list.Release), MCFileSystem::ToUtf8(folder).c_str());
@@ -263,8 +263,8 @@ namespace
 
         // The plan stands without them: the next one hashes those files again.
         if (const std::filesystem::path path = HashesPath(setup);
-            plan->Hashes != hashes && (!disk.MakeFolders(path.parent_path()) ||
-                                       !WriteDurably(disk, path, MCContentPlan::HashesText(plan->Hashes))))
+            plan->Hashes != hashes &&
+            !WriteDurably(disk, setup.GameFolder, path, MCContentPlan::HashesText(plan->Hashes)))
         {
             SDL_Log("Updates: %s can't be written: the next plan hashes its files again",
                     MCFileSystem::ToUtf8(path).c_str());
@@ -860,7 +860,7 @@ std::expected<void, std::string> MCContentUpdater::Choose(MCUpdateDisk& disk, co
     const std::filesystem::path path = ChosenPath(gameFolder);
     const std::string text = MCUpdateJson::MCJson{{FormatKey, ChosenFormat}, {SetsKey, kept}}.dump();
 
-    if (!disk.MakeFolders(path.parent_path()) || !WriteDurably(disk, path, text))
+    if (!WriteDurably(disk, gameFolder, path, text))
     {
         return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
     }

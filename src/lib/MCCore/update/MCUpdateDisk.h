@@ -163,7 +163,10 @@ private:
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path);
 
 /// <summary>
-/// Writes <paramref name="path"/> durably: a temporary file beside it written and flushed, renamed over it, the folder
+/// Writes <paramref name="path"/> durably, inside <paramref name="within"/> (the game folder; the user folder for
+/// update.json): its folders made, with no part of its way below <paramref name="within"/> a link (MCNoLinks), looked at
+/// before they're made and again after; a temporary file beside it written and flushed, renamed over it, the folder
 /// flushed. Whatever happens, the file is then either all the old bytes or all the new.
 /// </summary>
-bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& path, std::string_view bytes);
+bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& within, const std::filesystem::path& path,
+                  std::string_view bytes);

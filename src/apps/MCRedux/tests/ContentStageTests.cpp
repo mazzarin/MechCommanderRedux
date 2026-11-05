@@ -471,8 +471,9 @@ TEST_CASE("content stage: a staged file cut short (a crash as it unpacked) is de
 }
 
 #ifndef _WIN32
-TEST_CASE("update disk: an update's file written durably never goes through a link at its name or in its folder's "
-          "place; a folder swapped for a link is caught at the next look, none remembered")
+TEST_CASE(
+    "update disk: an update's file written durably never goes through a link at its name or anywhere on its "
+    "way, nor makes a folder through one; a folder swapped for a link is caught at the next look, none remembered")
 {
     const MCScratchFolder game(Group, "durable-links");
     const MCScratchFolder outside(Group, "durable-links-outside");
@@ -485,7 +486,7 @@ TEST_CASE("update disk: an update's file written durably never goes through a li
 
     // A link planted at the temporary file's name: the write makes a file of its own, the link's target untouched.
     std::filesystem::create_symlink(victim, std::filesystem::path(record) += ".writing");
-    REQUIRE(WriteDurably(*disk, record, "the record"));
+    REQUIRE(WriteDurably(*disk, game.Path(), record, "the record"));
     CHECK_EQ(Read(victim), std::string("the player's"));
     CHECK_EQ(Read(record), std::string("the record"));
     CHECK(!std::filesystem::is_symlink(record));
@@ -494,8 +495,11 @@ TEST_CASE("update disk: an update's file written durably never goes through a li
     const std::filesystem::path updateElsewhere = outside.Path() / "Redux update";
     std::filesystem::rename(update, updateElsewhere);
     std::filesystem::create_symlink(updateElsewhere, update);
-    CHECK(!WriteDurably(*disk, record, "another record"));
+    CHECK(!WriteDurably(*disk, game.Path(), record, "another record"));
     CHECK_EQ(Read(updateElsewhere / "installed.json"), std::string("the record"));
+    // A folder further up a link (one put in before any update): nothing written, no folder made where it leads.
+    CHECK(!WriteDurably(*disk, game.Path(), update / "lists" / "a.json", "a list"));
+    CHECK(!std::filesystem::exists(updateElsewhere / "lists"));
     std::filesystem::remove(update);
     std::filesystem::rename(updateElsewhere, update);
 

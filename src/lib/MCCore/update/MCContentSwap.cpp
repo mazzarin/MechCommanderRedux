@@ -89,7 +89,7 @@ namespace
                     return error;
                 }
 
-                if (!WriteDurably(_Disk, At(MCInstalled::RecordPath), MCInstalled::Text(Record())))
+                if (!WriteDurably(_Disk, _Game, At(MCInstalled::RecordPath), MCInstalled::Text(Record())))
                 {
                     // Moved into place with only its folder's flush failing, the record names the new set: the swap is
                     // committed, and the old files mustn't go back under it (the next start finishes the clearing).
@@ -687,7 +687,7 @@ namespace
                 record.Files.insert_or_assign(entry->first, std::move(file));
             }
 
-            return WriteDurably(_Disk, At(MCInstalled::RecordPath), MCInstalled::Text(record))
+            return WriteDurably(_Disk, _Game, At(MCInstalled::RecordPath), MCInstalled::Text(record))
                        ? std::string()
                        : std::string("the installed record can't be written");
         }
@@ -985,7 +985,7 @@ bool MCContentSwap::MarkReady(MCUpdateDisk& disk, const std::filesystem::path& g
         move.NewWritten = stat.Written;
     }
 
-    return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
+    return WriteDurably(disk, gameFolder, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
 }
 
 namespace

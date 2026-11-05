@@ -184,7 +184,7 @@ std::expected<void, std::string> MCInstalled::NoteDue(MCUpdateDisk& disk, const 
         {LowestProgramKey,
          due.LowestProgram}}.dump();
 
-    if (!WriteDurably(disk, path, text))
+    if (!WriteDurably(disk, gameFolder, path, text))
     {
         return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
     }

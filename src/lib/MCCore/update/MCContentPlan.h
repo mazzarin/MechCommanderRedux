@@ -60,6 +60,8 @@ namespace MCContentPlan
         uint64_t DownloadBytes = 0;
         /// <summary>The bytes staged: each fetched or patched file written anew before the swap.</summary>
         uint64_t StagedBytes = 0;
+        /// <summary>The lowest program build the content needs (the list's): an older program doesn't swap it in.</summary>
+        uint64_t LowestProgram = 0;
         /// <summary>
         /// The record once the plan is done (the files as they'll be; a fetched or patched file's time is set when it
         /// lands), with every listed set's bytes.

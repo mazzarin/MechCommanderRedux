@@ -388,7 +388,8 @@ namespace
                 }
             }
 
-            const MCContentSwap::MCResult result = MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock);
+            const MCContentSwap::MCResult result =
+                MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, MC_VERSION_BUILD);
 
             if (result.Outcome != MCContentSwap::MCOutcome::Stuck)
             {
@@ -417,7 +418,8 @@ namespace
             deadline = std::chrono::steady_clock::now() + MCContentSwap::LobbyStartTime;
         }
 
-        const MCContentSwap::MCResult result = MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, deadline);
+        const MCContentSwap::MCResult result =
+            MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, MC_VERSION_BUILD, deadline);
 
         switch (result.Outcome)
         {
@@ -431,6 +433,12 @@ namespace
             case MCContentSwap::MCOutcome::PutBack:
             {
                 SDL_Log("Updates: the staged update waits for the next start (%s)", result.Error.c_str());
+                return true;
+            }
+            case MCContentSwap::MCOutcome::Disarmed:
+            {
+                SDL_Log("Updates: the staged update waits for its program (%s): the previous files play",
+                        result.Error.c_str());
                 return true;
             }
             case MCContentSwap::MCOutcome::Stuck:

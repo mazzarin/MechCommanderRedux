@@ -361,8 +361,8 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
     // Another copy runs on (past the start's deadline): the update waits, and the start plays the files as they are,
     // holding the lock shared.
     constexpr std::chrono::milliseconds shortWait{300};
-    const MCContentSwap::MCResult held =
-        MCContentSwap::RunAtStart(*disk, game, starting.get(), std::chrono::steady_clock::now() + shortWait);
+    const MCContentSwap::MCResult held = MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild,
+                                                                   std::chrono::steady_clock::now() + shortWait);
     CHECK(held.Outcome == MCContentSwap::MCOutcome::PutBack);
     CHECK(held.Error.find("another copy") != std::string::npos);
     CHECK(MCContentSwap::Waiting(*disk, game));
@@ -374,14 +374,15 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
     // A swap stopped midway, with another copy still holding the lock: waited for, then stuck past the deadline.
     REQUIRE(disk->Rename(game / "Redux update" / "ready.json", game / "Redux update" / "journal.json"));
     REQUIRE(running->Shared());
-    const MCContentSwap::MCResult stuck =
-        MCContentSwap::RunAtStart(*disk, game, starting.get(), std::chrono::steady_clock::now() + shortWait);
+    const MCContentSwap::MCResult stuck = MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild,
+                                                                    std::chrono::steady_clock::now() + shortWait);
     CHECK(stuck.Outcome == MCContentSwap::MCOutcome::Stuck);
     running->Release();
     starting->Release();
 
     // Alone, the start finishes it, and holds the lock shared: another copy runs beside it, none swaps under it.
-    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild).Outcome ==
+          MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
     CHECK(!running->TryExclusive());
     CHECK(running->Shared());
@@ -410,7 +411,8 @@ TEST_CASE("content swap at a start: a copy quitting as the start begins (RESTART
             std::this_thread::sleep_for(closing);
             quitting->Release();
         });
-    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild).Outcome ==
+          MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
 }
 

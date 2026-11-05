@@ -444,7 +444,7 @@ std::expected<void, std::string> MCContentStage::Stage(MCUpdateDisk& disk, MCSou
 std::expected<void, std::string> MCContentStage::Arm(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
                                                      const MCContentPlan::MCPlan& plan)
 {
-    if (!MCContentSwap::MarkReady(disk, gameFolder, {Moves(plan), plan.Record}))
+    if (!MCContentSwap::MarkReady(disk, gameFolder, {Moves(plan), plan.Record, plan.LowestProgram}))
     {
         // A write that failed only at its last flush left the file: it goes, or the next start would swap in content
         // whose program was never armed.

@@ -94,6 +94,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     plan.Record.Release = list.Release;
     plan.Record.List = listHash;
     plan.Record.Sets = sets;
+    plan.LowestProgram = list.LowestProgram;
     std::set<std::string, std::less<>> zips;
     std::set<std::string, std::less<>> listed;
 

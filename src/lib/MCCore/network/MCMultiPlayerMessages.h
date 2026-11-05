@@ -76,7 +76,13 @@ enum class MCMPMessageType : uint16_t
     /// the room keeps its place (network/MCLobbyUpdate.h). A header alone. The host sends it to the guests whose rules
     /// have MCMatchRule::RejoinsHost; a build without it ignores it.
     /// </summary>
-    Updating = 51
+    Updating = 51,
+    /// <summary>
+    /// Port: the sender's restart into an update is off after its Updating (the update failed, or the match started
+    /// first): it stays, and the room no longer keeps its place (network/MCLobbyUpdate.h). A header alone; a build
+    /// without it ignores it.
+    /// </summary>
+    RestartOff = 52
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

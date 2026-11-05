@@ -319,6 +319,9 @@
     <ClInclude Include="tests\MCContentFixture.h">
       <Filter>tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCFakeUpdaterBackend.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\MCFilePatchFixture.h">
       <Filter>tests</Filter>
     </ClInclude>

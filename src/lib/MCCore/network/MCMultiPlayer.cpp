@@ -807,7 +807,9 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
     {
         IsServer = true;
 
-        if (const auto player = SessionManager->GetPlayer(playerID); player != nullptr)
+        // Port (personal): a player away updating hasn't left: the room was told it is updating (network/MCLobbyUpdate.h).
+        if (const auto player = SessionManager->GetPlayer(playerID);
+            player != nullptr && !MCLobbyUpdate::LeftToUpdate(playerID))
         {
             std::string text = MCFormatPrintf(LoadGameString(0x382, 0xfe).c_str(), player->Name.c_str());
 
@@ -988,10 +990,25 @@ void ShowPlayerLeft(std::string_view name)
     dialog.Activate();
 }
 
-void ShowConnectStatus()
+void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function<void()> exit)
 {
-    const std::string text = LoadGameString(0x354, 0xfe);
+    dialog.SetText(text);
+    dialog.SetTwoButton(false);
+    dialog.Callback = nullptr;
+    dialog.OkButton->Callback().SetExec(std::move(exit));
+    char upArt[] = "bh_okay.tga";
+    char downArt[] = "bg_okay.tga";
+    dialog.OkButton->SetUpPicture(upArt);
+    dialog.OkButton->SetDownPicture(downArt);
+    dialog.OkButton->Disabled = false;
+    // Port: after a waiting dialog (ShowWaitingDialog), which hides it.
+    dialog.OkButton->ShowGuiWindow(true);
+    dialog.OkButton->Draw();
+    dialog.Activate();
+}
 
+void ShowWaitingDialog(std::string_view text)
+{
     if (GlobalLog() == nullptr)
     {
         return;
@@ -1012,6 +1029,11 @@ void ShowConnectStatus()
 
     dialog.Callback = nullptr;
     dialog.Activate();
+}
+
+void ShowConnectStatus()
+{
+    ShowWaitingDialog(LoadGameString(0x354, 0xfe));
     UpdateDisplay(false, false, 0, false, 0);
 }
 

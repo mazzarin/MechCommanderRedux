@@ -32,9 +32,8 @@ namespace MCRejoinNote
     };
 
     /// <summary>
-    /// The lobby's words <paramref name="args"/> came from (the -host with its port, or the -join with its address;
-    /// -player, -session and -maxplayers) with <see cref="RejoinSwitch"/>: a word with spaces in quotes, its quotes
-    /// dropped (the command line can't carry them).
+    /// The command line the lobby started the game with (<paramref name="args"/>'), whole, so the restart starts as the
+    /// lobby started it (its match's options, slots and teams too), with <see cref="RejoinSwitch"/> once.
     /// </summary>
     std::string LobbyCommandLine(const MCLobbyLaunchArgs& args);
 
@@ -54,6 +53,9 @@ namespace MCRejoinNote
     /// <paramref name="userFolder"/> was for it, and goes.
     /// </summary>
     void Discard(const std::filesystem::path& userFolder);
+
+    /// <summary>RESTART is off (network/MCLobbyUpdate.h): the note in <paramref name="userFolder"/> goes, unread.</summary>
+    void Withdraw(const std::filesystem::path& userFolder);
 
     /// <summary>Now, in seconds since 1970 (the system's clock, as the note keeps it).</summary>
     int64_t Now();

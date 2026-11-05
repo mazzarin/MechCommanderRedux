@@ -487,6 +487,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
     if (LobbyLaunchArgs.Active)
     {
         LaunchedFromLobby = true;
+        LobbyLaunchArgs.CommandLine = commandLine;
     }
 
     // Port: only the host runs a configured match, and only a configuration that can be run (a mission, a player on

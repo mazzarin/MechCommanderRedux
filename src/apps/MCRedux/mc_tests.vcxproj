@@ -179,6 +179,7 @@
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />
     <ClInclude Include="tests\fixtures\MCTinyMap.h" />
     <ClInclude Include="tests\MCContentFixture.h" />
+    <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCMock.h" />

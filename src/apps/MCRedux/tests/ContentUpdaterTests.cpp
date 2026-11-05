@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCContentFixture.h"
+#include "MCFakeUpdaterBackend.h"
 #include "../MCFirstStart.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
@@ -251,29 +252,6 @@ namespace
         std::shared_ptr<MCStall> _Stall;
     };
 
-    /// <summary>What the stand-in program backend was asked.</summary>
-    struct MCProgramLog
-    {
-        std::vector<std::optional<uint64_t>> Checks;
-        std::vector<MCAnswer> Answers;
-    };
-
-    /// <summary>A stand-in for Sparkle: it keeps what it's asked; the test reports its steps.</summary>
-    class MCFakeProgram final : public MCUpdater::MCBackend
-    {
-    public:
-        explicit MCFakeProgram(std::shared_ptr<MCProgramLog> log) : _Log(std::move(log)) {}
-
-        std::string RunningVersion() override { return std::string(RunningShown); }
-
-        void Check(std::optional<uint64_t> build) override { _Log->Checks.push_back(build); }
-
-        void Answer(MCAnswer answer) override { _Log->Answers.push_back(answer); }
-
-    private:
-        std::shared_ptr<MCProgramLog> _Log;
-    };
-
     /// <summary>
     /// The updater with the release's content and, with <paramref name="program"/>, a stand-in program backend, for the
     /// test's length; RESTART's quits counted.
@@ -285,7 +263,7 @@ namespace
         {
             if (program)
             {
-                MCUpdater::SetBackend(std::make_unique<MCFakeProgram>(Program));
+                MCUpdater::SetBackend(std::make_unique<MCTestUpdater::MCFakeBackend>(Program, RunningShown));
             }
 
             MCUpdater::SetContent(
@@ -304,7 +282,7 @@ namespace
         MCUpdaterScope(const MCUpdaterScope&) = delete;
         MCUpdaterScope& operator=(const MCUpdaterScope&) = delete;
 
-        std::shared_ptr<MCProgramLog> Program = std::make_shared<MCProgramLog>();
+        std::shared_ptr<MCTestUpdater::MCBackendLog> Program = std::make_shared<MCTestUpdater::MCBackendLog>();
         std::shared_ptr<int32_t> Quits = std::make_shared<int32_t>(0);
     };
 

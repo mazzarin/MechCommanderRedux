@@ -1,32 +1,17 @@
 #include "stdafx.h"
 #include "../MCGameFolder.h"
+#include "MCContentFixture.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "platform/MCUtf8Path.h"
 
 namespace
 {
     /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
-    class ScratchFolder
+    class ScratchFolder : public MCScratchFolder
     {
     public:
-        explicit ScratchFolder(std::string_view name)
-            : _Path(std::filesystem::temp_directory_path() / "mc_game_folder_tests" / name)
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-            std::filesystem::create_directories(_Path);
-        }
-
-        ~ScratchFolder()
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-        }
-
-        const std::filesystem::path& Path() const { return _Path; }
-
-    private:
-        std::filesystem::path _Path;
+        explicit ScratchFolder(std::string_view name) : MCScratchFolder("mc_game_folder_tests", name) {}
     };
 
     /// <summary>Makes <paramref name="folder"/> look like an install: its SYSTEM.CFG and, unless not, MCX.EXE.</summary>
@@ -44,12 +29,8 @@ namespace
         return folder;
     }
 
-    /// <summary>The whole of a small file, or empty when it can't be read.</summary>
-    std::string ReadAll(const std::filesystem::path& file)
-    {
-        std::ifstream in(file, std::ios::binary);
-        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
+    /// <summary>The whole of a small file, or empty when it can't be read (the content fixture's).</summary>
+    constexpr auto& ReadAll = MCContentFixture::Read;
 }
 
 /// <summary>

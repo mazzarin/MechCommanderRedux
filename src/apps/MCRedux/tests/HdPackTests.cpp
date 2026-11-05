@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "TestGame.h"
 #include "lib/MCFastFile.h"
@@ -368,27 +369,10 @@ namespace
     }
 
     /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
-    class ScratchFolder
+    class ScratchFolder : public MCScratchFolder
     {
     public:
-        explicit ScratchFolder(std::string_view name)
-            : _Path(std::filesystem::temp_directory_path() / "mc_hd_pack_tests" / name)
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-            std::filesystem::create_directories(_Path);
-        }
-
-        ~ScratchFolder()
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-        }
-
-        const std::filesystem::path& Path() const { return _Path; }
-
-    private:
-        std::filesystem::path _Path;
+        explicit ScratchFolder(std::string_view name) : MCScratchFolder("mc_hd_pack_tests", name) {}
     };
 
     /// <summary>The original's size of TileFrameFile's tile.</summary>

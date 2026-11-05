@@ -97,6 +97,12 @@ public:
     /// </summary>
     void FileReport(uint32_t playerId, MCFileCheck check);
 
+    /// <summary>
+    /// Port-only (the personal build): player <paramref name="playerId"/> is gone from the room for good (a guest away
+    /// updating that didn't rejoin in time): its name and its place on a team go, here only.
+    /// </summary>
+    void RemovePlayer(uint32_t playerId);
+
     /// <summary>Loads mission <paramref name="fileName"/> chosen by the host and tells the others.</summary>
     void LoadMission(std::string_view fileName);
 
@@ -110,8 +116,12 @@ public:
     /// </summary>
     void PublishMatchState() const;
 
-    /// <summary>Lights the start button when every player is on a team and a mission is loaded.</summary>
-    void CheckGoodToGo() const;
+    /// <summary>
+    /// Lights the start button when every player is on a team and a mission is loaded. Port-only (the personal build):
+    /// and no guest is away updating (network/MCLobbyUpdate.h); while one is, <see cref="StartWaits"/> says whom the start
+    /// waits for, in the update's line's place.
+    /// </summary>
+    void CheckGoodToGo();
 
     /// <summary>Sets team <paramref name="team"/>'s tech base (1 Inner Sphere, -1 Clan) and its toggles.</summary>
     void SetTeamTechBase(int8_t team, int8_t techBase);
@@ -208,6 +218,11 @@ public:
     /// Null in other games, and in a build that doesn't update itself.
     /// </summary>
     MCGuiOwned<MCLogObject> UpdateLine;
+    /// <summary>
+    /// Port-only (the personal build): whom the start waits for, guests away updating ("WAITING FOR ANN TO UPDATE."), as
+    /// <see cref="CheckGoodToGo"/> last found; empty when it waits for no one.
+    /// </summary>
+    std::string StartWaits;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;
@@ -218,6 +233,9 @@ public:
 private:
     /// <summary>Lays the names of the players on no team down the unassigned list (see the callers for the skips).</summary>
     void LayOutUnassigned(uint32_t skipId, size_t names, bool skipEmpty);
+
+    /// <summary>Port-only (the personal build): <see cref="StartWaits"/>' line, in the update's line's place.</summary>
+    void DrawStartWaits(const MCPane& frame);
 
     /// <summary>The spinners' and tech toggles' live state (the host's, or an unlocked mission's).</summary>
     void SetTeamControls(bool live) const;

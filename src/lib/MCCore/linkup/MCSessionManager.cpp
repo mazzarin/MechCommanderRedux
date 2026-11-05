@@ -23,8 +23,9 @@ namespace
 {
     using namespace MCDirectPlayGuids;
 
-    /// <summary>TryLobbyJoin's result when no room to join was found (yet).</summary>
-    constexpr int32_t LobbyRoomNotFound = 1;
+    /// <summary>How often, and how many times, a lobby's start tries to join its room.</summary>
+    constexpr uint32_t LobbyJoinEveryMs = 500;
+    constexpr int32_t LobbyJoinTries = 30;
 
     /// <summary>The enumeration flags GetSessions and Dial ask DirectPlay for.</summary>
     constexpr uint32_t EnumSessionFlags =
@@ -371,9 +372,23 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
         // A press from before the wait doesn't cancel it.
         MCInput::GetAsyncKeyState(VK_ESCAPE);
 
-        for (int attempt = 0; attempt < 30; ++attempt)
+        for (int32_t attempt = 0; attempt < LobbyJoinTries; ++attempt)
         {
-            if (const int32_t tried = TryLobbyJoin(playerName); tried != LobbyRoomNotFound)
+            MCLobbyJoin tried = TryLobbyJoin(playerName);
+
+            // Port-only (the personal build): a rejoin finding its room there but full or started (the list of rooms
+            // to join leaves those out) stops at once, saying so.
+            if (tried == MCLobbyJoin::NoRoom && LobbyLaunchArgs.Rejoin)
+            {
+                if (const MCRoomRefusal refusal = LobbyRoomRefusal(); refusal != MCRoomRefusal::Gone)
+                {
+                    SDL_Log("SetupLobbyConnection: the room at %s takes no one now", targetAddr.c_str());
+                    LastRoomRefusal = refusal;
+                    tried = MCLobbyJoin::Refused;
+                }
+            }
+
+            if (tried != MCLobbyJoin::NoRoom)
             {
                 if (hideStatus)
                 {
@@ -381,11 +396,11 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
                 }
 
                 // A session that refuses the join (full, or gone) is not tried again.
-                return tried == 0 ? DP_OK : DPERR_NOSESSIONS;
+                return tried == MCLobbyJoin::Joined ? DP_OK : DPERR_NOSESSIONS;
             }
 
             // The window stays responsive while it waits, and Escape (or closing it) gives up.
-            const bool open = MCInput::WaitMessage(500);
+            const bool open = MCInput::WaitMessage(LobbyJoinEveryMs);
 
             if (!open || (MCInput::GetAsyncKeyState(VK_ESCAPE) & 0x8001) != 0)
             {
@@ -409,13 +424,13 @@ uint32_t MCSessionManager::SetupLobbyConnection(const std::function<void()>& sho
     }
 }
 
-int32_t MCSessionManager::TryLobbyJoin(std::string_view playerName)
+MCLobbyJoin MCSessionManager::TryLobbyJoin(std::string_view playerName)
 {
     const auto sessions = GetSessions();
 
     if (!sessions.has_value() || sessions->empty())
     {
-        return LobbyRoomNotFound;
+        return MCLobbyJoin::NoRoom;
     }
 
     std::shared_ptr<MCFidpSession> targetSession;
@@ -433,7 +448,7 @@ int32_t MCSessionManager::TryLobbyJoin(std::string_view playerName)
 
     if (targetSession == nullptr)
     {
-        return LobbyRoomNotFound;
+        return MCLobbyJoin::NoRoom;
     }
 
     const int32_t joinResult = JoinSession(targetSession->SessionDesc.guidInstance, playerName);
@@ -442,12 +457,12 @@ int32_t MCSessionManager::TryLobbyJoin(std::string_view playerName)
     {
         SDL_Log("SetupLobbyConnection: could not join \"%s\" (result %d)", targetSession->Name.c_str(), joinResult);
         LastRoomRefusal = LobbyRoomRefusal();
-        return joinResult == LobbyRoomNotFound ? -1 : joinResult;
+        return MCLobbyJoin::Refused;
     }
 
     IsHost = false;
     SDL_Log("SetupLobbyConnection: joined session \"%s\"", targetSession->Name.c_str());
-    return 0;
+    return MCLobbyJoin::Joined;
 }
 
 MCRoomRefusal MCSessionManager::LobbyRoomRefusal()

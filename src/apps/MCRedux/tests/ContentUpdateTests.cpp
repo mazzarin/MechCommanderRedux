@@ -65,12 +65,8 @@ namespace
         return MCUpdateJson::ToBase64(std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
     }
 
-    void WriteText(const std::filesystem::path& path, std::string_view text)
-    {
-        std::filesystem::create_directories(path.parent_path());
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    }
+    /// <summary>Writes <paramref name="text"/> as the whole of a file, its folders made (the content fixture's).</summary>
+    constexpr auto& WriteText = MCContentFixture::Write;
 
     /// <summary>A listed file with <paramref name="text"/> as its bytes.</summary>
     MCContentList::MCFile Listed(std::string path, std::string_view text, std::string zip = "base-1.zip",

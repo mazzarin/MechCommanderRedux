@@ -42,6 +42,11 @@ struct MCLobbyLaunchArgs
     /// says why (the room gone, full or started).
     /// </summary>
     bool Rejoin = false;
+    /// <summary>
+    /// Port-only (the personal build): the command line the lobby started the game with, whole (a restart into an
+    /// update starts again with it: network/MCRejoinNote.h).
+    /// </summary>
+    std::string CommandLine;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;
@@ -55,6 +60,17 @@ enum class MCRoomRefusal : uint8_t
     Full,
     /// <summary>The room is there, its match started (it takes no new players).</summary>
     Started,
+};
+
+/// <summary>Port: what one try at joining the lobby's room came to (MCSessionManager::TryLobbyJoin).</summary>
+enum class MCLobbyJoin : uint8_t
+{
+    /// <summary>In the room.</summary>
+    Joined,
+    /// <summary>No room to join there (yet): a lobby's start tries again.</summary>
+    NoRoom,
+    /// <summary>The room refused the join (MCSessionManager::LastRoomRefusal says why).</summary>
+    Refused,
 };
 
 /// <summary>
@@ -155,8 +171,8 @@ public:
     /// Port: one try at joining the lobby's room (<see cref="LobbyLaunchArgs"/>' session at its address, or the first
     /// there) as <paramref name="playerName"/>, on the connection made to it (ConnectTcp).
     /// </summary>
-    /// <returns>0 when joined; 1 when no room to join was found yet; else the join's error (a room refusing it).</returns>
-    int32_t TryLobbyJoin(std::string_view playerName);
+    /// <returns>Joined, no room to join found (yet), or the room refused it (<see cref="LastRoomRefusal"/>).</returns>
+    MCLobbyJoin TryLobbyJoin(std::string_view playerName);
     /// <summary>
     /// Port-only (the personal build): why the lobby's room can't be joined now: it isn't at the address, or it is,
     /// full or started (listed whatever its state, the session's name as <see cref="TryLobbyJoin"/> picks it).

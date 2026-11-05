@@ -163,6 +163,13 @@ namespace MCUpdater
     /// <summary>Picks up the content's work (each frame): its progress, and its end.</summary>
     void Frame();
 
+    /// <summary>
+    /// Whether a match's mission plays (each frame, before <see cref="Frame"/>): the content's downloads (an update's
+    /// staging, or the HD pack's) stop where they are while it does, and go on from there once it's over, so they take
+    /// nothing from the match. The program's download, Sparkle's own, isn't paused.
+    /// </summary>
+    void PauseWork(bool paused);
+
     /// <summary>The game is quitting: work under way stops (staged files stay for the next try).</summary>
     void Quit();
 

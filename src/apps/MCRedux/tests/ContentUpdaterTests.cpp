@@ -943,6 +943,74 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithoutHd);
 }
 
+namespace
+{
+    /// <summary>Runs the updater's frames a while, as the game does, with no end looked for.</summary>
+    void SomeFrames()
+    {
+        constexpr int32_t Frames = 20;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            MCUpdater::Frame();
+            std::this_thread::sleep_for(LookAgain);
+        }
+    }
+
+    /// <summary>
+    /// A match's mission begins while <paramref name="gate"/>'s download waits: it stops, and stays stopped however long
+    /// the mission plays, then goes on once it's over (the gate open by then).
+    /// </summary>
+    void PauseAndResume(MCGate& gate)
+    {
+        MCUpdater::PauseWork(true);
+        REQUIRE(FramesUntilIdle());
+        gate.Reached = false;
+        gate.Open = true;
+        SomeFrames();
+        CHECK(!MCUpdater::Working());
+        CHECK(!gate.Reached);
+        MCUpdater::PauseWork(false);
+        CHECK(MCUpdater::Working());
+    }
+}
+
+TEST_CASE("updater: an update's download stops while a match's mission plays, and goes on after it")
+{
+    MCHostedRelease release("updater-paused");
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+
+    PauseAndResume(*gate);
+    CHECK(Stage() == MCStage::Downloading);
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+
+TEST_CASE("updater: the HD pack's download stops while a match's mission plays, and goes on after it")
+{
+    MCHostedRelease release("updater-hd-paused");
+    UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    MCUpdater::ChooseHd(true);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+
+    PauseAndResume(*gate);
+    CHECK(MCUpdater::HdPack().Stage == MCStage::Downloading);
+    REQUIRE(FramesUntilIdle());
+    CHECK(MCUpdater::HdPack().Stage == MCStage::Ready);
+    CHECK(release.Armed());
+}
+
 TEST_CASE("updater: with an update shown, HD's choice plans the update again with it; Sparkle lets its update go and "
           "finds it again")
 {

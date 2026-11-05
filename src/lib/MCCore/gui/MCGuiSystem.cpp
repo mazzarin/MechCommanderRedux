@@ -447,7 +447,9 @@ auto MCGuiSystem::Run() -> void
         }
 
         MCTelemetry::Frame();
-        // Port (personal): the updater's content work, done on a thread of its own (main/MCUpdater.h).
+        // Port (personal): the updater's content work, done on a thread of its own (main/MCUpdater.h); its downloads
+        // wait while a match's mission plays.
+        MCUpdater::PauseWork(MultiPlayer() != nullptr && MultiPlayer()->InMission);
         MCUpdater::Frame();
         // Port-only (HD weather's snow): the frames' pace, which a machine that can't keep up thins it by.
         MCWeatherPacing::Frame(drewWeather);

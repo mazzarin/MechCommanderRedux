@@ -124,6 +124,11 @@ namespace
     /// for the program waits for that (MCUpdater::Closed), so the old session's end isn't taken for the new one's.
     /// </summary>
     bool ProgramClosing = false;
+    /// <summary>A match's mission plays: the content's downloads wait (<see cref="MCUpdater::PauseWork"/>).</summary>
+    bool Paused = false;
+    /// <summary>The download the pause stopped (staging or the change of sets), to go on with after it; none, Idle.</summary>
+    MCStep PausedStep = MCStep::Idle;
+
     /// <summary>The input's quit: the game ends as if the player had closed it.</summary>
     void InputQuit()
     {
@@ -165,6 +170,7 @@ namespace
         Hd = {};
         SetsChosenAgain = false;
         ProgramClosing = false;
+        PausedStep = MCStep::Idle;
     }
 
     /// <summary>What the copy has of the HD pack, read from its record and the sets chosen.</summary>
@@ -498,6 +504,24 @@ namespace
         }
     }
 
+    /// <summary>The download a match's mission stopped goes on from where it was (its staged files kept).</summary>
+    void Resume()
+    {
+        const MCStep resume = std::exchange(PausedStep, MCStep::Idle);
+        SDL_Log("Updater: the mission is over: the download goes on");
+
+        if (resume == MCStep::StagingContent)
+        {
+            StartStaging(false);
+        }
+        else
+        {
+            // Its staging lock is still this copy's: taken again for the sets' change.
+            StagingLock.reset();
+            StartSetsChange();
+        }
+    }
+
     /// <summary>The check's end: nothing, an update to show, or one to look for the program of first.</summary>
     void CheckDone(const std::string& error, std::optional<MCOffer> offer)
     {
@@ -764,6 +788,22 @@ auto MCUpdater::Frame() -> void
 
     StopWork();
 
+    // Stopped for a match's mission: it goes on once the mission is over (at once, if it already is). Done just as the
+    // mission began, it ends as it would have.
+    if (PausedStep != MCStep::Idle && !error.empty())
+    {
+        if (!Paused)
+        {
+            Resume();
+            return;
+        }
+
+        SDL_Log("Updater: the download waits for the mission to end (%s)", error.c_str());
+        return;
+    }
+
+    PausedStep = MCStep::Idle;
+
     switch (Step)
     {
         case MCStep::CheckingContent:
@@ -780,6 +820,35 @@ auto MCUpdater::Frame() -> void
             break;
         default:
             break;
+    }
+}
+
+auto MCUpdater::PauseWork(bool paused) -> void
+{
+    if (paused == Paused)
+    {
+        return;
+    }
+
+    Paused = paused;
+
+    if (paused)
+    {
+        // Only downloads stop: a check or the quiet update's record is done in a moment.
+        if (Worker.joinable() && (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
+        {
+            SDL_Log("Updater: the download stops while the mission plays");
+            PausedStep = Step;
+            Worker.request_stop();
+        }
+
+        return;
+    }
+
+    // Still stopping, its end goes on with it (Frame).
+    if (PausedStep != MCStep::Idle && Work == nullptr)
+    {
+        Resume();
     }
 }
 

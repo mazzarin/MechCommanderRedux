@@ -35,15 +35,7 @@ namespace
     MCReleaseFile::MCKept ReadKept(const MCSetup& setup, MCUpdateDisk& disk)
     {
         const std::filesystem::path path = KeptPath(setup);
-
-        if (!disk.Stat(path).Exists)
-        {
-            return {};
-        }
-
-        const auto text = disk.ReadText(path);
-        const auto kept = text ? MCReleaseFile::ReadKept(*text)
-                               : std::expected<MCReleaseFile::MCKept, std::string>(std::unexpected(text.error()));
+        const auto kept = MCUpdateJson::ReadFile(disk, path, MCReleaseFile::ReadKept);
 
         if (!kept)
         {
@@ -52,7 +44,7 @@ namespace
             return {};
         }
 
-        return *kept;
+        return kept->value_or(MCReleaseFile::MCKept{});
     }
 
     std::expected<void, std::string> WriteKept(const MCSetup& setup, MCUpdateDisk& disk,
@@ -76,25 +68,117 @@ namespace
         uint64_t Release = 0;
     };
 
+    /// <summary>A list's file name, on the host and kept: its hash.</summary>
+    std::string ListFileName(const MCSha256::MCDigest& hash)
+    {
+        return std::format("{}.json", MCSha256::Hex(hash));
+    }
+
+    std::filesystem::path KeptListsPath(const MCSetup& setup)
+    {
+        return setup.GameFolder / MCFileSystem::FromUtf8(KeptListsFolder);
+    }
+
+    /// <summary>Whether <paramref name="text"/> is the list <paramref name="list"/> names: its hash, and its size when known.</summary>
+    bool IsList(std::string_view text, const MCListRef& list)
+    {
+        return (!list.Size || text.size() == *list.Size) && MCSha256::Of(text) == list.Hash;
+    }
+
     /// <summary>
-    /// The list of <paramref name="list"/>'s release fetched and held to its hash (and size), for a program of build
-    /// <paramref name="build"/>; its plan still to make (<see cref="PlanFor"/>).
+    /// The list kept from an earlier fetch; none when none is, or when the one kept isn't the list its name says
+    /// (logged: it's fetched again).
+    /// </summary>
+    std::optional<std::string> KeptList(const MCSetup& setup, MCUpdateDisk& disk, const MCListRef& list)
+    {
+        const std::filesystem::path path = KeptListsPath(setup) / MCFileSystem::FromUtf8(ListFileName(list.Hash));
+        const auto kept = MCUpdateJson::ReadFile(
+            disk, path,
+            [&](std::string_view text) -> std::expected<std::string, std::string>
+            {
+                if (!IsList(text, list))
+                {
+                    return std::unexpected(std::format("{} isn't the list its name says", MCFileSystem::ToUtf8(path)));
+                }
+
+                return std::string(text);
+            });
+
+        if (!kept)
+        {
+            SDL_Log("Updates: %s: it's fetched again", kept.error().c_str());
+            return std::nullopt;
+        }
+
+        return *kept;
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="text"/>, the list just fetched, for later checks, and deletes every other list kept but
+    /// the installed release's. What fails is logged: a later check fetches the list again.
+    /// </summary>
+    void KeepList(const MCSetup& setup, MCUpdateDisk& disk, const MCListRef& list, std::string_view text)
+    {
+        const std::filesystem::path folder = KeptListsPath(setup);
+        const std::string name = ListFileName(list.Hash);
+
+        if (!disk.MakeFolders(folder) || !WriteDurably(disk, folder / MCFileSystem::FromUtf8(name), text))
+        {
+            SDL_Log("Updates: release %llu's list can't be kept in %s: it's fetched again at the next check",
+                    static_cast<unsigned long long>(list.Release), MCFileSystem::ToUtf8(folder).c_str());
+            return;
+        }
+
+        const auto installed = MCInstalled::Read(setup.GameFolder);
+        const auto files = disk.Files(folder);
+
+        if (!installed || !files)
+        {
+            SDL_Log("Updates: the lists kept stay as they are (%s)",
+                    (!installed ? installed.error() : files.error()).c_str());
+            return;
+        }
+
+        const std::string installedName = ListFileName(installed->List);
+
+        for (const std::string& file : *files)
+        {
+            if (file != name && file != installedName && !disk.Remove(folder / MCFileSystem::FromUtf8(file)))
+            {
+                SDL_Log("Updates: the list kept as %s stays", file.c_str());
+            }
+        }
+    }
+
+    /// <summary>
+    /// The list of <paramref name="list"/>'s release held to its hash (and size): the one kept, else fetched from
+    /// <paramref name="source"/> and kept; for a program of build <paramref name="build"/>; its plan still to make
+    /// (<see cref="PlanFor"/>).
     /// </summary>
     /// <returns>The content, its plan empty; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(MCContentStage::MCSource& source,
+    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(const MCSetup& setup, MCUpdateDisk& disk,
+                                                                     MCContentStage::MCSource& source,
                                                                      const MCListRef& list, uint64_t build)
     {
-        const std::string name = std::format("{}/{}.json", ListsFolder, MCSha256::Hex(list.Hash));
-        const auto text = source.Read(name, MostListBytes);
+        std::optional<std::string> text = KeptList(setup, disk, list);
 
         if (!text)
         {
-            return std::unexpected(text.error());
-        }
+            const std::string name = std::format("{}/{}", ListsFolder, ListFileName(list.Hash));
+            auto fetched = source.Read(name, MostListBytes);
 
-        if ((list.Size && text->size() != *list.Size) || MCSha256::Of(*text) != list.Hash)
-        {
-            return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
+            if (!fetched)
+            {
+                return std::unexpected(fetched.error());
+            }
+
+            if (!IsList(*fetched, list))
+            {
+                return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
+            }
+
+            KeepList(setup, disk, list, *fetched);
+            text = std::move(*fetched);
         }
 
         auto read = MCContentList::Read(*text);
@@ -123,19 +207,56 @@ namespace
         return content;
     }
 
+    std::filesystem::path HashesPath(const MCSetup& setup)
+    {
+        return setup.GameFolder / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    }
+
+    /// <summary>The hashes the last plan kept: none yet, or ones that can't be read (logged), are none.</summary>
+    MCContentPlan::MCHashes ReadHashes(const MCSetup& setup, MCUpdateDisk& disk)
+    {
+        const auto hashes = MCUpdateJson::ReadFile(disk, HashesPath(setup), MCContentPlan::ReadHashes);
+
+        if (!hashes)
+        {
+            SDL_Log("Updates: the files' hashes kept can't be read (%s): the files are hashed again",
+                    hashes.error().c_str());
+            return {};
+        }
+
+        return hashes->value_or(MCContentPlan::MCHashes{});
+    }
+
     /// <summary>
     /// Plans <paramref name="content"/>'s list for the copy: <paramref name="sets"/> against what
-    /// <paramref name="installed"/> records.
+    /// <paramref name="installed"/> records, and the hashes the last plan kept; this plan's are kept in their place.
     /// </summary>
-    std::expected<void, std::string> PlanFor(const MCSetup& setup, MCContent& content, const MCListRef& list,
-                                             const MCInstalled::MCRecord& installed, const MCSets& sets)
+    std::expected<void, std::string> PlanFor(const MCSetup& setup, MCUpdateDisk& disk, MCContent& content,
+                                             const MCListRef& list, const MCInstalled::MCRecord& installed,
+                                             const MCSets& sets)
     {
+        const MCContentPlan::MCHashes hashes = ReadHashes(setup, disk);
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets);
+        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes);
 
         if (!plan)
         {
             return std::unexpected(plan.error());
+        }
+
+        if (plan->HashedFiles != 0)
+        {
+            SDL_Log("Updates: the plan for release %llu hashed %zu of its files",
+                    static_cast<unsigned long long>(list.Release), plan->HashedFiles);
+        }
+
+        // The plan stands without them: the next one hashes those files again.
+        if (const std::filesystem::path path = HashesPath(setup);
+            plan->Hashes != hashes && (!disk.MakeFolders(path.parent_path()) ||
+                                       !WriteDurably(disk, path, MCContentPlan::HashesText(plan->Hashes))))
+        {
+            SDL_Log("Updates: %s can't be written: the next plan hashes its files again",
+                    MCFileSystem::ToUtf8(path).c_str());
         }
 
         content.Plan = std::move(*plan);
@@ -147,13 +268,13 @@ namespace
     /// <see cref="PlanFor"/>).
     /// </summary>
     /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup,
+    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup, MCUpdateDisk& disk,
                                                                              MCContentStage::MCSource& source,
                                                                              const MCListRef& list,
                                                                              const MCInstalled::MCRecord& installed,
                                                                              const MCSets& sets, uint64_t build)
     {
-        auto content = FetchList(source, list, build);
+        auto content = FetchList(setup, disk, source, list, build);
 
         if (!content)
         {
@@ -165,7 +286,7 @@ namespace
             return nullptr;
         }
 
-        if (const auto planned = PlanFor(setup, **content, list, installed, sets); !planned)
+        if (const auto planned = PlanFor(setup, disk, **content, list, installed, sets); !planned)
         {
             return std::unexpected(planned.error());
         }
@@ -307,7 +428,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
     if (newContent)
     {
         auto content =
-            PlanContent(setup, source, {release.List, release.ListSize, release.Number}, *installed,
+            PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number}, *installed,
                         Wanted(disk, setup.GameFolder, *installed), offer.ProgramBuild.value_or(setup.RunningBuild));
 
         if (!content)
@@ -364,8 +485,28 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected(writable.error());
     }
 
-    auto content = PlanContent(setup, source, {installed->List, std::nullopt, installed->Release}, *installed, sets,
-                               setup.RunningBuild);
+    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
+
+    // Sets taken out alone (HD OPTIONS' REMOVE): planned from the record, so neither the host nor a list is needed.
+    if (std::ranges::includes(installed->Sets, sets))
+    {
+        MCContentFolder folder(setup.GameFolder);
+        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk));
+
+        if (!removal)
+        {
+            return std::unexpected(removal.error());
+        }
+
+        auto content = std::make_shared<MCContent>();
+        content->List.Release = installed->Release;
+        content->Plan = std::move(*removal);
+        offer.Content = std::move(content);
+        return offer;
+    }
+
+    auto content = PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release}, *installed,
+                               sets, setup.RunningBuild);
 
     if (!content)
     {
@@ -377,7 +518,6 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected("the installed release's list is in a newer format than this game reads");
     }
 
-    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
     offer.Content = std::move(*content);
     return offer;
 }
@@ -408,7 +548,7 @@ namespace
 
         const MCReleaseFile::MCRelease& release = chosen->Release;
         const MCListRef list{release.List, release.ListSize, release.Number};
-        auto content = FetchList(source, list, setup.RunningBuild);
+        auto content = FetchList(setup, disk, source, list, setup.RunningBuild);
 
         if (!content)
         {
@@ -437,7 +577,7 @@ namespace
         }
 
         if (const auto planned =
-                PlanFor(setup, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
+                PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
             !planned)
         {
             return std::unexpected(planned.error());
@@ -568,34 +708,20 @@ MCContentUpdater::MCSets MCContentUpdater::SetsFound(const std::filesystem::path
 std::optional<MCContentUpdater::MCSets> MCContentUpdater::Chosen(MCUpdateDisk& disk,
                                                                  const std::filesystem::path& gameFolder)
 {
-    const std::filesystem::path path = ChosenPath(gameFolder);
-
-    if (!disk.Stat(path).Exists)
-    {
-        return std::nullopt;
-    }
-
-    const auto text = disk.ReadText(path);
-    const auto sets =
-        text ? MCUpdateJson::Read(ChosenFile,
-                                  [&]()
-                                  {
-                                      const MCUpdateJson::MCJson json = MCUpdateJson::Object(*text);
-                                      MCSets read = {std::string(MCContentList::GameSet)};
-
-                                      for (const MCUpdateJson::MCJson& set : MCUpdateJson::Array(json, SetsKey))
-                                      {
-                                          if (!set.is_string())
-                                          {
-                                              MCUpdateJson::Fail("a set isn't a string");
-                                          }
-
-                                          read.insert(set.get<std::string>());
-                                      }
-
-                                      return read;
-                                  })
-             : std::expected<MCSets, std::string>(std::unexpected(text.error()));
+    const auto sets = MCUpdateJson::ReadFile(disk, ChosenPath(gameFolder),
+                                             [](std::string_view text)
+                                             {
+                                                 return MCUpdateJson::Read(
+                                                     ChosenFile,
+                                                     [&]()
+                                                     {
+                                                         const std::vector<std::string> chosen =
+                                                             MCUpdateJson::Strings(MCUpdateJson::Object(text), SetsKey);
+                                                         MCSets read(chosen.begin(), chosen.end());
+                                                         read.emplace(MCContentList::GameSet);
+                                                         return read;
+                                                     });
+                                             });
 
     if (!sets)
     {

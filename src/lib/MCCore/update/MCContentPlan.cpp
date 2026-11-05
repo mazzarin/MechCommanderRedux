@@ -2,26 +2,38 @@
 #include "update/MCContentPlan.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentFolder.h"
+#include "update/MCUpdateJson.h"
 
 namespace
 {
     using namespace MCContentPlan;
     using MCContentList::FoldedPath;
 
-    /// <summary>A file on disk as it was found.</summary>
-    struct MCHashed
+    /// <summary>The hashes' file: its format, and each file's fields.</summary>
+    constexpr std::string_view FormatKey = "format";
+    constexpr std::string_view FilesKey = "files";
+    constexpr std::string_view PathKey = "path";
+    constexpr std::string_view SizeKey = "size";
+    constexpr std::string_view WrittenKey = "written";
+    constexpr std::string_view Sha256Key = "sha256";
+    constexpr uint64_t HashesFormat = 1;
+
+    /// <summary>
+    /// Whether a file kept at <paramref name="keptSize"/> and <paramref name="keptWritten"/> is as found, at
+    /// <paramref name="size"/> and <paramref name="written"/> (a time of 0 is never trusted).
+    /// </summary>
+    bool AsFound(uint64_t keptSize, int64_t keptWritten, uint64_t size, int64_t written)
     {
-        MCSha256::MCDigest Sha256{};
-        uint64_t Size = 0;
-        int64_t Written = 0;
-    };
+        return keptSize == size && keptWritten == written && keptWritten != 0;
+    }
 
     /// <summary>
     /// The file at <paramref name="onDisk"/>: its recorded hash when its size and time are as <paramref name="had"/>
-    /// recorded them, else hashed now.
+    /// recorded them, else the one <paramref name="hashes"/> kept when they're as it found them, else hashed now (counted
+    /// in <paramref name="plan"/>). One the record doesn't vouch for is kept in the plan's hashes.
     /// </summary>
-    std::expected<MCHashed, std::string> Hashed(const MCContentFolder& folder, const std::string& onDisk,
-                                                const MCInstalled::MCFile* had)
+    std::expected<MCHash, std::string> Hashed(const MCContentFolder& folder, const std::string& onDisk,
+                                              const MCInstalled::MCFile* had, const MCHashes& hashes, MCPlan& plan)
     {
         const std::filesystem::path path = folder.Full(onDisk);
         std::error_code error;
@@ -33,19 +45,33 @@ namespace
             return std::unexpected(std::format("{} can't be looked at", MCFileSystem::ToUtf8(path)));
         }
 
-        if (had != nullptr && had->Path == onDisk && had->Size == size && had->Written == *written && had->Written != 0)
+        if (had != nullptr && had->Path == onDisk && AsFound(had->Size, had->Written, size, *written))
         {
-            return MCHashed{had->Sha256, size, *written};
+            return MCHash{size, *written, had->Sha256};
         }
 
-        const auto digest = MCSha256::OfFile(path);
+        MCHash found{.Size = size, .Written = *written};
 
-        if (!digest)
+        if (const auto kept = hashes.find(onDisk);
+            kept != hashes.end() && AsFound(kept->second.Size, kept->second.Written, size, *written))
         {
-            return std::unexpected(digest.error());
+            found.Sha256 = kept->second.Sha256;
+        }
+        else
+        {
+            const auto digest = MCSha256::OfFile(path);
+
+            if (!digest)
+            {
+                return std::unexpected(digest.error());
+            }
+
+            found.Sha256 = *digest;
+            ++plan.HashedFiles;
         }
 
-        return MCHashed{*digest, size, *written};
+        plan.Hashes.insert_or_assign(onDisk, found);
+        return found;
     }
 
     /// <summary>Whether the file found, <paramref name="hash"/>, is the one an update placed (so it can go).</summary>
@@ -64,6 +90,46 @@ namespace
     {
         const auto found = installed.Files.find(folded);
         return found == installed.Files.end() ? nullptr : &found->second;
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="plan"/> the removal of <paramref name="had"/>, a recorded file, when it's on disk: kept in
+    /// Redux backup when an update didn't place it as found, but deleted whatever it holds when its set is taken out
+    /// (<paramref name="setTakenOut"/>: GET downloads it again).
+    /// </summary>
+    std::expected<void, std::string> AddRemoval(MCContentFolder& folder, const MCInstalled::MCFile& had,
+                                                bool setTakenOut, const MCHashes& hashes, MCPlan& plan)
+    {
+        const auto found = folder.Find(had.Path);
+
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
+        if (found->Kind != MCContentFolder::MCKind::File)
+        {
+            return {};
+        }
+
+        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan);
+
+        if (!hashed)
+        {
+            return std::unexpected(hashed.error());
+        }
+
+        plan.Steps.push_back(
+            MCStep{.Action = MCAction::Remove,
+                   .Path = had.Path,
+                   .OnDisk = found->Path,
+                   .File = nullptr,
+                   .Patch = nullptr,
+                   .Found = hashed->Sha256,
+                   .FoundSize = hashed->Size,
+                   .FoundWritten = hashed->Written,
+                   .Keep = setTakenOut ? MCContentSwap::MCKeep::Never : KeepUnlessPlaced(&had, hashed->Sha256)});
+        return {};
     }
 
     /// <summary>Why a file can't be planned when something not a file is in its place.</summary>
@@ -88,7 +154,8 @@ bool MCContentPlan::MCPlan::Changes() const
 std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                                        const MCContentList::MCList& list,
                                                        const MCSha256::MCDigest& listHash,
-                                                       const std::set<std::string, std::less<>>& sets)
+                                                       const std::set<std::string, std::less<>>& sets,
+                                                       const MCHashes& hashes)
 {
     MCPlan plan;
     plan.Record.Release = list.Release;
@@ -112,27 +179,40 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         const std::string folded = FoldedPath(file.Path);
         listed.insert(folded);
         const MCInstalled::MCFile* const had = Recorded(installed, folded);
-        const MCContentFolder::MCFound found = folder.Find(file.Path);
+        const auto found = folder.Find(file.Path);
+
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
         MCStep step;
         step.Path = file.Path;
         step.File = &file;
         MCInstalled::MCFile record{.Path = {}, .Set = file.Set, .Sha256 = file.Sha256, .Size = file.Size};
 
-        switch (found.Kind)
+        switch (found->Kind)
         {
             case MCContentFolder::MCKind::Link:
             case MCContentFolder::MCKind::Blocked:
-                return std::unexpected(InTheWay(file.Path, found));
+                return std::unexpected(InTheWay(file.Path, *found));
             case MCContentFolder::MCKind::Missing:
             {
+                auto placed = folder.Place(file.Path);
+
+                if (!placed)
+                {
+                    return std::unexpected(placed.error());
+                }
+
                 step.Action = MCAction::Fetch;
-                step.OnDisk = folder.Place(file.Path);
+                step.OnDisk = std::move(*placed);
                 break;
             }
             case MCContentFolder::MCKind::File:
             {
-                step.OnDisk = found.Path;
-                const auto hashed = Hashed(folder, found.Path, had);
+                step.OnDisk = found->Path;
+                const auto hashed = Hashed(folder, found->Path, had, hashes, plan);
 
                 if (!hashed)
                 {
@@ -184,31 +264,10 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             continue;
         }
 
-        const MCContentFolder::MCFound found = folder.Find(had.Path);
-
-        if (found.Kind != MCContentFolder::MCKind::File)
+        if (const auto removed = AddRemoval(folder, had, !sets.contains(had.Set), hashes, plan); !removed)
         {
-            continue;
+            return std::unexpected(removed.error());
         }
-
-        const auto hashed = Hashed(folder, found.Path, &had);
-
-        if (!hashed)
-        {
-            return std::unexpected(hashed.error());
-        }
-
-        plan.Steps.push_back(MCStep{.Action = MCAction::Remove,
-                                    .Path = had.Path,
-                                    .OnDisk = found.Path,
-                                    .File = nullptr,
-                                    .Patch = nullptr,
-                                    .Found = hashed->Sha256,
-                                    .FoundSize = hashed->Size,
-                                    .FoundWritten = hashed->Written,
-                                    // A set taken out goes whole: GET downloads it again.
-                                    .Keep = sets.contains(had.Set) ? KeepUnlessPlaced(&had, hashed->Sha256)
-                                                                   : MCContentSwap::MCKeep::Never});
     }
 
     for (const MCContentList::MCZip& zip : list.Zips)
@@ -221,4 +280,70 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     }
 
     return plan;
+}
+
+std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folder,
+                                                          const MCInstalled::MCRecord& installed,
+                                                          const std::set<std::string, std::less<>>& sets,
+                                                          const MCHashes& hashes)
+{
+    MCPlan plan;
+    plan.Record = installed;
+    plan.Record.Sets = sets;
+    plan.Record.Files.clear();
+
+    for (const auto& [folded, had] : installed.Files)
+    {
+        if (sets.contains(had.Set))
+        {
+            plan.Record.Files.insert_or_assign(folded, had);
+        }
+        else if (const auto removed = AddRemoval(folder, had, true, hashes, plan); !removed)
+        {
+            return std::unexpected(removed.error());
+        }
+    }
+
+    return plan;
+}
+
+std::string MCContentPlan::HashesText(const MCHashes& hashes)
+{
+    MCUpdateJson::MCJson files = MCUpdateJson::MCJson::array();
+
+    for (const auto& [path, hash] : hashes)
+    {
+        files.push_back({{PathKey, path},
+                         {SizeKey, hash.Size},
+                         {WrittenKey, hash.Written},
+                         {Sha256Key, MCSha256::Hex(hash.Sha256)}});
+    }
+
+    return MCUpdateJson::MCJson{{FormatKey, HashesFormat}, {FilesKey, std::move(files)}}.dump(1);
+}
+
+std::expected<MCHashes, std::string> MCContentPlan::ReadHashes(std::string_view text)
+{
+    return MCUpdateJson::Read(HashesFile,
+                              [&]()
+                              {
+                                  const MCUpdateJson::MCJson json = MCUpdateJson::Object(text);
+
+                                  if (MCUpdateJson::Count(json, FormatKey) != HashesFormat)
+                                  {
+                                      MCUpdateJson::Fail("\"{}\" isn't {}", FormatKey, HashesFormat);
+                                  }
+
+                                  MCHashes hashes;
+
+                                  for (const MCUpdateJson::MCJson& file : MCUpdateJson::Array(json, FilesKey))
+                                  {
+                                      hashes.insert_or_assign(MCUpdateJson::Text(file, PathKey),
+                                                              MCHash{.Size = MCUpdateJson::Count(file, SizeKey),
+                                                                     .Written = MCUpdateJson::Integer(file, WrittenKey),
+                                                                     .Sha256 = MCUpdateJson::Digest(file, Sha256Key)});
+                                  }
+
+                                  return hashes;
+                              });
 }

@@ -26,6 +26,12 @@ namespace
     {
         return folder.empty() ? std::string(name) : folder + Separator + std::string(name);
     }
+
+    /// <summary>Whether <paramref name="error"/> says what was looked at isn't there (or went since it was listed).</summary>
+    bool Gone(const std::error_code& error)
+    {
+        return error == std::errc::no_such_file_or_directory;
+    }
 }
 
 MCContentFolder::MCContentFolder(std::filesystem::path root) : _Root(std::move(root))
@@ -37,26 +43,37 @@ std::filesystem::path MCContentFolder::Full(std::string_view relative) const
     return _Root / MCFileSystem::FromUtf8(relative);
 }
 
-const std::map<std::string, MCContentFolder::MCEntry, std::less<>>& MCContentFolder::Listing(const std::string& folder)
+std::expected<const MCContentFolder::MCListing*, std::string> MCContentFolder::Listing(const std::string& folder)
 {
     if (const auto found = _Listings.find(folder); found != _Listings.end())
     {
-        return found->second;
+        return &found->second;
     }
 
-    std::map<std::string, MCEntry, std::less<>>& listing = _Listings[folder];
+    const std::filesystem::path path = Full(folder);
+    MCListing listing;
     std::error_code error;
+    std::filesystem::directory_iterator it(path, error);
 
-    for (std::filesystem::directory_iterator it(Full(folder), error), end; !error && it != end; it.increment(error))
+    // A folder that isn't there holds nothing: what's listed in it is missing.
+    if (Gone(error))
+    {
+        error.clear();
+    }
+
+    for (const std::filesystem::directory_iterator end; !error && it != end; it.increment(error))
     {
         const std::filesystem::file_status status = it->symlink_status(error);
 
-        if (error)
+        if (Gone(error))
         {
-            SDL_Log("Updates: %s can't be looked at (%s)", MCFileSystem::ToUtf8(it->path()).c_str(),
-                    error.message().c_str());
             error.clear();
             continue;
+        }
+
+        if (error)
+        {
+            break;
         }
 
         MCEntry entry;
@@ -66,45 +83,56 @@ const std::map<std::string, MCContentFolder::MCEntry, std::less<>>& MCContentFol
         listing.emplace(MCContentList::FoldedPath(entry.Name), std::move(entry));
     }
 
-    return listing;
+    if (error)
+    {
+        return std::unexpected(std::format("{} can't be listed ({})", MCFileSystem::ToUtf8(path), error.message()));
+    }
+
+    return &_Listings.emplace(folder, std::move(listing)).first->second;
 }
 
-MCContentFolder::MCFound MCContentFolder::Find(std::string_view path)
+std::expected<MCContentFolder::MCFound, std::string> MCContentFolder::Find(std::string_view path)
 {
     const std::vector<std::string_view> parts = Parts(path);
     std::string onDisk;
 
     for (size_t i = 0; i < parts.size(); ++i)
     {
-        const auto& listing = Listing(onDisk);
-        const auto found = listing.find(MCContentList::FoldedPath(parts[i]));
+        const auto listing = Listing(onDisk);
 
-        if (found == listing.end())
+        if (!listing)
         {
-            return {MCKind::Missing, {}};
+            return std::unexpected(listing.error());
+        }
+
+        const auto found = (*listing)->find(MCContentList::FoldedPath(parts[i]));
+
+        if (found == (*listing)->end())
+        {
+            return MCFound{MCKind::Missing, {}};
         }
 
         const MCEntry& entry = found->second;
 
         if (entry.Kind == MCKind::Link)
         {
-            return {MCKind::Link, Joined(onDisk, entry.Name)};
+            return MCFound{MCKind::Link, Joined(onDisk, entry.Name)};
         }
 
         const bool last = i + 1 == parts.size();
 
         if (entry.Folder == last)
         {
-            return {MCKind::Blocked, Joined(onDisk, entry.Name)};
+            return MCFound{MCKind::Blocked, Joined(onDisk, entry.Name)};
         }
 
         onDisk = Joined(onDisk, entry.Name);
     }
 
-    return {MCKind::File, onDisk};
+    return MCFound{MCKind::File, onDisk};
 }
 
-std::string MCContentFolder::Place(std::string_view path)
+std::expected<std::string, std::string> MCContentFolder::Place(std::string_view path)
 {
     const std::vector<std::string_view> parts = Parts(path);
     std::string placed;
@@ -116,10 +144,15 @@ std::string MCContentFolder::Place(std::string_view path)
 
         if (onDisk && i + 1 < parts.size())
         {
-            const auto& listing = Listing(placed);
+            const auto listing = Listing(placed);
 
-            if (const auto found = listing.find(MCContentList::FoldedPath(name));
-                found != listing.end() && found->second.Folder)
+            if (!listing)
+            {
+                return std::unexpected(listing.error());
+            }
+
+            if (const auto found = (*listing)->find(MCContentList::FoldedPath(name));
+                found != (*listing)->end() && found->second.Folder)
             {
                 name = found->second.Name;
             }

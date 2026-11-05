@@ -22,6 +22,13 @@ namespace MCContentUpdater
     constexpr std::string_view ReleasesName = "release.json";
     constexpr std::string_view ListsFolder = "lists";
 
+    /// <summary>
+    /// The content lists fetched, kept in the game folder by their names on the host (each checked against its name
+    /// when read): the installed release's, so a change of sets plans offline, and the newest fetched, so a check while
+    /// an update waits doesn't fetch it again.
+    /// </summary>
+    constexpr std::string_view KeptListsFolder = MCContentList::InUpdateFolder<"lists">;
+
     /// <summary>The most a signed file (the key list, <c>release.json</c>) and a content list may hold.</summary>
     constexpr size_t MostSignedBytes = 1 << 20;
     constexpr size_t MostListBytes = 64 << 20;
@@ -31,7 +38,7 @@ namespace MCContentUpdater
     /// JSON: <c>{"format": 1, "sets": ["game", "hd"]}</c>. The copy plans for these; without the file, for the sets its
     /// record has.
     /// </summary>
-    constexpr std::string_view ChosenFile = "Redux update/sets.json";
+    constexpr std::string_view ChosenFile = MCContentList::InUpdateFolder<"sets.json">;
 
     using MCSets = std::set<std::string, std::less<>>;
 
@@ -93,11 +100,12 @@ namespace MCContentUpdater
 
     /// <summary>
     /// The change of sets the player chose (HD OPTIONS getting or removing HD), planned against the release the copy
-    /// has installed: its list fetched by the hash its record keeps, so nothing else changes.
+    /// has installed, so nothing else changes. Sets taken out alone are planned from the record (MCContentPlan::Removal),
+    /// offline; a set added, from the release's list, read by the hash the record keeps (kept, else fetched).
     /// </summary>
     /// <returns>
     /// The change (no program); none when the copy has the sets chosen, or an update already waits for the next start;
-    /// or why there's none (no release installed yet, the list no longer hosted, the host out of reach).
+    /// or why there's none (no release installed yet; adding, the list neither kept nor hosted, the host out of reach).
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> CheckSets(const MCSetup& setup, MCUpdateDisk& disk,
                                                                  MCContentStage::MCSource& source);

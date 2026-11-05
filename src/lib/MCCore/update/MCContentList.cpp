@@ -2,6 +2,8 @@
 #include "update/MCContentList.h"
 #include "update/MCUpdateJson.h"
 
+static_assert(MCContentList::InUpdateFolder<"installed.json"> == "Redux update/installed.json");
+
 namespace
 {
     using namespace MCUpdateJson;

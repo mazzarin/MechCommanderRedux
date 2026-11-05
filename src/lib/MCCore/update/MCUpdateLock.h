@@ -1,6 +1,9 @@
 #pragma once
 
-// Only standard headers: MCUpdateLock.cpp is built without the precompiled header on Windows.
+// Only standard headers and update/MCContentList.h (which holds to that too): MCUpdateLock.cpp is built without the
+// precompiled header on Windows.
+#include "update/MCContentList.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -23,8 +26,8 @@ class MCUpdateLock
 {
 public:
     /// <summary>The locks, in the game folder.</summary>
-    static constexpr std::string_view GameLock = "Redux update/game.lock";
-    static constexpr std::string_view StagingLock = "Redux update/staging.lock";
+    static constexpr std::string_view GameLock = MCContentList::InUpdateFolder<"game.lock">;
+    static constexpr std::string_view StagingLock = MCContentList::InUpdateFolder<"staging.lock">;
 
     /// <summary>
     /// The lock <paramref name="name"/> in <paramref name="gameFolder"/>, made with its folder if need be, held by

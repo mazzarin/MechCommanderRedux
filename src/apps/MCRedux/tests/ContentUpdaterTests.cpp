@@ -534,6 +534,50 @@ TEST_CASE("content updater: a skip is kept and a higher release offered; files a
 #endif
 }
 
+TEST_CASE("content updater: a copy with no record hashes its files once; later checks take the hashes kept while each "
+          "file stays as found")
+{
+    MCHostedRelease release("hashes");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path hashesFile = game / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const auto hashedAtCheck = [&]()
+    {
+        const auto offer = MCContentUpdater::Check(setup, *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        REQUIRE((*offer)->Content != nullptr);
+        return (*offer)->Content->Plan.HashedFiles;
+    };
+
+    // The three listed files the copy has (release 1's) hashed at the first check, none at the next.
+    CHECK_EQ(hashedAtCheck(), size_t{3});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+
+    // One whose time moved on is hashed again, alone.
+    const std::filesystem::path same = game / "data" / "same.fit";
+    std::filesystem::last_write_time(same, std::filesystem::last_write_time(same) + std::chrono::seconds(5));
+    CHECK_EQ(hashedAtCheck(), size_t{1});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+
+    // A file gone keeps no hash.
+    std::filesystem::remove(game / "data" / "changed.fit");
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+    const auto kept = MCContentPlan::ReadHashes(Read(hashesFile));
+    REQUIRE(kept.has_value());
+    CHECK_EQ(kept->size(), size_t{2});
+    CHECK(!kept->contains("data/changed.fit"));
+    CHECK(kept->contains("data/same.fit"));
+
+    // Hashes that can't be read start again.
+    Write(hashesFile, "not json");
+    CHECK_EQ(hashedAtCheck(), size_t{2});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+}
+
 TEST_CASE("updater: content alone is checked off the main thread, staged on INSTALL, ready once armed, and RESTART "
           "starts the game again")
 {
@@ -775,7 +819,99 @@ TEST_CASE(
     // A sets file that can't be read is left aside: the copy keeps the sets its record has.
     Write(game / "Redux update" / "sets.json", "not json");
     CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
+    Write(game / "Redux update" / "sets.json", R"({"format": 1, "sets": ["game", 2]})");
+    CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
     CHECK(MCContentUpdater::Wanted(*disk, game, *MCInstalled::Read(game)) == WithoutHd);
+}
+
+TEST_CASE("content updater: lists are kept: read again unfetched, fetched again when damaged, HD removed offline; only "
+          "the installed release's and the newest stay")
+{
+    MCHostedRelease release("kept-lists");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path lists = game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder);
+    const std::string listName = MCSha256::Hex(MCSha256::Of(release.ListText)) + ".json";
+    const std::string hostedList = std::format("{}/{}", MCContentUpdater::ListsFolder, listName);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const auto listsKept = [&]() { return std::distance(std::filesystem::directory_iterator(lists), {}); };
+    const auto fetchesAtCheck = [&]()
+    {
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(setup, *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        return std::ranges::count(source.Asked(), hostedList);
+    };
+
+    // Kept before: the installed release's list, and an older one.
+    const std::string installedName = MCSha256::Hex(release.Installed.List) + ".json";
+    Write(lists / installedName, "release 1's list");
+    Write(lists / (MCSha256::Hex(MCSha256::Of("an older list")) + ".json"), "an older list");
+
+    // Fetched once and kept, beside the installed release's alone; read from there while the update waits.
+    CHECK_EQ(fetchesAtCheck(), 1);
+    CHECK_EQ(Read(lists / listName), release.ListText);
+    CHECK(std::filesystem::exists(lists / installedName));
+    CHECK_EQ(listsKept(), 2);
+    CHECK_EQ(fetchesAtCheck(), 0);
+
+    // One kept that isn't what its name says is fetched again.
+    Write(lists / listName, "damaged");
+    CHECK_EQ(fetchesAtCheck(), 1);
+    CHECK_EQ(Read(lists / listName), release.ListText);
+
+    // Installed, HD taken out, then got again: planned with the host out of reach, from the installed release's list
+    // kept (only its download needs the host).
+    UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    MCFolderSource offline(release.Host.Path() / "out-of-reach");
+    const auto addition = MCContentUpdater::CheckSets(setup, *disk, offline);
+    REQUIRE(addition.has_value());
+    REQUIRE(addition->has_value());
+    CHECK(offline.Asked().empty());
+    CHECK((*addition)->ContentBytes() > 0);
+}
+
+TEST_CASE("content updater: HD OPTIONS' REMOVE is planned from the record alone, with no host and no list kept")
+{
+    MCHostedRelease release("remove-offline");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path lists = game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder);
+    UpdateToRelease2(release);
+    std::filesystem::remove_all(lists);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    MCFolderSource offline(release.Host.Path() / "out-of-reach");
+    const auto removal = MCContentUpdater::CheckSets(setup, *disk, offline);
+    REQUIRE(removal.has_value());
+    REQUIRE(removal->has_value());
+    CHECK_EQ((*removal)->ContentBytes(), uint64_t{0});
+    REQUIRE(MCContentUpdater::Stage(setup, *disk, offline, **removal, GoOn).has_value());
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, **removal).has_value());
+    CHECK(offline.Asked().empty());
+    CHECK(!std::filesystem::exists(lists));
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!std::filesystem::exists(game / "HD"));
+
+    // The game's files stay as recorded, with the release, its list and HD's size, for GET.
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK(record->Sets == WithoutHd);
+    CHECK_EQ(record->Files.size(), size_t{3});
+    CHECK(!record->Files.contains("HD/TERRAIN.HDA"));
+    CHECK_EQ(record->Release, uint64_t{2});
+    CHECK(record->List == MCSha256::Of(release.ListText));
+    CHECK_EQ(record->SetBytes.at("hd"), uint64_t{Terrain().size()});
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+
+    // Got again, from the host.
+    ChangeSets(release, WithHd);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK(InstalledSets(release) == WithHd);
 }
 
 TEST_CASE("content updater: an update is planned for the sets chosen")
@@ -1410,7 +1546,8 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     std::filesystem::rename(update / "staged" / "data" / "changed.fit", game / "data" / "changed.fit");
     std::filesystem::remove(update / "staged" / "HD" / "terrain.hda");
 
-    // Offline, or the release's list out of reach, nothing is given up: TRY AGAIN can still finish the update.
+    // Offline, or the release's list neither kept nor hosted, nothing is given up: TRY AGAIN can still finish the
+    // update.
     const auto unchanged = [&]()
     {
         CHECK(std::filesystem::exists(update / "journal.json"));
@@ -1425,6 +1562,7 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     const std::filesystem::path lists = release.Host.Path() / "lists";
     const std::filesystem::path listsAway = release.Host.Path() / "lists-away";
     std::filesystem::rename(lists, listsAway);
+    std::filesystem::remove_all(game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder));
     REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
     unchanged();
     std::filesystem::rename(listsAway, lists);

@@ -18,7 +18,7 @@ class MCUpdateDisk;
 namespace MCContentStage
 {
     /// <summary>Where downloads go while staging, in the game folder.</summary>
-    constexpr std::string_view DownloadFolder = "Redux update/download";
+    constexpr std::string_view DownloadFolder = MCContentList::InUpdateFolder<"download">;
 
     /// <summary>Fetches the release's files from where they're hosted (the downloads Worker; a folder in the tests).</summary>
     class MCSource

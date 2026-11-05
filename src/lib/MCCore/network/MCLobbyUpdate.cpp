@@ -105,6 +105,15 @@ namespace
     /// was called off and the room's places kept stand; another is the host's new version's, which has kept none.
     /// </summary>
     std::optional<_GUID> RoomLeft;
+    /// <summary>
+    /// How long the room's start has waited on kept places, all of them together, and since when it waits now (while any
+    /// is kept): it waits MCLobbyUpdate::MostStartHold at most in a room, whatever the guests' ids and names, so no guest
+    /// holds it on and on by rejoining as another player.
+    /// </summary>
+    Clock::duration StartHeldFor{};
+    std::optional<Clock::time_point> StartHeldSince;
+    /// <summary>The room's start has waited its most on kept places: START no longer waits for them.</summary>
+    bool StartHoldSpent = false;
     /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
     MCLobbyUpdate::MCClock TestClock;
 
@@ -129,12 +138,36 @@ namespace
         return std::format("{} IS UPDATING.", Upper(name));
     }
 
+    /// <summary>How long the room's start has waited on kept places by <paramref name="now"/>, all of them together.</summary>
+    Clock::duration StartHeldBy(Clock::time_point now)
+    {
+        return StartHeldFor + (StartHeldSince.has_value() ? now - *StartHeldSince : Clock::duration::zero());
+    }
+
+    /// <summary>The places kept changed: the start's wait runs while any is kept, and stops while none is.</summary>
+    void TimeStartHold()
+    {
+        const Clock::time_point now = Now();
+
+        if (!Coming.empty() && !StartHeldSince.has_value())
+        {
+            StartHeldSince = now;
+        }
+        else if (Coming.empty() && StartHeldSince.has_value())
+        {
+            StartHeldFor += now - *StartHeldSince;
+            StartHeldSince.reset();
+        }
+    }
+
     /// <summary>
-    /// The places kept changed: the session screen holds its start while any is kept, and lets it go after
-    /// (MCSessionScreen::CheckGoodToGo).
+    /// The places kept changed: the session screen holds its start while any is kept (MCLobbyUpdate::StartHeld), and
+    /// lets it go after (MCSessionScreen::CheckGoodToGo).
     /// </summary>
     void PlacesChanged()
     {
+        TimeStartHold();
+
         if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
             logistics != nullptr && logistics->SessionScreen != nullptr &&
             logistics->SessionScreen->StartButton != nullptr)
@@ -245,6 +278,7 @@ namespace
         // The places this guest saw kept: the room's guests back (or not) while it is away go unseen. Which places the
         // room has kept stands until this guest knows whether it comes back to the same room (TryHostAgain).
         Coming.clear();
+        TimeStartHold();
         RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
@@ -278,6 +312,9 @@ namespace
             {
                 KeptOnce.clear();
                 OwnPlaceKept = false;
+                StartHeldFor = Clock::duration::zero();
+                StartHeldSince.reset();
+                StartHoldSpent = false;
             }
 
             RoomLeft.reset();
@@ -443,6 +480,11 @@ auto MCLobbyUpdate::CanRestart() -> bool
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
+auto MCLobbyUpdate::StartHeld() -> bool
+{
+    return !Coming.empty() && !StartHoldSpent;
+}
+
 auto MCLobbyUpdate::StartWaitsText() -> std::string
 {
     if (Coming.empty())
@@ -547,6 +589,16 @@ auto MCLobbyUpdate::Frame() -> void
     }
 
     KeepPlaces(now);
+
+    // The room's start has waited its most on kept places: START lights, though places may still be kept (the session
+    // screen's line names them).
+    if (!StartHoldSpent && StartHeldBy(now) >= MostStartHold)
+    {
+        SDL_Log("Lobby updates: the room's start has waited %lld s on kept places, its most: it waits for them no more",
+                static_cast<long long>(MostStartHold.count()));
+        StartHoldSpent = true;
+        PlacesChanged();
+    }
 
     // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
     if (RefreshAt.has_value() && now >= *RefreshAt)

@@ -634,6 +634,78 @@ TEST_CASE_ISOLATED("game: a lobby's room keeps a guest's place only for a build 
     CHECK(!MCLobbyUpdate::LeftToUpdate(ann.Id()));
 }
 
+/// <summary>
+/// A guest away updating can join the room again as another player (another name, another id) and say it updates, the
+/// room keeping a place for each: so the room's start waits two minutes at most in all on kept places, whoever's. Past
+/// them START lights though a place is still kept (the line names it, the room open to it), and one kept after holds the
+/// start no more.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's room holds its start two minutes at most in all, whoever's places it keeps")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Address = "127.0.0.1:28919";
+    constexpr std::chrono::seconds Between{50};
+    MCLobbyClock clock;
+    Guest ann("ANN");
+    Guest cal("CAL");
+    REQUIRE(HostLobbyRoom("28919", {ann, cal}));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    cal.SendRules(hostId, MCMatchRule::Supported);
+    PickTeams(screen, {ann.Id(), cal.Id()});
+    REQUIRE(!screen.StartButton->Disabled);
+
+    // A guest joins the room (open while places are kept), says it updates, and leaves.
+    auto updatesAs = [&](Guest& guest)
+    {
+        REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, Address));
+        Settle();
+        guest.SendRules(hostId, MCMatchRule::Supported);
+        guest.SendUpdating(hostId);
+        REQUIRE(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(guest.Id()); }));
+        guest.Leave();
+    };
+
+    // ANN updates, and joins again as ANNA and as ANNB, each before the last one's minute is over.
+    ann.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    ann.Leave();
+    clock.Pass(Between);
+    Guest anna("ANNA");
+    updatesAs(anna);
+    clock.Pass(Between);
+    Guest annb("ANNB");
+    updatesAs(annb);
+    CHECK(screen.StartButton->Disabled);
+
+    // A second short of two minutes: ANN's and ANNA's places gone, ANNB's kept, START still waits.
+    clock.Pass(MCLobbyUpdate::MostStartHold - 2 * Between - std::chrono::seconds(1));
+    CHECK(MCLobbyUpdate::StartHeld());
+    CHECK(screen.StartButton->Disabled);
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANNB TO REJOIN."));
+
+    // Two minutes: START lights, ANNB's place still kept.
+    clock.Pass(std::chrono::seconds(1));
+    CHECK(!MCLobbyUpdate::StartHeld());
+    CHECK(!screen.StartButton->Disabled);
+    CHECK(RoomOpen());
+    CHECK(MCLobbyUpdate::LeftToUpdate(annb.Id()));
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANNB TO REJOIN."));
+    MCScreenInput::SaveShot("lobby start waits 2 most held", MCScreenInput::ScreenHash());
+
+    // A place kept after holds it no more.
+    cal.SendUpdating(hostId);
+    REQUIRE(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(cal.Id()); }));
+    CHECK(!MCLobbyUpdate::StartHeld());
+    CHECK(!screen.StartButton->Disabled);
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANNB, CAL TO REJOIN."));
+}
+
 namespace
 {
     /// <summary>The version shown without its build: the new version's build isn't known.</summary>

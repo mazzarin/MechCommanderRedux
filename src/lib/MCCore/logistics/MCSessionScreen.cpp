@@ -1436,10 +1436,10 @@ auto MCSessionScreen::CheckGoodToGo() -> void
     const bool goodToGo = NumUnassigned == 0 && !MissionFile.empty() && !MultiPlayer()->PlayersOnHomeTeam()->empty() &&
                           !MultiPlayer()->PlayersOnEnemyTeam()->empty() && filled(Team1Players) && filled(Team2Players);
 
-    // Port-only (the personal build): a guest away updating holds the start until it's back (network/MCLobbyUpdate.h),
-    // its line in the update's line's place meanwhile.
+    // Port-only (the personal build): a guest away updating holds the start until it's back, for a while at most in all
+    // (network/MCLobbyUpdate.h); its line is in the update's line's place while its place is kept.
     StartWaits = MCLobbyUpdate::StartWaitsText();
-    StartButton->Disabled = !goodToGo || !StartWaits.empty();
+    StartButton->Disabled = !goodToGo || MCLobbyUpdate::StartHeld();
 
     if (UpdateLine != nullptr)
     {

@@ -205,8 +205,7 @@ namespace MCContentFixture
                                   .Set = "game",
                                   .Size = 10,
                                   .Sha256 = MCSha256::Of("changed v2"),
-                                  .Zip = "update-2.zip",
-                                  .Earlier = {MCSha256::Of("changed v1")}});
+                                  .Zip = "update-2.zip"});
             List.Files.push_back({.Path = "data/missions/new.fit",
                                   .Set = "game",
                                   .Size = 13,

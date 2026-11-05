@@ -50,6 +50,9 @@ namespace
         /// <summary>The file at <paramref name="path"/> is held open: moving or replacing it fails (empty: none).</summary>
         void HoldOpen(std::string path) { _Held = std::move(path); }
 
+        /// <summary>The folder flush right after a file moves into <paramref name="path"/> fails, once.</summary>
+        void FailFlushAfterMoveTo(std::string path) { _FailFlushAfter = std::move(path); }
+
         /// <summary>
         /// The machine stops and starts again: the safe changes stay, and each unsafe one stays when
         /// <paramref name="keep"/> says so (by its order), applied in order, skipping one whose file is gone.
@@ -127,6 +130,7 @@ namespace
                 return false;
             }
 
+            _LastMovedTo = Key(to);
             return Record({MCKind::Rename, Key(from), Key(to), {}, {Parent(from), Parent(to)}, true});
         }
 
@@ -154,6 +158,13 @@ namespace
         bool FlushFolder(const std::filesystem::path& path) override
         {
             Step();
+
+            if (!_FailFlushAfter.empty() && _FailFlushAfter == _LastMovedTo)
+            {
+                _FailFlushAfter.clear();
+                return false;
+            }
+
             const std::string folder = Key(path);
 
             for (MCChange& change : _Pending)
@@ -256,6 +267,8 @@ namespace
         int _Changes = 0;
         int64_t _Clock = 1000;
         std::string _Held;
+        std::string _FailFlushAfter;
+        std::string _LastMovedTo;
     };
 
     const std::filesystem::path Game = "/game";
@@ -266,8 +279,9 @@ namespace
     }
 
     /// <summary>
-    /// An update of four files: one replaced, one added in a new folder, one removed, one replaced in HD; with each
-    /// old file, the staged new ones and ready.json on the disk, all safe.
+    /// An update of six files: one replaced, one added in a new folder, one removed, one replaced in HD, and two an
+    /// update didn't place (one replaced, one removed: both kept in Redux backup); with each old file, the staged new
+    /// ones and ready.json on the disk, all safe.
     /// </summary>
     struct MCUpdate
     {
@@ -277,6 +291,8 @@ namespace
             Add("data/missions/new.fit", std::nullopt, "a new mission");
             Add("data/old.fit", "removed in v2", std::nullopt);
             Add("HD/terrain.hda", "terrain v1, bigger", "terrain v2");
+            Add("data/mod.fit", "the folder's own mod", "mod v2", true);
+            Add("data/dropped/own.fit", "the folder's own, dropped", std::nullopt, true);
             Before.Release = 1;
             After.Release = 2;
             After.List = MCSha256::Of("list 2");
@@ -287,9 +303,9 @@ namespace
             Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(Journal()), 1};
         }
 
-        void Add(std::string path, std::optional<std::string> old, std::optional<std::string> now)
+        void Add(std::string path, std::optional<std::string> old, std::optional<std::string> now, bool backup = false)
         {
-            MCContentSwap::MCMove move{.Path = path};
+            MCContentSwap::MCMove move{.Path = path, .Backup = backup};
             const std::string folded = MCContentList::FoldedPath(path);
 
             if (old)
@@ -298,8 +314,12 @@ namespace
                 move.OldSize = old->size();
                 move.OldWritten = ++Clock;
                 Files[GamePath(path)] = {*old, move.OldWritten};
-                Before.Files[folded] = {
-                    .Path = path, .Set = "game", .Sha256 = *move.Old, .Size = old->size(), .Written = move.OldWritten};
+                Before.Files[folded] = {.Path = path,
+                                        .Set = "game",
+                                        .Sha256 = *move.Old,
+                                        .Size = old->size(),
+                                        .Written = move.OldWritten,
+                                        .Placed = !backup};
             }
 
             if (now)
@@ -334,9 +354,42 @@ namespace
             return true;
         }
 
+        /// <summary>Redux backup's files and their bytes.</summary>
+        static std::map<std::string, std::string> InBackup(const MCCrashDisk::MCFiles& files)
+        {
+            const std::string backup = GamePath(MCContentList::BackupFolder) + "/";
+            std::map<std::string, std::string> kept;
+
+            for (const auto& [path, file] : files)
+            {
+                if (path.starts_with(backup))
+                {
+                    kept[path] = file.Bytes;
+                }
+            }
+
+            return kept;
+        }
+
+        /// <summary>Whether Redux backup holds the old files an update didn't place, each once, and nothing else.</summary>
+        bool BackupKept(const MCCrashDisk::MCFiles& files) const
+        {
+            std::map<std::string, std::string> wanted;
+
+            for (const MCContentSwap::MCMove& move : Moves)
+            {
+                if (move.Backup && Old.at(move.Path))
+                {
+                    wanted[GamePath(std::string(MCContentList::BackupFolder) + "/" + move.Path)] = *Old.at(move.Path);
+                }
+            }
+
+            return InBackup(files) == wanted;
+        }
+
         bool IsNew(const MCCrashDisk::MCFiles& files) const
         {
-            if (!WhichSet(files, New) || files.contains(GamePath(MCContentSwap::JournalFile)) ||
+            if (!WhichSet(files, New) || !BackupKept(files) || files.contains(GamePath(MCContentSwap::JournalFile)) ||
                 files.contains(GamePath(MCContentSwap::ReadyFile)))
             {
                 return false;
@@ -355,7 +408,8 @@ namespace
         /// <summary>The old set in place, the update staged again and ready for the next start.</summary>
         bool IsOldAndReady(const MCCrashDisk::MCFiles& files) const
         {
-            if (!WhichSet(files, Old) || !files.contains(GamePath(MCContentSwap::ReadyFile)))
+            if (!WhichSet(files, Old) || !InBackup(files).empty() ||
+                !files.contains(GamePath(MCContentSwap::ReadyFile)))
             {
                 return false;
             }
@@ -600,22 +654,65 @@ TEST_CASE("content swap: a lobby's start, which gets the deadline, is one with -
     CHECK(!StartsInLobby("-player \"-host and friends\""));
 }
 
-TEST_CASE("content swap: a file the player changed since staging is left alone and recorded as theirs")
+TEST_CASE("content swap: a file the player changed since staging is replaced too, and kept in Redux backup")
 {
     MCUpdate update;
     update.Files[GamePath("ART.FST")] = {"the player's art", 5};
     update.Files[GamePath("data/missions/new.fit")] = {"the player's own mission", 6};
     MCCrashDisk disk(update.Files);
     REQUIRE(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
-    CHECK_EQ(disk.Files().at(GamePath("ART.FST")).Bytes, std::string("the player's art"));
-    CHECK_EQ(disk.Files().at(GamePath("data/missions/new.fit")).Bytes, std::string("the player's own mission"));
-    CHECK_EQ(disk.Files().at(GamePath("HD/terrain.hda")).Bytes, std::string("terrain v2"));
+    CHECK(update.WhichSet(disk.Files(), update.New));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/ART.FST")).Bytes, std::string("the player's art"));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/missions/new.fit")).Bytes,
+             std::string("the player's own mission"));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod.fit")).Bytes, std::string("the folder's own mod"));
+    CHECK(!disk.Files().contains(GamePath("Redux backup/HD/terrain.hda")));
     const auto record = MCInstalled::FromText(disk.Files().at(GamePath(MCInstalled::RecordPath)).Bytes);
     REQUIRE(record.has_value());
-    CHECK(!record->Files.at("ART.FST").Ours);
-    CHECK(record->Files.at("ART.FST").Sha256 == MCSha256::Of("the player's art"));
-    CHECK(!record->Files.at("DATA/MISSIONS/NEW.FIT").Ours);
-    CHECK(record->Files.at("HD/TERRAIN.HDA").Ours);
+    CHECK(record->Files.at("ART.FST").Placed);
+    CHECK(record->Files.at("ART.FST").Sha256 == MCSha256::Of("art v2"));
+    CHECK(record->Files.at("DATA/MISSIONS/NEW.FIT").Placed);
+}
+
+TEST_CASE("content swap: a later copy of a path already in Redux backup is kept beside it, numbered")
+{
+    MCUpdate update;
+    update.Files[GamePath("Redux backup/data/mod.fit")] = {"kept by an earlier update", 7};
+    update.Files[GamePath("Redux backup/data/mod (2).fit")] = {"kept by the one after", 8};
+    MCCrashDisk disk(update.Files);
+    REQUIRE(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod.fit")).Bytes, std::string("kept by an earlier update"));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod (2).fit")).Bytes, std::string("kept by the one after"));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/mod (3).fit")).Bytes, std::string("the folder's own mod"));
+}
+
+TEST_CASE("content swap: a folder put in a file's place since staging puts the old set back")
+{
+    MCUpdate update;
+    update.Files.erase(GamePath("data/mod.fit"));
+    update.Files[GamePath("data/mod.fit/inside.txt")] = {"a folder's file", 9};
+    MCCrashDisk disk(update.Files);
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game);
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("data/mod.fit: a folder is in its place") != std::string::npos);
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
+    CHECK_EQ(disk.Files().at(GamePath("ART.FST")).Bytes, std::string("art v1"));
+}
+
+TEST_CASE("content swap: the record moved into place but its folder's flush failing is committed: the old files aren't "
+          "put back under it")
+{
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.FailFlushAfterMoveTo(GamePath(MCInstalled::RecordPath));
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game);
+    CHECK(result.Outcome == MCOutcome::Swapped);
+    CHECK(result.Error.find("record") != std::string::npos);
+    CHECK(update.WhichSet(disk.Files(), update.New));
+
+    // The next start finishes the clearing.
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK(update.IsNew(disk.Files()));
 }
 
 TEST_CASE("content swap: the disk's writes are durable and replace a file whole")

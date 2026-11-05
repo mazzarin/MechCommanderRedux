@@ -6,9 +6,9 @@
 /// Port-only: a release's content list (SPEC-install-and-updates.md's The content list), named on the host by its
 /// SHA-256, which the signed <c>release.json</c> gives (update/MCReleaseFile.h). It covers only the managed folder,
 /// the game data (which holds HD as <c>HD/</c>), never the program: every file of the release, each with its path,
-/// set, size, SHA-256 and the zip holding its current bytes; the hashes of its earlier official versions (so a copy
-/// knows them from the player's own); and, for a file a release changed in part, its patches, each from one earlier
-/// release's copy.
+/// set, size, SHA-256 and the zip holding its current bytes; and, for a file a release changed in part, its patches,
+/// each from one earlier release's copy. (The release script keeps each file's earlier hashes in the list, as
+/// "earlier", for its own patches; the game doesn't read them.)
 ///
 /// Paths are relative to the game folder, '/' apart, as the release has them. The rules the release script follows
 /// are checked again here (<see cref="PathProblem"/>), so a list can't name anything outside the folder, anything
@@ -58,8 +58,6 @@ namespace MCContentList
         MCSha256::MCDigest Sha256{};
         /// <summary>The zip holding it (<see cref="MCList::Zips"/>' name).</summary>
         std::string Zip;
-        /// <summary>The hashes of its earlier official versions: a copy holding one replaces it.</summary>
-        std::vector<MCSha256::MCDigest> Earlier;
         std::vector<MCPatch> Patches;
     };
 

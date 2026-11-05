@@ -245,11 +245,12 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
     REQUIRE(plan.has_value());
     const auto count = [&](MCAction action)
     { return std::ranges::count(plan->Steps, action, &MCContentPlan::MCStep::Action); };
-    std::cout << std::format("  release {} ({}): {} kept, {} patched, {} fetched, {} removed, {} the player's; {} "
+    const auto backedUp = std::ranges::count(plan->Steps, true, &MCContentPlan::MCStep::Backup);
+    std::cout << std::format("  release {} ({}): {} kept, {} patched, {} fetched, {} removed, {} to Redux backup; {} "
                              "bytes to download in {} zips\n",
                              release.Number, release.Version, count(MCAction::Keep), count(MCAction::Patch),
-                             count(MCAction::Fetch), count(MCAction::Remove), count(MCAction::LeaveTheirs),
-                             plan->DownloadBytes, plan->Zips.size());
+                             count(MCAction::Fetch), count(MCAction::Remove), backedUp, plan->DownloadBytes,
+                             plan->Zips.size());
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     uint64_t downloaded = 0;
     const auto stageStart = std::chrono::steady_clock::now();

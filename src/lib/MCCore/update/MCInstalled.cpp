@@ -19,7 +19,7 @@ namespace
     constexpr std::string_view Sha256Key = "sha256";
     constexpr std::string_view SizeKey = "size";
     constexpr std::string_view WrittenKey = "written";
-    constexpr std::string_view OursKey = "ours";
+    constexpr std::string_view PlacedKey = "placed";
     constexpr std::string_view SwapKey = "swap";
     constexpr uint64_t RecordFormat = 1;
 }
@@ -48,7 +48,7 @@ std::string MCInstalled::Text(const MCRecord& record)
                          {Sha256Key, MCSha256::Hex(file.Sha256)},
                          {SizeKey, file.Size},
                          {WrittenKey, file.Written},
-                         {OursKey, file.Ours}});
+                         {PlacedKey, file.Placed}});
     }
 
     MCJson setBytes = MCJson::object();
@@ -119,14 +119,14 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::str
                 }
 
                 file.Written = written.get<int64_t>();
-                const MCJson& ours = Member(entry, OursKey);
+                const MCJson& placed = Member(entry, PlacedKey);
 
-                if (!ours.is_boolean())
+                if (!placed.is_boolean())
                 {
-                    Fail("\"{}\" isn't true or false", OursKey);
+                    Fail("\"{}\" isn't true or false", PlacedKey);
                 }
 
-                file.Ours = ours.get<bool>();
+                file.Placed = placed.get<bool>();
                 record.Files.insert_or_assign(MCContentList::FoldedPath(file.Path), std::move(file));
             }
 

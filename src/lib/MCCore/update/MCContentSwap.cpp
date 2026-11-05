@@ -25,6 +25,10 @@ namespace
     constexpr std::string_view OldWrittenKey = "oldWritten";
     constexpr std::string_view NewKey = "new";
     constexpr std::string_view NewSizeKey = "newSize";
+    constexpr std::string_view BackupKey = "backup";
+    /// <summary>A later copy kept in Redux backup beside a path's first: "name (2).ext", then "(3)", up to the last.</summary>
+    constexpr int FirstNumberedCopy = 2;
+    constexpr int LastNumberedCopy = 999;
     constexpr std::string_view TooLateError = "the swap took longer than a lobby's start allows";
 
     /// <summary>What's at a move's path.</summary>
@@ -33,8 +37,10 @@ namespace
         Missing,
         Old,
         New,
-        /// <summary>Neither: the player's (changed since staging, or added in a new file's place).</summary>
+        /// <summary>Another file: the player's (changed since staging, or added in a new file's place).</summary>
         Other,
+        /// <summary>A folder in the file's place.</summary>
+        Folder,
     };
 
     /// <summary>One run of the swap: forward, and back if forward fails.</summary>
@@ -63,13 +69,21 @@ namespace
 
                 if (!WriteDurably(_Disk, At(MCInstalled::RecordPath), MCInstalled::Text(Record())))
                 {
+                    // Moved into place with only its folder's flush failing, the record names the new set: the swap is
+                    // committed, and the old files mustn't go back under it (the next start finishes the clearing).
+                    _Committed = RecordWritten();
                     return "the installed record can't be written";
                 }
             }
 
             _Committed = true;
 
-            // Flushed before the journal goes, or a crash could keep its deletion and lose theirs.
+            if (std::string error = KeepSetAside(); !error.empty())
+            {
+                return error;
+            }
+
+            // Flushed before the journal goes, or a crash could keep its deletion and lose the record of what to clear.
             if (!_Disk.Remove(At(ReplacedFolder)) || !_Disk.Remove(At(StagedFolder)) ||
                 !_Disk.FlushFolder(At(UpdateFolder)))
             {
@@ -139,7 +153,23 @@ namespace
                     return at.error();
                 }
 
-                if (*at == MCAt::Old && !Move(Destination(move), Replaced(move)))
+                if (*at == MCAt::Folder)
+                {
+                    return std::format("{}: a folder is in its place", move.Path);
+                }
+
+                if (*at != MCAt::Old && *at != MCAt::Other)
+                {
+                    continue;
+                }
+
+                // Only one file is ever set aside at a path: the next start's put back finds it there.
+                if (_Disk.Stat(Replaced(move)).Exists)
+                {
+                    return std::format("{} can't be moved aside: another copy is already set aside", move.Path);
+                }
+
+                if (!Move(Destination(move), Replaced(move)))
                 {
                     return std::format("{} can't be moved aside", move.Path);
                 }
@@ -152,7 +182,7 @@ namespace
 
             for (const MCMove& move : _Journal.Moves)
             {
-                if (!move.New || _Theirs.contains(move.Path))
+                if (!move.New)
                 {
                     continue;
                 }
@@ -174,6 +204,11 @@ namespace
                     if (*at == MCAt::Old)
                     {
                         return std::format("{} is still in place", move.Path);
+                    }
+
+                    if (*at != MCAt::New)
+                    {
+                        return std::format("{} changed while the update went in", move.Path);
                     }
 
                     continue;
@@ -221,7 +256,7 @@ namespace
         {
             for (const MCMove& move : std::views::reverse(_Journal.Moves))
             {
-                if (move.New && !_Theirs.contains(move.Path) && _Disk.Stat(Destination(move)).Exists)
+                if (move.New && _Disk.Stat(Destination(move)).Exists)
                 {
                     const auto at = Classify(move);
 
@@ -277,52 +312,126 @@ namespace
             return At(ReplacedFolder) / MCFileSystem::FromUtf8(move.Path);
         }
 
+        /// <summary>What's at the move's path (<see cref="What"/>).</summary>
+        std::expected<MCAt, std::string> Classify(const MCMove& move) { return What(Destination(move), move); }
+
         /// <summary>
-        /// What's at the move's path: old without hashing when its size and time are as planned, else by its hash. A
-        /// file that's neither is the player's: kept in <see cref="_Theirs"/>, and left alone from then.
+        /// What the file at <paramref name="path"/> is to <paramref name="move"/>: old without hashing when its size
+        /// and time are as planned (a move keeps them), else by its hash.
         /// </summary>
-        std::expected<MCAt, std::string> Classify(const MCMove& move)
+        std::expected<MCAt, std::string> What(const std::filesystem::path& path, const MCMove& move)
         {
-            const MCUpdateDisk::MCStat stat = _Disk.Stat(Destination(move));
+            const MCUpdateDisk::MCStat stat = _Disk.Stat(path);
 
             if (!stat.Exists)
             {
                 return MCAt::Missing;
             }
 
-            if (!stat.Folder && move.Old && stat.Size == move.OldSize && move.OldWritten != 0 &&
-                stat.Written == move.OldWritten)
+            if (stat.Folder)
+            {
+                return MCAt::Folder;
+            }
+
+            if (move.Old && stat.Size == move.OldSize && move.OldWritten != 0 && stat.Written == move.OldWritten)
             {
                 return MCAt::Old;
             }
 
-            std::optional<MCSha256::MCDigest> hash;
+            const auto hash = _Disk.Hash(path);
 
-            if (!stat.Folder)
+            if (!hash)
             {
-                const auto read = _Disk.Hash(Destination(move));
-
-                if (!read)
-                {
-                    return std::unexpected(read.error());
-                }
-
-                hash = *read;
+                return std::unexpected(hash.error());
             }
 
-            if (hash && hash == move.New)
+            if (*hash == move.New)
             {
                 return MCAt::New;
             }
 
-            if (hash && hash == move.Old)
+            if (*hash == move.Old)
             {
                 return MCAt::Old;
             }
 
-            _Theirs.insert_or_assign(
-                move.Path, MCTheirs{hash.value_or(MCSha256::MCDigest{}), stat.Size, stat.Written, stat.Folder});
             return MCAt::Other;
+        }
+
+        /// <summary>
+        /// Once committed: each file set aside that an update didn't place, as placed (planned so, or another found at
+        /// the swap: the player's), moves from replaced/ into Redux backup at its path; the rest goes with replaced/.
+        /// Empty, or what failed (the next start tries again).
+        /// </summary>
+        std::string KeepSetAside()
+        {
+            for (const MCMove& move : _Journal.Moves)
+            {
+                if (!_Disk.Stat(Replaced(move)).Exists)
+                {
+                    continue;
+                }
+
+                if (!move.Backup)
+                {
+                    const auto at = What(Replaced(move), move);
+
+                    if (!at)
+                    {
+                        return at.error();
+                    }
+
+                    if (*at == MCAt::Old)
+                    {
+                        continue;
+                    }
+                }
+
+                const std::optional<std::filesystem::path> kept = KeptAt(move);
+
+                if (!kept)
+                {
+                    return std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder);
+                }
+
+                if (!Move(Replaced(move), *kept))
+                {
+                    return std::format("{} can't be kept in {}", move.Path, MCContentList::BackupFolder);
+                }
+            }
+
+            return FlushTouched() ? std::string()
+                                  : std::format("{}'s folders can't be flushed", MCContentList::BackupFolder);
+        }
+
+        /// <summary>
+        /// Where a file set aside is kept: its path in Redux backup, the folder's own copy there staying (the uninstall
+        /// puts it back), so a later one goes beside it as "name (2).ext", "name (3).ext" and on; none when all are taken.
+        /// </summary>
+        std::optional<std::filesystem::path> KeptAt(const MCMove& move) const
+        {
+            const std::filesystem::path first = At(MCContentList::BackupFolder) / MCFileSystem::FromUtf8(move.Path);
+
+            if (!_Disk.Stat(first).Exists)
+            {
+                return first;
+            }
+
+            const std::string stem = MCFileSystem::ToUtf8(first.stem());
+            const std::string extension = MCFileSystem::ToUtf8(first.extension());
+
+            for (int copy = FirstNumberedCopy; copy <= LastNumberedCopy; ++copy)
+            {
+                const std::filesystem::path numbered =
+                    first.parent_path() / MCFileSystem::FromUtf8(std::format("{} ({}){}", stem, copy, extension));
+
+                if (!_Disk.Stat(numbered).Exists)
+                {
+                    return numbered;
+                }
+            }
+
+            return std::nullopt;
         }
 
         /// <summary>Moves a file, noting both folders for the next flush.</summary>
@@ -349,29 +458,20 @@ namespace
             return flushed;
         }
 
-        /// <summary>The record the journal holds, with the new files' times and the player's files as theirs.</summary>
+        /// <summary>The record the journal holds, with the new files' times.</summary>
         MCInstalled::MCRecord Record()
         {
             MCInstalled::MCRecord record = _Journal.Record;
 
             for (const MCMove& move : _Journal.Moves)
             {
-                const std::string folded = MCContentList::FoldedPath(move.Path);
-                const auto entry = record.Files.find(folded);
-
-                if (const auto theirs = _Theirs.find(move.Path); theirs != _Theirs.end())
+                if (!move.New)
                 {
-                    if (theirs->second.Folder || entry == record.Files.end())
-                    {
-                        continue;
-                    }
-
-                    entry->second.Sha256 = theirs->second.Sha256;
-                    entry->second.Size = theirs->second.Size;
-                    entry->second.Written = theirs->second.Written;
-                    entry->second.Ours = false;
+                    continue;
                 }
-                else if (move.New && entry != record.Files.end())
+
+                if (const auto entry = record.Files.find(MCContentList::FoldedPath(move.Path));
+                    entry != record.Files.end())
                 {
                     entry->second.Written = _Disk.Stat(Destination(move)).Written;
                 }
@@ -380,21 +480,11 @@ namespace
             return record;
         }
 
-        struct MCTheirs
-        {
-            MCSha256::MCDigest Sha256{};
-            uint64_t Size = 0;
-            int64_t Written = 0;
-            bool Folder = false;
-        };
-
         MCUpdateDisk& _Disk;
         std::filesystem::path _Game;
         MCJournal _Journal;
         /// <summary>The folders whose entries changed since the last flush.</summary>
         std::set<std::filesystem::path> _Touched;
-        /// <summary>The moves left alone: the player's file at the path.</summary>
-        std::map<std::string, MCTheirs, std::less<>> _Theirs;
         std::optional<std::chrono::steady_clock::time_point> _Deadline;
         bool _Committed = false;
     };
@@ -414,6 +504,11 @@ namespace
         {
             json[std::string(NewKey)] = MCSha256::Hex(*move.New);
             json[std::string(NewSizeKey)] = move.NewSize;
+        }
+
+        if (move.Backup)
+        {
+            json[std::string(BackupKey)] = true;
         }
 
         return json;
@@ -447,6 +542,18 @@ namespace
         {
             move.New = Digest(json, NewKey);
             move.NewSize = Count(json, NewSizeKey);
+        }
+
+        if (json.contains(BackupKey))
+        {
+            const MCJson& backup = Member(json, BackupKey);
+
+            if (!backup.is_boolean())
+            {
+                Fail("\"{}\" isn't true or false", BackupKey);
+            }
+
+            move.Backup = backup.get<bool>();
         }
 
         if (!move.Old && !move.New)

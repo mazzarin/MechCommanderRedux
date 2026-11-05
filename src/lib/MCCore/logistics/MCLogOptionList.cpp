@@ -186,6 +186,12 @@ auto MCLogOptionList::HeldReason(int32_t row) const -> std::string_view
     return _Held[static_cast<size_t>(row)];
 }
 
+auto MCLogOptionList::Description(int32_t row) const -> std::string
+{
+    const Row& option = _Rows[static_cast<size_t>(row)];
+    return option.Line != nullptr ? option.Line() : std::string(option.Description);
+}
+
 auto MCLogOptionList::SetRendererHints(bool shown) -> void
 {
     _RendererHints = shown;
@@ -343,7 +349,9 @@ auto MCLogOptionList::OptionAt(int32_t xPos, int32_t yPos) -> std::optional<int3
 auto MCLogOptionList::ChangeableAt(int32_t xPos, int32_t yPos) -> std::optional<int32_t>
 {
     const std::optional<int32_t> row = OptionAt(xPos, yPos);
-    return row.has_value() && !_Locked && HeldReason(*row).empty() ? row : std::nullopt;
+    return row.has_value() && !_Locked && HeldReason(*row).empty() && _Rows[static_cast<size_t>(*row)].Place == nullptr
+               ? row
+               : std::nullopt;
 }
 
 auto MCLogOptionList::SettingCentre(int32_t row) -> std::optional<std::pair<int32_t, int32_t>>
@@ -425,7 +433,13 @@ auto MCLogOptionList::DrawOption(int32_t row, int32_t top) -> void
             left += Write(left, top + LineHeight + TextOffset, std::format("NEEDS {}. ", lacks), NeedsColor, nameWidth);
         }
 
-        Write(left, top + LineHeight + TextOffset, option.Description, DescriptionColor, descriptionRight - left);
+        Write(left, top + LineHeight + TextOffset, Description(row), DescriptionColor, descriptionRight - left);
+    }
+
+    // An action's button is the page's own (Row::Place).
+    if (option.Place != nullptr)
+    {
+        return;
     }
 
     // The setting, in its box.
@@ -454,6 +468,15 @@ auto MCLogOptionList::Draw() -> void
     if (!_Port->ViewOpen())
     {
         return;
+    }
+
+    // Rows held by how things stand now are held, or let go, before they're drawn.
+    for (size_t row = 0; row < _Rows.size(); row++)
+    {
+        if (_Rows[row].HeldNow != nullptr)
+        {
+            SetHeld(static_cast<int32_t>(row), _Rows[row].HeldNow());
+        }
     }
 
     DrawFrame(Status(), !_News.empty());
@@ -485,5 +508,15 @@ auto MCLogOptionList::Draw() -> void
         }
 
         DrawOption(row, top);
+    }
+
+    // An action's button stands where its setting's box would be, in line with the other rows' boxes, while it shows.
+    for (size_t row = 0; row < _Rows.size(); row++)
+    {
+        if (_Rows[row].Place != nullptr)
+        {
+            const auto option = static_cast<int32_t>(row);
+            _Rows[row].Place(HeldReason(option).empty() ? SettingCentre(option) : std::nullopt);
+        }
     }
 }

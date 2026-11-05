@@ -62,6 +62,46 @@ namespace MCUpdater
         Later,
     };
 
+    /// <summary>Why HD OPTIONS can't change the HD pack now: an update's work comes first.</summary>
+    enum class MCHdHold : uint8_t
+    {
+        /// <summary>It can change.</summary>
+        None,
+        /// <summary>The start's check looks for an update.</summary>
+        Looking,
+        /// <summary>An update downloads.</summary>
+        UpdateDownloading,
+        /// <summary>An update waits for a restart (it goes in as the game quits).</summary>
+        UpdateReady,
+        /// <summary>A change of the pack goes in at the next start.</summary>
+        NextStart,
+    };
+
+    /// <summary>The HD pack as HD OPTIONS shows it: whether the copy has it, and the change under way.</summary>
+    struct MCHdPack
+    {
+        /// <summary>Whether the game manages its content (the content's updater is set); without, nothing to show.</summary>
+        bool Managed = false;
+        /// <summary>Whether the copy has it installed, and whether the player chose it.</summary>
+        bool Installed = false;
+        bool Chosen = false;
+        /// <summary>Its size at the release installed (0: not known).</summary>
+        uint64_t Bytes = 0;
+        /// <summary>
+        /// The change: none, downloading (<see cref="Received"/> of <see cref="Expected"/>), ready (in or out at the
+        /// next start) or failed (<see cref="Error"/>).
+        /// </summary>
+        MCStage Stage = MCStage::None;
+        uint64_t Received = 0;
+        uint64_t Expected = 0;
+        std::string Error;
+        /// <summary>The player changed their mind while it downloaded: it stops, then the new choice is planned.</summary>
+        bool Stopping = false;
+        /// <summary>The update shown brings the change (it was planned with the choice).</summary>
+        bool WithUpdate = false;
+        MCHdHold Hold = MCHdHold::None;
+    };
+
     /// <summary>The update as the backend last reported it.</summary>
     struct MCStatus
     {
@@ -131,6 +171,21 @@ namespace MCUpdater
 
     /// <summary>Whether this build updates itself (it has a backend, or the content's updater).</summary>
     bool Available();
+
+    /// <summary>The HD pack (HD OPTIONS' HD PACK row).</summary>
+    const MCHdPack& HdPack();
+
+    /// <summary>
+    /// The player chose to have the HD pack or not (HD OPTIONS' GET, REMOVE and STOP): kept as the copy's choice, then
+    /// planned against the release installed, downloaded while the game plays, and in or out at the next start (RESTART,
+    /// or quitting). The same choice again after a failure tries again. With an update shown,
+    /// the update is planned again with it; changed while it downloads, the download stops for the new choice. A
+    /// change made while an update's work comes first goes in at a later start.
+    /// </summary>
+    void ChooseHd(bool chosen);
+
+    /// <summary>RESTART on HD OPTIONS: with the HD pack's change ready, the game quits and starts again, putting it in.</summary>
+    void RestartForHd();
 
     /// <summary>The version running, as shown, or empty without a backend.</summary>
     std::string RunningVersion();

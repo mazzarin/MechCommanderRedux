@@ -205,6 +205,19 @@ namespace
             return !error;
         }
 
+        bool RemoveIfEmpty(const std::filesystem::path& path) override
+        {
+            std::error_code error;
+
+            // remove deletes an empty folder only, but a file too: a file or a link is never taken for one.
+            if (!std::filesystem::is_directory(std::filesystem::symlink_status(path, error)))
+            {
+                return false;
+            }
+
+            return std::filesystem::remove(path, error);
+        }
+
         bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
         {
             {

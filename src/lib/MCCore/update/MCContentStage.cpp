@@ -80,6 +80,11 @@ namespace
                         whole.push_back(&step);
                     }
                 }
+                else if (step.Action == MCAction::Patch)
+                {
+                    // Staged by an earlier attempt: its patch counts as in.
+                    Received(step.Patch->Size);
+                }
                 else if (step.Action == MCAction::Fetch && !IsStaged(step))
                 {
                     whole.push_back(&step);
@@ -99,6 +104,12 @@ namespace
 
                 if (entries.empty())
                 {
+                    // Every file it holds staged by an earlier attempt: it counts as in.
+                    if (std::ranges::find(_Plan.Zips, &zip) != _Plan.Zips.end())
+                    {
+                        Received(zip.Size);
+                    }
+
                     continue;
                 }
 

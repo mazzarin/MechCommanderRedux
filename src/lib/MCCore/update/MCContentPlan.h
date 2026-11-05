@@ -61,7 +61,7 @@ namespace MCContentPlan
         uint64_t StagedBytes = 0;
         /// <summary>
         /// The record once the plan is done (the files as they'll be; a fetched or patched file's time is set when it
-        /// lands).
+        /// lands), with every listed set's bytes.
         /// </summary>
         MCInstalled::MCRecord Record;
 

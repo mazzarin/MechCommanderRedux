@@ -53,8 +53,17 @@ public:
         std::string_view NeedsLabel;
         /// <summary>Called with the new value when a click changes it.</summary>
         void (*Changed)(int32_t value) = nullptr;
+        /// <summary>Port: its line as things stand, asked each frame instead of <see cref="Description"/> (none: that).</summary>
+        std::string (*Line)() = nullptr;
+        /// <summary>Port: why it can't be changed now, asked each frame (<see cref="SetHeld"/>; none, or empty: it can).</summary>
+        std::string (*HeldNow)() = nullptr;
+        /// <summary>
+        /// Port: an action, not a setting: a button of the page's own stands where the setting's box would be, told
+        /// each frame where that box's middle is on the screen, or none while the row is scrolled away or held.
+        /// </summary>
+        void (*Place)(std::optional<std::pair<int32_t, int32_t>> centre) = nullptr;
 
-        bool IsHeading() const { return Key.empty() && Value == nullptr; }
+        bool IsHeading() const { return Key.empty() && Value == nullptr && Place == nullptr; }
     };
 
     /// <summary>The height of a row: a line for the name and one for what it does.</summary>
@@ -140,8 +149,11 @@ public:
     /// <summary>How many rows the list has, headings with them.</summary>
     int32_t OptionRows() const { return static_cast<int32_t>(_Rows.size()); }
 
-    /// <summary>What row <paramref name="row"/>'s option does, as its line says.</summary>
-    std::string_view Description(int32_t row) const { return _Rows[static_cast<size_t>(row)].Description; }
+    /// <summary>What row <paramref name="row"/>'s option does, as its line says now.</summary>
+    std::string Description(int32_t row) const;
+
+    /// <summary>Row <paramref name="row"/>'s name, or its heading.</summary>
+    std::string_view Label(int32_t row) const { return _Rows[static_cast<size_t>(row)].Label; }
 
     /// <summary>
     /// Whether row <paramref name="row"/>'s option can show: the GPU draws the game if only the GPU draws it, and the

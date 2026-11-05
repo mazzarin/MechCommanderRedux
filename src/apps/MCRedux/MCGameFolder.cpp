@@ -21,6 +21,10 @@ namespace
 {
     /// <summary>The file in the user folder that remembers the chosen game folder: its path, UTF-8, on one line.</summary>
     constexpr std::string_view RememberedFile = "gamefolder.txt";
+#if defined(__APPLE__)
+    /// <summary>The game folder the Mac's package puts beside the app (tools/bundle's layout).</summary>
+    constexpr std::string_view InstalledGameFolder = "MechCommander Gold";
+#endif
     /// <summary>How deep a chosen folder that isn't an install is searched (a folder of games, a CD, a Wine drive).</summary>
     constexpr int ChosenFolderDepth = 4;
     /// <summary>How deep a Wine drive is searched: Program Files\MicroProse\MCX, where the installer puts it, is 3.</summary>
@@ -425,6 +429,17 @@ std::vector<std::filesystem::path> MCGameFolder::FindInstalls(const std::filesys
 
     std::ranges::sort(found);
     return found;
+}
+
+std::filesystem::path MCGameFolder::InstallFolder()
+{
+#if defined(__APPLE__)
+    const std::filesystem::path bundle = AppBundle();
+    return bundle.empty() ? std::filesystem::path() : bundle.parent_path() / InstalledGameFolder;
+#else
+    const char* basePath = SDL_GetBasePath();
+    return basePath != nullptr ? FromUtf8(basePath) : std::filesystem::path();
+#endif
 }
 
 std::vector<std::filesystem::path> MCGameFolder::FindInUsualPlaces()

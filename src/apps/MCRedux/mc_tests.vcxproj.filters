@@ -14,6 +14,7 @@
   <ItemGroup>
     <ClCompile Include="MCConsole.cpp" />
     <ClCompile Include="MCCrashTrace.cpp" />
+    <ClCompile Include="MCFirstStart.cpp" />
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
@@ -280,6 +281,7 @@
   <ItemGroup>
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />
+    <ClInclude Include="MCFirstStart.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />

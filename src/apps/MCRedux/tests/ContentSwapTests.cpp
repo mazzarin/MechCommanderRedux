@@ -136,6 +136,9 @@ namespace
             return Record({MCKind::Remove, Key(path), {}, {}, {Parent(path)}, true});
         }
 
+        // Its folders are only its files' paths: one holding nothing is gone already.
+        bool RemoveIfEmpty(const std::filesystem::path&) override { return true; }
+
         bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
         {
             Step();

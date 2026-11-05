@@ -12,6 +12,7 @@ namespace
     constexpr std::string_view ReleaseKey = "release";
     constexpr std::string_view ListKey = "list";
     constexpr std::string_view SetsKey = "sets";
+    constexpr std::string_view SetBytesKey = "setBytes";
     constexpr std::string_view FilesKey = "files";
     constexpr std::string_view PathKey = "path";
     constexpr std::string_view SetKey = "set";
@@ -50,8 +51,17 @@ std::string MCInstalled::Text(const MCRecord& record)
                          {OursKey, file.Ours}});
     }
 
-    return MCJson{{FormatKey, RecordFormat}, {ReleaseKey, record.Release}, {ListKey, MCSha256::Hex(record.List)},
-                  {SetsKey, record.Sets},    {SwapKey, record.Swap},       {FilesKey, std::move(files)}}
+    MCJson setBytes = MCJson::object();
+
+    for (const auto& [set, bytes] : record.SetBytes)
+    {
+        setBytes[set] = bytes;
+    }
+
+    return MCJson{
+        {FormatKey, RecordFormat},   {ReleaseKey, record.Release},       {ListKey, MCSha256::Hex(record.List)},
+        {SetsKey, record.Sets},      {SetBytesKey, std::move(setBytes)}, {SwapKey, record.Swap},
+        {FilesKey, std::move(files)}}
         .dump(1);
 }
 
@@ -75,6 +85,17 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::str
                 }
 
                 record.Sets.insert(set.get<std::string>());
+            }
+
+            // Recorded since the HD pack could be got later (HD OPTIONS): an earlier record has none.
+            if (json.contains(SetBytesKey))
+            {
+                const MCJson& setBytes = Child(json, SetBytesKey);
+
+                for (const auto& [set, bytes] : setBytes.items())
+                {
+                    record.SetBytes.insert_or_assign(set, Count(setBytes, set));
+                }
             }
 
             for (const MCJson& entry : Array(json, FilesKey))

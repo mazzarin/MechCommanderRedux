@@ -5,6 +5,8 @@
 #include "update/MCContentSwap.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
+#include "update/MCUpdateJson.h"
+#include "update/MCUpdateLock.h"
 
 #include <random>
 
@@ -17,6 +19,11 @@ namespace
 
     /// <summary>The HD pack's folder in the game folder: its being there means the copy has HD.</summary>
     constexpr std::string_view HdFolder = "HD";
+
+    /// <summary>The chosen sets' file: its format, and its sets.</summary>
+    constexpr std::string_view FormatKey = "format";
+    constexpr std::string_view SetsKey = "sets";
+    constexpr uint64_t ChosenFormat = 1;
 
     std::filesystem::path KeptPath(const MCSetup& setup)
     {
@@ -60,18 +67,27 @@ namespace
         return {};
     }
 
+    /// <summary>The content list a plan reads: its hash (its name on the host), its size when known, its release.</summary>
+    struct MCListRef
+    {
+        MCSha256::MCDigest Hash{};
+        std::optional<uint64_t> Size;
+        uint64_t Release = 0;
+    };
+
     /// <summary>
-    /// <paramref name="release"/>'s content planned for the copy: its list fetched and held to the hash and size
-    /// <c>release.json</c> gives, then the plan against what <paramref name="installed"/> records.
+    /// The content of <paramref name="list"/>'s release planned for the copy: the list fetched and held to its hash
+    /// (and size), then the plan of <paramref name="sets"/> against what <paramref name="installed"/> records, for
+    /// a program of build <paramref name="build"/>.
     /// </summary>
     /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
     std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup,
                                                                              MCContentStage::MCSource& source,
-                                                                             const MCReleaseFile::MCRelease& release,
+                                                                             const MCListRef& list,
                                                                              const MCInstalled::MCRecord& installed,
-                                                                             uint64_t build)
+                                                                             const MCSets& sets, uint64_t build)
     {
-        const std::string name = std::format("{}/{}.json", ListsFolder, MCSha256::Hex(release.List));
+        const std::string name = std::format("{}/{}.json", ListsFolder, MCSha256::Hex(list.Hash));
         const auto text = source.Read(name, MostListBytes);
 
         if (!text)
@@ -79,38 +95,36 @@ namespace
             return std::unexpected(text.error());
         }
 
-        if (text->size() != release.ListSize || MCSha256::Of(*text) != release.List)
+        if ((list.Size && text->size() != *list.Size) || MCSha256::Of(*text) != list.Hash)
         {
-            return std::unexpected(std::format("{} isn't the list release.json names", name));
+            return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
         }
 
-        auto list = MCContentList::Read(*text);
+        auto read = MCContentList::Read(*text);
 
-        if (!list)
+        if (!read)
         {
-            return std::unexpected(list.error());
+            return std::unexpected(read.error());
         }
 
-        if (list->Format > MCContentList::KnownFormat)
+        if (read->Format > MCContentList::KnownFormat)
         {
-            SDL_Log("Updates: release %llu's list is format %llu, newer than this game reads: the program comes alone",
-                    static_cast<unsigned long long>(release.Number), static_cast<unsigned long long>(list->Format));
+            SDL_Log("Updates: release %llu's list is format %llu, newer than this game reads",
+                    static_cast<unsigned long long>(list.Release), static_cast<unsigned long long>(read->Format));
             return nullptr;
         }
 
-        if (list->LowestProgram > build)
+        if (read->LowestProgram > build)
         {
-            return std::unexpected(std::format("release {}'s content needs build {}, and the release's program is {}",
-                                               release.Number, list->LowestProgram, build));
+            return std::unexpected(std::format("release {}'s content needs build {} of the program, newer than {}",
+                                               list.Release, read->LowestProgram, build));
         }
 
         // The plan points into the list, so both stay together where they're made.
         auto content = std::make_shared<MCContent>();
-        content->List = std::move(*list);
-        const std::set<std::string, std::less<>> sets =
-            installed.Sets.empty() ? SetsFound(setup.GameFolder) : installed.Sets;
+        content->List = std::move(*read);
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content->List, release.List, sets);
+        auto plan = MCContentPlan::Make(folder, installed, content->List, list.Hash, sets);
 
         if (!plan)
         {
@@ -119,6 +133,69 @@ namespace
 
         content->Plan = std::move(*plan);
         return content;
+    }
+
+    /// <summary>The release this copy takes, and what the game keeps of the files read.</summary>
+    struct MCReleaseFor
+    {
+        MCReleaseFile::MCRelease Release;
+        MCReleaseFile::MCKept Kept;
+    };
+
+    /// <summary>
+    /// The key list and <c>release.json</c> read from <paramref name="source"/> and checked, kept in
+    /// <c>update.json</c>, and the release this copy's rollout number gives it.
+    /// </summary>
+    std::expected<MCReleaseFor, std::string> ReleaseFor(const MCSetup& setup, MCUpdateDisk& disk,
+                                                        MCContentStage::MCSource& source)
+    {
+        const MCReleaseFile::MCKept before = ReadKept(setup, disk);
+        MCReleaseFile::MCKept kept = before;
+
+        if (!kept.RolloutNumber)
+        {
+            std::random_device random;
+            kept.RolloutNumber = static_cast<uint32_t>(random());
+        }
+
+        const auto keyList = source.Read(KeyListName, MostSignedBytes);
+
+        if (!keyList)
+        {
+            return std::unexpected(keyList.error());
+        }
+
+        const auto releases = source.Read(ReleasesName, MostSignedBytes);
+
+        if (!releases)
+        {
+            return std::unexpected(releases.error());
+        }
+
+        const auto trusted = MCReleaseFile::Check(*keyList, *releases, setup.RootKeys, kept);
+
+        if (!trusted)
+        {
+            return std::unexpected(trusted.error());
+        }
+
+        kept = MCReleaseFile::Keep(kept, *trusted);
+
+        if (kept != before)
+        {
+            // The check goes on without it: the next start reads the files again.
+            if (const auto written = WriteKept(setup, disk, kept); !written)
+            {
+                SDL_Log("Updates: %s", written.error().c_str());
+            }
+        }
+
+        return MCReleaseFor{MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber), kept};
+    }
+
+    std::filesystem::path ChosenPath(const std::filesystem::path& gameFolder)
+    {
+        return gameFolder / MCFileSystem::FromUtf8(ChosenFile);
     }
 }
 
@@ -140,50 +217,16 @@ std::string MCContentUpdater::MCOffer::ShownVersion(uint64_t runningBuild) const
 std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const MCSetup& setup, MCUpdateDisk& disk,
                                                                            MCContentStage::MCSource& source)
 {
-    const MCReleaseFile::MCKept before = ReadKept(setup, disk);
-    MCReleaseFile::MCKept kept = before;
+    const auto chosen = ReleaseFor(setup, disk, source);
 
-    if (!kept.RolloutNumber)
+    if (!chosen)
     {
-        std::random_device random;
-        kept.RolloutNumber = static_cast<uint32_t>(random());
+        return std::unexpected(chosen.error());
     }
 
-    const auto keyList = source.Read(KeyListName, MostSignedBytes);
+    const MCReleaseFile::MCRelease& release = chosen->Release;
 
-    if (!keyList)
-    {
-        return std::unexpected(keyList.error());
-    }
-
-    const auto releases = source.Read(ReleasesName, MostSignedBytes);
-
-    if (!releases)
-    {
-        return std::unexpected(releases.error());
-    }
-
-    const auto trusted = MCReleaseFile::Check(*keyList, *releases, setup.RootKeys, kept);
-
-    if (!trusted)
-    {
-        return std::unexpected(trusted.error());
-    }
-
-    kept = MCReleaseFile::Keep(kept, *trusted);
-
-    if (kept != before)
-    {
-        // The check goes on without it: the next start reads the files again.
-        if (const auto written = WriteKept(setup, disk, kept); !written)
-        {
-            SDL_Log("Updates: %s", written.error().c_str());
-        }
-    }
-
-    const MCReleaseFile::MCRelease& release = MCReleaseFile::For(trusted->Releases, *kept.RolloutNumber);
-
-    if (release.Number == kept.Skipped)
+    if (release.Number == chosen->Kept.Skipped)
     {
         SDL_Log("Updates: release %llu was skipped", static_cast<unsigned long long>(release.Number));
         return std::nullopt;
@@ -225,11 +268,18 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 
     if (newContent)
     {
-        auto content = PlanContent(setup, source, release, *installed, offer.ProgramBuild.value_or(setup.RunningBuild));
+        auto content =
+            PlanContent(setup, source, {release.List, release.ListSize, release.Number}, *installed,
+                        Wanted(disk, setup.GameFolder, *installed), offer.ProgramBuild.value_or(setup.RunningBuild));
 
         if (!content)
         {
             return std::unexpected(content.error());
+        }
+
+        if (*content == nullptr)
+        {
+            SDL_Log("Updates: release %llu's program comes alone", static_cast<unsigned long long>(release.Number));
         }
 
         offer.Content = std::move(*content);
@@ -244,6 +294,98 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
     return offer;
 }
 
+std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(const MCSetup& setup, MCUpdateDisk& disk,
+                                                                               MCContentStage::MCSource& source)
+{
+    const auto installed = MCInstalled::Read(setup.GameFolder);
+
+    if (!installed)
+    {
+        return std::unexpected(installed.error());
+    }
+
+    const MCSets sets = Wanted(disk, setup.GameFolder, *installed);
+
+    if (sets == installed->Sets)
+    {
+        return std::nullopt;
+    }
+
+    if (installed->Release == 0)
+    {
+        return std::unexpected("no release is installed yet");
+    }
+
+    if (MCContentSwap::Waiting(disk, setup.GameFolder))
+    {
+        return std::unexpected("an update waits for the game's next start");
+    }
+
+    if (const auto writable = Writable(setup.GameFolder); !writable)
+    {
+        return std::unexpected(writable.error());
+    }
+
+    auto content = PlanContent(setup, source, {installed->List, std::nullopt, installed->Release}, *installed, sets,
+                               setup.RunningBuild);
+
+    if (!content)
+    {
+        return std::unexpected(content.error());
+    }
+
+    if (*content == nullptr)
+    {
+        return std::unexpected("the installed release's list is in a newer format than this game reads");
+    }
+
+    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
+    offer.Content = std::move(*content);
+    return offer;
+}
+
+std::expected<MCOffer, std::string> MCContentUpdater::CheckInstall(const MCSetup& setup, MCUpdateDisk& disk,
+                                                                   MCContentStage::MCSource& source)
+{
+    const auto chosen = ReleaseFor(setup, disk, source);
+
+    if (!chosen)
+    {
+        return std::unexpected(chosen.error());
+    }
+
+    const auto installed = MCInstalled::Read(setup.GameFolder);
+
+    if (!installed)
+    {
+        return std::unexpected(installed.error());
+    }
+
+    if (const auto writable = Writable(setup.GameFolder); !writable)
+    {
+        return std::unexpected(writable.error());
+    }
+
+    const MCReleaseFile::MCRelease& release = chosen->Release;
+    auto content = PlanContent(setup, source, {release.List, release.ListSize, release.Number}, *installed,
+                               Wanted(disk, setup.GameFolder, *installed), setup.RunningBuild);
+
+    if (!content)
+    {
+        return std::unexpected(content.error());
+    }
+
+    if (*content == nullptr)
+    {
+        return std::unexpected("the game's files are in a newer format than this version reads: download the newest "
+                               "installer");
+    }
+
+    MCOffer offer{.Release = release};
+    offer.Content = std::move(*content);
+    return offer;
+}
+
 std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, MCUpdateDisk& disk,
                                                          MCContentStage::MCSource& source, const MCOffer& offer,
                                                          const std::function<bool(uint64_t, uint64_t)>& progress)
@@ -254,6 +396,36 @@ std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, M
     }
 
     return MCContentStage::Stage(disk, source, setup.GameFolder, offer.Content->Plan, offer.Content->List, progress);
+}
+
+std::expected<void, std::string> MCContentUpdater::Install(const MCSetup& setup, MCUpdateDisk& disk,
+                                                           MCContentStage::MCSource& source,
+                                                           const std::function<bool(uint64_t, uint64_t)>& progress)
+{
+    const std::unique_ptr<MCUpdateLock> staging = MCUpdateLock::Open(setup.GameFolder, MCUpdateLock::StagingLock);
+
+    if (staging == nullptr || !staging->TryExclusive())
+    {
+        return std::unexpected("another copy of the game is downloading it");
+    }
+
+    const auto offer = CheckInstall(setup, disk, source);
+
+    if (!offer)
+    {
+        return std::unexpected(offer.error());
+    }
+
+    SDL_Log("Updates: the first start installs release %llu (%llu bytes to download)",
+            static_cast<unsigned long long>(offer->Release.Number),
+            static_cast<unsigned long long>(offer->ContentBytes()));
+
+    if (const auto staged = Stage(setup, disk, source, *offer, progress); !staged)
+    {
+        return staged;
+    }
+
+    return Arm(setup, disk, *offer);
 }
 
 std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCUpdateDisk& disk, const MCOffer& offer)
@@ -273,9 +445,9 @@ std::expected<void, std::string> MCContentUpdater::Skip(const MCSetup& setup, MC
     return WriteKept(setup, disk, kept);
 }
 
-std::set<std::string, std::less<>> MCContentUpdater::SetsFound(const std::filesystem::path& gameFolder)
+MCContentUpdater::MCSets MCContentUpdater::SetsFound(const std::filesystem::path& gameFolder)
 {
-    std::set<std::string, std::less<>> sets = {std::string(MCContentList::GameSet)};
+    MCSets sets = {std::string(MCContentList::GameSet)};
     const std::filesystem::path hd = gameFolder / MCFileSystem::FromUtf8(HdFolder);
     std::error_code error;
 
@@ -285,6 +457,89 @@ std::set<std::string, std::less<>> MCContentUpdater::SetsFound(const std::filesy
     }
 
     return sets;
+}
+
+std::optional<MCContentUpdater::MCSets> MCContentUpdater::Chosen(MCUpdateDisk& disk,
+                                                                 const std::filesystem::path& gameFolder)
+{
+    const std::filesystem::path path = ChosenPath(gameFolder);
+
+    if (!disk.Stat(path).Exists)
+    {
+        return std::nullopt;
+    }
+
+    const auto text = disk.ReadText(path);
+    const auto sets =
+        text ? MCUpdateJson::Read(ChosenFile,
+                                  [&]()
+                                  {
+                                      const MCUpdateJson::MCJson json = MCUpdateJson::Object(*text);
+                                      MCSets read = {std::string(MCContentList::GameSet)};
+
+                                      for (const MCUpdateJson::MCJson& set : MCUpdateJson::Array(json, SetsKey))
+                                      {
+                                          if (!set.is_string())
+                                          {
+                                              MCUpdateJson::Fail("a set isn't a string");
+                                          }
+
+                                          read.insert(set.get<std::string>());
+                                      }
+
+                                      return read;
+                                  })
+             : std::expected<MCSets, std::string>(std::unexpected(text.error()));
+
+    if (!sets)
+    {
+        SDL_Log("Updates: the sets chosen can't be read (%s): the copy keeps those it has", sets.error().c_str());
+        return std::nullopt;
+    }
+
+    return *sets;
+}
+
+std::expected<void, std::string> MCContentUpdater::Choose(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                          const MCSets& sets)
+{
+    MCSets kept = sets;
+    kept.emplace(MCContentList::GameSet);
+    const std::filesystem::path path = ChosenPath(gameFolder);
+    const std::string text = MCUpdateJson::MCJson{{FormatKey, ChosenFormat}, {SetsKey, kept}}.dump();
+
+    if (!disk.MakeFolders(path.parent_path()) || !WriteDurably(disk, path, text))
+    {
+        return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
+    }
+
+    return {};
+}
+
+MCContentUpdater::MCSets MCContentUpdater::Wanted(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                  const MCInstalled::MCRecord& installed)
+{
+    MCSets sets = Chosen(disk, gameFolder).value_or(installed.Sets.empty() ? SetsFound(gameFolder) : installed.Sets);
+    sets.emplace(MCContentList::GameSet);
+    return sets;
+}
+
+bool MCContentUpdater::AwaitsInstall(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    if (!disk.Stat(ChosenPath(gameFolder)).Exists)
+    {
+        return false;
+    }
+
+    const auto installed = MCInstalled::Read(gameFolder);
+
+    if (!installed)
+    {
+        SDL_Log("Updates: %s", installed.error().c_str());
+        return false;
+    }
+
+    return installed->Release == 0;
 }
 
 std::expected<void, std::string> MCContentUpdater::Writable(const std::filesystem::path& gameFolder)

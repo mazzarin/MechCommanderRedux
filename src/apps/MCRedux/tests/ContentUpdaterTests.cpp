@@ -1,6 +1,18 @@
 #include "stdafx.h"
 #include "MCContentFixture.h"
+#include "MCFirstStart.h"
 #include "MCTest.h"
+#include "ScreenInput.h"
+#include "TestGame.h"
+#include "logistics/MCGenericScreen.h"
+#include "logistics/MCHdOptionsPanel.h"
+#include "logistics/MCLogDialogButton.h"
+#include "logistics/MCLogOptionList.h"
+#include "logistics/MCLogTextButton.h"
+#include "logistics/MCPreferencesMenu.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSplashScreen.h"
+#include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
@@ -13,7 +25,8 @@
 // release hosted in a folder as the release script lays it out, checked against the root key, planned, staged and
 // armed; the program's backend (Sparkle on the Mac) held to release.json's build and armed with the content, neither
 // half going in without the other; a skip kept; another copy kept from swapping under a running one, and from staging
-// beside it.
+// beside it. The HD pack got and removed at the release installed (HD OPTIONS), an update planned for the sets chosen,
+// and the first start's install into a folder an installer prepared, with its window (MCFirstStart.h).
 
 namespace
 {
@@ -87,6 +100,100 @@ namespace
         std::string ListText;
     };
 
+    /// <summary>The sets with HD, and without.</summary>
+    const MCContentUpdater::MCSets WithHd = {"game", "hd"};
+    const MCContentUpdater::MCSets WithoutHd = {"game"};
+
+    /// <summary>The HD file's bytes in release 2.</summary>
+    std::string Terrain()
+    {
+        return Text(MCFilePatchFixture::PatchNew());
+    }
+
+    /// <summary>Stages, arms and swaps in <paramref name="offer"/>, as INSTALL and the next start do.</summary>
+    void PutInPlace(const MCHostedRelease& release, const MCContentUpdater::MCOffer& offer)
+    {
+        MCFolderSource source(release.Host.Path());
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        REQUIRE(MCContentUpdater::Stage(release.Setup(), *disk, source, offer, GoOn).has_value());
+        REQUIRE(MCContentUpdater::Arm(release.Setup(), *disk, offer).has_value());
+        REQUIRE(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    }
+
+    /// <summary>The copy brought to release 2, checked and put in place.</summary>
+    void UpdateToRelease2(const MCHostedRelease& release)
+    {
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(release.Setup(), *MakeDisk(), source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        PutInPlace(release, **offer);
+    }
+
+    /// <summary><paramref name="sets"/> chosen, planned against the release installed, and put in place.</summary>
+    void ChangeSets(const MCHostedRelease& release, const MCContentUpdater::MCSets& sets)
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        REQUIRE(MCContentUpdater::Choose(*disk, release.Game.Path(), sets).has_value());
+        MCFolderSource source(release.Host.Path());
+        const auto change = MCContentUpdater::CheckSets(release.Setup(), *disk, source);
+        REQUIRE(change.has_value());
+        REQUIRE(change->has_value());
+        PutInPlace(release, **change);
+    }
+
+    /// <summary>The sets the copy's record has.</summary>
+    MCContentUpdater::MCSets InstalledSets(const MCHostedRelease& release)
+    {
+        const auto record = MCInstalled::Read(release.Game.Path());
+        REQUIRE(record.has_value());
+        return record->Sets;
+    }
+
+    /// <summary>A download held until the test lets it go, or until the work is stopped.</summary>
+    struct MCGate
+    {
+        std::atomic<bool> Open = false;
+        std::atomic<bool> Reached = false;
+    };
+
+    /// <summary>The release's files hosted in a folder, each download held at its gate.</summary>
+    class MCHeldSource final : public MCContentStage::MCSource
+    {
+    public:
+        MCHeldSource(std::filesystem::path folder, std::shared_ptr<MCGate> gate)
+            : _Inner(std::move(folder)), _Gate(std::move(gate))
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(uint64_t)>& received) override
+        {
+            _Gate->Reached = true;
+
+            while (!_Gate->Open)
+            {
+                if (!received(0))
+                {
+                    return std::unexpected("stopped");
+                }
+
+                std::this_thread::sleep_for(LookAgain);
+            }
+
+            return _Inner.Fetch(name, to, size, received);
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+    private:
+        MCFolderSource _Inner;
+        std::shared_ptr<MCGate> _Gate;
+    };
+
     /// <summary>What the stand-in program backend was asked.</summary>
     struct MCProgramLog
     {
@@ -117,15 +224,16 @@ namespace
     class MCUpdaterScope
     {
     public:
-        MCUpdaterScope(const MCHostedRelease& release, bool program)
+        MCUpdaterScope(const MCHostedRelease& release, bool program, MCUpdater::MCSourceMaker source = nullptr)
         {
             if (program)
             {
                 MCUpdater::SetBackend(std::make_unique<MCFakeProgram>(Program));
             }
 
-            MCUpdater::SetContent(release.Setup(),
-                                  [host = release.Host.Path()] { return std::make_unique<MCFolderSource>(host); });
+            MCUpdater::SetContent(
+                release.Setup(), source != nullptr ? std::move(source) : [host = release.Host.Path()]
+                                     { return std::make_unique<MCFolderSource>(host); });
             MCUpdater::SetQuit([quits = Quits] { ++*quits; });
         }
 
@@ -601,4 +709,492 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CHECK(Stage() == MCStage::Failed);
     CHECK(scope.Program->Answers.empty());
     CHECK(!release.Armed());
+}
+
+TEST_CASE("content updater: HD removed and got again at the release installed, its size recorded; the player's own HD "
+          "file kept")
+{
+    MCHostedRelease release("sets");
+    const std::filesystem::path& game = release.Game.Path();
+    UpdateToRelease2(release);
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK_EQ(record->SetBytes.at("hd"), uint64_t{Terrain().size()});
+    CHECK_EQ(record->SetBytes.at("game"), uint64_t{10 + 13 + 12});
+
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+    const MCContentUpdater::MCSetup setup = release.Setup();
+
+    // Nothing chosen apart from what the copy has: no change.
+    CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
+    const auto none = MCContentUpdater::CheckSets(setup, *disk, source);
+    REQUIRE(none.has_value());
+    CHECK(!none->has_value());
+
+    // HD removed: nothing downloaded, its file moved out at the swap, its emptied folder gone; a second change waits
+    // for the start that puts the first in place.
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    CHECK(MCContentUpdater::Chosen(*disk, game) == WithoutHd);
+    const auto removal = MCContentUpdater::CheckSets(setup, *disk, source);
+    REQUIRE(removal.has_value());
+    REQUIRE(removal->has_value());
+    CHECK_EQ((*removal)->ContentBytes(), uint64_t{0});
+    CHECK_EQ((*removal)->Release.Number, uint64_t{2});
+    REQUIRE(MCContentUpdater::Stage(setup, *disk, source, **removal, GoOn).has_value());
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, **removal).has_value());
+    const auto waits = MCContentUpdater::CheckSets(setup, *disk, source);
+    REQUIRE(!waits.has_value());
+    CHECK(waits.error().find("next start") != std::string::npos);
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!std::filesystem::exists(game / "HD"));
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+    CHECK(InstalledSets(release) == WithoutHd);
+
+    // HD got again: its file fetched from its zip.
+    ChangeSets(release, WithHd);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK(InstalledSets(release) == WithHd);
+    CHECK_EQ(MCInstalled::Read(game)->Files.size(), size_t{4});
+
+    // The player's own HD file stays when HD goes, and so does its folder.
+    Write(game / "HD" / "terrain.hda", "my own terrain");
+    ChangeSets(release, WithoutHd);
+    CHECK_EQ(Read(game / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK(InstalledSets(release) == WithoutHd);
+
+    // A sets file that can't be read is left aside: the copy keeps the sets its record has.
+    Write(game / "Redux update" / "sets.json", "not json");
+    CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
+    CHECK(MCContentUpdater::Wanted(*disk, game, *MCInstalled::Read(game)) == WithoutHd);
+}
+
+TEST_CASE("content updater: an update is planned for the sets chosen")
+{
+    MCHostedRelease release("update-sets");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    MCFolderSource source(release.Host.Path());
+    const auto offer = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(offer.has_value());
+    REQUIRE(offer->has_value());
+
+    // The HD file isn't patched but removed; only the update zip is downloaded.
+    CHECK_EQ((*offer)->ContentBytes(), uint64_t{std::filesystem::file_size(release.Host.Path() / "update-2.zip")});
+    PutInPlace(release, **offer);
+    CHECK(!std::filesystem::exists(game / "HD"));
+    CHECK_EQ(Read(game / "data" / "changed.fit"), std::string("changed v2"));
+    CHECK(InstalledSets(release) == WithoutHd);
+}
+
+TEST_CASE("content updater: the first start installs the sets chosen into a folder an installer prepared, a cut "
+          "download resumed; one copy at a time; content needing a newer program refused")
+{
+    MCHostedRelease release("first");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+
+    // An empty folder an installer prepared: its answer, and nothing else.
+    std::filesystem::remove_all(game);
+    std::filesystem::create_directories(game);
+    CHECK(!MCContentUpdater::AwaitsInstall(*disk, game));
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    CHECK(MCContentUpdater::AwaitsInstall(*disk, game));
+
+    // Another copy downloading it: this one waits.
+    {
+        const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(game, MCUpdateLock::StagingLock);
+        REQUIRE(other != nullptr);
+        REQUIRE(other->TryExclusive());
+        MCFolderSource source(release.Host.Path());
+        const auto held = MCContentUpdater::Install(setup, *disk, source, GoOn);
+        REQUIRE(!held.has_value());
+        CHECK(held.error().find("another copy") != std::string::npos);
+    }
+
+    // Cut off midway, then again: it resumes, and the swap puts release 2 in place.
+    MCFolderSource cut(release.Host.Path());
+    cut.CutAfter(SendBytes);
+    REQUIRE(!MCContentUpdater::Install(setup, *disk, cut, GoOn).has_value());
+    CHECK(MCContentUpdater::AwaitsInstall(*disk, game));
+    MCFolderSource source(release.Host.Path());
+    std::vector<std::pair<uint64_t, uint64_t>> progress;
+    REQUIRE(MCContentUpdater::Install(setup, *disk, source,
+                                      [&](uint64_t received, uint64_t expected)
+                                      {
+                                          progress.emplace_back(received, expected);
+                                          return true;
+                                      })
+                .has_value());
+    REQUIRE(!progress.empty());
+    CHECK_EQ(progress.back().first, progress.back().second);
+    CHECK(MCContentUpdater::AwaitsInstall(*disk, game));
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!MCContentUpdater::AwaitsInstall(*disk, game));
+    release.CheckIsRelease2();
+    CHECK(InstalledSets(release) == WithHd);
+
+    // Without HD chosen, its files never come.
+    std::filesystem::remove_all(game);
+    std::filesystem::create_directories(game);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    REQUIRE(MCContentUpdater::Install(setup, *disk, source, GoOn).has_value());
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!std::filesystem::exists(game / "HD"));
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+
+    // Content that needs a newer program than the one running isn't installed.
+    std::filesystem::remove_all(game);
+    std::filesystem::create_directories(game);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    release.List.LowestProgram = NewerBuild;
+    release.ListText = MCContentList::Write(release.List);
+    Write(release.Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(release.ListText)) + ".json"), release.ListText);
+    release.Publish(2, 2, NewerBuild);
+    const auto newer = MCContentUpdater::CheckInstall(setup, *disk, source);
+    REQUIRE(!newer.has_value());
+    CHECK(newer.error().find("newer than") != std::string::npos);
+}
+
+TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a later start gets it back as chosen")
+{
+    MCHostedRelease release("updater-hd");
+    const std::filesystem::path& game = release.Game.Path();
+    UpdateToRelease2(release);
+
+    {
+        MCUpdaterScope scope(release, false);
+        CHECK(MCUpdater::HdPack().Managed);
+        CHECK(MCUpdater::HdPack().Installed);
+        CHECK(MCUpdater::HdPack().Chosen);
+        CHECK_EQ(MCUpdater::HdPack().Bytes, uint64_t{Terrain().size()});
+        MCUpdater::CheckAtStart();
+        CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::Looking);
+        REQUIRE(FramesUntilIdle());
+        CHECK(Stage() == MCStage::None);
+        CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::None);
+        CHECK(MCUpdater::HdPack().Stage == MCStage::None);
+
+        MCUpdater::ChooseHd(false);
+        CHECK(!MCUpdater::HdPack().Chosen);
+        REQUIRE(FramesUntil([] { return MCUpdater::HdPack().Stage != MCStage::Downloading; }));
+        CHECK(MCUpdater::HdPack().Stage == MCStage::Ready);
+        CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::NextStart);
+        CHECK(release.Armed());
+        CHECK(StagingFree(game));
+
+        // The UPDATE button stays as it was: this is no update.
+        CHECK(Stage() == MCStage::None);
+        CHECK(!MCUpdater::Waiting());
+
+        // Chosen again this run: kept, for a later start.
+        MCUpdater::ChooseHd(true);
+        CHECK(MCUpdater::HdPack().Chosen);
+        CHECK(!MCUpdater::Working());
+        CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithHd);
+    }
+
+    // The next start: the swap takes HD out; the start's check finds no update, and HD comes back as chosen.
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!std::filesystem::exists(game / "HD"));
+
+    {
+        MCUpdaterScope scope(release, false);
+        CHECK(!MCUpdater::HdPack().Installed);
+        CHECK(MCUpdater::HdPack().Chosen);
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([] { return MCUpdater::HdPack().Stage == MCStage::Ready; }));
+        CHECK(MCUpdater::HdPack().Expected > 0);
+        CHECK_EQ(MCUpdater::HdPack().Received, MCUpdater::HdPack().Expected);
+    }
+
+    REQUIRE(MCContentSwap::Run(*MakeDisk(), game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK(InstalledSets(release) == WithHd);
+}
+
+TEST_CASE("updater: HD's choice changed while it downloads stops the download for the new choice")
+{
+    MCHostedRelease release("updater-hd-stop");
+    const std::filesystem::path& game = release.Game.Path();
+    UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    CHECK(!MCUpdater::HdPack().Installed);
+    CHECK(!MCUpdater::HdPack().Chosen);
+
+    MCUpdater::ChooseHd(true);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+    CHECK(MCUpdater::HdPack().Stage == MCStage::Downloading);
+    CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::None);
+
+    MCUpdater::ChooseHd(false);
+    CHECK(MCUpdater::HdPack().Stopping);
+    REQUIRE(FramesUntilIdle());
+    CHECK(MCUpdater::HdPack().Stage == MCStage::None);
+    CHECK(!MCUpdater::HdPack().Stopping);
+    CHECK(!MCUpdater::HdPack().Chosen);
+    CHECK(!release.Armed());
+    CHECK(StagingFree(game));
+    CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithoutHd);
+}
+
+TEST_CASE("updater: with an update shown, HD's choice plans the update again with it; Sparkle lets its update go and "
+          "finds it again")
+{
+    {
+        MCHostedRelease release("updater-hd-update");
+        MCUpdaterScope scope(release, false);
+        CheckUntilFound(scope, std::nullopt);
+        const uint64_t withHd = MCUpdater::Status().Expected;
+        CHECK(!MCUpdater::HdPack().WithUpdate);
+
+        MCUpdater::ChooseHd(false);
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+        CHECK(MCUpdater::Status().Expected < withHd);
+        CHECK(MCUpdater::HdPack().WithUpdate);
+        CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::None);
+
+        MCUpdater::Answer(MCAnswer::Install);
+        REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+        REQUIRE(Stage() == MCStage::Ready);
+        CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::UpdateReady);
+        REQUIRE(MCContentSwap::Run(*MakeDisk(), release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+        CHECK(!std::filesystem::exists(release.Game.Path() / "HD"));
+        CHECK(InstalledSets(release) == WithoutHd);
+    }
+
+    {
+        MCHostedRelease release("updater-hd-program");
+        release.Publish(1, 2, NewerBuild);
+        MCUpdaterScope scope(release, true);
+        CheckUntilFound(scope, NewerBuild);
+
+        // Sparkle is told to let its update go; the program is looked for again only once its session has ended, so
+        // that end isn't taken for the new look's.
+        MCUpdater::ChooseHd(false);
+        REQUIRE(!scope.Program->Answers.empty());
+        CHECK(scope.Program->Answers.back() == MCAnswer::Later);
+        REQUIRE(FramesUntilIdle());
+        CHECK_EQ(scope.Program->Checks.size(), size_t{1});
+        MCUpdater::Closed();
+        REQUIRE_EQ(scope.Program->Checks.size(), size_t{2});
+        CHECK(scope.Program->Checks.back() == NewerBuild);
+        MCUpdater::Found(std::format("{}.0 ({})", ReleaseVersion, NewerBuild), "Sparkle's own notes.");
+        CHECK(Stage() == MCStage::Found);
+        CHECK(MCUpdater::HdPack().WithUpdate);
+    }
+}
+
+TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends with it; closing it stops the work")
+{
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+    {
+        std::cout << "  (skipped: no video: " << SDL_GetError() << ")\n";
+        return;
+    }
+
+    // Halfway through 6 GB, saved as a shot with --shots.
+    MCFirstStart::MCWindowOptions options{.Hidden = true};
+
+    if (const std::optional<std::string_view> shots = MCTest::Option("shots"))
+    {
+        options.Shot = MCFileSystem::FromUtf8(*shots) / "first start window.bmp";
+    }
+
+    constexpr uint64_t Whole = 6'000'000'000;
+    constexpr std::chrono::milliseconds Shown{200};
+    const auto done = MCFirstStart::Run(
+        "GETTING THE GAME READY",
+        [&](MCFirstStart::MCProgress& progress, std::stop_token) -> std::expected<void, std::string>
+        {
+            progress.Set(Whole / 2, Whole);
+            std::this_thread::sleep_for(Shown);
+            return {};
+        },
+        options);
+
+    if (!done && done.error().find("can't open") != std::string::npos)
+    {
+        std::cout << "  (skipped: " << done.error() << ")\n";
+        SDL_Quit();
+        return;
+    }
+
+    REQUIRE(done.has_value());
+    CHECK(*done);
+
+    // A failure comes back as it is.
+    const auto failed = MCFirstStart::Run(
+        "GETTING THE GAME READY", [](MCFirstStart::MCProgress&, std::stop_token) -> std::expected<void, std::string>
+        { return std::unexpected("the host is out of reach"); }, {.Hidden = true});
+    REQUIRE(!failed.has_value());
+    CHECK_EQ(failed.error(), std::string("the host is out of reach"));
+
+    // Closed (the system's quit): the work is asked to stop, and the player wasn't failed.
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    REQUIRE(SDL_PushEvent(&quit));
+    bool stopped = false;
+    const auto closed =
+        MCFirstStart::Run("GETTING THE GAME READY",
+                          [&](MCFirstStart::MCProgress&, std::stop_token stop) -> std::expected<void, std::string>
+                          {
+                              while (!stop.stop_requested())
+                              {
+                                  std::this_thread::sleep_for(LookAgain);
+                              }
+
+                              stopped = true;
+                              return std::unexpected("stopped");
+                          },
+                          {.Hidden = true});
+    REQUIRE(closed.has_value());
+    CHECK(!*closed);
+    CHECK(stopped);
+    SDL_Quit();
+}
+
+namespace
+{
+    /// <summary>HD OPTIONS' HD PACK row: first under PACKS.</summary>
+    constexpr int32_t HdPackRow = 1;
+
+    /// <summary>Runs a few frames, as a player's screen would between inputs.</summary>
+    void ScreenFrames()
+    {
+        constexpr int32_t frames = 3;
+
+        for (int32_t frame = 0; frame < frames; frame++)
+        {
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    }
+
+    /// <summary>
+    /// The preferences' HD OPTIONS page open, once the main menu's check at the start found nothing newer (until then
+    /// HD PACK waits for it); its list.
+    /// </summary>
+    std::shared_ptr<MCLogOptionList> OpenHdOptions()
+    {
+        ShowPreferences();
+        ShowHdOptions();
+        ScreenFrames();
+        const std::shared_ptr<MCLogOptionList> list = HdOptionsList();
+        REQUIRE(list != nullptr);
+        REQUIRE_EQ(list->Label(HdPackRow), std::string_view("HD PACK"));
+        CHECK_EQ(list->HeldReason(HdPackRow), std::string_view("LOOKING FOR AN UPDATE."));
+        REQUIRE(FramesUntilIdle());
+        ScreenFrames();
+        CHECK(list->HeldReason(HdPackRow).empty());
+        return list;
+    }
+
+    /// <summary>Whether the preferences' button <paramref name="label"/> is showing.</summary>
+    bool ButtonShown(std::string_view label)
+    {
+        const std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->PrefScreen, label);
+        return button != nullptr && button->IsShowing();
+    }
+
+    /// <summary>The preferences' button <paramref name="label"/>, which must be showing.</summary>
+    std::shared_ptr<MCLogTextButton> ShownButton(std::string_view label)
+    {
+        std::shared_ptr<MCLogTextButton> button = MCScreenInput::FindTextButton(*GlobalLog()->PrefScreen, label);
+        REQUIRE(button != nullptr);
+        CHECK(button->IsShowing());
+        return button;
+    }
+
+    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
+    void RealClickOn(MCGuiObject& object)
+    {
+        MCScreenInput::RealClick(object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2);
+        ScreenFrames();
+    }
+
+    /// <summary>Runs the game's frames until the HD pack's change is <paramref name="stage"/>.</summary>
+    bool ScreenFramesUntil(MCStage stage)
+    {
+        return FramesUntil(
+            [&]
+            {
+                MCTestGame::RunFrame(1.0f / 15.0f);
+                return MCUpdater::HdPack().Stage == stage;
+            });
+    }
+}
+
+TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown, then RESTART puts it in")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("hd-options-get");
+    UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
+    CHECK(list->Description(HdPackRow).find("GB TO DOWNLOAD.") != std::string::npos);
+    const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
+    CHECK(!ButtonShown("RESTART"));
+    MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
+
+    // GET downloads it at once, while the game goes on; RESTART then.
+    RealClickOn(*get);
+    CHECK(MCUpdater::HdPack().Chosen);
+    REQUIRE(ScreenFramesUntil(MCStage::Ready));
+    ScreenFrames();
+    CHECK(release.Armed());
+    CHECK_EQ(list->Description(HdPackRow), std::string("DOWNLOADED. RESTART THE GAME TO SEE IT."));
+    CHECK(!get->IsShowing());
+    const std::shared_ptr<MCLogTextButton> restart = ShownButton("RESTART");
+    MCScreenInput::SaveShot("hd options restart", MCScreenInput::ScreenHash());
+    RealClickOn(*restart);
+    CHECK_EQ(*scope.Quits, 1);
+    CHECK(MCUpdater::RestartWanted());
+}
+
+TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD out")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCHostedRelease release("hd-options-remove");
+    UpdateToRelease2(release);
+    MCUpdaterScope scope(release, false);
+    REQUIRE(MCTestGame::StartLogistics());
+    const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
+    CHECK(list->Description(HdPackRow).find("GB).") != std::string::npos);
+    const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
+
+    // Asked first: CANCEL keeps it.
+    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    RealClickOn(*remove);
+    REQUIRE(question.IsShowing());
+    MCScreenInput::SaveShot("hd options remove question", MCScreenInput::ScreenHash());
+    RealClickOn(*question.CancelButton);
+    CHECK(!question.IsShowing());
+    CHECK(MCUpdater::HdPack().Chosen);
+    CHECK(!MCUpdater::Working());
+
+    // OK: it goes at the restart.
+    RealClickOn(*remove);
+    REQUIRE(question.IsShowing());
+    RealClickOn(*question.OkButton);
+    CHECK(!MCUpdater::HdPack().Chosen);
+    REQUIRE(ScreenFramesUntil(MCStage::Ready));
+    ScreenFrames();
+    CHECK_EQ(list->Description(HdPackRow), std::string("RESTART THE GAME TO REMOVE IT."));
+    CHECK(ButtonShown("RESTART"));
+    CHECK(!ButtonShown("REMOVE"));
 }

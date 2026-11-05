@@ -81,6 +81,7 @@ namespace
                 return "the journal can't be deleted";
             }
 
+            RemoveEmptiedFolders();
             return {};
         }
 
@@ -88,6 +89,39 @@ namespace
         bool Committed() const { return _Committed; }
 
     private:
+        /// <summary>
+        /// Deletes the folders the removed files leave empty (a set dropped: HD OPTIONS removing HD), deepest first, up
+        /// to the game folder. Tidying only: a folder left behind holds nothing.
+        /// </summary>
+        void RemoveEmptiedFolders()
+        {
+            std::set<std::filesystem::path> folders;
+
+            for (const MCMove& move : _Journal.Moves)
+            {
+                if (move.New)
+                {
+                    continue;
+                }
+
+                for (std::filesystem::path folder = MCFileSystem::FromUtf8(move.Path).parent_path(); !folder.empty();
+                     folder = folder.parent_path())
+                {
+                    folders.insert(folder);
+                }
+            }
+
+            // Longer paths first: a folder's own folders come after it.
+            std::vector<std::filesystem::path> deepestFirst(folders.begin(), folders.end());
+            std::ranges::sort(deepestFirst, [](const std::filesystem::path& a, const std::filesystem::path& b)
+                              { return std::distance(a.begin(), a.end()) > std::distance(b.begin(), b.end()); });
+
+            for (const std::filesystem::path& folder : deepestFirst)
+            {
+                _Disk.RemoveIfEmpty(_Game / folder);
+            }
+        }
+
         /// <summary>Moves the old files aside, flushes, then the new ones in, flushes; empty, or what failed.</summary>
         std::string MoveFiles()
         {

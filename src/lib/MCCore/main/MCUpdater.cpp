@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "main/MCUpdater.h"
 #include "platform/MCInput.h"
+#include "update/MCContentList.h"
 #include "update/MCContentUpdater.h"
+#include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
@@ -78,6 +80,10 @@ namespace
         Armed,
         /// <summary>Installing, or failed: nothing more this run.</summary>
         Finished,
+        /// <summary>The sets the player chose (HD OPTIONS) are planned, staged and armed, with no update.</summary>
+        ChangingSets,
+        /// <summary>The change of sets goes in at the next start: nothing more this run.</summary>
+        SetsArmed,
     };
 
     /// <summary>The content's work off the main thread (a check, or staging): its progress and end, read each frame.</summary>
@@ -109,6 +115,15 @@ namespace
     std::jthread Worker;
     /// <summary>Held from INSTALL until both halves are armed or it fails: one copy stages at a time.</summary>
     std::unique_ptr<MCUpdateLock> StagingLock;
+    /// <summary>The HD pack as HD OPTIONS shows it.</summary>
+    MCUpdater::MCHdPack Hd;
+    /// <summary>The player chose again while the change of sets ran: it stops, then the new choice is planned.</summary>
+    bool SetsChosenAgain = false;
+    /// <summary>
+    /// The program's backend was told to let its update go (LookAgain) and hasn't closed its session yet: a new look
+    /// for the program waits for that (MCUpdater::Closed), so the old session's end isn't taken for the new one's.
+    /// </summary>
+    bool ProgramClosing = false;
     /// <summary>The input's quit: the game ends as if the player had closed it.</summary>
     void InputQuit()
     {
@@ -147,6 +162,33 @@ namespace
         Offer.reset();
         Step = MCStep::Idle;
         RestartAfterQuit = false;
+        Hd = {};
+        SetsChosenAgain = false;
+        ProgramClosing = false;
+    }
+
+    /// <summary>What the copy has of the HD pack, read from its record and the sets chosen.</summary>
+    void ReadHd()
+    {
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        const auto installed = MCInstalled::Read(Content->GameFolder);
+
+        if (!installed)
+        {
+            SDL_Log("Updater: %s", installed.error().c_str());
+        }
+
+        const MCInstalled::MCRecord record = installed.value_or(MCInstalled::MCRecord{});
+        const MCContentUpdater::MCSets has =
+            record.Release != 0 ? record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
+        Hd = {.Managed = true,
+              .Installed = has.contains(MCContentList::HdSet),
+              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, record).contains(MCContentList::HdSet)};
+
+        if (const auto bytes = record.SetBytes.find(MCContentList::HdSet); bytes != record.SetBytes.end())
+        {
+            Hd.Bytes = bytes->second;
+        }
     }
 
     /// <summary>Runs <paramref name="job"/> on a thread of its own; <see cref="MCUpdater::Frame"/> picks up its end.</summary>
@@ -295,6 +337,167 @@ namespace
         Changed();
     }
 
+    /// <summary>
+    /// Plans, stages and arms the sets the player chose on the work's thread (no update: the release installed). The
+    /// staging lock is held until it ends.
+    /// </summary>
+    void StartSetsChange()
+    {
+        Hd.Stopping = false;
+        Hd.Error.clear();
+        Hd.Received = 0;
+        Hd.Expected = 0;
+
+        if (!TakeStagingLock())
+        {
+            SDL_Log("Updater: the HD pack waits: another copy of the game is staging an update");
+            Hd.Stage = MCStage::Failed;
+            Hd.Error = "another copy of the game is installing an update";
+            return;
+        }
+
+        SDL_Log("Updater: the HD pack is %s", Hd.Chosen ? "coming" : "going");
+        Step = MCStep::ChangingSets;
+        Hd.Stage = MCStage::Downloading;
+        RunWork(
+            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token stop)
+            {
+                auto source = SourceFor(makeSource);
+                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+                auto change = source
+                                  ? MCContentUpdater::CheckSets(setup, *disk, **source)
+                                  : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
+                std::expected<void, std::string> done =
+                    change ? std::expected<void, std::string>() : std::unexpected(change.error());
+
+                if (done && *change)
+                {
+                    {
+                        const std::lock_guard lock(work.Mutex);
+                        work.Expected = (*change)->ContentBytes();
+                    }
+
+                    done = MCContentUpdater::Stage(setup, *disk, **source, **change,
+                                                   [&](uint64_t received, uint64_t expected)
+                                                   {
+                                                       const std::lock_guard lock(work.Mutex);
+                                                       work.Received = received;
+                                                       work.Expected = expected;
+                                                       return !stop.stop_requested();
+                                                   });
+
+                    if (done)
+                    {
+                        done = MCContentUpdater::Arm(setup, *disk, **change);
+                    }
+                }
+
+                const std::lock_guard lock(work.Mutex);
+
+                if (!done)
+                {
+                    work.Error = done.error();
+                }
+                else if (*change)
+                {
+                    work.Offer = std::move(*change);
+                }
+            });
+    }
+
+    /// <summary>
+    /// Nothing more for an update this run: a change of sets the player chose and the copy lacks starts, as the start's
+    /// check found no update to carry it (one chosen in an earlier run, stopped as the game quit).
+    /// </summary>
+    void Settle()
+    {
+        Step = MCStep::Idle;
+
+        if (Hd.Managed && Hd.Chosen != Hd.Installed && Hd.Stage != MCStage::Failed)
+        {
+            StartSetsChange();
+        }
+    }
+
+    /// <summary>The change of sets' end: armed for the next start, nothing to change, stopped for a new choice, or failed.</summary>
+    void SetsDone(const std::string& error, bool armed)
+    {
+        StagingLock.reset();
+        Step = MCStep::Idle;
+        const bool again = std::exchange(SetsChosenAgain, false);
+        Hd.Stopping = false;
+
+        if (armed)
+        {
+            // A new choice that came too late goes in after it, at a later start.
+            SDL_Log("Updater: the HD pack's change goes in at the next start");
+            Step = MCStep::SetsArmed;
+            Hd.Stage = MCStage::Ready;
+            Hd.Received = Hd.Expected;
+            return;
+        }
+
+        if (again)
+        {
+            StartSetsChange();
+            return;
+        }
+
+        if (!error.empty())
+        {
+            SDL_Log("Updater: the HD pack's change failed: %s", error.c_str());
+            Hd.Stage = MCStage::Failed;
+            Hd.Error = Printable(error, MaxErrorLength, false);
+            return;
+        }
+
+        Hd.Stage = MCStage::None;
+    }
+
+    /// <summary>The content's check, on the work's thread: release.json read and the content planned.</summary>
+    void LookForUpdate()
+    {
+        Step = MCStep::CheckingContent;
+        RunWork(
+            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token)
+            {
+                auto source = SourceFor(makeSource);
+                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+                auto offer = source
+                                 ? MCContentUpdater::Check(setup, *disk, **source)
+                                 : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
+                const std::lock_guard lock(work.Mutex);
+
+                if (offer)
+                {
+                    work.Offer = std::move(*offer);
+                }
+                else
+                {
+                    work.Error = offer.error();
+                }
+            });
+    }
+
+    /// <summary>
+    /// The update shown is looked for again (the sets chosen changed, so its content is planned again): the page shows
+    /// nothing until it's back. The program's backend lets its update go first; it's found again with the check.
+    /// </summary>
+    void LookAgain()
+    {
+        const bool program = Offer->ProgramBuild.has_value() && Backend != nullptr;
+        Offer.reset();
+        Current = {};
+        Changed();
+        LookForUpdate();
+
+        if (program)
+        {
+            ProgramClosing = true;
+            Backend->Answer(MCAnswer::Later);
+        }
+    }
+
     /// <summary>The check's end: nothing, an update to show, or one to look for the program of first.</summary>
     void CheckDone(const std::string& error, std::optional<MCOffer> offer)
     {
@@ -302,14 +505,17 @@ namespace
 
         if (!error.empty())
         {
-            // No news for the player (offline, say): the next start looks again.
+            // No news for the player (offline, say): the next start looks again. A change of sets the player chose
+            // still tries, and says so if it fails too.
             SDL_Log("Updater: the check failed: %s", error.c_str());
+            Settle();
             return;
         }
 
         if (!offer)
         {
             SDL_Log("Updater: nothing newer than %s", Content->RunningVersion.c_str());
+            Settle();
             return;
         }
 
@@ -338,11 +544,17 @@ namespace
                         static_cast<unsigned long long>(Offer->Release.Number),
                         static_cast<unsigned long long>(*Offer->ProgramBuild));
                 Offer.reset();
+                Settle();
                 return;
             }
 
             Step = MCStep::CheckingProgram;
-            Backend->Check(Offer->ProgramBuild);
+
+            if (!ProgramClosing)
+            {
+                Backend->Check(Offer->ProgramBuild);
+            }
+
             return;
         }
 
@@ -389,7 +601,7 @@ namespace
 
         StagingLock.reset();
         Offer.reset();
-        Step = MCStep::Idle;
+        Settle();
     }
 
     /// <summary>The player's answer, with the content's updater set.</summary>
@@ -441,9 +653,9 @@ namespace
             }
 
             Offer.reset();
-            Step = MCStep::Idle;
             Current = {};
             Changed();
+            Settle();
         }
         else if (Current.Stage == MCStage::Ready && Step == MCStep::Armed && answer == MCAnswer::Install)
         {
@@ -483,6 +695,7 @@ auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker
     MakeSource = std::move(source);
     Current = {};
     CheckedAtStart = false;
+    ReadHd();
     Changed();
 }
 
@@ -540,6 +753,11 @@ auto MCUpdater::Frame() -> void
             ShowProgress(received,
                          std::max(expected, Offer->ContentBytes()) + (Offer->ProgramBuild ? Offer->ProgramBytes : 0));
         }
+        else if (Step == MCStep::ChangingSets)
+        {
+            Hd.Received = received;
+            Hd.Expected = expected;
+        }
 
         return;
     }
@@ -556,6 +774,9 @@ auto MCUpdater::Frame() -> void
             break;
         case MCStep::ArmingQuietly:
             QuietDone(error);
+            break;
+        case MCStep::ChangingSets:
+            SetsDone(error, offer.has_value());
             break;
         default:
             break;
@@ -585,9 +806,10 @@ auto MCUpdater::Quit() -> void
         }
         else
         {
-            // It holds what it uses; it stops with the process.
+            // It holds what it uses, the staging lock too, which the system lets go as the process ends.
             SDL_Log("Updater: the download is still stopping as the game quits; the next try resumes it");
             Worker.detach();
+            static_cast<void>(StagingLock.release());
         }
     }
 
@@ -631,25 +853,114 @@ auto MCUpdater::CheckAtStart() -> void
         return;
     }
 
-    Step = MCStep::CheckingContent;
-    RunWork(
-        [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token)
-        {
-            auto source = SourceFor(makeSource);
-            const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-            auto offer = source ? MCContentUpdater::Check(setup, *disk, **source)
-                                : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
-            const std::lock_guard lock(work.Mutex);
+    LookForUpdate();
+}
 
-            if (offer)
+auto MCUpdater::HdPack() -> const MCHdPack&
+{
+    switch (Step)
+    {
+        case MCStep::CheckingContent:
+        case MCStep::CheckingProgram:
+        case MCStep::ArmingQuietly:
+            Hd.Hold = MCHdHold::Looking;
+            break;
+        case MCStep::StagingContent:
+        case MCStep::DownloadingProgram:
+            Hd.Hold = MCHdHold::UpdateDownloading;
+            break;
+        case MCStep::Armed:
+            Hd.Hold = MCHdHold::UpdateReady;
+            break;
+        case MCStep::Finished:
+            Hd.Hold = Current.Stage == MCStage::Failed ? MCHdHold::None : MCHdHold::UpdateReady;
+            break;
+        case MCStep::SetsArmed:
+            Hd.Hold = MCHdHold::NextStart;
+            break;
+        default:
+            Hd.Hold = MCHdHold::None;
+            break;
+    }
+
+    Hd.WithUpdate = Step == MCStep::Offered && Hd.Chosen != Hd.Installed && Offer && Offer->Content != nullptr;
+    return Hd;
+}
+
+auto MCUpdater::ChooseHd(bool chosen) -> void
+{
+    if (!Content || !Hd.Managed || (chosen == Hd.Chosen && Hd.Stage != MCStage::Failed))
+    {
+        return;
+    }
+
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto installed = MCInstalled::Read(Content->GameFolder);
+    MCContentUpdater::MCSets sets =
+        MCContentUpdater::Wanted(*disk, Content->GameFolder, installed.value_or(MCInstalled::MCRecord{}));
+
+    if (chosen)
+    {
+        sets.emplace(MCContentList::HdSet);
+    }
+    else
+    {
+        sets.erase(std::string(MCContentList::HdSet));
+    }
+
+    if (const auto kept = MCContentUpdater::Choose(*disk, Content->GameFolder, sets); !kept)
+    {
+        SDL_Log("Updater: the HD pack's choice isn't kept: %s", kept.error().c_str());
+        Hd.Stage = MCStage::Failed;
+        Hd.Error = Printable(kept.error(), MaxErrorLength, false);
+        return;
+    }
+
+    Hd.Chosen = chosen;
+
+    switch (Step)
+    {
+        case MCStep::Idle:
+            StartSetsChange();
+            break;
+        case MCStep::Finished:
+        {
+            // After a failed update this run; one installing goes in as the game quits, the choice at a later start.
+            if (Current.Stage == MCStage::Failed)
             {
-                work.Offer = std::move(*offer);
+                StartSetsChange();
             }
-            else
-            {
-                work.Error = offer.error();
-            }
-        });
+
+            break;
+        }
+        case MCStep::Offered:
+            LookAgain();
+            break;
+        case MCStep::ChangingSets:
+        {
+            // Stopped where it is (staged files stay); its end plans the new choice.
+            SetsChosenAgain = true;
+            Hd.Stopping = true;
+            Worker.request_stop();
+            break;
+        }
+        default:
+            // An update's work comes first: the choice is planned at a later start.
+            break;
+    }
+}
+
+auto MCUpdater::RestartForHd() -> void
+{
+    if (Step != MCStep::SetsArmed)
+    {
+        return;
+    }
+
+    // The new copy waits for this one's lock as it ends, then its start swaps the change in.
+    SDL_Log("Updater: restart for the HD pack's change");
+    RestartAfterQuit = true;
+    QuitGame();
 }
 
 auto MCUpdater::Status() -> const MCStatus&
@@ -806,7 +1117,7 @@ auto MCUpdater::Failed(std::string error) -> void
         if (Content && Step == MCStep::CheckingProgram)
         {
             Offer.reset();
-            Step = MCStep::Idle;
+            Settle();
         }
 
         return;
@@ -828,13 +1139,26 @@ auto MCUpdater::Closed() -> void
 {
     if (Content)
     {
+        // The session LookAgain let go has ended: the look for the program that waited for it goes ahead.
+        if (ProgramClosing)
+        {
+            ProgramClosing = false;
+
+            if (Step == MCStep::CheckingProgram)
+            {
+                Backend->Check(Offer->ProgramBuild);
+            }
+
+            return;
+        }
+
         // Looking for release.json's build and closing without it: the program isn't out yet. Closing while the update
         // is shown or its program downloads, it can't install: the page says so rather than wait for it.
         if (Step == MCStep::CheckingProgram)
         {
             SDL_Log("Updater: build %llu isn't out yet", static_cast<unsigned long long>(*Offer->ProgramBuild));
             Offer.reset();
-            Step = MCStep::Idle;
+            Settle();
         }
         else if (Step == MCStep::Offered || Step == MCStep::DownloadingProgram)
         {

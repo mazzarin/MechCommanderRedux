@@ -43,6 +43,9 @@ public:
     /// <summary>Deletes a file, or a folder and all it holds.</summary>
     virtual bool Remove(const std::filesystem::path& path) = 0;
 
+    /// <summary>Deletes a folder when it holds nothing (false otherwise, or when it isn't a folder).</summary>
+    virtual bool RemoveIfEmpty(const std::filesystem::path& path) = 0;
+
     /// <summary>Writes a file anew and flushes its bytes (its entry in its folder isn't flushed).</summary>
     virtual bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) = 0;
 

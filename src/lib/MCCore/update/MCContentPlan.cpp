@@ -100,6 +100,11 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
     for (const MCContentList::MCFile& file : list.Files)
     {
+        plan.Record.SetBytes[file.Set] += file.Size;
+    }
+
+    for (const MCContentList::MCFile& file : list.Files)
+    {
         if (!sets.contains(file.Set))
         {
             continue;

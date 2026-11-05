@@ -34,6 +34,13 @@ namespace MCGameFolder
     /// <summary>The installs in the usual places (see the namespace), nearest first, each once.</summary>
     std::vector<std::filesystem::path> FindInUsualPlaces();
 
+    /// <summary>
+    /// The folder an installer prepares for the game's content, which the game downloads at its first start: on
+    /// Windows the program's own folder (the install folder is the game folder), on macOS the
+    /// <c>MechCommander Gold</c> folder beside the app; empty when there's none (an app run from a translocated copy).
+    /// </summary>
+    std::filesystem::path InstallFolder();
+
     /// <summary>The folder chosen last time, or empty when none is remembered in <paramref name="userFolder"/>.</summary>
     std::filesystem::path Remembered(const std::filesystem::path& userFolder);
 

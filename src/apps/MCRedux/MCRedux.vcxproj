@@ -65,6 +65,7 @@
     <ClCompile Include="MCCrashTrace.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCFirstStart.cpp" />
     <ClCompile Include="MCGameFolder.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -82,6 +83,7 @@
     </ClCompile>
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />
+    <ClInclude Include="MCFirstStart.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCRestart.h" />

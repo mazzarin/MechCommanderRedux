@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCConsole.h"
 #include "MCCrashTrace.h"
+#include "MCFirstStart.h"
 #include "MCGameFolder.h"
 #include "MCHttpGet.h"
 #include "MCRestart.h"
@@ -48,6 +49,9 @@ namespace
     /// </summary>
     constexpr std::array<std::string_view, 0> RootKeys = {};
 
+    /// <summary>What the first start's window says while the game's content downloads.</summary>
+    constexpr std::string_view FirstStartHeading = "GETTING THE GAME READY";
+
     /// <summary>This platform's name in release.json.</summary>
 #ifdef _WIN32
     constexpr std::string_view ReleasePlatform = "windows";
@@ -89,13 +93,24 @@ namespace
     }
 
     /// <summary>
+    /// Whether <paramref name="folder"/> awaits its first install (an installer prepared it, and the game downloads its
+    /// content): only in a build that updates its content (<paramref name="contentUpdates"/>).
+    /// </summary>
+    bool AwaitsInstall(const std::filesystem::path& folder, bool contentUpdates)
+    {
+        return contentUpdates && !folder.empty() && MCContentUpdater::AwaitsInstall(*MakeDisk(), folder);
+    }
+
+    /// <summary>
     /// The game's folder: the first of the --data folder (when given), the current folder and the executable's folder
-    /// that holds the game's data. Without --data, then the folder chosen last time, the one copy in the usual places
-    /// (MCGameFolder), or the player's choice, remembered for next time. Empty when the player quits; an error naming
-    /// every folder tried when --data names no game (a script gets no questions).
+    /// that holds the game's data. Without --data, then the folder an installer prepared for its first start (in a
+    /// build that updates its content, <paramref name="contentUpdates"/>), the folder chosen last time, the one copy in
+    /// the usual places (MCGameFolder), or the player's choice, remembered for next time. Empty when the player quits;
+    /// an error naming every folder tried when --data names no game (a script gets no questions).
     /// </summary>
     std::expected<std::filesystem::path, std::string> FindGameData(const std::filesystem::path& dataArgument,
-                                                                   const std::filesystem::path& userFolder)
+                                                                   const std::filesystem::path& userFolder,
+                                                                   bool contentUpdates)
     {
         std::vector<std::filesystem::path> candidates;
 
@@ -117,7 +132,7 @@ namespace
 
         for (const std::filesystem::path& folder : candidates)
         {
-            if (!folder.empty() && MCGameFolder::HasGameData(folder))
+            if (!folder.empty() && (MCGameFolder::HasGameData(folder) || AwaitsInstall(folder, contentUpdates)))
             {
                 return folder;
             }
@@ -130,6 +145,18 @@ namespace
             return std::unexpected(std::format("No SYSTEM.CFG found in:{}\nRun MCRedux from the MechCommander Gold "
                                                "install, put it beside the install, or point -d/--data at it.",
                                                tried));
+        }
+
+        // The copy the player just installed is the one they mean to play, whatever was chosen before.
+        if (const std::filesystem::path installed = MCGameFolder::InstallFolder();
+            AwaitsInstall(installed, contentUpdates))
+        {
+            if (const std::string error = MCGameFolder::Remember(userFolder, installed); !error.empty())
+            {
+                SDL_Log("Game folder not remembered: %s", error.c_str());
+            }
+
+            return installed;
         }
 
         const bool choose = MCGameFolder::ChoiceRequested();
@@ -293,27 +320,90 @@ namespace
         return keys;
     }
 
-    /// <summary>The game's own updater for the content (main/MCUpdater.h), reading the host over https.</summary>
-    void SetContentUpdater(const MCLaunchOptions& options, std::vector<MCSignedFile::MCPublicKey> rootKeys)
+    /// <summary>The copy and the build, for the game's own updater for the content.</summary>
+    MCContentUpdater::MCSetup ContentSetup(const MCLaunchOptions& options,
+                                           std::vector<MCSignedFile::MCPublicKey> rootKeys)
     {
-        MCUpdater::SetContent({.GameFolder = options.DataFolder,
-                               .UserFolder = options.UserFolder,
-                               .RootKeys = std::move(rootKeys),
-                               .Platform = std::string(ReleasePlatform),
-                               .RunningBuild = MC_VERSION_BUILD,
-                               .RunningVersion = MC_VERSION_SHOWN},
-                              []() -> std::unique_ptr<MCContentStage::MCSource>
-                              {
-                                  auto source = MCHttpSource::Make(ContentHost, MCMakeHttpGet());
+        return {.GameFolder = options.DataFolder,
+                .UserFolder = options.UserFolder,
+                .RootKeys = std::move(rootKeys),
+                .Platform = std::string(ReleasePlatform),
+                .RunningBuild = MC_VERSION_BUILD,
+                .RunningVersion = MC_VERSION_SHOWN};
+    }
 
-                                  if (!source)
-                                  {
-                                      SDL_Log("Updates: %s", source.error().c_str());
-                                      return nullptr;
-                                  }
+    /// <summary>The release's host over https, or none when this build's address is unusable (logged).</summary>
+    std::unique_ptr<MCContentStage::MCSource> MakeContentSource()
+    {
+        auto source = MCHttpSource::Make(ContentHost, MCMakeHttpGet());
 
-                                  return std::move(*source);
-                              });
+        if (!source)
+        {
+            SDL_Log("Updates: %s", source.error().c_str());
+            return nullptr;
+        }
+
+        return std::move(*source);
+    }
+
+    /// <summary>
+    /// The first start of a copy an installer prepared: its content downloaded, checked and put in place before
+    /// anything opens, a window showing the progress (MCFirstStart.h).
+    /// </summary>
+    /// <returns>
+    /// None to play; else the exit code to quit with: the player closed the window (the next start carries on), or the
+    /// content couldn't come or go in place (they're told).
+    /// </returns>
+    std::optional<int> InstallAtFirstStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
+                                           MCUpdateLock* lock)
+    {
+        SDL_Log("Updates: the first start gets the game's content");
+        const auto done = MCFirstStart::Run(
+            FirstStartHeading,
+            // Its own copy of the setup: a window closed mid-download leaves the work to end with the process.
+            [setup](MCFirstStart::MCProgress& progress, std::stop_token stop) -> std::expected<void, std::string>
+            {
+                const std::unique_ptr<MCContentStage::MCSource> source = MakeContentSource();
+
+                if (source == nullptr)
+                {
+                    return std::unexpected("the release's host has no usable address in this build");
+                }
+
+                return MCContentUpdater::Install(setup, *MakeDisk(), *source,
+                                                 [&](uint64_t received, uint64_t expected)
+                                                 {
+                                                     progress.Set(received, expected);
+                                                     return !stop.stop_requested();
+                                                 });
+            });
+
+        if (!done)
+        {
+            Report(std::format("The game's files couldn't be downloaded: {}.\n\nStart the game again to carry on.",
+                               done.error()),
+                   true);
+            return 1;
+        }
+
+        if (!*done)
+        {
+            return 0;
+        }
+
+        if (!SwapStagedUpdate(setup.GameFolder, commandLine, lock))
+        {
+            return 1;
+        }
+
+        // Put back (another copy of the game holds the folder): the files go in at the next start.
+        if (MCContentUpdater::AwaitsInstall(*MakeDisk(), setup.GameFolder))
+        {
+            Report("The game's files are downloaded. Close any other copy of the game, then start it again.", true);
+            return 1;
+        }
+
+        return std::nullopt;
     }
 
     /// <summary>Crash reporter: where the ABL interpreter was (module, routine, source line, code position).</summary>
@@ -392,7 +482,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const auto dataFolder = FindGameData(options->DataFolder, options->UserFolder);
+    // A build that updates its content carries the root keys (none until the root key is made).
+    std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();
+    const bool contentUpdates = !rootKeys.empty();
+    const auto dataFolder = FindGameData(options->DataFolder, options->UserFolder, contentUpdates);
 
     if (!dataFolder || dataFolder->empty())
     {
@@ -409,14 +502,23 @@ int main(int argc, char** argv)
     options->DataFolder = *dataFolder;
     // A build that updates its content holds the game's lock for its run, so no other copy swaps an update in under
     // it (update/MCUpdateLock.h); one that doesn't leaves the game folder as it is.
-    std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();
     std::unique_ptr<MCUpdateLock> gameLock =
-        rootKeys.empty() ? nullptr : MCUpdateLock::Open(options->DataFolder, MCUpdateLock::GameLock);
+        contentUpdates ? MCUpdateLock::Open(options->DataFolder, MCUpdateLock::GameLock) : nullptr;
 
     if (!SwapStagedUpdate(options->DataFolder, options->GameCommandLine, gameLock.get()))
     {
         SDL_Quit();
         return 1;
+    }
+
+    if (AwaitsInstall(options->DataFolder, contentUpdates))
+    {
+        if (const std::optional<int> quit =
+                InstallAtFirstStart(ContentSetup(*options, rootKeys), options->GameCommandLine, gameLock.get()))
+        {
+            SDL_Quit();
+            return *quit;
+        }
     }
 
     MCFileSystem::SetGameRoot(options->DataFolder);
@@ -433,9 +535,9 @@ int main(int argc, char** argv)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
 #endif
 
-    if (!rootKeys.empty())
+    if (contentUpdates)
     {
-        SetContentUpdater(*options, std::move(rootKeys));
+        MCUpdater::SetContent(ContentSetup(*options, std::move(rootKeys)), MakeContentSource);
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));

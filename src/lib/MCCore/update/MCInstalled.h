@@ -36,6 +36,11 @@ namespace MCInstalled
         /// <summary>The sets the copy has.</summary>
         std::set<std::string, std::less<>> Sets;
         /// <summary>
+        /// The bytes of each set the release lists, had or not (what HD OPTIONS says getting HD takes; none recorded by
+        /// an earlier version).
+        /// </summary>
+        std::map<std::string, uint64_t, std::less<>> SetBytes;
+        /// <summary>
         /// The swap that wrote it (a random id each update's journal carries; empty none): the swap is committed once
         /// the record on disk is its own, whatever the release (a repair keeps the same one).
         /// </summary>

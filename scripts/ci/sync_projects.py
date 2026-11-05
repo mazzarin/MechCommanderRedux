@@ -28,11 +28,13 @@ SKIP_DIRS = {"build", "__pycache__", ".vs"}
 PROJECTS = [
     ("lib/MCCore/MCCore.vcxproj", "tree"),
     ("apps/MCRedux/MCRedux.vcxproj", ["Main.cpp", "MCConsole.cpp", "MCConsole.h", "MCCrashTrace.cpp", "MCCrashTrace.h",
-                                      "MCGameFolder.cpp", "MCGameFolder.h", "MCHttpGet.h", "MCHttpGetWin.cpp",
+                                      "MCFirstStart.cpp", "MCFirstStart.h", "MCGameFolder.cpp", "MCGameFolder.h",
+                                      "MCHttpGet.h", "MCHttpGetWin.cpp",
                                       "MCRestart.cpp", "MCRestart.h", "MCTelemetryBackend.h", "MCTelemetryWin.cpp",
                                       "stdafx.cpp", "stdafx.h"]),
     ("apps/MCRedux/mc_tests.vcxproj", ["MCConsole.cpp", "MCConsole.h", "MCCrashTrace.cpp", "MCCrashTrace.h",
-                                       "MCGameFolder.cpp", "MCGameFolder.h", "MCHttpGet.h", "MCHttpGetWin.cpp",
+                                       "MCFirstStart.cpp", "MCFirstStart.h", "MCGameFolder.cpp", "MCGameFolder.h",
+                                       "MCHttpGet.h", "MCHttpGetWin.cpp",
                                        "MCTelemetryBackend.h", "MCTelemetryWin.cpp", "stdafx.cpp", "stdafx.h", "tests/"]),
     ("apps/MCEditor/MCEditor.vcxproj", "tree"),
 ]

@@ -2,6 +2,7 @@
 // it there and keeps the original in "Redux backup"). Whatever starts the original's MCX.EXE (its shortcuts, a
 // DirectPlay lobby such as MechCommander Online's rooms) gets Redux: MCRedux.exe beside it, with the same command line
 // and current folder. It waits for the game and returns its exit code, so a lobby waiting on MCX.EXE sees the game end.
+// Asked to close (logging off, an installer's Restart Manager), it does, the game being asked the same.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -21,6 +22,13 @@ namespace
     constexpr const wchar_t* Title = L"MechCommander Redux";
     /// <summary>The exit code when the game couldn't be started or waited for.</summary>
     constexpr int FailedExitCode = 1;
+    /// <summary>The exit code when Windows closed the launcher before the game ended (it closes the game too).</summary>
+    constexpr int ClosedExitCode = 0;
+    /// <summary>
+    /// The hidden window's class. Windows asks a program to close through its windows, and one with none can't be
+    /// asked: the Restart Manager then closes nothing, the game included, and the installer can't update them.
+    /// </summary>
+    constexpr const wchar_t* WindowClass = L"MechCommanderReduxLauncher";
     /// <summary>The first path buffer, in characters; doubled until the path fits.</summary>
     constexpr DWORD FirstPathLength = MAX_PATH;
 
@@ -87,6 +95,82 @@ namespace
         return at;
     }
 
+    LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        switch (message)
+        {
+            case WM_QUERYENDSESSION:
+                return TRUE;
+            case WM_ENDSESSION:
+            {
+                if (wParam != FALSE)
+                {
+                    DestroyWindow(window);
+                }
+
+                return 0;
+            }
+            case WM_DESTROY:
+            {
+                PostQuitMessage(ClosedExitCode);
+                return 0;
+            }
+            default:
+                return DefWindowProcW(window, message, wParam, lParam);
+        }
+    }
+
+    /// <summary>The hidden window Windows asks the launcher to close through, or null when it couldn't be made.</summary>
+    HWND MakeHiddenWindow(HINSTANCE instance)
+    {
+        WNDCLASSW windowClass{};
+        windowClass.lpfnWndProc = WindowProc;
+        windowClass.hInstance = instance;
+        windowClass.lpszClassName = WindowClass;
+
+        if (RegisterClassW(&windowClass) == 0)
+        {
+            return nullptr;
+        }
+
+        return CreateWindowExW(0, WindowClass, Title, WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
+    }
+
+    /// <summary>
+    /// The game's exit code once it ends, answering Windows meanwhile; <see cref="ClosedExitCode"/> when Windows
+    /// closes the launcher first, <see cref="FailedExitCode"/> when the wait fails.
+    /// </summary>
+    int WaitForGame(HANDLE game)
+    {
+        for (;;)
+        {
+            const DWORD woken = MsgWaitForMultipleObjects(1, &game, FALSE, INFINITE, QS_ALLINPUT);
+
+            if (woken == WAIT_OBJECT_0)
+            {
+                DWORD exitCode = FailedExitCode;
+                return GetExitCodeProcess(game, &exitCode) ? static_cast<int>(exitCode) : FailedExitCode;
+            }
+
+            if (woken != WAIT_OBJECT_0 + 1)
+            {
+                return FailedExitCode;
+            }
+
+            MSG message;
+
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                if (message.message == WM_QUIT)
+                {
+                    return static_cast<int>(message.wParam);
+                }
+
+                DispatchMessageW(&message);
+            }
+        }
+    }
+
     /// <summary>This exe's path, or empty with Windows' error.</summary>
     std::wstring OwnPath(DWORD& error)
     {
@@ -113,7 +197,7 @@ namespace
     }
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
     DWORD error = 0;
     const std::wstring ownPath = OwnPath(error);
@@ -133,6 +217,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     SetEnvironmentVariableW(CompatLayerVariable, nullptr);
+    // Without it the launcher can't be asked to close, but the game still runs.
+    MakeHiddenWindow(instance);
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -157,15 +243,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     CloseHandle(process.hThread);
-
-    DWORD exitCode = FailedExitCode;
-
-    if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
-        !GetExitCodeProcess(process.hProcess, &exitCode))
-    {
-        exitCode = FailedExitCode;
-    }
-
+    const int exitCode = WaitForGame(process.hProcess);
     CloseHandle(process.hProcess);
-    return static_cast<int>(exitCode);
+    return exitCode;
 }

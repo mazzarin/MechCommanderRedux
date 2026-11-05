@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "update/MCUpdateJson.h"
+#include "update/MCUpdateDisk.h"
 
 #ifndef SODIUM_STATIC
 #define SODIUM_STATIC 1
@@ -82,6 +83,18 @@ uint64_t MCUpdateJson::Count(const MCJson& object, std::string_view key)
     return member.get<uint64_t>();
 }
 
+int64_t MCUpdateJson::Integer(const MCJson& object, std::string_view key)
+{
+    const MCJson& member = Member(object, key);
+
+    if (!member.is_number_integer())
+    {
+        Fail("\"{}\" isn't a whole number", key);
+    }
+
+    return member.get<int64_t>();
+}
+
 double MCUpdateJson::Number(const MCJson& object, std::string_view key)
 {
     const MCJson& member = Member(object, key);
@@ -141,6 +154,24 @@ const MCUpdateJson::MCJson& MCUpdateJson::Child(const MCJson& object, std::strin
     }
 
     return member;
+}
+
+std::expected<std::optional<std::string>, std::string> MCUpdateJson::FileText(MCUpdateDisk& disk,
+                                                                              const std::filesystem::path& path)
+{
+    if (!disk.Stat(path).Exists)
+    {
+        return std::nullopt;
+    }
+
+    auto text = disk.ReadText(path);
+
+    if (!text)
+    {
+        return std::unexpected(std::move(text.error()));
+    }
+
+    return std::move(*text);
 }
 
 std::vector<uint8_t> MCUpdateJson::Base64(std::string_view text, std::string_view key)

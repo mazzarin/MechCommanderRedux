@@ -123,19 +123,56 @@ namespace
         return content;
     }
 
+    std::filesystem::path HashesPath(const MCSetup& setup)
+    {
+        return setup.GameFolder / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    }
+
+    /// <summary>The hashes the last plan kept: none yet, or ones that can't be read (logged), are none.</summary>
+    MCContentPlan::MCHashes ReadHashes(const MCSetup& setup, MCUpdateDisk& disk)
+    {
+        const auto hashes = MCUpdateJson::ReadFile(disk, HashesPath(setup), MCContentPlan::ReadHashes);
+
+        if (!hashes)
+        {
+            SDL_Log("Updates: the files' hashes kept can't be read (%s): the files are hashed again",
+                    hashes.error().c_str());
+            return {};
+        }
+
+        return hashes->value_or(MCContentPlan::MCHashes{});
+    }
+
     /// <summary>
     /// Plans <paramref name="content"/>'s list for the copy: <paramref name="sets"/> against what
-    /// <paramref name="installed"/> records.
+    /// <paramref name="installed"/> records, and the hashes the last plan kept; this plan's are kept in their place.
     /// </summary>
-    std::expected<void, std::string> PlanFor(const MCSetup& setup, MCContent& content, const MCListRef& list,
-                                             const MCInstalled::MCRecord& installed, const MCSets& sets)
+    std::expected<void, std::string> PlanFor(const MCSetup& setup, MCUpdateDisk& disk, MCContent& content,
+                                             const MCListRef& list, const MCInstalled::MCRecord& installed,
+                                             const MCSets& sets)
     {
+        const MCContentPlan::MCHashes hashes = ReadHashes(setup, disk);
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets);
+        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes);
 
         if (!plan)
         {
             return std::unexpected(plan.error());
+        }
+
+        if (plan->HashedFiles != 0)
+        {
+            SDL_Log("Updates: the plan for release %llu hashed %zu of its files",
+                    static_cast<unsigned long long>(list.Release), plan->HashedFiles);
+        }
+
+        // The plan stands without them: the next one hashes those files again.
+        if (const std::filesystem::path path = HashesPath(setup);
+            plan->Hashes != hashes && (!disk.MakeFolders(path.parent_path()) ||
+                                       !WriteDurably(disk, path, MCContentPlan::HashesText(plan->Hashes))))
+        {
+            SDL_Log("Updates: %s can't be written: the next plan hashes its files again",
+                    MCFileSystem::ToUtf8(path).c_str());
         }
 
         content.Plan = std::move(*plan);
@@ -147,7 +184,7 @@ namespace
     /// <see cref="PlanFor"/>).
     /// </summary>
     /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup,
+    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup, MCUpdateDisk& disk,
                                                                              MCContentStage::MCSource& source,
                                                                              const MCListRef& list,
                                                                              const MCInstalled::MCRecord& installed,
@@ -165,7 +202,7 @@ namespace
             return nullptr;
         }
 
-        if (const auto planned = PlanFor(setup, **content, list, installed, sets); !planned)
+        if (const auto planned = PlanFor(setup, disk, **content, list, installed, sets); !planned)
         {
             return std::unexpected(planned.error());
         }
@@ -307,7 +344,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
     if (newContent)
     {
         auto content =
-            PlanContent(setup, source, {release.List, release.ListSize, release.Number}, *installed,
+            PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number}, *installed,
                         Wanted(disk, setup.GameFolder, *installed), offer.ProgramBuild.value_or(setup.RunningBuild));
 
         if (!content)
@@ -364,8 +401,8 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected(writable.error());
     }
 
-    auto content = PlanContent(setup, source, {installed->List, std::nullopt, installed->Release}, *installed, sets,
-                               setup.RunningBuild);
+    auto content = PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release}, *installed,
+                               sets, setup.RunningBuild);
 
     if (!content)
     {
@@ -437,7 +474,7 @@ namespace
         }
 
         if (const auto planned =
-                PlanFor(setup, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
+                PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
             !planned)
         {
             return std::unexpected(planned.error());

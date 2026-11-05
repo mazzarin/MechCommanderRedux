@@ -534,6 +534,50 @@ TEST_CASE("content updater: a skip is kept and a higher release offered; files a
 #endif
 }
 
+TEST_CASE("content updater: a copy with no record hashes its files once; later checks take the hashes kept while each "
+          "file stays as found")
+{
+    MCHostedRelease release("hashes");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path hashesFile = game / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const auto hashedAtCheck = [&]()
+    {
+        const auto offer = MCContentUpdater::Check(setup, *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        REQUIRE((*offer)->Content != nullptr);
+        return (*offer)->Content->Plan.HashedFiles;
+    };
+
+    // The three listed files the copy has (release 1's) hashed at the first check, none at the next.
+    CHECK_EQ(hashedAtCheck(), size_t{3});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+
+    // One whose time moved on is hashed again, alone.
+    const std::filesystem::path same = game / "data" / "same.fit";
+    std::filesystem::last_write_time(same, std::filesystem::last_write_time(same) + std::chrono::seconds(5));
+    CHECK_EQ(hashedAtCheck(), size_t{1});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+
+    // A file gone keeps no hash.
+    std::filesystem::remove(game / "data" / "changed.fit");
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+    const auto kept = MCContentPlan::ReadHashes(Read(hashesFile));
+    REQUIRE(kept.has_value());
+    CHECK_EQ(kept->size(), size_t{2});
+    CHECK(!kept->contains("data/changed.fit"));
+    CHECK(kept->contains("data/same.fit"));
+
+    // Hashes that can't be read start again.
+    Write(hashesFile, "not json");
+    CHECK_EQ(hashedAtCheck(), size_t{2});
+    CHECK_EQ(hashedAtCheck(), size_t{0});
+}
+
 TEST_CASE("updater: content alone is checked off the main thread, staged on INSTALL, ready once armed, and RESTART "
           "starts the game again")
 {

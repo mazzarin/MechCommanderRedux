@@ -296,6 +296,16 @@ int main(int argc, char** argv)
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());
     SDL_Log("User data: %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
 
+    // The game folder's own settings and saves show through the user folder; what the original wrote into it from
+    // Program Files went to Windows' VirtualStore, so the first start copies that into the user folder.
+    if (const std::filesystem::path store = MCGameFolder::VirtualStore(options->DataFolder); !store.empty())
+    {
+        if (const std::string error = MCGameFolder::CarryOver(store, options->UserFolder); !error.empty())
+        {
+            SDL_Log("The original's settings and saves weren't all carried over. %s", error.c_str());
+        }
+    }
+
     // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
     // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h). The snow
     // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h).

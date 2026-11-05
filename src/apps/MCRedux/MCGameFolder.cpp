@@ -15,12 +15,19 @@
 
 #if defined(__APPLE__)
 #include <CoreGraphics/CoreGraphics.h>
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <cwchar>
+#include <windows.h>
 #endif
 
 namespace
 {
     /// <summary>The file in the user folder that remembers the chosen game folder: its path, UTF-8, on one line.</summary>
     constexpr std::string_view RememberedFile = "gamefolder.txt";
+    /// <summary>The settings file, in the game folder and the user folder.</summary>
+    constexpr std::string_view PrefsFile = "PREFS.CFG";
     /// <summary>How deep a chosen folder that isn't an install is searched (a folder of games, a CD, a Wine drive).</summary>
     constexpr int ChosenFolderDepth = 4;
     /// <summary>How deep a Wine drive is searched: Program Files\MicroProse\MCX, where the installer puts it, is 3.</summary>
@@ -46,6 +53,18 @@ namespace
     constexpr const char* QuitText = "Quit";
     constexpr const char* OtherFolderText = "Other Folder\xE2\x80\xA6";
     constexpr const char* ChooseFolderText = "Choose Folder\xE2\x80\xA6";
+#if defined(_WIN32)
+    /// <summary>
+    /// Where the original's installer (32-bit, so in the registry's 32-bit view) recorded the game folder: its own
+    /// key, which the CD's Mission Editor setup reads, and DirectPlay's entry for lobbies.
+    /// </summary>
+    constexpr std::array<const wchar_t*, 2> RecordingKeys = {
+        L"Software\\FASA Interactive\\MechCommander Expansion",
+        L"Software\\Microsoft\\DirectPlay\\Applications\\MechCommander Expansion 1.0"};
+    constexpr const wchar_t* RecordedFolderValue = L"Path";
+    /// <summary>The folder under the local app data folder where Windows keeps what old programs wrote elsewhere.</summary>
+    constexpr std::string_view VirtualStoreFolder = "VirtualStore";
+#endif
 
     /// <summary>The question's buttons other than the listed copies (whose IDs are their indexes).</summary>
     enum : int
@@ -224,6 +243,31 @@ namespace
             }
         }
     }
+
+#if defined(_WIN32)
+    /// <summary>The folder recorded under <paramref name="key"/> (its Path), or empty.</summary>
+    std::filesystem::path RecordedFolder(const wchar_t* key)
+    {
+        constexpr DWORD Flags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6432KEY;
+        DWORD size = 0;
+
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, key, RecordedFolderValue, Flags, nullptr, nullptr, &size) != ERROR_SUCCESS)
+        {
+            return {};
+        }
+
+        std::wstring value(size / sizeof(wchar_t), L'\0');
+
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, key, RecordedFolderValue, Flags, nullptr, value.data(), &size) !=
+            ERROR_SUCCESS)
+        {
+            return {};
+        }
+
+        value.resize(std::wcslen(value.c_str()));
+        return std::filesystem::path(value);
+    }
+#endif
 
 #if defined(__APPLE__)
     /// <summary>
@@ -462,9 +506,82 @@ std::vector<std::filesystem::path> MCGameFolder::FindInUsualPlaces()
             AddNew(found, FindInstalls(it->path() / "drive_c", WineDriveDepth));
         }
     }
+#elif defined(_WIN32)
+    for (const wchar_t* key : RecordingKeys)
+    {
+        if (const std::filesystem::path folder = RecordedFolder(key); !folder.empty() && IsInstall(folder))
+        {
+            AddNew(found, {folder});
+        }
+    }
 #endif
 
     return found;
+}
+
+std::filesystem::path MCGameFolder::VirtualStore(const std::filesystem::path& folder)
+{
+#if defined(_WIN32)
+    const char* localAppData = SDL_getenv("LOCALAPPDATA");
+    const char* systemDrive = SDL_getenv("SystemDrive");
+
+    // Windows redirects only folders on its own drive, and the copy's path leaves the drive out.
+    if (localAppData == nullptr || systemDrive == nullptr ||
+        !EqualsIgnoringCase(ToUtf8(folder.root_name()), systemDrive))
+    {
+        return {};
+    }
+
+    const std::filesystem::path store = FromUtf8(localAppData) / VirtualStoreFolder / folder.relative_path();
+    std::error_code error;
+    return std::filesystem::is_directory(store, error) ? store : std::filesystem::path();
+#else
+    static_cast<void>(folder);
+    return {};
+#endif
+}
+
+std::string MCGameFolder::CarryOver(const std::filesystem::path& store, const std::filesystem::path& userFolder)
+{
+    if (HasFile(userFolder, PrefsFile))
+    {
+        return {};
+    }
+
+    std::string failed;
+    std::error_code error;
+
+    for (std::filesystem::recursive_directory_iterator it(store, error), end; !error && it != end; it.increment(error))
+    {
+        std::error_code fileError;
+
+        if (!it->is_regular_file(fileError))
+        {
+            continue;
+        }
+
+        const std::filesystem::path relative = it->path().lexically_relative(store);
+        const std::filesystem::path target = userFolder / relative;
+
+        if (std::filesystem::exists(target, fileError))
+        {
+            continue;
+        }
+
+        std::filesystem::create_directories(target.parent_path(), fileError);
+
+        if (fileError || !std::filesystem::copy_file(it->path(), target, fileError))
+        {
+            failed += std::format("\n  {}: {}", ToUtf8(relative), fileError.message());
+        }
+    }
+
+    if (error)
+    {
+        failed += std::format("\n  {}: {}", ToUtf8(store), error.message());
+    }
+
+    return failed.empty() ? failed : std::format("Not copied from {}:{}", ToUtf8(store), failed);
 }
 
 std::filesystem::path MCGameFolder::Remembered(const std::filesystem::path& userFolder)

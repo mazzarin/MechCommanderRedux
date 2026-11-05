@@ -143,8 +143,8 @@ private:
 /// <summary>
 /// Keeps an update's writes and moves inside the game folder: just before each, every part of the path below the folder
 /// is looked at, and a link (a junction on Windows) anywhere refuses it, so a folder swapped for a link since the plan
-/// (by a program granted only the game folder, say) never takes the game's writes elsewhere. The folders found to be no
-/// link are kept for the run (a swap, a staging), so each costs a look or two. From any thread.
+/// (by a program granted only the game folder, say) never takes the game's writes elsewhere. Every part is looked at
+/// each time, none remembered: a folder swapped during a long download is caught at the next write. From any thread.
 /// </summary>
 class MCNoLinks
 {
@@ -157,8 +157,6 @@ public:
 private:
     MCUpdateDisk& _Disk;
     std::filesystem::path _Game;
-    std::mutex _Mutex;
-    std::set<std::filesystem::path> _Seen;
 };
 
 /// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>

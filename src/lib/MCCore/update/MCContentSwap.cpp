@@ -3,6 +3,7 @@
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
 #include "update/MCInstalledJson.h"
+#include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 #include "update/MCUpdateLock.h"
@@ -129,7 +130,8 @@ namespace
         {
             const std::optional<MCInstalled::MCDue> due = MCInstalled::ReadDue(_Disk, _Game);
 
-            if (due && due->Release > _Journal.Record.Release)
+            if (due && MCReleaseFile::MCOrder{due->Epoch, due->Release} >
+                           MCReleaseFile::MCOrder{_Journal.Record.Epoch, _Journal.Record.Release})
             {
                 return true;
             }

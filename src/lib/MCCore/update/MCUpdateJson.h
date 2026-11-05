@@ -61,6 +61,9 @@ namespace MCUpdateJson
     /// <summary>The member, a whole number from 0.</summary>
     uint64_t Count(const MCJson& object, std::string_view key);
 
+    /// <summary>The member, a whole number from 0, or <paramref name="otherwise"/> without one (a field added later).</summary>
+    uint64_t CountOr(const MCJson& object, std::string_view key, uint64_t otherwise);
+
     /// <summary>The member, a whole number (below 0 too).</summary>
     int64_t Integer(const MCJson& object, std::string_view key);
 

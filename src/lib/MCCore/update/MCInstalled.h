@@ -96,6 +96,8 @@ namespace MCInstalled
 
     struct MCDue
     {
+        /// <summary>The release's place in the order (MCReleaseFile::MCOrder): its key list's epoch, then its number.</summary>
+        uint64_t Epoch = 0;
         uint64_t Release = 0;
         uint64_t LowestProgram = 0;
 

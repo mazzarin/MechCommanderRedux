@@ -72,6 +72,11 @@ std::string MCUpdateJson::TextOr(const MCJson& object, std::string_view key, std
     return Find(object, key) == nullptr ? std::string(otherwise) : Text(object, key);
 }
 
+uint64_t MCUpdateJson::CountOr(const MCJson& object, std::string_view key, uint64_t otherwise)
+{
+    return Find(object, key) == nullptr ? otherwise : Count(object, key);
+}
+
 uint64_t MCUpdateJson::Count(const MCJson& object, std::string_view key)
 {
     const MCJson& member = Member(object, key);

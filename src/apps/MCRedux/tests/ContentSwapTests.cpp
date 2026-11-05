@@ -1682,6 +1682,17 @@ TEST_CASE("content at a start: a first start, a release older than the program p
     record.Release = 5;
     CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
 
+    // A later epoch's release is due over an earlier epoch's higher number: the key list started the order again.
+    record.Release = 100;
+    const MCInstalled::MCDue later{.Epoch = 1, .Release = 2, .LowestProgram = NewProgram};
+    REQUIRE(MCInstalled::NoteDue(*disk, game.Path(), later).has_value());
+    CHECK(MCInstalled::ReadDue(*disk, game.Path()) == later);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Due);
+    record.Epoch = 1;
+    record.Release = 2;
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+    record.Epoch = 0;
+
     // A note that can't be read waits for nothing.
     record.Release = 3;
     REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile), "{ damaged"));
@@ -1712,6 +1723,19 @@ TEST_CASE("content at a start: the program armed alone notes its release's conte
         REQUIRE(MCContentSwap::Run(crash, Game).Outcome == MCOutcome::Swapped);
         CHECK_EQ(crash.Files().contains(GamePath(MCInstalled::DueFile)), release < 2);
     }
+
+    // A swap of a later epoch ends an earlier epoch's note, whatever its number.
+    const MCContentUpdater::MCOffer earlier{.Release = {.Number = 100}, .ProgramBuild = NewProgram};
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, earlier).has_value());
+    MCUpdate update;
+    update.After.Epoch = 1;
+    update.After.Release = 1;
+    update.Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(update.Journal()), 1};
+    update.Files[GamePath(MCInstalled::DueFile)] = {
+        *disk->ReadText(game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile)), 1};
+    MCCrashDisk crash(update.Files);
+    REQUIRE(MCContentSwap::Run(crash, Game).Outcome == MCOutcome::Swapped);
+    CHECK(!crash.Files().contains(GamePath(MCInstalled::DueFile)));
 }
 
 TEST_CASE(

@@ -90,6 +90,12 @@ namespace MCLobbyUpdate
     void Frame();
 
     /// <summary>
+    /// The match starts (START, or the host's start reaching a guest), just before the teams are published: the places
+    /// kept go, and a guest away updating leaves its team, so the match's teams and their slots are the players there.
+    /// </summary>
+    void MatchStarts();
+
+    /// <summary>
     /// Player <paramref name="fromId"/>'s game restarts into an update (its MCMPMessageType::Updating). A guest's is
     /// ignored unless its rules say it rejoins (MCMatchRule::RejoinsHost), and once the room has kept its place.
     /// </summary>

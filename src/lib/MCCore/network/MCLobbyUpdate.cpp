@@ -177,13 +177,24 @@ namespace
     }
 
     /// <summary>
-    /// The match starts while places are kept (a configured match, or a start that crossed a guest's Updating): they go,
-    /// and the room takes no new players again.
+    /// The match starts while places are kept (START past the room's most hold, a configured match, or a start that
+    /// crossed a guest's Updating): they go, a guest still away leaves its team (its slots would be counted for a player
+    /// who can't come back), and the room takes no new players again.
     /// </summary>
     void DropPlaces()
     {
         SDL_Log("Lobby updates: the match starts: the room no longer keeps %zu updating players' places",
                 Coming.size());
+
+        for (const MCComing& coming : Coming)
+        {
+            if (MultiPlayer()->SessionManager->GetPlayer(coming.Id) == nullptr &&
+                GlobalLog()->SessionScreen != nullptr && GlobalLog()->SessionScreen->StartButton != nullptr)
+            {
+                GlobalLog()->SessionScreen->RemovePlayer(coming.Id);
+            }
+        }
+
         Coming.clear();
 
         if (MultiPlayer()->IsHost)
@@ -696,6 +707,14 @@ auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
 auto MCLobbyUpdate::SetClock(MCClock clock) -> void
 {
     TestClock = std::move(clock);
+}
+
+auto MCLobbyUpdate::MatchStarts() -> void
+{
+    if (MultiPlayer() != nullptr && GlobalLog() != nullptr && !Coming.empty())
+    {
+        DropPlaces();
+    }
 }
 
 auto MCLobbyUpdate::LeftToUpdate(uint32_t playerId) -> bool

@@ -164,6 +164,8 @@ namespace
         GuiSystem().RemoveTimer(Screen(), ScreenTimer);
         MultiPlayer()->SessionManager->SendLatencyInfo();
         SoundSystem()->PlayBettySample(0x19);
+        // Port-only (the personal build): a guest still away updating leaves its team first (network/MCLobbyUpdate.h).
+        MCLobbyUpdate::MatchStarts();
         Screen().PublishMatchState();
         GlobalLog()->InitializeMultiplayer();
         GlobalLog()->LoadCampaign(missionName, extension, false, false);

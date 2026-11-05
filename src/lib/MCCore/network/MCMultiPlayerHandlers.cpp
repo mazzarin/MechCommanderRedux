@@ -1250,6 +1250,8 @@ void HandleAppStart(uint32_t fromID, std::span<const uint8_t> msg)
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
     Game().SessionManager->SendLatencyInfo();
     SoundSystem()->PlayBettySample(0x19);
+    // Port-only (the personal build): a guest still away updating leaves its team first (network/MCLobbyUpdate.h).
+    MCLobbyUpdate::MatchStarts();
     GlobalLog()->SessionScreen->PublishMatchState();
     GlobalLog()->InitializeMultiplayer();
     GlobalLog()->LoadCampaign(missionName, ".MPK", false, false);

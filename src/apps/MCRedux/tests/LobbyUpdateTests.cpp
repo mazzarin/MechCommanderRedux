@@ -704,6 +704,20 @@ TEST_CASE_ISOLATED("game: a lobby's room holds its start two minutes at most in 
     CHECK(!MCLobbyUpdate::StartHeld());
     CHECK(!screen.StartButton->Disabled);
     CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANNB, CAL TO REJOIN."));
+
+    // CAL, on a team, leaves to update, and the host starts: CAL leaves its team before the teams are published, so
+    // the match's slots are the players there; the places go and the room closes.
+    cal.Leave();
+    Settle();
+    REQUIRE(std::ranges::contains(screen.Team1Players, cal.Id()) ||
+            std::ranges::contains(screen.Team2Players, cal.Id()));
+    MCLobbyUpdate::MatchStarts();
+    screen.PublishMatchState();
+    CHECK(!std::ranges::contains(MultiPlayer()->Match.Team1Players, cal.Id()));
+    CHECK(!std::ranges::contains(MultiPlayer()->Match.Team2Players, cal.Id()));
+    CHECK(!MCLobbyUpdate::LeftToUpdate(annb.Id()));
+    CHECK(screen.StartWaits.empty());
+    CHECK(!RoomOpen());
 }
 
 namespace

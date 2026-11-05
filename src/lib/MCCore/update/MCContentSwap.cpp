@@ -866,6 +866,11 @@ bool MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& g
     return disk.Stat(gameFolder / MCFileSystem::FromUtf8(RepairFile)).Exists;
 }
 
+bool MCContentSwap::UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    return Waiting(disk, gameFolder) || Repairing(disk, gameFolder);
+}
+
 std::expected<void, std::string> MCContentSwap::Abandon(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
     const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
@@ -945,7 +950,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
 
     MCResult result;
 
-    if (Waiting(disk, gameFolder) || Repairing(disk, gameFolder))
+    if (UnderWay(disk, gameFolder))
     {
         const auto now = std::chrono::steady_clock::now();
         const auto midwayUntil = deadline.value_or(now + MidwayWait);

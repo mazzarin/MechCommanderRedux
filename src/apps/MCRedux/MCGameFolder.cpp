@@ -1,6 +1,8 @@
 // Built without the precompiled header: macOS's CoreGraphics and MCCore's Win32 stand-ins (MCWin32Defs.h) cannot meet.
 #include "MCGameFolder.h"
 #include "platform/MCUtf8Path.h"
+#include "update/MCContentSwap.h"
+#include "update/MCUpdateDisk.h"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -26,6 +28,9 @@ namespace
 {
     /// <summary>The file in the user folder that remembers the chosen game folder: its path, UTF-8, on one line.</summary>
     constexpr std::string_view RememberedFile = "gamefolder.txt";
+    /// <summary>What makes a folder the game's: its data's settings, and the original's program beside them.</summary>
+    constexpr std::string_view GameDataFile = "SYSTEM.CFG";
+    constexpr std::string_view GameProgramFile = "MCX.EXE";
 #if defined(__APPLE__)
     /// <summary>The game folder the Mac's package puts beside the app (tools/bundle's layout).</summary>
     constexpr std::string_view InstalledGameFolder = "MechCommander Gold";
@@ -477,12 +482,14 @@ namespace
 
 bool MCGameFolder::HasGameData(const std::filesystem::path& folder)
 {
-    return HasFile(folder, "SYSTEM.CFG");
+    // An update stopped midway may have set SYSTEM.CFG aside: the folder is still the game's, so the start finishes the
+    // swap, or shows the recovery screen.
+    return HasFile(folder, GameDataFile) || MCContentSwap::UnderWay(*MakeDisk(), folder);
 }
 
 bool MCGameFolder::IsInstall(const std::filesystem::path& folder)
 {
-    return HasFile(folder, "SYSTEM.CFG") && HasFile(folder, "MCX.EXE");
+    return HasFile(folder, GameProgramFile) && HasGameData(folder);
 }
 
 std::vector<std::filesystem::path> MCGameFolder::FindInstalls(const std::filesystem::path& root, int depth)

@@ -15,7 +15,10 @@
 /// </summary>
 namespace MCGameFolder
 {
-    /// <summary>Whether <paramref name="folder"/> holds the game's data (its SYSTEM.CFG).</summary>
+    /// <summary>
+    /// Whether <paramref name="folder"/> holds the game's data: its SYSTEM.CFG, or an update under way, which may have
+    /// set SYSTEM.CFG aside until a start finishes it (update/MCContentSwap.h).
+    /// </summary>
     bool HasGameData(const std::filesystem::path& folder);
 
     /// <summary>

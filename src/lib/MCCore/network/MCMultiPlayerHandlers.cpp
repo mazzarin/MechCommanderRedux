@@ -173,22 +173,6 @@ namespace
         return extension.empty() || (name.size() >= extension.size() &&
                                      MCPort::StrICmp(name.substr(name.size() - extension.size()), extension) == 0);
     }
-
-    /// <summary>Sets up the dialog's single OK button with the given exit.</summary>
-    void ShowOkDialog(MCReusableDialog& dialog, std::string_view text, std::function<void()> exit)
-    {
-        dialog.SetText(text);
-        dialog.SetTwoButton(false);
-        dialog.Callback = nullptr;
-        dialog.OkButton->Callback().SetExec(std::move(exit));
-        char upArt[] = "bh_okay.tga";
-        char downArt[] = "bg_okay.tga";
-        dialog.OkButton->SetUpPicture(upArt);
-        dialog.OkButton->SetDownPicture(downArt);
-        dialog.OkButton->Disabled = false;
-        dialog.OkButton->Draw();
-        dialog.Activate();
-    }
 }
 
 MCWeaponHitChunk EmptyWeaponHitChunk()

@@ -177,17 +177,6 @@ namespace
         return !LobbyLaunchArgs.Address.empty() ? LobbyLaunchArgs.Address : std::string(OwnMachine);
     }
 
-    /// <summary>The message dialog saying <paramref name="text"/>, with no button: the game waits.</summary>
-    void ShowWaiting(std::string_view text)
-    {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        dialog.SetText(text);
-        dialog.OkButton->ShowGuiWindow(false);
-        dialog.CancelButton->ShowGuiWindow(false);
-        dialog.Callback = nullptr;
-        dialog.Activate();
-    }
-
     /// <summary>The room's waiting screen, as a lobby's start shows it (its button ends the game).</summary>
     void ShowWaitingScreen()
     {
@@ -216,7 +205,7 @@ namespace
         RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
-        ShowWaiting(UpdatingText(name));
+        ShowWaitingDialog(UpdatingText(name));
         const Clock::time_point now = Now();
         HostWait = MCHostWait{.Until = now + MCLobbyUpdate::RejoinWait, .NextTry = now};
     }
@@ -224,16 +213,7 @@ namespace
     /// <summary>Says a join failed with <paramref name="text"/>; its OK ends the game, back to the lobby.</summary>
     void ShowJoinFailed(std::string_view text)
     {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        dialog.SetText(text);
-        dialog.SetTwoButton(false);
-        dialog.Callback = nullptr;
-        dialog.OkButton->ShowGuiWindow(true);
-        dialog.OkButton->Callback().SetExec(CancelToMPlayer);
-        dialog.OkButton->SetUpPicture("bh_okay.tga");
-        dialog.OkButton->SetDownPicture("bg_okay.tga");
-        dialog.OkButton->Disabled = false;
-        dialog.Activate();
+        ShowOkDialog(*GlobalLog()->MessageDialog, text, CancelToMPlayer);
     }
 
     /// <summary>The guest's next try at joining its host's room again, or the end of its wait.</summary>

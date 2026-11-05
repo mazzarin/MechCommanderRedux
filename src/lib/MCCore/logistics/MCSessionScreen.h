@@ -97,6 +97,12 @@ public:
     /// </summary>
     void FileReport(uint32_t playerId, MCFileCheck check);
 
+    /// <summary>
+    /// Port-only (the personal build): player <paramref name="playerId"/> is gone from the room for good (a guest away
+    /// updating that didn't rejoin in time): its name and its place on a team go, here only.
+    /// </summary>
+    void RemovePlayer(uint32_t playerId);
+
     /// <summary>Loads mission <paramref name="fileName"/> chosen by the host and tells the others.</summary>
     void LoadMission(std::string_view fileName);
 

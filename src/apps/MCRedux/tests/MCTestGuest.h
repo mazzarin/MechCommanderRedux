@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MCTest.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
 #include "linkup/MCLinkupMessages.h"
 #include "linkup/MCSessionManager.h"
@@ -169,8 +170,19 @@ namespace MCTestGuest
             Send(hostId, message);
         }
 
+        /// <summary>Says to the host (player <paramref name="hostId"/>) that this guest's restart into an update is off.</summary>
+        void SendRestartOff(uint32_t hostId)
+        {
+            MCMPLongMessage message{};
+            message.Header = PlainHeader(MCMPMessageType::RestartOff);
+            Send(hostId, message);
+        }
+
         /// <summary>The host's messages saying its game restarts into an update, so far.</summary>
         int32_t Updatings() const { return _Updatings; }
+
+        /// <summary>The host's messages saying its restart into an update is off, so far.</summary>
+        int32_t RestartOffs() const { return _RestartOffs; }
 
         /// <summary>The host's messages taking every player to the session screen (its GO, or its room shown again).</summary>
         int32_t SessionScreens() const { return _SessionScreens; }
@@ -246,6 +258,12 @@ namespace MCTestGuest
             if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
             {
                 _Updatings++;
+                return;
+            }
+
+            if (type == static_cast<uint16_t>(MCMPMessageType::RestartOff))
+            {
+                _RestartOffs++;
                 return;
             }
 
@@ -351,8 +369,9 @@ namespace MCTestGuest
         std::optional<MCMPPlayersRulesMessage> _PlayersRules;
         /// <summary>The messages to send and to whom, until the listener sends them.</summary>
         std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
-        /// <summary>The host's messages saying it restarts into an update.</summary>
+        /// <summary>The host's messages saying it restarts into an update, and that its restart is off.</summary>
         std::atomic<int32_t> _Updatings = 0;
+        std::atomic<int32_t> _RestartOffs = 0;
         /// <summary>The host's messages taking every player to the session screen.</summary>
         std::atomic<int32_t> _SessionScreens = 0;
         /// <summary>What the guest's file reports say (<see cref="AnswerFiles"/>).</summary>
@@ -445,6 +464,9 @@ namespace MCTestGuest
         /// <summary>The guests' messages saying their games restart into an update, so far.</summary>
         int32_t Updatings() const { return _Updatings; }
 
+        /// <summary>The guests' messages saying their restarts into an update are off, so far.</summary>
+        int32_t RestartOffs() const { return _RestartOffs; }
+
         /// <summary>Says to player <paramref name="to"/> that the host's game restarts into an update.</summary>
         void SendUpdating(uint32_t to)
         {
@@ -509,11 +531,20 @@ namespace MCTestGuest
                 return;
             }
 
-            if (message.size() >= sizeof(MCFIGuaranteedMessageHeader) &&
-                ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type() ==
-                    static_cast<uint16_t>(MCMPMessageType::Updating))
+            if (message.size() < sizeof(MCFIGuaranteedMessageHeader))
+            {
+                return;
+            }
+
+            const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
+
+            if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
             {
                 _Updatings++;
+            }
+            else if (type == static_cast<uint16_t>(MCMPMessageType::RestartOff))
+            {
+                _RestartOffs++;
             }
         }
 
@@ -548,22 +579,53 @@ namespace MCTestGuest
         std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
         std::vector<uint32_t> _Joined;
         std::atomic<int32_t> _Updatings = 0;
+        std::atomic<int32_t> _RestartOffs = 0;
         /// <summary>The session as hosted, and whether the test wants it closed to new players.</summary>
         DPSESSIONDESC2 _Desc{};
         std::atomic<bool> _LockWanted = false;
     };
 
-    /// <summary>Runs frames for two seconds of game time, giving the network a moment each.</summary>
-    inline void Settle()
+    /// <summary>Runs one frame of a fifteenth of a second, giving the network a moment first.</summary>
+    inline void Step()
+    {
+        constexpr uint32_t NetworkMs = 3;
+        SDL_Delay(NetworkMs);
+        MCTestGame::RunFrame(1.0f / 15.0f);
+    }
+
+    /// <summary>Runs frames for two seconds of game time, giving the network a moment each; the last frame's hash.</summary>
+    inline uint32_t Settle()
     {
         constexpr int32_t Frames = 30;
-        constexpr uint32_t NetworkMs = 3;
 
         for (int32_t frame = 0; frame < Frames; frame++)
         {
-            SDL_Delay(NetworkMs);
-            MCTestGame::RunFrame(1.0f / 15.0f);
+            Step();
         }
+
+        return MCScreenInput::ScreenHash();
+    }
+
+    /// <summary>
+    /// Runs frames until <paramref name="done"/> says so, for ten seconds at most (the network's answers come in real
+    /// time, slower on a loaded machine); whether it did.
+    /// </summary>
+    inline bool SettleUntil(const std::function<bool()>& done)
+    {
+        constexpr std::chrono::seconds MostWait{10};
+        const auto deadline = std::chrono::steady_clock::now() + MostWait;
+
+        while (!done())
+        {
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+
+            Step();
+        }
+
+        return true;
     }
 
     /// <summary>

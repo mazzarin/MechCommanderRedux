@@ -19,16 +19,9 @@
 namespace
 {
     using Clock = std::chrono::steady_clock;
-
-    /// <summary>
-    /// How long RESTART waits before the update installs, so its messages leave this game first (the game keeps
-    /// sending and taking messages each frame meanwhile).
-    /// </summary>
-    constexpr std::chrono::milliseconds SendTime{500};
-    /// <summary>How often a guest waiting for its host tries to join again.</summary>
-    constexpr std::chrono::milliseconds TryEvery{500};
-    /// <summary>How long the host lets a guest back in settle (numbered by the session) before showing it the room.</summary>
-    constexpr std::chrono::seconds SettleTime{1};
+    using MCLobbyUpdate::SendTime;
+    using MCLobbyUpdate::SettleTime;
+    using MCLobbyUpdate::TryEvery;
 
     /// <summary>The logistics state of the room's waiting screen (the connect screen), as a lobby's start shows it.</summary>
     constexpr int32_t WaitingState = 0xe;
@@ -47,8 +40,15 @@ namespace
     constexpr std::string_view HostAloneRestartText = "DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN.";
     constexpr std::string_view HostRestartText = "DOWNLOADED: ON RESTART, EVERYONE REJOINS.";
 
-    /// <summary>The session screen's line while the room's start waits for guests restarting into an update.</summary>
-    constexpr std::string_view StartWaitsFormat = "WAITING FOR {} TO UPDATE.";
+    /// <summary>
+    /// The session screen's line while the room's start waits for guests away updating (or, after the host's restart
+    /// was called off, waiting for it).
+    /// </summary>
+    constexpr std::string_view StartWaitsFormat = "WAITING FOR {} TO REJOIN.";
+    /// <summary>What the room's other games say of player <paramref name="name"/> whose restart into an update is off.</summary>
+    constexpr std::string_view UpdateOffFormat = "{}'S UPDATE IS OFF.";
+    /// <summary>What the room's games say of player <paramref name="name"/> whose minute to rejoin is over.</summary>
+    constexpr std::string_view NotBackFormat = "{} DIDN'T REJOIN IN TIME.";
 
     /// <summary>A guest restarting into an update, whose place the room keeps until it is back or the wait is over.</summary>
     struct MCComing
@@ -68,11 +68,23 @@ namespace
     /// <summary>RESTART was taken: when the update installs; this game then quits.</summary>
     std::optional<Clock::time_point> RestartAt;
     bool Restarting = false;
+    /// <summary>The players in the room at RESTART, the host's guests: their places are kept if the restart is called off.</summary>
+    std::vector<MCComing> RoomAtRestart;
+    /// <summary>The rejoin note couldn't be written: RESTART waits for the match's end from then on.</summary>
+    bool NoteUnwritten = false;
     /// <summary>The guests restarting into an update, by the order they said so.</summary>
     std::vector<MCComing> Coming;
     /// <summary>The host shows its room again once a guest back from its update has settled.</summary>
     std::optional<Clock::time_point> RefreshAt;
     std::optional<MCHostWait> HostWait;
+    /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
+    MCLobbyUpdate::MCClock TestClock;
+
+    /// <summary>Now, for the room's waits.</summary>
+    Clock::time_point Now()
+    {
+        return TestClock ? TestClock() : Clock::now();
+    }
 
     /// <summary><paramref name="text"/> in capitals, as the menus write names.</summary>
     std::string Upper(std::string_view text)
@@ -142,12 +154,12 @@ namespace
         return said != MultiPlayer()->PlayerRules.end() && (said->second & MCMatchRule::RejoinsHost) != 0;
     }
 
-    /// <summary>Sends this game's Updating to player <paramref name="to"/> (0: every player).</summary>
-    void SendUpdating(uint32_t to)
+    /// <summary>Sends this game's <paramref name="type"/> (Updating or RestartOff, a header alone) to every player.</summary>
+    void SendToRoom(MCMPMessageType type)
     {
         MCMPLongMessage message{};
-        message.Header = PlainHeader(MCMPMessageType::Updating);
-        MultiPlayer()->SessionManager->SendPlainMessage(to, LinkupBytes(message));
+        message.Header = PlainHeader(type);
+        MultiPlayer()->SessionManager->SendPlainMessage(0, LinkupBytes(message));
     }
 
     /// <summary>The name this game takes in the room (as SetupLobbyConnection takes it).</summary>
@@ -203,7 +215,7 @@ namespace
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
         ShowWaiting(UpdatingText(name));
-        const Clock::time_point now = Clock::now();
+        const Clock::time_point now = Now();
         HostWait = MCHostWait{.Until = now + MCLobbyUpdate::RejoinWait, .NextTry = now};
     }
 
@@ -255,10 +267,14 @@ namespace
         ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(refusal));
     }
 
-    /// <summary>The host's places kept for updating guests: those past their wait go as the original's leaving does.</summary>
+    /// <summary>
+    /// The places kept for guests away updating: one past its wait goes, the room closing again once none is kept. The
+    /// guest is gone from the room: its name and its place on a team go too, so the room's start waits no more. A host
+    /// left alone ends the game as the original's leaving does.
+    /// </summary>
     void KeepPlaces(Clock::time_point now)
     {
-        const bool host = MultiPlayer()->IsHost;
+        MCMultiPlayer& game = *MultiPlayer();
 
         for (auto coming = Coming.begin(); coming != Coming.end();)
         {
@@ -268,22 +284,78 @@ namespace
                 continue;
             }
 
-            SDL_Log("Lobby updates: %s didn't come back", coming->Name.c_str());
-            const std::string name = coming->Name;
+            // A guest still here never left (its host's restart was called off before it went).
+            const bool stayed = game.SessionManager->GetPlayer(coming->Id) != nullptr;
+            SDL_Log("Lobby updates: %s %s", coming->Name.c_str(), stayed ? "stayed" : "didn't rejoin in time");
+            const MCComing gone = *coming;
             coming = Coming.erase(coming);
 
-            if (host && Coming.empty())
+            if (game.IsHost && Coming.empty())
             {
-                MultiPlayer()->SessionManager->AdmitNewPlayers(false);
+                game.SessionManager->AdmitNewPlayers(false);
+            }
+
+            if (!stayed && GlobalLog()->SessionScreen != nullptr && GlobalLog()->SessionScreen->StartButton != nullptr)
+            {
+                GlobalLog()->SessionScreen->RemovePlayer(gone.Id);
             }
 
             PlacesChanged();
 
-            if (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
+            if (stayed)
             {
-                ShowPlayerLeft(name);
+                continue;
+            }
+
+            if (game.IsHost && Others().empty() && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
+            {
+                ShowPlayerLeft(gone.Name);
+            }
+            else if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+            {
+                chat->AddLine(std::format(NotBackFormat, Upper(gone.Name)));
             }
         }
+    }
+}
+
+namespace
+{
+    /// <summary>
+    /// RESTART is off (<paramref name="why"/>): the update failed, or the room can't rejoin now. The note goes, the room
+    /// is told so that it drops the place it keeps for this game, and a host keeps its guests' places: they left to wait
+    /// for it, and join the same address again.
+    /// </summary>
+    void CallOff(std::string_view why)
+    {
+        SDL_Log("Lobby updates: the restart is off: %.*s", static_cast<int>(why.size()), why.data());
+        RestartAt.reset();
+        Restarting = false;
+        MCRejoinNote::Withdraw(MCFileSystem::UserRoot());
+
+        if (!MCLobbyUpdate::InRoom())
+        {
+            RoomAtRestart.clear();
+            return;
+        }
+
+        SendToRoom(MCMPMessageType::RestartOff);
+
+        if (MultiPlayer()->IsHost && !RoomAtRestart.empty())
+        {
+            const Clock::time_point until = Now() + MCLobbyUpdate::RejoinWait;
+
+            for (MCComing& guest : RoomAtRestart)
+            {
+                guest.Until = until;
+                Coming.push_back(std::move(guest));
+            }
+
+            MultiPlayer()->SessionManager->AdmitNewPlayers(true);
+            PlacesChanged();
+        }
+
+        RoomAtRestart.clear();
     }
 }
 
@@ -323,8 +395,9 @@ auto MCLobbyUpdate::ReadyText() -> std::string
 
 auto MCLobbyUpdate::CanRestart() -> bool
 {
-    // A guest away updating can't be told: the room restarts only once it is back.
-    return InRoom() && !MatchUnderWay() && Coming.empty() &&
+    // A guest away updating can't be told: the room restarts only once it is back. The new version comes back only
+    // with the note, which needs the build it starts as.
+    return InRoom() && !MatchUnderWay() && Coming.empty() && !NoteUnwritten && MCUpdater::ExpectedBuild().has_value() &&
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
@@ -358,38 +431,62 @@ auto MCLobbyUpdate::Restart() -> bool
         return true;
     }
 
-    const std::optional<uint64_t> build = MCUpdater::ExpectedBuild();
+    // Known: CanRestart.
+    const uint64_t build = *MCUpdater::ExpectedBuild();
     const std::string commandLine = MCRejoinNote::LobbyCommandLine(LobbyLaunchArgs);
 
-    if (!build.has_value())
+    if (const auto written = MCRejoinNote::Write(
+            MCFileSystem::UserRoot(), {.CommandLine = commandLine, .Build = build, .Time = MCRejoinNote::Now()});
+        !written)
     {
-        SDL_Log("Lobby updates: the update's build isn't known: no rejoin note");
-    }
-    else if (const auto written = MCRejoinNote::Write(
-                 MCFileSystem::UserRoot(), {.CommandLine = commandLine, .Build = *build, .Time = MCRejoinNote::Now()});
-             !written)
-    {
-        SDL_Log("Lobby updates: no rejoin note: %s", written.error().c_str());
+        SDL_Log(
+            "Lobby updates: RESTART waits: no rejoin note (%s): the update installs as the game exits after the match",
+            written.error().c_str());
+        NoteUnwritten = true;
+        return true;
     }
 
     // Every game in the room: the host's guests wait for it, a guest's place is kept.
-    SendUpdating(0);
+    SendToRoom(MCMPMessageType::Updating);
+    RoomAtRestart.clear();
+
+    if (MultiPlayer()->IsHost)
+    {
+        for (const std::shared_ptr<MCFidpPlayer>& guest : Others())
+        {
+            RoomAtRestart.push_back({.Id = guest->Id, .Name = guest->Name});
+        }
+    }
 
     SDL_Log("Lobby updates: restarting into the update, to start again as %s", commandLine.c_str());
-    RestartAt = Clock::now() + SendTime;
+    RestartAt = Now() + SendTime;
     return true;
 }
 
 auto MCLobbyUpdate::Frame() -> void
 {
-    const Clock::time_point now = Clock::now();
+    const Clock::time_point now = Now();
 
     if (RestartAt.has_value() && now >= *RestartAt)
     {
-        RestartAt.reset();
-        MCUpdater::Answer(MCUpdater::MCAnswer::Install);
-        // An update no longer ready (it failed meanwhile) leaves the room as it was.
-        Restarting = MCUpdater::Status().Stage == MCUpdater::MCStage::Installing;
+        // The room may have changed meanwhile: its match started (a guest's RESTART crossing the host's START).
+        if (!CanRestart())
+        {
+            CallOff("the room can't rejoin now");
+        }
+        else
+        {
+            RestartAt.reset();
+            MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+            Restarting = true;
+        }
+    }
+
+    // An update no longer installing (it failed, meanwhile or since) leaves the room as it was.
+    if (Restarting && MCUpdater::Status().Stage != MCUpdater::MCStage::Installing)
+    {
+        CallOff(MCUpdater::Status().Stage == MCUpdater::MCStage::Failed ? MCUpdater::Status().Error
+                                                                        : std::string("the update isn't ready"));
     }
 
     if (MultiPlayer() == nullptr || GlobalLog() == nullptr)
@@ -445,7 +542,7 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
     }
 
     SDL_Log("Lobby updates: %s restarts into an update; the room keeps its place", player->Name.c_str());
-    Coming.push_back({.Id = fromId, .Name = player->Name, .Until = Clock::now() + RejoinWait});
+    Coming.push_back({.Id = fromId, .Name = player->Name, .Until = Now() + RejoinWait});
 
     if (game.IsHost)
     {
@@ -458,6 +555,37 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
     {
         chat->AddLine(UpdatingText(player->Name));
     }
+}
+
+auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
+{
+    const auto coming = std::ranges::find(Coming, fromId, &MCComing::Id);
+
+    if (!InRoom() || GlobalLog() == nullptr || coming == Coming.end())
+    {
+        return;
+    }
+
+    SDL_Log("Lobby updates: %s's restart is off; it stays in the room", coming->Name.c_str());
+    const std::string name = coming->Name;
+    Coming.erase(coming);
+
+    if (MultiPlayer()->IsHost && Coming.empty())
+    {
+        MultiPlayer()->SessionManager->AdmitNewPlayers(false);
+    }
+
+    PlacesChanged();
+
+    if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+    {
+        chat->AddLine(std::format(UpdateOffFormat, Upper(name)));
+    }
+}
+
+auto MCLobbyUpdate::SetClock(MCClock clock) -> void
+{
+    TestClock = std::move(clock);
 }
 
 auto MCLobbyUpdate::LeftToUpdate(uint32_t playerId) -> bool
@@ -492,7 +620,7 @@ auto MCLobbyUpdate::PlayerJoined(uint32_t playerId) -> void
             game->SessionManager->AdmitNewPlayers(false);
         }
 
-        RefreshAt = Clock::now() + SettleTime;
+        RefreshAt = Now() + SettleTime;
     }
 
     PlacesChanged();

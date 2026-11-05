@@ -4,6 +4,7 @@
 #include "MCTestGuest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
+#include "gui/MCGuiCallback.h"
 #include "gui/MCGuiStartup.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
@@ -15,6 +16,7 @@
 #include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
+#include "main/MCGameSession.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
 #include "network/MCLobbyUpdate.h"
@@ -123,6 +125,7 @@ namespace
     using MCTestGuest::Guest;
     using MCTestGuest::HostLobbyRoom;
     using MCTestGuest::Settle;
+    using MCTestGuest::SettleUntil;
     using MCUpdater::MCAnswer;
 
     /// <summary>What the stand-in for Sparkle was asked.</summary>
@@ -163,18 +166,29 @@ namespace
     constexpr std::string_view NewVersion = "0.2.2 (480)";
     constexpr std::string_view NewNotes = "Rooms keep their players through an update.";
 
-    /// <summary>Runs <see cref="Settle"/> until <paramref name="done"/> says so, at most a few times; whether it did.</summary>
-    bool SettleUntil(const std::function<bool()>& done)
+    /// <summary>The room's waits go by a clock the test moves (MCLobbyUpdate::SetClock), for the test's length.</summary>
+    class MCLobbyClock
     {
-        constexpr int32_t MostSettles = 10;
-
-        for (int32_t settle = 0; settle < MostSettles && !done(); settle++)
+    public:
+        MCLobbyClock()
         {
+            MCLobbyUpdate::SetClock([this] { return _Now; });
+        }
+
+        ~MCLobbyClock() { MCLobbyUpdate::SetClock(nullptr); }
+        MCLobbyClock(const MCLobbyClock&) = delete;
+        MCLobbyClock& operator=(const MCLobbyClock&) = delete;
+
+        /// <summary>Moves the clock on by <paramref name="time"/>, and the game sees it.</summary>
+        void Pass(std::chrono::milliseconds time)
+        {
+            _Now += time;
             Settle();
         }
 
-        return done();
-    }
+    private:
+        std::chrono::steady_clock::time_point _Now = std::chrono::steady_clock::now();
+    };
 
     /// <summary>The middle of <paramref name="object"/>, on the screen.</summary>
     std::pair<int32_t, int32_t> Middle(MCGuiObject& object)
@@ -245,10 +259,10 @@ namespace
     /// <summary>The build the found update (<see cref="NewVersion"/>) brings.</summary>
     constexpr uint64_t NewBuild = 480;
 
-    /// <summary>The update found, downloaded and ready: RESTART installs it.</summary>
-    void UpdateReady()
+    /// <summary>The update found (as <paramref name="version"/>), downloaded and ready: RESTART installs it.</summary>
+    void UpdateReady(std::string_view version = NewVersion)
     {
-        MCUpdater::Found(std::string(NewVersion), std::string(NewNotes));
+        MCUpdater::Found(std::string(version), std::string(NewNotes));
         MCUpdater::Answer(MCAnswer::Install);
         MCUpdater::Ready();
         Settle();
@@ -425,7 +439,7 @@ TEST_CASE_ISOLATED("game: a lobby's room holds its start while a guest is away u
     ann.SendUpdating(hostId);
     REQUIRE(SettleUntil(RoomOpen));
     CHECK(screen.StartButton->Disabled);
-    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN TO UPDATE."));
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
     MCScreenInput::SaveShot("lobby start waits 0 guest away", MCScreenInput::ScreenHash());
 
     // The guest gone (as it quits), its name left in its slot: START still waits, whatever the picks say.
@@ -452,6 +466,172 @@ TEST_CASE_ISOLATED("game: a lobby's room holds its start while a guest is away u
     CHECK(!MCLobbyUpdate::LeftToUpdate(cal.Id()));
     CHECK(MCLobbyUpdate::StartWaitsText().empty());
     MultiPlayer()->InLogistics = false;
+}
+
+/// <summary>
+/// A guest away updating has a minute to rejoin: then its place goes, its name and its place on a team with it, the
+/// room closes and START lights with the picks left (no "has left the game", which would end a lobby's game). A guest
+/// whose restart is off (its update failed) says so, and the room lets its place go at once.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's room lets a guest away updating go after its minute, or at once when its restart "
+                   "is off")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCLobbyClock clock;
+    Guest ann("ANN");
+    Guest cal("CAL");
+    REQUIRE(HostLobbyRoom("28901", {ann, cal}));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    PickTeams(screen, {ann.Id(), cal.Id()});
+    REQUIRE(!screen.StartButton->Disabled);
+
+    cal.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    CHECK(screen.StartButton->Disabled);
+    cal.SendRestartOff(hostId);
+    REQUIRE(SettleUntil([] { return !RoomOpen(); }));
+    CHECK(!screen.StartButton->Disabled);
+    CHECK(!MCLobbyUpdate::LeftToUpdate(cal.Id()));
+
+    ann.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    ann.Leave();
+    Settle();
+    clock.Pass(MCLobbyUpdate::RejoinWait - std::chrono::seconds(1));
+    CHECK(RoomOpen());
+    CHECK(screen.StartButton->Disabled);
+    CHECK(Shows(screen, ann.Id()));
+
+    clock.Pass(std::chrono::seconds(1));
+    CHECK(!RoomOpen());
+    CHECK(!Shows(screen, ann.Id()));
+    CHECK(screen.StartWaits.empty());
+    CHECK(!screen.StartButton->Disabled);
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    MCScreenInput::SaveShot("lobby start waits 1 guest not back", MCScreenInput::ScreenHash());
+}
+
+namespace
+{
+    /// <summary>The version shown without its build: the new version's build isn't known.</summary>
+    constexpr std::string_view VersionWithoutBuild = "0.2.2";
+
+    /// <summary>The rejoin note's file in the game's user folder.</summary>
+    std::filesystem::path GameNotePath()
+    {
+        return MCTestGame::UserFolder() / MCRejoinNote::FileName;
+    }
+
+    /// <summary>The UPDATE page over the session screen, its RESTART button (null when the page has none).</summary>
+    std::shared_ptr<MCLogTextButton> RestartOnPage(MCSessionScreen& screen)
+    {
+        ShowUpdatePageOver(screen);
+        Settle();
+        return MCScreenInput::FindTextButton(screen, "RESTART");
+    }
+}
+
+/// <summary>
+/// RESTART brings a lobby's game back to its room only with the rejoin note, which names the build it starts as: with
+/// the update's build unknown, or the note unwritable, the page says the update installs after the match, and the
+/// room is told nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's RESTART waits for the match's end when the update's build isn't known, or the "
+                   "rejoin note can't be written")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCFakeUpdater updater;
+    Guest ann("ANN");
+    REQUIRE(HostLobbyRoom("28903", {ann}));
+    ann.SendRules(MultiPlayer()->SessionManager->MyPlayer()->Id, MCMatchRule::Supported);
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    UpdateReady(VersionWithoutBuild);
+    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
+    REQUIRE(restart != nullptr);
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK(!restart->IsShowing());
+    CHECK(MCLobbyUpdate::Restart());
+    Settle();
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+
+    // The build known, but the note's file taken by a folder.
+    std::filesystem::create_directories(GameNotePath());
+    UpdateReady();
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    ClickOn(*restart);
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK(!restart->IsShowing());
+    Settle();
+    CHECK_EQ(updater.Log->Answers.size(), size_t{2});
+    CHECK_EQ(ann.Updatings(), 0);
+    CHECK(!MCLobbyUpdate::LeftToUpdate(ann.Id()));
+    std::filesystem::remove(GameNotePath());
+}
+
+/// <summary>
+/// A lobby's host whose update fails after RESTART told the room: the restart is off, the note goes, and the guests
+/// still there are told; those gone to wait for it (as their games do at once) have their places kept, the room open,
+/// and rejoin it as they try the same address again: the host shows them the room.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's host whose update fails after RESTART keeps its guests' places, and they rejoin")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCLobbyClock clock;
+    MCFakeUpdater updater;
+    Guest ann("ANN");
+    Guest cal("CAL");
+    REQUIRE(HostLobbyRoom("28905", {ann, cal}));
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    cal.SendRules(hostId, MCMatchRule::Supported);
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    UpdateReady();
+    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
+    REQUIRE(restart != nullptr);
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    ClickOn(*restart);
+    REQUIRE(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
+    clock.Pass(MCLobbyUpdate::SendTime);
+    REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
+    CHECK(std::filesystem::exists(GameNotePath()));
+
+    // ANN's game has gone to wait for the host; CAL's is still on its way out.
+    ann.Leave();
+    Settle();
+    MCUpdater::Failed("the disk is full");
+    REQUIRE(SettleUntil([&] { return cal.RestartOffs() == 1; }));
+    CHECK(!std::filesystem::exists(GameNotePath()));
+    CHECK(RoomOpen());
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN, CAL TO REJOIN."));
+    cal.Leave();
+    Settle();
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+
+    Guest annBack("ANN");
+    Guest calBack("CAL");
+    REQUIRE(annBack.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28905"));
+    REQUIRE(calBack.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28905"));
+    Settle();
+    clock.Pass(MCLobbyUpdate::SettleTime);
+    REQUIRE(SettleUntil([&] { return annBack.SessionScreens() > 0 && calBack.SessionScreens() > 0; }));
+    CHECK(!RoomOpen());
+    CHECK(screen.StartWaits.empty());
+    CHECK(Shows(screen, annBack.Id()));
+    CHECK(Shows(screen, calBack.Id()));
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
 }
 
 namespace
@@ -491,7 +671,32 @@ namespace
         return MCTestGame::StartLobby(*line);
     }
 
-    /// <summary>Boots the game to rejoin a room at <paramref name="port"/>, which fails: what it says.</summary>
+    /// <summary>Whether the message dialog's OK ends the game, back to the lobby (CancelToMPlayer, which quits it).</summary>
+    bool OkEndsTheGame()
+    {
+        const MCGuiCallback& ok = GlobalLog()->MessageDialog->OkButton->Callback();
+
+        if (!ok.Runs(CancelToMPlayer))
+        {
+            return false;
+        }
+
+        try
+        {
+            ok.Exec();
+        }
+        catch (const MCGameQuit& quit)
+        {
+            return quit.ExitCode == 0;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Boots the game to rejoin a room at <paramref name="port"/>, which fails: what it says (its OK ending the game, as
+    /// the test checks).
+    /// </summary>
     std::string RejoinFails(std::string_view port)
     {
         if (!StartFromNote(
@@ -501,7 +706,9 @@ namespace
         }
 
         CHECK(!InSession());
-        return DialogText();
+        std::string text = DialogText();
+        CHECK(OkEndsTheGame());
+        return text;
     }
 }
 
@@ -594,6 +801,92 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
         MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
     REQUIRE(note.has_value());
     CHECK_EQ(*note, std::format("-join 127.0.0.1:28897 -player ANN -session \"{}\" -maxplayers 6 -rejoin", RoomName));
+}
+
+/// <summary>
+/// A lobby's guest whose host said it restarts but whose room doesn't come back within the minute says the room has
+/// closed, and its OK ends the game, back to the lobby.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest whose host isn't back within a minute says the room has closed, and its OK "
+                   "ends the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCLobbyClock clock;
+    auto bob = std::make_unique<Host>();
+    REQUIRE(bob->Open("28909", std::string(HostName), std::string(RoomName)));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1:28909 -player ANN -session \"{}\"", RoomName)));
+    REQUIRE(SettleUntil([&] { return !bob->Joined().empty(); }));
+    bob->Lock();
+    MultiPlayer()->ServerID = bob->Id();
+    bob->SendUpdating(MultiPlayer()->SessionManager->MyPlayerID);
+    REQUIRE(SettleUntil([] { return !InSession(); }));
+    bob->Close();
+    bob.reset();
+
+    clock.Pass(MCLobbyUpdate::RejoinWait - MCLobbyUpdate::TryEvery);
+    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    clock.Pass(MCLobbyUpdate::TryEvery);
+    CHECK(!InSession());
+    CHECK_EQ(DialogText(), std::string("Couldn't join the room again: it has closed."));
+    CHECK(OkEndsTheGame());
+}
+
+/// <summary>
+/// A lobby's guest calls its RESTART off when the room's match starts before the update goes in (the host's START
+/// crossing it), and when the update fails after it went in: the note goes, the host is told, and the game stays in
+/// the room as before.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the match starts first or the update fails, "
+                   "telling the room")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCLobbyClock clock;
+    MCFakeUpdater updater;
+    Host bob;
+    REQUIRE(bob.Open("28907", std::string(HostName), std::string(RoomName)));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1:28907 -player ANN -session \"{}\"", RoomName)));
+    REQUIRE(SettleUntil([&] { return !bob.Joined().empty(); }));
+    GlobalLog()->SetUpSessionScreen();
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    MultiPlayer()->PlayerRules[bob.Id()] = MCMatchRule::Supported;
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    UpdateReady();
+    const std::shared_ptr<MCLogTextButton> restart = RestartOnPage(screen);
+    REQUIRE(restart != nullptr);
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+
+    // The host's START crosses the RESTART: the match is under way before the update goes in.
+    ClickOn(*restart);
+    REQUIRE(SettleUntil([&] { return bob.Updatings() == 1; }));
+    MultiPlayer()->InLogistics = true;
+    clock.Pass(MCLobbyUpdate::SendTime);
+    REQUIRE(SettleUntil([&] { return bob.RestartOffs() == 1; }));
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+    CHECK(!std::filesystem::exists(GameNotePath()));
+    CHECK(!MCLobbyUpdate::LeftToUpdate(bob.Id()));
+    MultiPlayer()->InLogistics = false;
+
+    // Again, and the update fails after it went in.
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    ClickOn(*restart);
+    REQUIRE(SettleUntil([&] { return bob.Updatings() == 2; }));
+    clock.Pass(MCLobbyUpdate::SendTime);
+    REQUIRE_EQ(updater.Log->Answers.size(), size_t{2});
+    CHECK(MCLobbyUpdate::LeftToUpdate(bob.Id()));
+    MCUpdater::Failed("the disk is full");
+    REQUIRE(SettleUntil([&] { return bob.RestartOffs() == 2; }));
+    CHECK(!std::filesystem::exists(GameNotePath()));
+    CHECK(!MCLobbyUpdate::LeftToUpdate(bob.Id()));
+    CHECK(InSession());
 }
 
 /// <summary>A rejoin finding no room at the address says the room has closed (its OK ends the game).</summary>

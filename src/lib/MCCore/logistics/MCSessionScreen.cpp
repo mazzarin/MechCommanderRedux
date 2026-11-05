@@ -959,6 +959,34 @@ auto MCSessionScreen::AssignPlayer(uint32_t playerId, int8_t team, int8_t slot, 
     CheckGoodToGo();
 }
 
+auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
+{
+    const std::shared_ptr<MCPlayerNameObject> nameObject = playerId != NoPlayer ? NameOf(playerId) : nullptr;
+
+    if (nameObject == nullptr)
+    {
+        return;
+    }
+
+    // Each game takes it off its own screen (its own place-keeping times it out), so nothing is sent.
+    if (const int32_t slot = FindSlot(Team1Players, playerId); slot >= 0)
+    {
+        Team1Players[static_cast<size_t>(slot)] = NoPlayer;
+        MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->InnerSphereGroupID, playerId);
+    }
+    else if (const int32_t team2Slot = FindSlot(Team2Players, playerId); team2Slot >= 0)
+    {
+        Team2Players[static_cast<size_t>(team2Slot)] = NoPlayer;
+        MultiPlayer()->SessionManager->RemovePlayerFromGroup(MultiPlayer()->ClanGroupID, playerId);
+    }
+
+    nameObject->ShowGuiWindow(false);
+    nameObject->SetPlayerId(NoPlayer);
+    NumPlayers = std::max(NumPlayers - 1, 0);
+    LayOutUnassigned(NoPlayer, MaxPlayers, true);
+    CheckGoodToGo();
+}
+
 auto MCSessionScreen::SetTeam1RP(int32_t resourcePoints) const -> void
 {
     Team1RPText->SetStringBuffer(std::format("{}", resourcePoints));

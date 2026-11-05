@@ -55,6 +55,9 @@ namespace MCRejoinNote
     /// </summary>
     void Discard(const std::filesystem::path& userFolder);
 
+    /// <summary>RESTART is off (network/MCLobbyUpdate.h): the note in <paramref name="userFolder"/> goes, unread.</summary>
+    void Withdraw(const std::filesystem::path& userFolder);
+
     /// <summary>Now, in seconds since 1970 (the system's clock, as the note keeps it).</summary>
     int64_t Now();
 }

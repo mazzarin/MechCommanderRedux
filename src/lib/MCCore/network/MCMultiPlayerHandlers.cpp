@@ -1719,6 +1719,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
             break;
         }
 
+        case MCMPMessageType::RestartOff:
+        {
+            // Port (personal): the sender's restart is off after all: it stays (network/MCLobbyUpdate.h).
+            MCLobbyUpdate::RestartOff(fromID);
+            break;
+        }
+
         case MCMPMessageType::SessionCheckIn:
         {
             // A sender without a number (gone, or not yet numbered) is ignored; the original read through the null

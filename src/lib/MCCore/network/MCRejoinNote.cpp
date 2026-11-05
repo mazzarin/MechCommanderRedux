@@ -32,6 +32,18 @@ namespace
                 why.data(), error ? std::format(" can't be deleted: {}", error.message()).c_str() : " is deleted");
     }
 
+    /// <summary>Deletes the note in <paramref name="userFolder"/>, if there is one, saying why.</summary>
+    void DeleteAny(const std::filesystem::path& userFolder, std::string_view why)
+    {
+        const std::filesystem::path path = userFolder / MCRejoinNote::FileName;
+        std::error_code error;
+
+        if (std::filesystem::exists(path, error))
+        {
+            Delete(path, why);
+        }
+    }
+
     /// <summary>The note at <paramref name="path"/>, or why it isn't one.</summary>
     std::expected<MCRejoinNote::MCNote, std::string> Read(const std::filesystem::path& path)
     {
@@ -181,13 +193,12 @@ auto MCRejoinNote::TakeAtStart(const std::filesystem::path& userFolder, uint64_t
 
 auto MCRejoinNote::Discard(const std::filesystem::path& userFolder) -> void
 {
-    const std::filesystem::path path = userFolder / FileName;
-    std::error_code error;
+    DeleteAny(userFolder, "a lobby's start with its own words");
+}
 
-    if (std::filesystem::exists(path, error))
-    {
-        Delete(path, "a lobby's start with its own words");
-    }
+auto MCRejoinNote::Withdraw(const std::filesystem::path& userFolder) -> void
+{
+    DeleteAny(userFolder, "the restart is off");
 }
 
 auto MCRejoinNote::Now() -> int64_t

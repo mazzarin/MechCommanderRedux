@@ -807,7 +807,9 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
     {
         IsServer = true;
 
-        if (const auto player = SessionManager->GetPlayer(playerID); player != nullptr)
+        // Port (personal): a player away updating hasn't left: the room was told it is updating (network/MCLobbyUpdate.h).
+        if (const auto player = SessionManager->GetPlayer(playerID);
+            player != nullptr && !MCLobbyUpdate::LeftToUpdate(playerID))
         {
             std::string text = MCFormatPrintf(LoadGameString(0x382, 0xfe).c_str(), player->Name.c_str());
 

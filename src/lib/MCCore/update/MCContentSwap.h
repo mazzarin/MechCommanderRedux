@@ -168,9 +168,10 @@ namespace MCContentSwap
     /// The start's swap (<see cref="Run"/>) under the game's lock (update/MCUpdateLock.h), which then stays held shared
     /// for the game's run. The swap takes the lock exclusive: a ready update waits <see cref="QuittingWait"/> for
     /// another copy to quit, then for a later start. A swap stopped midway or a repair, whose files can't be played, is
-    /// waited for (another copy finishing it) until <paramref name="deadline"/> or, with none, <see cref="MidwayWait"/>. Neither
-    /// wait passes <paramref name="deadline"/>. Without a lock (none could be opened) the swap runs as it is. The
-    /// program starting is build <paramref name="runningBuild"/>: content needing a newer one is disarmed.
+    /// waited for (another copy finishing it) until <paramref name="deadline"/> or, with none, <see cref="MidwayWait"/>;
+    /// so is another copy holding the lock exclusive when it's to be held shared. Past that the start is Stuck, never
+    /// waiting longer, and holds nothing. Without a lock (none could be opened) the swap runs as it is. The program
+    /// starting is build <paramref name="runningBuild"/>: content needing a newer one is disarmed.
     /// </summary>
     MCResult RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
                         uint64_t runningBuild,

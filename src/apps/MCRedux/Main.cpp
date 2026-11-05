@@ -338,7 +338,9 @@ namespace
     /// The recovery screen (SPEC-install-and-updates.md's If it can't finish): an update stopped partway that can
     /// neither finish nor go back, or a repair not done. TRY AGAIN swaps again; REPAIR, in a build that updates its
     /// content (<paramref name="setup"/>), gives the update up and installs the release over the files as they are,
-    /// under the game's lock held exclusive; QUIT ends the game. It asks again while the files can't be played.
+    /// under the game's lock held exclusive; QUIT ends the game. It asks again while the files can't be played. While it
+    /// asks, the game holds no lock, so another copy may finish the update meanwhile: each answer takes the lock again
+    /// and looks at the folder as it is then.
     /// </summary>
     /// <returns>Whether the game can play the files now.</returns>
     bool Recover(std::string problem, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
@@ -355,6 +357,12 @@ namespace
 
         for (;;)
         {
+            // The player may take long to answer: the lock isn't held meanwhile (the editor isn't kept waiting).
+            if (lock != nullptr)
+            {
+                lock->Release();
+            }
+
             SDL_Log("Updates: the game's files can't be played (%s): the recovery screen asks", problem.c_str());
             const std::string text = setup != nullptr
                                          ? std::format("{}.\n\n{} {}", Lettered(problem), RecoveryStep, RepairStep)
@@ -374,20 +382,26 @@ namespace
                     continue;
                 }
 
-                const auto repaired = MCFirstStart::Run(RepairHeading, ContentWork(*setup, MCContentUpdater::Repair));
-
-                if (!repaired)
+                // Another copy may have finished the update while the player chose: then there's nothing to repair.
+                if (MCContentSwap::UnderWay(*MakeDisk(), gameFolder))
                 {
-                    problem = repaired.error();
-                    continue;
-                }
+                    const auto repaired =
+                        MCFirstStart::Run(RepairHeading, ContentWork(*setup, MCContentUpdater::Repair));
 
-                if (!*repaired)
-                {
-                    return false;
+                    if (!repaired)
+                    {
+                        problem = repaired.error();
+                        continue;
+                    }
+
+                    if (!*repaired)
+                    {
+                        return false;
+                    }
                 }
             }
 
+            // The swap again, the lock taken exclusive (held already after a repair), then held shared to play.
             const MCContentSwap::MCResult result =
                 MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, MC_VERSION_BUILD);
 

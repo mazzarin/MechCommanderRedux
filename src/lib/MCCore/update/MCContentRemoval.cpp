@@ -6,31 +6,8 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
-#include <thread>
-
 namespace
 {
-    /// <summary>How often removal tries the game's lock again while copies of the game run.</summary>
-    constexpr std::chrono::milliseconds LockRetry{100};
-
-    /// <summary>Takes <paramref name="lock"/> exclusive, trying until <paramref name="wait"/> has passed.</summary>
-    bool TakeExclusive(MCUpdateLock& lock, std::chrono::milliseconds wait)
-    {
-        const auto until = std::chrono::steady_clock::now() + wait;
-
-        while (!lock.TryExclusive())
-        {
-            if (std::chrono::steady_clock::now() >= until)
-            {
-                return false;
-            }
-
-            std::this_thread::sleep_for(LockRetry);
-        }
-
-        return true;
-    }
-
     /// <summary>
     /// Under the game's lock held exclusive, finishes what an update left under way, so the record says what's on disk
     /// and nothing the player had is left in <c>Redux update/replaced/</c>: a swap a crash stopped midway is finished,
@@ -111,7 +88,7 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
         return std::unexpected(std::format("the game's lock in {} can't be opened", MCFileSystem::ToUtf8(update)));
     }
 
-    if (!TakeExclusive(*lock, wait))
+    if (!lock->ExclusiveBy(std::chrono::steady_clock::now() + wait))
     {
         return std::unexpected(std::format("a copy of the game is running from {}: close it, then try again",
                                            MCFileSystem::ToUtf8(gameFolder)));

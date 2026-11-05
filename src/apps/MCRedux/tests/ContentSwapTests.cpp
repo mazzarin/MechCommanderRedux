@@ -1129,3 +1129,64 @@ TEST_CASE("content removal: a repair's giving up stopped at any step is finished
 
     CHECK(tried > 0);
 }
+
+TEST_CASE("update lock: held exclusive by one copy, another can't hold it shared; a wait for it ends at its deadline")
+{
+    const MCScratchFolder game(Group, "lock-waits");
+    const std::unique_ptr<MCUpdateLock> swapping = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    REQUIRE(swapping != nullptr);
+    REQUIRE(starting != nullptr);
+    REQUIRE(swapping->TryExclusive());
+    CHECK(!starting->TryShared());
+
+    constexpr std::chrono::milliseconds wait{250};
+    const auto before = std::chrono::steady_clock::now();
+    CHECK(!starting->SharedBy(before + wait));
+    CHECK(!starting->ExclusiveBy(before + wait));
+    const auto waited = std::chrono::steady_clock::now() - before;
+    CHECK(waited >= wait);
+    CHECK(waited < 2 * wait + MCUpdateLock::RetryEvery);
+
+    // Let go, the waits end as soon as they can; exclusive turns shared in place.
+    swapping->Release();
+    CHECK(starting->ExclusiveBy(std::chrono::steady_clock::now() + wait));
+    CHECK(starting->TryShared());
+    CHECK(swapping->TryShared());
+    CHECK(!swapping->TryExclusive());
+}
+
+TEST_CASE("content swap at a start: another copy holding the lock exclusive makes the start Stuck by its deadline, "
+          "holding nothing; it never waits longer")
+{
+    const MCScratchFolder game(Group, "start-stuck");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    REQUIRE(other != nullptr);
+    REQUIRE(starting != nullptr);
+    REQUIRE(other->TryExclusive());
+    constexpr std::chrono::milliseconds wait{300};
+
+    // Nothing under way here, but another copy holds it exclusive (removing the content, say), then a swap stopped
+    // midway (a repair runs for as long as its download takes).
+    for (const bool midway : {false, true})
+    {
+        if (midway)
+        {
+            REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCContentSwap::JournalFile), "{}"));
+        }
+
+        const auto before = std::chrono::steady_clock::now();
+        const MCContentSwap::MCResult result =
+            MCContentSwap::RunAtStart(*disk, game.Path(), starting.get(), NewProgram, before + wait);
+        const auto waited = std::chrono::steady_clock::now() - before;
+        CHECK(result.Outcome == MCOutcome::Stuck);
+        CHECK(result.Error.find("another copy") != std::string::npos);
+        CHECK(waited < 2 * wait + MCUpdateLock::RetryEvery);
+
+        // It holds nothing: the other copy, letting go, takes it back exclusive at once.
+        other->Release();
+        CHECK(other->TryExclusive());
+    }
+}

@@ -3,8 +3,10 @@
 
 #include "update/MCUpdateLock.h"
 
+#include <algorithm>
 #include <cstdarg>
 #include <system_error>
+#include <thread>
 
 #ifdef MC_LOCK_NO_SDL
 #include <cstdio>
@@ -84,6 +86,28 @@ namespace
         return result == 0;
     }
 #endif
+
+    /// <summary>Tries <paramref name="attempt"/> until it succeeds or <paramref name="until"/> has passed (once at least).</summary>
+    template <typename Attempt> bool TryUntil(std::chrono::steady_clock::time_point until, Attempt&& attempt)
+    {
+        for (;;)
+        {
+            if (attempt())
+            {
+                return true;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+
+            if (now >= until)
+            {
+                return false;
+            }
+
+            std::this_thread::sleep_for(
+                std::min<std::chrono::steady_clock::duration>(MCUpdateLock::RetryEvery, until - now));
+        }
+    }
 }
 
 std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& gameFolder, std::string_view name)
@@ -170,7 +194,7 @@ bool MCUpdateLock::TryExclusive()
     return true;
 }
 
-bool MCUpdateLock::Shared()
+bool MCUpdateLock::TryShared()
 {
     if (_Held == MCHeld::Shared)
     {
@@ -180,13 +204,13 @@ bool MCUpdateLock::Shared()
 #ifdef _WIN32
     Release();
 
-    if (!Lock(_Handle, 0))
+    if (!Lock(_Handle, LOCKFILE_FAIL_IMMEDIATELY))
     {
         return false;
     }
 #else
     // flock turns an exclusive hold shared in place.
-    if (!Flock(_Handle, LOCK_SH))
+    if (!Flock(_Handle, LOCK_SH | LOCK_NB))
     {
         return false;
     }
@@ -194,6 +218,16 @@ bool MCUpdateLock::Shared()
 
     _Held = MCHeld::Shared;
     return true;
+}
+
+bool MCUpdateLock::ExclusiveBy(std::chrono::steady_clock::time_point until)
+{
+    return TryUntil(until, [this] { return TryExclusive(); });
+}
+
+bool MCUpdateLock::SharedBy(std::chrono::steady_clock::time_point until)
+{
+    return TryUntil(until, [this] { return TryShared(); });
 }
 
 void MCUpdateLock::Release()

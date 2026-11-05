@@ -51,7 +51,8 @@ private:
     /// <summary>
     /// The port's: in a copy that updates its content, holds the game's lock as a running game does, so no game puts
     /// an update in place under the editor (update/MCUpdateLock.h). False when an update stopped midway, whose files
-    /// only the game can finish putting in place (the player is told).
+    /// only the game can finish putting in place, or a game is still putting one in place once the editor has waited
+    /// as long as a game's start would (the player is told either way: the editor never hangs on the lock).
     /// </summary>
     BOOL HoldGameLock(const CString& dataPath);
 

@@ -17,6 +17,7 @@
 #include "logistics/MCPurMechList.h"
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
+#include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -492,6 +493,39 @@ namespace MCTestGame
         }
 
         std::cout << "  logistics never came up (mission state " << std::to_underlying(Mission()->State) << ")\n";
+        return false;
+    }
+
+    bool StartLobby(std::string_view commandLine)
+    {
+        if (booted != 0)
+        {
+            return false;
+        }
+
+        booted = -1;
+        clockFollowsPresents = true;
+
+        if (!Boot(std::string(commandLine)))
+        {
+            return false;
+        }
+
+        for (int32_t frame = 0; frame < 3000; frame++)
+        {
+            RunFrame(1.0f / 15.0f);
+
+            if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
+                (GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen ||
+                 GlobalLog()->MessageDialog->IsShowing()) &&
+                GuiSystem().SmackerWindow == nullptr)
+            {
+                return true;
+            }
+        }
+
+        std::cout << "  the lobby's logistics never came up (mission state " << std::to_underlying(Mission()->State)
+                  << ")\n";
         return false;
     }
 

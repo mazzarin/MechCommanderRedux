@@ -1,9 +1,23 @@
 #include "stdafx.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
+#include "MCTestGuest.h"
+#include "ScreenInput.h"
+#include "TestGame.h"
 #include "gui/MCGuiStartup.h"
+#include "linkup/MCFidpPlayer.h"
 #include "linkup/MCSessionManager.h"
+#include "logistics/MCConnectMenu.h"
+#include "logistics/MCLogTextButton.h"
+#include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
+#include "logistics/MCSplashScreen.h"
+#include "logistics/MCUpdatePage.h"
+#include "main/MCLogistics.h"
+#include "main/MCUpdater.h"
+#include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
+#include "platform/MCDirectPlay.h"
 
 // Port-only (the personal build): updates for players a multiplayer lobby starts (SPEC-install-and-updates.md's
 // "Players who come from a multiplayer lobby"): the rejoin note a lobby's game leaves as it restarts into an update.
@@ -99,4 +113,159 @@ TEST_CASE("lobby updates: a rejoin note too old, or for another build, is ignore
     WriteNote(folder, NoteBuild, WrittenAt, "-mission 3");
     CHECK(!MCRejoinNote::TakeAtStart(folder.Path(), NoteBuild, WrittenAt).has_value());
     CHECK(!std::filesystem::exists(NotePath(folder)));
+}
+
+namespace
+{
+    using MCTestGuest::Guest;
+    using MCUpdater::MCAnswer;
+
+    /// <summary>What the stand-in for Sparkle was asked.</summary>
+    struct MCBackendLog
+    {
+        std::vector<MCAnswer> Answers;
+    };
+
+    /// <summary>A stand-in for Sparkle: it keeps the answers; the test reports the steps.</summary>
+    class MCFakeBackend final : public MCUpdater::MCBackend
+    {
+    public:
+        explicit MCFakeBackend(std::shared_ptr<MCBackendLog> log) : _Log(std::move(log)) {}
+
+        std::string RunningVersion() override { return "0.2.1 (468)"; }
+
+        void Check(std::optional<uint64_t>) override {}
+
+        void Answer(MCAnswer answer) override { _Log->Answers.push_back(answer); }
+
+    private:
+        std::shared_ptr<MCBackendLog> _Log;
+    };
+
+    /// <summary>Sets a stand-in backend for the test's length, then takes it away.</summary>
+    class MCFakeUpdater
+    {
+    public:
+        MCFakeUpdater() { MCUpdater::SetBackend(std::make_unique<MCFakeBackend>(Log)); }
+        ~MCFakeUpdater() { MCUpdater::SetBackend(nullptr); }
+        MCFakeUpdater(const MCFakeUpdater&) = delete;
+        MCFakeUpdater& operator=(const MCFakeUpdater&) = delete;
+
+        std::shared_ptr<MCBackendLog> Log = std::make_shared<MCBackendLog>();
+    };
+
+    /// <summary>The update the tests find, as the feed shows it.</summary>
+    constexpr std::string_view NewVersion = "0.2.2 (480)";
+    constexpr std::string_view NewNotes = "Rooms keep their players through an update.";
+
+    /// <summary>Runs frames for two seconds of game time, giving the network a moment each.</summary>
+    void Settle()
+    {
+        constexpr int32_t Frames = 30;
+        constexpr uint32_t NetworkMs = 3;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            SDL_Delay(NetworkMs);
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    }
+
+    /// <summary>Runs <see cref="Settle"/> until <paramref name="done"/> says so, at most a few times; whether it did.</summary>
+    bool SettleUntil(const std::function<bool()>& done)
+    {
+        constexpr int32_t MostSettles = 10;
+
+        for (int32_t settle = 0; settle < MostSettles && !done(); settle++)
+        {
+            Settle();
+        }
+
+        return done();
+    }
+
+    /// <summary>The middle of <paramref name="object"/>, on the screen.</summary>
+    std::pair<int32_t, int32_t> Middle(MCGuiObject& object)
+    {
+        return {object.GlobalX() + object.Width() / 2, object.GlobalY() + object.Height() / 2};
+    }
+
+    /// <summary>Clicks the middle of <paramref name="object"/> as a player does.</summary>
+    void ClickOn(MCGuiObject& object)
+    {
+        const auto [x, y] = Middle(object);
+        MCScreenInput::RealClick(x, y);
+        Settle();
+    }
+
+    /// <summary>
+    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guest"/> join it, and opens the
+    /// session screen (the host's GO).
+    /// </summary>
+    bool HostLobbyRoom(std::string_view port, Guest& guest)
+    {
+        if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
+            MultiPlayer()->SessionManager->DirectPlay == nullptr)
+        {
+            return false;
+        }
+
+        if (!guest.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", port)))
+        {
+            return false;
+        }
+
+        Settle();
+        Go();
+        Settle();
+        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+    }
+}
+
+/// <summary>
+/// A game a lobby started never shows the main menu, so its session screen offers the update: a line in UPDATE's amber
+/// left of the start button while one waits, whose click opens the UPDATE page over the screen; the page takes every
+/// click on it (none reaches the start button under it), and DONE brings the screen back.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's session screen offers the update, its line opening the UPDATE page there")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCFakeUpdater updater;
+    Guest guest("ANN");
+    REQUIRE(HostLobbyRoom("28883", guest));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    REQUIRE(screen.UpdateLine != nullptr);
+    const auto [lineX, lineY] = Middle(*screen.UpdateLine);
+
+    // Nothing waits: no line, and nothing there to click.
+    CHECK(screen.FindObject(lineX, lineY) != screen.UpdateLine);
+    MCScreenInput::SaveShot("lobby session 0 nothing new", MCScreenInput::ScreenHash());
+
+    MCUpdater::Found(std::string(NewVersion), std::string(NewNotes));
+    Settle();
+    CHECK(screen.FindObject(lineX, lineY) == screen.UpdateLine);
+    MCScreenInput::SaveShot("lobby session 1 update waits", MCScreenInput::ScreenHash());
+
+    ClickOn(*screen.UpdateLine);
+    REQUIRE(UpdatePageShown());
+    CHECK_EQ(UpdatePageStatus(), std::string("A NEWER VERSION IS OUT."));
+    const std::shared_ptr<MCLogTextButton> install = MCScreenInput::FindTextButton(screen, "INSTALL");
+    const std::shared_ptr<MCLogTextButton> done = MCScreenInput::FindTextButton(screen, "DONE");
+    REQUIRE(install != nullptr);
+    REQUIRE(done != nullptr);
+    CHECK(install->IsShowing());
+    MCScreenInput::SaveShot("lobby session 2 update page", MCScreenInput::ScreenHash());
+
+    // The start button is under the page: a click there stays on the page.
+    const auto [startX, startY] = Middle(*screen.StartButton);
+    CHECK(screen.FindObject(startX, startY) != screen.StartButton);
+
+    ClickOn(*done);
+    CHECK(!UpdatePageShown());
+    CHECK(screen.FindObject(lineX, lineY) == screen.UpdateLine);
+    CHECK(screen.FindObject(startX, startY) == screen.StartButton);
 }

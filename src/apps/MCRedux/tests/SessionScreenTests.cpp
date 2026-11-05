@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
+#include "MCTestGuest.h"
 #include "TestGame.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
@@ -33,6 +34,7 @@
 #include "sprite/MCWeather.h"
 
 using namespace MCScreenInput;
+using MCTestGuest::Guest;
 
 namespace
 {
@@ -42,275 +44,6 @@ namespace
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
     /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
-
-    /// <summary>Selects the TCP/IP connection to <paramref name="address"/> ("host:port").</summary>
-    uint32_t Connect(MCDirectPlay& directPlay, std::string_view address)
-    {
-        const auto provider = std::bit_cast<std::array<uint8_t, sizeof(_GUID)>>(MCDirectPlayGuids::DPSPGUID_TCPIP);
-        std::vector<uint8_t> host(address.begin(), address.end());
-        host.push_back(0);
-        const std::array<DPCOMPOUNDADDRESSELEMENT, 2> elements{
-            DPCOMPOUNDADDRESSELEMENT{MCDirectPlayGuids::DPAID_ServiceProvider,
-                                     std::vector<uint8_t>(provider.begin(), provider.end())},
-            DPCOMPOUNDADDRESSELEMENT{MCDirectPlayGuids::DPAID_INet, host}};
-        return directPlay.InitializeConnection(MCDirectPlay::CreateCompoundAddress(elements), 0);
-    }
-
-    /// <summary>Runs <paramref name="call"/> while another thread pumps <paramref name="other"/> (the game is not running).</summary>
-    template <class Call> auto WhilePumping(MCDirectPlay& other, Call&& call)
-    {
-        std::atomic<bool> stop = false;
-        std::thread pumper(
-            [&]
-            {
-                while (!stop)
-                {
-                    other.Pump();
-                    SDL_Delay(1);
-                }
-            });
-        auto result = call();
-        stop = true;
-        pumper.join();
-        return result;
-    }
-
-    /// <summary>
-    /// A second player in the game's session, on the test's side: it joins over the loopback and then only takes in
-    /// (and drops) what it is sent, on its own thread, so the host keeps it.
-    /// </summary>
-    class Guest
-    {
-    public:
-        bool Join(MCDirectPlay& host, std::string_view address = HostAddress)
-        {
-            if (Connect(_DirectPlay, address) != DP_OK)
-            {
-                return false;
-            }
-
-            DPSESSIONDESC2 found{};
-            bool foundOne = false;
-
-            for (int attempt = 0; attempt < 40 && !foundOne; attempt++)
-            {
-                DPSESSIONDESC2 desc{};
-                desc.dwSize = sizeof(desc);
-                desc.guidApplication = MultiPlayerAppGuid;
-                _DirectPlay.EnumSessions(
-                    desc, 0,
-                    [&](const DPSESSIONDESC2& session, uint32_t flags)
-                    {
-                        if ((flags & DPESC_TIMEDOUT) == 0)
-                        {
-                            found = session;
-                            foundOne = true;
-                        }
-
-                        return false;
-                    },
-                    DPENUMSESSIONS_AVAILABLE);
-                host.Pump();
-                SDL_Delay(5);
-            }
-
-            if (!foundOne)
-            {
-                return false;
-            }
-
-            if (WhilePumping(host, [&] { return _DirectPlay.Open(found, DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }) != DP_OK)
-            {
-                return false;
-            }
-
-            const DPNAME name{std::string("Guest"), std::nullopt};
-            uint32_t id = 0;
-
-            if (WhilePumping(host, [&] { return _DirectPlay.CreatePlayer(id, name, {}, 0); }) != DP_OK)
-            {
-                return false;
-            }
-
-            _Id = id;
-            _Listener = std::thread(
-                [this]
-                {
-                    while (!_Stop)
-                    {
-                        std::array<uint8_t, 4096> buffer{};
-                        uint32_t size = 0;
-                        uint32_t from = 0;
-                        uint32_t to = 0;
-
-                        while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
-                        {
-                            const auto message =
-                                std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size()));
-                            Answer(from, message);
-                            Keep(message);
-                        }
-
-                        SendWaitingRules();
-                        _DirectPlay.Pump();
-                        SDL_Delay(1);
-                    }
-                });
-            return true;
-        }
-
-        /// <summary>The last match options message the host sent, if any.</summary>
-        std::optional<MCMPMatchOptionsMessage> MatchOptions()
-        {
-            const std::lock_guard lock(_Mutex);
-            return _MatchOptions;
-        }
-
-        /// <summary>The last players' rules message the host sent, if any.</summary>
-        std::optional<MCMPPlayersRulesMessage> PlayersRules()
-        {
-            const std::lock_guard lock(_Mutex);
-            return _PlayersRules;
-        }
-
-        /// <summary>
-        /// Says to the host (player <paramref name="hostId"/>) that this guest's build plays by
-        /// <paramref name="rules"/>, as a game's rules message does (sent from the listener, which owns the connection).
-        /// </summary>
-        void SendRules(uint32_t hostId, uint32_t rules)
-        {
-            const std::lock_guard lock(_Mutex);
-            _RulesToSend = std::pair(hostId, rules);
-        }
-
-        /// <summary>The guest's player id.</summary>
-        uint32_t Id() const { return _Id; }
-
-        /// <summary>
-        /// Answers the host's file inquiries from now on with <paramref name="value"/>, as a game's file report does
-        /// (0: no file).
-        /// </summary>
-        void AnswerFiles(uint32_t value) { _FileAnswer = value; }
-
-        /// <summary>The host's messages telling this guest to load a mission, so far.</summary>
-        int32_t MissionsLoaded() const { return _MissionsLoaded; }
-
-        ~Guest()
-        {
-            _Stop = true;
-
-            if (_Listener.joinable())
-            {
-                _Listener.join();
-            }
-        }
-
-    private:
-        /// <summary>
-        /// Answers <paramref name="message"/> from player <paramref name="from"/> if it is a file inquiry (the file
-        /// report: <see cref="AnswerFiles"/>'s value and the name asked about), and counts a load mission. The host sends
-        /// a guaranteed message again until it is acknowledged, which this guest never does: each is taken once.
-        /// </summary>
-        void Answer(uint32_t from, std::span<const uint8_t> message)
-        {
-            constexpr size_t NameOffset = sizeof(MCFIGuaranteedMessageHeader);
-
-            if (message.size() <= NameOffset)
-            {
-                return;
-            }
-
-            const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
-
-            if ((type != static_cast<uint16_t>(MCMPMessageType::LoadMission) &&
-                 type != static_cast<uint16_t>(MCMPMessageType::FileInquiry)) ||
-                !_Taken.emplace(message.begin(), message.end()).second)
-            {
-                return;
-            }
-
-            if (type == static_cast<uint16_t>(MCMPMessageType::LoadMission))
-            {
-                _MissionsLoaded++;
-                return;
-            }
-
-            const std::span<const uint8_t> rest = message.subspan(NameOffset);
-            const std::string name(rest.begin(), std::ranges::find(rest, uint8_t{0}));
-            MCMPFileNameMessage report{};
-            report.Header = PlainHeader(MCMPMessageType::FileReport);
-            report.Value = static_cast<int32_t>(_FileAnswer.load());
-            std::vector<uint8_t> bytes(sizeof(report));
-            std::memcpy(bytes.data(), &report, sizeof(report));
-            bytes.insert(bytes.end(), name.begin(), name.end());
-            bytes.push_back(0);
-            _DirectPlay.Send(_Id, from, 0, bytes);
-        }
-
-        /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
-        void Keep(std::span<const uint8_t> message)
-        {
-            if (message.size() >= sizeof(MCMPPlayersRulesMessage))
-            {
-                const auto players = ReadLinkupMessage<MCMPPlayersRulesMessage>(message);
-
-                if (players.Type() == static_cast<uint16_t>(MCMPMessageType::PlayersRules))
-                {
-                    const std::lock_guard lock(_Mutex);
-                    _PlayersRules = players;
-                    return;
-                }
-            }
-
-            if (message.size() < sizeof(MCMPMatchOptionsMessage))
-            {
-                return;
-            }
-
-            const auto options = ReadLinkupMessage<MCMPMatchOptionsMessage>(message);
-
-            if (options.Type() == static_cast<uint16_t>(MCMPMessageType::MatchOptions))
-            {
-                const std::lock_guard lock(_Mutex);
-                _MatchOptions = options;
-            }
-        }
-
-        /// <summary>Sends the rules message <see cref="SendRules"/> left, if any.</summary>
-        void SendWaitingRules()
-        {
-            std::optional<std::pair<uint32_t, uint32_t>> rules;
-
-            {
-                const std::lock_guard lock(_Mutex);
-                rules.swap(_RulesToSend);
-            }
-
-            if (rules.has_value())
-            {
-                MCMPLongMessage message{};
-                message.Header = PlainHeader(MCMPMessageType::PlayerRules);
-                message.Value = static_cast<int32_t>(rules->second);
-                _DirectPlay.Send(_Id, rules->first, 0, LinkupBytes(message));
-            }
-        }
-
-        MCDirectPlay _DirectPlay;
-        uint32_t _Id = 0;
-        std::thread _Listener;
-        std::atomic<bool> _Stop = false;
-        std::mutex _Mutex;
-        std::optional<MCMPMatchOptionsMessage> _MatchOptions;
-        std::optional<MCMPPlayersRulesMessage> _PlayersRules;
-        /// <summary>The host's player id and the rules to say, until the listener sends them.</summary>
-        std::optional<std::pair<uint32_t, uint32_t>> _RulesToSend;
-        /// <summary>What the guest's file reports say (<see cref="AnswerFiles"/>).</summary>
-        std::atomic<uint32_t> _FileAnswer = 0;
-        /// <summary>The load missions the host sent.</summary>
-        std::atomic<int32_t> _MissionsLoaded = 0;
-        /// <summary>The inquiries and load missions taken (the listener's own).</summary>
-        std::set<std::vector<uint8_t>> _Taken;
-    };
 
     /// <summary>Runs frames for two seconds of game time, giving the network a moment each; the last frame's hash.</summary>
     uint32_t Settle()
@@ -374,7 +107,7 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     REQUIRE(manager.DirectPlay != nullptr);
 
     Guest guest;
-    REQUIRE(guest.Join(*manager.DirectPlay));
+    REQUIRE(guest.Join(*manager.DirectPlay, HostAddress));
     Settle();
 
     // Every frame presented from here on is folded into one more hash.

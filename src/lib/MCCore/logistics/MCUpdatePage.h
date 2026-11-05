@@ -1,7 +1,11 @@
 #pragma once
 
+#include "gui/MCGuiOwned.h"
+
 class MCGenericScreen;
+class MCGuiObject;
 class MCLogButton;
+class MCLogObject;
 class MCLogPort;
 
 // Port-only (the personal build): the main menu's UPDATE button, which takes ORIGINAL CINEMA's place in a build that
@@ -32,8 +36,28 @@ MCMenuButtonPictures UpdateButtonPictures(std::span<const uint8_t> palette);
 /// </summary>
 void AddUpdatePage(MCGenericScreen& mainScreen);
 
-/// <summary>UPDATE: the page shows over the main menu.</summary>
+/// <summary>UPDATE: the page shows over the main menu (or over the screen it was last shown over, the main menu hidden).</summary>
 void ShowUpdatePage();
+
+/// <summary>
+/// The line saying an update waits, for the session screen of a game a lobby started (which never shows the main menu):
+/// a field in UPDATE's amber, <paramref name="palette"/> the screen's (6-bit RGB); a click on it opens the page over
+/// that screen. Shown while an update waits.
+/// </summary>
+MCGuiOwned<MCLogObject> MakeUpdateLine(std::span<const uint8_t> palette);
+
+/// <summary>The page shows over <paramref name="screen"/>, in front of what is on it.</summary>
+void ShowUpdatePageOver(MCGuiObject& screen);
+
+/// <summary>The page, hidden, leaves <paramref name="screen"/> (going away) for the main menu, if it is there.</summary>
+void UpdatePageLeaves(MCGuiObject& screen);
+
+/// <summary>
+/// What a click at (<paramref name="xPos"/>, <paramref name="yPos"/>) finds of the page shown over
+/// <paramref name="screen"/> (the page itself between its controls); null when the page isn't over it, or the point is
+/// off the page.
+/// </summary>
+std::shared_ptr<MCGuiObject> UpdatePageFind(const MCGuiObject& screen, int32_t xPos, int32_t yPos);
 
 /// <summary>DONE (or SKIP): the page closes.</summary>
 void HideUpdatePage();

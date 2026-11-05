@@ -11,6 +11,8 @@
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
+#include "update/MCContentSwap.h"
+#include "update/MCUpdateDisk.h"
 
 #if defined(__APPLE__)
 #include "MCSparkleUpdater.h"
@@ -200,6 +202,50 @@ namespace
         return options;
     }
 
+    /// <summary>
+    /// Puts a staged content update in place, or finishes one a crash stopped (update/MCContentSwap.h), before any of
+    /// the game's files opens. A lobby's start gives it <see cref="MCContentSwap::LobbyStartTime"/>, past which the
+    /// previous files play and the next start tries again.
+    /// </summary>
+    /// <returns>False when the game can't play the files as they are (the player is told).</returns>
+    bool SwapStagedUpdate(const std::filesystem::path& gameFolder, std::string_view commandLine)
+    {
+        std::optional<std::chrono::steady_clock::time_point> deadline;
+
+        if (StartsInLobby(commandLine))
+        {
+            deadline = std::chrono::steady_clock::now() + MCContentSwap::LobbyStartTime;
+        }
+
+        const MCContentSwap::MCResult result = MCContentSwap::Run(*MakeDisk(), gameFolder, deadline);
+
+        switch (result.Outcome)
+        {
+            case MCContentSwap::MCOutcome::Nothing:
+                return true;
+            case MCContentSwap::MCOutcome::Swapped:
+            {
+                SDL_Log("Updates: the staged update is in place");
+                return true;
+            }
+            case MCContentSwap::MCOutcome::PutBack:
+            {
+                SDL_Log("Updates: the staged update waits for the next start (%s)", result.Error.c_str());
+                return true;
+            }
+            case MCContentSwap::MCOutcome::Stuck:
+            {
+                Report(std::format("The game's update stopped midway and can't be finished or undone: {}.\n\nClose any "
+                                   "program using the game's folder, then start the game again.",
+                                   result.Error),
+                       true);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Crash reporter: where the ABL interpreter was (module, routine, source line, code position).</summary>
     void ReportAblState()
     {
@@ -291,6 +337,13 @@ int main(int argc, char** argv)
     }
 
     options->DataFolder = *dataFolder;
+
+    if (!SwapStagedUpdate(options->DataFolder, options->GameCommandLine))
+    {
+        SDL_Quit();
+        return 1;
+    }
+
     MCFileSystem::SetGameRoot(options->DataFolder);
     MCFileSystem::SetUserRoot(options->UserFolder);
     SDL_Log("Game data: %s", MCFileSystem::ToUtf8(options->DataFolder).c_str());

@@ -15,3 +15,6 @@ int RunGame(std::string_view commandLine);
 /// the port's <c>-renderer</c>, <c>-gpudraw</c>, <c>-gpudump</c>, <c>-framelog</c>, <c>-fps</c> and <c>-novsync</c>.
 /// </summary>
 void ParseCommandLine(std::string_view commandLine);
+
+/// <summary>Whether the command line starts the game in a multiplayer lobby's room (<c>-host</c> or <c>-join</c>).</summary>
+bool StartsInLobby(std::string_view commandLine);

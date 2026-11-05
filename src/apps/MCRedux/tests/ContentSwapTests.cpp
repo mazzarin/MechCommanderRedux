@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "gui/MCGuiStartup.h"
 #include "lib/MCSha256.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
@@ -529,6 +530,71 @@ TEST_CASE("content swap: the machine stopping while the old set is put back stil
             }
         }
     }
+}
+
+TEST_CASE("content swap: past a lobby's deadline the old set goes back, but a committed swap still finishes")
+{
+    const MCUpdate update;
+    const auto now = std::chrono::steady_clock::now();
+    const auto passed = now - std::chrono::seconds(1);
+
+    // In time, it swaps as without a deadline.
+    MCCrashDisk inTime(update.Files);
+    CHECK(MCContentSwap::Run(inTime, Game, now + MCContentSwap::LobbyStartTime).Outcome == MCOutcome::Swapped);
+    CHECK(update.IsNew(inTime.Files()));
+
+    // Too late, nothing moves in: the old set stays, the update ready for the next start, which swaps it.
+    MCCrashDisk late(update.Files);
+    const MCContentSwap::MCResult tooLate = MCContentSwap::Run(late, Game, passed);
+    CHECK(tooLate.Outcome == MCOutcome::PutBack);
+    CHECK(tooLate.Error.find("lobby") != std::string::npos);
+    CHECK(update.IsOldAndReady(late.Files()));
+    CHECK(MCContentSwap::Run(late, Game).Outcome == MCOutcome::Swapped);
+    CHECK(update.IsNew(late.Files()));
+
+    // Stopped after the record was written: the swap is committed, so a start past its deadline only finishes it.
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    bool committedTried = false;
+
+    for (int step = 0; step < measure.Changes() && !committedTried; ++step)
+    {
+        MCCrashDisk disk(update.Files);
+        disk.CutAt(step);
+
+        try
+        {
+            MCContentSwap::Run(disk, Game);
+        }
+        catch (const MCPowerCut&)
+        {
+        }
+
+        disk.Cut([](size_t) { return true; });
+        const auto record = MCInstalled::FromText(disk.Files().at(GamePath(MCInstalled::RecordPath)).Bytes);
+
+        if (!record || record->Swap != update.After.Swap)
+        {
+            continue;
+        }
+
+        committedTried = true;
+        CHECK(disk.Files().contains(GamePath(MCContentSwap::JournalFile)));
+        CHECK(MCContentSwap::Run(disk, Game, passed).Outcome == MCOutcome::Swapped);
+        CHECK(update.IsNew(disk.Files()));
+    }
+
+    CHECK(committedTried);
+}
+
+TEST_CASE("content swap: a lobby's start, which gets the deadline, is one with -host or -join")
+{
+    CHECK(StartsInLobby("-join 192.168.1.5 -player LAPTOP"));
+    CHECK(StartsInLobby("-player MAC --HOST"));
+    CHECK(StartsInLobby("-host"));
+    CHECK(!StartsInLobby(""));
+    CHECK(!StartsInLobby("-mission 3"));
+    CHECK(!StartsInLobby("-player \"-host and friends\""));
 }
 
 TEST_CASE("content swap: a file the player changed since staging is left alone and recorded as theirs")

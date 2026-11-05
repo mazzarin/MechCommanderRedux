@@ -11,6 +11,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <chrono>
+#include <thread>
 #include <windows.h>
 #else
 #include <cerrno>
@@ -22,6 +24,12 @@
 namespace
 {
     constexpr std::string_view TemporarySuffix = ".writing";
+
+#ifdef _WIN32
+    /// <summary>A move of a file another program holds: tried this many times, this far apart (a second in all).</summary>
+    constexpr int HeldTries = 10;
+    constexpr std::chrono::milliseconds HeldWait{100};
+#endif
 
     std::string Shown(const std::filesystem::path& path)
     {
@@ -148,15 +156,28 @@ namespace
         bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
 #ifdef _WIN32
-            // Write-through: the move is on the disk when it returns, as NTFS offers no flush of a folder's entries.
-            if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0)
+            // Write-through: the move is on the disk when it returns, as NTFS offers no flush of a folder's entries. A
+            // file another program has open can't be moved; a virus scanner holds one briefly, so it's tried again.
+            for (int attempt = 1;; ++attempt)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%lu)", Shown(from).c_str(), Shown(to).c_str(),
-                        GetLastError());
-                return false;
-            }
+                if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
+                {
+                    return true;
+                }
 
-            return true;
+                const DWORD error = GetLastError();
+                const bool held =
+                    error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION || error == ERROR_ACCESS_DENIED;
+
+                if (!held || attempt >= HeldTries)
+                {
+                    SDL_Log("Updates: %s can't be moved to %s (%lu, try %d)", Shown(from).c_str(), Shown(to).c_str(),
+                            error, attempt);
+                    return false;
+                }
+
+                std::this_thread::sleep_for(HeldWait);
+            }
 #else
             std::error_code error;
             std::filesystem::rename(from, to, error);

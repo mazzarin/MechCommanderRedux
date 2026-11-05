@@ -144,6 +144,80 @@ namespace
         SendAndReceiveTestMessages();
     }
 
+    /// <summary>The command line's words, split at runs of spaces; only double quotes group words.</summary>
+    std::vector<std::string> CommandLineWords(std::string_view commandLine)
+    {
+        std::vector<std::string> words;
+        size_t pos = 0;
+
+        while (pos < commandLine.size())
+        {
+            while (pos < commandLine.size() && (commandLine[pos] == ' ' || commandLine[pos] == '\t'))
+            {
+                pos++;
+            }
+
+            if (pos >= commandLine.size())
+            {
+                break;
+            }
+
+            // Only double quotes group words: an apostrophe is part of a name or path (O'Brien).
+            std::string token;
+            bool inQuote = false;
+
+            while (pos < commandLine.size())
+            {
+                const char c = commandLine[pos];
+
+                if (inQuote)
+                {
+                    if (c == '"')
+                    {
+                        inQuote = false;
+                        pos++;
+                    }
+                    else
+                    {
+                        token += c;
+                        pos++;
+                    }
+                }
+                else
+                {
+                    if (c == '"')
+                    {
+                        inQuote = true;
+                        pos++;
+                    }
+                    else if (c == ' ' || c == '\t')
+                    {
+                        break;
+                    }
+                    else
+                    {
+                        token += c;
+                        pos++;
+                    }
+                }
+            }
+
+            words.push_back(std::move(token));
+        }
+
+        return words;
+    }
+
+    bool IsHostSwitch(std::string_view word)
+    {
+        return MCIEquals(word, "-host") || MCIEquals(word, "--host");
+    }
+
+    bool IsJoinSwitch(std::string_view word)
+    {
+        return MCIEquals(word, "-join") || MCIEquals(word, "--join");
+    }
+
     /// <summary>A mission number from the command line: <paramref name="last"/> at most, else 0 (none).</summary>
     int32_t SegmentNumber(std::string_view word, int32_t last)
     {
@@ -152,66 +226,15 @@ namespace
     }
 }
 
+auto StartsInLobby(std::string_view commandLine) -> bool
+{
+    return std::ranges::any_of(CommandLineWords(commandLine),
+                               [](const std::string& word) { return IsHostSwitch(word) || IsJoinSwitch(word); });
+}
+
 auto ParseCommandLine(std::string_view commandLine) -> void
 {
-    // The words, split at runs of spaces, respecting quoted arguments.
-    std::vector<std::string> words;
-    size_t pos = 0;
-
-    while (pos < commandLine.size())
-    {
-        while (pos < commandLine.size() && (commandLine[pos] == ' ' || commandLine[pos] == '\t'))
-        {
-            pos++;
-        }
-
-        if (pos >= commandLine.size())
-        {
-            break;
-        }
-
-        // Only double quotes group words: an apostrophe is part of a name or path (O'Brien).
-        std::string token;
-        bool inQuote = false;
-
-        while (pos < commandLine.size())
-        {
-            const char c = commandLine[pos];
-
-            if (inQuote)
-            {
-                if (c == '"')
-                {
-                    inQuote = false;
-                    pos++;
-                }
-                else
-                {
-                    token += c;
-                    pos++;
-                }
-            }
-            else
-            {
-                if (c == '"')
-                {
-                    inQuote = true;
-                    pos++;
-                }
-                else if (c == ' ' || c == '\t')
-                {
-                    break;
-                }
-                else
-                {
-                    token += c;
-                    pos++;
-                }
-            }
-        }
-
-        words.push_back(std::move(token));
-    }
+    const std::vector<std::string> words = CommandLineWords(commandLine);
 
     std::optional<std::string_view> networkFile;
 
@@ -221,7 +244,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
         const std::string_view word = words[i];
         const bool hasArgument = i + 1 < words.size();
 
-        if (MCIEquals(word, "-host") || MCIEquals(word, "--host"))
+        if (IsHostSwitch(word))
         {
             LobbyLaunchArgs.Active = true;
             LobbyLaunchArgs.IsHost = true;
@@ -241,7 +264,7 @@ auto ParseCommandLine(std::string_view commandLine) -> void
                 }
             }
         }
-        else if (MCIEquals(word, "-join") || MCIEquals(word, "--join"))
+        else if (IsJoinSwitch(word))
         {
             LobbyLaunchArgs.Active = true;
             LobbyLaunchArgs.IsHost = false;

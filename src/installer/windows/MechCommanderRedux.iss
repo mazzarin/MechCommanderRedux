@@ -180,9 +180,9 @@ const
   WriteTestName = 'MechCommander Redux setup.tmp';
   // The bytes in a GB, as Windows shows sizes.
   BytesPerGB = 1073741824;
-  // Waiting for a process to end (OpenProcess, WaitForSingleObject).
-  SYNCHRONIZE = $00100000;
-  WAIT_OBJECT_0 = 0;
+  // Waiting for a process to end: OpenProcess's SYNCHRONIZE, and WaitForSingleObject's WAIT_OBJECT_0.
+  WaitAccess = $00100000;
+  WaitEnded = 0;
   // The answers on the command line (silent installs).
   CopyAnswer = 'COPY';
   DownloadAnswer = 'DOWNLOAD';
@@ -646,13 +646,13 @@ begin
   if Id = 0 then
     Exit;
 
-  Process := OpenProcess(SYNCHRONIZE, 0, Id);
+  Process := OpenProcess(WaitAccess, 0, Id);
 
   // Ended already, or never there.
   if Process = 0 then
     Exit;
 
-  if WaitForSingleObject(Process, {#GameEndWait}) = WAIT_OBJECT_0 then
+  if WaitForSingleObject(Process, {#GameEndWait}) = WaitEnded then
     Log(Format('The game that started the update (process %d) has ended', [Id]))
   else
     Log(Format('The game that started the update (process %d) is still running', [Id]));

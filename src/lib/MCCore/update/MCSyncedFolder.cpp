@@ -10,7 +10,7 @@
 
 #include <array>
 #include <cfapi.h>
-#include <cwctype>
+#include <cwchar>
 
 #pragma comment(lib, "cldapi.lib")
 

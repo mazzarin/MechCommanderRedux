@@ -20,6 +20,7 @@ namespace
     constexpr std::string_view OldWrittenKey = "oldWritten";
     constexpr std::string_view NewKey = "new";
     constexpr std::string_view NewSizeKey = "newSize";
+    constexpr std::string_view TooLateError = "the swap took longer than a lobby's start allows";
 
     /// <summary>What's at a move's path.</summary>
     enum class MCAt : uint8_t
@@ -35,8 +36,9 @@ namespace
     class MCSwapper
     {
     public:
-        MCSwapper(MCUpdateDisk& disk, std::filesystem::path game, MCJournal journal)
-            : _Disk(disk), _Game(std::move(game)), _Journal(std::move(journal))
+        MCSwapper(MCUpdateDisk& disk, std::filesystem::path game, MCJournal journal,
+                  std::optional<std::chrono::steady_clock::time_point> deadline)
+            : _Disk(disk), _Game(std::move(game)), _Journal(std::move(journal)), _Deadline(deadline)
         {
         }
 
@@ -86,6 +88,11 @@ namespace
         {
             for (const MCMove& move : _Journal.Moves)
             {
+                if (TooLate())
+                {
+                    return std::string(TooLateError);
+                }
+
                 const auto at = Classify(move);
 
                 if (!at)
@@ -109,6 +116,11 @@ namespace
                 if (!move.New || _Theirs.contains(move.Path))
                 {
                     continue;
+                }
+
+                if (TooLate())
+                {
+                    return std::string(TooLateError);
                 }
 
                 if (_Disk.Stat(Destination(move)).Exists)
@@ -287,6 +299,9 @@ namespace
             return true;
         }
 
+        /// <summary>Whether the deadline has passed (none: never).</summary>
+        bool TooLate() const { return _Deadline && std::chrono::steady_clock::now() > *_Deadline; }
+
         bool FlushTouched()
         {
             const bool flushed = std::ranges::all_of(_Touched, [&](const std::filesystem::path& folder)
@@ -341,6 +356,7 @@ namespace
         std::set<std::filesystem::path> _Touched;
         /// <summary>The moves left alone: the player's file at the path.</summary>
         std::map<std::string, MCTheirs, std::less<>> _Theirs;
+        std::optional<std::chrono::steady_clock::time_point> _Deadline;
         bool _Committed = false;
     };
 
@@ -455,7 +471,8 @@ bool MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gam
            disk.Stat(gameFolder / MCFileSystem::FromUtf8(ReadyFile)).Exists;
 }
 
-MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                           std::optional<std::chrono::steady_clock::time_point> deadline)
 {
     const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
 
@@ -489,7 +506,7 @@ MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesy
         return {MCOutcome::Stuck, journal.error()};
     }
 
-    MCSwapper swapper(disk, gameFolder, std::move(*journal));
+    MCSwapper swapper(disk, gameFolder, std::move(*journal), deadline);
     const std::string forward = swapper.Forward();
 
     if (forward.empty())

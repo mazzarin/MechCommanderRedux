@@ -29,6 +29,11 @@ namespace MCContentSwap
     constexpr std::string_view ReplacedFolder = "Redux update/replaced";
     constexpr std::string_view ReadyFile = "Redux update/ready.json";
     constexpr std::string_view JournalFile = "Redux update/journal.json";
+    /// <summary>
+    /// How long a multiplayer lobby's start lets the swap take before putting the previous set back: a room is never
+    /// held up (a normal swap takes well under a second).
+    /// </summary>
+    constexpr std::chrono::seconds LobbyStartTime{5};
 
     /// <summary>A file the swap moves: added (no old), replaced, or removed (no new).</summary>
     struct MCMove
@@ -80,6 +85,10 @@ namespace MCContentSwap
     /// <summary>Whether an update is staged and ready, or a swap was stopped midway.</summary>
     bool Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
-    /// <summary>Swaps a ready update in, or finishes one a crash stopped; puts the previous set back if it can't.</summary>
-    MCResult Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+    /// <summary>
+    /// Swaps a ready update in, or finishes one a crash stopped; puts the previous set back if it can't, or if moving
+    /// the files is still going at <paramref name="deadline"/> (a committed swap only finishes its clearing).
+    /// </summary>
+    MCResult Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                 std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
 }

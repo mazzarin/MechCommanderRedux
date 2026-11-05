@@ -42,6 +42,12 @@ namespace MCContentStage
         /// </summary>
         /// <returns>Its bytes, or what failed.</returns>
         virtual std::expected<std::string, std::string> Read(std::string_view name, size_t most) = 0;
+
+        /// <summary>
+        /// From any thread: ends the fetch or read under way at once, and fails every later one, with "stopped" (a
+        /// work's stop calls it). Here it does nothing (the fetch stops at its next bytes, as received says).
+        /// </summary>
+        virtual void Cancel() {}
     };
 
     /// <summary>The moves the swap makes for <paramref name="plan"/>.</summary>

@@ -38,5 +38,11 @@ namespace MCHttpSource
         /// </summary>
         /// <returns>Nothing once the answer ended or the reply stopped it; else what failed (no connection, a timeout).</returns>
         virtual std::expected<void, std::string> Get(const std::string& url, uint64_t from, MCReply& reply) = 0;
+
+        /// <summary>
+        /// From any thread: ends the transfer under way at once, and fails every later one, with "stopped". Here it
+        /// does nothing (a transfer that can't be cut short ends at its next bytes, as its reply stops it).
+        /// </summary>
+        virtual void Cancel() {}
     };
 }

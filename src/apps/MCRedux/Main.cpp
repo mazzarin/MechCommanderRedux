@@ -281,7 +281,7 @@ namespace
     /// <summary>The release's host over https, or none when this build's address is unusable (logged).</summary>
     std::unique_ptr<MCContentStage::MCSource> MakeContentSource()
     {
-        auto source = MCHttpSource::Make(ContentHost, MCMakeHttpGet());
+        auto source = MCHttpSource::Make(ContentHost, MCMakeHttpGet);
 
         if (!source)
         {
@@ -472,7 +472,7 @@ namespace
     /// <summary>The folder a program is hosted in (the fork's releases), over https.</summary>
     std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MakeProgramSource(std::string_view folder)
     {
-        return MCHttpSource::Make(folder, MCMakeHttpGet());
+        return MCHttpSource::Make(folder, MCMakeHttpGet);
     }
 #endif
 

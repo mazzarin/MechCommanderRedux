@@ -92,6 +92,7 @@
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

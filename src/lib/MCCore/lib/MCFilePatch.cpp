@@ -51,6 +51,9 @@ namespace
         hpatch_TStreamOutput Stream{};
         std::fstream File;
         bool WriteFailed = false;
+        /// <summary>Asked before each write (none: always on); once it says to stop, every write fails.</summary>
+        const std::function<bool()>* GoOn = nullptr;
+        bool Stopped = false;
         /// <summary>
         /// Where the file stands after the last read or write, and whether it was a write (none: unknown): a read after
         /// a write, or a write after a read, seeks first, as a file stream needs.
@@ -113,6 +116,13 @@ namespace
     {
         auto* const output = static_cast<OutputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
+
+        if (output->Stopped || (output->GoOn != nullptr && *output->GoOn && !(*output->GoOn)()))
+        {
+            output->Stopped = true;
+            return hpatch_FALSE;
+        }
+
         output->File.clear();
 
         if (!output->LastWrote || output->At != to)
@@ -261,9 +271,10 @@ namespace
     /// <summary>Applies the patch to <paramref name="out"/>, which the caller removes when it fails.</summary>
     std::expected<void, std::string> Write(InputFile& old, InputFile& patch, const hpatch_windowDiffInfo& info,
                                            const std::filesystem::path& oldPath, const std::filesystem::path& patchPath,
-                                           const std::filesystem::path& out)
+                                           const std::filesystem::path& out, const std::function<bool()>& goOn)
     {
         OutputFile output;
+        output.GoOn = &goOn;
         output.File.open(out, std::ios::in | std::ios::out | std::ios::trunc | std::ios::binary);
 
         if (!output.File.is_open())
@@ -282,6 +293,11 @@ namespace
         listener.onDiffInfo = OnDiffInfo;
         const TWindowPatchResult result =
             patch_window_diff(&listener, &output.Stream, &old.Stream, &patch.Stream, 0, SingleThread);
+
+        if (output.Stopped)
+        {
+            return std::unexpected(std::string(MCFilePatch::StoppedError));
+        }
 
         if (output.WriteFailed)
         {
@@ -308,7 +324,7 @@ namespace
     /// which the caller removes when it fails.
     /// </summary>
     std::expected<void, std::string> Patched(const std::filesystem::path& old, const std::filesystem::path& patch,
-                                             const std::filesystem::path& out)
+                                             const std::filesystem::path& out, const std::function<bool()>& goOn)
     {
         InputFile oldFile;
         InputFile patchFile;
@@ -348,13 +364,13 @@ namespace
                                                info.oldDataSize, Shown(old), oldFile.Stream.streamSize));
         }
 
-        return Write(oldFile, patchFile, info, old, patch, out);
+        return Write(oldFile, patchFile, info, old, patch, out, goOn);
     }
 }
 
 std::expected<void, std::string> MCFilePatch::Apply(const std::filesystem::path& old,
                                                     const std::filesystem::path& patch,
-                                                    const std::filesystem::path& out)
+                                                    const std::filesystem::path& out, const std::function<bool()>& goOn)
 {
     // Refused before out is touched: it's a file this patch reads.
     for (const std::filesystem::path& source : {old, patch})
@@ -367,7 +383,7 @@ std::expected<void, std::string> MCFilePatch::Apply(const std::filesystem::path&
         }
     }
 
-    auto patched = Patched(old, patch, out);
+    auto patched = Patched(old, patch, out, goOn);
 
     if (!patched)
     {

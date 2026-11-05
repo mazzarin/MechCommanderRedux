@@ -53,7 +53,26 @@ MCSha256::MCDigest MCSha256::Of(std::string_view text)
     return Of(std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()));
 }
 
-std::expected<MCSha256::MCDigest, std::string> MCSha256::OfFile(const std::filesystem::path& path)
+struct MCSha256::MCHasher::MCState
+{
+    crypto_hash_sha256_state Sha256{};
+};
+
+MCSha256::MCHasher::MCHasher() : _State(std::make_unique<MCState>())
+{
+    crypto_hash_sha256_init(&_State->Sha256);
+}
+
+MCSha256::MCHasher::~MCHasher() = default;
+
+void MCSha256::MCHasher::Add(std::span<const char> bytes)
+{
+    crypto_hash_sha256_update(&_State->Sha256, reinterpret_cast<const unsigned char*>(bytes.data()),
+                              static_cast<unsigned long long>(bytes.size()));
+}
+
+std::expected<uint64_t, std::string> MCSha256::MCHasher::AddFile(const std::filesystem::path& path, uint64_t count,
+                                                                 const std::function<bool()>& goOn)
 {
     std::ifstream file(path, std::ios::binary);
 
@@ -62,30 +81,52 @@ std::expected<MCSha256::MCDigest, std::string> MCSha256::OfFile(const std::files
         return std::unexpected(std::format("{} can't be opened", MCFileSystem::ToUtf8(path)));
     }
 
-    crypto_hash_sha256_state state;
-    crypto_hash_sha256_init(&state);
-    std::vector<char> buffer(ReadBytes);
+    std::vector<char> buffer(static_cast<size_t>(std::min<uint64_t>(ReadBytes, count)));
+    uint64_t added = 0;
 
-    while (file)
+    while (added < count && file)
     {
-        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const std::streamsize count = file.gcount();
-
-        if (count > 0)
+        if (goOn && !goOn())
         {
-            crypto_hash_sha256_update(&state, reinterpret_cast<const unsigned char*>(buffer.data()),
-                                      static_cast<unsigned long long>(count));
+            return std::unexpected(std::string(StoppedError));
+        }
+
+        file.read(buffer.data(), static_cast<std::streamsize>(std::min<uint64_t>(buffer.size(), count - added)));
+        const std::streamsize read = file.gcount();
+
+        if (read > 0)
+        {
+            Add({buffer.data(), static_cast<size_t>(read)});
+            added += static_cast<uint64_t>(read);
         }
     }
 
-    if (!file.eof())
+    if (added < count && !file.eof())
     {
         return std::unexpected(std::format("{} can't be read", MCFileSystem::ToUtf8(path)));
     }
 
+    return added;
+}
+
+MCSha256::MCDigest MCSha256::MCHasher::Finish()
+{
     MCDigest digest{};
-    crypto_hash_sha256_final(&state, digest.data());
+    crypto_hash_sha256_final(&_State->Sha256, digest.data());
     return digest;
+}
+
+std::expected<MCSha256::MCDigest, std::string> MCSha256::OfFile(const std::filesystem::path& path,
+                                                                const std::function<bool()>& goOn)
+{
+    MCHasher hasher;
+
+    if (const auto added = hasher.AddFile(path, std::numeric_limits<uint64_t>::max(), goOn); !added)
+    {
+        return std::unexpected(added.error());
+    }
+
+    return hasher.Finish();
 }
 
 std::string MCSha256::Hex(const MCDigest& digest)

@@ -288,6 +288,7 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h">
       <Filter>tests\fakes</Filter>

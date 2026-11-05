@@ -1,7 +1,8 @@
 # Port-only (the personal build): builds the game, the editor and the tests on Windows and runs the tests, as
 # checks.yml's build job does for pull requests, on a push of the fork's windows-* branches (or by hand from the Actions
 # tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes (the launcher
-# MCX.exe too), the setup, the version header and MSBuild's log are kept as the run's artifact.
+# MCX.exe and the tests' mc_tests.exe too, for the test laptop's content installs), the setup, the version header and
+# MSBuild's log are kept as the run's artifact.
 name: Windows (personal)
 
 on:
@@ -93,7 +94,8 @@ jobs:
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
 
       # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
-      # built into them. Inno Setup 6 is on the runner's image.
+      # built into them. Inno Setup 6 is on the runner's image. No release's sizes here (the release script builds the
+      # setup it publishes with them): this one shows none.
       - name: Setup
         shell: pwsh
         run: |
@@ -121,6 +123,7 @@ jobs:
             src/build/bin/x64/Release/SDL3.dll
             src/build/bin/x64/Release/MCEditor.exe
             src/build/bin/x64/Release/MCX.exe
+            src/build/bin/x64/Release/mc_tests.exe
             src/build/generated/MCVersion.h
             dist/MechCommander-Redux-Setup.exe
             msbuild.log

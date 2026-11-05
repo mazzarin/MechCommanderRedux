@@ -238,9 +238,9 @@ namespace
     void TryHostAgain(Clock::time_point now)
     {
         MCSessionManager& manager = *MultiPlayer()->SessionManager;
-        const int32_t tried = manager.TryLobbyJoin(PlayerName());
+        const MCLobbyJoin tried = manager.TryLobbyJoin(PlayerName());
 
-        if (tried == 0)
+        if (tried == MCLobbyJoin::Joined)
         {
             SDL_Log("Lobby updates: back in the room");
             HostWait.reset();
@@ -250,7 +250,7 @@ namespace
         }
 
         // A room that refused the join (the host's old one, closed, still answering) is asked again afresh.
-        if (tried != 1)
+        if (tried == MCLobbyJoin::Refused)
         {
             manager.ConnectTcp(RoomAddress());
         }

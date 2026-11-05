@@ -169,6 +169,10 @@ Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Description: "{cm:PlayGame}";
 ; An update the game ran for RESTART: the new version starts by itself.
 Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Flags: nowait; Check: StartAfterUpdate
 
+[UninstallDelete]
+; The folder, once nothing's left in it: Setup may have made it itself, to let the player change it.
+Type: dirifempty; Name: "{app}"
+
 [UninstallRun]
 ; First, the game removes its content (the files updates put here; the setup never owns content), leaving the
 ; player's own and what a copy taken over had. Then the program goes, and the backup comes back.
@@ -187,6 +191,9 @@ const
   CopyAnswer = 'COPY';
   DownloadAnswer = 'DOWNLOAD';
   NoAnswer = 'NO';
+  // GetUserNameExW's form for an account as Windows' tools take it: "MACHINE\name", "DOMAIN\name".
+  NameSamCompatible = 2;
+  AccountNameLength = 256;
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -206,6 +213,8 @@ function WaitForSingleObject(Handle: THandle; Milliseconds: Cardinal): Cardinal;
   external 'WaitForSingleObject@kernel32.dll stdcall';
 function CloseHandle(Handle: THandle): Integer;
   external 'CloseHandle@kernel32.dll stdcall';
+function GetUserNameExW(NameFormat: Integer; NameBuffer: String; var Size: Cardinal): Integer;
+  external 'GetUserNameExW@secur32.dll stdcall';
 
 // The names of the files [Files] puts in the game folder.
 function ProgramFileNames: TArrayOfString;
@@ -458,10 +467,20 @@ begin
   Result := '"' + Result + '"';
 end;
 
-// The player's account, named here: an elevated command may run as another account (an administrator's).
+// The player's account, named here: an elevated command may run as another account (an administrator's). As Windows
+// names it ("MACHINE\name"): USERDOMAIN can name another (WORKGROUP, over SSH), and then icacls grants nothing.
 function PlayerAccount: String;
+var
+  Size: Cardinal;
 begin
-  Result := GetEnv('USERDOMAIN') + '\' + GetUserNameString;
+  Size := AccountNameLength;
+  Result := StringOfChar(' ', Size);
+
+  if GetUserNameExW(NameSamCompatible, Result, Size) <> 0 then
+    SetLength(Result, Size)
+  else
+    // icacls looks a bare name up on this machine first.
+    Result := GetUserNameString;
 end;
 
 // Lets the player's account change Folder and everything in it, making it first if need be; elevated by Windows' prompt

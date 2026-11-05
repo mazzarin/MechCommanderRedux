@@ -120,7 +120,7 @@ jobs:
         shell: pwsh
         run: |
           $optimization = @()
-          if (-not $env:RELEASE_COMMIT) { $optimization = '-p:WholeProgramOptimization=false' }
+          if (-not $env:RELEASE_COMMIT) { $optimization = @('-p:WholeProgramOptimization=false') }
           msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
           if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE." }
 

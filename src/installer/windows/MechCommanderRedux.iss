@@ -148,6 +148,7 @@ SyncedFolder=OneDrive syncs %1. Choose a folder outside it: the game's files wou
 DriveFolder=%1 is a whole drive. Choose a folder on it for the game.
 SharedFolder=%1 belongs to Windows, the programs or another account, or holds their folders. Choose a folder of the game's own.
 FolderNotEmpty=%1 holds other files already. Choose an empty folder for the game, or a new one.
+FolderSigns=Setup can't use %1: its name has a percent sign or a quote. Choose another folder.
 FolderProtected=Windows protects %1. Setup will ask Windows to let you change it.
 FolderStillProtected=Setup couldn't get permission to change %1.
 BackupFailed=Setup couldn't copy %1 to %2.
@@ -515,27 +516,53 @@ begin
     Result := GetUserNameString;
 end;
 
+// Whether Name (a folder's, an account's) has what Windows' command line reads as something else even between quotes:
+// cmd expands %NAME%, and a quote ends the quoting.
+function HasCommandSigns(const Name: String): Boolean;
+begin
+  Result := (Pos('%', Name) > 0) or (Pos('"', Name) > 0);
+end;
+
 // Lets the player's account change Folder and everything in it, making it first if need be; elevated by Windows' prompt
 // unless Setup already is. Folder alone: the folders holding it stay as they are. Whether the player can now change it.
 function Grant(const Folder: String): Boolean;
 var
-  Verb, Command: String;
+  Account, Verb, Command: String;
   ErrorCode: Integer;
 begin
+  Result := False;
+  Account := PlayerAccount;
+
+  if HasCommandSigns(Folder) or HasCommandSigns(Account) then
+  begin
+    Log(Format('Not letting %s change %s: cmd would read the names as something else', [Account, Folder]));
+    Exit;
+  end;
+
   if IsAdmin then
     Verb := ''
   else
     Verb := 'runas';
 
-  Command := '/c mkdir ' + QuotedFolder(Folder) + ' 2>nul & "' + ExpandConstant('{sys}\icacls.exe') + '" ' +
-             QuotedFolder(Folder) + ' /grant "' + PlayerAccount + ':(OI)(CI)M"';
+  // Without the AutoRun commands or delayed expansion (!NAME!) the registry may ask cmd for.
+  Command := '/d /v:off /c mkdir ' + QuotedFolder(Folder) + ' 2>nul & "' + ExpandConstant('{sys}\icacls.exe') + '" ' +
+             QuotedFolder(Folder) + ' /grant "' + Account + ':(OI)(CI)M"';
 
   if not ShellExec(Verb, ExpandConstant('{cmd}'), Command, '', SW_HIDE, ewWaitUntilTerminated, ErrorCode) then
-    Log(Format('icacls for %s on %s didn''t run: %s', [PlayerAccount, Folder, SysErrorMessage(ErrorCode)]))
+    Log(Format('icacls for %s on %s didn''t run: %s', [Account, Folder, SysErrorMessage(ErrorCode)]))
   else
-    Log(Format('Let %s change %s', [PlayerAccount, Folder]));
+    Log(Format('Let %s change %s', [Account, Folder]));
 
   Result := DirExists(Folder) and CanChange(Folder);
+end;
+
+// Grant, saying so when the player still can't change Folder; whether the player now can.
+function GrantOrSay(const Folder: String): Boolean;
+begin
+  Result := Grant(Folder);
+
+  if not Result then
+    SuppressibleMsgBox(FmtMessage(CustomMessage('FolderStillProtected'), [Folder]), mbError, MB_OK, IDOK);
 end;
 
 // Asks Windows, once, to let the player's account change Folder and everything in it; whether it now can.
@@ -547,10 +574,7 @@ begin
                         IDOK) <> IDOK then
     Exit;
 
-  Result := Grant(Folder);
-
-  if not Result then
-    SuppressibleMsgBox(FmtMessage(CustomMessage('FolderStillProtected'), [Folder]), mbError, MB_OK, IDOK);
+  Result := GrantOrSay(Folder);
 end;
 
 // The folder, or the nearest folder holding it that exists: where Setup will make it.
@@ -658,7 +682,7 @@ end;
 // the game's folder and everything in it, so it must be the game's own: never a whole drive, nor in Windows' folder or
 // another account's, nor one of the programs' or accounts' folders or one holding them (a folder of the game's in
 // Program Files, an original install, is its own). Downloaded into (Download), a folder there already holds nothing or
-// the game.
+// the game. And Windows' command line must read its name as it is (Grant).
 function FolderRefusal(const Folder: String; Download: Boolean): String;
 var
   Path: String;
@@ -668,6 +692,12 @@ var
 begin
   Result := '';
   Path := ComparablePath(Folder);
+
+  if HasCommandSigns(Folder) then
+  begin
+    Result := FmtMessage(CustomMessage('FolderSigns'), [Folder]);
+    Exit;
+  end;
 
   if Path = AddBackslash(AnsiLowercase(ExtractFileDrive(Path))) then
   begin
@@ -734,7 +764,7 @@ begin
   else if IsAdmin then
   begin
     if not InOwnProfile(ComparablePath(Folder)) then
-      Result := Grant(Folder);
+      Result := GrantOrSay(Folder);
   end
   else if not CanChange(ExistingFolder(Folder)) then
     Result := GetPermission(Folder);
@@ -1071,8 +1101,9 @@ begin
   Report := ExpandConstant('{tmp}\') + RemovalReportName;
   DeleteFile(Report);
 
-  if not Exec(AddBackslash(Folder) + '{#GameExe}', '--remove-content --data "' + Folder + '" --report "' + Report + '"',
-              Folder, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  // Quoted as Grant quotes it: a drive's backslash before the closing quote would escape it.
+  if not Exec(AddBackslash(Folder) + '{#GameExe}', '--remove-content --data ' + QuotedFolder(Folder) + ' --report "' +
+              Report + '"', Folder, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Reason := SysErrorMessage(ResultCode)
   else if ResultCode = RemovedCode then
   begin

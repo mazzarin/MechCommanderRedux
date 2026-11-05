@@ -44,6 +44,9 @@
     <ClCompile Include="tests\ConsoleTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ContentStageTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ContentSwapTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -300,10 +303,16 @@
     <ClInclude Include="tests\fixtures\MCTinyMap.h">
       <Filter>tests\fixtures</Filter>
     </ClInclude>
+    <ClInclude Include="tests\MCFilePatchFixture.h">
+      <Filter>tests</Filter>
+    </ClInclude>
     <ClInclude Include="tests\MCHdMovieFixture.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCMock.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCScratchFolder.h">
       <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCTest.h">

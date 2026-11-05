@@ -141,6 +141,13 @@ target_compile_definitions(mc_hpatch PRIVATE _IS_USED_MULTITHREAD=0)
 target_compile_options(mc_hpatch PRIVATE -w)
 target_include_directories(mc_hpatch PUBLIC ${MC_SRC}/lib/HDiffPatch-5.1.3)
 target_link_libraries(MCCore PUBLIC mc_hpatch)
+# miniz's zip reader (update/MCContentStage unpacks updates' zips; the tests write some), through the game's own
+# file reads, as on Windows.
+add_library(mc_miniz STATIC ${MC_SRC}/lib/miniz-3.0.2/miniz.c)
+target_compile_definitions(mc_miniz PRIVATE MINIZ_NO_STDIO MINIZ_NO_TIME)
+target_compile_options(mc_miniz PRIVATE -w)
+target_include_directories(mc_miniz PUBLIC ${MC_SRC}/lib/miniz-3.0.2)
+target_link_libraries(MCCore PUBLIC mc_miniz)
 # libsodium (update/MCSignedFile and lib/MCSha256: updates' signatures and files): every C file MCCore.vcxproj lists,
 # libsodium's portable C (its README.md), a library of its own outside MCCore's C++ options.
 set(MC_SODIUM_DIR ${MC_SRC}/lib/libsodium-1.0.22/src/libsodium)

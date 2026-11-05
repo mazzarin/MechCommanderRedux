@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "lib/MCSha256.h"
 #include "platform/MCFileSystem.h"
@@ -21,28 +22,11 @@ namespace
 {
     using MCContentPlan::MCAction;
 
-    /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
-    class ScratchFolder
+    /// <summary>A scratch folder of the test's own, deleted with it.</summary>
+    class ScratchFolder : public MCScratchFolder
     {
     public:
-        explicit ScratchFolder(std::string_view name)
-            : _Path(std::filesystem::temp_directory_path() / "mc_content_update_tests" / name)
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-            std::filesystem::create_directories(_Path);
-        }
-
-        ~ScratchFolder()
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-        }
-
-        const std::filesystem::path& Path() const { return _Path; }
-
-    private:
-        std::filesystem::path _Path;
+        explicit ScratchFolder(std::string_view name) : MCScratchFolder("mc_content_update_tests", name) {}
     };
 
     /// <summary>An Ed25519 key pair made from one seed byte, so each test's keys are the same every run.</summary>

@@ -467,6 +467,7 @@
     <ClCompile Include="update\MCContentFolder.cpp" />
     <ClCompile Include="update\MCContentList.cpp" />
     <ClCompile Include="update\MCContentPlan.cpp" />
+    <ClCompile Include="update\MCContentStage.cpp" />
     <ClCompile Include="update\MCContentSwap.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
@@ -904,6 +905,7 @@
     <ClInclude Include="update\MCContentFolder.h" />
     <ClInclude Include="update\MCContentList.h" />
     <ClInclude Include="update\MCContentPlan.h" />
+    <ClInclude Include="update\MCContentStage.h" />
     <ClInclude Include="update\MCContentSwap.h" />
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
@@ -1087,6 +1089,17 @@
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <PreprocessorDefinitions>_IS_USED_MULTITHREAD=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- miniz 3.0.2 (src\lib\miniz-3.0.2, MIT): its zip reader unpacks updates' zips (update\MCContentStage; the
+       tests write some), through the game's own file reads (no stdio). The editor builds its own copy for its
+       inflate. A C unit outside MCCore, so its own ItemGroup too. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)miniz-3.0.2\miniz.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>MINIZ_NO_STDIO;MINIZ_NO_TIME;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemGroup>
   <!-- libsodium 1.0.22 (src\lib\libsodium-1.0.22, ISC): checks updates' signatures (Ed25519) and files (SHA-256),

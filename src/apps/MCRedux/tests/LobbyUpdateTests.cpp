@@ -67,6 +67,30 @@ TEST_CASE("lobby updates: the rejoin note holds the words the lobby started the 
 }
 
 /// <summary>
+/// The rejoin note starts the game again with no command line of its own, so it holds the lobby's words alone, each
+/// with the words it takes: the game's other switches (a file written, a folder dumped to, a mission or a save loaded)
+/// are left out when it is written, and again when it is read, as anything that writes the user folder can write one.
+/// </summary>
+TEST_CASE("lobby updates: the rejoin note keeps only the lobby's words, written and read")
+{
+    const MCLobbyLaunchArgs host{
+        .Active = true,
+        .IsHost = true,
+        .CommandLine = "-host -port 28800 -framelog /tmp/frames.log -player BOB -gpudump /tmp/dump -mission 3 "
+                       "-network net.fit -load save.pak -matchweather rain -slot BOB 1 0 -fps"};
+    CHECK_EQ(MCRejoinNote::LobbyCommandLine(host),
+             std::string("-host -port 28800 -player BOB -matchweather rain -slot BOB 1 0 -rejoin"));
+
+    // A lobby's switch keeps the word it takes, whatever it says; a -slot short of its words is nothing.
+    const MCScratchFolder folder(ScratchGroup, "lobby words");
+    WriteNote(folder, NoteBuild, WrittenAt,
+              R"(-join 10.0.0.2 -framelog "/tmp/a b.log" -player -load -session "Ann's room" -rejoin -slot ANN 2)");
+    const std::optional<std::string> taken = MCRejoinNote::TakeAtStart(folder.Path(), NoteBuild, WrittenAt);
+    REQUIRE(taken.has_value());
+    CHECK_EQ(*taken, std::string(R"(-join 10.0.0.2 -player -load -session "Ann's room" -rejoin)"));
+}
+
+/// <summary>
 /// A host starting again (a restart into an update) takes its port at once, though its last run's end of each link
 /// waits out TIME_WAIT (the host's end closes first): the listener reuses the address.
 /// </summary>

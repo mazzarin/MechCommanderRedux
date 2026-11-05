@@ -32,8 +32,9 @@ namespace MCRejoinNote
     };
 
     /// <summary>
-    /// The command line the lobby started the game with (<paramref name="args"/>'), whole, so the restart starts as the
-    /// lobby started it (its match's options, slots and teams too), with <see cref="RejoinSwitch"/> once.
+    /// The lobby's words the game was started with (<paramref name="args"/>'), so the restart starts as the lobby started
+    /// it (its match's options, slots and teams too), with <see cref="RejoinSwitch"/> once; no other word
+    /// (gui/MCGuiStartup.h's LobbyWords).
     /// </summary>
     std::string LobbyCommandLine(const MCLobbyLaunchArgs& args);
 
@@ -42,9 +43,10 @@ namespace MCRejoinNote
     std::expected<void, std::string> Write(const std::filesystem::path& userFolder, const MCNote& note);
 
     /// <summary>
-    /// A start with no command line: the note's command line when <paramref name="userFolder"/> holds one written
-    /// within <see cref="Life"/> of <paramref name="now"/> (seconds since 1970) for build <paramref name="build"/>,
-    /// which is deleted; a note too old (or unreadable) is deleted and one for another build left, both unread.
+    /// A start with no command line: the lobby's words in the note's command line (LobbyWords: any other is left out)
+    /// when <paramref name="userFolder"/> holds one written within <see cref="Life"/> of <paramref name="now"/> (seconds
+    /// since 1970) for build <paramref name="build"/>, which is deleted; a note too old (or unreadable, or without a
+    /// lobby's switch) is deleted and one for another build left, both unread.
     /// </summary>
     std::optional<std::string> TakeAtStart(const std::filesystem::path& userFolder, uint64_t build, int64_t now);
 

@@ -225,6 +225,67 @@ namespace
         const int32_t segment = std::atoi(std::string(word).c_str());
         return segment >= 1 && segment <= last ? segment : 0;
     }
+
+    /// <summary>The lobby's switches that take the word after them, as ParseCommandLine reads them.</summary>
+    constexpr std::array<std::string_view, 13> LobbyValueSwitches{
+        "-player", "--player",  "-session", "--session", "-maxplayers", "--maxplayers", "-port",
+        "--port",  "-matchmap", "-team1rp", "-team2rp",  "-team1tech",  "-team2tech"};
+    /// <summary>The lobby's -slot and the words it takes: the player, the team and the slot.</summary>
+    constexpr std::string_view SlotSwitch = "-slot";
+    constexpr size_t SlotWords = 3;
+
+    /// <summary>
+    /// How many words after <paramref name="words"/>[<paramref name="at"/>] it takes, as ParseCommandLine reads them,
+    /// when it is one of the lobby's words; none when it isn't.
+    /// </summary>
+    std::optional<size_t> LobbyWordValues(const std::vector<std::string>& words, size_t at)
+    {
+        const std::string_view word = words[at];
+        const size_t hasArgument = at + 1 < words.size() ? 1 : 0;
+
+        if (IsHostSwitch(word) || IsJoinSwitch(word))
+        {
+            // The next word only when it isn't a switch.
+            return hasArgument != 0 && !words[at + 1].empty() && words[at + 1][0] != '-' ? 1 : 0;
+        }
+
+        if (MCIEquals(word, MCRejoinNote::RejoinSwitch))
+        {
+            return 0;
+        }
+
+        if (MCIEquals(word, SlotSwitch))
+        {
+            // A -slot short of its words is read as nothing.
+            return at + SlotWords < words.size() ? std::optional<size_t>(SlotWords) : std::nullopt;
+        }
+
+        if (MPIsMatchOptionFlag(word) ||
+            std::ranges::any_of(LobbyValueSwitches, [&](std::string_view lobby) { return MCIEquals(word, lobby); }))
+        {
+            return hasArgument;
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>Adds <paramref name="word"/> to <paramref name="line"/>, quoted when it is empty or has a space or tab.</summary>
+    void AddWord(std::string& line, std::string_view word)
+    {
+        if (!line.empty())
+        {
+            line += ' ';
+        }
+
+        if (word.empty() || word.find_first_of(" \t") != std::string_view::npos)
+        {
+            line += std::format("\"{}\"", word);
+        }
+        else
+        {
+            line += word;
+        }
+    }
 }
 
 auto StartsInLobby(std::string_view commandLine) -> bool
@@ -233,8 +294,36 @@ auto StartsInLobby(std::string_view commandLine) -> bool
                                [](const std::string& word) { return IsHostSwitch(word) || IsJoinSwitch(word); });
 }
 
+auto LobbyWords(std::string_view commandLine) -> std::string
+{
+    const std::vector<std::string> words = CommandLineWords(commandLine);
+    std::string kept;
+    std::string left;
+
+    for (size_t i = 0; i < words.size(); i++)
+    {
+        const std::optional<size_t> values = LobbyWordValues(words, i);
+        std::string& line = values.has_value() ? kept : left;
+
+        for (size_t word = i; word <= i + values.value_or(0); word++)
+        {
+            AddWord(line, words[word]);
+        }
+
+        i += values.value_or(0);
+    }
+
+    if (!left.empty())
+    {
+        SDL_Log("Lobby's words: left out %s", left.c_str());
+    }
+
+    return kept;
+}
+
 auto ParseCommandLine(std::string_view commandLine) -> void
 {
+    // Port-only (the personal build): a switch the lobby gives goes in LobbyWordValues too (the rejoin note keeps those).
     const std::vector<std::string> words = CommandLineWords(commandLine);
 
     std::optional<std::string_view> networkFile;

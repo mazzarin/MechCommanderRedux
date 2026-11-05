@@ -100,11 +100,12 @@ namespace MCContentUpdater
 
     /// <summary>
     /// The change of sets the player chose (HD OPTIONS getting or removing HD), planned against the release the copy
-    /// has installed: its list read by the hash its record keeps (kept, else fetched), so nothing else changes.
+    /// has installed, so nothing else changes. Sets taken out alone are planned from the record (MCContentPlan::Removal),
+    /// offline; a set added, from the release's list, read by the hash the record keeps (kept, else fetched).
     /// </summary>
     /// <returns>
     /// The change (no program); none when the copy has the sets chosen, or an update already waits for the next start;
-    /// or why there's none (no release installed yet, the list neither kept nor hosted, the host out of reach).
+    /// or why there's none (no release installed yet; adding, the list neither kept nor hosted, the host out of reach).
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> CheckSets(const MCSetup& setup, MCUpdateDisk& disk,
                                                                  MCContentStage::MCSource& source);

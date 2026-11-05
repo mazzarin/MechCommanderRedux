@@ -493,6 +493,26 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected(writable.error());
     }
 
+    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
+
+    // Sets taken out alone (HD OPTIONS' REMOVE): planned from the record, so neither the host nor a list is needed.
+    if (std::ranges::includes(installed->Sets, sets))
+    {
+        MCContentFolder folder(setup.GameFolder);
+        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk));
+
+        if (!removal)
+        {
+            return std::unexpected(removal.error());
+        }
+
+        auto content = std::make_shared<MCContent>();
+        content->List.Release = installed->Release;
+        content->Plan = std::move(*removal);
+        offer.Content = std::move(content);
+        return offer;
+    }
+
     auto content = PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release}, *installed,
                                sets, setup.RunningBuild);
 
@@ -506,7 +526,6 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected("the installed release's list is in a newer format than this game reads");
     }
 
-    MCOffer offer{.Release = {.Number = installed->Release, .List = installed->List}};
     offer.Content = std::move(*content);
     return offer;
 }

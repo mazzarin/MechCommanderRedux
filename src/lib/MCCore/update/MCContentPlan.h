@@ -113,6 +113,16 @@ namespace MCContentPlan
                                             const std::set<std::string, std::less<>>& sets,
                                             const MCHashes& hashes = {});
 
+    /// <summary>
+    /// The plan taking out of <paramref name="folder"/> every set <paramref name="installed"/> records but
+    /// <paramref name="sets"/> (HD OPTIONS' REMOVE), from the record alone: no list is read. Each recorded file of a
+    /// set taken out is removed, deleted whatever it holds; those of the sets kept stay as recorded.
+    /// </summary>
+    /// <returns>The plan, or why there's none (a file can't be read, a folder can't be listed).</returns>
+    std::expected<MCPlan, std::string> Removal(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
+                                               const std::set<std::string, std::less<>>& sets,
+                                               const MCHashes& hashes = {});
+
     /// <summary>The hashes kept as text (JSON).</summary>
     std::string HashesText(const MCHashes& hashes);
 

@@ -92,6 +92,46 @@ namespace
         return found == installed.Files.end() ? nullptr : &found->second;
     }
 
+    /// <summary>
+    /// Adds to <paramref name="plan"/> the removal of <paramref name="had"/>, a recorded file, when it's on disk: kept in
+    /// Redux backup when an update didn't place it as found, but deleted whatever it holds when its set is taken out
+    /// (<paramref name="setTakenOut"/>: GET downloads it again).
+    /// </summary>
+    std::expected<void, std::string> AddRemoval(MCContentFolder& folder, const MCInstalled::MCFile& had,
+                                                bool setTakenOut, const MCHashes& hashes, MCPlan& plan)
+    {
+        const auto found = folder.Find(had.Path);
+
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
+        if (found->Kind != MCContentFolder::MCKind::File)
+        {
+            return {};
+        }
+
+        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan);
+
+        if (!hashed)
+        {
+            return std::unexpected(hashed.error());
+        }
+
+        plan.Steps.push_back(
+            MCStep{.Action = MCAction::Remove,
+                   .Path = had.Path,
+                   .OnDisk = found->Path,
+                   .File = nullptr,
+                   .Patch = nullptr,
+                   .Found = hashed->Sha256,
+                   .FoundSize = hashed->Size,
+                   .FoundWritten = hashed->Written,
+                   .Keep = setTakenOut ? MCContentSwap::MCKeep::Never : KeepUnlessPlaced(&had, hashed->Sha256)});
+        return {};
+    }
+
     /// <summary>Why a file can't be planned when something not a file is in its place.</summary>
     std::string InTheWay(std::string_view listed, const MCContentFolder::MCFound& found)
     {
@@ -224,36 +264,10 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             continue;
         }
 
-        const auto found = folder.Find(had.Path);
-
-        if (!found)
+        if (const auto removed = AddRemoval(folder, had, !sets.contains(had.Set), hashes, plan); !removed)
         {
-            return std::unexpected(found.error());
+            return std::unexpected(removed.error());
         }
-
-        if (found->Kind != MCContentFolder::MCKind::File)
-        {
-            continue;
-        }
-
-        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan);
-
-        if (!hashed)
-        {
-            return std::unexpected(hashed.error());
-        }
-
-        plan.Steps.push_back(MCStep{.Action = MCAction::Remove,
-                                    .Path = had.Path,
-                                    .OnDisk = found->Path,
-                                    .File = nullptr,
-                                    .Patch = nullptr,
-                                    .Found = hashed->Sha256,
-                                    .FoundSize = hashed->Size,
-                                    .FoundWritten = hashed->Written,
-                                    // A set taken out goes whole: GET downloads it again.
-                                    .Keep = sets.contains(had.Set) ? KeepUnlessPlaced(&had, hashed->Sha256)
-                                                                   : MCContentSwap::MCKeep::Never});
     }
 
     for (const MCContentList::MCZip& zip : list.Zips)
@@ -262,6 +276,31 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         {
             plan.Zips.push_back(&zip);
             plan.DownloadBytes += zip.Size;
+        }
+    }
+
+    return plan;
+}
+
+std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folder,
+                                                          const MCInstalled::MCRecord& installed,
+                                                          const std::set<std::string, std::less<>>& sets,
+                                                          const MCHashes& hashes)
+{
+    MCPlan plan;
+    plan.Record = installed;
+    plan.Record.Sets = sets;
+    plan.Record.Files.clear();
+
+    for (const auto& [folded, had] : installed.Files)
+    {
+        if (sets.contains(had.Set))
+        {
+            plan.Record.Files.insert_or_assign(folded, had);
+        }
+        else if (const auto removed = AddRemoval(folder, had, true, hashes, plan); !removed)
+        {
+            return std::unexpected(removed.error());
         }
     }
 

@@ -859,19 +859,57 @@ TEST_CASE("content updater: lists are kept: read again unfetched, fetched again 
     CHECK_EQ(fetchesAtCheck(), 1);
     CHECK_EQ(Read(lists / listName), release.ListText);
 
-    // Installed, then HD removed with the host out of reach: planned and staged from the list kept.
+    // Installed, HD taken out, then got again: planned with the host out of reach, from the installed release's list
+    // kept (only its download needs the host).
     UpdateToRelease2(release);
+    ChangeSets(release, WithoutHd);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    MCFolderSource offline(release.Host.Path() / "out-of-reach");
+    const auto addition = MCContentUpdater::CheckSets(setup, *disk, offline);
+    REQUIRE(addition.has_value());
+    REQUIRE(addition->has_value());
+    CHECK(offline.Asked().empty());
+    CHECK((*addition)->ContentBytes() > 0);
+}
+
+TEST_CASE("content updater: HD OPTIONS' REMOVE is planned from the record alone, with no host and no list kept")
+{
+    MCHostedRelease release("remove-offline");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path lists = game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder);
+    UpdateToRelease2(release);
+    std::filesystem::remove_all(lists);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+
     REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
     MCFolderSource offline(release.Host.Path() / "out-of-reach");
     const auto removal = MCContentUpdater::CheckSets(setup, *disk, offline);
     REQUIRE(removal.has_value());
     REQUIRE(removal->has_value());
+    CHECK_EQ((*removal)->ContentBytes(), uint64_t{0});
     REQUIRE(MCContentUpdater::Stage(setup, *disk, offline, **removal, GoOn).has_value());
     REQUIRE(MCContentUpdater::Arm(setup, *disk, **removal).has_value());
     CHECK(offline.Asked().empty());
+    CHECK(!std::filesystem::exists(lists));
     REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
     CHECK(!std::filesystem::exists(game / "HD"));
-    CHECK(InstalledSets(release) == WithoutHd);
+
+    // The game's files stay as recorded, with the release, its list and HD's size, for GET.
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK(record->Sets == WithoutHd);
+    CHECK_EQ(record->Files.size(), size_t{3});
+    CHECK(!record->Files.contains("HD/TERRAIN.HDA"));
+    CHECK_EQ(record->Release, uint64_t{2});
+    CHECK(record->List == MCSha256::Of(release.ListText));
+    CHECK_EQ(record->SetBytes.at("hd"), uint64_t{Terrain().size()});
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+
+    // Got again, from the host.
+    ChangeSets(release, WithHd);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    CHECK(InstalledSets(release) == WithHd);
 }
 
 TEST_CASE("content updater: an update is planned for the sets chosen")

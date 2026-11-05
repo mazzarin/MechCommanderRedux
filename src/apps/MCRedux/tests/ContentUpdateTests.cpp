@@ -121,6 +121,17 @@ TEST_CASE("sha256: the standard's test vector, a file read in parts, and hex bot
     CHECK(!MCSha256::FromHex("ba7816bf").has_value());
     CHECK(!MCSha256::FromHex(std::string(64, 'g')).has_value());
     CHECK(!MCSha256::OfFile(scratch.Path() / "missing.bin").has_value());
+
+    // Taken in pieces: a file's start, then bytes as they come; a read asked to stop stops before its next megabyte.
+    constexpr size_t Start = (1 << 20) + 12345;
+    MCSha256::MCHasher pieces;
+    CHECK_EQ(pieces.AddFile(scratch.Path() / "big.bin", Start).value_or(0), uint64_t{Start});
+    pieces.Add(std::span(big).subspan(Start));
+    CHECK(pieces.Finish() == MCSha256::Of(big));
+    int asked = 0;
+    const auto stopped = MCSha256::OfFile(scratch.Path() / "big.bin", [&] { return ++asked < 2; });
+    CHECK_EQ(stopped.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK_EQ(asked, 2);
 }
 
 TEST_CASE("update files: a signed file opens with its key and type, never another key, type or a changed byte")

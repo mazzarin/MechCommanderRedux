@@ -33,17 +33,31 @@ namespace
         return static_cast<size_t>(file.gcount());
     }
 
-    /// <summary>Where an entry is unpacked to, and whether writing it failed (the disk's fault, not the zip's).</summary>
+    /// <summary>
+    /// Where an entry is unpacked to, whether writing it failed (the disk's fault, not the zip's), and whether it was
+    /// stopped (asked before each piece).
+    /// </summary>
     struct MCEntrySink
     {
+        explicit MCEntrySink(const std::function<bool()>& goOn) : GoOn(goOn) {}
+
         std::ofstream Out;
+        const std::function<bool()>& GoOn;
         bool WriteFailed = false;
+        bool Stopped = false;
     };
 
     /// <summary>miniz writes an entry, in order, through this.</summary>
     size_t WriteEntry(void* opaque, mz_uint64, const void* buffer, size_t count)
     {
         auto& sink = *static_cast<MCEntrySink*>(opaque);
+
+        if (!sink.GoOn())
+        {
+            sink.Stopped = true;
+            return 0;
+        }
+
         sink.Out.write(static_cast<const char*>(buffer), static_cast<std::streamsize>(count));
         sink.WriteFailed = sink.WriteFailed || !sink.Out;
         return sink.WriteFailed ? 0 : count;
@@ -93,6 +107,11 @@ namespace
                     // Staged by an earlier attempt: its patch counts as in.
                     Received(step.Patch->Size);
                 }
+            }
+
+            if (Stopped())
+            {
+                return Stop();
             }
 
             const std::set<const MCContentList::MCZip*> zipsPlanned = ZipsHolding(whole);
@@ -181,7 +200,7 @@ namespace
                 return false;
             }
 
-            const auto hash = _Disk.Hash(StagedPath(step));
+            const auto hash = MCSha256::OfFile(StagedPath(step), _GoOn);
             return hash && *hash == step.File->Sha256;
         }
 
@@ -299,7 +318,12 @@ namespace
                 return Stop();
             }
 
-            const auto hash = _Disk.Hash(path);
+            const auto hash = MCSha256::OfFile(path, _GoOn);
+
+            if (Stopped())
+            {
+                return Stop();
+            }
 
             if (_Disk.Stat(path).Size != size || !hash || *hash != sha256)
             {
@@ -332,7 +356,14 @@ namespace
                 return Stop();
             }
 
-            const auto applied = MCFilePatch::Apply(At(step.OnDisk), *patch, staged);
+            const auto applied = MCFilePatch::Apply(At(step.OnDisk), *patch, staged, _GoOn);
+
+            // Stopped, the patch stays for the next attempt.
+            if (Stopped())
+            {
+                return Stop();
+            }
+
             _Disk.Remove(*patch);
 
             if (!applied)
@@ -340,13 +371,13 @@ namespace
                 return std::unexpected(applied.error());
             }
 
-            if (Stopped())
-            {
-                return Stop();
-            }
-
             if (!IsStaged(step))
             {
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
                 _Disk.Remove(staged);
                 return std::unexpected("the patched file isn't the release's");
             }
@@ -415,11 +446,19 @@ namespace
                     break;
                 }
 
-                MCEntrySink sink;
+                MCEntrySink sink(_GoOn);
                 sink.Out.open(staged, std::ios::binary | std::ios::trunc);
                 const bool unpacked = sink.Out && mz_zip_reader_extract_to_callback(
                                                       &archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
                 sink.Out.close();
+
+                if (sink.Stopped)
+                {
+                    _Disk.Remove(staged);
+                    error = StoppedError;
+                    keepZip = true;
+                    break;
+                }
 
                 if (!sink.Out || sink.WriteFailed)
                 {
@@ -431,6 +470,13 @@ namespace
 
                 if (!unpacked || !IsStaged(*step))
                 {
+                    if (Stopped())
+                    {
+                        error = StoppedError;
+                        keepZip = true;
+                        break;
+                    }
+
                     _Disk.Remove(staged);
                     error = std::format("{} from {} isn't the release's", step->File->Path, zip.Name);
                     break;
@@ -526,6 +572,8 @@ namespace
         uint64_t _Received = 0;
         uint64_t _Expected = 0;
         bool _Stopped = false;
+        /// <summary>Asked in the long loops (a hash's reads, a patch's writes, an entry's): false once stopped.</summary>
+        const std::function<bool()> _GoOn = [this] { return !Stopped(); };
     };
 }
 

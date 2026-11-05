@@ -1037,6 +1037,20 @@ TEST_CASE("file patch: one for another file, damaged, without checksums or no pa
     CHECK(ReadFile(old) == PatchOld());
 }
 
+/// <summary>A patch asked to stop as it writes ends at once, as stopped, and leaves nothing.</summary>
+TEST_CASE("file patch: a patch stopped as it writes ends at once and writes nothing")
+{
+    ScratchFolder folder("file-patch-stopped");
+    WriteFile(folder.Path() / "old.bin", PatchOld());
+    WriteFile(folder.Path() / "patch.hdiff", CheckedPatch);
+    int asked = 0;
+    const auto stopped = MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff",
+                                            folder.Path() / "new.bin", [&] { return ++asked == 0; });
+    CHECK_EQ(stopped.error_or(""), std::string(MCFilePatch::StoppedError));
+    CHECK_EQ(asked, 1);
+    CHECK(!std::filesystem::exists(folder.Path() / "new.bin"));
+}
+
 /// <summary>
 /// Tool: <c>--file-patch &lt;out&gt; --patch-old &lt;file&gt; --patch-file &lt;patch&gt;</c> applies an update's patch
 /// with the game's code (MCFilePatch::Apply), printing the new file's size and the time taken: to check the release

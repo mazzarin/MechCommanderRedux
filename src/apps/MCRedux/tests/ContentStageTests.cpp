@@ -235,6 +235,13 @@ TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched
           Text(MCFilePatchFixture::CheckedPatch));
     MCFolderSource source(release.Host.Path());
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    // STOP from the start: nothing is fetched, and the patch already here isn't applied.
+    const auto never = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                             [](uint64_t, uint64_t) { return false; });
+    CHECK_EQ(never.error_or(""), std::string("stopped"));
+    CHECK(source.Asked().empty());
+    CHECK(!std::filesystem::exists(StagedAt(release, "HD/b.hda")));
+
     // STOP as the first patch's bytes arrive.
     const auto stopped = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
                                                [](uint64_t received, uint64_t) { return received == 0; });

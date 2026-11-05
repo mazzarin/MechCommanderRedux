@@ -27,7 +27,7 @@ namespace
     constexpr float ButtonHeight = 16.0f;
     constexpr float ButtonSpacing = 8.0f;
     constexpr float LetterWidth = static_cast<float>(SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE);
-    /// <summary>The most lines a question shows; past them the last ends "...".</summary>
+    /// <summary>The most lines a question shows (<see cref="MCFirstStart::Wrapped"/>).</summary>
     constexpr size_t MostLines = 12;
     constexpr std::string_view CutShort = "...";
 
@@ -137,65 +137,11 @@ namespace
         return static_cast<size_t>((static_cast<float>(WindowWidth) / DrawingScale - 2 * Margin) / LetterWidth);
     }
 
-    /// <summary>
-    /// <paramref name="text"/> in lines of at most <paramref name="width"/> letters, broken between words (a word too
-    /// long for a line, within it); each '\n' starts a line. At most <see cref="MostLines"/>, the last cut short.
-    /// </summary>
-    std::vector<std::string> Wrapped(std::string_view text, size_t width)
+    /// <summary>A line cut short to <paramref name="width"/> letters, ending "...".</summary>
+    void CutLine(std::string& line, size_t width)
     {
-        std::vector<std::string> lines;
-
-        for (const auto paragraph : std::views::split(text, '\n'))
-        {
-            std::string line;
-
-            for (const auto part : std::views::split(std::string_view(paragraph), ' '))
-            {
-                std::string_view word(part);
-
-                if (word.empty())
-                {
-                    continue;
-                }
-
-                if (!line.empty() && line.size() + 1 + word.size() > width)
-                {
-                    lines.push_back(std::move(line));
-                    line.clear();
-                }
-
-                while (word.size() > width)
-                {
-                    if (!line.empty())
-                    {
-                        lines.push_back(std::move(line));
-                        line.clear();
-                    }
-
-                    lines.emplace_back(word.substr(0, width));
-                    word.remove_prefix(width);
-                }
-
-                if (!line.empty())
-                {
-                    line += ' ';
-                }
-
-                line += word;
-            }
-
-            lines.push_back(std::move(line));
-        }
-
-        if (lines.size() > MostLines)
-        {
-            lines.resize(MostLines);
-            std::string& last = lines.back();
-            last.resize(std::min(last.size(), width - CutShort.size()));
-            last += CutShort;
-        }
-
-        return lines;
+        line.resize(std::min(line.size(), width - CutShort.size()));
+        line += CutShort;
     }
 
     /// <summary>A button of the question: its place, in the drawing's units, and its word.</summary>
@@ -221,10 +167,17 @@ namespace
         return buttons;
     }
 
-    /// <summary>The button at the point, in the drawing's units, if any.</summary>
+    /// <summary>A point of the window, in its points as the mouse gives them, in the drawing's units.</summary>
+    SDL_FPoint DrawingPoint(float x, float y)
+    {
+        // The drawing's scale is DrawingScale times the window's pixel density, so it's DrawingScale of its points.
+        return {x / DrawingScale, y / DrawingScale};
+    }
+
+    /// <summary>The button at the window's point (in its points), if any.</summary>
     std::optional<size_t> ButtonAt(const std::vector<MCButton>& buttons, float x, float y)
     {
-        const SDL_FPoint point{x, y};
+        const SDL_FPoint point = DrawingPoint(x, y);
 
         for (size_t i = 0; i < buttons.size(); ++i)
         {
@@ -402,6 +355,78 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
     return true;
 }
 
+std::vector<std::string> MCFirstStart::Wrapped(std::string_view text, size_t width)
+{
+    std::vector<std::string> lines;
+    // Where the last paragraph's lines begin.
+    size_t lastStart = 0;
+
+    for (const auto paragraph : std::views::split(text, '\n'))
+    {
+        lastStart = lines.size();
+        std::string line;
+
+        for (const auto part : std::views::split(std::string_view(paragraph), ' '))
+        {
+            std::string_view word(part);
+
+            if (word.empty())
+            {
+                continue;
+            }
+
+            if (!line.empty() && line.size() + 1 + word.size() > width)
+            {
+                lines.push_back(std::move(line));
+                line.clear();
+            }
+
+            while (word.size() > width)
+            {
+                if (!line.empty())
+                {
+                    lines.push_back(std::move(line));
+                    line.clear();
+                }
+
+                lines.emplace_back(word.substr(0, width));
+                word.remove_prefix(width);
+            }
+
+            if (!line.empty())
+            {
+                line += ' ';
+            }
+
+            line += word;
+        }
+
+        lines.push_back(std::move(line));
+    }
+
+    if (lines.size() <= MostLines)
+    {
+        return lines;
+    }
+
+    // The last paragraph (the step to take) shows whole, after a blank line when it has one; the text before it is cut.
+    const size_t last = lines.size() - lastStart;
+    const size_t blank = lastStart > 0 && lines[lastStart - 1].empty() ? 1 : 0;
+
+    if (last + blank < MostLines)
+    {
+        const size_t before = MostLines - last - blank;
+        std::vector<std::string> shown(lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(before));
+        CutLine(shown.back(), width);
+        shown.insert(shown.end(), lines.begin() + static_cast<std::ptrdiff_t>(lastStart - blank), lines.end());
+        return shown;
+    }
+
+    lines.resize(MostLines);
+    CutLine(lines.back(), width);
+    return lines;
+}
+
 std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_view text,
                                         std::span<const std::string_view> buttons, const MCWindowOptions& options)
 {
@@ -426,6 +451,8 @@ std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_vi
     SDL_Renderer* const renderer = (*open)->Renderer;
     SDL_RaiseWindow((*open)->Window);
     size_t lit = 0;
+    // The button the mouse went down on: one pressed is one let go on where it went down.
+    std::optional<size_t> pressedOn;
 
     if (options.Answer)
     {
@@ -446,8 +473,6 @@ std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_vi
 
         do
         {
-            SDL_ConvertEventToRenderCoordinates(renderer, &event);
-
             switch (event.type)
             {
                 case SDL_EVENT_QUIT:
@@ -458,18 +483,40 @@ std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_vi
                     lit = ButtonAt(laidOut, event.motion.x, event.motion.y).value_or(lit);
                     break;
                 }
-                case SDL_EVENT_MOUSE_BUTTON_UP:
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 {
-                    if (const std::optional<size_t> pressed = ButtonAt(laidOut, event.button.x, event.button.y);
-                        pressed && event.button.button == SDL_BUTTON_LEFT)
+                    if (event.button.button == SDL_BUTTON_LEFT)
                     {
-                        return pressed;
+                        pressedOn = ButtonAt(laidOut, event.button.x, event.button.y);
                     }
 
                     break;
                 }
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                {
+                    if (event.button.button != SDL_BUTTON_LEFT)
+                    {
+                        break;
+                    }
+
+                    const std::optional<size_t> released = ButtonAt(laidOut, event.button.x, event.button.y);
+
+                    if (released && released == pressedOn)
+                    {
+                        return released;
+                    }
+
+                    pressedOn.reset();
+                    break;
+                }
                 case SDL_EVENT_KEY_DOWN:
                 {
+                    // A key held from before the window opened (Enter, starting the game) repeats: only a press counts.
+                    if (event.key.repeat)
+                    {
+                        break;
+                    }
+
                     switch (event.key.key)
                     {
                         case SDLK_LEFT:

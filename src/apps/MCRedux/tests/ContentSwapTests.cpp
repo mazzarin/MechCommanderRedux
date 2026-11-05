@@ -865,10 +865,12 @@ TEST_CASE(
     const int steps = whole.Changes();
     CHECK(steps > 5);
     const std::map<std::string, std::string> given = MCUpdate::Bytes(whole.Files());
+    constexpr int SubsetsPerStep = 12;
+    std::mt19937 random(20261105);
 
     for (int step = 0; step < steps; ++step)
     {
-        for (const bool keepAll : {false, true})
+        for (int subset = 0; subset < SubsetsPerStep; ++subset)
         {
             MCCrashDisk disk = update.Stuck();
             disk.CutAt(step);
@@ -881,7 +883,12 @@ TEST_CASE(
             {
             }
 
-            disk.Cut([&](size_t) { return keepAll; });
+            // Every unflushed change lost, every one kept, then random halves.
+            const uint32_t seed = random();
+            disk.Cut([&](size_t i)
+                     { return subset == 0   ? false
+                              : subset == 1 ? true
+                                            : ((seed >> (i % 32)) & 1) != 0; });
 
             // Begun, it's a repair: the game doesn't play the files.
             if (MCContentSwap::Repairing(disk, Game))
@@ -891,7 +898,7 @@ TEST_CASE(
                 if (MCContentSwap::Run(start, Game).Outcome != MCOutcome::Stuck)
                 {
                     FAIL_CHECK(
-                        std::format("step {} keep {}: a start played the files a repair gave up", step, keepAll));
+                        std::format("step {} subset {}: a start played the files a repair gave up", step, subset));
                 }
             }
 
@@ -899,7 +906,7 @@ TEST_CASE(
 
             if (!again || MCUpdate::Bytes(disk.Files()) != given)
             {
-                FAIL_CHECK(std::format("step {} keep {}: done again, it didn't end as whole ({})", step, keepAll,
+                FAIL_CHECK(std::format("step {} subset {}: done again, it didn't end as whole ({})", step, subset,
                                        again ? std::string("its files differ") : again.error()));
             }
         }

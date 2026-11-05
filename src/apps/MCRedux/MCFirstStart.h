@@ -10,6 +10,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <vector>
 
 /// <summary>
 /// Port-only: the first start of a copy an installer prepared (update/MCContentUpdater.h's AwaitsInstall). The game's
@@ -55,6 +56,13 @@ namespace MCFirstStart
     /// </summary>
     /// <returns>True when the work was done, false when the player closed the window, or what failed.</returns>
     std::expected<bool, std::string> Run(std::string_view heading, MCWork work, const MCWindowOptions& options = {});
+
+    /// <summary>
+    /// <paramref name="text"/> as <see cref="Ask"/> shows it: lines of at most <paramref name="width"/> letters, broken
+    /// between words (a word too long for a line, within it), each '\n' starting a line. Past 12 lines the last
+    /// paragraph (the step to take) still shows whole and the text before it is cut short, ending "...".
+    /// </summary>
+    std::vector<std::string> Wrapped(std::string_view text, size_t width);
 
     /// <summary>
     /// Shows <paramref name="heading"/> and <paramref name="text"/>, wrapped, over a row of <paramref name="buttons"/>,

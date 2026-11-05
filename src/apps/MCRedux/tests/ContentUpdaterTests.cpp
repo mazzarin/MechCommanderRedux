@@ -1027,6 +1027,25 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     std::filesystem::rename(update / "staged" / "data" / "changed.fit", game / "data" / "changed.fit");
     std::filesystem::remove(update / "staged" / "HD" / "terrain.hda");
 
+    // Offline, or the release's list out of reach, nothing is given up: TRY AGAIN can still finish the update.
+    const auto unchanged = [&]()
+    {
+        CHECK(std::filesystem::exists(update / "journal.json"));
+        CHECK(!MCContentSwap::Repairing(*disk, game));
+        CHECK_EQ(Read(update / "replaced" / "data" / "missions" / "new.fit"), std::string("the player's own mission"));
+        CHECK_EQ(Read(update / "replaced" / "data" / "removed.fit"), std::string("removed in v2"));
+    };
+
+    MCFolderSource offline(release.Host.Path() / "nowhere");
+    REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, offline, GoOn).has_value());
+    unchanged();
+    const std::filesystem::path lists = release.Host.Path() / "lists";
+    const std::filesystem::path listsAway = release.Host.Path() / "lists-away";
+    std::filesystem::rename(lists, listsAway);
+    REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
+    unchanged();
+    std::filesystem::rename(listsAway, lists);
+
     REQUIRE(MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
     CHECK(MCContentSwap::Repairing(*disk, game));
     REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
@@ -1115,8 +1134,40 @@ TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends w
     SDL_Quit();
 }
 
-TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its buttons; Enter, the arrows and Escape press "
-                   "them")
+TEST_CASE("recovery screen: its text wraps between words, a word too long within it; past 12 lines the step to take "
+          "still shows whole")
+{
+    constexpr size_t Width = 10;
+    CHECK((MCFirstStart::Wrapped("ONE TWO THREE", Width) == std::vector<std::string>{"ONE TWO", "THREE"}));
+    CHECK((MCFirstStart::Wrapped("TENLETTERS FITS", Width) == std::vector<std::string>{"TENLETTERS", "FITS"}));
+    CHECK((MCFirstStart::Wrapped("ELEVENLETTERS", Width) == std::vector<std::string>{"ELEVENLETT", "ERS"}));
+    CHECK((MCFirstStart::Wrapped("A\n\nB", Width) == std::vector<std::string>{"A", "", "B"}));
+
+    // A problem of 20 long words: it's cut short, and the step after it shows whole.
+    std::string text;
+
+    for (int word = 0; word < 20; ++word)
+    {
+        text += "ABCDEFGH ";
+    }
+
+    text += "\n\nCLOSE IT, THEN TRY AGAIN.";
+    const std::vector<std::string> lines = MCFirstStart::Wrapped(text, Width);
+    REQUIRE_EQ(lines.size(), size_t{12});
+    CHECK_EQ(lines[7], std::string("ABCDEFG..."));
+    CHECK_EQ(lines[8], std::string());
+    CHECK_EQ(lines[9], std::string("CLOSE IT,"));
+    CHECK_EQ(lines[10], std::string("THEN TRY"));
+    CHECK_EQ(lines[11], std::string("AGAIN."));
+
+    // A step too long to show whole is cut at the end, as any text.
+    const std::vector<std::string> one = MCFirstStart::Wrapped(text.substr(0, 20 * 9), Width);
+    REQUIRE_EQ(one.size(), size_t{12});
+    CHECK_EQ(one.back(), std::string("ABCDEFG..."));
+}
+
+TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its buttons; Enter, the arrows, Escape and the "
+                   "mouse press them")
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
@@ -1167,6 +1218,47 @@ TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its button
     CHECK(pressed({SDLK_RIGHT, SDLK_RETURN}) == std::optional<size_t>(1));
     CHECK(pressed({SDLK_LEFT, SDLK_RETURN}) == std::optional<size_t>(2));
     CHECK(pressed({SDLK_ESCAPE}) == std::optional<size_t>(2));
+
+    // Enter held from before the window opened repeats, which isn't a press.
+    SDL_Event held{};
+    held.type = SDL_EVENT_KEY_DOWN;
+    held.key.key = SDLK_RETURN;
+    held.key.down = true;
+    held.key.repeat = true;
+    REQUIRE(SDL_PushEvent(&held));
+    CHECK(pressed({SDLK_ESCAPE}) == std::optional<size_t>(2));
+
+    // The mouse, in the window's points: one line of text puts the buttons' middles 120 down, REPAIR's 272 across and
+    // QUIT's 392. A click is a press and a release on one button.
+    const auto clicked = [&](std::initializer_list<std::pair<float, float>> downUp, std::string_view text)
+    {
+        bool down = true;
+
+        for (const auto& [x, y] : downUp)
+        {
+            SDL_Event event{};
+            event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            event.button.button = SDL_BUTTON_LEFT;
+            event.button.down = down;
+            event.button.x = x;
+            event.button.y = y;
+            REQUIRE(SDL_PushEvent(&event));
+            down = !down;
+        }
+
+        return MCFirstStart::Ask(Heading, text, Buttons, {.Hidden = true});
+    };
+
+    constexpr float ButtonsMiddle = 120;
+    constexpr float RepairMiddle = 272;
+    constexpr float QuitMiddle = 392;
+    CHECK(clicked({{RepairMiddle, ButtonsMiddle}, {RepairMiddle, ButtonsMiddle}}, "ONE LINE.") ==
+          std::optional<size_t>(1));
+    CHECK(clicked({{RepairMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle}},
+                  "ONE LINE.") == std::optional<size_t>(2));
 
     // Closed: no answer.
     SDL_Event quit{};

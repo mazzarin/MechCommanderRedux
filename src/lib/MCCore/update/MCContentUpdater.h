@@ -127,9 +127,10 @@ namespace MCContentUpdater
                                              const std::function<bool(uint64_t, uint64_t)>& progress);
 
     /// <summary>
-    /// The recovery screen's REPAIR, under the game's lock held exclusive: the update stopped partway is given up
-    /// (MCContentSwap::Abandon), then the release is installed as at the first start (<see cref="Install"/>), planned
-    /// from the files as they are, so the swap that follows makes every listed file the release's.
+    /// The recovery screen's REPAIR, under the game's lock held exclusive: the release is installed as at the first
+    /// start (<see cref="Install"/>), planned from the files as they are, so the swap that follows makes every listed
+    /// file the release's. The update stopped partway is given up (MCContentSwap::Abandon) only once the release and its
+    /// list are fetched and checked: offline, it stays as it was.
     /// </summary>
     /// <returns>Nothing, or what failed (the host out of reach, a full disk).</returns>
     std::expected<void, std::string> Repair(const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source,

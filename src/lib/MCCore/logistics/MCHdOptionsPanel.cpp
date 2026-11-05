@@ -38,14 +38,6 @@ namespace
     constexpr std::string_view HdLightingLabel = "HD LIGHTING";
     constexpr std::string_view ParticlesLabel = "PARTICLES";
 
-    /// <summary>The pack's sizes are shown in gigabytes, as the installers give them.</summary>
-    constexpr double BytesPerGigabyte = 1e9;
-
-    double Gigabytes(uint64_t bytes)
-    {
-        return static_cast<double>(bytes) / BytesPerGigabyte;
-    }
-
     /// <summary>HD PACK's buttons, one shown at a time where the other rows have their settings.</summary>
     constexpr std::string_view GetLabel = "GET";
     constexpr std::string_view StopLabel = "STOP";
@@ -96,9 +88,9 @@ namespace
                     return "GETTING READY TO REMOVE IT.";
                 }
 
-                return pack.Expected > 0 ? std::format("DOWNLOADING: {:.1f} OF {:.1f} GB.", Gigabytes(pack.Received),
-                                                       Gigabytes(pack.Expected))
-                                         : std::string("STARTING THE DOWNLOAD.");
+                return pack.Expected > 0
+                           ? std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(pack.Received, pack.Expected))
+                           : std::string("STARTING THE DOWNLOAD.");
             }
             case MCUpdater::MCStage::Ready:
                 return pack.Chosen ? "DOWNLOADED. RESTART THE GAME TO SEE IT." : "RESTART THE GAME TO REMOVE IT.";
@@ -124,8 +116,8 @@ namespace
         }
 
         return pack.Installed
-                   ? std::format("THE HD ART, SOUND AND MOVIES ({:.1f} GB).", Gigabytes(pack.Bytes))
-                   : std::format("THE HD ART, SOUND AND MOVIES: {:.1f} GB TO DOWNLOAD.", Gigabytes(pack.Bytes));
+                   ? std::format("THE HD ART, SOUND AND MOVIES ({}).", MCUpdateWork::SizeText(pack.Bytes))
+                   : std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(pack.Bytes));
     }
 
     /// <summary>Why HD PACK can't change now: an update's work comes first.</summary>

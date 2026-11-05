@@ -2,9 +2,6 @@
 #include "MCFirstStart.h"
 #include "platform/MCFileSystem.h"
 
-#include <atomic>
-#include <thread>
-
 namespace
 {
     /// <summary>The window's size in points; it's drawn at twice that scale, the built-in text's letters 16 points tall.</summary>
@@ -35,12 +32,10 @@ namespace
     constexpr int32_t FrameMilliseconds = 50;
 
     /// <summary>
-    /// How long a closed window waits for the work to stop: a download stalled on the network stops only at its
-    /// timeout, so past this the game ends without it (the next start resumes it).
+    /// How long a closed window draws itself STOPPING while the work stops (its transfer cancelled, it ends at once);
+    /// past this it just waits for it (the next start resumes the download).
     /// </summary>
     constexpr std::chrono::seconds StopWait{1};
-
-    constexpr double BytesPerGigabyte = 1e9;
 
     struct MCColor
     {
@@ -53,14 +48,6 @@ namespace
     constexpr MCColor Background{16, 16, 16};
     constexpr MCColor Amber{232, 168, 48};
     constexpr MCColor BarEdge{120, 88, 32};
-
-    /// <summary>The work's end, shared with its thread (which a closed window may leave behind).</summary>
-    struct MCShared
-    {
-        MCFirstStart::MCProgress Progress;
-        std::atomic<bool> Done = false;
-        std::expected<void, std::string> Result;
-    };
 
     /// <summary>The window and its renderer, closed as it goes.</summary>
     class MCOpenWindow
@@ -226,11 +213,6 @@ namespace
         Present(renderer, shot);
     }
 
-    double Gigabytes(uint64_t bytes)
-    {
-        return static_cast<double>(bytes) / BytesPerGigabyte;
-    }
-
     /// <summary>The second line: how much is in, or what's happening.</summary>
     std::string AmountLine(uint64_t received, uint64_t expected, bool stopping)
     {
@@ -244,7 +226,7 @@ namespace
             return "LOOKING AT WHAT'S NEEDED.";
         }
 
-        return std::format("{:.1f} OF {:.1f} GB", Gigabytes(received), Gigabytes(expected));
+        return MCUpdateWork::ProgressText(received, expected);
     }
 
     /// <summary>Draws the window: the heading, the amount and the bar; saved to <paramref name="shot"/> when given.</summary>
@@ -270,19 +252,6 @@ namespace
     }
 }
 
-void MCFirstStart::MCProgress::Set(uint64_t received, uint64_t expected)
-{
-    const std::lock_guard lock(_Mutex);
-    _Received = received;
-    _Expected = expected;
-}
-
-std::pair<uint64_t, uint64_t> MCFirstStart::MCProgress::Get() const
-{
-    const std::lock_guard lock(_Mutex);
-    return {_Received, _Expected};
-}
-
 std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCWork work,
                                                    const MCWindowOptions& options)
 {
@@ -294,18 +263,12 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
     }
 
     SDL_Renderer* const renderer = (*open)->Renderer;
-    const auto shared = std::make_shared<MCShared>();
-    std::jthread worker(
-        [shared, work = std::move(work)](std::stop_token stop)
-        {
-            shared->Result = work(shared->Progress, stop);
-            shared->Done = true;
-        });
-
+    MCUpdateWork::MCWork<void> running(std::string(heading), [work = std::move(work)](MCUpdateWork::MCContext& context)
+                                       { return work(context.Progress, context.Stop); });
     bool closed = false;
     std::chrono::steady_clock::time_point stopBy;
 
-    while (!shared->Done)
+    while (!running.Finished())
     {
         SDL_Event event;
 
@@ -316,7 +279,7 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
                 SDL_Log("First start: the window was closed; the download stops");
                 closed = true;
                 stopBy = std::chrono::steady_clock::now() + StopWait;
-                worker.request_stop();
+                running.Stop();
             }
         }
 
@@ -325,31 +288,26 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
             break;
         }
 
-        Draw(renderer, heading, shared->Progress, closed, {});
+        Draw(renderer, heading, running.Progress(), closed, {});
         SDL_WaitEventTimeout(nullptr, FrameMilliseconds);
     }
 
-    Draw(renderer, heading, shared->Progress, closed && !shared->Done, options.Shot);
+    Draw(renderer, heading, running.Progress(), closed && !running.Finished(), options.Shot);
 
-    if (shared->Done)
+    if (closed && !running.Finished())
     {
-        worker.join();
-    }
-    else
-    {
-        // It holds only what it shares; it ends with the process.
-        SDL_Log("First start: the download is still stopping as the game quits; the next start resumes it");
-        worker.detach();
+        SDL_Log("First start: the download is still stopping; the game waits for it (the next start resumes it)");
     }
 
-    if (!shared->Done)
+    if (const std::expected<void, std::string> result = running.Join(); !result)
     {
-        return false;
-    }
+        if (closed)
+        {
+            SDL_Log("First start: the work stopped: %s", result.error().c_str());
+            return false;
+        }
 
-    if (!shared->Result)
-    {
-        return closed ? std::expected<bool, std::string>(false) : std::unexpected(shared->Result.error());
+        return std::unexpected(result.error());
     }
 
     return true;

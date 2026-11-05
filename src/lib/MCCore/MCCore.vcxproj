@@ -495,6 +495,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="update\MCUpdatePlace.cpp" />
+    <ClCompile Include="update\MCUpdateWork.cpp" />
     <ClCompile Include="vfx\MCAgEllipse.cpp" />
     <ClCompile Include="vfx\MCAgShapeDraw.cpp" />
     <ClCompile Include="vfx\MCAgShapeTransform.cpp" />
@@ -939,6 +940,7 @@
     <ClInclude Include="update\MCUpdateJson.h" />
     <ClInclude Include="update\MCUpdateLock.h" />
     <ClInclude Include="update\MCUpdatePlace.h" />
+    <ClInclude Include="update\MCUpdateWork.h" />
     <ClInclude Include="vfx\MCAgShape.h" />
     <ClInclude Include="vfx\MCVfx.h" />
     <ClInclude Include="vfx\MCVfxClip.h" />

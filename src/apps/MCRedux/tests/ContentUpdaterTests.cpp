@@ -23,6 +23,8 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 // The game's own updater (update/MCContentUpdater.h, main/MCUpdater.h) and its locks (update/MCUpdateLock.h): a
@@ -196,6 +198,57 @@ namespace
     private:
         MCFolderSource _Inner;
         std::shared_ptr<MCGate> _Gate;
+    };
+
+    /// <summary>A transfer stalled on the network: its downloads wait, saying nothing, until it's cancelled.</summary>
+    struct MCStall
+    {
+        std::mutex Mutex;
+        std::condition_variable Changed;
+        bool Reached = false;
+        bool Cancelled = false;
+    };
+
+    /// <summary>The release's files hosted in a folder, each download stalled until the transfer is cancelled.</summary>
+    class MCStalledSource final : public MCContentStage::MCSource
+    {
+    public:
+        MCStalledSource(std::filesystem::path folder, std::shared_ptr<MCStall> stall)
+            : _Inner(std::move(folder)), _Stall(std::move(stall))
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
+                                               const std::function<bool(uint64_t)>&) override
+        {
+            std::unique_lock lock(_Stall->Mutex);
+            _Stall->Reached = true;
+            _Stall->Changed.notify_all();
+
+            // Never the bytes callback: only a cancel ends it (or the test's own wait, failing it).
+            if (!_Stall->Changed.wait_for(lock, WorkWait, [&] { return _Stall->Cancelled; }))
+            {
+                return std::unexpected("the stalled download was never cancelled");
+            }
+
+            return std::unexpected("stopped");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+        void Cancel() override
+        {
+            const std::lock_guard lock(_Stall->Mutex);
+            _Stall->Cancelled = true;
+            _Stall->Changed.notify_all();
+        }
+
+    private:
+        MCFolderSource _Inner;
+        std::shared_ptr<MCStall> _Stall;
     };
 
     /// <summary>What the stand-in program backend was asked.</summary>
@@ -631,9 +684,14 @@ TEST_CASE("updater: the program held to release.json's build; the content stages
     CHECK_EQ(MCUpdater::Status().Received, contentBytes + programIn);
     CHECK_EQ(MCUpdater::Status().Expected, contentBytes + ProgramSize);
 
-    // The program's installer armed: the content is armed with it.
+    // The program's installer armed: the content is armed with it, on the work's thread (the frame never waits for its
+    // journal's writes), and READY only once it is; the program's ready answer waits.
     MCUpdater::Ready();
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK(MCUpdater::Working());
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
     CHECK(Stage() == MCStage::Ready);
+    CHECK_EQ(scope.Program->Answers.size(), size_t{1});
     CHECK(release.Armed());
     CHECK(StagingFree(release.Game.Path()));
 
@@ -672,10 +730,33 @@ TEST_CASE("updater: the content can't be armed: the program's install is cancell
     const std::filesystem::path update = release.Game.Path() / "Redux update";
     std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
     MCUpdater::Ready();
+    const bool ended = FramesUntil([] { return Stage() != MCStage::Downloading; });
     std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    REQUIRE(ended);
     CHECK(scope.Program->Answers.back() == MCAnswer::Skip);
     CHECK(Stage() == MCStage::Failed);
     CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+
+TEST_CASE("updater: quitting while the content is armed waits for it; content that can't be armed cancels the "
+          "program's install")
+{
+    MCHostedRelease release("arm-fails-quitting");
+    release.Publish(1, 2, NewerBuild);
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return !scope.Program->Answers.empty(); }));
+    const std::filesystem::path update = release.Game.Path() / "Redux update";
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    MCUpdater::Ready();
+    MCUpdater::Quit();
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    CHECK(scope.Program->Answers.back() == MCAnswer::Skip);
+    CHECK(!MCUpdater::Working());
+    CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
 }
 #endif
 
@@ -731,6 +812,40 @@ TEST_CASE("updater: another copy stages: INSTALL fails, saying so")
     CHECK(!release.Armed());
 }
 
+TEST_CASE("updater: the program alone holds the staging lock from INSTALL until READY; another copy installing it "
+          "fails INSTALL, saying so")
+{
+    MCHostedRelease release("program-alone");
+    const std::filesystem::path& game = release.Game.Path();
+    UpdateToRelease2(release);
+    release.Publish(2, 2, NewerBuild);
+
+    {
+        MCUpdaterScope scope(release, true);
+        CheckUntilFound(scope, NewerBuild);
+        CHECK_EQ(MCUpdater::Status().Expected, ProgramSize);
+        const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(game, MCUpdateLock::StagingLock);
+        REQUIRE(other != nullptr);
+        REQUIRE(other->TryExclusive());
+        MCUpdater::Answer(MCAnswer::Install);
+        CHECK(Stage() == MCStage::Failed);
+        CHECK(MCUpdater::Status().Error.find("another copy") != std::string::npos);
+        REQUIRE(!scope.Program->Answers.empty());
+        CHECK(scope.Program->Answers.back() == MCAnswer::Later);
+    }
+
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(!scope.Program->Answers.empty());
+    CHECK(scope.Program->Answers.back() == MCAnswer::Install);
+    CHECK(!StagingFree(game));
+    MCUpdater::Ready();
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(StagingFree(game));
+}
+
 TEST_CASE("updater: Sparkle installing without its ready step (an update it downloaded before) arms the content too")
 {
     MCHostedRelease release("installs-at-once");
@@ -745,7 +860,29 @@ TEST_CASE("updater: Sparkle installing without its ready step (an update it down
     CHECK(StagingFree(release.Game.Path()));
 }
 
-TEST_CASE("updater: Sparkle ending its session while the update is shown fails it rather than wait")
+#ifndef _WIN32
+TEST_CASE("updater: Sparkle installing without its ready step with content that can't be armed: the update stays "
+          "failed")
+{
+    MCHostedRelease release("installs-at-once-arm-fails");
+    release.Publish(1, 2, NewerBuild);
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return !scope.Program->Answers.empty(); }));
+    const std::filesystem::path update = release.Game.Path() / "Redux update";
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    MCUpdater::Installing();
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!MCUpdater::Status().Error.empty());
+    CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+#endif
+
+TEST_CASE("updater: Sparkle ending its session while the update is shown fails it rather than wait; INSTALL then "
+          "looks again")
 {
     MCHostedRelease release("session-ends");
     release.Publish(1, 2, NewerBuild);
@@ -753,10 +890,16 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CheckUntilFound(scope, NewerBuild);
     MCUpdater::Closed();
     CHECK(Stage() == MCStage::Failed);
-    MCUpdater::Answer(MCAnswer::Install);
-    CHECK(Stage() == MCStage::Failed);
     CHECK(scope.Program->Answers.empty());
     CHECK(!release.Armed());
+
+    // INSTALL: the check again, and the program's backend asked for its build again; nothing passed on to it yet.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(Stage() == MCStage::Downloading);
+    REQUIRE(FramesUntil([&] { return scope.Program->Checks.size() == 2; }));
+    CHECK(scope.Program->Checks.back() == NewerBuild);
+    CHECK(scope.Program->Answers.empty());
+    CHECK(Stage() == MCStage::Downloading);
 }
 
 TEST_CASE(
@@ -1371,7 +1514,8 @@ TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a lat
     CHECK(InstalledSets(release) == WithHd);
 }
 
-TEST_CASE("updater: HD's choice changed while it downloads stops the download for the new choice")
+TEST_CASE("updater: HD's choice changed while it downloads stops the download for the new choice; back to what's "
+          "installed, what it staged and downloaded goes")
 {
     MCHostedRelease release("updater-hd-stop");
     const std::filesystem::path& game = release.Game.Path();
@@ -1388,6 +1532,12 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(MCUpdater::HdPack().Stage == MCStage::Downloading);
     CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::None);
 
+    // What it has staged and downloaded so far.
+    const std::filesystem::path staged = game / "Redux update" / "staged";
+    const std::filesystem::path download = game / "Redux update" / "download";
+    Write(staged / "HD" / "terrain.hda", "half the terrain");
+    Write(download / "hd-2.zip", "half the zip");
+
     MCUpdater::ChooseHd(false);
     CHECK(MCUpdater::HdPack().Stopping);
     REQUIRE(FramesUntilIdle());
@@ -1397,6 +1547,8 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(!release.Armed());
     CHECK(StagingFree(game));
     CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithoutHd);
+    CHECK(!std::filesystem::exists(staged));
+    CHECK(!std::filesystem::exists(download));
 }
 
 namespace
@@ -1429,6 +1581,166 @@ namespace
         MCUpdater::PauseWork(false);
         CHECK(MCUpdater::Working());
     }
+}
+
+TEST_CASE("updater: the program's backend failing while the content stages stops the staging before the staging lock "
+          "goes")
+{
+    MCHostedRelease release("fails-while-staging");
+    release.Publish(1, 2, NewerBuild);
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, true,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+    CHECK(!StagingFree(release.Game.Path()));
+
+    MCUpdater::Failed("Sparkle's session ended");
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!MCUpdater::Working());
+    CHECK(StagingFree(release.Game.Path()));
+
+    // Nothing stages on after it, nor goes in.
+    gate->Open = true;
+    SomeFrames();
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!release.Armed());
+    CHECK(scope.Program->Answers.empty());
+}
+
+namespace
+{
+    /// <summary>The release's files hosted in a folder, every download failing as a lost connection does.</summary>
+    class MCCutSource final : public MCContentStage::MCSource
+    {
+    public:
+        explicit MCCutSource(std::filesystem::path folder) : _Inner(std::move(folder)) {}
+
+        std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
+                                               const std::function<bool(uint64_t)>&) override
+        {
+            return std::unexpected("the connection was lost");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+    private:
+        MCFolderSource _Inner;
+    };
+}
+
+TEST_CASE("updater: after a failed download INSTALL tries again: a fresh check, then the update it finds installs")
+{
+    MCHostedRelease release("install-again");
+
+    // The first staging's downloads are cut off; every other transfer works.
+    const auto made = std::make_shared<int32_t>(0);
+    constexpr int32_t cutTransfer = 2;
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), made]() -> std::unique_ptr<MCContentStage::MCSource>
+                         {
+                             if (++*made == cutTransfer)
+                             {
+                                 return std::make_unique<MCCutSource>(host);
+                             }
+
+                             return std::make_unique<MCFolderSource>(host);
+                         });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    REQUIRE(Stage() == MCStage::Failed);
+    CHECK(MCUpdater::Status().Retry);
+    CHECK(StagingFree(release.Game.Path()));
+
+    // INSTALL: it shows downloading while the check runs, and goes on to READY with no second INSTALL.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK_EQ(MCUpdater::Status().Version, std::string("0.2.2 (500)"));
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK_EQ(*made, cutTransfer + 2);
+}
+
+TEST_CASE("updater: quitting cancels a download stalled on the network and waits for its end; nothing is left running")
+{
+    MCHostedRelease release("stalled-quit");
+    const auto stall = std::make_shared<MCStall>();
+    MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
+                         { return std::make_unique<MCStalledSource>(host, stall); });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+
+    {
+        std::unique_lock lock(stall->Mutex);
+        REQUIRE(stall->Changed.wait_for(lock, WorkWait, [&] { return stall->Reached; }));
+    }
+
+    // A cancel ends it at once, well before the stall's own wait.
+    constexpr std::chrono::seconds prompt{5};
+    const auto began = std::chrono::steady_clock::now();
+    MCUpdater::Quit();
+    CHECK(std::chrono::steady_clock::now() - began < prompt);
+    CHECK(stall->Cancelled);
+    CHECK(!MCUpdater::Working());
+    CHECK(StagingFree(release.Game.Path()));
+    CHECK(!release.Armed());
+}
+
+TEST_CASE("update work: a piece of work's transfer is cancelled when it's asked to stop; with none it fails, saying so")
+{
+    MCHostedRelease release("work-source");
+    const auto stall = std::make_shared<MCStall>();
+    MCUpdateWork::MCWork<void> work(
+        "a test's download",
+        [host = release.Host.Path(), stall](MCUpdateWork::MCContext& context)
+        {
+            return MCUpdateWork::WithSource<void>(
+                [&] { return std::make_unique<MCStalledSource>(host, stall); }, context.Stop,
+                [](MCContentStage::MCSource& source)
+                { return source.Fetch("update-2.zip", {}, 1, [](uint64_t) { return true; }); });
+        });
+
+    {
+        std::unique_lock lock(stall->Mutex);
+        REQUIRE(stall->Changed.wait_for(lock, WorkWait, [&] { return stall->Reached; }));
+    }
+
+    CHECK(!work.Finished());
+    work.Stop();
+    const std::expected<void, std::string> stopped = work.Join();
+    REQUIRE(!stopped.has_value());
+    CHECK_EQ(stopped.error(), std::string("stopped"));
+    CHECK(stall->Cancelled);
+
+    // Stopped before its transfer is made, the transfer is cancelled as it's made.
+    const auto early = std::make_shared<MCStall>();
+    std::stop_source stop;
+    stop.request_stop();
+    const MCUpdateWork::MCWorkSource cancelled(
+        [&] { return std::make_unique<MCStalledSource>(release.Host.Path(), early); }, stop.get_token());
+    CHECK(early->Cancelled);
+
+    // No transfer: the work fails, saying why.
+    const auto none = MCUpdateWork::WithSource<void>(
+        [] { return std::unique_ptr<MCContentStage::MCSource>(); }, std::stop_token(),
+        [](MCContentStage::MCSource&) -> std::expected<void, std::string> { return {}; });
+    REQUIRE(!none.has_value());
+    CHECK_EQ(none.error(), std::string(MCUpdateWork::NoSourceError));
+
+    // Progress reported, until the stop.
+    MCUpdateWork::MCProgress progress;
+    std::stop_source reporting;
+    const auto report = MCUpdateWork::Reporter(progress, reporting.get_token());
+    CHECK(report(3, 10));
+    CHECK((progress.Get() == std::pair<uint64_t, uint64_t>{3, 10}));
+    reporting.request_stop();
+    CHECK(!report(4, 10));
 }
 
 TEST_CASE("updater: an update's download stops while a match's mission plays, and goes on after it")
@@ -1872,7 +2184,8 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
     const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK(list->Description(HdPackRow).find("GB TO DOWNLOAD.") != std::string::npos);
+    CHECK_EQ(list->Description(HdPackRow),
+             std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
     CHECK(!ButtonShown("RESTART"));
     MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
@@ -1904,7 +2217,8 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
     const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK(list->Description(HdPackRow).find("GB).") != std::string::npos);
+    CHECK_EQ(list->Description(HdPackRow),
+             std::format("THE HD ART, SOUND AND MOVIES ({}).", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
 
     // Asked first: CANCEL keeps it.

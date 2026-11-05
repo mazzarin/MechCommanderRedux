@@ -1,15 +1,15 @@
 #include "stdafx.h"
 #include "main/MCUpdater.h"
 #include "platform/MCInput.h"
+#include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCInstalled.h"
 #include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
-
-#include <mutex>
-#include <thread>
+#include "update/MCUpdateWork.h"
 
 namespace
 {
@@ -24,13 +24,6 @@ namespace
     constexpr size_t MaxVersionLength = 40;
     constexpr size_t MaxNotesLength = 8192;
     constexpr size_t MaxErrorLength = 300;
-
-    /// <summary>
-    /// How long quitting waits for the work to stop, and how often it looks: a download stalled on the network stops
-    /// only at its timeout, so past this it ends with the game (staging resumes at the next try).
-    /// </summary>
-    constexpr std::chrono::seconds QuitWait{1};
-    constexpr std::chrono::milliseconds QuitLook{10};
 
     /// <summary>
     /// <paramref name="text"/> with only what the game's fonts write (printable ASCII, and newlines when
@@ -75,6 +68,11 @@ namespace
         StagingContent,
         /// <summary>The content is staged; the program downloads.</summary>
         DownloadingProgram,
+        /// <summary>
+        /// The program is in (or there's none): the content is armed on the work's thread, the program's ready answer
+        /// held until it is.
+        /// </summary>
+        ArmingContent,
         /// <summary>An update with nothing to fetch goes in unasked.</summary>
         ArmingQuietly,
         /// <summary>Both halves armed: RESTART or quitting installs them.</summary>
@@ -87,18 +85,24 @@ namespace
         SetsArmed,
     };
 
-    /// <summary>The content's work off the main thread (a check, or staging): its progress and end, read each frame.</summary>
-    struct MCWork
+    /// <summary>INSTALL after a failure: the fresh check looks for the update, then it installs once found.</summary>
+    enum class MCAgain : uint8_t
     {
-        std::mutex Mutex;
-        uint64_t Received = 0;
-        uint64_t Expected = 0;
-        bool Finished = false;
-        /// <summary>What failed; empty, it went well.</summary>
-        std::string Error;
-        /// <summary>The check's update, when it found one.</summary>
-        std::optional<MCOffer> Offer;
+        /// <summary>No INSTALL waits.</summary>
+        No,
+        /// <summary>The fresh check runs (the page shows the download).</summary>
+        Looking,
+        /// <summary>Found: it installs at the next frame.</summary>
+        Found,
     };
+
+    /// <summary>
+    /// The content's work off the main thread (a check, staging, arming, the HD pack's change): its progress and end,
+    /// read each frame. It ends with the update found, when it looked for one, or what failed.
+    /// </summary>
+    using MCWorkResult = std::expected<std::optional<MCOffer>, std::string>;
+    using MCContentWork = MCUpdateWork::MCWork<std::optional<MCOffer>>;
+    using MCJob = std::function<MCWorkResult(MCUpdateWork::MCContext& context)>;
 
     std::unique_ptr<MCUpdater::MCBackend> Backend;
     MCUpdater::MCStatus Current;
@@ -111,13 +115,17 @@ namespace
     MCUpdater::MCSourceMaker MakeSource;
     MCStep Step = MCStep::Idle;
     std::optional<MCOffer> Offer;
-    /// <summary>The work under way, and its thread.</summary>
-    std::shared_ptr<MCWork> Work;
-    std::jthread Worker;
+    /// <summary>The work under way.</summary>
+    std::unique_ptr<MCContentWork> Work;
     /// <summary>Held from INSTALL until both halves are armed or it fails: one copy stages at a time.</summary>
     std::unique_ptr<MCUpdateLock> StagingLock;
     /// <summary>The HD pack as HD OPTIONS shows it.</summary>
     MCUpdater::MCHdPack Hd;
+    /// <summary>
+    /// The copy's record, read once as the content's updater is set: nothing changes it until the next start's swap,
+    /// so HD OPTIONS never reads it again on the main thread.
+    /// </summary>
+    MCInstalled::MCRecord Record;
     /// <summary>The player chose again while the change of sets ran: it stops, then the new choice is planned.</summary>
     bool SetsChosenAgain = false;
     /// <summary>
@@ -127,6 +135,8 @@ namespace
     bool ProgramClosing = false;
     /// <summary>A match's mission plays: the content's downloads wait (<see cref="MCUpdater::PauseWork"/>).</summary>
     bool Paused = false;
+    /// <summary>The player chose INSTALL after a failure (<see cref="MCAgain"/>).</summary>
+    MCAgain InstallAgain = MCAgain::No;
     /// <summary>The download the pause stopped (staging or the change of sets), to go on with after it; none, Idle.</summary>
     MCStep PausedStep = MCStep::Idle;
 
@@ -160,13 +170,19 @@ namespace
         Backend->Check(Offer->ProgramBuild);
     }
 
-    /// <summary>Stops the work under way and waits for its thread.</summary>
+    /// <summary>Stops the work under way (its transfer cancelled at once) and waits for it.</summary>
     void StopWork()
     {
-        if (Worker.joinable())
+        if (Work == nullptr)
         {
-            Worker.request_stop();
-            Worker.join();
+            return;
+        }
+
+        Work->Stop();
+
+        if (const MCWorkResult ended = Work->Join(); !ended)
+        {
+            SDL_Log("Updater: the work under way stopped: %s", ended.error().c_str());
         }
 
         Work.reset();
@@ -184,9 +200,10 @@ namespace
         SetsChosenAgain = false;
         ProgramClosing = false;
         PausedStep = MCStep::Idle;
+        InstallAgain = MCAgain::No;
     }
 
-    /// <summary>What the copy has of the HD pack, read from its record and the sets chosen.</summary>
+    /// <summary>What the copy has of the HD pack, from its record (read here, and kept) and the sets chosen.</summary>
     void ReadHd()
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
@@ -197,55 +214,45 @@ namespace
             SDL_Log("Updater: %s", installed.error().c_str());
         }
 
-        const MCInstalled::MCRecord record = installed.value_or(MCInstalled::MCRecord{});
+        Record = installed.value_or(MCInstalled::MCRecord{});
         const MCContentUpdater::MCSets has =
-            record.Release != 0 ? record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
+            Record.Release != 0 ? Record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
         Hd = {.Managed = true,
               .Installed = has.contains(MCContentList::HdSet),
-              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, record).contains(MCContentList::HdSet)};
+              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record).contains(MCContentList::HdSet)};
 
-        if (const auto bytes = record.SetBytes.find(MCContentList::HdSet); bytes != record.SetBytes.end())
+        if (const auto bytes = Record.SetBytes.find(MCContentList::HdSet); bytes != Record.SetBytes.end())
         {
             Hd.Bytes = bytes->second;
         }
     }
 
-    /// <summary>Runs <paramref name="job"/> on a thread of its own; <see cref="MCUpdater::Frame"/> picks up its end.</summary>
-    void RunWork(std::function<void(MCWork&, std::stop_token)> job)
+    /// <summary>
+    /// Runs <paramref name="job"/> (<paramref name="name"/> in the logs) on a thread of its own;
+    /// <see cref="MCUpdater::Frame"/> picks up its end.
+    /// </summary>
+    void RunWork(std::string name, MCJob job)
     {
         StopWork();
-        Work = std::make_shared<MCWork>();
-        Worker = std::jthread(
-            [work = Work, job = std::move(job)](std::stop_token stop)
-            {
-                job(*work, stop);
-                const std::lock_guard lock(work->Mutex);
-                work->Finished = true;
-            });
+        Work = std::make_unique<MCContentWork>(std::move(name), std::move(job));
     }
 
-    /// <summary>The transfer to the host for a piece of work, or what's wrong.</summary>
-    std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> SourceFor(
-        const MCUpdater::MCSourceMaker& makeSource)
-    {
-        std::unique_ptr<MCContentStage::MCSource> source = makeSource ? makeSource() : nullptr;
-
-        if (source == nullptr)
-        {
-            return std::unexpected("the release's host has no usable address in this build");
-        }
-
-        return source;
-    }
-
-    /// <summary>A step failed: the page says why, and nothing more happens this run.</summary>
-    void Fail(std::string_view error)
+    /// <summary>
+    /// A step failed: the page says why, and nothing more happens until the player chooses INSTALL again, when
+    /// <paramref name="retry"/> (a fresh check first). Work still under way (the program's backend failing while the
+    /// content stages) stops before the staging lock goes, so no copy stages beside it.
+    /// </summary>
+    void Fail(std::string_view error, bool retry = true)
     {
         SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), std::string(error).c_str());
+        StopWork();
         StagingLock.reset();
+        PausedStep = MCStep::Idle;
         Step = MCStep::Finished;
         Current.Stage = MCStage::Failed;
         Current.Error = Printable(error, MaxErrorLength, false);
+        Current.Retry = retry;
+        InstallAgain = MCAgain::No;
         Changed();
     }
 
@@ -255,11 +262,16 @@ namespace
         return Offer->ContentBytes() + (Offer->ProgramBuild ? Offer->ProgramBytes : 0);
     }
 
-    /// <summary>The update is shown, with what it brings and its size.</summary>
+    /// <summary>
+    /// The update is shown, with what it brings and its size; after INSTALL again, it shows downloading and installs at
+    /// the next frame.
+    /// </summary>
     void ShowOffer()
     {
+        const bool again = InstallAgain == MCAgain::Looking;
+        InstallAgain = again ? MCAgain::Found : MCAgain::No;
         Step = MCStep::Offered;
-        Current = {.Stage = MCStage::Found,
+        Current = {.Stage = again ? MCStage::Downloading : MCStage::Found,
                    .Version = Printable(Offer->ShownVersion(Content->RunningBuild), MaxVersionLength, false),
                    .Notes = Printable(Offer->Release.Notes, MaxNotesLength, true),
                    .Expected = DownloadBytes()};
@@ -298,53 +310,70 @@ namespace
     /// <summary>Stages the update's content on the work's thread; <paramref name="arm"/>, arms it there too.</summary>
     void StartStaging(bool arm)
     {
-        RunWork(
-            [setup = *Content, makeSource = MakeSource, offer = *Offer, arm](MCWork& work, std::stop_token stop)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                std::expected<void, std::string> done =
-                    source ? std::expected<void, std::string>() : std::unexpected(source.error());
-
-                if (done)
+        RunWork("the update's staging",
+                [setup = *Content, makeSource = MakeSource, offer = *Offer, arm](MCUpdateWork::MCContext& context)
                 {
-                    done = MCContentUpdater::Stage(setup, *disk, **source, offer,
-                                                   [&](uint64_t received, uint64_t expected)
-                                                   {
-                                                       const std::lock_guard lock(work.Mutex);
-                                                       work.Received = received;
-                                                       work.Expected = expected;
-                                                       return !stop.stop_requested();
-                                                   });
-                }
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop,
+                        [&](MCContentStage::MCSource& source) -> MCWorkResult
+                        {
+                            const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
-                if (done && arm)
-                {
-                    done = MCContentUpdater::Arm(setup, *disk, offer);
-                }
+                            if (const auto staged =
+                                    MCContentUpdater::Stage(setup, *disk, source, offer,
+                                                            MCUpdateWork::Reporter(context.Progress, context.Stop));
+                                !staged)
+                            {
+                                return std::unexpected(staged.error());
+                            }
 
-                if (!done)
-                {
-                    const std::lock_guard lock(work.Mutex);
-                    work.Error = done.error();
-                }
-            });
+                            if (const auto armed = arm ? MCContentUpdater::Arm(setup, *disk, offer)
+                                                       : std::expected<void, std::string>();
+                                !armed)
+                            {
+                                return std::unexpected(armed.error());
+                            }
+
+                            return {};
+                        });
+                });
     }
 
-    /// <summary>Arms the staged content once the program is in too: READY, or neither half goes in.</summary>
-    void ArmContent()
+    /// <summary>
+    /// The program is in (or there's none): the staged content is armed on the work's thread (its journal written
+    /// durably takes a while), READY once it is. The program's ready answer waits for it.
+    /// </summary>
+    void StartArming()
     {
-        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        Step = MCStep::ArmingContent;
+        RunWork("the update's arming",
+                [setup = *Content, offer = *Offer](MCUpdateWork::MCContext&) -> MCWorkResult
+                {
+                    if (const auto armed = MCContentUpdater::Arm(setup, *MakeDisk(), offer); !armed)
+                    {
+                        return std::unexpected(armed.error());
+                    }
 
-        if (const auto armed = MCContentUpdater::Arm(*Content, *disk, *Offer); !armed)
+                    return {};
+                });
+    }
+
+    /// <summary>The content can't be armed: the program's installer, armed already, is told to skip, so neither half goes in.</summary>
+    void CancelProgram()
+    {
+        if (Offer && Offer->ProgramBuild && Backend != nullptr)
         {
-            // The program's installer is armed already: told to skip, it installs nothing either.
-            if (Offer->ProgramBuild && Backend != nullptr)
-            {
-                Backend->Answer(MCAnswer::Skip);
-            }
+            Backend->Answer(MCAnswer::Skip);
+        }
+    }
 
-            Fail(armed.error());
+    /// <summary>The arming's end: READY, or neither half goes in.</summary>
+    void ArmingDone(const std::string& error)
+    {
+        if (!error.empty())
+        {
+            CancelProgram();
+            Fail(error);
             return;
         }
 
@@ -354,6 +383,57 @@ namespace
         Current.Stage = MCStage::Ready;
         Current.Received = Current.Expected;
         Changed();
+    }
+
+    /// <summary>
+    /// The game is quitting or the program installing: the content is armed now, an arming under way waited for (a
+    /// moment's write, not stopped).
+    /// </summary>
+    /// <returns>Empty once armed, or what failed.</returns>
+    std::string ArmNow()
+    {
+        if (Step == MCStep::ArmingContent && Work != nullptr)
+        {
+            const MCWorkResult armed = Work->Join();
+            Work.reset();
+            return armed ? std::string() : armed.error();
+        }
+
+        const auto armed = MCContentUpdater::Arm(*Content, *MakeDisk(), *Offer);
+        return armed ? std::string() : armed.error();
+    }
+
+    /// <summary>
+    /// The HD pack's choice is back to what's installed, and nothing is armed: what an earlier change (or an update)
+    /// staged or downloaded would never be used, so it goes. On the work's thread, under the staging lock.
+    /// </summary>
+    void ClearUnused(const std::filesystem::path& gameFolder, MCUpdateDisk& disk)
+    {
+        if (MCContentSwap::Waiting(disk, gameFolder) || MCContentSwap::Repairing(disk, gameFolder))
+        {
+            return;
+        }
+
+        for (const std::string_view folder : {MCContentSwap::StagedFolder, MCContentStage::DownloadFolder})
+        {
+            const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(folder);
+
+            if (!disk.Stat(path).Exists)
+            {
+                continue;
+            }
+
+            if (disk.Remove(path))
+            {
+                SDL_Log("Updater: %.*s is cleared: the HD pack's choice is back to what's installed",
+                        static_cast<int>(folder.size()), folder.data());
+            }
+            else
+            {
+                SDL_Log("Updater: %.*s can't be cleared; what it holds stays unused", static_cast<int>(folder.size()),
+                        folder.data());
+            }
+        }
     }
 
     /// <summary>
@@ -378,50 +458,55 @@ namespace
         SDL_Log("Updater: the HD pack is %s", Hd.Chosen ? "coming" : "going");
         Step = MCStep::ChangingSets;
         Hd.Stage = MCStage::Downloading;
-        RunWork(
-            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token stop)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                auto change = source
-                                  ? MCContentUpdater::CheckSets(setup, *disk, **source)
-                                  : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
-                std::expected<void, std::string> done =
-                    change ? std::expected<void, std::string>() : std::unexpected(change.error());
-
-                if (done && *change)
+        RunWork("the HD pack's change",
+                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
                 {
-                    {
-                        const std::lock_guard lock(work.Mutex);
-                        work.Expected = (*change)->ContentBytes();
-                    }
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop,
+                        [&](MCContentStage::MCSource& source) -> MCWorkResult
+                        {
+                            const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+                            auto change = MCContentUpdater::CheckSets(setup, *disk, source);
 
-                    done = MCContentUpdater::Stage(setup, *disk, **source, **change,
-                                                   [&](uint64_t received, uint64_t expected)
-                                                   {
-                                                       const std::lock_guard lock(work.Mutex);
-                                                       work.Received = received;
-                                                       work.Expected = expected;
-                                                       return !stop.stop_requested();
-                                                   });
+                            if (change && !*change)
+                            {
+                                ClearUnused(setup.GameFolder, *disk);
+                            }
 
-                    if (done)
-                    {
-                        done = MCContentUpdater::Arm(setup, *disk, **change);
-                    }
-                }
+                            if (!change || !*change)
+                            {
+                                return change;
+                            }
 
-                const std::lock_guard lock(work.Mutex);
+                            context.Progress.Set(0, (*change)->ContentBytes());
 
-                if (!done)
-                {
-                    work.Error = done.error();
-                }
-                else if (*change)
-                {
-                    work.Offer = std::move(*change);
-                }
-            });
+                            if (const auto staged =
+                                    MCContentUpdater::Stage(setup, *disk, source, **change,
+                                                            MCUpdateWork::Reporter(context.Progress, context.Stop));
+                                !staged)
+                            {
+                                return std::unexpected(staged.error());
+                            }
+
+                            if (const auto armed = MCContentUpdater::Arm(setup, *disk, **change); !armed)
+                            {
+                                return std::unexpected(armed.error());
+                            }
+
+                            return change;
+                        });
+                });
+    }
+
+    /// <summary>INSTALL again found nothing to install (the release gone, or armed by another copy): nothing is shown.</summary>
+    void LookedInVain()
+    {
+        if (std::exchange(InstallAgain, MCAgain::No) != MCAgain::No && Current.Stage == MCStage::Downloading)
+        {
+            SDL_Log("Updater: the fresh check found nothing to install");
+            Current = {};
+            Changed();
+        }
     }
 
     /// <summary>
@@ -431,6 +516,7 @@ namespace
     void Settle()
     {
         Step = MCStep::Idle;
+        LookedInVain();
 
         if (Hd.Managed && Hd.Chosen != Hd.Installed && Hd.Stage != MCStage::Failed)
         {
@@ -477,25 +563,13 @@ namespace
     void LookForUpdate()
     {
         Step = MCStep::CheckingContent;
-        RunWork(
-            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                auto offer = source
-                                 ? MCContentUpdater::Check(setup, *disk, **source)
-                                 : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
-                const std::lock_guard lock(work.Mutex);
-
-                if (offer)
+        RunWork("the update's check",
+                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
                 {
-                    work.Offer = std::move(*offer);
-                }
-                else
-                {
-                    work.Error = offer.error();
-                }
-            });
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop, [&](MCContentStage::MCSource& source)
+                        { return MCContentUpdater::Check(setup, *MakeDisk(), source); });
+                });
     }
 
     /// <summary>
@@ -542,6 +616,13 @@ namespace
 
         if (!error.empty())
         {
+            // INSTALL again: the player is told.
+            if (InstallAgain != MCAgain::No)
+            {
+                Fail(error);
+                return;
+            }
+
             // No news for the player (offline, say): the next start looks again. A change of sets the player chose
             // still tries, and says so if it fails too.
             SDL_Log("Updater: the check failed: %s", error.c_str());
@@ -565,6 +646,7 @@ namespace
             {
                 SDL_Log("Updater: another copy of the game is staging an update");
                 Offer.reset();
+                LookedInVain();
                 return;
             }
 
@@ -619,7 +701,7 @@ namespace
             return;
         }
 
-        ArmContent();
+        StartArming();
     }
 
     /// <summary>The quiet update's end.</summary>
@@ -641,38 +723,64 @@ namespace
         Settle();
     }
 
+    /// <summary>INSTALL at the update shown: the content stages, then the program downloads.</summary>
+    void InstallOffer()
+    {
+        SDL_Log("Updater: install at %s", Current.Version.c_str());
+        Current.Stage = MCStage::Downloading;
+        Current.Received = 0;
+        Current.Expected = DownloadBytes();
+
+        // The program alone too: the lock keeps another copy from downloading the same setup at once.
+        if (!TakeStagingLock())
+        {
+            if (Offer->ProgramBuild)
+            {
+                Backend->Answer(MCAnswer::Later);
+            }
+
+            Fail("another copy of the game is installing it");
+            return;
+        }
+
+        if (Offer->Content == nullptr)
+        {
+            Step = MCStep::DownloadingProgram;
+            Changed();
+            Backend->Answer(MCAnswer::Install);
+            return;
+        }
+
+        Step = MCStep::StagingContent;
+        Changed();
+        StartStaging(false);
+    }
+
+    /// <summary>
+    /// INSTALL after a failure: a fresh check (the release may have changed), then the update it finds installs with
+    /// no second INSTALL (<see cref="MCUpdater::Frame"/>). The page shows the download meanwhile.
+    /// </summary>
+    void InstallAfterFailure()
+    {
+        SDL_Log("Updater: install %s again: a fresh check first", Current.Version.c_str());
+        InstallAgain = MCAgain::Looking;
+        Offer.reset();
+        Current = {.Stage = MCStage::Downloading, .Version = Current.Version};
+        Changed();
+        LookForUpdate();
+    }
+
     /// <summary>The player's answer, with the content's updater set.</summary>
     void AnswerContent(MCAnswer answer)
     {
         if (Current.Stage == MCStage::Found && Step == MCStep::Offered && answer == MCAnswer::Install)
         {
-            SDL_Log("Updater: install at %s", Current.Version.c_str());
-            Current.Stage = MCStage::Downloading;
-            Current.Received = 0;
-            Current.Expected = DownloadBytes();
-
-            if (Offer->Content == nullptr)
-            {
-                Step = MCStep::DownloadingProgram;
-                Changed();
-                Backend->Answer(MCAnswer::Install);
-                return;
-            }
-
-            if (!TakeStagingLock())
-            {
-                if (Offer->ProgramBuild)
-                {
-                    Backend->Answer(MCAnswer::Later);
-                }
-
-                Fail("another copy of the game is installing it");
-                return;
-            }
-
-            Step = MCStep::StagingContent;
-            Changed();
-            StartStaging(false);
+            InstallOffer();
+        }
+        else if (Current.Stage == MCStage::Failed && Current.Retry && answer == MCAnswer::Install &&
+                 (Step == MCStep::Finished || Step == MCStep::Idle))
+        {
+            InstallAfterFailure();
         }
         else if (Current.Stage == MCStage::Found && Step == MCStep::Offered && answer == MCAnswer::Skip)
         {
@@ -763,34 +871,33 @@ auto MCUpdater::Frame() -> void
         Backend->Frame();
     }
 
+    // INSTALL again: the update the fresh check found installs now, a frame after it was found (never from inside the
+    // backend's own report).
+    if (InstallAgain == MCAgain::Found)
+    {
+        InstallAgain = MCAgain::No;
+
+        if (Content && Step == MCStep::Offered)
+        {
+            InstallOffer();
+        }
+        else if (!Content && Backend != nullptr && Current.Stage == MCStage::Downloading)
+        {
+            Backend->Answer(MCAnswer::Install);
+        }
+    }
+
     if (Work == nullptr)
     {
         return;
     }
 
-    uint64_t received = 0;
-    uint64_t expected = 0;
-    bool finished = false;
-    std::string error;
-    std::optional<MCOffer> offer;
-
+    if (!Work->Finished())
     {
-        const std::lock_guard lock(Work->Mutex);
-        received = Work->Received;
-        expected = Work->Expected;
-        finished = Work->Finished;
+        const auto [received, expected] = Work->Progress().Get();
 
-        if (finished)
-        {
-            error = std::move(Work->Error);
-            offer = std::move(Work->Offer);
-        }
-    }
-
-    if (!finished)
-    {
         // Staging's whole is the plan's until its first bytes say more (a patch that fell back on its zip).
-        if (Step == MCStep::StagingContent)
+        if (Step == MCStep::StagingContent && Offer)
         {
             ShowProgress(received,
                          std::max(expected, Offer->ContentBytes()) + (Offer->ProgramBuild ? Offer->ProgramBytes : 0));
@@ -804,7 +911,10 @@ auto MCUpdater::Frame() -> void
         return;
     }
 
-    StopWork();
+    MCWorkResult ended = Work->Join();
+    Work.reset();
+    const std::string error = ended ? std::string() : std::move(ended.error());
+    std::optional<MCOffer> offer = ended ? std::move(*ended) : std::nullopt;
 
     // Stopped for a match's mission: it goes on once the mission is over (at once, if it already is). Done just as the
     // mission began, it ends as it would have.
@@ -833,6 +943,9 @@ auto MCUpdater::Frame() -> void
         case MCStep::ArmingQuietly:
             QuietDone(error);
             break;
+        case MCStep::ArmingContent:
+            ArmingDone(error);
+            break;
         case MCStep::ChangingSets:
             SetsDone(error, offer.has_value());
             break;
@@ -849,12 +962,12 @@ auto MCUpdater::PauseWork(bool paused) -> void
         // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
         Paused = true;
 
-        if (Worker.joinable() && PausedStep == MCStep::Idle &&
+        if (Work != nullptr && PausedStep == MCStep::Idle &&
             (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
         {
             SDL_Log("Updater: the download stops while the mission plays");
             PausedStep = Step;
-            Worker.request_stop();
+            Work->Stop();
         }
 
         return;
@@ -874,35 +987,18 @@ auto MCUpdater::PauseWork(bool paused) -> void
 
 auto MCUpdater::Quit() -> void
 {
-    if (Worker.joinable())
+    // An arming under way finishes (quitting installs the program armed: neither half goes in without the other).
+    if (Step == MCStep::ArmingContent)
     {
-        Worker.request_stop();
-        const auto until = std::chrono::steady_clock::now() + QuitWait;
-        const auto finished = [work = Work]
+        if (const std::string error = ArmNow(); !error.empty())
         {
-            const std::lock_guard lock(work->Mutex);
-            return work->Finished;
-        };
-
-        while (!finished() && std::chrono::steady_clock::now() < until)
-        {
-            std::this_thread::sleep_for(QuitLook);
-        }
-
-        if (finished())
-        {
-            Worker.join();
-        }
-        else
-        {
-            // It holds what it uses, the staging lock too, which the system lets go as the process ends.
-            SDL_Log("Updater: the download is still stopping as the game quits; the next try resumes it");
-            Worker.detach();
-            static_cast<void>(StagingLock.release());
+            SDL_Log("Updater: %s can't be armed as the game quits: %s", Current.Version.c_str(), error.c_str());
+            CancelProgram();
         }
     }
 
-    Work.reset();
+    // Its transfer cancelled, work under way ends at once (staged files stay for the next try).
+    StopWork();
     StagingLock.reset();
 
     if (Backend != nullptr)
@@ -983,6 +1079,7 @@ auto MCUpdater::HdPack() -> const MCHdPack&
             break;
         case MCStep::StagingContent:
         case MCStep::DownloadingProgram:
+        case MCStep::ArmingContent:
             Hd.Hold = MCHdHold::UpdateDownloading;
             break;
         case MCStep::Armed:
@@ -1011,9 +1108,7 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
     }
 
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-    const auto installed = MCInstalled::Read(Content->GameFolder);
-    MCContentUpdater::MCSets sets =
-        MCContentUpdater::Wanted(*disk, Content->GameFolder, installed.value_or(MCInstalled::MCRecord{}));
+    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record);
 
     if (chosen)
     {
@@ -1041,9 +1136,12 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
             break;
         case MCStep::Finished:
         {
-            // After a failed update this run; one installing goes in as the game quits, the choice at a later start.
+            // After a failed update this run, which then waits for the next start (INSTALL is no longer offered); one
+            // installing goes in as the game quits, the choice at a later start.
             if (Current.Stage == MCStage::Failed)
             {
+                Current.Retry = false;
+                Changed();
                 StartSetsChange();
             }
 
@@ -1054,10 +1152,16 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
             break;
         case MCStep::ChangingSets:
         {
-            // Stopped where it is (staged files stay); its end plans the new choice.
+            // Stopped where it is (staged files stay); its end plans the new choice, and clears them when that's back to
+            // what's installed.
             SetsChosenAgain = true;
             Hd.Stopping = true;
-            Worker.request_stop();
+
+            if (Work != nullptr)
+            {
+                Work->Stop();
+            }
+
             break;
         }
         default:
@@ -1123,6 +1227,15 @@ auto MCUpdater::Answer(MCAnswer answer) -> void
         Current.Stage = MCStage::Installing;
         Changed();
     }
+    else if (answer == MCAnswer::Install && stage == MCStage::Failed && Current.Retry)
+    {
+        // A fresh check, then the update it finds installs with no second INSTALL (Frame).
+        InstallAgain = MCAgain::Looking;
+        Current = {.Stage = MCStage::Downloading, .Version = Current.Version};
+        Changed();
+        Backend->Check(std::nullopt);
+        return;
+    }
     else
     {
         return;
@@ -1150,7 +1263,10 @@ auto MCUpdater::Found(std::string version, std::string notes) -> void
         return;
     }
 
-    Current = {.Stage = MCStage::Found,
+    // After INSTALL again, it shows downloading and installs at the next frame.
+    const bool again = InstallAgain == MCAgain::Looking;
+    InstallAgain = again ? MCAgain::Found : MCAgain::No;
+    Current = {.Stage = again ? MCStage::Downloading : MCStage::Found,
                .Version = Printable(version, MaxVersionLength, false),
                .Notes = Printable(notes, MaxNotesLength, true)};
     SDL_Log("Updater: %s is out", Current.Version.c_str());
@@ -1174,7 +1290,7 @@ auto MCUpdater::Downloading(uint64_t received, uint64_t expected) -> void
     if (Content)
     {
         // The content is in by now: the program's bytes count after it, out of release.json's whole.
-        if (Step == MCStep::DownloadingProgram)
+        if (Step == MCStep::DownloadingProgram && Offer)
         {
             ShowProgress(Offer->ContentBytes() + received, DownloadBytes());
         }
@@ -1194,7 +1310,7 @@ auto MCUpdater::Ready() -> void
     {
         if (Step == MCStep::DownloadingProgram)
         {
-            ArmContent();
+            StartArming();
         }
 
         return;
@@ -1210,10 +1326,19 @@ auto MCUpdater::Installing() -> void
     if (Content)
     {
         // Sparkle can install without its ready step (an update it downloaded in an earlier run): the content goes in
-        // with it.
-        if (Step == MCStep::DownloadingProgram)
+        // with it, armed now as the game quits. Content that can't be armed leaves the update failed: with no step
+        // waiting for an answer, Sparkle installs the program alone, and the new build's start looks for the content
+        // again.
+        if (Step == MCStep::DownloadingProgram || Step == MCStep::ArmingContent)
         {
-            ArmContent();
+            if (const std::string error = ArmNow(); !error.empty())
+            {
+                Fail(error, false);
+                SDL_Log("Updater: %s's program installs without its content", Current.Version.c_str());
+                return;
+            }
+
+            StagingLock.reset();
         }
 
         Step = MCStep::Finished;
@@ -1241,6 +1366,13 @@ auto MCUpdater::Failed(std::string error) -> void
 
     if (Content)
     {
+        // A late report while the HD pack's change is the work this run (after a failed update) fails nothing.
+        if (Step == MCStep::ChangingSets || Step == MCStep::SetsArmed)
+        {
+            SDL_Log("Updater: the program's update failed after it was given up: %s", error.c_str());
+            return;
+        }
+
         Fail(error);
         return;
     }
@@ -1248,6 +1380,8 @@ auto MCUpdater::Failed(std::string error) -> void
     SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), error.c_str());
     Current.Stage = MCStage::Failed;
     Current.Error = Printable(error, MaxErrorLength, false);
+    Current.Retry = true;
+    InstallAgain = MCAgain::No;
     Changed();
 }
 
@@ -1272,7 +1406,8 @@ auto MCUpdater::Closed() -> void
         // is shown or its program downloads, it can't install: the page says so rather than wait for it.
         if (Step == MCStep::CheckingProgram)
         {
-            SDL_Log("Updater: build %llu isn't out yet", static_cast<unsigned long long>(*Offer->ProgramBuild));
+            SDL_Log("Updater: build %llu isn't out yet",
+                    static_cast<unsigned long long>(Offer ? Offer->ProgramBuild.value_or(0) : 0));
             Offer.reset();
             Settle();
         }
@@ -1291,6 +1426,7 @@ auto MCUpdater::Closed() -> void
         return;
     }
 
+    InstallAgain = MCAgain::No;
     Current = {};
     Changed();
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "update/MCUpdateWork.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -19,13 +21,8 @@
 // The main menu's UPDATE button and page (logistics/MCUpdatePage.h) show where it is and pass on the player's answers:
 // nothing downloads until the player chooses INSTALL. With neither half (the tests, a build without one) there is
 // nothing to update and the main menu keeps ORIGINAL CINEMA. Everything here happens on the main thread: Sparkle calls
-// its driver there, as the frame pumps the window's events. Standard headers only: the Mac's Sparkle backend includes
-// it without the precompiled header.
-
-namespace MCContentStage
-{
-    class MCSource;
-}
+// its driver there, as the frame pumps the window's events. Standard headers only (update/MCUpdateWork.h is too): the
+// Mac's Sparkle backend includes it without the precompiled header.
 
 namespace MCContentUpdater
 {
@@ -52,14 +49,20 @@ namespace MCUpdater
         Ready,
         /// <summary>The game is quitting so it can be installed; the new version starts by itself.</summary>
         Installing,
-        /// <summary>A step failed (<see cref="MCStatus::Error"/> says how); the next start looks again.</summary>
+        /// <summary>
+        /// A step failed (<see cref="MCStatus::Error"/> says how): INSTALL tries again when it can
+        /// (<see cref="MCStatus::Retry"/>), else the next start looks again.
+        /// </summary>
         Failed,
     };
 
     /// <summary>The player's answer to the update shown, or the updater's own to the program's backend.</summary>
     enum class MCAnswer : uint8_t
     {
-        /// <summary>Found: download and install it. Ready: restart to install it now.</summary>
+        /// <summary>
+        /// Found: download and install it. Ready: restart to install it now. Failed: look again, then download and
+        /// install what's found.
+        /// </summary>
         Install,
         /// <summary>Found: never offer this version again. Ready: install nothing after all (the content couldn't be armed).</summary>
         Skip,
@@ -123,6 +126,8 @@ namespace MCUpdater
         uint64_t Expected = 0;
         /// <summary>Failed: what went wrong.</summary>
         std::string Error;
+        /// <summary>Failed: whether INSTALL tries again (a fresh check first), the download having failed.</summary>
+        bool Retry = false;
     };
 
     /// <summary>What the app gives the updater: the version running, the check and the answers.</summary>
@@ -161,7 +166,7 @@ namespace MCUpdater
     void SetBackend(std::unique_ptr<MCBackend> backend);
 
     /// <summary>A transfer to the release's host, made for each piece of the content's work, on that work's thread.</summary>
-    using MCSourceMaker = std::function<std::unique_ptr<MCContentStage::MCSource>()>;
+    using MCSourceMaker = MCUpdateWork::MCSourceMaker;
 
     /// <summary>
     /// The game's own updater for the content, for the copy <paramref name="setup"/> describes, reading the release's
@@ -188,7 +193,10 @@ namespace MCUpdater
     /// </summary>
     void PauseWork(bool paused);
 
-    /// <summary>The game is quitting: work under way stops (staged files stay for the next try).</summary>
+    /// <summary>
+    /// The game is quitting: work under way stops, its transfer cancelled, and is waited for (staged files stay for the
+    /// next try).
+    /// </summary>
     void Quit();
 
     /// <summary>Whether RESTART asked for the game to start again once it has quit (an update with no program).</summary>

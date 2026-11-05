@@ -600,9 +600,6 @@ namespace
     constexpr std::string_view FoundTitle = "NEW: {}";
     constexpr std::string_view RunningTitle = "RUNNING: {}";
 
-    /// <summary>A megabyte, for the download's progress.</summary>
-    constexpr double Megabyte = 1024.0 * 1024.0;
-
     /// <summary>What the status line says the update is doing.</summary>
     std::string StatusText(const MCStatus& status)
     {
@@ -617,18 +614,16 @@ namespace
                     return "A NEWER VERSION IS OUT.";
                 }
 
-                return std::format("A NEWER VERSION IS OUT: {:.1f} MB TO DOWNLOAD.",
-                                   static_cast<double>(status.Expected) / Megabyte);
+                return std::format("A NEWER VERSION IS OUT: {} TO DOWNLOAD.", MCUpdateWork::SizeText(status.Expected));
             }
             case MCStage::Downloading:
             {
                 if (status.Expected == 0)
                 {
-                    return std::format("DOWNLOADING: {:.1f} MB.", static_cast<double>(status.Received) / Megabyte);
+                    return std::format("DOWNLOADING: {}.", MCUpdateWork::SizeText(status.Received));
                 }
 
-                return std::format("DOWNLOADING: {:.1f} OF {:.1f} MB.", static_cast<double>(status.Received) / Megabyte,
-                                   static_cast<double>(status.Expected) / Megabyte);
+                return std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(status.Received, status.Expected));
             }
             case MCStage::Ready:
             {
@@ -928,7 +923,7 @@ namespace
 
     /// <summary>
     /// The updater changed: the UPDATE button lit (amber) while an update waits and grayed otherwise, the page's buttons
-    /// for its stage.
+    /// for its stage: INSTALL also after a failed download, to try again.
     /// </summary>
     void Refresh()
     {
@@ -937,13 +932,13 @@ namespace
             button->Disabled = !MCUpdater::Waiting();
         }
 
-        const MCStage stage = MCUpdater::Status().Stage;
-        ShowButton(InstallButton, stage == MCStage::Found);
-        ShowButton(SkipButton, stage == MCStage::Found);
-        ShowRestart(stage);
+        const MCStatus& status = MCUpdater::Status();
+        ShowButton(InstallButton, status.Stage == MCStage::Found || (status.Stage == MCStage::Failed && status.Retry));
+        ShowButton(SkipButton, status.Stage == MCStage::Found);
+        ShowRestart(status.Stage);
     }
 
-    /// <summary>INSTALL: the download starts.</summary>
+    /// <summary>INSTALL: the download starts (after a failure, once a fresh check finds the update again).</summary>
     void Install()
     {
         MCUpdater::Answer(MCAnswer::Install);

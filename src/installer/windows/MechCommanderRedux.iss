@@ -183,8 +183,8 @@ Filename: "{app}\{#GameExe}"; Parameters: "--remove-content --data ""{app}"""; W
 const
   // Written and deleted to learn whether the player can change the folder.
   WriteTestName = 'MechCommander Redux setup.tmp';
-  // The bytes in a GB, as Windows shows sizes.
-  BytesPerGB = 1073741824;
+  // The bytes in a GB, decimal, as the game's own screens show sizes (MCUpdateWork::SizeText).
+  BytesPerGB = 1000000000;
   // Waiting for a process to end: OpenProcess's SYNCHRONIZE, and WaitForSingleObject's WAIT_OBJECT_0.
   WaitAccess = $00100000;
   WaitEnded = 0;

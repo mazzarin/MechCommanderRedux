@@ -300,23 +300,13 @@ namespace
     /// <summary>The window's work (MCFirstStart.h): <paramref name="step"/> on the release's host.</summary>
     MCFirstStart::MCWork ContentWork(MCContentUpdater::MCSetup setup, MCContentStep step)
     {
-        // Its own copy of the setup: a window closed mid-download leaves the work to end with the process.
+        // Its own copy of the setup, on the work's thread; its transfer is cancelled when the window is closed.
         return [setup = std::move(setup), step](MCFirstStart::MCProgress& progress,
                                                 std::stop_token stop) -> std::expected<void, std::string>
         {
-            const std::unique_ptr<MCContentStage::MCSource> source = MakeContentSource();
-
-            if (source == nullptr)
-            {
-                return std::unexpected("the release's host has no usable address in this build");
-            }
-
-            return step(setup, *MakeDisk(), *source,
-                        [&](uint64_t received, uint64_t expected)
-                        {
-                            progress.Set(received, expected);
-                            return !stop.stop_requested();
-                        });
+            return MCUpdateWork::WithSource<void>(
+                MakeContentSource, stop, [&](MCContentStage::MCSource& source)
+                { return step(setup, *MakeDisk(), source, MCUpdateWork::Reporter(progress, stop)); });
         };
     }
 

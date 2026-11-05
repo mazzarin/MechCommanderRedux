@@ -154,9 +154,33 @@ TEST_CASE("updater: the check is made once a start, and an update waits through 
     MCUpdater::Answer(MCAnswer::Install);
     MCUpdater::Failed("The update is improperly signed.");
     CHECK(MCUpdater::Status().Stage == MCStage::Failed);
+    CHECK(MCUpdater::Status().Retry);
     MCUpdater::Closed();
     CHECK(MCUpdater::Status().Stage == MCStage::Failed);
     CHECK(changes > 0);
+
+    // INSTALL tries again: a fresh check, and what it finds downloads a frame later, with no second INSTALL.
+    const size_t answered = updater.Log->Answers.size();
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK_EQ(updater.Log->Checks, 2);
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    MCUpdater::Found(std::string(NewVersion), std::string(Notes));
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    CHECK_EQ(updater.Log->Answers.size(), answered);
+    MCUpdater::Frame();
+    REQUIRE_EQ(updater.Log->Answers.size(), answered + 1);
+    CHECK(updater.Log->Answers.back() == MCAnswer::Install);
+    MCUpdater::Ready();
+    CHECK(MCUpdater::Status().Stage == MCStage::Ready);
+
+    // Again, and nothing is found this time: nothing is shown.
+    MCUpdater::Failed("The update is improperly signed.");
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    MCUpdater::Closed();
+    CHECK(MCUpdater::Status().Stage == MCStage::None);
+    MCUpdater::Frame();
+    CHECK_EQ(updater.Log->Answers.size(), answered + 1);
     MCUpdater::SetListener(nullptr);
 }
 
@@ -256,7 +280,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     REQUIRE_EQ(updater.Log->Answers.size(), size_t{1});
     CHECK(updater.Log->Answers[0] == MCAnswer::Install);
     CHECK(!install->IsShowing());
-    constexpr uint64_t megabyte = 1024 * 1024;
+    constexpr uint64_t megabyte = 1'000'000;
     MCUpdater::Downloading(megabyte * 3 / 2, megabyte * 5);
     Frames();
     CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADING: 1.5 OF 5.0 MB."));
@@ -290,6 +314,36 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK(updater.Log->Answers[2] == MCAnswer::Skip);
     CHECK(!UpdatePageShown());
     CHECK(cinema->Disabled);
+
+    // A failed download: INSTALL is offered again, and tries again.
+    MCUpdater::Found("0.2.4 (500)", "Even more.");
+    MCUpdater::Answer(MCAnswer::Install);
+    MCUpdater::Failed("the download was cut off");
+    Frames();
+    RealClickOn(*cinema);
+    REQUIRE(UpdatePageShown());
+    CHECK_EQ(UpdatePageStatus(), std::string("THE UPDATE FAILED: THE DOWNLOAD WAS CUT OFF"));
+    CHECK(install->IsShowing());
+    CHECK(!skip->IsShowing());
+    MCScreenInput::SaveShot("update failed", MCScreenInput::ScreenHash());
+    const int32_t checks = updater.Log->Checks;
+    RealClickOn(*install);
+    CHECK_EQ(updater.Log->Checks, checks + 1);
+    CHECK(!install->IsShowing());
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+}
+
+TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth from 1 GB, MB below")
+{
+    CHECK_EQ(MCUpdateWork::SizeText(5'500'000'000), std::string("5.5 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(1'000'000'000), std::string("1.0 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(999'960'000), std::string("1.0 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(999'940'000), std::string("999.9 MB"));
+    CHECK_EQ(MCUpdateWork::SizeText(350'200'000), std::string("350.2 MB"));
+    CHECK_EQ(MCUpdateWork::SizeText(0), std::string("0.0 MB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(1'200'000'000, 5'500'000'000), std::string("1.2 OF 5.5 GB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(300'000'000, 5'500'000'000), std::string("0.3 OF 5.5 GB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(1'500'000, 7'000'000), std::string("1.5 OF 7.0 MB"));
 }
 
 /// <summary>

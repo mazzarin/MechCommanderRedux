@@ -2,6 +2,9 @@
 
 #include "update/MCInstalled.h"
 
+#include <chrono>
+#include <vector>
+
 class MCUpdateDisk;
 class MCUpdateLock;
 

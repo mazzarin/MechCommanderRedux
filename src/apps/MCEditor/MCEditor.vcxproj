@@ -321,6 +321,15 @@
     <ClInclude Include="..\MCRedux\MCConsole.h" />
     <ClInclude Include="..\MCRedux\MCCrashTrace.h" />
   </ItemGroup>
+  <!-- The game's lock (update/MCUpdateLock.h), shared from MCCore, which the editor doesn't link: in a copy that
+       updates its content, the editor holds it as a running game does. Built without SDL, its notes go to stderr. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)MCCore\update\MCUpdateLock.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>MC_LOCK_NO_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClInclude Include="$(MCLibDir)MCCore\update\MCUpdateLock.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

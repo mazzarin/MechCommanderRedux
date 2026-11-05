@@ -2,6 +2,10 @@
 
 #include "lib/MCSha256.h"
 
+#include <functional>
+#include <map>
+#include <set>
+
 /// <summary>
 /// Port-only: what a copy has installed (<c>Redux update/installed.json</c> in the game folder): the content release
 /// and its list, the sets the copy has (the installer's HD answer, then HD OPTIONS'), and each managed file as it was

@@ -470,6 +470,76 @@ TEST_CASE("content stage: a staged file cut short (a crash as it unpacked) is de
     CHECK_EQ(Read(changed), std::string("a new mission"));
 }
 
+#ifndef _WIN32
+TEST_CASE("content stage: a folder below the game folder put in as a link, before the plan or between it and the "
+          "swap, stops the plan, the staging or the swap, naming it; nothing is written through it")
+{
+    MCRelease release(Group, "planted-link");
+    const MCScratchFolder outside(Group, "planted-link-outside");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path data = game / "data";
+    const std::filesystem::path elsewhere = outside.Path() / "data";
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto plantLink = [&]
+    {
+        std::filesystem::rename(data, elsewhere);
+        std::filesystem::create_symlink(elsewhere, data);
+    };
+
+    const auto takeLinkAway = [&]
+    {
+        std::filesystem::remove(data);
+        std::filesystem::rename(elsewhere, data);
+    };
+
+    // Before the plan: refused there.
+    plantLink();
+    MCContentFolder linked(game);
+    const auto refused =
+        MCContentPlan::Make(linked, release.Installed, release.List, MCSha256::Of("list 2"), {"game", "hd"});
+    CHECK(refused.error_or("").find("is a link") != std::string::npos);
+    takeLinkAway();
+
+    // The update folder put in as a link since the plan: staging writes nothing through it.
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    const std::filesystem::path update = game / "Redux update";
+    const std::filesystem::path updateElsewhere = outside.Path() / "Redux update";
+    std::filesystem::create_directories(update);
+    std::filesystem::rename(update, updateElsewhere);
+    std::filesystem::create_symlink(updateElsewhere, update);
+    const auto staging = MCContentStage::Stage(*disk, source, game, plan, release.List, GoOn);
+    CHECK(staging.error_or("").find("Redux update is a link") != std::string::npos);
+    CHECK(std::filesystem::is_empty(updateElsewhere));
+    std::filesystem::remove(update);
+    std::filesystem::rename(updateElsewhere, update);
+
+    // A link in staged/ is cleared as anything unplanned there is (the link, not what it points to).
+    const std::filesystem::path stagedData = update / "staged" / "data";
+    std::filesystem::create_directories(outside.Path() / "staged-data");
+    std::filesystem::create_directories(stagedData.parent_path());
+    std::filesystem::create_symlink(outside.Path() / "staged-data", stagedData);
+    REQUIRE(MCContentStage::Stage(*disk, source, game, plan, release.List, GoOn).has_value());
+    CHECK(std::filesystem::is_empty(outside.Path() / "staged-data"));
+    CHECK(!std::filesystem::is_symlink(stagedData));
+
+    // Between the plan and the swap: the swap moves nothing through it, and the previous files play.
+    REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
+    plantLink();
+    const MCContentSwap::MCResult stopped = MCContentSwap::Run(*disk, game);
+    CHECK(stopped.Outcome == MCContentSwap::MCOutcome::PutBack);
+    CHECK(stopped.Error.find("data is a link") != std::string::npos);
+    CHECK_EQ(Read(elsewhere / "changed.fit"), std::string("changed v1"));
+    CHECK(!std::filesystem::exists(elsewhere / "missions"));
+    CHECK(Read(game / "HD" / "terrain.hda") == Text(MCFilePatchFixture::PatchOld()));
+
+    // Taken away, the next start swaps the update in.
+    takeLinkAway();
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+}
+#endif
+
 TEST_CASE("content stage: patches are fetched several at once, each over a source of its own, applied in order")
 {
     MCRelease release(Group, "parallel");

@@ -128,6 +128,7 @@ namespace
             : _Disk(disk)
             , _Source(source)
             , _Game(std::move(game))
+            , _NoLinks(disk, _Game)
             , _Plan(plan)
             , _List(list)
             , _Progress(progress)
@@ -282,6 +283,12 @@ namespace
         std::expected<bool, std::string> FoundStaged(const MCStep& step)
         {
             const std::filesystem::path path = StagedPath(step);
+
+            if (auto checked = _NoLinks.Check(path); !checked)
+            {
+                return std::unexpected(checked.error());
+            }
+
             const MCUpdateDisk::MCStat stat = _Disk.Stat(path);
 
             if (!stat.Error.empty())
@@ -505,6 +512,12 @@ namespace
                                                                        const std::function<bool(uint64_t)>& received)
         {
             const std::filesystem::path path = DownloadPath(name);
+
+            if (auto checked = _NoLinks.Check(path); !checked)
+            {
+                return std::unexpected(checked.error());
+            }
+
             const auto fetched = MCContentStage::FetchChecked(_Disk, source, name, path, size, sha256, received);
 
             if (fetched)
@@ -772,6 +785,11 @@ namespace
         {
             const std::filesystem::path staged = StagedPath(step);
 
+            if (auto checked = _NoLinks.Check(staged); !checked)
+            {
+                return checked;
+            }
+
             if (!_Disk.MakeFolders(staged.parent_path()))
             {
                 return std::unexpected(std::format("{} can't be made", MCFileSystem::ToUtf8(staged.parent_path())));
@@ -860,6 +878,13 @@ namespace
                 if (index < 0)
                 {
                     error = std::format("{} isn't in {}", step->File->Path, zip.Name);
+                    break;
+                }
+
+                if (auto checked = _NoLinks.Check(staged); !checked)
+                {
+                    error = checked.error();
+                    keepZip = true;
                     break;
                 }
 
@@ -1030,6 +1055,8 @@ namespace
         MCUpdateDisk& _Disk;
         MCContentStage::MCSource& _Source;
         std::filesystem::path _Game;
+        /// <summary>Each path staging writes or deletes looked at just before (MCNoLinks).</summary>
+        MCNoLinks _NoLinks;
         const MCContentPlan::MCPlan& _Plan;
         const MCContentList::MCList& _List;
         const std::function<bool(uint64_t, uint64_t)>& _Progress;

@@ -174,6 +174,11 @@ namespace MCContentFixture
             return _Disk->Stat(path);
         }
 
+        std::expected<bool, std::string> IsLink(const std::filesystem::path& path) override
+        {
+            return _Disk->IsLink(path);
+        }
+
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
             return _Disk->Hash(path);

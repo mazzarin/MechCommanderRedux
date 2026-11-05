@@ -7,6 +7,8 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,6 +40,12 @@ public:
     virtual ~MCUpdateDisk() = default;
 
     virtual MCStat Stat(const std::filesystem::path& path) = 0;
+
+    /// <summary>
+    /// Whether what's at <paramref name="path"/> is itself a link, never followed (on Windows any reparse point: a
+    /// symbolic link, a junction); false when nothing is there; or why it can't be told.
+    /// </summary>
+    virtual std::expected<bool, std::string> IsLink(const std::filesystem::path& path) = 0;
     virtual std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) = 0;
     virtual std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) = 0;
 
@@ -130,6 +138,27 @@ private:
     /// <summary>The descriptor (the Mac's) or HANDLE (Windows'); <see cref="Closed"/> once closed.</summary>
     intptr_t _Handle;
     static constexpr intptr_t Closed = -1;
+};
+
+/// <summary>
+/// Keeps an update's writes and moves inside the game folder: just before each, every part of the path below the folder
+/// is looked at, and a link (a junction on Windows) anywhere refuses it, so a folder swapped for a link since the plan
+/// (by a program granted only the game folder, say) never takes the game's writes elsewhere. The folders found to be no
+/// link are kept for the run (a swap, a staging), so each costs a look or two. From any thread.
+/// </summary>
+class MCNoLinks
+{
+public:
+    MCNoLinks(MCUpdateDisk& disk, std::filesystem::path gameFolder) : _Disk(disk), _Game(std::move(gameFolder)) {}
+
+    /// <returns>Nothing, or why <paramref name="path"/> can't be used (a link on its way, naming it; outside the folder).</returns>
+    std::expected<void, std::string> Check(const std::filesystem::path& path);
+
+private:
+    MCUpdateDisk& _Disk;
+    std::filesystem::path _Game;
+    std::mutex _Mutex;
+    std::set<std::filesystem::path> _Seen;
 };
 
 /// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>

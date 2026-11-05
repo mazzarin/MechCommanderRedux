@@ -248,6 +248,42 @@ namespace
 #endif
         }
 
+        std::expected<bool, std::string> IsLink(const std::filesystem::path& path) override
+        {
+#ifdef _WIN32
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+            {
+                const DWORD error = GetLastError();
+
+                if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                {
+                    return false;
+                }
+
+                return std::unexpected(std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), error));
+            }
+
+            return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+            struct stat info{};
+
+            if (::lstat(path.c_str(), &info) != 0)
+            {
+                if (errno == ENOENT || errno == ENOTDIR)
+                {
+                    return false;
+                }
+
+                return std::unexpected(
+                    std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), std::strerror(errno)));
+            }
+
+            return S_ISLNK(info.st_mode);
+#endif
+        }
+
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
             return MCSha256::OfFile(path);
@@ -465,6 +501,50 @@ std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesyst
     }
 
     return stat.Exists;
+}
+
+std::expected<void, std::string> MCNoLinks::Check(const std::filesystem::path& path)
+{
+    const std::filesystem::path relative = path.lexically_normal().lexically_relative(_Game.lexically_normal());
+
+    if (relative.empty() || *relative.begin() == "..")
+    {
+        return std::unexpected(std::format("{} isn't in the game's folder", MCFileSystem::ToUtf8(path)));
+    }
+
+    const std::lock_guard lock(_Mutex);
+    const std::vector<std::filesystem::path> parts(relative.begin(), relative.end());
+    std::filesystem::path at = _Game;
+
+    for (size_t i = 0; i < parts.size(); ++i)
+    {
+        at /= parts[i];
+        const bool folder = i + 1 < parts.size();
+
+        if (folder && _Seen.contains(at))
+        {
+            continue;
+        }
+
+        const auto link = _Disk.IsLink(at);
+
+        if (!link)
+        {
+            return std::unexpected(link.error());
+        }
+
+        if (*link)
+        {
+            return std::unexpected(std::format("{} is a link, which updates don't follow", MCFileSystem::ToUtf8(at)));
+        }
+
+        if (folder)
+        {
+            _Seen.insert(at);
+        }
+    }
+
+    return {};
 }
 
 std::expected<MCNewFile, std::string> MCNewFile::Create(const std::filesystem::path& path)

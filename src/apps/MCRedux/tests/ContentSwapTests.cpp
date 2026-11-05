@@ -65,6 +65,9 @@ namespace
         /// <summary>The folder at <paramref name="path"/> can't be listed (empty: none).</summary>
         void FailFiles(std::string path) { _Unlisted = std::move(path); }
 
+        /// <summary>The folder at <paramref name="path"/> is a link (a program put one in its place; empty: none).</summary>
+        void MakeLink(std::string path) { _Link = std::move(path); }
+
         /// <summary>How long each move of a file takes, by where from and to (a slow drive); none: at once.</summary>
         using MCMoveTime = std::function<std::chrono::milliseconds(const std::string& from, const std::string& to)>;
         void SlowMoves(MCMoveTime time) { _MoveTime = std::move(time); }
@@ -121,6 +124,11 @@ namespace
 
             const bool folder = std::ranges::any_of(_Seen, [&](const auto& entry) { return Inside(entry.first, key); });
             return {.Exists = folder, .Folder = folder};
+        }
+
+        std::expected<bool, std::string> IsLink(const std::filesystem::path& path) override
+        {
+            return !_Link.empty() && Key(path) == _Link;
         }
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
@@ -351,6 +359,7 @@ namespace
         std::string _LastMovedTo;
         std::string _Unseen;
         std::string _Unlisted;
+        std::string _Link;
         std::optional<std::pair<std::string, std::string>> _Appearing;
         MCMoveTime _MoveTime;
         int _Hashes = 0;
@@ -1456,6 +1465,26 @@ TEST_CASE("content swap at a start: a journal that can't be looked at makes the 
     disk.FailStat({});
     CHECK(MCContentSwap::RunAtStart(disk, Game, starting.get(), NewProgram).Outcome == MCOutcome::Swapped);
     CHECK(update.IsNew(disk.Files()));
+}
+
+TEST_CASE("content swap: a folder put in as a link since staging stops the swap, naming it; putting the previous set "
+          "back moves nothing through it either")
+{
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.MakeLink(GamePath("data/missions"));
+    const MCContentSwap::MCResult stopped = MCContentSwap::Run(disk, Game);
+    CHECK(stopped.Outcome == MCOutcome::PutBack);
+    CHECK(stopped.Error.find("data/missions is a link") != std::string::npos);
+    CHECK(update.IsOldAndReady(disk.Files()));
+
+    // One on an old file's way aside: the files set aside before it come back, and nothing moved through it.
+    MCCrashDisk aside(update.Files);
+    aside.MakeLink(GamePath("HD"));
+    const MCContentSwap::MCResult held = MCContentSwap::Run(aside, Game);
+    CHECK(held.Outcome == MCOutcome::PutBack);
+    CHECK(held.Error.find("HD is a link") != std::string::npos);
+    CHECK(update.IsOldAndReady(aside.Files()));
 }
 
 TEST_CASE("content swap: a file the player puts in a new file's place as it moves in is never replaced: the old set "

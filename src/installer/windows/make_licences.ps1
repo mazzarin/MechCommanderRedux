@@ -11,13 +11,16 @@ $ErrorActionPreference = 'Stop'
 
 # Each library and its licence file under src\lib.
 $licenceFiles = [ordered]@{
-    'SDL 3.4.12'      = 'SDL-release-3.4.12\LICENSE.txt'
-    'dav1d 1.5.4'     = 'dav1d-1.5.4\COPYING'
-    'libdeflate 1.26' = 'libdeflate-1.26\COPYING'
-    'mimalloc 3.3.1'  = 'mimalloc-3.3.1\LICENSE'
-    'miniz 3.0.2'     = 'miniz-3.0.2\LICENSE'
-    'xxHash 0.8.4'    = 'xxHash-0.8.4\LICENSE'
-    'bc7enc_rdo'      = 'bc7enc_rdo\LICENSE'
+    'SDL 3.4.12'                 = 'SDL-release-3.4.12\LICENSE.txt'
+    'dav1d 1.5.4'                = 'dav1d-1.5.4\COPYING'
+    'libdeflate 1.26'            = 'libdeflate-1.26\COPYING'
+    'mimalloc 3.3.1'             = 'mimalloc-3.3.1\LICENSE'
+    'miniz 3.0.2'                = 'miniz-3.0.2\LICENSE'
+    'xxHash 0.8.4'               = 'xxHash-0.8.4\LICENSE'
+    'bc7enc_rdo'                 = 'bc7enc_rdo\LICENSE'
+    'HDiffPatch 5.1.3'           = 'HDiffPatch-5.1.3\LICENSE'
+    'libsodium 1.0.22'           = 'libsodium-1.0.22\LICENSE'
+    'JSON for Modern C++ 3.12.0' = 'nlohmann-json-3.12.0\LICENSE.MIT'
 }
 # Code whose licence is a line in its source, not a file.
 $licenceNotes = [ordered]@{

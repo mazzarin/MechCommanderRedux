@@ -3,36 +3,68 @@
 # tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes (the launcher
 # MCX.exe and the tests' mc_tests.exe too, for the test laptop's content installs), the setup, the version header and
 # MSBuild's log are kept as the run's artifact.
+#
+# A release's setup: the release script (the workspace's tools/release/make_release.py make) runs it by hand with the
+# commit to build and the release's sets' sizes, which the setup shows. That run builds the commit as a release is built
+# (whole-program optimization, no cache) and keeps the sizes it was given as dist/setup-sizes.txt.
 name: Windows (personal)
 
 on:
   push:
     branches: ['windows-*']
   workflow_dispatch:
+    inputs:
+      commit:
+        description: "A release's commit (all 40 characters); empty for a work build of the branch"
+        required: false
+        default: ''
+      game_bytes:
+        description: "The release's game set, in bytes (make_release.py setup-sizes)"
+        required: false
+        default: ''
+      hd_bytes:
+        description: "The release's HD set, in bytes"
+        required: false
+        default: ''
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.ref }}-${{ inputs.commit }}
   cancel-in-progress: true
 
 jobs:
   build:
     # The release build's image and configuration (release.yml, checks.yml).
     runs-on: windows-2025-vs2026
+    env:
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      GAME_BYTES: ${{ inputs.game_bytes }}
+      HD_BYTES: ${{ inputs.hd_bytes }}
     steps:
+      - name: Check the release's inputs
+        if: inputs.commit
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw "The commit isn't 40 hex characters: $env:RELEASE_COMMIT" }
+          if ($env:GAME_BYTES -notmatch '^[1-9][0-9]*$' -or $env:HD_BYTES -notmatch '^[1-9][0-9]*$') {
+            throw "A release's setup needs both sets' sizes in bytes (game $env:GAME_BYTES, HD $env:HD_BYTES)."
+          }
+
       - name: Check out
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.commit || github.sha }}
           # The build number is the count of commits (src/MechCommander.props), so it needs the whole history.
           fetch-depth: 0
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # A run starts from the last run's build folder (GitHub's cache, one per branch), so only what changed since
-      # compiles. The key starts with the compiler's version, since objects and precompiled headers from another
+      # A work build starts from the last run's build folder (GitHub's cache, one per branch), so only what changed
+      # since compiles. The key starts with the compiler's version, since objects and precompiled headers from another
       # compiler can't be reused (not the runner image's: images roll out over days, so runners alternate between two
-      # and each would miss the other's), and ends with the commit the folder was built from.
+      # and each would miss the other's), and ends with the commit the folder was built from. A release builds afresh.
       - name: Name the build cache
+        if: ${{ !inputs.commit }}
         id: cache-name
         shell: pwsh
         run: |
@@ -44,6 +76,7 @@ jobs:
           "prefix=windows-build-msvc-$tools-" >> $env:GITHUB_OUTPUT
 
       - name: Restore the last build
+        if: ${{ !inputs.commit }}
         id: restore
         uses: actions/cache/restore@v4
         with:
@@ -55,6 +88,7 @@ jobs:
       # changed since the cached build's commit (the end of the key restored) dated now, so MSBuild compiles only those.
       # A cache from a commit this clone doesn't have, or one that brought no files, is dropped: a full build.
       - name: Date the sources for the cached build
+        if: ${{ !inputs.commit }}
         shell: pwsh
         env:
           MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
@@ -78,15 +112,20 @@ jobs:
           foreach ($file in $changed) { [IO.File]::SetLastWriteTimeUtc($file, $now) }
           "Built before at $cached ($restored files restored); $($changed.Count) of $($files.Count) files changed since."
 
-      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). Without whole-program
-      # optimization (a work branch's check, not a release), so a run after the first compiles only what changed and
-      # links quickly. A full build takes longer without it (MCCore 10 min, not 4: every function is compiled, not
-      # only those the programs reach).
+      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). A work build goes
+      # without whole-program optimization, so a run after the first compiles only what changed and links quickly. A
+      # full build takes longer without it (MCCore 10 min, not 4: every function is compiled, not only those the
+      # programs reach). A release keeps each project's own setting, as upstream's releases do.
       - name: Build
-        run: msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -p:WholeProgramOptimization=false -m "-flp:logfile=msbuild.log;verbosity=normal"
+        shell: pwsh
+        run: |
+          $optimization = @()
+          if (-not $env:RELEASE_COMMIT) { $optimization = '-p:WholeProgramOptimization=false' }
+          msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE." }
 
       - name: Save the build
-        if: success()
+        if: ${{ success() && !inputs.commit }}
         uses: actions/cache/save@v4
         with:
           path: src/build
@@ -103,8 +142,8 @@ jobs:
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
 
       # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
-      # built into them. Inno Setup 6 is on the runner's image. No release's sizes here (the release script builds the
-      # setup it publishes with them): this one shows none.
+      # built into them. Inno Setup 6 is on the runner's image. A work build's setup has no release's sizes, so it shows
+      # none and asks only for the player's copy; a release's has them.
       - name: Setup
         shell: pwsh
         run: |
@@ -114,17 +153,22 @@ jobs:
           if (-not $number -or -not $shown) { throw "MCVersion.h has no MC_VERSION or MC_VERSION_SHOWN." }
           $licences = "$pwd\src\build\setup\licences.txt"
           & src\installer\windows\make_licences.ps1 -LibDir "$pwd\src\lib" -Out $licences
+          $sizes = @()
+          if ($env:RELEASE_COMMIT) { $sizes = "/DGameBytes=$env:GAME_BYTES", "/DHdBytes=$env:HD_BYTES" }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "No Inno Setup 6 on this runner ($iscc)." }
           & $iscc "/DAppVersionNumber=$number" "/DAppVersionShown=$shown" "/DBinDir=$pwd\src\build\bin\x64\Release" `
-            "/DDocsDir=$pwd\src\docs" "/DLicencesFile=$licences" "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
+            "/DDocsDir=$pwd\src\docs" "/DLicencesFile=$licences" @sizes "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
+          if ($env:RELEASE_COMMIT) {
+            Set-Content -LiteralPath dist\setup-sizes.txt -NoNewline -Value "commit=$env:RELEASE_COMMIT GameBytes=$env:GAME_BYTES HdBytes=$env:HD_BYTES"
+          }
 
       - name: Keep the build
         if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-${{ github.sha }}
+          name: windows-${{ inputs.commit || github.sha }}
           retention-days: 7
           if-no-files-found: warn
           path: |
@@ -135,4 +179,5 @@ jobs:
             src/build/bin/x64/Release/mc_tests.exe
             src/build/generated/MCVersion.h
             dist/MechCommander-Redux-Setup.exe
+            dist/setup-sizes.txt
             msbuild.log

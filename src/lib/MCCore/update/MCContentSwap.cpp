@@ -21,11 +21,17 @@ namespace
     constexpr std::string_view OldWrittenKey = "oldWritten";
     constexpr std::string_view NewKey = "new";
     constexpr std::string_view NewSizeKey = "newSize";
+    constexpr std::string_view NewWrittenKey = "newWritten";
     constexpr std::string_view LowestProgramKey = "lowestProgram";
     /// <summary>A move's MCKeep, when not IfChanged: "always" or "never".</summary>
     constexpr std::string_view KeepKey = "keep";
     constexpr std::string_view KeepAlways = "always";
     constexpr std::string_view KeepNever = "never";
+    /// <summary>
+    /// A lobby's start moves the files forward for at most this part of the time left (a half), keeping the rest for
+    /// putting the previous set back.
+    /// </summary>
+    constexpr int ForwardShare = 2;
     /// <summary>A later copy kept in Redux backup beside a path's first: "name (2).ext", then "(3)", up to the last.</summary>
     constexpr int FirstNumberedCopy = 2;
     constexpr int LastNumberedCopy = 999;
@@ -49,10 +55,21 @@ namespace
     class MCSwapper
     {
     public:
+        /// <summary>
+        /// The swap of <paramref name="journal"/>, <paramref name="fresh"/> when it begins this run (from
+        /// <c>ready.json</c>: nothing was set aside before). Moving the files stops at half the time left to
+        /// <paramref name="deadline"/>, keeping the rest for putting the previous set back (the deadline is a target,
+        /// not a promise: a put back that ends late still plays).
+        /// </summary>
         MCSwapper(MCUpdateDisk& disk, std::filesystem::path game, MCJournal journal,
-                  std::optional<std::chrono::steady_clock::time_point> deadline)
-            : _Disk(disk), _Game(std::move(game)), _Journal(std::move(journal)), _Deadline(deadline)
+                  std::optional<std::chrono::steady_clock::time_point> deadline, bool fresh)
+            : _Disk(disk), _Game(std::move(game)), _Journal(std::move(journal)), _Fresh(fresh)
         {
+            if (deadline)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                _ForwardUntil = now + (*deadline - now) / ForwardShare;
+            }
         }
 
         /// <summary>
@@ -239,6 +256,9 @@ namespace
                 {
                     return std::format("{} can't be moved aside", move.Path);
                 }
+
+                _MovedAside.push_back(&move);
+                _At.insert_or_assign(&move, MCAt::Missing);
             }
 
             if (!FlushTouched())
@@ -303,6 +323,9 @@ namespace
                 {
                     return std::format("{} can't be moved into place", move.Path);
                 }
+
+                _MovedIn.push_back(&move);
+                _At.insert_or_assign(&move, MCAt::New);
             }
 
             if (!FlushTouched())
@@ -316,40 +339,15 @@ namespace
     public:
         /// <summary>
         /// Puts the previous set back: each new file back in staged/, each old one in place; the journal becomes
-        /// ready.json again, for the next start. Empty, or what failed.
+        /// ready.json again, for the next start. A swap begun this run moves back just what it moved, looking at
+        /// nothing again; one a crash stopped looks at each move's files. It has no deadline: the previous set must be
+        /// whole before anything plays. Empty, or what failed.
         /// </summary>
         std::string Back()
         {
-            for (const MCMove& move : std::views::reverse(_Journal.Moves))
+            if (std::string error = _Fresh ? BackWhatMoved() : BackEveryMove(); !error.empty())
             {
-                if (move.New)
-                {
-                    // A new file in place goes back to staged/; anything else there is left as it is.
-                    const auto at = Classify(move);
-
-                    if (!at)
-                    {
-                        return at.error();
-                    }
-
-                    if (*at == MCAt::New && !Move(Destination(move), Staged(move)))
-                    {
-                        return std::format("{} can't be moved back to staged", move.Path);
-                    }
-                }
-
-                const auto setAside = IsThere(_Disk, Replaced(move));
-
-                if (!setAside)
-                {
-                    return setAside.error();
-                }
-
-                if (*setAside && !Move(Replaced(move), Destination(move)))
-                {
-                    return std::format("{} can't be put back: something else is in its place, or it can't move",
-                                       move.Path);
-                }
+                return error;
             }
 
             if (!FlushTouched())
@@ -366,6 +364,91 @@ namespace
         }
 
     private:
+        /// <summary>
+        /// Back, a swap begun this run: what it moved, last first, as <see cref="BackEveryMove"/> would (a move's new file
+        /// back to staged/ before its old one comes back), none looked at again.
+        /// </summary>
+        std::string BackWhatMoved()
+        {
+            // Both lists are in the journal's order, so the later of their last entries is the last move made.
+            auto in = _MovedIn.rbegin();
+            auto aside = _MovedAside.rbegin();
+
+            while (in != _MovedIn.rend() || aside != _MovedAside.rend())
+            {
+                if (in != _MovedIn.rend() && (aside == _MovedAside.rend() || std::greater_equal()(*in, *aside)))
+                {
+                    if (!Move(Destination(**in), Staged(**in)))
+                    {
+                        return std::format("{} can't be moved back to staged", (*in)->Path);
+                    }
+
+                    _At.insert_or_assign(*in, MCAt::Missing);
+                    ++in;
+                    continue;
+                }
+
+                if (!Move(Replaced(**aside), Destination(**aside)))
+                {
+                    return std::format("{} can't be put back: something else is in its place, or it can't move",
+                                       (*aside)->Path);
+                }
+
+                _At.erase(*aside);
+                ++aside;
+            }
+
+            return {};
+        }
+
+        /// <summary>Back, a swap a crash stopped: each move's files looked at, last first.</summary>
+        std::string BackEveryMove()
+        {
+            for (const MCMove& move : std::views::reverse(_Journal.Moves))
+            {
+                if (move.New)
+                {
+                    // A new file in place goes back to staged/; anything else there is left as it is.
+                    const auto at = Classify(move);
+
+                    if (!at)
+                    {
+                        return at.error();
+                    }
+
+                    if (*at == MCAt::New)
+                    {
+                        if (!Move(Destination(move), Staged(move)))
+                        {
+                            return std::format("{} can't be moved back to staged", move.Path);
+                        }
+
+                        _At.insert_or_assign(&move, MCAt::Missing);
+                    }
+                }
+
+                const auto setAside = IsThere(_Disk, Replaced(move));
+
+                if (!setAside)
+                {
+                    return setAside.error();
+                }
+
+                if (*setAside)
+                {
+                    if (!Move(Replaced(move), Destination(move)))
+                    {
+                        return std::format("{} can't be put back: something else is in its place, or it can't move",
+                                           move.Path);
+                    }
+
+                    _At.erase(&move);
+                }
+            }
+
+            return {};
+        }
+
         std::filesystem::path At(std::string_view relative) const { return _Game / MCFileSystem::FromUtf8(relative); }
 
         std::filesystem::path Destination(const MCMove& move) const { return At(move.Path); }
@@ -379,12 +462,30 @@ namespace
             return At(ReplacedFolder) / MCFileSystem::FromUtf8(move.Path);
         }
 
-        /// <summary>What's at the move's path (<see cref="What"/>).</summary>
-        std::expected<MCAt, std::string> Classify(const MCMove& move) { return What(Destination(move), move); }
+        /// <summary>
+        /// What's at the move's path (<see cref="What"/>), told once a run: the swap's own moves keep it up to date.
+        /// </summary>
+        std::expected<MCAt, std::string> Classify(const MCMove& move)
+        {
+            if (const auto known = _At.find(&move); known != _At.end())
+            {
+                return known->second;
+            }
+
+            const auto at = What(Destination(move), move);
+
+            if (at)
+            {
+                _At.emplace(&move, *at);
+            }
+
+            return at;
+        }
 
         /// <summary>
-        /// What the file at <paramref name="path"/> is to <paramref name="move"/>: old without hashing when its size
-        /// and time are as planned (a move keeps them), else by its hash.
+        /// What the file at <paramref name="path"/> is to <paramref name="move"/>: old or new without hashing when its
+        /// size and time are the old file's as planned, or the staged one's as armed (a move keeps them); else by its
+        /// hash.
         /// </summary>
         std::expected<MCAt, std::string> What(const std::filesystem::path& path, const MCMove& move)
         {
@@ -405,9 +506,14 @@ namespace
                 return MCAt::Folder;
             }
 
-            if (move.Old && stat.Size == move.OldSize && move.OldWritten != 0 && stat.Written == move.OldWritten)
+            const bool oldByTime =
+                move.Old && move.OldWritten != 0 && stat.Size == move.OldSize && stat.Written == move.OldWritten;
+            const bool newByTime =
+                move.New && move.NewWritten != 0 && stat.Size == move.NewSize && stat.Written == move.NewWritten;
+
+            if (oldByTime != newByTime)
             {
-                return MCAt::Old;
+                return oldByTime ? MCAt::Old : MCAt::New;
             }
 
             const auto hash = _Disk.Hash(path);
@@ -601,8 +707,8 @@ namespace
             return true;
         }
 
-        /// <summary>Whether the deadline has passed (none: never).</summary>
-        bool TooLate() const { return _Deadline && std::chrono::steady_clock::now() > *_Deadline; }
+        /// <summary>Whether moving the files forward is past its share of the deadline (none: never).</summary>
+        bool TooLate() const { return _ForwardUntil && std::chrono::steady_clock::now() > *_ForwardUntil; }
 
         bool FlushTouched()
         {
@@ -639,9 +745,29 @@ namespace
         MCJournal _Journal;
         /// <summary>The folders whose entries changed since the last flush.</summary>
         std::set<std::filesystem::path> _Touched;
-        std::optional<std::chrono::steady_clock::time_point> _Deadline;
+        /// <summary>When moving the files forward stops (<see cref="TooLate"/>).</summary>
+        std::optional<std::chrono::steady_clock::time_point> _ForwardUntil;
+        /// <summary>Whether the swap began this run, and what it moved aside and in, in order.</summary>
+        bool _Fresh = false;
+        std::vector<const MCMove*> _MovedAside;
+        std::vector<const MCMove*> _MovedIn;
+        /// <summary>What's at each move's path, once told this run.</summary>
+        std::map<const MCMove*, MCAt> _At;
         bool _Committed = false;
     };
+
+    /// <summary>The member <paramref name="key"/>, a whole number (a time written may be below 0).</summary>
+    int64_t WholeNumber(const MCJson& json, std::string_view key)
+    {
+        const MCJson& number = Member(json, key);
+
+        if (!number.is_number_integer())
+        {
+            Fail("\"{}\" isn't a whole number", key);
+        }
+
+        return number.get<int64_t>();
+    }
 
     MCJson MoveJson(const MCMove& move)
     {
@@ -658,6 +784,7 @@ namespace
         {
             json[std::string(NewKey)] = MCSha256::Hex(*move.New);
             json[std::string(NewSizeKey)] = move.NewSize;
+            json[std::string(NewWrittenKey)] = move.NewWritten;
         }
 
         if (move.Keep != MCKeep::IfChanged)
@@ -682,20 +809,19 @@ namespace
         {
             move.Old = Digest(json, OldKey);
             move.OldSize = Count(json, OldSizeKey);
-            const MCJson& written = Member(json, OldWrittenKey);
-
-            if (!written.is_number_integer())
-            {
-                Fail("\"{}\" isn't a whole number", OldWrittenKey);
-            }
-
-            move.OldWritten = written.get<int64_t>();
+            move.OldWritten = WholeNumber(json, OldWrittenKey);
         }
 
         if (json.contains(NewKey))
         {
             move.New = Digest(json, NewKey);
             move.NewSize = Count(json, NewSizeKey);
+
+            // Written since the swap tells a new file by its time: a journal from before has none (it's hashed).
+            if (json.contains(NewWrittenKey))
+            {
+                move.NewWritten = WholeNumber(json, NewWrittenKey);
+            }
         }
 
         if (json.contains(KeepKey))
@@ -772,6 +898,35 @@ bool MCContentSwap::MarkReady(MCUpdateDisk& disk, const std::filesystem::path& g
     std::random_device random;
     MCJournal ready = journal;
     ready.Record.Swap = std::format("{:08x}{:08x}{:08x}{:08x}", random(), random(), random(), random());
+
+    // Each staged file's time, which its move into place keeps: the swap then tells it without hashing it.
+    for (MCMove& move : ready.Moves)
+    {
+        if (!move.New)
+        {
+            continue;
+        }
+
+        const std::filesystem::path staged =
+            gameFolder / MCFileSystem::FromUtf8(StagedFolder) / MCFileSystem::FromUtf8(move.Path);
+        const MCUpdateDisk::MCStat stat = disk.Stat(staged);
+
+        if (!stat.Error.empty())
+        {
+            SDL_Log("Updates: the update isn't marked ready: %s", stat.Error.c_str());
+            return false;
+        }
+
+        // One not there as planned is told by its hash, and the swap finds it lost.
+        if (!stat.Exists || stat.Folder || stat.Size != move.NewSize)
+        {
+            SDL_Log("Updates: %s isn't staged as planned: the swap will say so", move.Path.c_str());
+            continue;
+        }
+
+        move.NewWritten = stat.Written;
+    }
+
     return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
 }
 
@@ -872,7 +1027,7 @@ namespace
         }
 
         std::string tooNew = TooNew(*journal, runningBuild);
-        MCSwapper swapper(disk, gameFolder, std::move(*journal), deadline);
+        MCSwapper swapper(disk, gameFolder, std::move(*journal), deadline, !*begun);
 
         // Begun under a newer program (one beside this, sharing the folder), and not yet committed: it goes back.
         if (!tooNew.empty() && !swapper.RecordWritten())
@@ -992,7 +1147,7 @@ std::expected<void, std::string> MCContentSwap::Abandon(MCUpdateDisk& disk, cons
         return std::unexpected(setAside.error());
     }
 
-    if (std::string error = MCSwapper(disk, gameFolder, std::move(*journal), std::nullopt).GiveUp(*setAside);
+    if (std::string error = MCSwapper(disk, gameFolder, std::move(*journal), std::nullopt, false).GiveUp(*setAside);
         !error.empty())
     {
         return std::unexpected(error);

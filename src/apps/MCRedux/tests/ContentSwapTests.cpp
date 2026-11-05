@@ -12,6 +12,7 @@
 #include "update/MCUpdateLock.h"
 
 #include <random>
+#include <thread>
 
 namespace
 {
@@ -59,6 +60,13 @@ namespace
 
         /// <summary>What's at <paramref name="path"/> can't be looked at (a drive failing; empty: none).</summary>
         void FailStat(std::string path) { _Unseen = std::move(path); }
+
+        /// <summary>How long each move of a file takes, by where from and to (a slow drive); none: at once.</summary>
+        using MCMoveTime = std::function<std::chrono::milliseconds(const std::string& from, const std::string& to)>;
+        void SlowMoves(MCMoveTime time) { _MoveTime = std::move(time); }
+
+        /// <summary>The files hashed since the disk was made.</summary>
+        int Hashes() const { return _Hashes; }
 
         /// <summary>
         /// The player puts <paramref name="bytes"/> at <paramref name="path"/> just as the next file is moved there (once).
@@ -113,6 +121,7 @@ namespace
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
+            ++_Hashes;
             const auto found = _Seen.find(Key(path));
 
             if (found == _Seen.end())
@@ -173,6 +182,11 @@ namespace
             {
                 const auto [path, bytes] = *std::exchange(_Appearing, std::nullopt);
                 Record({MCKind::Write, path, {}, bytes, {Parent(to)}, true});
+            }
+
+            if (_MoveTime)
+            {
+                std::this_thread::sleep_for(_MoveTime(Key(from), Key(to)));
             }
 
             // Never over a file, nor a folder.
@@ -322,6 +336,8 @@ namespace
         std::string _LastMovedTo;
         std::string _Unseen;
         std::optional<std::pair<std::string, std::string>> _Appearing;
+        MCMoveTime _MoveTime;
+        int _Hashes = 0;
     };
 
     /// <summary>The scratch folders' group, for the tests on a real disk.</summary>
@@ -393,7 +409,9 @@ namespace
             {
                 move.New = MCSha256::Of(*now);
                 move.NewSize = now->size();
-                Files[GamePath(std::string(MCContentSwap::StagedFolder) + "/" + path)] = {*now, ++Clock};
+                // As MarkReady gives it: the staged copy's time.
+                move.NewWritten = ++Clock;
+                Files[GamePath(std::string(MCContentSwap::StagedFolder) + "/" + path)] = {*now, move.NewWritten};
                 After.Files[folded] = {.Path = path, .Set = "game", .Sha256 = *move.New, .Size = now->size()};
             }
 
@@ -1094,6 +1112,24 @@ TEST_CASE("content swap at a start: content whose list needs a newer program is 
     const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
     REQUIRE(lock != nullptr);
 
+    // Armed, the journal-to-be names the program the content needs, and each staged file's time.
+    const auto ready = disk->ReadText(game / MCFileSystem::FromUtf8(MCContentSwap::ReadyFile));
+    REQUIRE(ready.has_value());
+    const auto journal = MCContentSwap::ReadJournal(*ready);
+    REQUIRE(journal.has_value());
+    CHECK_EQ(journal->LowestProgram, NewProgram);
+
+    for (const MCContentSwap::MCMove& move : journal->Moves)
+    {
+        if (move.New)
+        {
+            const std::filesystem::path staged =
+                game / MCFileSystem::FromUtf8(MCContentSwap::StagedFolder) / MCFileSystem::FromUtf8(move.Path);
+            CHECK(move.NewWritten != 0);
+            CHECK_EQ(move.NewWritten, disk->Stat(staged).Written);
+        }
+    }
+
     const MCContentSwap::MCResult old = MCContentSwap::RunAtStart(*disk, game, lock.get(), OldProgram);
     CHECK(old.Outcome == MCOutcome::Disarmed);
     CHECK(!MCContentSwap::Waiting(*disk, game));
@@ -1308,4 +1344,101 @@ TEST_CASE("content swap: a file set aside that can't be looked at once the swap 
     }
 
     CHECK(tried);
+}
+
+TEST_CASE("content swap: a swap the machine stopped at any step is finished telling each file by its size and time: "
+          "none is hashed")
+{
+    const MCUpdate update;
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    CHECK_EQ(measure.Hashes(), 0);
+    const int steps = measure.Changes();
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk(update.Files);
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Run(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+            const int before = disk.Hashes();
+            const MCContentSwap::MCResult again = MCContentSwap::Run(disk, Game);
+
+            if (disk.Hashes() != before || !update.IsNew(disk.Files()))
+            {
+                FAIL_CHECK(std::format("step {} keep {}: {} hashed, {} ({})", step, keepAll, disk.Hashes() - before,
+                                       static_cast<int>(again.Outcome), again.Error));
+            }
+        }
+    }
+}
+
+namespace
+{
+    /// <summary>Whether a move puts the previous set back: a new file to staged/, or an old one out of replaced/.</summary>
+    bool MovesBack(const std::string& from, const std::string& to)
+    {
+        return to.starts_with(GamePath(MCContentSwap::StagedFolder)) ||
+               (from.starts_with(GamePath(MCContentSwap::ReplacedFolder)) &&
+                !to.starts_with(GamePath(MCContentList::BackupFolder)));
+    }
+}
+
+TEST_CASE("content swap: a lobby's start moves files forward for half its deadline, keeping the rest for putting the "
+          "previous set back")
+{
+    constexpr std::chrono::milliseconds slow{100};
+    constexpr std::chrono::milliseconds deadline{600};
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.SlowMoves([&](const std::string& from, const std::string& to)
+                   { return MovesBack(from, to) ? std::chrono::milliseconds(0) : slow; });
+    const auto start = std::chrono::steady_clock::now();
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game, start + deadline);
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("lobby") != std::string::npos);
+    CHECK(update.IsOldAndReady(disk.Files()));
+    CHECK(took < deadline);
+}
+
+TEST_CASE("content swap: putting the previous set back after a fast swap failed isn't cut short by a lobby's deadline: "
+          "it ends late, and the previous set plays")
+{
+    constexpr std::chrono::milliseconds slow{100};
+    constexpr std::chrono::milliseconds deadline{300};
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    REQUIRE(disk.Remove(Game / MCFileSystem::FromUtf8(MCContentSwap::StagedFolder) / "HD" / "terrain.hda"));
+    int movedBack = 0;
+    disk.SlowMoves(
+        [&](const std::string& from, const std::string& to)
+        {
+            if (!MovesBack(from, to))
+            {
+                return std::chrono::milliseconds(0);
+            }
+
+            ++movedBack;
+            return slow;
+        });
+    const auto start = std::chrono::steady_clock::now();
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game, start + deadline);
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("HD/terrain.hda's staged copy") != std::string::npos);
+    CHECK(MCUpdate::WhichSet(disk.Files(), update.Old));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
+    CHECK(movedBack * slow > deadline);
+    CHECK(took >= movedBack * slow);
 }

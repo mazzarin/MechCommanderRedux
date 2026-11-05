@@ -27,12 +27,12 @@ class MCUpdateLock;
 /// <c>staged/</c> staying for the next INSTALL, and the previous set plays.
 ///
 /// A crash at any step leaves the journal, and the next start finishes the swap, judging each file by what's at its
-/// path (its size, else its hash): old, new, missing, or another (the player's, set aside and kept as an old one is).
-/// Nothing new moves in before every old file is safely aside, so no old file is ever lost. If the swap can't finish
-/// (a file held open, a full disk), the previous set is put back from <c>replaced/</c> and the update stays staged
-/// for the next start; only a set that can't be put back stops the game, on the recovery screen. In
-/// <c>Redux backup/</c> the first copy of a path stays: it's the folder's own, which the uninstall puts back; a later
-/// one is kept beside it, numbered.
+/// path (its size and time, else its hash): old, new, missing, or another (the player's, set aside and kept as an old
+/// one is). Nothing new moves in before every old file is safely aside, and no move ever replaces a file, so no old
+/// file is ever lost. If the swap can't finish (a file held open, a full disk), the previous set is put back from
+/// <c>replaced/</c> and the update stays staged for the next start; only a set that can't be put back stops the game,
+/// on the recovery screen. In <c>Redux backup/</c> the first copy of a path stays: it's the folder's own, which the
+/// uninstall puts back; a later one is kept beside it, numbered.
 ///
 /// The recovery screen's REPAIR gives that swap up (<see cref="Abandon"/>) and installs the release afresh over the
 /// files as they are; until a swap is committed, the game doesn't play them (<see cref="Repairing"/>).
@@ -48,8 +48,9 @@ namespace MCContentSwap
     /// <summary>A repair under way: the journal of the swap it gave up, kept until a swap is committed.</summary>
     constexpr std::string_view RepairFile = "Redux update/repair.json";
     /// <summary>
-    /// How long a multiplayer lobby's start lets the swap take before putting the previous set back: a room is never
-    /// held up (a normal swap takes well under a second).
+    /// How long a multiplayer lobby's start means the swap to take, at most, so a room isn't held up (a normal swap
+    /// takes well under a second): a target, not a promise. The files move forward for half of it; past that the
+    /// previous set goes back, which isn't cut short (it must be whole to play).
     /// </summary>
     constexpr std::chrono::seconds LobbyStartTime{15};
 
@@ -84,6 +85,11 @@ namespace MCContentSwap
         int64_t OldWritten = 0;
         std::optional<MCSha256::MCDigest> New;
         uint64_t NewSize = 0;
+        /// <summary>
+        /// The staged file's time written, when armed (<see cref="MarkReady"/>): moved into place, unchanged, it's taken
+        /// as new without hashing.
+        /// </summary>
+        int64_t NewWritten = 0;
         /// <summary>Whether the old file, set aside, is kept in <c>Redux backup/</c>.</summary>
         MCKeep Keep = MCKeep::IfChanged;
     };
@@ -127,7 +133,8 @@ namespace MCContentSwap
 
     /// <summary>
     /// Staging is done (each staged file and its folder flushed): writes <c>ready.json</c> durably, the record given a
-    /// swap id of its own.
+    /// swap id of its own and each new file its staged copy's time. False when it can't be written, or a staged file
+    /// can't be looked at.
     /// </summary>
     bool MarkReady(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal);
 

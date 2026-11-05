@@ -607,7 +607,7 @@ namespace
         const MCReleaseFile::MCRelease& release = chosen->Release;
 
         // Never a release older than the one installed, checked before anything is given up (a repair's swap).
-        const auto had = MCInstalled::Read(setup.GameFolder);
+        const auto had = MCInstalled::Read(disk, setup.GameFolder);
 
         if (!had)
         {
@@ -790,8 +790,9 @@ std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCU
 
         // The program alone (a list this game can't read): its first start fetches the release's content. The list's
         // own lowest program isn't known here; the build armed, the release's, takes its content.
-        return MCInstalled::NoteDue(disk, setup.GameFolder,
-                                    {.Release = offer.Release.Number, .LowestProgram = *offer.ProgramBuild});
+        return MCInstalled::NoteDue(
+            disk, setup.GameFolder,
+            {.Epoch = offer.Release.Epoch, .Release = offer.Release.Number, .LowestProgram = *offer.ProgramBuild});
     }
 
     return MCContentStage::Arm(disk, setup.GameFolder, offer.Content->Plan);

@@ -2,6 +2,7 @@
 #include "update/MCInstalled.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCInstalledJson.h"
+#include "update/MCReleaseFile.h"
 #include "update/MCContentList.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCUpdateDisk.h"
@@ -39,10 +40,7 @@ namespace
         record.Swap = TextOr(json, SwapKey, "");
 
         // Recorded since a key list could raise its epoch: an earlier record has none.
-        if (json.contains(EpochKey))
-        {
-            record.Epoch = Count(json, EpochKey);
-        }
+        record.Epoch = CountOr(json, EpochKey, 0);
 
         for (std::string& set : MCUpdateJson::Strings(json, SetsKey))
         {
@@ -179,8 +177,12 @@ std::expected<void, std::string> MCInstalled::NoteDue(MCUpdateDisk& disk, const 
                                                       const MCDue& due)
 {
     const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(DueFile);
-    const std::string text =
-        MCJson{{FormatKey, DueFormat}, {ReleaseKey, due.Release}, {LowestProgramKey, due.LowestProgram}}.dump();
+    const std::string text = MCJson{
+        {FormatKey, DueFormat},
+        {EpochKey, due.Epoch},
+        {ReleaseKey, due.Release},
+        {LowestProgramKey,
+         due.LowestProgram}}.dump();
 
     if (!WriteDurably(disk, path, text))
     {
@@ -200,7 +202,8 @@ std::optional<MCInstalled::MCDue> MCInstalled::ReadDue(MCUpdateDisk& disk, const
                                                [&]
                                                {
                                                    const MCJson json = Object(text);
-                                                   return MCDue{.Release = Count(json, ReleaseKey),
+                                                   return MCDue{.Epoch = CountOr(json, EpochKey, 0),
+                                                                .Release = Count(json, ReleaseKey),
                                                                 .LowestProgram = Count(json, LowestProgramKey)};
                                                });
                  });
@@ -225,7 +228,9 @@ MCInstalled::MCStartNeed MCInstalled::AtStart(MCUpdateDisk& disk, const std::fil
 
     // Due only to a program that takes it: an older one plays the files it has, and is offered the update again.
     if (const std::optional<MCDue> due = ReadDue(disk, gameFolder);
-        due && due->Release > record.Release && runningBuild >= due->LowestProgram)
+        due &&
+        MCReleaseFile::MCOrder{due->Epoch, due->Release} > MCReleaseFile::MCOrder{record.Epoch, record.Release} &&
+        runningBuild >= due->LowestProgram)
     {
         return MCStartNeed::Due;
     }

@@ -684,8 +684,8 @@ TEST_CASE("content updater: a stop while a check, a change of sets or an install
     CHECK(!release.Armed());
 }
 
-TEST_CASE("content updater: the record is read from the disk it's given: one it can't read fails the check and the "
-          "change of sets, saying why")
+TEST_CASE("content updater: the record is read from the disk it's given: one it can't read fails the check, the "
+          "change of sets and REPAIR, saying why")
 {
     MCHostedRelease release("record-disk");
     const std::filesystem::path& game = release.Game.Path();
@@ -696,6 +696,9 @@ TEST_CASE("content updater: the record is read from the disk it's given: one it 
           std::string::npos);
     REQUIRE(MCContentUpdater::Choose(disk, game, WithoutHd).has_value());
     CHECK(MCContentUpdater::CheckSets(release.Setup(), disk, source).error_or("").find("the test's disk") !=
+          std::string::npos);
+    // REPAIR too, before it gives anything up.
+    CHECK(MCContentUpdater::Repair(release.Setup(), disk, source, GoOn).error_or("").find("the test's disk") !=
           std::string::npos);
 
     // An installer's answer with a record of no release that can't be read: not taken for a first start.

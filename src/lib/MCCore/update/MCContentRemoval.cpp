@@ -6,29 +6,51 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
-#include <thread>
-
 namespace
 {
-    /// <summary>How often removal tries the game's lock again while copies of the game run.</summary>
-    constexpr std::chrono::milliseconds LockRetry{100};
-
-    /// <summary>Takes <paramref name="lock"/> exclusive, trying until <paramref name="wait"/> has passed.</summary>
-    bool TakeExclusive(MCUpdateLock& lock, std::chrono::milliseconds wait)
+    /// <summary>
+    /// Under the game's lock held exclusive, finishes what an update left under way, so the record says what's on disk
+    /// and nothing the player had is left in <c>Redux update/replaced/</c>: a swap a crash stopped midway is finished,
+    /// or the previous set put back, its clearing done; a repair's giving up (MCContentSwap::Abandon) is finished. One
+    /// armed and not begun leaves the record as it is: its staged files go with the update folder.
+    /// </summary>
+    /// <returns>Empty, or what's left undone: then nothing may go, as the player's originals may still be set aside.</returns>
+    std::string FinishUnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
     {
-        const auto until = std::chrono::steady_clock::now() + wait;
+        const auto begun = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile));
+        const auto setAside = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::ReplacedFolder));
+        const auto repairing = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::RepairFile));
 
-        while (!lock.TryExclusive())
+        for (const auto* seen : {&begun, &setAside, &repairing})
         {
-            if (std::chrono::steady_clock::now() >= until)
+            if (!*seen)
             {
-                return false;
+                return seen->error();
             }
-
-            std::this_thread::sleep_for(LockRetry);
         }
 
-        return true;
+        if (*begun)
+        {
+            // A committed swap whose clearing failed says so too: what it set aside is still in replaced/.
+            if (const MCContentSwap::MCResult swap = MCContentSwap::Run(disk, gameFolder);
+                swap.Outcome == MCContentSwap::MCOutcome::Stuck || !swap.Error.empty())
+            {
+                return swap.Error;
+            }
+
+            return {};
+        }
+
+        // The journal becomes repair.json before the files set aside are sorted: replaced/ still there, it isn't done.
+        if (*repairing && *setAside)
+        {
+            if (const auto given = MCContentSwap::Abandon(disk, gameFolder); !given)
+            {
+                return given.error();
+            }
+        }
+
+        return {};
     }
 
     /// <summary>Whether the file at <paramref name="path"/> is still <paramref name="file"/> as recorded.</summary>
@@ -64,8 +86,14 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
     MCUpdateDisk& disk, const std::filesystem::path& gameFolder, std::chrono::milliseconds wait)
 {
     const std::filesystem::path update = gameFolder / MCFileSystem::FromUtf8(MCContentSwap::UpdateFolder);
+    const auto hasUpdate = IsThere(disk, update);
 
-    if (!disk.Stat(update).Exists)
+    if (!hasUpdate)
+    {
+        return std::unexpected(hasUpdate.error());
+    }
+
+    if (!*hasUpdate)
     {
         return MCRemoved{};
     }
@@ -77,24 +105,18 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
         return std::unexpected(std::format("the game's lock in {} can't be opened", MCFileSystem::ToUtf8(update)));
     }
 
-    if (!TakeExclusive(*lock, wait))
+    if (!lock->ExclusiveBy(std::chrono::steady_clock::now() + wait))
     {
         return std::unexpected(std::format("a copy of the game is running from {}: close it, then try again",
                                            MCFileSystem::ToUtf8(gameFolder)));
     }
 
-    // A swap a crash stopped midway is finished, or the previous set put back, so the record says what's on disk. One
-    // armed and not begun leaves the record as it is: its staged files go with the update folder.
-    if (disk.Stat(gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile)).Exists)
+    if (const std::string unfinished = FinishUnderWay(disk, gameFolder); !unfinished.empty())
     {
-        if (const MCContentSwap::MCResult swap = MCContentSwap::Run(disk, gameFolder);
-            swap.Outcome == MCContentSwap::MCOutcome::Stuck)
-        {
-            return std::unexpected(swap.Error);
-        }
+        return std::unexpected(unfinished);
     }
 
-    const auto record = MCInstalled::Read(gameFolder);
+    const auto record = MCInstalled::Read(disk, gameFolder);
 
     if (!record)
     {

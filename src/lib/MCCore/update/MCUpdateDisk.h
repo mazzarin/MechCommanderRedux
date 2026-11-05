@@ -27,6 +27,11 @@ public:
         uint64_t Size = 0;
         /// <summary>The time written, in the file system's ticks (MCInstalled::WrittenAt).</summary>
         int64_t Written = 0;
+        /// <summary>
+        /// Why it can't be told what's there (no access, a failing drive); empty when it can. Only a path the system
+        /// says isn't there is missing: a decision to keep or remove a file never takes an error for that.
+        /// </summary>
+        std::string Error;
     };
 
     virtual ~MCUpdateDisk() = default;
@@ -44,8 +49,18 @@ public:
     /// <summary>Makes the folder and those on its way.</summary>
     virtual bool MakeFolders(const std::filesystem::path& path) = 0;
 
-    /// <summary>Moves a file, replacing what's at <paramref name="to"/>; both on one disk, so it's all or nothing.</summary>
+    /// <summary>
+    /// Moves a file, replacing what's at <paramref name="to"/>; both on one disk, so it's all or nothing. Only for the
+    /// update's own records (<see cref="WriteDurably"/>, the journal's names): an update's files move with
+    /// <see cref="Move"/>.
+    /// </summary>
     virtual bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
+
+    /// <summary>
+    /// Moves a file to <paramref name="to"/>, where nothing may be: false when something is (it's never replaced) or
+    /// the move fails. Both on one disk, so it's all or nothing.
+    /// </summary>
+    virtual bool Move(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
 
     /// <summary>Deletes a file, or a folder and all it holds.</summary>
     virtual bool Remove(const std::filesystem::path& path) = 0;
@@ -68,6 +83,9 @@ public:
 
 /// <summary>The disk.</summary>
 std::unique_ptr<MCUpdateDisk> MakeDisk();
+
+/// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>
+std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path);
 
 /// <summary>
 /// Writes <paramref name="path"/> durably: a temporary file beside it written and flushed, renamed over it, the folder

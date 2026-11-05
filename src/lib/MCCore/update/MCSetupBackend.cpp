@@ -488,6 +488,16 @@ std::unique_ptr<MCUpdater::MCBackend> MCSetupBackend::Make(std::filesystem::path
 bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64_t runningBuild,
                                  const MCPlatform& platform)
 {
+    // Held exclusive throughout, from before the armed record is read until the setup has started: no other copy plays,
+    // arms or runs one meanwhile. Another copy running is at its own update's READY, or playing on: the setup waits
+    // for it to quit.
+    const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(gameFolder, MCUpdateLock::GameLock);
+
+    if (lock == nullptr || !lock->TryExclusive())
+    {
+        return false;
+    }
+
     const auto armed = ReadArmed(gameFolder);
 
     if (!armed)
@@ -504,13 +514,6 @@ bool MCSetupBackend::RunLeftOver(const std::filesystem::path& gameFolder, uint64
         }
 
         ClearDone(gameFolder, runningBuild);
-        return false;
-    }
-
-    // Another copy running is at its own update's READY, or playing on: the setup waits for it to quit.
-    if (const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(gameFolder, MCUpdateLock::GameLock);
-        lock == nullptr || !lock->TryExclusive())
-    {
         return false;
     }
 

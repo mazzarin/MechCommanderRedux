@@ -678,7 +678,15 @@ std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCU
 {
     if (offer.Content == nullptr)
     {
-        return {};
+        if (!offer.ProgramBuild)
+        {
+            return {};
+        }
+
+        // The program alone (a list this game can't read): its first start fetches the release's content. The list's
+        // own lowest program isn't known here; the build armed, the release's, takes its content.
+        return MCInstalled::NoteDue(disk, setup.GameFolder,
+                                    {.Release = offer.Release.Number, .LowestProgram = *offer.ProgramBuild});
     }
 
     return MCContentStage::Arm(disk, setup.GameFolder, offer.Content->Plan);

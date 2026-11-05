@@ -56,6 +56,11 @@ namespace
             return _Disk->Rename(from, to);
         }
 
+        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            return _Disk->Move(from, to);
+        }
+
         bool Remove(const std::filesystem::path& path) override { return _Disk->Remove(path); }
         bool RemoveIfEmpty(const std::filesystem::path& path) override { return _Disk->RemoveIfEmpty(path); }
 

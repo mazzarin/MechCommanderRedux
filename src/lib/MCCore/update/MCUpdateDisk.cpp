@@ -4,6 +4,7 @@
 #include "update/MCUpdateDisk.h"
 
 #include <SDL3/SDL_log.h>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <system_error>
@@ -16,14 +17,19 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace
 {
     constexpr std::string_view TemporarySuffix = ".writing";
+#ifndef _WIN32
+    constexpr int64_t NanosecondsPerSecond = 1'000'000'000;
+#endif
 
 #ifdef _WIN32
     /// <summary>A move of a file another program holds: tried this many times, this far apart (a second in all).</summary>
@@ -91,17 +97,87 @@ namespace
     }
 #endif
 
+#ifdef _WIN32
+    /// <summary>
+    /// Moves a file with MoveFileExW's <paramref name="flags"/>, written through: the move is on the disk when it
+    /// returns, as NTFS offers no flush of a folder's entries. A file another program has open can't be moved; a virus
+    /// scanner holds one briefly, so it's tried again.
+    /// </summary>
+    bool MoveWithFlags(const std::filesystem::path& from, const std::filesystem::path& to, DWORD flags)
+    {
+        for (int attempt = 1;; ++attempt)
+        {
+            if (MoveFileExW(from.c_str(), to.c_str(), flags | MOVEFILE_WRITE_THROUGH) != 0)
+            {
+                return true;
+            }
+
+            const DWORD error = GetLastError();
+            const bool held =
+                error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION || error == ERROR_ACCESS_DENIED;
+
+            if (!held || attempt >= HeldTries)
+            {
+                SDL_Log("Updates: %s can't be moved to %s (%lu, try %d)", Shown(from).c_str(), Shown(to).c_str(), error,
+                        attempt);
+                return false;
+            }
+
+            std::this_thread::sleep_for(HeldWait);
+        }
+    }
+#endif
+
+    /// <summary>A stat that couldn't be made: why, naming <paramref name="path"/>.</summary>
+    MCUpdateDisk::MCStat Unseen(const std::filesystem::path& path, const std::error_code& error)
+    {
+        return {.Error = std::format("{} can't be looked at ({})", Shown(path), error.message())};
+    }
+
     class MCDisk final : public MCUpdateDisk
     {
     public:
         MCStat Stat(const std::filesystem::path& path) override
         {
+#ifndef _WIN32
+            // One stat call, not three (the swap looks at each file several times): its time as
+            // std::filesystem::last_write_time gives it, nanoseconds since 1970.
+            struct stat info{};
+
+            if (::stat(path.c_str(), &info) != 0)
+            {
+                // Missing only when the system says so: any other error (no access, a failing drive) is told as one.
+                if (errno == ENOENT || errno == ENOTDIR)
+                {
+                    return {};
+                }
+
+                return Unseen(path, std::error_code(errno, std::generic_category()));
+            }
+
+#ifdef __APPLE__
+            const timespec& written = info.st_mtimespec;
+#else
+            const timespec& written = info.st_mtim;
+#endif
+            const bool folder = S_ISDIR(info.st_mode);
+            return {.Exists = true,
+                    .Folder = folder,
+                    .Size = folder ? 0 : static_cast<uint64_t>(info.st_size),
+                    .Written = static_cast<int64_t>(written.tv_sec) * NanosecondsPerSecond + written.tv_nsec};
+#else
             std::error_code error;
             const std::filesystem::file_status status = std::filesystem::status(path, error);
 
-            if (error || !std::filesystem::exists(status))
+            // Missing only when the system says so: any other error (no access, a failing drive) is told as one.
+            if (status.type() == std::filesystem::file_type::not_found)
             {
                 return {};
+            }
+
+            if (error || !std::filesystem::exists(status))
+            {
+                return Unseen(path, error);
             }
 
             MCStat stat{.Exists = true, .Folder = std::filesystem::is_directory(status)};
@@ -109,11 +185,23 @@ namespace
             if (!stat.Folder)
             {
                 stat.Size = std::filesystem::file_size(path, error);
+
+                if (error)
+                {
+                    return Unseen(path, error);
+                }
             }
 
             const std::filesystem::file_time_type written = std::filesystem::last_write_time(path, error);
-            stat.Written = error ? 0 : static_cast<int64_t>(written.time_since_epoch().count());
+
+            if (error)
+            {
+                return Unseen(path, error);
+            }
+
+            stat.Written = static_cast<int64_t>(written.time_since_epoch().count());
             return stat;
+#endif
         }
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
@@ -187,28 +275,7 @@ namespace
         bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
 #ifdef _WIN32
-            // Write-through: the move is on the disk when it returns, as NTFS offers no flush of a folder's entries. A
-            // file another program has open can't be moved; a virus scanner holds one briefly, so it's tried again.
-            for (int attempt = 1;; ++attempt)
-            {
-                if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
-                {
-                    return true;
-                }
-
-                const DWORD error = GetLastError();
-                const bool held =
-                    error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION || error == ERROR_ACCESS_DENIED;
-
-                if (!held || attempt >= HeldTries)
-                {
-                    SDL_Log("Updates: %s can't be moved to %s (%lu, try %d)", Shown(from).c_str(), Shown(to).c_str(),
-                            error, attempt);
-                    return false;
-                }
-
-                std::this_thread::sleep_for(HeldWait);
-            }
+            return MoveWithFlags(from, to, MOVEFILE_REPLACE_EXISTING);
 #else
             std::error_code error;
             std::filesystem::rename(from, to, error);
@@ -220,6 +287,25 @@ namespace
             }
 
             return !error;
+#endif
+        }
+
+        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+#ifdef _WIN32
+            // Without MOVEFILE_REPLACE_EXISTING: a file at to fails it (ERROR_ALREADY_EXISTS), never tried again.
+            constexpr DWORD replacingNothing = 0;
+            return MoveWithFlags(from, to, replacingNothing);
+#else
+            // RENAME_EXCL: one step, failing with EEXIST when something is at to.
+            if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) != 0)
+            {
+                SDL_Log("Updates: %s can't be moved to %s (%s)", Shown(from).c_str(), Shown(to).c_str(),
+                        std::strerror(errno));
+                return false;
+            }
+
+            return true;
 #endif
         }
 
@@ -297,6 +383,18 @@ namespace
 std::unique_ptr<MCUpdateDisk> MakeDisk()
 {
     return std::make_unique<MCDisk>();
+}
+
+std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path)
+{
+    const MCUpdateDisk::MCStat stat = disk.Stat(path);
+
+    if (!stat.Error.empty())
+    {
+        return std::unexpected(stat.Error);
+    }
+
+    return stat.Exists;
 }
 
 bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& path, std::string_view bytes)

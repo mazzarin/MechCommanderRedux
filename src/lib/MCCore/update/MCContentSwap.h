@@ -23,13 +23,17 @@ class MCUpdateLock;
 ///    <c>Redux backup/</c> at their paths, the folders flushed, but those of a set taken out (<see cref="MCKeep"/>);
 ///    then <c>replaced/</c> and <c>staged/</c> go, then the journal.
 ///
+/// An update whose content needs a newer program than the one starting (its program's half never went in: a setup that
+/// failed, a crash before Sparkle installed) isn't swapped in: it's disarmed, <c>ready.json</c> going and
+/// <c>staged/</c> staying for the next INSTALL, and the previous set plays.
+///
 /// A crash at any step leaves the journal, and the next start finishes the swap, judging each file by what's at its
-/// path (its size, else its hash): old, new, missing, or another (the player's, set aside and kept as an old one is).
-/// Nothing new moves in before every old file is safely aside, so no old file is ever lost. If the swap can't finish
-/// (a file held open, a full disk), the previous set is put back from <c>replaced/</c> and the update stays staged
-/// for the next start; only a set that can't be put back stops the game, on the recovery screen. In
-/// <c>Redux backup/</c> the first copy of a path stays: it's the folder's own, which the uninstall puts back; a later
-/// one is kept beside it, numbered.
+/// path (its size and time, else its hash): old, new, missing, or another (the player's, set aside and kept as an old
+/// one is). Nothing new moves in before every old file is safely aside, and no move ever replaces a file, so no old
+/// file is ever lost. If the swap can't finish (a file held open, a full disk), the previous set is put back from
+/// <c>replaced/</c> and the update stays staged for the next start; only a set that can't be put back stops the game,
+/// on the recovery screen. In <c>Redux backup/</c> the first copy of a path stays: it's the folder's own, which the
+/// uninstall puts back; a later one is kept beside it, numbered.
 ///
 /// The recovery screen's REPAIR gives that swap up (<see cref="Abandon"/>) and installs the release afresh over the
 /// files as they are; until a swap is committed, the game doesn't play them (<see cref="Repairing"/>).
@@ -45,8 +49,9 @@ namespace MCContentSwap
     /// <summary>A repair under way: the journal of the swap it gave up, kept until a swap is committed.</summary>
     constexpr std::string_view RepairFile = MCContentList::InUpdateFolder<"repair.json">;
     /// <summary>
-    /// How long a multiplayer lobby's start lets the swap take before putting the previous set back: a room is never
-    /// held up (a normal swap takes well under a second).
+    /// How long a multiplayer lobby's start means the swap to take, at most, so a room isn't held up (a normal swap
+    /// takes well under a second): a target, not a promise. The files move forward for half of it; past that the
+    /// previous set goes back, which isn't cut short (it must be whole to play).
     /// </summary>
     constexpr std::chrono::seconds LobbyStartTime{15};
 
@@ -81,6 +86,11 @@ namespace MCContentSwap
         int64_t OldWritten = 0;
         std::optional<MCSha256::MCDigest> New;
         uint64_t NewSize = 0;
+        /// <summary>
+        /// The staged file's time written, when armed (<see cref="MarkReady"/>): moved into place, unchanged, it's taken
+        /// as new without hashing.
+        /// </summary>
+        int64_t NewWritten = 0;
         /// <summary>Whether the old file, set aside, is kept in <c>Redux backup/</c>.</summary>
         MCKeep Keep = MCKeep::IfChanged;
     };
@@ -90,6 +100,8 @@ namespace MCContentSwap
         std::vector<MCMove> Moves;
         /// <summary>The installed record once swapped.</summary>
         MCInstalled::MCRecord Record;
+        /// <summary>The lowest program build the content needs (its list's; 0 in a journal from before).</summary>
+        uint64_t LowestProgram = 0;
     };
 
     enum class MCOutcome : uint8_t
@@ -100,6 +112,11 @@ namespace MCContentSwap
         Swapped,
         /// <summary>It couldn't finish: the previous set is back, the update still staged (<see cref="MCResult::Error"/>).</summary>
         PutBack,
+        /// <summary>
+        /// It needs a newer program than the one running: the previous set is in place, the update disarmed, its files
+        /// still staged (<see cref="MCResult::Error"/> says why).
+        /// </summary>
+        Disarmed,
         /// <summary>
         /// Neither, or a repair isn't done: the game can't play the files as they are (<see cref="MCResult::Error"/>).
         /// </summary>
@@ -117,7 +134,8 @@ namespace MCContentSwap
 
     /// <summary>
     /// Staging is done (each staged file and its folder flushed): writes <c>ready.json</c> durably, the record given a
-    /// swap id of its own.
+    /// swap id of its own and each new file its staged copy's time. False when it can't be written, or a staged file
+    /// can't be looked at.
     /// </summary>
     bool MarkReady(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal);
 
@@ -126,6 +144,12 @@ namespace MCContentSwap
 
     /// <summary>Whether a repair is under way: the game can't play the files until a swap is committed.</summary>
     bool Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+
+    /// <summary>
+    /// Whether an update is under way: ready, stopped midway or being repaired (<see cref="Waiting"/>,
+    /// <see cref="Repairing"/>). Its game files may be set aside, SYSTEM.CFG among them, until a start finishes it.
+    /// </summary>
+    bool UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
     /// <summary>
     /// REPAIR's first step, under the game's lock held exclusive: gives up a swap that can neither finish nor go back.
@@ -139,19 +163,25 @@ namespace MCContentSwap
 
     /// <summary>
     /// Swaps a ready update in, or finishes one a crash stopped; puts the previous set back if it can't, or if moving
-    /// the files is still going at <paramref name="deadline"/> (a committed swap only finishes its clearing). While a
-    /// repair is under way there's no previous set to play: anything but a committed swap is Stuck.
+    /// the files is still going at <paramref name="deadline"/> (a committed swap only finishes its clearing). An update
+    /// needing a newer program than <paramref name="runningBuild"/> (none: any program will do) is disarmed instead,
+    /// one begun put back first. While a repair is under way there's no previous set to play: anything but a committed
+    /// swap is Stuck.
     /// </summary>
     MCResult Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                 std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
+                 std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt,
+                 std::optional<uint64_t> runningBuild = std::nullopt);
 
     /// <summary>
     /// The start's swap (<see cref="Run"/>) under the game's lock (update/MCUpdateLock.h), which then stays held shared
     /// for the game's run. The swap takes the lock exclusive: a ready update waits <see cref="QuittingWait"/> for
     /// another copy to quit, then for a later start. A swap stopped midway or a repair, whose files can't be played, is
-    /// waited for (another copy finishing it) until <paramref name="deadline"/> or, with none, <see cref="MidwayWait"/>. Neither
-    /// wait passes <paramref name="deadline"/>. Without a lock (none could be opened) the swap runs as it is.
+    /// waited for (another copy finishing it) until <paramref name="deadline"/> or, with none, <see cref="MidwayWait"/>;
+    /// so is another copy holding the lock exclusive when it's to be held shared. Past that the start is Stuck, never
+    /// waiting longer, and holds nothing. Without a lock (none could be opened) the swap runs as it is. The program
+    /// starting is build <paramref name="runningBuild"/>: content needing a newer one is disarmed.
     /// </summary>
     MCResult RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
+                        uint64_t runningBuild,
                         std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
 }

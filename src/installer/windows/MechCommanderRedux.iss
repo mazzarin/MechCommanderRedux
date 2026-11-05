@@ -9,7 +9,9 @@
 ; replaces there (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup".
 ;
 ; The uninstaller has the game remove its content first (MCRedux --remove-content: the files updates put there),
-; then removes the program and puts back what's in the backup, so a copy taken over is as it was. A program update is
+; then removes the program and puts back what's in the backup, so a copy taken over is as it was. When the game can't
+; (a copy still running, an update it can't finish, a file it can't remove), the uninstall says why and stops, so the
+; program, the content's one remover, stays to try again. A program update is
 ; this setup run silently by the game (main/MCUpdater.h's Windows backend): it waits for the game that started it to
 ; end, closes any other copy running (Windows' Restart Manager), and starts the game again when asked.
 ;
@@ -146,6 +148,7 @@ FolderProtected=Windows protects %1. Setup will ask Windows to let you change it
 FolderStillProtected=Setup couldn't get permission to change %1.
 BackupFailed=Setup couldn't copy %1 to %2.
 RestoreFailed=These files couldn't go back into your MechCommander Gold folder, so they're still in %1:%2
+RemovalFailed=The game couldn't remove its downloaded files from %1, so the uninstall stopped:%n%n%2%n%nClose the game and its editor, then uninstall again.
 PlayGame=Play {#AppName}
 EditorShortcut={#AppName} Mission Editor
 
@@ -174,11 +177,6 @@ Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Flags: nowait; Check: StartAf
 ; The folder, once nothing's left in it: Setup may have made it itself, to let the player change it.
 Type: dirifempty; Name: "{app}"
 
-[UninstallRun]
-; First, the game removes its content (the files updates put here; the setup never owns content), leaving the
-; player's own and what a copy taken over had. Then the program goes, and the backup comes back.
-Filename: "{app}\{#GameExe}"; Parameters: "--remove-content --data ""{app}"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveContent"
-
 [Code]
 const
   // Written and deleted to learn whether the player can change the folder.
@@ -197,6 +195,10 @@ const
   AccountNameLength = 256;
   // The number of an update's second copy of a file in the backup, "name (2).ext" (update/MCContentSwap.cpp's KeptAt).
   FirstNumberedCopy = 2;
+  // The game's exit code once it has removed its content (MCRedux --remove-content), and the file it says why it
+  // couldn't in (--report), in the uninstaller's temporary folder.
+  RemovedCode = 0;
+  RemovalReportName = 'content removal.txt';
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -925,17 +927,65 @@ begin
   end;
 end;
 
-// After the game removed its content and the program's files are gone: everything in the backup goes back, so the
-// folder is as it was, and the original's MCX.EXE gets its compatibility settings back. An update's later copies of the
-// player's files stay in the backup, which then stays too.
+// The game removes its content from Folder (the files updates put there; the setup never owns content), leaving the
+// player's own and what a copy taken over had: whether it did. If not, the player is told why (silently, the log is).
+function RemoveContent(const Folder: String): Boolean;
+var
+  Report, Reason: String;
+  Lines: TArrayOfString;
+  ResultCode, I: Integer;
+begin
+  Result := False;
+  Report := ExpandConstant('{tmp}\') + RemovalReportName;
+  DeleteFile(Report);
+
+  if not Exec(AddBackslash(Folder) + '{#GameExe}', '--remove-content --data "' + Folder + '" --report "' + Report + '"',
+              Folder, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Reason := SysErrorMessage(ResultCode)
+  else if ResultCode = RemovedCode then
+  begin
+    Log('The game removed its content');
+    Result := True;
+    Exit;
+  end
+  else
+  begin
+    Reason := '';
+
+    if LoadStringsFromFile(Report, Lines) then
+      for I := 0 to GetArrayLength(Lines) - 1 do
+        Reason := Trim(Reason + ' ' + Lines[I]);
+
+    if Reason = '' then
+      Reason := Format('{#GameExe} ended with code %d', [ResultCode]);
+  end;
+
+  Log(Format('The game couldn''t remove its content: %s', [Reason]));
+  SuppressibleMsgBox(FmtMessage(CustomMessage('RemovalFailed'), [Folder, Reason]), mbError, MB_OK, IDOK);
+end;
+
+// First, before anything goes, the game removes its content; if it can't, the uninstall stops there, the program kept
+// to try again (it's the content's one remover). After the program's files are gone, everything in the backup goes
+// back, so the folder is as it was, and the original's MCX.EXE gets its compatibility settings back. An update's later
+// copies of the player's files stay in the backup, which then stays too.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Folder, Left: String;
 begin
+  Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+
+  // Here, not in InitializeUninstall: that comes before the player is asked whether to uninstall at all.
+  if CurUninstallStep = usUninstall then
+  begin
+    if not RemoveContent(Folder) then
+      Abort;
+
+    Exit;
+  end;
+
   if CurUninstallStep <> usPostUninstall then
     Exit;
 
-  Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
   Left := '';
   PutBackAll(Folder, '', Left);
   RemoveDir(BackupFolder(Folder));

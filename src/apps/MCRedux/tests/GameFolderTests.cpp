@@ -4,6 +4,8 @@
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "platform/MCUtf8Path.h"
+#include "update/MCContentSwap.h"
+#include "update/MCUpdateLock.h"
 
 namespace
 {
@@ -76,6 +78,34 @@ TEST_CASE("launcher: the game is found in folders and Wine wrappers, not in mods
     CHECK(MCGameFolder::HasGameData(root / "No Exe"));
     CHECK(!MCGameFolder::IsInstall(root / "No Exe"));
     CHECK(!MCGameFolder::HasGameData(root / "Missing"));
+}
+
+/// <summary>
+/// A swap stopped midway sets SYSTEM.CFG aside before the new one moves in: a folder whose update is under way (ready,
+/// begun or being repaired) is still the game's, so the start finds it again and finishes the swap; the update folder
+/// alone (its locks) isn't.
+/// </summary>
+TEST_CASE("launcher: a folder whose update is under way is the game's, its SYSTEM.CFG set aside")
+{
+    const ScratchFolder scratch("midway");
+
+    for (const std::string_view under :
+         {MCContentSwap::JournalFile, MCContentSwap::ReadyFile, MCContentSwap::RepairFile})
+    {
+        const std::filesystem::path folder = scratch.Path() / std::filesystem::path(under).filename();
+        const std::filesystem::path file = folder / std::filesystem::path(under);
+        std::filesystem::create_directories(file.parent_path());
+        std::ofstream(file) << "{}";
+        std::ofstream(folder / "MCX.EXE") << "MZ";
+        CHECK(MCGameFolder::HasGameData(folder));
+        CHECK(MCGameFolder::IsInstall(folder));
+    }
+
+    const std::filesystem::path locksOnly = scratch.Path() / "locks";
+    CHECK(MCUpdateLock::Open(locksOnly, MCUpdateLock::GameLock) != nullptr);
+    std::ofstream(locksOnly / "MCX.EXE") << "MZ";
+    CHECK(!MCGameFolder::HasGameData(locksOnly));
+    CHECK(!MCGameFolder::IsInstall(locksOnly));
 }
 
 /// <summary>The chosen folder is remembered in the user folder, accented letters and all; none is empty.</summary>

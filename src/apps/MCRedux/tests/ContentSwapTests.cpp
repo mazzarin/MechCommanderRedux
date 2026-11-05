@@ -1,14 +1,19 @@
 #include "stdafx.h"
+#include "MCContentFixture.h"
 #include "MCTest.h"
 #include "gui/MCGuiStartup.h"
 #include "lib/MCSha256.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
+#include "update/MCContentUpdater.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
+#include "update/MCUpdateLock.h"
 
 #include <random>
+#include <thread>
 
 namespace
 {
@@ -54,6 +59,21 @@ namespace
         /// <summary>The folder flush right after a file moves into <paramref name="path"/> fails, once.</summary>
         void FailFlushAfterMoveTo(std::string path) { _FailFlushAfter = std::move(path); }
 
+        /// <summary>What's at <paramref name="path"/> can't be looked at (a drive failing; empty: none).</summary>
+        void FailStat(std::string path) { _Unseen = std::move(path); }
+
+        /// <summary>How long each move of a file takes, by where from and to (a slow drive); none: at once.</summary>
+        using MCMoveTime = std::function<std::chrono::milliseconds(const std::string& from, const std::string& to)>;
+        void SlowMoves(MCMoveTime time) { _MoveTime = std::move(time); }
+
+        /// <summary>The files hashed since the disk was made.</summary>
+        int Hashes() const { return _Hashes; }
+
+        /// <summary>
+        /// The player puts <paramref name="bytes"/> at <paramref name="path"/> just as the next file is moved there (once).
+        /// </summary>
+        void AppearAt(std::string path, std::string bytes) { _Appearing = {std::move(path), std::move(bytes)}; }
+
         /// <summary>
         /// The machine stops and starts again: the safe changes stay, and each unsafe one stays when
         /// <paramref name="keep"/> says so (by its order), applied in order, skipping one whose file is gone.
@@ -83,6 +103,11 @@ namespace
         {
             const std::string key = Key(path);
 
+            if (key == _Unseen)
+            {
+                return {.Error = key + " can't be looked at"};
+            }
+
             if (const auto found = _Seen.find(key); found != _Seen.end())
             {
                 return {.Exists = true,
@@ -97,6 +122,7 @@ namespace
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
+            ++_Hashes;
             const auto found = _Seen.find(Key(path));
 
             if (found == _Seen.end())
@@ -149,6 +175,29 @@ namespace
 
             _LastMovedTo = Key(to);
             return Record({MCKind::Rename, Key(from), Key(to), {}, {Parent(from), Parent(to)}, true});
+        }
+
+        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            if (_Appearing && _Appearing->first == Key(to))
+            {
+                const auto [path, bytes] = *std::exchange(_Appearing, std::nullopt);
+                Record({MCKind::Write, path, {}, bytes, {Parent(to)}, true});
+            }
+
+            if (_MoveTime)
+            {
+                std::this_thread::sleep_for(_MoveTime(Key(from), Key(to)));
+            }
+
+            // Never over a file, nor a folder.
+            if (Stat(to).Exists)
+            {
+                Step();
+                return false;
+            }
+
+            return Rename(from, to);
         }
 
         bool Remove(const std::filesystem::path& path) override
@@ -292,9 +341,25 @@ namespace
         std::string _Held;
         std::string _FailFlushAfter;
         std::string _LastMovedTo;
+        std::string _Unseen;
+        std::optional<std::pair<std::string, std::string>> _Appearing;
+        MCMoveTime _MoveTime;
+        int _Hashes = 0;
     };
 
-    const std::filesystem::path Game = "/game";
+    /// <summary>The scratch folders' group, for the tests on a real disk.</summary>
+    constexpr std::string_view Group = "mc_content_swap_tests";
+
+    /// <summary>
+    /// The game folder. Its files are on the disk in memory, but removal takes the game's lock on the real disk, so it's
+    /// a folder there (a scratch folder of its own: <see cref="GameName"/>).
+    /// </summary>
+    constexpr std::string_view GameName = "crash-game";
+    const std::filesystem::path Game = std::filesystem::temp_directory_path() / Group / GameName;
+
+    /// <summary>A program new enough for an update that needs one, and the program before it.</summary>
+    constexpr uint64_t NewProgram = 600;
+    constexpr uint64_t OldProgram = NewProgram - 1;
 
     std::string GamePath(std::string_view relative)
     {
@@ -351,7 +416,9 @@ namespace
             {
                 move.New = MCSha256::Of(*now);
                 move.NewSize = now->size();
-                Files[GamePath(std::string(MCContentSwap::StagedFolder) + "/" + path)] = {*now, ++Clock};
+                // As MarkReady gives it: the staged copy's time.
+                move.NewWritten = ++Clock;
+                Files[GamePath(std::string(MCContentSwap::StagedFolder) + "/" + path)] = {*now, move.NewWritten};
                 After.Files[folded] = {.Path = path, .Set = "game", .Sha256 = *move.New, .Size = now->size()};
             }
 
@@ -360,7 +427,14 @@ namespace
             New[path] = now;
         }
 
-        MCContentSwap::MCJournal Journal() const { return {Moves, After}; }
+        MCContentSwap::MCJournal Journal() const { return {Moves, After, LowestProgram}; }
+
+        /// <summary>The update's content needs build <paramref name="build"/> of the program, as ready.json says.</summary>
+        void NeedsProgram(uint64_t build)
+        {
+            LowestProgram = build;
+            Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(Journal()), 1};
+        }
 
         /// <summary>Whether the files a program sees are wholly <paramref name="set"/>.</summary>
         static bool WhichSet(const MCCrashDisk::MCFiles& files,
@@ -431,10 +505,17 @@ namespace
         }
 
         /// <summary>The old set in place, the update staged again and ready for the next start.</summary>
-        bool IsOldAndReady(const MCCrashDisk::MCFiles& files) const
+        bool IsOldAndReady(const MCCrashDisk::MCFiles& files) const { return IsOld(files, true); }
+
+        /// <summary>The old set in place, the update disarmed: its files staged, nothing ready.</summary>
+        bool IsOldAndDisarmed(const MCCrashDisk::MCFiles& files) const { return IsOld(files, false); }
+
+        /// <summary>The old set in place and the update staged, ready for the next start or not.</summary>
+        bool IsOld(const MCCrashDisk::MCFiles& files, bool ready) const
         {
             if (!WhichSet(files, Old) || !InBackup(files).empty() ||
-                !files.contains(GamePath(MCContentSwap::ReadyFile)))
+                files.contains(GamePath(MCContentSwap::ReadyFile)) != ready ||
+                files.contains(GamePath(MCContentSwap::JournalFile)))
             {
                 return false;
             }
@@ -492,6 +573,7 @@ namespace
         std::map<std::string, std::optional<std::string>> Old;
         std::map<std::string, std::optional<std::string>> New;
         int64_t Clock = 100;
+        uint64_t LowestProgram = 0;
     };
 }
 
@@ -799,6 +881,31 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(disk->FlushFolder(folder / "a"));
     CHECK(disk->FlushFile(folder / "c.json"));
     CHECK(!disk->Stat(folder / "a" / "b.json").Exists);
+
+    // An update's files move only where nothing is.
+    REQUIRE(WriteDurably(*disk, folder / "d.json", "third"));
+    CHECK(!disk->Move(folder / "c.json", folder / "d.json"));
+    CHECK_EQ(*disk->ReadText(folder / "d.json"), std::string("third"));
+    CHECK(disk->Move(folder / "c.json", folder / "a" / "e.json"));
+    CHECK_EQ(*disk->ReadText(folder / "a" / "e.json"), std::string("second"));
+
+    // A file's time is the one std::filesystem gives (as the records written before kept it).
+    CHECK_EQ(disk->Stat(folder / "d.json").Written,
+             static_cast<int64_t>(std::filesystem::last_write_time(folder / "d.json").time_since_epoch().count()));
+    CHECK_EQ(MCInstalled::WrittenAt(folder / "d.json").value_or(0), disk->Stat(folder / "d.json").Written);
+
+    // Missing is only what isn't there: a file in a folder that can't be read can't be looked at.
+    const MCUpdateDisk::MCStat missing = disk->Stat(folder / "none.json");
+    CHECK(!missing.Exists);
+    CHECK(missing.Error.empty());
+#ifndef _WIN32
+    std::filesystem::permissions(folder / "a", std::filesystem::perms::none, error);
+    const MCUpdateDisk::MCStat unseen = disk->Stat(folder / "a" / "e.json");
+    std::filesystem::permissions(folder / "a", std::filesystem::perms::owner_all, error);
+    CHECK(!unseen.Exists);
+    CHECK(!unseen.Error.empty());
+    CHECK(IsThere(*disk, folder / "a" / "e.json").value_or(false));
+#endif
     CHECK(disk->Remove(folder));
     CHECK(!disk->Stat(folder).Exists);
 }
@@ -931,4 +1038,545 @@ TEST_CASE("content swap: REPAIR keeps every file set aside when the journal can'
     CHECK_EQ(kept.at(GamePath("Redux backup/data/mod.fit")), std::string("the folder's own mod"));
     CHECK(MCContentSwap::Repairing(disk, Game));
     CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Stuck);
+}
+
+TEST_CASE("content swap: content needing a newer program than the one starting is disarmed, its files kept staged, and "
+          "the previous set plays")
+{
+    MCUpdate update;
+    update.NeedsProgram(NewProgram);
+    MCCrashDisk disk(update.Files);
+    const MCContentSwap::MCResult old = MCContentSwap::Run(disk, Game, std::nullopt, OldProgram);
+    CHECK(old.Outcome == MCOutcome::Disarmed);
+    CHECK(old.Error.find(std::format("needs build {}", NewProgram)) != std::string::npos);
+    CHECK(update.IsOldAndDisarmed(disk.Files()));
+    CHECK(!MCContentSwap::Waiting(disk, Game));
+    CHECK(MCContentSwap::Run(disk, Game, std::nullopt, NewProgram).Outcome == MCOutcome::Nothing);
+
+    // Armed again (the next INSTALL, its files already staged), the program it needs swaps it in.
+    REQUIRE(MCContentSwap::MarkReady(disk, Game, update.Journal()));
+    CHECK(MCContentSwap::Run(disk, Game, std::nullopt, NewProgram).Outcome == MCOutcome::Swapped);
+    CHECK(update.IsNew(disk.Files()));
+}
+
+TEST_CASE("content swap: a swap a newer program began, stopped at any step, goes back under an older one, disarmed; "
+          "committed, it only finishes")
+{
+    MCUpdate update;
+    update.NeedsProgram(NewProgram);
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game, std::nullopt, NewProgram).Outcome == MCOutcome::Swapped);
+    const int steps = measure.Changes();
+    int disarmed = 0;
+    int finished = 0;
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk(update.Files);
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Run(disk, Game, std::nullopt, NewProgram);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+            const MCContentSwap::MCResult old = MCContentSwap::Run(disk, Game, std::nullopt, OldProgram);
+
+            if (old.Outcome == MCOutcome::Disarmed && update.IsOldAndDisarmed(disk.Files()))
+            {
+                ++disarmed;
+            }
+            else if ((old.Outcome == MCOutcome::Swapped || old.Outcome == MCOutcome::Nothing) &&
+                     update.IsNew(disk.Files()))
+            {
+                ++finished;
+            }
+            else
+            {
+                FAIL_CHECK(std::format("step {} keep {}: under the older program {} ({})", step, keepAll,
+                                       static_cast<int>(old.Outcome), old.Error));
+            }
+        }
+    }
+
+    CHECK(disarmed > 0);
+    CHECK(finished > 0);
+}
+
+TEST_CASE("content swap at a start: content whose list needs a newer program is disarmed, the previous files play; "
+          "armed again, the program it needs swaps it in")
+{
+    MCContentFixture::MCRelease release(Group, "too-new");
+    const std::filesystem::path& game = release.Game.Path();
+    release.List.LowestProgram = NewProgram;
+    const MCContentPlan::MCPlan plan = release.Plan();
+    CHECK_EQ(plan.LowestProgram, NewProgram);
+    MCContentFixture::MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    REQUIRE(MCContentStage::Stage(*disk, source, game, plan, release.List, MCContentFixture::GoOn).has_value());
+    REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
+    const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
+    REQUIRE(lock != nullptr);
+
+    // Armed, the journal-to-be names the program the content needs, and each staged file's time.
+    const auto ready = disk->ReadText(game / MCFileSystem::FromUtf8(MCContentSwap::ReadyFile));
+    REQUIRE(ready.has_value());
+    const auto journal = MCContentSwap::ReadJournal(*ready);
+    REQUIRE(journal.has_value());
+    CHECK_EQ(journal->LowestProgram, NewProgram);
+
+    for (const MCContentSwap::MCMove& move : journal->Moves)
+    {
+        if (move.New)
+        {
+            const std::filesystem::path staged =
+                game / MCFileSystem::FromUtf8(MCContentSwap::StagedFolder) / MCFileSystem::FromUtf8(move.Path);
+            CHECK(move.NewWritten != 0);
+            CHECK_EQ(move.NewWritten, disk->Stat(staged).Written);
+        }
+    }
+
+    const MCContentSwap::MCResult old = MCContentSwap::RunAtStart(*disk, game, lock.get(), OldProgram);
+    CHECK(old.Outcome == MCOutcome::Disarmed);
+    CHECK(!MCContentSwap::Waiting(*disk, game));
+    CHECK_EQ(MCContentFixture::Read(game / "data" / "changed.fit"), std::string("changed v1"));
+    CHECK_EQ(MCContentFixture::Read(game / "Redux update" / "staged" / "data" / "changed.fit"),
+             std::string("changed v2"));
+    lock->Release();
+
+    REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
+    CHECK(MCContentSwap::RunAtStart(*disk, game, lock.get(), NewProgram).Outcome == MCOutcome::Swapped);
+    release.CheckIsRelease2();
+}
+
+TEST_CASE("content removal: a committed swap that can't finish its clearing keeps Redux update whole, the folder's own "
+          "files still set aside in it")
+{
+    const MCScratchFolder locks(Group, GameName);
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    REQUIRE(disk.Rename(Game / MCFileSystem::FromUtf8(MCContentSwap::ReadyFile),
+                        Game / MCFileSystem::FromUtf8(MCContentSwap::JournalFile)));
+    const std::string setAside = GamePath(std::string(MCContentSwap::ReplacedFolder) + "/data/mod.fit");
+    disk.HoldOpen(setAside);
+    const auto held = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    REQUIRE(!held.has_value());
+    CHECK(held.error().find("data/mod.fit") != std::string::npos);
+    CHECK_EQ(disk.Files().at(setAside).Bytes, std::string("the folder's own mod"));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::JournalFile)));
+    CHECK(disk.Files().contains(GamePath(MCInstalled::RecordPath)));
+    CHECK(disk.Files().contains(GamePath("ART.FST")));
+
+    // Let go, it's finished and removed: the folder's own files are in Redux backup, what the update placed gone.
+    disk.HoldOpen({});
+    const auto removed = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    REQUIRE(removed.has_value());
+    CHECK(update.BackupKept(disk.Files()));
+    CHECK(!disk.Files().contains(GamePath("ART.FST")));
+    CHECK(!std::ranges::any_of(disk.Files(), [](const auto& entry)
+                               { return entry.first.find("Redux update") != std::string::npos; }));
+}
+
+TEST_CASE("content removal: a repair's giving up stopped at any step is finished first: the folder's own files end in "
+          "Redux backup")
+{
+    const MCScratchFolder locks(Group, GameName);
+    const MCUpdate update;
+    MCCrashDisk whole = update.Stuck();
+    REQUIRE(MCContentSwap::Abandon(whole, Game).has_value());
+    const int steps = whole.Changes();
+    int tried = 0;
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk = update.Stuck();
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Abandon(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+
+            // Begun (the journal is repair.json): removal finishes it.
+            if (disk.Files().contains(GamePath(MCContentSwap::JournalFile)))
+            {
+                continue;
+            }
+
+            ++tried;
+            const auto removed = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+
+            if (!removed || !update.BackupKept(disk.Files()))
+            {
+                FAIL_CHECK(
+                    std::format("step {} keep {}: {}", step, keepAll,
+                                removed ? std::string("Redux backup lacks the folder's own files") : removed.error()));
+            }
+        }
+    }
+
+    CHECK(tried > 0);
+}
+
+TEST_CASE("update lock: held exclusive by one copy, another can't hold it shared; a wait for it ends at its deadline")
+{
+    const MCScratchFolder game(Group, "lock-waits");
+    const std::unique_ptr<MCUpdateLock> swapping = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    REQUIRE(swapping != nullptr);
+    REQUIRE(starting != nullptr);
+    REQUIRE(swapping->TryExclusive());
+    CHECK(!starting->TryShared());
+
+    constexpr std::chrono::milliseconds wait{250};
+    const auto before = std::chrono::steady_clock::now();
+    CHECK(!starting->SharedBy(before + wait));
+    CHECK(!starting->ExclusiveBy(before + wait));
+    const auto waited = std::chrono::steady_clock::now() - before;
+    CHECK(waited >= wait);
+    CHECK(waited < 2 * wait + MCUpdateLock::RetryEvery);
+
+    // Let go, the waits end as soon as they can; exclusive turns shared in place.
+    swapping->Release();
+    CHECK(starting->ExclusiveBy(std::chrono::steady_clock::now() + wait));
+    CHECK(starting->TryShared());
+    CHECK(swapping->TryShared());
+    CHECK(!swapping->TryExclusive());
+}
+
+TEST_CASE("content swap at a start: another copy holding the lock exclusive makes the start Stuck by its deadline, "
+          "holding nothing; it never waits longer")
+{
+    const MCScratchFolder game(Group, "start-stuck");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game.Path(), MCUpdateLock::GameLock);
+    REQUIRE(other != nullptr);
+    REQUIRE(starting != nullptr);
+    REQUIRE(other->TryExclusive());
+    constexpr std::chrono::milliseconds wait{300};
+
+    // Nothing under way here, but another copy holds it exclusive (removing the content, say), then a swap stopped
+    // midway (a repair runs for as long as its download takes).
+    for (const bool midway : {false, true})
+    {
+        if (midway)
+        {
+            REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCContentSwap::JournalFile), "{}"));
+        }
+
+        const auto before = std::chrono::steady_clock::now();
+        const MCContentSwap::MCResult result =
+            MCContentSwap::RunAtStart(*disk, game.Path(), starting.get(), NewProgram, before + wait);
+        const auto waited = std::chrono::steady_clock::now() - before;
+        CHECK(result.Outcome == MCOutcome::Stuck);
+        CHECK(result.Error.find("another copy") != std::string::npos);
+        CHECK(waited < 2 * wait + MCUpdateLock::RetryEvery);
+
+        // It holds nothing: the other copy, letting go, takes it back exclusive at once.
+        other->Release();
+        CHECK(other->TryExclusive());
+    }
+}
+
+TEST_CASE("content swap: a file the player puts in a new file's place as it moves in is never replaced: the old set "
+          "goes back")
+{
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.AppearAt(GamePath("data/missions/new.fit"), "the player's own mission");
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game);
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("data/missions/new.fit") != std::string::npos);
+    CHECK_EQ(disk.Files().at(GamePath("data/missions/new.fit")).Bytes, std::string("the player's own mission"));
+    CHECK_EQ(disk.Files().at(GamePath("ART.FST")).Bytes, std::string("art v1"));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
+
+    // The next start sets the player's file aside, kept in Redux backup, and swaps the update in.
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK(update.WhichSet(disk.Files(), update.New));
+    CHECK_EQ(disk.Files().at(GamePath("Redux backup/data/missions/new.fit")).Bytes,
+             std::string("the player's own mission"));
+}
+
+TEST_CASE("content swap: a file set aside that can't be looked at once the swap is committed stays set aside, never "
+          "taken for gone")
+{
+    const MCUpdate update;
+    const std::string setAside = GamePath(std::string(MCContentSwap::ReplacedFolder) + "/data/mod.fit");
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    bool tried = false;
+
+    // Stopped once committed, with the folder's own mod still set aside.
+    for (int step = 0; step < measure.Changes() && !tried; ++step)
+    {
+        MCCrashDisk disk(update.Files);
+        disk.CutAt(step);
+
+        try
+        {
+            MCContentSwap::Run(disk, Game);
+        }
+        catch (const MCPowerCut&)
+        {
+        }
+
+        disk.Cut([](size_t) { return true; });
+        const auto record = MCInstalled::FromText(disk.Files().at(GamePath(MCInstalled::RecordPath)).Bytes);
+
+        if (!record || record->Swap != update.After.Swap || !disk.Files().contains(setAside))
+        {
+            continue;
+        }
+
+        tried = true;
+        disk.FailStat(setAside);
+        const MCContentSwap::MCResult unseen = MCContentSwap::Run(disk, Game);
+        CHECK(unseen.Outcome == MCOutcome::Swapped);
+        CHECK(unseen.Error.find("data/mod.fit") != std::string::npos);
+        CHECK_EQ(disk.Files().at(setAside).Bytes, std::string("the folder's own mod"));
+
+        disk.FailStat({});
+        CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+        CHECK(update.IsNew(disk.Files()));
+    }
+
+    CHECK(tried);
+}
+
+TEST_CASE("content swap: a swap the machine stopped at any step is finished telling each file by its size and time: "
+          "none is hashed")
+{
+    const MCUpdate update;
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    CHECK_EQ(measure.Hashes(), 0);
+    const int steps = measure.Changes();
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk(update.Files);
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Run(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+            const int before = disk.Hashes();
+            const MCContentSwap::MCResult again = MCContentSwap::Run(disk, Game);
+
+            if (disk.Hashes() != before || !update.IsNew(disk.Files()))
+            {
+                FAIL_CHECK(std::format("step {} keep {}: {} hashed, {} ({})", step, keepAll, disk.Hashes() - before,
+                                       static_cast<int>(again.Outcome), again.Error));
+            }
+        }
+    }
+}
+
+namespace
+{
+    /// <summary>Whether a move puts the previous set back: a new file to staged/, or an old one out of replaced/.</summary>
+    bool MovesBack(const std::string& from, const std::string& to)
+    {
+        return to.starts_with(GamePath(MCContentSwap::StagedFolder)) ||
+               (from.starts_with(GamePath(MCContentSwap::ReplacedFolder)) &&
+                !to.starts_with(GamePath(MCContentList::BackupFolder)));
+    }
+}
+
+TEST_CASE("content swap: a lobby's start moves files forward for half its deadline, keeping the rest for putting the "
+          "previous set back")
+{
+    constexpr std::chrono::milliseconds slow{100};
+    constexpr std::chrono::milliseconds deadline{600};
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    disk.SlowMoves([&](const std::string& from, const std::string& to)
+                   { return MovesBack(from, to) ? std::chrono::milliseconds(0) : slow; });
+    const auto start = std::chrono::steady_clock::now();
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game, start + deadline);
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("lobby") != std::string::npos);
+    CHECK(update.IsOldAndReady(disk.Files()));
+    CHECK(took < deadline);
+}
+
+TEST_CASE("content swap: putting the previous set back after a fast swap failed isn't cut short by a lobby's deadline: "
+          "it ends late, and the previous set plays")
+{
+    constexpr std::chrono::milliseconds slow{100};
+    constexpr std::chrono::milliseconds deadline{300};
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    REQUIRE(disk.Remove(Game / MCFileSystem::FromUtf8(MCContentSwap::StagedFolder) / "HD" / "terrain.hda"));
+    int movedBack = 0;
+    disk.SlowMoves(
+        [&](const std::string& from, const std::string& to)
+        {
+            if (!MovesBack(from, to))
+            {
+                return std::chrono::milliseconds(0);
+            }
+
+            ++movedBack;
+            return slow;
+        });
+    const auto start = std::chrono::steady_clock::now();
+    const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game, start + deadline);
+    const auto took = std::chrono::steady_clock::now() - start;
+    CHECK(result.Outcome == MCOutcome::PutBack);
+    CHECK(result.Error.find("HD/terrain.hda's staged copy") != std::string::npos);
+    CHECK(MCUpdate::WhichSet(disk.Files(), update.Old));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
+    CHECK(movedBack * slow > deadline);
+    CHECK(took >= movedBack * slow);
+}
+
+TEST_CASE("content at a start: a first start, a release older than the program plays, and the release a program was "
+          "installed alone for, when this program takes it")
+{
+    using MCInstalled::MCStartNeed;
+    const MCScratchFolder game(Group, "at-start");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCInstalled::MCRecord record;
+    constexpr uint64_t noLowest = 0;
+
+    // Nothing installed and no installer's answer: nothing (a copy pointed at by hand updates when asked).
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+
+    // The installer's answer and nothing installed: the first start's install.
+    REQUIRE(MCContentUpdater::Choose(*disk, game.Path(), {std::string(MCContentList::HdSet)}).has_value());
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Needed);
+
+    // A release installed, as old as the program plays or newer: nothing; older: needed.
+    record.Release = 3;
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, 3) == MCStartNeed::Nothing);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, 4) == MCStartNeed::Needed);
+
+    // A program armed alone for release 5: due only to a program that takes it, and only until it's in.
+    const MCInstalled::MCDue due{.Release = 5, .LowestProgram = NewProgram};
+    REQUIRE(MCInstalled::NoteDue(*disk, game.Path(), due).has_value());
+    CHECK(MCInstalled::ReadDue(*disk, game.Path()) == due);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, OldProgram, noLowest) == MCStartNeed::Nothing);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Due);
+    record.Release = 5;
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+
+    // A note that can't be read waits for nothing.
+    record.Release = 3;
+    REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile), "{ damaged"));
+    CHECK(!MCInstalled::ReadDue(*disk, game.Path()).has_value());
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+}
+
+TEST_CASE("content at a start: the program armed alone notes its release's content due; a committed swap of it, or "
+          "a later one, ends it")
+{
+    const MCScratchFolder game(Group, "due");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup{.GameFolder = game.Path(), .RunningBuild = OldProgram};
+    const MCContentUpdater::MCOffer alone{.Release = {.Number = 2}, .ProgramBuild = NewProgram};
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, alone).has_value());
+    const MCInstalled::MCDue due{.Release = 2, .LowestProgram = NewProgram};
+    CHECK(MCInstalled::ReadDue(*disk, game.Path()) == due);
+
+    // A swap of an earlier release leaves it; of that release, it goes.
+    for (const uint64_t release : {uint64_t{1}, uint64_t{2}})
+    {
+        MCUpdate update;
+        update.After.Release = release;
+        update.Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(update.Journal()), 1};
+        update.Files[GamePath(MCInstalled::DueFile)] = {
+            *disk->ReadText(game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile)), 1};
+        MCCrashDisk crash(update.Files);
+        REQUIRE(MCContentSwap::Run(crash, Game).Outcome == MCOutcome::Swapped);
+        CHECK_EQ(crash.Files().contains(GamePath(MCInstalled::DueFile)), release < 2);
+    }
+}
+
+TEST_CASE(
+    "content at a start: the copy has HD as its record says once a release is installed, else as its folder holds "
+    "it")
+{
+    const MCScratchFolder game(Group, "has-hd");
+    MCInstalled::MCRecord record;
+    CHECK(!MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+    std::filesystem::create_directories(game.Path() / "HD");
+    CHECK(MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+
+    // Installed without HD (or HD removed), its folder left behind: no HD.
+    record.Release = 2;
+    record.Sets = {std::string(MCContentList::GameSet)};
+    CHECK(!MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+    record.Sets.emplace(MCContentList::HdSet);
+    CHECK(MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+}
+
+TEST_CASE("content swap: a new file already in place before the swap stays there when the previous set goes back, the "
+          "machine stopping at any step or not")
+{
+    MCUpdate update;
+    update.Files[GamePath("data/missions/new.fit")] = {"a new mission", 7};
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    const int steps = measure.Changes();
+
+    for (int step = 0; step <= steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk(update.Files);
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Run(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+            disk.HoldOpen(GamePath("HD/terrain.hda"));
+            const MCContentSwap::MCResult held = MCContentSwap::Run(disk, Game);
+
+            if (held.Outcome == MCOutcome::Stuck ||
+                disk.Files().at(GamePath("data/missions/new.fit")).Bytes != "a new mission")
+            {
+                FAIL_CHECK(
+                    std::format("step {} keep {}: {} ({})", step, keepAll, static_cast<int>(held.Outcome), held.Error));
+            }
+
+            disk.HoldOpen({});
+
+            if (MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Stuck ||
+                !update.WhichSet(disk.Files(), update.New))
+            {
+                FAIL_CHECK(std::format("step {} keep {}: let go, the start after didn't finish", step, keepAll));
+            }
+        }
+    }
 }

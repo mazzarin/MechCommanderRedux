@@ -1,7 +1,10 @@
 #include "stdafx.h"
 #include "update/MCInstalled.h"
 #include "platform/MCFileSystem.h"
+#include "update/MCInstalledJson.h"
 #include "update/MCContentList.h"
+#include "update/MCContentUpdater.h"
+#include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 
 namespace
@@ -22,22 +25,89 @@ namespace
     constexpr std::string_view PlacedKey = "placed";
     constexpr std::string_view SwapKey = "swap";
     constexpr uint64_t RecordFormat = 1;
+    /// <summary>The due note's keys (its release is ReleaseKey's) and format.</summary>
+    constexpr std::string_view LowestProgramKey = "lowestProgram";
+    constexpr uint64_t DueFormat = 1;
+
+    /// <summary>The record <paramref name="json"/> holds (an object); it throws MCBadFile at a rule broken.</summary>
+    MCInstalled::MCRecord ReadRecord(const MCJson& json)
+    {
+        MCInstalled::MCRecord record;
+        record.Release = Count(json, ReleaseKey);
+        record.List = Digest(json, ListKey);
+        record.Swap = TextOr(json, SwapKey, "");
+
+        for (const MCJson& set : Array(json, SetsKey))
+        {
+            if (!set.is_string())
+            {
+                Fail("a set isn't a string");
+            }
+
+            record.Sets.insert(set.get<std::string>());
+        }
+
+        // Recorded since the HD pack could be got later (HD OPTIONS): an earlier record has none.
+        if (json.contains(SetBytesKey))
+        {
+            const MCJson& setBytes = Child(json, SetBytesKey);
+
+            for (const auto& [set, bytes] : setBytes.items())
+            {
+                record.SetBytes.insert_or_assign(set, Count(setBytes, set));
+            }
+        }
+
+        for (const MCJson& entry : Array(json, FilesKey))
+        {
+            MCInstalled::MCFile file;
+            file.Path = MCUpdateJson::Text(entry, PathKey);
+
+            if (const std::string problem = MCContentList::PathProblem(file.Path); !problem.empty())
+            {
+                Fail("\"{}\" {}", file.Path, problem);
+            }
+
+            file.Set = MCUpdateJson::Text(entry, SetKey);
+            file.Sha256 = Digest(entry, Sha256Key);
+            file.Size = Count(entry, SizeKey);
+            const MCJson& written = Member(entry, WrittenKey);
+
+            if (!written.is_number_integer())
+            {
+                Fail("\"{}\" isn't a whole number", WrittenKey);
+            }
+
+            file.Written = written.get<int64_t>();
+            const MCJson& placed = Member(entry, PlacedKey);
+
+            if (!placed.is_boolean())
+            {
+                Fail("\"{}\" isn't true or false", PlacedKey);
+            }
+
+            file.Placed = placed.get<bool>();
+            record.Files.insert_or_assign(MCContentList::FoldedPath(file.Path), std::move(file));
+        }
+
+        return record;
+    }
 }
 
 std::optional<int64_t> MCInstalled::WrittenAt(const std::filesystem::path& path)
 {
-    std::error_code error;
-    const std::filesystem::file_time_type written = std::filesystem::last_write_time(path, error);
+    // As the update's disk tells it, so a plan's times and the swap's are the same.
+    const MCUpdateDisk::MCStat stat = MakeDisk()->Stat(path);
 
-    if (error)
+    if (!stat.Exists || !stat.Error.empty())
     {
         return std::nullopt;
     }
 
-    return static_cast<int64_t>(written.time_since_epoch().count());
+    return stat.Written;
 }
 
-std::string MCInstalled::Text(const MCRecord& record)
+MCUpdateJson::MCJson MCInstalled::ToJson(const MCRecord& record)
 {
     MCJson files = MCJson::array();
 
@@ -61,96 +131,121 @@ std::string MCInstalled::Text(const MCRecord& record)
     return MCJson{
         {FormatKey, RecordFormat},   {ReleaseKey, record.Release},       {ListKey, MCSha256::Hex(record.List)},
         {SetsKey, record.Sets},      {SetBytesKey, std::move(setBytes)}, {SwapKey, record.Swap},
-        {FilesKey, std::move(files)}}
-        .dump(1);
+        {FilesKey, std::move(files)}};
+}
+
+std::string MCInstalled::Text(const MCRecord& record)
+{
+    return ToJson(record).dump(1);
 }
 
 std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::string_view text)
 {
-    return MCUpdateJson::Read(
-        RecordPath,
-        [&]()
-        {
-            const MCJson json = Object(text);
-            MCRecord record;
-            record.Release = Count(json, ReleaseKey);
-            record.List = Digest(json, ListKey);
-            record.Swap = TextOr(json, SwapKey, "");
-
-            for (const MCJson& set : Array(json, SetsKey))
-            {
-                if (!set.is_string())
-                {
-                    Fail("a set isn't a string");
-                }
-
-                record.Sets.insert(set.get<std::string>());
-            }
-
-            // Recorded since the HD pack could be got later (HD OPTIONS): an earlier record has none.
-            if (json.contains(SetBytesKey))
-            {
-                const MCJson& setBytes = Child(json, SetBytesKey);
-
-                for (const auto& [set, bytes] : setBytes.items())
-                {
-                    record.SetBytes.insert_or_assign(set, Count(setBytes, set));
-                }
-            }
-
-            for (const MCJson& entry : Array(json, FilesKey))
-            {
-                MCFile file;
-                file.Path = MCUpdateJson::Text(entry, PathKey);
-
-                if (const std::string problem = MCContentList::PathProblem(file.Path); !problem.empty())
-                {
-                    Fail("\"{}\" {}", file.Path, problem);
-                }
-
-                file.Set = MCUpdateJson::Text(entry, SetKey);
-                file.Sha256 = Digest(entry, Sha256Key);
-                file.Size = Count(entry, SizeKey);
-                const MCJson& written = Member(entry, WrittenKey);
-
-                if (!written.is_number_integer())
-                {
-                    Fail("\"{}\" isn't a whole number", WrittenKey);
-                }
-
-                file.Written = written.get<int64_t>();
-                const MCJson& placed = Member(entry, PlacedKey);
-
-                if (!placed.is_boolean())
-                {
-                    Fail("\"{}\" isn't true or false", PlacedKey);
-                }
-
-                file.Placed = placed.get<bool>();
-                record.Files.insert_or_assign(MCContentList::FoldedPath(file.Path), std::move(file));
-            }
-
-            return record;
-        });
+    return MCUpdateJson::Read(RecordPath, [&]() { return ReadRecord(Object(text)); });
 }
 
-std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(const std::filesystem::path& gameFolder)
+std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromJson(const MCUpdateJson::MCJson& json)
+{
+    return MCUpdateJson::Read(RecordPath,
+                              [&]()
+                              {
+                                  if (!json.is_object())
+                                  {
+                                      Fail("isn't a JSON object");
+                                  }
+
+                                  return ReadRecord(json);
+                              });
+}
+
+std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(MCUpdateDisk& disk,
+                                                                    const std::filesystem::path& gameFolder)
 {
     const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(RecordPath);
-    std::error_code error;
 
-    if (!std::filesystem::exists(path, error))
+    if (!disk.Stat(path).Exists)
     {
         return MCRecord{};
     }
 
-    std::ifstream file(path, std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto text = disk.ReadText(path);
 
-    if (!file && !file.eof())
+    if (!text)
     {
-        return std::unexpected(std::format("{} can't be read", MCFileSystem::ToUtf8(path)));
+        return std::unexpected(text.error());
     }
 
-    return FromText(text);
+    return FromText(*text);
+}
+
+std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(const std::filesystem::path& gameFolder)
+{
+    return Read(*MakeDisk(), gameFolder);
+}
+
+bool MCInstalled::Has(const MCRecord& record, const std::filesystem::path& gameFolder, std::string_view set)
+{
+    return record.Release != 0 ? record.Sets.contains(set) : MCContentUpdater::SetsFound(gameFolder).contains(set);
+}
+
+std::expected<void, std::string> MCInstalled::NoteDue(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                      const MCDue& due)
+{
+    const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(DueFile);
+    const std::string text =
+        MCJson{{FormatKey, DueFormat}, {ReleaseKey, due.Release}, {LowestProgramKey, due.LowestProgram}}.dump();
+
+    if (!WriteDurably(disk, path, text))
+    {
+        return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
+    }
+
+    return {};
+}
+
+std::optional<MCInstalled::MCDue> MCInstalled::ReadDue(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(DueFile);
+
+    if (!disk.Stat(path).Exists)
+    {
+        return std::nullopt;
+    }
+
+    const auto text = disk.ReadText(path);
+    const auto due = text ? MCUpdateJson::Read(DueFile,
+                                               [&]()
+                                               {
+                                                   const MCJson json = Object(*text);
+                                                   return MCDue{.Release = Count(json, ReleaseKey),
+                                                                .LowestProgram = Count(json, LowestProgramKey)};
+                                               })
+                          : std::expected<MCDue, std::string>(std::unexpected(text.error()));
+
+    if (!due)
+    {
+        SDL_Log("Updates: the content due can't be read (%s): the start doesn't wait for it", due.error().c_str());
+        return std::nullopt;
+    }
+
+    return *due;
+}
+
+MCInstalled::MCStartNeed MCInstalled::AtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                              const MCRecord& record, uint64_t runningBuild, uint64_t lowestContent)
+{
+    if ((record.Release == 0 && disk.Stat(gameFolder / MCFileSystem::FromUtf8(MCContentUpdater::ChosenFile)).Exists) ||
+        record.Release < lowestContent)
+    {
+        return MCStartNeed::Needed;
+    }
+
+    // Due only to a program that takes it: an older one plays the files it has, and is offered the update again.
+    if (const std::optional<MCDue> due = ReadDue(disk, gameFolder);
+        due && due->Release > record.Release && runningBuild >= due->LowestProgram)
+    {
+        return MCStartNeed::Due;
+    }
+
+    return MCStartNeed::Nothing;
 }

@@ -4,6 +4,7 @@
 // precompiled header on Windows.
 #include "update/MCContentList.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -20,7 +21,8 @@
 ///   files at once.
 ///
 /// Each file is made the first time it's needed and never replaced or deleted, so every copy locks the same file. A
-/// lock is held through one open file: two in one process are as two copies.
+/// lock is held through one open file: two in one process are as two copies. Nothing here waits without an end: a copy
+/// that can't have the lock by its deadline says so.
 /// </summary>
 class MCUpdateLock
 {
@@ -28,6 +30,9 @@ public:
     /// <summary>The locks, in the game folder.</summary>
     static constexpr std::string_view GameLock = MCContentList::InUpdateFolder<"game.lock">;
     static constexpr std::string_view StagingLock = MCContentList::InUpdateFolder<"staging.lock">;
+
+    /// <summary>How often a wait for a lock tries it again.</summary>
+    static constexpr std::chrono::milliseconds RetryEvery{100};
 
     /// <summary>
     /// The lock <paramref name="name"/> in <paramref name="gameFolder"/>, made with its folder if need be, held by
@@ -42,8 +47,20 @@ public:
     /// <summary>Takes it exclusive without waiting: false while another holds it, shared or exclusive.</summary>
     bool TryExclusive();
 
-    /// <summary>Holds it shared, waiting while another holds it exclusive (another copy's swap: a second or so).</summary>
-    bool Shared();
+    /// <summary>Holds it shared without waiting: false while another holds it exclusive (another copy swapping).</summary>
+    bool TryShared();
+
+    /// <summary>
+    /// <see cref="TryExclusive"/>, tried again every <see cref="RetryEvery"/> until it's taken or
+    /// <paramref name="until"/> has passed (tried once at least).
+    /// </summary>
+    bool ExclusiveBy(std::chrono::steady_clock::time_point until);
+
+    /// <summary>
+    /// <see cref="TryShared"/>, tried again every <see cref="RetryEvery"/> until it's held or <paramref name="until"/>
+    /// has passed (tried once at least).
+    /// </summary>
+    bool SharedBy(std::chrono::steady_clock::time_point until);
 
     /// <summary>Lets go.</summary>
     void Release();

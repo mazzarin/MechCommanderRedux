@@ -350,9 +350,9 @@ TEST_CASE("update lock: running copies share the game's lock and keep the swap o
     CHECK(std::filesystem::exists(game.Path() / "Redux update" / "game.lock"));
 
     // A running copy keeps the swap out, and another runs beside it.
-    REQUIRE(first->Shared());
+    REQUIRE(first->TryShared());
     CHECK(!second->TryExclusive());
-    CHECK(second->Shared());
+    CHECK(second->TryShared());
     CHECK(!first->TryExclusive());
 
     // Alone, a copy swaps; meanwhile no other copy swaps.
@@ -387,13 +387,13 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
     const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
     REQUIRE(running != nullptr);
     REQUIRE(starting != nullptr);
-    REQUIRE(running->Shared());
+    REQUIRE(running->TryShared());
 
     // Another copy runs on (past the start's deadline): the update waits, and the start plays the files as they are,
     // holding the lock shared.
     constexpr std::chrono::milliseconds shortWait{300};
-    const MCContentSwap::MCResult held =
-        MCContentSwap::RunAtStart(*disk, game, starting.get(), std::chrono::steady_clock::now() + shortWait);
+    const MCContentSwap::MCResult held = MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild,
+                                                                   std::chrono::steady_clock::now() + shortWait);
     CHECK(held.Outcome == MCContentSwap::MCOutcome::PutBack);
     CHECK(held.Error.find("another copy") != std::string::npos);
     CHECK(MCContentSwap::Waiting(*disk, game));
@@ -404,18 +404,19 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
 
     // A swap stopped midway, with another copy still holding the lock: waited for, then stuck past the deadline.
     REQUIRE(disk->Rename(game / "Redux update" / "ready.json", game / "Redux update" / "journal.json"));
-    REQUIRE(running->Shared());
-    const MCContentSwap::MCResult stuck =
-        MCContentSwap::RunAtStart(*disk, game, starting.get(), std::chrono::steady_clock::now() + shortWait);
+    REQUIRE(running->TryShared());
+    const MCContentSwap::MCResult stuck = MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild,
+                                                                    std::chrono::steady_clock::now() + shortWait);
     CHECK(stuck.Outcome == MCContentSwap::MCOutcome::Stuck);
     running->Release();
     starting->Release();
 
     // Alone, the start finishes it, and holds the lock shared: another copy runs beside it, none swaps under it.
-    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild).Outcome ==
+          MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
     CHECK(!running->TryExclusive());
-    CHECK(running->Shared());
+    CHECK(running->TryShared());
 }
 
 TEST_CASE("content swap at a start: a copy quitting as the start begins (RESTART) is waited for, then the update "
@@ -433,7 +434,7 @@ TEST_CASE("content swap at a start: a copy quitting as the start begins (RESTART
     const std::unique_ptr<MCUpdateLock> starting = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
     REQUIRE(quitting != nullptr);
     REQUIRE(starting != nullptr);
-    REQUIRE(quitting->Shared());
+    REQUIRE(quitting->TryShared());
     constexpr std::chrono::milliseconds closing{200};
     std::jthread ends(
         [&]
@@ -441,7 +442,8 @@ TEST_CASE("content swap at a start: a copy quitting as the start begins (RESTART
             std::this_thread::sleep_for(closing);
             quitting->Release();
         });
-    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(*disk, game, starting.get(), RunningBuild).Outcome ==
+          MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
 }
 
@@ -1332,13 +1334,25 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
     {
         const std::unique_ptr<MCUpdateLock> running = MCUpdateLock::Open(release.Game.Path(), MCUpdateLock::GameLock);
         REQUIRE(running != nullptr);
-        REQUIRE(running->Shared());
+        REQUIRE(running->TryShared());
         CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
         CHECK(log->Started.empty());
         CHECK(std::filesystem::exists(ArmedRecord(release)));
     }
 
-    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
+    // Alone, it runs, the game's lock held exclusive until the setup has started: no copy plays meanwhile.
+    MCSetupBackend::MCPlatform probing = FakeWindows(log);
+    bool heldWhileStarting = false;
+    probing.Start = [start = probing.Start, &heldWhileStarting, &release](const std::filesystem::path& setup,
+                                                                          std::string_view arguments, bool restart)
+    {
+        const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(release.Game.Path(), MCUpdateLock::GameLock);
+        heldWhileStarting = other != nullptr && !other->TryShared();
+        return start(setup, arguments, restart);
+    };
+
+    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, probing));
+    CHECK(heldWhileStarting);
     REQUIRE_EQ(log->Started.size(), size_t{1});
     CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
     CHECK(std::get<2>(log->Started.front()));
@@ -1397,7 +1411,7 @@ TEST_CASE("content removal: the uninstaller's removal takes what updates placed,
     {
         const std::unique_ptr<MCUpdateLock> running = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
         REQUIRE(running != nullptr);
-        REQUIRE(running->Shared());
+        REQUIRE(running->TryShared());
         const auto held = MCContentRemoval::Remove(*disk, game, std::chrono::milliseconds(200));
         REQUIRE(!held.has_value());
         CHECK(held.error().find("running") != std::string::npos);

@@ -16,10 +16,12 @@
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
+#include "update/MCContentList.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
+#include "update/MCInstalled.h"
 #include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
@@ -41,7 +43,13 @@ namespace
         std::string GameCommandLine;
         /// <summary>--remove-content: the content goes, and the game doesn't start (the Windows uninstaller's).</summary>
         bool RemoveContent = false;
+        /// <summary>--report: where --remove-content says why it failed (the uninstaller shows it); empty, nowhere.</summary>
+        std::filesystem::path ReportFile;
     };
+
+    /// <summary>The command line's words for the content's removal.</summary>
+    constexpr std::string_view RemoveContentOption = "--remove-content";
+    constexpr std::string_view ReportOption = "--report";
 
     /// <summary>
     /// The release's host for the game's own updater: the downloads Worker (tools/cloudflare/downloads in the
@@ -55,6 +63,12 @@ namespace
     /// updates no content and takes no lock, and the Mac's Sparkle updates the program alone.
     /// </summary>
     constexpr std::array<std::string_view, 0> RootKeys = {};
+
+    /// <summary>
+    /// The lowest content release this program plays (SPEC-install-and-updates.md's The content list; 0: any): a copy
+    /// with an older one gets the release at its start, before anything opens, as a first start does.
+    /// </summary>
+    constexpr uint64_t LowestContentRelease = 0;
 
     /// <summary>What the first start's window says while the game's content downloads.</summary>
     constexpr std::string_view FirstStartHeading = "GETTING THE GAME READY";
@@ -85,6 +99,7 @@ namespace
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
         "  --remove-content - Remove the game's downloaded files from the install (or the\n"
         "                   --data folder), leaving the player's own, and quit\n"
+        "  --report <file> - With --remove-content: why it failed, written to the file\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
         "  -load <file>   - Load a saved game\n"
@@ -222,16 +237,19 @@ namespace
         {
             const std::string_view arg = arguments[i];
 
-            if (arg == "--data" || arg == "-d" || arg == "--user")
+            if (arg == "--data" || arg == "-d" || arg == "--user" || arg == ReportOption)
             {
                 if (i + 1 >= arguments.size())
                 {
-                    return std::unexpected(std::format("{} needs a folder", arg));
+                    return std::unexpected(std::format("{} needs a {}", arg, arg == ReportOption ? "file" : "folder"));
                 }
 
-                (arg == "--user" ? options.UserFolder : options.DataFolder) = MCFileSystem::FromUtf8(arguments[++i]);
+                std::filesystem::path& path = arg == ReportOption ? options.ReportFile
+                                              : arg == "--user"   ? options.UserFolder
+                                                                  : options.DataFolder;
+                path = MCFileSystem::FromUtf8(arguments[++i]);
             }
-            else if (arg == "--remove-content")
+            else if (arg == RemoveContentOption)
             {
                 options.RemoveContent = true;
             }
@@ -328,7 +346,9 @@ namespace
     /// The recovery screen (SPEC-install-and-updates.md's If it can't finish): an update stopped partway that can
     /// neither finish nor go back, or a repair not done. TRY AGAIN swaps again; REPAIR, in a build that updates its
     /// content (<paramref name="setup"/>), gives the update up and installs the release over the files as they are,
-    /// under the game's lock held exclusive; QUIT ends the game. It asks again while the files can't be played.
+    /// under the game's lock held exclusive; QUIT ends the game. It asks again while the files can't be played. While it
+    /// asks, the game holds no lock, so another copy may finish the update meanwhile: each answer takes the lock again
+    /// and looks at the folder as it is then.
     /// </summary>
     /// <returns>Whether the game can play the files now.</returns>
     bool Recover(std::string problem, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
@@ -345,6 +365,12 @@ namespace
 
         for (;;)
         {
+            // The player may take long to answer: the lock isn't held meanwhile (the editor isn't kept waiting).
+            if (lock != nullptr)
+            {
+                lock->Release();
+            }
+
             SDL_Log("Updates: the game's files can't be played (%s): the recovery screen asks", problem.c_str());
             const std::string text = setup != nullptr
                                          ? std::format("{}.\n\n{} {}", Lettered(problem), RecoveryStep, RepairStep)
@@ -364,21 +390,28 @@ namespace
                     continue;
                 }
 
-                const auto repaired = MCFirstStart::Run(RepairHeading, ContentWork(*setup, MCContentUpdater::Repair));
-
-                if (!repaired)
+                // Another copy may have finished the update while the player chose: then there's nothing to repair.
+                if (MCContentSwap::UnderWay(*MakeDisk(), gameFolder))
                 {
-                    problem = repaired.error();
-                    continue;
-                }
+                    const auto repaired =
+                        MCFirstStart::Run(RepairHeading, ContentWork(*setup, MCContentUpdater::Repair));
 
-                if (!*repaired)
-                {
-                    return false;
+                    if (!repaired)
+                    {
+                        problem = repaired.error();
+                        continue;
+                    }
+
+                    if (!*repaired)
+                    {
+                        return false;
+                    }
                 }
             }
 
-            const MCContentSwap::MCResult result = MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock);
+            // The swap again, the lock taken exclusive (held already after a repair), then held shared to play.
+            const MCContentSwap::MCResult result =
+                MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, MC_VERSION_BUILD);
 
             if (result.Outcome != MCContentSwap::MCOutcome::Stuck)
             {
@@ -392,9 +425,10 @@ namespace
 
     /// <summary>
     /// Puts a staged content update in place, or finishes one a crash stopped (update/MCContentSwap.h), before any of
-    /// the game's files opens. A lobby's start gives it <see cref="MCContentSwap::LobbyStartTime"/>, past which the
-    /// previous files play and the next start tries again. Files it can't play go to the recovery screen
-    /// (<see cref="Recover"/>; REPAIR in a build that updates its content, <paramref name="setup"/>).
+    /// the game's files opens. A lobby's start aims to keep it within <see cref="MCContentSwap::LobbyStartTime"/> (a
+    /// target): past half of it the files stop moving, the previous ones play, and the next start tries again. The
+    /// program starting is this build: content needing a newer one waits for it. Files it can't play go to the recovery
+    /// screen (<see cref="Recover"/>; REPAIR in a build that updates its content, <paramref name="setup"/>).
     /// </summary>
     /// <returns>False when the game can't play the files as they are (the player quit the recovery screen).</returns>
     bool SwapStagedUpdate(const std::filesystem::path& gameFolder, std::string_view commandLine, MCUpdateLock* lock,
@@ -407,7 +441,8 @@ namespace
             deadline = std::chrono::steady_clock::now() + MCContentSwap::LobbyStartTime;
         }
 
-        const MCContentSwap::MCResult result = MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, deadline);
+        const MCContentSwap::MCResult result =
+            MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, MC_VERSION_BUILD, deadline);
 
         switch (result.Outcome)
         {
@@ -421,6 +456,12 @@ namespace
             case MCContentSwap::MCOutcome::PutBack:
             {
                 SDL_Log("Updates: the staged update waits for the next start (%s)", result.Error.c_str());
+                return true;
+            }
+            case MCContentSwap::MCOutcome::Disarmed:
+            {
+                SDL_Log("Updates: the staged update waits for its program (%s): the previous files play",
+                        result.Error.c_str());
                 return true;
             }
             case MCContentSwap::MCOutcome::Stuck:
@@ -477,18 +518,28 @@ namespace
 #endif
 
     /// <summary>
-    /// The first start of a copy an installer prepared: its content downloaded, checked and put in place before
-    /// anything opens, a window showing the progress (MCFirstStart.h).
+    /// The content a start must get before anything opens (MCInstalled::AtStart: a first start, a release older than
+    /// the program plays, or the one its program was installed alone for): downloaded, checked and put in place, a window
+    /// showing the progress (MCFirstStart.h). <paramref name="record"/> is then the installed record as it is.
     /// </summary>
     /// <returns>
     /// None to play; else the exit code to quit with: the player closed the window (the next start carries on), or the
-    /// content couldn't come or go in place (they're told).
+    /// content needed couldn't come or go in place (they're told). Content only due that can't come leaves the files to
+    /// play as they are.
     /// </returns>
-    std::optional<int> InstallAtFirstStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
-                                           MCUpdateLock* lock)
+    std::optional<int> GetContentAtStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
+                                         MCUpdateLock* lock, MCInstalled::MCStartNeed need,
+                                         MCInstalled::MCRecord& record)
     {
-        SDL_Log("Updates: the first start gets the game's content");
+        const bool needed = need == MCInstalled::MCStartNeed::Needed;
+        SDL_Log("Updates: the start gets the game's content%s", needed ? "" : ", which its program was installed for");
         const auto done = MCFirstStart::Run(FirstStartHeading, ContentWork(setup, MCContentUpdater::Install));
+
+        if (!done && !needed)
+        {
+            SDL_Log("Updates: the content due didn't come (%s): the files play as they are", done.error().c_str());
+            return std::nullopt;
+        }
 
         if (!done)
         {
@@ -508,8 +559,19 @@ namespace
             return 1;
         }
 
+        auto swapped = MCInstalled::Read(*MakeDisk(), setup.GameFolder);
+
+        if (!swapped)
+        {
+            SDL_Log("Updates: %s", swapped.error().c_str());
+            return std::nullopt;
+        }
+
+        record = std::move(*swapped);
+
         // Put back (another copy of the game holds the folder): the files go in at the next start.
-        if (MCContentUpdater::AwaitsInstall(*MakeDisk(), setup.GameFolder))
+        if (needed && MCInstalled::AtStart(*MakeDisk(), setup.GameFolder, record, MC_VERSION_BUILD,
+                                           LowestContentRelease) == MCInstalled::MCStartNeed::Needed)
         {
             Report("The game's files are downloaded. Close any other copy of the game, then start it again.", true);
             return 1;
@@ -520,21 +582,21 @@ namespace
 
     /// <summary>
     /// --remove-content: the game's content goes from the install folder, or the --data folder (update/MCContentRemoval.h).
-    /// The uninstaller runs it hidden, so it asks nothing and tells only a terminal it was started from.
+    /// The uninstaller runs it hidden, so it asks nothing and tells only a terminal it was started from, and the
+    /// --report file, where a failure's reason goes (the uninstaller shows it, and stops).
     /// </summary>
     /// <returns>The exit code: 0 once removed.</returns>
     int RemoveContent(const MCLaunchOptions& options)
     {
         const std::filesystem::path folder =
             options.DataFolder.empty() ? MCGameFolder::InstallFolder() : options.DataFolder;
+        std::expected<MCContentRemoval::MCRemoved, std::string> removed = std::unexpected("there's no install folder");
 
-        if (folder.empty())
+        if (!folder.empty())
         {
-            SDL_Log("Removing the content: no install folder");
-            return 1;
+            removed = MCContentRemoval::Remove(*MakeDisk(), folder);
         }
 
-        const auto removed = MCContentRemoval::Remove(*MakeDisk(), folder);
         const std::string told = removed
                                      ? std::format("Removed {} of the game's files from {}; {} left as the player's",
                                                    removed->Removed, MCFileSystem::ToUtf8(folder), removed->Kept)
@@ -545,6 +607,18 @@ namespace
         if (MCConsole::HasOutput())
         {
             (removed ? std::cout : std::cerr) << told << "\n";
+        }
+
+        if (!removed && !options.ReportFile.empty())
+        {
+            std::ofstream report(options.ReportFile, std::ios::binary | std::ios::trunc);
+            report << removed.error() << "\n";
+
+            if (!report)
+            {
+                SDL_Log("Removing the content: its report can't be written to %s",
+                        MCFileSystem::ToUtf8(options.ReportFile).c_str());
+            }
         }
 
         return removed ? 0 : 1;
@@ -688,13 +762,27 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (AwaitsInstall(options->DataFolder, contentUpdates))
+    // The installed record, read once the swap is done, for what the start must get first and the build's defaults
+    // (one that can't be read asks for nothing: the updater says why).
+    auto installed = contentUpdates ? MCInstalled::Read(*MakeDisk(), options->DataFolder)
+                                    : std::expected<MCInstalled::MCRecord, std::string>();
+
+    if (!installed)
     {
-        if (const std::optional<int> quit =
-                InstallAtFirstStart(ContentSetup(*options, rootKeys), options->GameCommandLine, gameLock.get()))
+        SDL_Log("Updates: %s", installed.error().c_str());
+    }
+    else if (contentUpdates)
+    {
+        if (const MCInstalled::MCStartNeed need = MCInstalled::AtStart(*MakeDisk(), options->DataFolder, *installed,
+                                                                       MC_VERSION_BUILD, LowestContentRelease);
+            need != MCInstalled::MCStartNeed::Nothing)
         {
-            SDL_Quit();
-            return *quit;
+            if (const std::optional<int> quit = GetContentAtStart(
+                    ContentSetup(*options, rootKeys), options->GameCommandLine, gameLock.get(), need, *installed))
+            {
+                SDL_Quit();
+                return *quit;
+            }
         }
     }
 
@@ -715,8 +803,17 @@ int main(int argc, char** argv)
 
     // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
     // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h). The snow
-    // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h).
-    UseHdByDefault();
+    // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h). In a build that updates
+    // its content, the HD options' defaults follow the HD answer: Redux HD's looks for a copy with HD (the installer's
+    // answer, or HD OPTIONS'), the original's without.
+    const MCInstalled::MCRecord noRecord;
+    const MCInstalled::MCRecord* const record = installed ? &*installed : &noRecord;
+
+    if (!contentUpdates || MCInstalled::Has(*record, options->DataFolder, MCContentList::HdSet))
+    {
+        UseHdByDefault();
+    }
+
     MCWeatherPacing::Follow(true);
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());

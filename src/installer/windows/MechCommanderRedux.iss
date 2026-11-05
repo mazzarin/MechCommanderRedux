@@ -306,10 +306,10 @@ procedure ShowTotals;
 begin
   WizardForm.DiskSpaceLabel.Visible := SizesKnown;
 
+  // A line of [Code] can't start with "[": Inno takes it for a section's.
   if SizesKnown then
-    WizardForm.DiskSpaceLabel.Caption :=
-      FmtMessage(CustomMessage('Totals'),
-                 [ShownGB(IntToStr(StrToInt64('{#GameBytes}') + StrToInt64('{#HdBytes}'))), ShownGB('{#GameBytes}')]);
+    WizardForm.DiskSpaceLabel.Caption := FmtMessage(CustomMessage('Totals'), [
+      ShownGB(IntToStr(StrToInt64('{#GameBytes}') + StrToInt64('{#HdBytes}'))), ShownGB('{#GameBytes}')]);
 end;
 
 // The player picked the other answer to the game: the folder box shows that answer's folder, keeping the one edited.

@@ -19,6 +19,8 @@ namespace
     constexpr auto RequestTime = 5s;
     constexpr auto PollTime = 1ms;
     constexpr auto CutWait = 300ms;
+    /// <summary>A cancel ends a wait to try again (a second, the first) well before it would end.</summary>
+    constexpr auto CancelledWithin = 800ms;
 
     /// <summary>Bytes no two runs differ in, and no two places in them repeat soon.</summary>
     std::string Bytes(size_t count)
@@ -45,7 +47,8 @@ namespace
     /// <summary>
     /// A host on this machine for the tests: serves files from memory under /content/, whole or from a byte on
     /// ("Range: bytes=N-"), one connection at a time, each closed after its answer. It can ignore ranges, as a host
-    /// may, and cut the next answer off after some bytes, as a lost connection does.
+    /// may, cut the next answer off after some bytes, as a lost connection does, and answer the next requests with a
+    /// failure, as a busy host does.
     /// </summary>
     class MCTestHost
     {
@@ -75,6 +78,13 @@ namespace
 
         /// <summary>The next answer's body stops after <paramref name="bytes"/> bytes.</summary>
         void CutAfter(int64_t bytes) { _CutAfter = bytes; }
+
+        /// <summary>The next <paramref name="count"/> requests are answered <paramref name="status"/>, with no body.</summary>
+        void FailNext(int status, int count)
+        {
+            _FailStatus = status;
+            _FailCount = count;
+        }
 
         /// <summary>Each request's Range header, in order (empty: none).</summary>
         std::vector<std::string> Ranges()
@@ -156,6 +166,13 @@ namespace
                 _Ranges.push_back(range);
             }
 
+            if (_FailCount.fetch_sub(1) > 0)
+            {
+                Send(client, std::format("HTTP/1.1 {} Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                         _FailStatus.load()));
+                return;
+            }
+
             const auto file = path.starts_with(HostFolder) ? _Files.find(path.substr(HostFolder.size())) : _Files.end();
 
             if (file == _Files.end())
@@ -223,6 +240,8 @@ namespace
         std::atomic<bool> _Stop = false;
         std::atomic<bool> _IgnoreRanges = false;
         std::atomic<int64_t> _CutAfter = -1;
+        std::atomic<int> _FailStatus = 0;
+        std::atomic<int> _FailCount = 0;
         std::mutex _Lock;
         std::vector<std::string> _Ranges;
     };
@@ -253,7 +272,7 @@ namespace
     }
 }
 
-TEST_CASE("content source: a hosted file comes whole, and a cut-off one resumes from where it stopped")
+TEST_CASE("content source: a hosted file comes whole; one cut off is tried again from where it stopped")
 {
     const std::string zip = Bytes(ZipBytes);
     MCTestHost host({{std::string(ZipName), zip}});
@@ -263,21 +282,17 @@ TEST_CASE("content source: a hosted file comes whole, and a cut-off one resumes 
     constexpr int64_t CutBytes = 100'000;
     host.CutAfter(CutBytes);
     uint64_t received = 0;
-    const auto cut = Fetch(*source, ZipName, to, zip.size(), received);
-    REQUIRE(!cut.has_value());
-    const uint64_t kept = std::filesystem::file_size(to);
-    CHECK(kept > 0);
-    CHECK(kept <= static_cast<uint64_t>(CutBytes));
-    CHECK_EQ(received, kept);
-
-    const auto resumed = Fetch(*source, ZipName, to, zip.size(), received);
-    CHECK_EQ(resumed.error_or(""), std::string());
+    CHECK_EQ(Fetch(*source, ZipName, to, zip.size(), received).error_or(""), std::string());
     CHECK(FileText(to) == zip);
     CHECK_EQ(received, uint64_t{ZipBytes});
     const std::vector<std::string> ranges = host.Ranges();
     REQUIRE_EQ(ranges.size(), size_t{2});
     CHECK_EQ(ranges[0], std::string());
-    CHECK_EQ(ranges[1], std::format("bytes={}-", kept));
+    constexpr std::string_view RangeStart = "bytes=";
+    REQUIRE(ranges[1].starts_with(RangeStart));
+    const uint64_t kept = std::stoull(ranges[1].substr(RangeStart.size()));
+    CHECK(kept > 0);
+    CHECK(kept <= static_cast<uint64_t>(CutBytes));
 
     // Whole, it needs no range; once all here, nothing is asked.
     const std::filesystem::path whole = folder.Path() / "whole.zip";
@@ -286,6 +301,56 @@ TEST_CASE("content source: a hosted file comes whole, and a cut-off one resumes 
     CHECK(FileText(whole) == zip);
     CHECK(Fetch(*source, ZipName, whole, zip.size(), wholeReceived).has_value());
     CHECK_EQ(host.Ranges().size(), size_t{3});
+}
+
+TEST_CASE("content source: a busy host is tried again, a missing file isn't; a cancel ends the wait to try again")
+{
+    const std::string zip = Bytes(ZipBytes);
+    const std::string release = R"({"payloadType": "x"})";
+    MCTestHost host({{std::string(ZipName), zip}, {"release.json", release}});
+    const auto source = SourceAt(host);
+    const MCScratchFolder folder(TestGroup, "retried");
+    constexpr int Unavailable = 503;
+    constexpr int TooMany = 429;
+    uint64_t received = 0;
+    host.FailNext(Unavailable, 1);
+    CHECK_EQ(Fetch(*source, ZipName, folder.Path() / "busy.zip", zip.size(), received).error_or(""), std::string());
+    CHECK(FileText(folder.Path() / "busy.zip") == zip);
+    CHECK_EQ(host.Ranges().size(), size_t{2});
+    host.FailNext(TooMany, 1);
+    CHECK_EQ(source->Read("release.json", release.size()).value_or(""), release);
+    CHECK_EQ(host.Ranges().size(), size_t{4});
+
+    const auto missing = Fetch(*source, "zips/none.zip", folder.Path() / "none.zip", zip.size(), received);
+    CHECK(missing.error_or("").find("404") != std::string::npos);
+    CHECK_EQ(host.Ranges().size(), size_t{5});
+    constexpr int Forbidden = 403;
+    host.FailNext(Forbidden, 1);
+    CHECK(source->Read("release.json", release.size()).error_or("").find("403") != std::string::npos);
+    CHECK_EQ(host.Ranges().size(), size_t{6});
+
+    // Busy for good: cancelled while it waits to try again, it ends at once, and so does every later fetch.
+    constexpr int Always = 1000;
+    host.FailNext(Unavailable, Always);
+    std::thread canceller(
+        [&]
+        {
+            while (host.Ranges().size() < 7)
+            {
+                std::this_thread::sleep_for(PollTime);
+            }
+
+            source->Cancel();
+        });
+    const auto start = std::chrono::steady_clock::now();
+    const auto cancelled = Fetch(*source, ZipName, folder.Path() / "cancelled.zip", zip.size(), received);
+    const auto took = std::chrono::steady_clock::now() - start;
+    canceller.join();
+    CHECK_EQ(cancelled.error_or(""), std::string("stopped"));
+    CHECK(took < CancelledWithin);
+    CHECK_EQ(Fetch(*source, ZipName, folder.Path() / "later.zip", zip.size(), received).error_or(""),
+             std::string("stopped"));
+    CHECK_EQ(host.Ranges().size(), size_t{7});
 }
 
 TEST_CASE("content source: from a host that ignores the range, the bytes already here are skipped")
@@ -314,9 +379,10 @@ TEST_CASE("content source: a missing file, or one shorter or longer than the lis
     const auto missing = Fetch(*source, "zips/none.zip", folder.Path() / "none.zip", zip.size(), received);
     CHECK(missing.error_or("").find("404") != std::string::npos);
 
+    // Ending short, it's asked for again from there, as a lost connection's would be: the host has nothing more.
     constexpr uint64_t Extra = 10;
     const auto shortWhole = Fetch(*source, ZipName, folder.Path() / "short.zip", zip.size() + Extra, received);
-    CHECK(shortWhole.error_or("").find("stopped short") != std::string::npos);
+    CHECK(shortWhole.error_or("").find("shorter than the list says") != std::string::npos);
 
     // All the hosted bytes here and more asked: the host has nothing from there on.
     const auto pastEnd = Fetch(*source, ZipName, folder.Path() / "short.zip", zip.size() + Extra, received);

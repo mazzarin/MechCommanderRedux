@@ -8,7 +8,9 @@
 /// fetched by name under one address and a cut-off download resumed with a byte range. The rules are here; the
 /// transfer is the platform's (<c>MCGet</c>: NSURLSession on the Mac, WinHTTP on Windows), so both follow them
 /// alike (update/MCHttpTransfer.h). Only https, but for http to this machine (the tests' server): what arrives is checked against the signed
-/// files whatever carries it, and https keeps what a player fetches private.
+/// files whatever carries it, and https keeps what a player fetches private. A failure that may pass (a lost
+/// connection, a timeout, the host's 5xx, 408 or 429) is tried again a few times, waiting longer each time and resuming
+/// where the bytes stopped; any other (a missing file, one not as the list has it) isn't.
 /// </summary>
 namespace MCHttpSource
 {

@@ -659,6 +659,9 @@ namespace
     /// column titles, what the update brings a line a row (wrapped, in capitals as the fonts write), and what the update
     /// is doing on the status line. It draws every frame from the updater.
     /// </summary>
+    /// <summary>RESTART shown as the update's stage and a lobby's room allow (with the page's buttons, below).</summary>
+    void ShowRestart(MCStage stage);
+
     class MCLogUpdateNotes : public MCLogScrollList
     {
     public:
@@ -682,6 +685,8 @@ namespace
 
             const MCStatus& status = MCUpdater::Status();
             DrawFrame(StatusText(status), status.Stage == MCStage::Ready || status.Stage == MCStage::Failed);
+            // A room's players and match change without the updater: RESTART follows them every frame.
+            ShowRestart(status.Stage);
 
             const int32_t textRight = ScrollBarLeft() - HeadingLeft;
             const std::string running = std::format(RunningTitle, MCUpdater::RunningVersion());
@@ -915,6 +920,12 @@ namespace
         }
     }
 
+    void ShowRestart(MCStage stage)
+    {
+        // In a lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
+        ShowButton(RestartButton, stage == MCStage::Ready && (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart()));
+    }
+
     /// <summary>
     /// The updater changed: the UPDATE button lit (amber) while an update waits and grayed otherwise, the page's buttons
     /// for its stage.
@@ -929,7 +940,7 @@ namespace
         const MCStage stage = MCUpdater::Status().Stage;
         ShowButton(InstallButton, stage == MCStage::Found);
         ShowButton(SkipButton, stage == MCStage::Found);
-        ShowButton(RestartButton, stage == MCStage::Ready);
+        ShowRestart(stage);
     }
 
     /// <summary>INSTALL: the download starts.</summary>

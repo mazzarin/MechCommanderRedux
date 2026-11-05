@@ -41,6 +41,12 @@ namespace
     constexpr std::string_view RoomFullText = "Couldn't join the room again: it is full.";
     constexpr std::string_view RoomStartedText = "Couldn't join the room again: its match has started.";
 
+    /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
+    constexpr std::string_view AfterMatchText = "DOWNLOADED: IT INSTALLS AFTER THE MATCH.";
+    constexpr std::string_view GuestRestartText = "DOWNLOADED: ON RESTART, YOU REJOIN THIS ROOM.";
+    constexpr std::string_view HostAloneRestartText = "DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN.";
+    constexpr std::string_view HostRestartText = "DOWNLOADED: ON RESTART, EVERYONE REJOINS.";
+
     /// <summary>A guest restarting into an update, whose place the room keeps until it is back or the wait is over.</summary>
     struct MCComing
     {
@@ -91,8 +97,11 @@ namespace
         return others;
     }
 
-    /// <summary>Whether <paramref name="player"/>'s build waits for its host restarting into an update.</summary>
-    bool WaitsForHost(const MCFidpPlayer& player)
+    /// <summary>
+    /// Whether <paramref name="player"/>'s build can rejoin around a restart into an update: it keeps a restarting
+    /// guest's place, and waits for its restarting host.
+    /// </summary>
+    bool Rejoins(const MCFidpPlayer& player)
     {
         const auto said = MultiPlayer()->PlayerRules.find(player.Id);
         return said != MultiPlayer()->PlayerRules.end() && (said->second & MCMatchRule::RejoinsHost) != 0;
@@ -262,26 +271,23 @@ auto MCLobbyUpdate::ReadyText() -> std::string
         return {};
     }
 
-    if (MatchUnderWay())
+    if (!CanRestart())
     {
-        return "DOWNLOADED: IT INSTALLS WHEN THE MATCH IS OVER.";
+        return std::string(AfterMatchText);
     }
 
     if (!MultiPlayer()->IsHost)
     {
-        return "DOWNLOADED: ON RESTART, YOU JOIN THIS ROOM AGAIN.";
+        return std::string(GuestRestartText);
     }
 
-    const std::vector<std::shared_ptr<MCFidpPlayer>> others = Others();
+    return std::string(Others().empty() ? HostAloneRestartText : HostRestartText);
+}
 
-    if (others.empty())
-    {
-        return "DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN.";
-    }
-
-    const auto rejoining = std::ranges::count_if(others, [](const auto& player) { return WaitsForHost(*player); });
-    return std::format("DOWNLOADED: ON RESTART, {} OF {} {} {} AGAIN.", rejoining, others.size(),
-                       others.size() == 1 ? "PLAYER" : "PLAYERS", rejoining == 1 ? "JOINS" : "JOIN");
+auto MCLobbyUpdate::CanRestart() -> bool
+{
+    return InRoom() && !MatchUnderWay() &&
+           std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
 auto MCLobbyUpdate::Restart() -> bool
@@ -296,9 +302,9 @@ auto MCLobbyUpdate::Restart() -> bool
         return true;
     }
 
-    if (MatchUnderWay())
+    if (!CanRestart())
     {
-        SDL_Log("Lobby updates: RESTART waits for the match to end; the update installs as the game exits");
+        SDL_Log("Lobby updates: RESTART waits: the update installs as the game exits after the match");
         return true;
     }
 
@@ -316,21 +322,8 @@ auto MCLobbyUpdate::Restart() -> bool
         SDL_Log("Lobby updates: no rejoin note: %s", written.error().c_str());
     }
 
-    // The host tells the guests that wait for it; a guest, every player, so the room keeps its place.
-    if (MultiPlayer()->IsHost)
-    {
-        for (const std::shared_ptr<MCFidpPlayer>& player : Others())
-        {
-            if (WaitsForHost(*player))
-            {
-                SendUpdating(player->Id);
-            }
-        }
-    }
-    else
-    {
-        SendUpdating(0);
-    }
+    // Every game in the room: the host's guests wait for it, a guest's place is kept.
+    SendUpdating(0);
 
     SDL_Log("Lobby updates: restarting into the update, to start again as %s", commandLine.c_str());
     RestartAt = Clock::now() + SendTime;

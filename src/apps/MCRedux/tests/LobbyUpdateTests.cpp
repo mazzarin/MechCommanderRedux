@@ -17,6 +17,7 @@
 #include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
 #include "platform/MCDirectPlay.h"
@@ -274,8 +275,9 @@ namespace
 /// then the update installs; the guests leaving as it goes don't stop it with "has left the game". Once the match is
 /// under way, RESTART waits for the game to exit at its end.
 /// </summary>
-TEST_CASE_ISOLATED("game: a lobby's host restarting into an update tells the guests that wait for it, and leaves the "
-                   "rejoin note")
+TEST_CASE_ISOLATED(
+    "game: a lobby's host offers RESTART only when every guest can rejoin, before the match; restarting, it "
+    "tells them and leaves the rejoin note")
 {
     if (!MCTestGame::Available())
     {
@@ -293,25 +295,38 @@ TEST_CASE_ISOLATED("game: a lobby's host restarting into an update tells the gue
     UpdateReady();
     ShowUpdatePageOver(screen);
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, 1 OF 2 PLAYERS JOINS AGAIN."));
-    MCScreenInput::SaveShot("lobby host 0 ready", MCScreenInput::ScreenHash());
-
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
 
-    // Once the match is under way RESTART waits: the update goes in as the game exits at its end.
+    // CAL's game can't rejoin: no RESTART, and the update goes in as the game exits after the match.
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK(!restart->IsShowing());
+    CHECK(MCLobbyUpdate::Restart());
+    Settle();
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+    CHECK_EQ(ann.Updatings(), 0);
+
+    // Every guest can.
+    cal.SendRules(hostId, MCMatchRule::Supported);
+    REQUIRE(SettleUntil([&] { return restart->IsShowing(); }));
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, EVERYONE REJOINS."));
+    MCScreenInput::SaveShot("lobby host 0 ready", MCScreenInput::ScreenHash());
+
+    // Once the match is under way, neither: the update goes in as the game exits at its end.
     MultiPlayer()->InLogistics = true;
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS WHEN THE MATCH IS OVER."));
-    ClickOn(*restart);
+    Settle();
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK(!restart->IsShowing());
+    CHECK(MCLobbyUpdate::Restart());
     Settle();
     CHECK_EQ(updater.Log->Answers.size(), size_t{1});
     CHECK_EQ(ann.Updatings(), 0);
     MultiPlayer()->InLogistics = false;
+    Settle();
 
-    // Before it, the game restarts into the update.
+    // Before it, the game restarts into the update, telling every guest.
     ClickOn(*restart);
-    CHECK(SettleUntil([&] { return ann.Updatings() == 1; }));
-    CHECK_EQ(cal.Updatings(), 0);
+    CHECK(SettleUntil([&] { return ann.Updatings() == 1 && cal.Updatings() == 1; }));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
     CHECK(updater.Log->Answers.back() == MCAnswer::Install);
 
@@ -484,10 +499,16 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
     UpdateReady();
     ShowUpdatePageOver(screen);
     Settle();
-    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU JOIN THIS ROOM AGAIN."));
-
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
+
+    // Until the host's rules come (relayed with every player's), its game isn't known to rejoin.
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS AFTER THE MATCH."));
+    CHECK(!restart->IsShowing());
+    MultiPlayer()->PlayerRules[bob.Id()] = MCMatchRule::Supported;
+    Settle();
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU REJOIN THIS ROOM."));
+    REQUIRE(restart->IsShowing());
     ClickOn(*restart);
     CHECK(SettleUntil([&] { return bob.Updatings() == 1; }));
     REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));

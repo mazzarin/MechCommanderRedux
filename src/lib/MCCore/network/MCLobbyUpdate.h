@@ -7,13 +7,12 @@ enum class MCRoomRefusal : uint8_t;
 // ends, so the session screen offers the update (logistics/MCUpdatePage.h), and RESTART brings the player back to the
 // room:
 //
-// - Before the match, RESTART writes the rejoin note (network/MCRejoinNote.h) and tells the room
-//   (MCMPMessageType::Updating), then the game quits and the update goes in; the new version joins or hosts again as the
-//   note says. A guest tells every player, whose games keep its place (no "has left the game", which ends a lobby's
-//   game) and whose host opens the room to it again until it is back, a minute at most. A host tells the guests whose
-//   builds can wait for it (MCMatchRule::RejoinsHost): their games say so and join the same address again for up to a
-//   minute; the others drop as it leaves.
-// - Once the match is under way, RESTART waits: the update goes in as the game exits at the match's end.
+// - RESTART is offered only before the match, and only when every other game in the room can rejoin
+//   (MCMatchRule::RejoinsHost); otherwise the update goes in as the game exits after the match.
+// - RESTART writes the rejoin note (network/MCRejoinNote.h) and tells the room (MCMPMessageType::Updating), then the
+//   game quits and the update goes in; the new version joins or hosts again as the note says. A guest's room keeps its
+//   place (no "has left the game", which ends a lobby's game), and its host opens the room to it again until it is
+//   back, a minute at most. A host's guests say so and join the same address again for up to a minute.
 // - A rejoin that fails (the room gone, full or started) says so, and its OK ends the game.
 
 namespace MCLobbyUpdate
@@ -28,14 +27,21 @@ namespace MCLobbyUpdate
     bool MatchUnderWay();
 
     /// <summary>
-    /// The UPDATE page's line for an update ready in a room: what RESTART does there (on the host's, how many of the
-    /// other players join again); empty outside a room.
+    /// Whether RESTART brings this game back to its room now: before the match, with every other game there able to
+    /// rejoin. Otherwise the update installs as the game exits after the match.
+    /// </summary>
+    bool CanRestart();
+
+    /// <summary>
+    /// The UPDATE page's line for an update ready in a room: what RESTART does there, or that the update installs after
+    /// the match (<see cref="CanRestart"/>); empty outside a room.
     /// </summary>
     std::string ReadyText();
 
     /// <summary>
-    /// RESTART with an update ready. In a room before its match: the note is written, the room told, and a moment later
-    /// (the messages out) the update installs; during the match nothing happens (it installs as the game exits).
+    /// RESTART with an update ready. In a room that can (<see cref="CanRestart"/>): the note is written, the room told,
+    /// and a moment later (the messages out) the update installs; otherwise nothing happens (it installs as the game
+    /// exits).
     /// </summary>
     /// <returns>Whether it took RESTART; false outside a room (the page answers as usual).</returns>
     bool Restart();

@@ -227,7 +227,7 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - Shots now fly to the spot they hit. In the original, bullets, laser beams and Gauss rifle (railgun) bolts flew to a
   point on the target picked by the firing weapon's mount, while the impact played where the shot hit, so hits often
   looked like misses. Damage is unchanged.
-- **Redux HD.** Missiles and cannon shots that hit now fly all the way to the target at any frame rate. The original's test for a
+- Missiles and cannon shots that hit now fly all the way to the target at any frame rate. The original's test for a
   shot reaching its target holds at 15 frames a second; at 60 or 120, the target's sprite shifting between its
   animation frames could end the flight, and the hit landed at once, mid-flight (more than a quarter of LRM hits at
   120). At 15 frames a second or fewer nothing changes.

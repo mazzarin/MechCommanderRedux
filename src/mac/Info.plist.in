@@ -12,7 +12,7 @@
   <key>CFBundleIconFile</key>
   <string>MCRedux</string>
   <key>CFBundleIdentifier</key>
-  <string>io.github.revenantbob.mechcommanderredux</string>
+  <string>io.github.revenantbob.mechcommanderredux.trial</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -33,9 +33,16 @@
   <!-- The updater (Sparkle): the fork's feed, from its latest release; the game looks once a start itself, and
        installs only an update signed with this key's private half (generate_keys, the releaser's login Keychain). -->
   <key>SUFeedURL</key>
-  <string>https://github.com/mazzarin/MechCommanderRedux/releases/latest/download/appcast.xml</string>
+  <string>http://127.0.0.1:8765/github/latest/appcast.xml</string>
+  <!-- TRIAL BUILD ONLY: the trial host on this machine, over http. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
   <key>SUPublicEDKey</key>
-  <string>uJU9bzHfuaVaOzO0OUxodWg8ExKCBxWjoVxYLyoWrqw=</string>
+  <!-- TRIAL BUILD ONLY: the trial's throwaway feed key. -->
+  <string>Y3t8/jqByZA+WvEeDUNe+zu/NF/W+hRnZ2Z8TONkPzI=</string>
   <key>SUEnableAutomaticChecks</key>
   <false/>
   <!-- The reports' server (main/MCTelemetry.h): empty, the app sends no reports. -->

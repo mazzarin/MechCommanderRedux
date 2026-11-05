@@ -471,6 +471,45 @@ TEST_CASE("content stage: a staged file cut short (a crash as it unpacked) is de
 }
 
 #ifndef _WIN32
+TEST_CASE("update disk: an update's file written durably never goes through a link at its name or in its folder's "
+          "place; a folder swapped for a link is caught at the next look, none remembered")
+{
+    const MCScratchFolder game(Group, "durable-links");
+    const MCScratchFolder outside(Group, "durable-links-outside");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const std::filesystem::path update = game.Path() / "Redux update";
+    const std::filesystem::path record = update / "installed.json";
+    const std::filesystem::path victim = outside.Path() / "victim.txt";
+    std::filesystem::create_directories(update);
+    Write(victim, "the player's");
+
+    // A link planted at the temporary file's name: the write makes a file of its own, the link's target untouched.
+    std::filesystem::create_symlink(victim, std::filesystem::path(record) += ".writing");
+    REQUIRE(WriteDurably(*disk, record, "the record"));
+    CHECK_EQ(Read(victim), std::string("the player's"));
+    CHECK_EQ(Read(record), std::string("the record"));
+    CHECK(!std::filesystem::is_symlink(record));
+
+    // The folder swapped for a link: nothing is written.
+    const std::filesystem::path updateElsewhere = outside.Path() / "Redux update";
+    std::filesystem::rename(update, updateElsewhere);
+    std::filesystem::create_symlink(updateElsewhere, update);
+    CHECK(!WriteDurably(*disk, record, "another record"));
+    CHECK_EQ(Read(updateElsewhere / "installed.json"), std::string("the record"));
+    std::filesystem::remove(update);
+    std::filesystem::rename(updateElsewhere, update);
+
+    // A path looked at once and found clear, then a folder on it swapped for a link: the next look refuses it.
+    MCNoLinks noLinks(*disk, game.Path());
+    const std::filesystem::path staged = update / "staged" / "data" / "a.fit";
+    std::filesystem::create_directories(staged.parent_path());
+    REQUIRE(noLinks.Check(staged).has_value());
+    const std::filesystem::path stagedElsewhere = outside.Path() / "staged";
+    std::filesystem::rename(update / "staged", stagedElsewhere);
+    std::filesystem::create_symlink(stagedElsewhere, update / "staged");
+    CHECK(noLinks.Check(staged).error_or("").find("is a link") != std::string::npos);
+}
+
 TEST_CASE("content stage: a folder below the game folder put in as a link, before the plan or between it and the "
           "swap, stops the plan, the staging or the swap, naming it; nothing is written through it")
 {

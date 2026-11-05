@@ -436,16 +436,18 @@ namespace
 
         bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
         {
-            {
-                std::ofstream file(path, std::ios::binary | std::ios::trunc);
-                file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-                file.close();
+            // Made anew, never through a link planted at its name (MCNewFile).
+            auto file = MCNewFile::Create(path);
 
-                if (!file)
-                {
-                    SDL_Log("Updates: %s can't be written", MCFileSystem::ToUtf8(path).c_str());
-                    return false;
-                }
+            if (!file)
+            {
+                SDL_Log("Updates: %s can't be written (%s)", MCFileSystem::ToUtf8(path).c_str(), file.error().c_str());
+                return false;
+            }
+
+            if (!file->WriteAt(0, bytes) || !file->Close())
+            {
+                return false;
             }
 
             return FlushPath(path);
@@ -512,20 +514,11 @@ std::expected<void, std::string> MCNoLinks::Check(const std::filesystem::path& p
         return std::unexpected(std::format("{} isn't in the game's folder", MCFileSystem::ToUtf8(path)));
     }
 
-    const std::lock_guard lock(_Mutex);
-    const std::vector<std::filesystem::path> parts(relative.begin(), relative.end());
     std::filesystem::path at = _Game;
 
-    for (size_t i = 0; i < parts.size(); ++i)
+    for (const std::filesystem::path& part : relative)
     {
-        at /= parts[i];
-        const bool folder = i + 1 < parts.size();
-
-        if (folder && _Seen.contains(at))
-        {
-            continue;
-        }
-
+        at /= part;
         const auto link = _Disk.IsLink(at);
 
         if (!link)
@@ -536,11 +529,6 @@ std::expected<void, std::string> MCNoLinks::Check(const std::filesystem::path& p
         if (*link)
         {
             return std::unexpected(std::format("{} is a link, which updates don't follow", MCFileSystem::ToUtf8(at)));
-        }
-
-        if (folder)
-        {
-            _Seen.insert(at);
         }
     }
 
@@ -706,6 +694,21 @@ bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& path, std::st
 {
     std::filesystem::path temporary = path;
     temporary += std::string(TemporarySuffix);
-    return disk.MakeFolders(path.parent_path()) && disk.WriteFlushed(temporary, bytes) &&
-           disk.Rename(temporary, path) && disk.FlushFolder(path.parent_path());
+
+    if (!disk.MakeFolders(path.parent_path()))
+    {
+        return false;
+    }
+
+    // Its folder never a link: one put in its place (Redux update swapped for a link, say) would take the write
+    // elsewhere. The file itself is made anew, never through a link (WriteFlushed), and the rename replaces a link at
+    // its name rather than follow it.
+    if (const auto link = disk.IsLink(path.parent_path()); !link || *link)
+    {
+        SDL_Log("Updates: %s isn't written: %s", MCFileSystem::ToUtf8(path).c_str(),
+                link ? "its folder is a link, which updates don't follow" : link.error().c_str());
+        return false;
+    }
+
+    return disk.WriteFlushed(temporary, bytes) && disk.Rename(temporary, path) && disk.FlushFolder(path.parent_path());
 }

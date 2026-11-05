@@ -25,21 +25,28 @@ namespace
     constexpr char Separator = '/';
     /// <summary>Characters Windows refuses in a name.</summary>
     constexpr std::string_view WindowsRefuses = "\\:*?\"<>|";
-    /// <summary>The first character that isn't a control character, and DEL.</summary>
+    /// <summary>
+    /// Characters that can make a name mean another file on Windows: '~' its short names (PROGRA~1), '$' its system
+    /// files and streams ($MFT, $DATA). No game or HD file's name has either.
+    /// </summary>
+    constexpr std::string_view MeansAnother = "~$";
+    /// <summary>The first character that isn't a control character, DEL, and the first byte past ASCII.</summary>
     constexpr unsigned char FirstPrintable = 0x20;
     constexpr unsigned char Delete = 0x7f;
-    /// <summary>Windows' device names, which a file can't take whatever its extension.</summary>
-    constexpr std::array<std::string_view, 4> ReservedNames = {"CON", "PRN", "AUX", "NUL"};
+    constexpr unsigned char PastAscii = 0x80;
+    /// <summary>
+    /// Windows' device names, which a file can't take whatever its extension (nor with spaces or dots before it: "NUL
+    /// .txt" is NUL).
+    /// </summary>
+    constexpr std::array<std::string_view, 6> ReservedNames = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"};
     constexpr std::array<std::string_view, 2> NumberedReservedNames = {"COM", "LPT"};
     constexpr size_t NumberedReservedLength = 4;
     /// <summary>The longest path a list may name, in bytes (the game folder's own path comes on top).</summary>
     constexpr size_t MaxPathBytes = 200;
 
-    /// <summary>Whether the part <paramref name="part"/> is one of Windows' device names, with or without an extension.</summary>
-    bool IsReservedName(std::string_view part)
+    /// <summary>Whether <paramref name="stem"/>, upper-cased, is one of Windows' device names.</summary>
+    bool IsDeviceName(const std::string& stem)
     {
-        const std::string stem = FoldedPath(part.substr(0, part.find('.')));
-
         if (std::ranges::find(ReservedNames, stem) != ReservedNames.end())
         {
             return true;
@@ -49,6 +56,19 @@ namespace
                std::ranges::find(NumberedReservedNames, std::string_view(stem).substr(0, 3)) !=
                    NumberedReservedNames.end() &&
                stem[3] >= '0' && stem[3] <= '9';
+    }
+
+    /// <summary>Whether the part <paramref name="part"/> is one of Windows' device names, with or without an extension.</summary>
+    bool IsReservedName(std::string_view part)
+    {
+        std::string_view stem = part.substr(0, part.find('.'));
+
+        while (!stem.empty() && (stem.back() == ' ' || stem.back() == '.'))
+        {
+            stem.remove_suffix(1);
+        }
+
+        return IsDeviceName(FoldedPath(stem));
     }
 
     /// <summary>A host path (a zip's or patch's name): the same rules as a content path, never under the update folders.</summary>
@@ -177,9 +197,20 @@ std::string MCContentList::PathProblem(std::string_view path)
             return "holds a control character";
         }
 
+        // Only ASCII: the systems spell other letters in more ways than one, so two names could be one file.
+        if (byte >= PastAscii)
+        {
+            return "holds a letter outside ASCII";
+        }
+
         if (WindowsRefuses.find(c) != std::string_view::npos)
         {
             return std::format("holds '{}', which Windows refuses in a name", c);
+        }
+
+        if (MeansAnother.find(c) != std::string_view::npos)
+        {
+            return std::format("holds '{}', which can make a name mean another file on Windows", c);
         }
     }
 

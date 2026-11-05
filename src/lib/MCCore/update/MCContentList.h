@@ -140,9 +140,10 @@ namespace MCContentList
 
     /// <summary>
     /// What's wrong with <paramref name="path"/> as a content path, or empty: absolute, '\', a part empty, "." or
-    /// "..", one Windows can't hold (a reserved name such as CON or LPT1, a character such as ':' or '?', a control
-    /// character, a trailing dot or space), or the folders updates keep or anything in them (<see cref="UpdateFolder"/>,
-    /// <see cref="BackupFolder"/>).
+    /// "..", one Windows can't hold (a reserved name such as CON, LPT1 or CONIN$, also with spaces or dots before its
+    /// extension, a character such as ':' or '?', a control character, a trailing dot or space), a letter outside
+    /// ASCII, '~' or '$' (which can make a name mean another file on Windows), or the folders updates keep or anything in
+    /// them (<see cref="UpdateFolder"/>, <see cref="BackupFolder"/>).
     /// </summary>
     std::string PathProblem(std::string_view path);
 

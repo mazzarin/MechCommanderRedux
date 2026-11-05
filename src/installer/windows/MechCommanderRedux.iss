@@ -208,6 +208,11 @@ const
   // The attribute of a file or folder that is a link to elsewhere (a junction, a symbolic link):
   // FILE_ATTRIBUTE_REPARSE_POINT.
   ReparsePointAttribute = $00000400;
+  // GetFileAttributesW's answer when it can't look (INVALID_FILE_ATTRIBUTES), and the errors that say nothing is there:
+  // ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND.
+  InvalidFileAttributes = -1;
+  ErrorFileNotFound = 2;
+  ErrorPathNotFound = 3;
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -229,6 +234,9 @@ function CloseHandle(Handle: THandle): Integer;
   external 'CloseHandle@kernel32.dll stdcall';
 function GetUserNameExW(NameFormat: Integer; NameBuffer: String; var Size: Cardinal): Integer;
   external 'GetUserNameExW@secur32.dll stdcall';
+// A file's or folder's own attributes (a link's, not what it leads to).
+function GetFileAttributesW(FileName: String): Longint;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
 
 // The names of the files [Files] puts in the game folder.
 function ProgramFileNames: TArrayOfString;
@@ -721,6 +729,65 @@ begin
     Result := FmtMessage(CustomMessage('FolderNotEmpty'), [Folder]);
 end;
 
+// Whether a folder on the way to Folder, from the drive down, is a link to elsewhere (a junction, a symbolic link: the
+// attribute IsLink reads) or can't be looked at. Those not there yet Setup makes (Grant).
+function LinkOnTheWay(const Folder: String): Boolean;
+var
+  Path, Rest, Name: String;
+  Slash: Integer;
+  Attributes, LookError: Longint;
+begin
+  Result := False;
+  Rest := AddBackslash(ExpandFileName(Folder));
+  Path := ExtractFileDrive(Rest);
+  // Each folder's name below the drive, each ending in a backslash.
+  Rest := Copy(Rest, Length(Path) + 2, Length(Rest));
+
+  while (Rest <> '') and not Result do
+  begin
+    Slash := Pos('\', Rest);
+    Name := Copy(Rest, 1, Slash - 1);
+    Rest := Copy(Rest, Slash + 1, Length(Rest));
+
+    if Name <> '' then
+    begin
+      Path := Path + '\' + Name;
+      Attributes := GetFileAttributesW(Path);
+
+      if Attributes = InvalidFileAttributes then
+      begin
+        LookError := DLLGetLastError;
+
+        // Not there: nor is anything past it.
+        if (LookError = ErrorFileNotFound) or (LookError = ErrorPathNotFound) then
+          Exit;
+
+        Log(Format('Couldn''t look at %s, on the way to %s: %s', [Path, Folder, SysErrorMessage(LookError)]));
+        Result := True;
+      end
+      else if (Attributes and ReparsePointAttribute) <> 0 then
+      begin
+        Log(Format('%s, on the way to %s, is a link to elsewhere', [Path, Folder]));
+        Result := True;
+      end;
+    end;
+  end;
+end;
+
+// Whether Setup may ask Windows to let the player change Folder, with an administrator's rights (Grant), saying why not
+// as FolderRefusal's folders not the game's own: FolderRefusal reads the path's text, and a link on the way to it
+// (LinkOnTheWay) would lead the grant elsewhere, into Windows' folder say.
+// Known: a folder on the way swapped for a link after this look (while Windows' prompt asks) isn't seen. Setup asks only
+// when the player can't change the nearest folder of the way that is there (ExistingFolder), so the folders Setup makes
+// in it aren't the player's to swap.
+function MayGrant(const Folder: String): Boolean;
+begin
+  Result := not LinkOnTheWay(Folder);
+
+  if not Result then
+    SuppressibleMsgBox(FmtMessage(CustomMessage('SharedFolder'), [Folder]), mbError, MB_OK, IDOK);
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Folder, Refusal: String;
@@ -767,10 +834,20 @@ begin
   else if IsAdmin then
   begin
     if not InOwnProfile(ComparablePath(Folder)) then
-      Result := GrantOrSay(Folder);
+    begin
+      Result := MayGrant(Folder);
+
+      if Result then
+        Result := GrantOrSay(Folder);
+    end;
   end
   else if not CanChange(ExistingFolder(Folder)) then
-    Result := GetPermission(Folder);
+  begin
+    Result := MayGrant(Folder);
+
+    if Result then
+      Result := GetPermission(Folder);
+  end;
 end;
 
 // Whether Path is a link to elsewhere (a junction, a symbolic link): what's in the backup is put back only when it is

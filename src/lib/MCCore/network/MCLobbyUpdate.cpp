@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "network/MCLobbyUpdate.h"
 #include "linkup/MCFidpPlayer.h"
+#include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCLogChatWindow.h"
@@ -14,6 +15,7 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "network/MCRejoinNote.h"
+#include "platform/MCDirectPlay.h"
 #include "platform/MCFileSystem.h"
 
 namespace
@@ -91,12 +93,27 @@ namespace
     /// <summary>
     /// Whether this guest's room has kept its place once already: it said it restarts and called it off, or it is back
     /// from its update (unset: as the game started, with -rejoin or not). Its next update then installs after the match,
-    /// as the room would keep no place for it. A host restarting makes a new room.
+    /// as the room would keep no place for it. A host restarting makes a new room; one whose restart is called off keeps
+    /// its room, which remembers.
     /// </summary>
     std::optional<bool> OwnPlaceKept;
     /// <summary>The host shows its room again once a guest back from its update has settled.</summary>
     std::optional<Clock::time_point> RefreshAt;
     std::optional<MCHostWait> HostWait;
+    /// <summary>
+    /// The room (its session's instance) this guest left to wait for its restarting host: back in it, the host's restart
+    /// was called off and the room's places kept stand; another is the host's new version's, which has kept none.
+    /// </summary>
+    std::optional<_GUID> RoomLeft;
+    /// <summary>
+    /// How long the room's start has waited on kept places, all of them together, and since when it waits now (while any
+    /// is kept): it waits MCLobbyUpdate::MostStartHold at most in a room, whatever the guests' ids and names, so no guest
+    /// holds it on and on by rejoining as another player.
+    /// </summary>
+    Clock::duration StartHeldFor{};
+    std::optional<Clock::time_point> StartHeldSince;
+    /// <summary>The room's start has waited its most on kept places: START no longer waits for them.</summary>
+    bool StartHoldSpent = false;
     /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
     MCLobbyUpdate::MCClock TestClock;
 
@@ -121,12 +138,36 @@ namespace
         return std::format("{} IS UPDATING.", Upper(name));
     }
 
+    /// <summary>How long the room's start has waited on kept places by <paramref name="now"/>, all of them together.</summary>
+    Clock::duration StartHeldBy(Clock::time_point now)
+    {
+        return StartHeldFor + (StartHeldSince.has_value() ? now - *StartHeldSince : Clock::duration::zero());
+    }
+
+    /// <summary>The places kept changed: the start's wait runs while any is kept, and stops while none is.</summary>
+    void TimeStartHold()
+    {
+        const Clock::time_point now = Now();
+
+        if (!Coming.empty() && !StartHeldSince.has_value())
+        {
+            StartHeldSince = now;
+        }
+        else if (Coming.empty() && StartHeldSince.has_value())
+        {
+            StartHeldFor += now - *StartHeldSince;
+            StartHeldSince.reset();
+        }
+    }
+
     /// <summary>
-    /// The places kept changed: the session screen holds its start while any is kept, and lets it go after
-    /// (MCSessionScreen::CheckGoodToGo).
+    /// The places kept changed: the session screen holds its start while any is kept (MCLobbyUpdate::StartHeld), and
+    /// lets it go after (MCSessionScreen::CheckGoodToGo).
     /// </summary>
     void PlacesChanged()
     {
+        TimeStartHold();
+
         if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
             logistics != nullptr && logistics->SessionScreen != nullptr &&
             logistics->SessionScreen->StartButton != nullptr)
@@ -229,13 +270,15 @@ namespace
         const std::string name = host != nullptr ? host->Name : std::string("THE HOST");
         SDL_Log("Lobby updates: the host %s restarts into an update; joining %s again", name.c_str(),
                 RoomAddress().c_str());
+        // Known: the room is this game's (Updating takes only a room's).
+        RoomLeft = game.SessionManager->CurrentSession()->SessionDesc.guidInstance;
         GlobalLog()->DestroyMultiplayer();
         game.LeaveSession();
         game.PlayerRules.clear();
-        // The host's new version opens a new room, which has kept no one's place.
+        // The places this guest saw kept: the room's guests back (or not) while it is away go unseen. Which places the
+        // room has kept stands until this guest knows whether it comes back to the same room (TryHostAgain).
         Coming.clear();
-        KeptOnce.clear();
-        OwnPlaceKept = false;
+        TimeStartHold();
         RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
@@ -258,7 +301,23 @@ namespace
 
         if (tried == MCLobbyJoin::Joined)
         {
-            SDL_Log("Lobby updates: back in the room");
+            // The host's new version opens a new room, which has kept no one's place; back in the same room (the host's
+            // restart called off), its host remembers whose it has kept, this guest's too.
+            const std::shared_ptr<MCFidpSession> room = manager.CurrentSession();
+            const bool sameRoom =
+                room != nullptr && RoomLeft.has_value() && MCSameGuid(room->SessionDesc.guidInstance, *RoomLeft);
+            SDL_Log("Lobby updates: back in the room (%s)", sameRoom ? "the same one" : "the host's new one");
+
+            if (!sameRoom)
+            {
+                KeptOnce.clear();
+                OwnPlaceKept = false;
+                StartHeldFor = Clock::duration::zero();
+                StartHeldSince.reset();
+                StartHoldSpent = false;
+            }
+
+            RoomLeft.reset();
             HostWait.reset();
             MultiPlayer()->StartLobbyGame();
             DestroyConnectStatusWindow();
@@ -421,6 +480,11 @@ auto MCLobbyUpdate::CanRestart() -> bool
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
+auto MCLobbyUpdate::StartHeld() -> bool
+{
+    return !Coming.empty() && !StartHoldSpent;
+}
+
 auto MCLobbyUpdate::StartWaitsText() -> std::string
 {
     if (Coming.empty())
@@ -525,6 +589,16 @@ auto MCLobbyUpdate::Frame() -> void
     }
 
     KeepPlaces(now);
+
+    // The room's start has waited its most on kept places: START lights, though places may still be kept (the session
+    // screen's line names them).
+    if (!StartHoldSpent && StartHeldBy(now) >= MostStartHold)
+    {
+        SDL_Log("Lobby updates: the room's start has waited %lld s on kept places, its most: it waits for them no more",
+                static_cast<long long>(MostStartHold.count()));
+        StartHoldSpent = true;
+        PlacesChanged();
+    }
 
     // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
     if (RefreshAt.has_value() && now >= *RefreshAt)

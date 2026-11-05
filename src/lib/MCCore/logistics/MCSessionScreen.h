@@ -118,8 +118,8 @@ public:
 
     /// <summary>
     /// Lights the start button when every player is on a team and a mission is loaded. Port-only (the personal build):
-    /// and no guest is away updating (network/MCLobbyUpdate.h); while one is, <see cref="StartWaits"/> says whom the start
-    /// waits for, in the update's line's place.
+    /// and no guest is away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is,
+    /// <see cref="StartWaits"/> says whom the room waits for, in the update's line's place.
     /// </summary>
     void CheckGoodToGo();
 
@@ -219,7 +219,7 @@ public:
     /// </summary>
     MCGuiOwned<MCLogObject> UpdateLine;
     /// <summary>
-    /// Port-only (the personal build): whom the start waits for, guests away updating ("WAITING FOR ANN TO UPDATE."), as
+    /// Port-only (the personal build): whom the room waits for, guests away updating ("WAITING FOR ANN TO REJOIN."), as
     /// <see cref="CheckGoodToGo"/> last found; empty when it waits for no one.
     /// </summary>
     std::string StartWaits;

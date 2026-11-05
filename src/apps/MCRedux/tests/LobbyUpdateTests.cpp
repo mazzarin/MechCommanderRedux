@@ -716,6 +716,35 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     CHECK(!RoomOpen());
 }
 
+/// <summary>
+/// A guest left unpicked holds START, as the original's screen does; leaving to update, it no longer does: START lights
+/// as the session lets it go, with no other change in the room.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's START lights as an unpicked guest leaves to update")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Guest ann("ANN");
+    Guest dan("DAN");
+    REQUIRE(HostLobbyRoom("28921", {ann, dan}));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    dan.SendRules(hostId, MCMatchRule::Supported);
+    PickTeams(screen, {dan.Id()});
+    REQUIRE(screen.StartButton->Disabled);
+
+    ann.SendUpdating(hostId);
+    REQUIRE(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(ann.Id()); }));
+    CHECK(screen.StartButton->Disabled);
+    ann.Leave();
+    CHECK(SettleUntil([&] { return !screen.StartButton->Disabled; }));
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN TO REJOIN."));
+}
+
 namespace
 {
     /// <summary>The version shown without its build: the new version's build isn't known.</summary>

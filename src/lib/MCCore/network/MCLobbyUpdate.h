@@ -125,7 +125,7 @@ namespace MCLobbyUpdate
 
     /// <summary>
     /// Player <paramref name="playerId"/> left the session: a guest away updating, gone, no longer counts for START
-    /// (<see cref="Away"/>).
+    /// (<see cref="Away"/>) from the next <see cref="Frame"/>, once the session has let it go.
     /// </summary>
     void PlayerLeft(uint32_t playerId);
 

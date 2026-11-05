@@ -109,6 +109,11 @@ namespace
     /// was called off and the room's places kept stand; another is the host's new version's, which has kept none.
     /// </summary>
     std::optional<_GUID> RoomLeft;
+    /// <summary>
+    /// A guest away updating left the session: the session screen looks again at the next frame, once the session has
+    /// let it go (its leave is told before then), so it no longer counts for START.
+    /// </summary>
+    bool AwayLeft = false;
     /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
     MCLobbyUpdate::MCClock TestClock;
 
@@ -582,6 +587,12 @@ auto MCLobbyUpdate::Frame() -> void
         DropPlaces();
     }
 
+    if (AwayLeft)
+    {
+        AwayLeft = false;
+        PlacesChanged();
+    }
+
     KeepPlaces(now);
 
     // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
@@ -697,10 +708,7 @@ auto MCLobbyUpdate::LeftToUpdate(uint32_t playerId) -> bool
 
 auto MCLobbyUpdate::PlayerLeft(uint32_t playerId) -> void
 {
-    if (std::ranges::contains(Coming, playerId, &MCComing::Id))
-    {
-        PlacesChanged();
-    }
+    AwayLeft = AwayLeft || std::ranges::contains(Coming, playerId, &MCComing::Id);
 }
 
 auto MCLobbyUpdate::PlayerJoined(uint32_t playerId) -> void

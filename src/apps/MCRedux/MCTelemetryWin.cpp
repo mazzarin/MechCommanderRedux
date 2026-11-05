@@ -29,7 +29,7 @@
 // The server: the project's reports Worker, as the Mac build's MC_REPORTS_URL (src/mac/CMakeLists.txt). A build can
 // define another; defined empty, it sends nothing.
 #ifndef MC_REPORTS_URL
-#define MC_REPORTS_URL "https://mechcommander-redux-reports.mazzarin.workers.dev"
+#define MC_REPORTS_URL ""
 #endif
 
 namespace

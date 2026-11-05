@@ -146,8 +146,10 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
                 if (hashed->Sha256 == file.Sha256)
                 {
+                    // Already there before any update put it there (the player's copy), or still as found then.
                     step.Action = MCAction::Keep;
                     record.Written = hashed->Written;
+                    record.Found = had == nullptr || had->Found;
                 }
                 else if (IsOfficial(file, hashed->Sha256, had))
                 {

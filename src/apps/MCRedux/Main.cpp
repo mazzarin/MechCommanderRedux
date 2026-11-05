@@ -15,6 +15,7 @@
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
+#include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
@@ -34,6 +35,8 @@ namespace
         std::filesystem::path DataFolder;
         std::filesystem::path UserFolder;
         std::string GameCommandLine;
+        /// <summary>--remove-content: the content goes, and the game doesn't start (the Windows uninstaller's).</summary>
+        bool RemoveContent = false;
     };
 
     /// <summary>
@@ -67,6 +70,8 @@ namespace
         "                   SYSTEM.CFG, the current folder, then the executable's folder;\n"
         "                   without any, the folder chosen last time or found, else ask.\n"
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
+        "  --remove-content - Remove the game's downloaded files from the install (or the\n"
+        "                   --data folder), leaving the player's own, and quit\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
         "  -load <file>   - Load a saved game\n"
@@ -212,6 +217,10 @@ namespace
                 }
 
                 (arg == "--user" ? options.UserFolder : options.DataFolder) = MCFileSystem::FromUtf8(arguments[++i]);
+            }
+            else if (arg == "--remove-content")
+            {
+                options.RemoveContent = true;
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -406,6 +415,38 @@ namespace
         return std::nullopt;
     }
 
+    /// <summary>
+    /// --remove-content: the game's content goes from the install folder, or the --data folder (update/MCContentRemoval.h).
+    /// The uninstaller runs it hidden, so it asks nothing and tells only a terminal it was started from.
+    /// </summary>
+    /// <returns>The exit code: 0 once removed.</returns>
+    int RemoveContent(const MCLaunchOptions& options)
+    {
+        const std::filesystem::path folder =
+            options.DataFolder.empty() ? MCGameFolder::InstallFolder() : options.DataFolder;
+
+        if (folder.empty())
+        {
+            SDL_Log("Removing the content: no install folder");
+            return 1;
+        }
+
+        const auto removed = MCContentRemoval::Remove(*MakeDisk(), folder);
+        const std::string told = removed
+                                     ? std::format("Removed {} of the game's files from {}; {} left as the player's",
+                                                   removed->Removed, MCFileSystem::ToUtf8(folder), removed->Kept)
+                                     : std::format("The game's files weren't all removed from {}: {}",
+                                                   MCFileSystem::ToUtf8(folder), removed.error());
+        SDL_Log("%s", told.c_str());
+
+        if (MCConsole::HasOutput())
+        {
+            (removed ? std::cout : std::cerr) << told << "\n";
+        }
+
+        return removed ? 0 : 1;
+    }
+
     /// <summary>Crash reporter: where the ABL interpreter was (module, routine, source line, code position).</summary>
     void ReportAblState()
     {
@@ -474,6 +515,11 @@ int main(int argc, char** argv)
         // On a terminal the usage follows the error; a message box only needs the error.
         Report(MCConsole::HasOutput() ? std::format("{}\n\n{}", options.error(), UsageText) : options.error(), true);
         return 1;
+    }
+
+    if (options->RemoveContent)
+    {
+        return RemoveContent(*options);
     }
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS))

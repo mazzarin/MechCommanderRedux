@@ -1319,6 +1319,9 @@
     <ClCompile Include="update\MCContentPlan.cpp">
       <Filter>update</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCContentRemoval.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="update\MCContentStage.cpp">
       <Filter>update</Filter>
     </ClCompile>
@@ -2622,6 +2625,9 @@
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCContentPlan.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCContentRemoval.h">
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCContentStage.h">

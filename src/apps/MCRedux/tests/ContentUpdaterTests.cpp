@@ -14,6 +14,7 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCUpdateDisk.h"
@@ -856,6 +857,70 @@ TEST_CASE("content updater: the first start installs the sets chosen into a fold
     const auto newer = MCContentUpdater::CheckInstall(setup, *disk, source);
     REQUIRE(!newer.has_value());
     CHECK(newer.error().find("newer than") != std::string::npos);
+}
+
+TEST_CASE("content removal: the uninstaller's removal takes what updates put there, leaves what a copy taken over had "
+          "and the player's own, and waits for running copies")
+{
+    MCHostedRelease release("removal");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+
+    // The player's copy, taken over: one file as the release has it, one the player modded, one they added.
+    std::filesystem::remove_all(game);
+    Write(game / "data" / "same.fit", "same in both");
+    Write(game / "data" / "changed.fit", "the player's mod");
+    Write(game / "data" / "mine.fit", "the player's own");
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    MCFolderSource source(release.Host.Path());
+    REQUIRE(MCContentUpdater::Install(release.Setup(), *disk, source, GoOn).has_value());
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    REQUIRE(std::filesystem::exists(game / "data" / "missions" / "new.fit"));
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK(record->Files.at("DATA/SAME.FIT").Found);
+    CHECK(!record->Files.at("DATA/MISSIONS/NEW.FIT").Found);
+    CHECK(!record->Files.at("DATA/CHANGED.FIT").Ours);
+
+    // A copy of the game running: removal waits for it, then gives up, removing nothing.
+    {
+        const std::unique_ptr<MCUpdateLock> running = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
+        REQUIRE(running != nullptr);
+        REQUIRE(running->Shared());
+        const auto held = MCContentRemoval::Remove(*disk, game, std::chrono::milliseconds(200));
+        REQUIRE(!held.has_value());
+        CHECK(held.error().find("running") != std::string::npos);
+        CHECK(std::filesystem::exists(game / "data" / "missions" / "new.fit"));
+    }
+
+    const auto removed = MCContentRemoval::Remove(*disk, game);
+    REQUIRE(removed.has_value());
+    CHECK_EQ(removed->Removed, size_t{1});
+    CHECK_EQ(removed->Kept, size_t{2});
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+    CHECK_EQ(Read(game / "data" / "changed.fit"), std::string("the player's mod"));
+    CHECK_EQ(Read(game / "data" / "mine.fit"), std::string("the player's own"));
+    CHECK(!std::filesystem::exists(game / "data" / "missions"));
+    CHECK(!std::filesystem::exists(game / "Redux update"));
+
+    // Nothing left to remove: a second run does nothing.
+    const auto again = MCContentRemoval::Remove(*disk, game);
+    REQUIRE(again.has_value());
+    CHECK_EQ(again->Removed, size_t{0});
+
+    // Downloaded into an empty folder, every file goes, with the folders, and a file the player changed stays.
+    std::filesystem::remove_all(game);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    REQUIRE(MCContentUpdater::Install(release.Setup(), *disk, source, GoOn).has_value());
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    Write(game / "data" / "same.fit", "changed by the player");
+    const auto downloaded = MCContentRemoval::Remove(*disk, game);
+    REQUIRE(downloaded.has_value());
+    CHECK_EQ(downloaded->Removed, size_t{3});
+    CHECK_EQ(downloaded->Kept, size_t{1});
+    CHECK(!std::filesystem::exists(game / "HD"));
+    CHECK(!std::filesystem::exists(game / "data" / "missions"));
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("changed by the player"));
 }
 
 TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a later start gets it back as chosen")

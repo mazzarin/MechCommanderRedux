@@ -20,6 +20,7 @@ namespace
     constexpr std::string_view SizeKey = "size";
     constexpr std::string_view WrittenKey = "written";
     constexpr std::string_view OursKey = "ours";
+    constexpr std::string_view FoundKey = "found";
     constexpr std::string_view SwapKey = "swap";
     constexpr uint64_t RecordFormat = 1;
 }
@@ -48,7 +49,8 @@ std::string MCInstalled::Text(const MCRecord& record)
                          {Sha256Key, MCSha256::Hex(file.Sha256)},
                          {SizeKey, file.Size},
                          {WrittenKey, file.Written},
-                         {OursKey, file.Ours}});
+                         {OursKey, file.Ours},
+                         {FoundKey, file.Found}});
     }
 
     MCJson setBytes = MCJson::object();
@@ -127,6 +129,21 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::str
                 }
 
                 file.Ours = ours.get<bool>();
+
+                // Recorded since content could be removed (the Windows uninstaller): an earlier record has none, and
+                // its files were all installed (no installer took a copy over before).
+                if (entry.contains(FoundKey))
+                {
+                    const MCJson& found = Member(entry, FoundKey);
+
+                    if (!found.is_boolean())
+                    {
+                        Fail("\"{}\" isn't true or false", FoundKey);
+                    }
+
+                    file.Found = found.get<bool>();
+                }
+
                 record.Files.insert_or_assign(MCContentList::FoldedPath(file.Path), std::move(file));
             }
 

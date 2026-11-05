@@ -7,7 +7,8 @@
 /// and its list, the sets the copy has (the installer's HD answer, then HD OPTIONS'), and each managed file as it was
 /// last seen, with its hash, size and time written. A file whose size and time are still as recorded keeps its
 /// recorded hash, so a plan hashes only what changed since. Files updates installed are the copy's ("ours"); a listed
-/// file the player changed is recorded as theirs, and updates leave it alone.
+/// file the player changed is recorded as theirs, and updates leave it alone. A file already in the folder as the
+/// release has it is ours too, and recorded as found there, so removing the content leaves it.
 /// </summary>
 namespace MCInstalled
 {
@@ -26,6 +27,11 @@ namespace MCInstalled
         int64_t Written = 0;
         /// <summary>Whether it's the release's (installed or found as the release has it), not the player's.</summary>
         bool Ours = true;
+        /// <summary>
+        /// Whether it was in the folder, as the release has it, before any update put it there (a copy the player's
+        /// installer took over): removing the content (MCContentRemoval) leaves it, so that copy stays as it was.
+        /// </summary>
+        bool Found = false;
     };
 
     struct MCRecord

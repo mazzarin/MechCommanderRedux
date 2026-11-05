@@ -467,6 +467,7 @@
     <ClCompile Include="update\MCContentFolder.cpp" />
     <ClCompile Include="update\MCContentList.cpp" />
     <ClCompile Include="update\MCContentPlan.cpp" />
+    <ClCompile Include="update\MCContentRemoval.cpp" />
     <ClCompile Include="update\MCContentStage.cpp" />
     <ClCompile Include="update\MCContentSwap.cpp" />
     <ClCompile Include="update\MCContentUpdater.cpp" />
@@ -912,6 +913,7 @@
     <ClInclude Include="update\MCContentFolder.h" />
     <ClInclude Include="update\MCContentList.h" />
     <ClInclude Include="update\MCContentPlan.h" />
+    <ClInclude Include="update\MCContentRemoval.h" />
     <ClInclude Include="update\MCContentStage.h" />
     <ClInclude Include="update\MCContentSwap.h" />
     <ClInclude Include="update\MCContentUpdater.h" />

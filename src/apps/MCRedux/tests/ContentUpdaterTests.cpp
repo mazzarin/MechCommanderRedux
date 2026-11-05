@@ -822,6 +822,58 @@ TEST_CASE(
     CHECK(MCContentUpdater::Wanted(*disk, game, *MCInstalled::Read(game)) == WithoutHd);
 }
 
+TEST_CASE("content updater: lists are kept: read again unfetched, fetched again when damaged, HD removed offline; only "
+          "the installed release's and the newest stay")
+{
+    MCHostedRelease release("kept-lists");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path lists = game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder);
+    const std::string listName = MCSha256::Hex(MCSha256::Of(release.ListText)) + ".json";
+    const std::string hostedList = std::format("{}/{}", MCContentUpdater::ListsFolder, listName);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const auto listsKept = [&]() { return std::distance(std::filesystem::directory_iterator(lists), {}); };
+    const auto fetchesAtCheck = [&]()
+    {
+        MCFolderSource source(release.Host.Path());
+        const auto offer = MCContentUpdater::Check(setup, *disk, source);
+        REQUIRE(offer.has_value());
+        REQUIRE(offer->has_value());
+        return std::ranges::count(source.Asked(), hostedList);
+    };
+
+    // Kept before: the installed release's list, and an older one.
+    const std::string installedName = MCSha256::Hex(release.Installed.List) + ".json";
+    Write(lists / installedName, "release 1's list");
+    Write(lists / (MCSha256::Hex(MCSha256::Of("an older list")) + ".json"), "an older list");
+
+    // Fetched once and kept, beside the installed release's alone; read from there while the update waits.
+    CHECK_EQ(fetchesAtCheck(), 1);
+    CHECK_EQ(Read(lists / listName), release.ListText);
+    CHECK(std::filesystem::exists(lists / installedName));
+    CHECK_EQ(listsKept(), 2);
+    CHECK_EQ(fetchesAtCheck(), 0);
+
+    // One kept that isn't what its name says is fetched again.
+    Write(lists / listName, "damaged");
+    CHECK_EQ(fetchesAtCheck(), 1);
+    CHECK_EQ(Read(lists / listName), release.ListText);
+
+    // Installed, then HD removed with the host out of reach: planned and staged from the list kept.
+    UpdateToRelease2(release);
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    MCFolderSource offline(release.Host.Path() / "out-of-reach");
+    const auto removal = MCContentUpdater::CheckSets(setup, *disk, offline);
+    REQUIRE(removal.has_value());
+    REQUIRE(removal->has_value());
+    REQUIRE(MCContentUpdater::Stage(setup, *disk, offline, **removal, GoOn).has_value());
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, **removal).has_value());
+    CHECK(offline.Asked().empty());
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!std::filesystem::exists(game / "HD"));
+    CHECK(InstalledSets(release) == WithoutHd);
+}
+
 TEST_CASE("content updater: an update is planned for the sets chosen")
 {
     MCHostedRelease release("update-sets");
@@ -1454,7 +1506,8 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     std::filesystem::rename(update / "staged" / "data" / "changed.fit", game / "data" / "changed.fit");
     std::filesystem::remove(update / "staged" / "HD" / "terrain.hda");
 
-    // Offline, or the release's list out of reach, nothing is given up: TRY AGAIN can still finish the update.
+    // Offline, or the release's list neither kept nor hosted, nothing is given up: TRY AGAIN can still finish the
+    // update.
     const auto unchanged = [&]()
     {
         CHECK(std::filesystem::exists(update / "journal.json"));
@@ -1469,6 +1522,7 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     const std::filesystem::path lists = release.Host.Path() / "lists";
     const std::filesystem::path listsAway = release.Host.Path() / "lists-away";
     std::filesystem::rename(lists, listsAway);
+    std::filesystem::remove_all(game / MCFileSystem::FromUtf8(MCContentUpdater::KeptListsFolder));
     REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
     unchanged();
     std::filesystem::rename(listsAway, lists);

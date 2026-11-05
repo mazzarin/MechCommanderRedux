@@ -76,25 +76,117 @@ namespace
         uint64_t Release = 0;
     };
 
+    /// <summary>A list's file name, on the host and kept: its hash.</summary>
+    std::string ListFileName(const MCSha256::MCDigest& hash)
+    {
+        return std::format("{}.json", MCSha256::Hex(hash));
+    }
+
+    std::filesystem::path KeptListsPath(const MCSetup& setup)
+    {
+        return setup.GameFolder / MCFileSystem::FromUtf8(KeptListsFolder);
+    }
+
+    /// <summary>Whether <paramref name="text"/> is the list <paramref name="list"/> names: its hash, and its size when known.</summary>
+    bool IsList(std::string_view text, const MCListRef& list)
+    {
+        return (!list.Size || text.size() == *list.Size) && MCSha256::Of(text) == list.Hash;
+    }
+
     /// <summary>
-    /// The list of <paramref name="list"/>'s release fetched and held to its hash (and size), for a program of build
-    /// <paramref name="build"/>; its plan still to make (<see cref="PlanFor"/>).
+    /// The list kept from an earlier fetch; none when none is, or when the one kept isn't the list its name says
+    /// (logged: it's fetched again).
+    /// </summary>
+    std::optional<std::string> KeptList(const MCSetup& setup, MCUpdateDisk& disk, const MCListRef& list)
+    {
+        const std::filesystem::path path = KeptListsPath(setup) / MCFileSystem::FromUtf8(ListFileName(list.Hash));
+        const auto kept = MCUpdateJson::ReadFile(
+            disk, path,
+            [&](std::string_view text) -> std::expected<std::string, std::string>
+            {
+                if (!IsList(text, list))
+                {
+                    return std::unexpected(std::format("{} isn't the list its name says", MCFileSystem::ToUtf8(path)));
+                }
+
+                return std::string(text);
+            });
+
+        if (!kept)
+        {
+            SDL_Log("Updates: %s: it's fetched again", kept.error().c_str());
+            return std::nullopt;
+        }
+
+        return *kept;
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="text"/>, the list just fetched, for later checks, and deletes every other list kept but
+    /// the installed release's. What fails is logged: a later check fetches the list again.
+    /// </summary>
+    void KeepList(const MCSetup& setup, MCUpdateDisk& disk, const MCListRef& list, std::string_view text)
+    {
+        const std::filesystem::path folder = KeptListsPath(setup);
+        const std::string name = ListFileName(list.Hash);
+
+        if (!disk.MakeFolders(folder) || !WriteDurably(disk, folder / MCFileSystem::FromUtf8(name), text))
+        {
+            SDL_Log("Updates: release %llu's list can't be kept in %s: it's fetched again at the next check",
+                    static_cast<unsigned long long>(list.Release), MCFileSystem::ToUtf8(folder).c_str());
+            return;
+        }
+
+        const auto installed = MCInstalled::Read(setup.GameFolder);
+        const auto files = disk.Files(folder);
+
+        if (!installed || !files)
+        {
+            SDL_Log("Updates: the lists kept stay as they are (%s)",
+                    (!installed ? installed.error() : files.error()).c_str());
+            return;
+        }
+
+        const std::string installedName = ListFileName(installed->List);
+
+        for (const std::string& file : *files)
+        {
+            if (file != name && file != installedName && !disk.Remove(folder / MCFileSystem::FromUtf8(file)))
+            {
+                SDL_Log("Updates: the list kept as %s stays", file.c_str());
+            }
+        }
+    }
+
+    /// <summary>
+    /// The list of <paramref name="list"/>'s release held to its hash (and size): the one kept, else fetched from
+    /// <paramref name="source"/> and kept; for a program of build <paramref name="build"/>; its plan still to make
+    /// (<see cref="PlanFor"/>).
     /// </summary>
     /// <returns>The content, its plan empty; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(MCContentStage::MCSource& source,
+    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(const MCSetup& setup, MCUpdateDisk& disk,
+                                                                     MCContentStage::MCSource& source,
                                                                      const MCListRef& list, uint64_t build)
     {
-        const std::string name = std::format("{}/{}.json", ListsFolder, MCSha256::Hex(list.Hash));
-        const auto text = source.Read(name, MostListBytes);
+        std::optional<std::string> text = KeptList(setup, disk, list);
 
         if (!text)
         {
-            return std::unexpected(text.error());
-        }
+            const std::string name = std::format("{}/{}", ListsFolder, ListFileName(list.Hash));
+            auto fetched = source.Read(name, MostListBytes);
 
-        if ((list.Size && text->size() != *list.Size) || MCSha256::Of(*text) != list.Hash)
-        {
-            return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
+            if (!fetched)
+            {
+                return std::unexpected(fetched.error());
+            }
+
+            if (!IsList(*fetched, list))
+            {
+                return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
+            }
+
+            KeepList(setup, disk, list, *fetched);
+            text = std::move(*fetched);
         }
 
         auto read = MCContentList::Read(*text);
@@ -190,7 +282,7 @@ namespace
                                                                              const MCInstalled::MCRecord& installed,
                                                                              const MCSets& sets, uint64_t build)
     {
-        auto content = FetchList(source, list, build);
+        auto content = FetchList(setup, disk, source, list, build);
 
         if (!content)
         {
@@ -445,7 +537,7 @@ namespace
 
         const MCReleaseFile::MCRelease& release = chosen->Release;
         const MCListRef list{release.List, release.ListSize, release.Number};
-        auto content = FetchList(source, list, setup.RunningBuild);
+        auto content = FetchList(setup, disk, source, list, setup.RunningBuild);
 
         if (!content)
         {

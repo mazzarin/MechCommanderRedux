@@ -120,7 +120,7 @@ BOOL DreditorApp::HoldGameLock(const CString& dataPath)
     }
 
     // Held shared, it waits out a game putting an update in place right now; a journal left after that is an update
-    // stopped midway, which the game's next start finishes.
+    // stopped midway, which the game's next start finishes, and a repair's file one the game is repairing.
     _gameLock = MCUpdateLock::Open(folder, MCUpdateLock::GameLock);
 
     if (_gameLock == nullptr || !_gameLock->Shared())
@@ -129,7 +129,8 @@ BOOL DreditorApp::HoldGameLock(const CString& dataPath)
         return TRUE;
     }
 
-    if (std::filesystem::exists(folder / MCContentSwap::JournalFile, error))
+    if (std::filesystem::exists(folder / MCContentSwap::JournalFile, error) ||
+        std::filesystem::exists(folder / MCContentSwap::RepairFile, error))
     {
         _gameLock.reset();
         AfxMessageBox(

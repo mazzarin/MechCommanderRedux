@@ -77,16 +77,12 @@ namespace
     };
 
     /// <summary>
-    /// The content of <paramref name="list"/>'s release planned for the copy: the list fetched and held to its hash
-    /// (and size), then the plan of <paramref name="sets"/> against what <paramref name="installed"/> records, for
-    /// a program of build <paramref name="build"/>.
+    /// The list of <paramref name="list"/>'s release fetched and held to its hash (and size), for a program of build
+    /// <paramref name="build"/>; its plan still to make (<see cref="PlanFor"/>).
     /// </summary>
-    /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup,
-                                                                             MCContentStage::MCSource& source,
-                                                                             const MCListRef& list,
-                                                                             const MCInstalled::MCRecord& installed,
-                                                                             const MCSets& sets, uint64_t build)
+    /// <returns>The content, its plan empty; none for a list in a format this game can't read; or why there's none.</returns>
+    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(MCContentStage::MCSource& source,
+                                                                     const MCListRef& list, uint64_t build)
     {
         const std::string name = std::format("{}/{}.json", ListsFolder, MCSha256::Hex(list.Hash));
         const auto text = source.Read(name, MostListBytes);
@@ -124,16 +120,57 @@ namespace
         // The plan points into the list, so both stay together where they're made.
         auto content = std::make_shared<MCContent>();
         content->List = std::move(*read);
+        return content;
+    }
+
+    /// <summary>
+    /// Plans <paramref name="content"/>'s list for the copy: <paramref name="sets"/> against what
+    /// <paramref name="installed"/> records.
+    /// </summary>
+    std::expected<void, std::string> PlanFor(const MCSetup& setup, MCContent& content, const MCListRef& list,
+                                             const MCInstalled::MCRecord& installed, const MCSets& sets)
+    {
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content->List, list.Hash, sets);
+        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets);
 
         if (!plan)
         {
             return std::unexpected(plan.error());
         }
 
-        content->Plan = std::move(*plan);
-        return content;
+        content.Plan = std::move(*plan);
+        return {};
+    }
+
+    /// <summary>
+    /// The content of <paramref name="list"/>'s release planned for the copy (<see cref="FetchList"/>, then
+    /// <see cref="PlanFor"/>).
+    /// </summary>
+    /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
+    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup,
+                                                                             MCContentStage::MCSource& source,
+                                                                             const MCListRef& list,
+                                                                             const MCInstalled::MCRecord& installed,
+                                                                             const MCSets& sets, uint64_t build)
+    {
+        auto content = FetchList(source, list, build);
+
+        if (!content)
+        {
+            return std::unexpected(content.error());
+        }
+
+        if (*content == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (const auto planned = PlanFor(setup, **content, list, installed, sets); !planned)
+        {
+            return std::unexpected(planned.error());
+        }
+
+        return std::shared_ptr<const MCContent>(std::move(*content));
     }
 
     /// <summary>The release this copy takes, and what the game keeps of the files read.</summary>
@@ -345,46 +382,112 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
     return offer;
 }
 
+namespace
+{
+    /// <summary>A step run once everything the install needs from the host is in hand, before it plans.</summary>
+    using MCBeforePlan = std::function<std::expected<void, std::string>()>;
+
+    /// <summary>
+    /// The first start's install (<see cref="MCContentUpdater::CheckInstall"/>): the release the copy takes and its list
+    /// fetched and checked, then <paramref name="beforePlan"/> (none: nothing), then the plan from the files as they are.
+    /// </summary>
+    std::expected<MCOffer, std::string> CheckRelease(const MCSetup& setup, MCUpdateDisk& disk,
+                                                     MCContentStage::MCSource& source, const MCBeforePlan& beforePlan)
+    {
+        const auto chosen = ReleaseFor(setup, disk, source);
+
+        if (!chosen)
+        {
+            return std::unexpected(chosen.error());
+        }
+
+        if (const auto writable = Writable(setup.GameFolder); !writable)
+        {
+            return std::unexpected(writable.error());
+        }
+
+        const MCReleaseFile::MCRelease& release = chosen->Release;
+        const MCListRef list{release.List, release.ListSize, release.Number};
+        auto content = FetchList(source, list, setup.RunningBuild);
+
+        if (!content)
+        {
+            return std::unexpected(content.error());
+        }
+
+        if (*content == nullptr)
+        {
+            return std::unexpected("the game's files are in a newer format than this version reads: download the "
+                                   "newest installer");
+        }
+
+        if (beforePlan)
+        {
+            if (const auto done = beforePlan(); !done)
+            {
+                return std::unexpected(done.error());
+            }
+        }
+
+        const auto installed = MCInstalled::Read(setup.GameFolder);
+
+        if (!installed)
+        {
+            return std::unexpected(installed.error());
+        }
+
+        if (const auto planned =
+                PlanFor(setup, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
+            !planned)
+        {
+            return std::unexpected(planned.error());
+        }
+
+        MCOffer offer{.Release = release};
+        offer.Content = std::move(*content);
+        return offer;
+    }
+
+    /// <summary>
+    /// The first start's install or a repair, under the staging lock: checked (<see cref="CheckRelease"/>), staged and
+    /// armed.
+    /// </summary>
+    std::expected<void, std::string> InstallRelease(const MCSetup& setup, MCUpdateDisk& disk,
+                                                    MCContentStage::MCSource& source,
+                                                    const std::function<bool(uint64_t, uint64_t)>& progress,
+                                                    const MCBeforePlan& beforePlan)
+    {
+        const std::unique_ptr<MCUpdateLock> staging = MCUpdateLock::Open(setup.GameFolder, MCUpdateLock::StagingLock);
+
+        if (staging == nullptr || !staging->TryExclusive())
+        {
+            return std::unexpected("another copy of the game is downloading it");
+        }
+
+        const auto offer = CheckRelease(setup, disk, source, beforePlan);
+
+        if (!offer)
+        {
+            return std::unexpected(offer.error());
+        }
+
+        SDL_Log("Updates: installing release %llu (%llu bytes to download)",
+                static_cast<unsigned long long>(offer->Release.Number),
+                static_cast<unsigned long long>(offer->ContentBytes()));
+
+        if (const auto staged = MCContentUpdater::Stage(setup, disk, source, *offer, progress); !staged)
+        {
+            return staged;
+        }
+
+        return MCContentUpdater::Arm(setup, disk, *offer);
+    }
+}
+
 std::expected<MCOffer, std::string> MCContentUpdater::CheckInstall(const MCSetup& setup, MCUpdateDisk& disk,
                                                                    MCContentStage::MCSource& source)
 {
-    const auto chosen = ReleaseFor(setup, disk, source);
-
-    if (!chosen)
-    {
-        return std::unexpected(chosen.error());
-    }
-
-    const auto installed = MCInstalled::Read(setup.GameFolder);
-
-    if (!installed)
-    {
-        return std::unexpected(installed.error());
-    }
-
-    if (const auto writable = Writable(setup.GameFolder); !writable)
-    {
-        return std::unexpected(writable.error());
-    }
-
-    const MCReleaseFile::MCRelease& release = chosen->Release;
-    auto content = PlanContent(setup, source, {release.List, release.ListSize, release.Number}, *installed,
-                               Wanted(disk, setup.GameFolder, *installed), setup.RunningBuild);
-
-    if (!content)
-    {
-        return std::unexpected(content.error());
-    }
-
-    if (*content == nullptr)
-    {
-        return std::unexpected("the game's files are in a newer format than this version reads: download the newest "
-                               "installer");
-    }
-
-    MCOffer offer{.Release = release};
-    offer.Content = std::move(*content);
-    return offer;
+    return CheckRelease(setup, disk, source, {});
 }
 
 std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, MCUpdateDisk& disk,
@@ -408,30 +511,27 @@ std::expected<void, std::string> MCContentUpdater::Install(const MCSetup& setup,
                                                            MCContentStage::MCSource& source,
                                                            const std::function<bool(uint64_t, uint64_t)>& progress)
 {
-    const std::unique_ptr<MCUpdateLock> staging = MCUpdateLock::Open(setup.GameFolder, MCUpdateLock::StagingLock);
+    return InstallRelease(setup, disk, source, progress, {});
+}
 
-    if (staging == nullptr || !staging->TryExclusive())
-    {
-        return std::unexpected("another copy of the game is downloading it");
-    }
+std::expected<void, std::string> MCContentUpdater::Repair(const MCSetup& setup, MCUpdateDisk& disk,
+                                                          MCContentStage::MCSource& source,
+                                                          const std::function<bool(uint64_t, uint64_t)>& progress)
+{
+    // Given up only once the release and its list are in hand: offline, the update stopped partway stays as it is,
+    // and TRY AGAIN can still finish it.
+    return InstallRelease(setup, disk, source, progress,
+                          [&]() -> std::expected<void, std::string>
+                          {
+                              if (const auto given = MCContentSwap::Abandon(disk, setup.GameFolder); !given)
+                              {
+                                  return given;
+                              }
 
-    const auto offer = CheckInstall(setup, disk, source);
-
-    if (!offer)
-    {
-        return std::unexpected(offer.error());
-    }
-
-    SDL_Log("Updates: the first start installs release %llu (%llu bytes to download)",
-            static_cast<unsigned long long>(offer->Release.Number),
-            static_cast<unsigned long long>(offer->ContentBytes()));
-
-    if (const auto staged = Stage(setup, disk, source, *offer, progress); !staged)
-    {
-        return staged;
-    }
-
-    return Arm(setup, disk, *offer);
+                              SDL_Log("Updates: the update stopped partway is given up; the repair installs the "
+                                      "release");
+                              return {};
+                          });
 }
 
 std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCUpdateDisk& disk, const MCOffer& offer)

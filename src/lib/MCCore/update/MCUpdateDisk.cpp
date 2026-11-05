@@ -140,6 +140,37 @@ namespace
             return text;
         }
 
+        std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) override
+        {
+            std::vector<std::string> files;
+            std::error_code error;
+
+            if (!std::filesystem::is_directory(std::filesystem::symlink_status(folder, error)))
+            {
+                return files;
+            }
+
+            // Links aren't followed: one is listed as a file is.
+            for (std::filesystem::recursive_directory_iterator entry(folder, error), end; !error && entry != end;
+                 entry.increment(error))
+            {
+                const std::filesystem::file_status status = entry->symlink_status(error);
+
+                if (!error && !std::filesystem::is_directory(status))
+                {
+                    const std::u8string relative = entry->path().lexically_relative(folder).generic_u8string();
+                    files.emplace_back(relative.begin(), relative.end());
+                }
+            }
+
+            if (error)
+            {
+                return std::unexpected(Shown(folder) + " can't be listed (" + error.message() + ")");
+            }
+
+            return files;
+        }
+
         bool MakeFolders(const std::filesystem::path& path) override
         {
             std::error_code error;

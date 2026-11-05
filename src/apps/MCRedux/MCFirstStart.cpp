@@ -19,6 +19,18 @@ namespace
     constexpr float BarTop = 48.0f;
     constexpr float BarHeight = 10.0f;
 
+    /// <summary>The question's lines and buttons (<see cref="MCFirstStart::Ask"/>), in the drawing's units.</summary>
+    constexpr float TextTop = AmountTop;
+    constexpr float LineHeight = 12.0f;
+    constexpr float ButtonsGap = 10.0f;
+    constexpr float ButtonPadding = 6.0f;
+    constexpr float ButtonHeight = 16.0f;
+    constexpr float ButtonSpacing = 8.0f;
+    constexpr float LetterWidth = static_cast<float>(SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE);
+    /// <summary>The most lines a question shows (<see cref="MCFirstStart::Wrapped"/>).</summary>
+    constexpr size_t MostLines = 12;
+    constexpr std::string_view CutShort = "...";
+
     /// <summary>How often the window is drawn while the work goes on.</summary>
     constexpr int32_t FrameMilliseconds = 50;
 
@@ -50,9 +62,168 @@ namespace
         std::expected<void, std::string> Result;
     };
 
+    /// <summary>The window and its renderer, closed as it goes.</summary>
+    class MCOpenWindow
+    {
+    public:
+        /// <summary>A window of the width every one has, <paramref name="height"/> points tall; or why it can't open.</summary>
+        static std::expected<std::unique_ptr<MCOpenWindow>, std::string> Open(int height, bool hidden)
+        {
+            auto open = std::unique_ptr<MCOpenWindow>(new MCOpenWindow());
+            const SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0);
+
+            if (!SDL_CreateWindowAndRenderer("MechCommander Redux", WindowWidth, height, flags, &open->Window,
+                                             &open->Renderer))
+            {
+                return std::unexpected(std::format("its window can't open ({})", SDL_GetError()));
+            }
+
+            const float scale = DrawingScale * SDL_GetWindowPixelDensity(open->Window);
+            SDL_SetRenderScale(open->Renderer, scale, scale);
+            return open;
+        }
+
+        MCOpenWindow(const MCOpenWindow&) = delete;
+        MCOpenWindow& operator=(const MCOpenWindow&) = delete;
+
+        ~MCOpenWindow()
+        {
+            if (Renderer != nullptr)
+            {
+                SDL_DestroyRenderer(Renderer);
+            }
+
+            if (Window != nullptr)
+            {
+                SDL_DestroyWindow(Window);
+            }
+        }
+
+        SDL_Window* Window = nullptr;
+        SDL_Renderer* Renderer = nullptr;
+
+    private:
+        MCOpenWindow() = default;
+    };
+
     void SetColor(SDL_Renderer* renderer, MCColor color)
     {
         SDL_SetRenderDrawColor(renderer, color.Red, color.Green, color.Blue, SDL_ALPHA_OPAQUE);
+    }
+
+    /// <summary>Shows the frame drawn, saved to <paramref name="shot"/> first when given.</summary>
+    void Present(SDL_Renderer* renderer, const std::filesystem::path& shot)
+    {
+        if (!shot.empty())
+        {
+            // Read before the frame is shown, as SDL asks.
+            if (SDL_Surface* frame = SDL_RenderReadPixels(renderer, nullptr); frame != nullptr)
+            {
+                if (!SDL_SaveBMP(frame, MCFileSystem::ToUtf8(shot).c_str()))
+                {
+                    SDL_Log("First start: the window's frame isn't saved: %s", SDL_GetError());
+                }
+
+                SDL_DestroySurface(frame);
+            }
+        }
+
+        SDL_RenderPresent(renderer);
+    }
+
+    /// <summary>The letters a line of the drawing holds between its margins.</summary>
+    size_t LineLetters()
+    {
+        return static_cast<size_t>((static_cast<float>(WindowWidth) / DrawingScale - 2 * Margin) / LetterWidth);
+    }
+
+    /// <summary>A line cut short to <paramref name="width"/> letters, ending "...".</summary>
+    void CutLine(std::string& line, size_t width)
+    {
+        line.resize(std::min(line.size(), width - CutShort.size()));
+        line += CutShort;
+    }
+
+    /// <summary>A button of the question: its place, in the drawing's units, and its word.</summary>
+    struct MCButton
+    {
+        SDL_FRect Area{};
+        std::string_view Label;
+    };
+
+    /// <summary>The buttons in a row from the left margin, at <paramref name="top"/>.</summary>
+    std::vector<MCButton> LaidOut(std::span<const std::string_view> labels, float top)
+    {
+        std::vector<MCButton> buttons;
+        float left = Margin;
+
+        for (const std::string_view label : labels)
+        {
+            const float width = static_cast<float>(label.size()) * LetterWidth + 2 * ButtonPadding;
+            buttons.push_back({{left, top, width, ButtonHeight}, label});
+            left += width + ButtonSpacing;
+        }
+
+        return buttons;
+    }
+
+    /// <summary>A point of the window, in its points as the mouse gives them, in the drawing's units.</summary>
+    SDL_FPoint DrawingPoint(float x, float y)
+    {
+        // The drawing's scale is DrawingScale times the window's pixel density, so it's DrawingScale of its points.
+        return {x / DrawingScale, y / DrawingScale};
+    }
+
+    /// <summary>The button at the window's point (in its points), if any.</summary>
+    std::optional<size_t> ButtonAt(const std::vector<MCButton>& buttons, float x, float y)
+    {
+        const SDL_FPoint point = DrawingPoint(x, y);
+
+        for (size_t i = 0; i < buttons.size(); ++i)
+        {
+            if (SDL_PointInRectFloat(&point, &buttons[i].Area))
+            {
+                return i;
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    /// <summary>Draws the question: the heading, its lines, and the buttons, <paramref name="lit"/> filled.</summary>
+    void DrawQuestion(SDL_Renderer* renderer, std::string_view heading, const std::vector<std::string>& lines,
+                      const std::vector<MCButton>& buttons, size_t lit, const std::filesystem::path& shot)
+    {
+        SetColor(renderer, Background);
+        SDL_RenderClear(renderer);
+        SetColor(renderer, Amber);
+        SDL_RenderDebugText(renderer, Margin, HeadingTop, std::string(heading).c_str());
+
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            SDL_RenderDebugText(renderer, Margin, TextTop + static_cast<float>(i) * LineHeight, lines[i].c_str());
+        }
+
+        for (size_t i = 0; i < buttons.size(); ++i)
+        {
+            const SDL_FRect& area = buttons[i].Area;
+            SetColor(renderer, Amber);
+
+            if (i == lit)
+            {
+                SDL_RenderFillRect(renderer, &area);
+                SetColor(renderer, Background);
+            }
+            else
+            {
+                SDL_RenderRect(renderer, &area);
+            }
+
+            SDL_RenderDebugText(renderer, area.x + ButtonPadding, area.y + (ButtonHeight - LetterWidth) / 2,
+                                std::string(buttons[i].Label).c_str());
+        }
+
+        Present(renderer, shot);
     }
 
     double Gigabytes(uint64_t bytes)
@@ -95,22 +266,7 @@ namespace
         SetColor(renderer, BarEdge);
         const SDL_FRect edge{Margin, BarTop, barWidth, BarHeight};
         SDL_RenderRect(renderer, &edge);
-
-        if (!shot.empty())
-        {
-            // Read before the frame is shown, as SDL asks.
-            if (SDL_Surface* frame = SDL_RenderReadPixels(renderer, nullptr); frame != nullptr)
-            {
-                if (!SDL_SaveBMP(frame, MCFileSystem::ToUtf8(shot).c_str()))
-                {
-                    SDL_Log("First start: the window's frame isn't saved: %s", SDL_GetError());
-                }
-
-                SDL_DestroySurface(frame);
-            }
-        }
-
-        SDL_RenderPresent(renderer);
+        Present(renderer, shot);
     }
 }
 
@@ -130,17 +286,14 @@ std::pair<uint64_t, uint64_t> MCFirstStart::MCProgress::Get() const
 std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCWork work,
                                                    const MCWindowOptions& options)
 {
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
-    const SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | (options.Hidden ? SDL_WINDOW_HIDDEN : 0);
+    const auto open = MCOpenWindow::Open(WindowHeight, options.Hidden);
 
-    if (!SDL_CreateWindowAndRenderer("MechCommander Redux", WindowWidth, WindowHeight, flags, &window, &renderer))
+    if (!open)
     {
-        return std::unexpected(std::format("its progress window can't open ({})", SDL_GetError()));
+        return std::unexpected(open.error());
     }
 
-    SDL_SetRenderScale(renderer, DrawingScale * SDL_GetWindowPixelDensity(window),
-                       DrawingScale * SDL_GetWindowPixelDensity(window));
+    SDL_Renderer* const renderer = (*open)->Renderer;
     const auto shared = std::make_shared<MCShared>();
     std::jthread worker(
         [shared, work = std::move(work)](std::stop_token stop)
@@ -189,9 +342,6 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
         worker.detach();
     }
 
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-
     if (!shared->Done)
     {
         return false;
@@ -203,4 +353,194 @@ std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCW
     }
 
     return true;
+}
+
+std::vector<std::string> MCFirstStart::Wrapped(std::string_view text, size_t width)
+{
+    std::vector<std::string> lines;
+    // Where the last paragraph's lines begin.
+    size_t lastStart = 0;
+
+    for (const auto paragraph : std::views::split(text, '\n'))
+    {
+        lastStart = lines.size();
+        std::string line;
+
+        for (const auto part : std::views::split(std::string_view(paragraph), ' '))
+        {
+            std::string_view word(part);
+
+            if (word.empty())
+            {
+                continue;
+            }
+
+            if (!line.empty() && line.size() + 1 + word.size() > width)
+            {
+                lines.push_back(std::move(line));
+                line.clear();
+            }
+
+            while (word.size() > width)
+            {
+                if (!line.empty())
+                {
+                    lines.push_back(std::move(line));
+                    line.clear();
+                }
+
+                lines.emplace_back(word.substr(0, width));
+                word.remove_prefix(width);
+            }
+
+            if (!line.empty())
+            {
+                line += ' ';
+            }
+
+            line += word;
+        }
+
+        lines.push_back(std::move(line));
+    }
+
+    if (lines.size() <= MostLines)
+    {
+        return lines;
+    }
+
+    // The last paragraph (the step to take) shows whole, after a blank line when it has one; the text before it is cut.
+    const size_t last = lines.size() - lastStart;
+    const size_t blank = lastStart > 0 && lines[lastStart - 1].empty() ? 1 : 0;
+
+    if (last + blank < MostLines)
+    {
+        const size_t before = MostLines - last - blank;
+        std::vector<std::string> shown(lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(before));
+        CutLine(shown.back(), width);
+        shown.insert(shown.end(), lines.begin() + static_cast<std::ptrdiff_t>(lastStart - blank), lines.end());
+        return shown;
+    }
+
+    lines.resize(MostLines);
+    CutLine(lines.back(), width);
+    return lines;
+}
+
+std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_view text,
+                                        std::span<const std::string_view> buttons, const MCWindowOptions& options)
+{
+    if (buttons.empty())
+    {
+        return std::nullopt;
+    }
+
+    const std::vector<std::string> lines = Wrapped(text, LineLetters());
+    const float buttonsTop = TextTop + static_cast<float>(lines.size()) * LineHeight + ButtonsGap;
+    const std::vector<MCButton> laidOut = LaidOut(buttons, buttonsTop);
+    const auto open =
+        MCOpenWindow::Open(static_cast<int>((buttonsTop + ButtonHeight + Margin) * DrawingScale), options.Hidden);
+
+    if (!open)
+    {
+        SDL_Log("First start: the question \"%.*s\" can't be asked: %s", static_cast<int>(heading.size()),
+                heading.data(), open.error().c_str());
+        return std::nullopt;
+    }
+
+    SDL_Renderer* const renderer = (*open)->Renderer;
+    SDL_RaiseWindow((*open)->Window);
+    size_t lit = 0;
+    // The button the mouse went down on: one pressed is one let go on where it went down.
+    std::optional<size_t> pressedOn;
+
+    if (options.Answer)
+    {
+        DrawQuestion(renderer, heading, lines, laidOut, *options.Answer, options.Shot);
+        return *options.Answer < buttons.size() ? options.Answer : std::nullopt;
+    }
+
+    for (;;)
+    {
+        DrawQuestion(renderer, heading, lines, laidOut, lit, {});
+        SDL_Event event;
+
+        if (!SDL_WaitEvent(&event))
+        {
+            SDL_Log("First start: the question's window gets no events: %s", SDL_GetError());
+            return std::nullopt;
+        }
+
+        do
+        {
+            switch (event.type)
+            {
+                case SDL_EVENT_QUIT:
+                case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                    return std::nullopt;
+                case SDL_EVENT_MOUSE_MOTION:
+                {
+                    lit = ButtonAt(laidOut, event.motion.x, event.motion.y).value_or(lit);
+                    break;
+                }
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                {
+                    if (event.button.button == SDL_BUTTON_LEFT)
+                    {
+                        pressedOn = ButtonAt(laidOut, event.button.x, event.button.y);
+                    }
+
+                    break;
+                }
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                {
+                    if (event.button.button != SDL_BUTTON_LEFT)
+                    {
+                        break;
+                    }
+
+                    const std::optional<size_t> released = ButtonAt(laidOut, event.button.x, event.button.y);
+
+                    if (released && released == pressedOn)
+                    {
+                        return released;
+                    }
+
+                    pressedOn.reset();
+                    break;
+                }
+                case SDL_EVENT_KEY_DOWN:
+                {
+                    // A key held from before the window opened (Enter, starting the game) repeats: only a press counts.
+                    if (event.key.repeat)
+                    {
+                        break;
+                    }
+
+                    switch (event.key.key)
+                    {
+                        case SDLK_LEFT:
+                            lit = (lit + buttons.size() - 1) % buttons.size();
+                            break;
+                        case SDLK_RIGHT:
+                        case SDLK_TAB:
+                            lit = (lit + 1) % buttons.size();
+                            break;
+                        case SDLK_RETURN:
+                        case SDLK_KP_ENTER:
+                        case SDLK_SPACE:
+                            return lit;
+                        case SDLK_ESCAPE:
+                            return buttons.size() - 1;
+                        default:
+                            break;
+                    }
+
+                    break;
+                }
+                default:
+                    break;
+            }
+        } while (SDL_PollEvent(&event));
+    }
 }

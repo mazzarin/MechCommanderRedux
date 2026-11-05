@@ -715,8 +715,9 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CHECK(!release.Armed());
 }
 
-TEST_CASE("content updater: HD removed and got again at the release installed, its size recorded; the player's version "
-          "of an HD file kept in Redux backup, a file of their own left")
+TEST_CASE(
+    "content updater: HD removed and got again at the release installed, its size recorded; removed, the player's "
+    "version of an HD file is deleted too, a file of their own left")
 {
     MCHostedRelease release("sets");
     const std::filesystem::path& game = release.Game.Path();
@@ -761,23 +762,15 @@ TEST_CASE("content updater: HD removed and got again at the release installed, i
     CHECK(InstalledSets(release) == WithHd);
     CHECK_EQ(MCInstalled::Read(game)->Files.size(), size_t{4});
 
-    // The player's version of an HD file goes when HD goes, kept in Redux backup; a file of their own in the folder
-    // stays, and so does the folder.
+    // HD removed deletes the player's version of an HD file too, keeping nothing (GET downloads it again); a file of
+    // their own in the folder stays, and so does the folder.
     Write(game / "HD" / "terrain.hda", "my own terrain");
     Write(game / "HD" / "mine.hda", "added by the player");
     ChangeSets(release, WithoutHd);
     CHECK(!std::filesystem::exists(game / "HD" / "terrain.hda"));
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK(!std::filesystem::exists(game / "Redux backup"));
     CHECK_EQ(Read(game / "HD" / "mine.hda"), std::string("added by the player"));
     CHECK(InstalledSets(release) == WithoutHd);
-
-    // Again: the backup's first copy stays (the uninstall puts it back), the later one kept beside it.
-    ChangeSets(release, WithHd);
-    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
-    Write(game / "HD" / "terrain.hda", "my terrain again");
-    ChangeSets(release, WithoutHd);
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
-    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain (2).hda"), std::string("my terrain again"));
 
     // A sets file that can't be read is left aside: the copy keeps the sets its record has.
     Write(game / "Redux update" / "sets.json", "not json");
@@ -1317,6 +1310,76 @@ TEST_CASE("updater: with an update shown, HD's choice plans the update again wit
     }
 }
 
+TEST_CASE("content updater: REPAIR gives up an update stopped partway and installs the release over the files as "
+          "they are, keeping the player's file it set aside")
+{
+    MCHostedRelease release("repair");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(release.Host.Path());
+
+    // The player's own mission where release 2 adds one; release 2 staged and armed.
+    Write(game / "data" / "missions" / "new.fit", "the player's own mission");
+    const auto offer = MCContentUpdater::Check(release.Setup(), *disk, source);
+    REQUIRE(offer.has_value());
+    REQUIRE(offer->has_value());
+    REQUIRE(MCContentUpdater::Stage(release.Setup(), *disk, source, **offer, GoOn).has_value());
+    REQUIRE(MCContentUpdater::Arm(release.Setup(), *disk, **offer).has_value());
+
+    // Stopped partway: the old files and the player's mission set aside, the changed file moved in, the big file's
+    // staged copy lost.
+    const std::filesystem::path update = game / "Redux update";
+    std::filesystem::rename(update / "ready.json", update / "journal.json");
+
+    for (const std::string_view path :
+         {"data/changed.fit", "HD/terrain.hda", "data/removed.fit", "data/missions/new.fit"})
+    {
+        const std::filesystem::path aside = update / "replaced" / path;
+        std::filesystem::create_directories(aside.parent_path());
+        std::filesystem::rename(game / path, aside);
+    }
+
+    std::filesystem::rename(update / "staged" / "data" / "changed.fit", game / "data" / "changed.fit");
+    std::filesystem::remove(update / "staged" / "HD" / "terrain.hda");
+
+    // Offline, or the release's list out of reach, nothing is given up: TRY AGAIN can still finish the update.
+    const auto unchanged = [&]()
+    {
+        CHECK(std::filesystem::exists(update / "journal.json"));
+        CHECK(!MCContentSwap::Repairing(*disk, game));
+        CHECK_EQ(Read(update / "replaced" / "data" / "missions" / "new.fit"), std::string("the player's own mission"));
+        CHECK_EQ(Read(update / "replaced" / "data" / "removed.fit"), std::string("removed in v2"));
+    };
+
+    MCFolderSource offline(release.Host.Path() / "nowhere");
+    REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, offline, GoOn).has_value());
+    unchanged();
+    const std::filesystem::path lists = release.Host.Path() / "lists";
+    const std::filesystem::path listsAway = release.Host.Path() / "lists-away";
+    std::filesystem::rename(lists, listsAway);
+    REQUIRE(!MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
+    unchanged();
+    std::filesystem::rename(listsAway, lists);
+
+    REQUIRE(MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
+    CHECK(MCContentSwap::Repairing(*disk, game));
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    CHECK(!MCContentSwap::Repairing(*disk, game));
+    release.CheckIsRelease2();
+
+    // The player's mission kept; the update's own files, and the release's already in place, recorded as placed.
+    CHECK_EQ(Read(game / "Redux backup" / "data" / "missions" / "new.fit"), std::string("the player's own mission"));
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "data" / "changed.fit"));
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "HD"));
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+
+    for (const auto& [folded, file] : record->Files)
+    {
+        CHECK(file.Placed);
+    }
+}
+
 TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends with it; closing it stops the work")
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
@@ -1383,6 +1446,140 @@ TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends w
     REQUIRE(closed.has_value());
     CHECK(!*closed);
     CHECK(stopped);
+    SDL_Quit();
+}
+
+TEST_CASE("recovery screen: its text wraps between words, a word too long within it; past 12 lines the step to take "
+          "still shows whole")
+{
+    constexpr size_t Width = 10;
+    CHECK((MCFirstStart::Wrapped("ONE TWO THREE", Width) == std::vector<std::string>{"ONE TWO", "THREE"}));
+    CHECK((MCFirstStart::Wrapped("TENLETTERS FITS", Width) == std::vector<std::string>{"TENLETTERS", "FITS"}));
+    CHECK((MCFirstStart::Wrapped("ELEVENLETTERS", Width) == std::vector<std::string>{"ELEVENLETT", "ERS"}));
+    CHECK((MCFirstStart::Wrapped("A\n\nB", Width) == std::vector<std::string>{"A", "", "B"}));
+
+    // A problem of 20 long words: it's cut short, and the step after it shows whole.
+    std::string text;
+
+    for (int word = 0; word < 20; ++word)
+    {
+        text += "ABCDEFGH ";
+    }
+
+    text += "\n\nCLOSE IT, THEN TRY AGAIN.";
+    const std::vector<std::string> lines = MCFirstStart::Wrapped(text, Width);
+    REQUIRE_EQ(lines.size(), size_t{12});
+    CHECK_EQ(lines[7], std::string("ABCDEFG..."));
+    CHECK_EQ(lines[8], std::string());
+    CHECK_EQ(lines[9], std::string("CLOSE IT,"));
+    CHECK_EQ(lines[10], std::string("THEN TRY"));
+    CHECK_EQ(lines[11], std::string("AGAIN."));
+
+    // A step too long to show whole is cut at the end, as any text.
+    const std::vector<std::string> one = MCFirstStart::Wrapped(text.substr(0, 20 * 9), Width);
+    REQUIRE_EQ(one.size(), size_t{12});
+    CHECK_EQ(one.back(), std::string("ABCDEFG..."));
+}
+
+TEST_CASE_ISOLATED("recovery screen: the question wraps its text over its buttons; Enter, the arrows, Escape and the "
+                   "mouse press them")
+{
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+    {
+        std::cout << "  (skipped: no video: " << SDL_GetError() << ")\n";
+        return;
+    }
+
+    constexpr std::string_view Heading = "THE UPDATE STOPPED PARTWAY.";
+    constexpr std::string_view Text =
+        "HD/TERRAIN.HDA'S STAGED COPY IS MISSING OR THE WRONG SIZE; THEN HD/TAKEN/OUT.HDA CAN'T BE PUT BACK.\n\nCLOSE "
+        "ANY PROGRAM USING THE GAME'S FOLDER, THEN TRY AGAIN. REPAIR DOWNLOADS ANY FILE THAT'S WRONG OR MISSING.";
+    constexpr std::array<std::string_view, 3> Buttons = {"TRY AGAIN", "REPAIR", "QUIT"};
+
+    // REPAIR lit, saved as a shot with --shots.
+    MCFirstStart::MCWindowOptions options{.Hidden = true, .Answer = 1};
+
+    if (const std::optional<std::string_view> shots = MCTest::Option("shots"))
+    {
+        options.Shot = MCFileSystem::FromUtf8(*shots) / "recovery screen.bmp";
+    }
+
+    const std::optional<size_t> shown = MCFirstStart::Ask(Heading, Text, Buttons, options);
+
+    if (!shown)
+    {
+        std::cout << "  (skipped: the window can't open)\n";
+        SDL_Quit();
+        return;
+    }
+
+    CHECK_EQ(*shown, size_t{1});
+
+    const auto pressed = [&](std::initializer_list<SDL_Keycode> keys)
+    {
+        for (const SDL_Keycode key : keys)
+        {
+            SDL_Event event{};
+            event.type = SDL_EVENT_KEY_DOWN;
+            event.key.key = key;
+            event.key.down = true;
+            REQUIRE(SDL_PushEvent(&event));
+        }
+
+        return MCFirstStart::Ask(Heading, Text, Buttons, {.Hidden = true});
+    };
+
+    CHECK(pressed({SDLK_RETURN}) == std::optional<size_t>(0));
+    CHECK(pressed({SDLK_RIGHT, SDLK_RETURN}) == std::optional<size_t>(1));
+    CHECK(pressed({SDLK_LEFT, SDLK_RETURN}) == std::optional<size_t>(2));
+    CHECK(pressed({SDLK_ESCAPE}) == std::optional<size_t>(2));
+
+    // Enter held from before the window opened repeats, which isn't a press.
+    SDL_Event held{};
+    held.type = SDL_EVENT_KEY_DOWN;
+    held.key.key = SDLK_RETURN;
+    held.key.down = true;
+    held.key.repeat = true;
+    REQUIRE(SDL_PushEvent(&held));
+    CHECK(pressed({SDLK_ESCAPE}) == std::optional<size_t>(2));
+
+    // The mouse, in the window's points: one line of text puts the buttons' middles 120 down, REPAIR's 272 across and
+    // QUIT's 392. A click is a press and a release on one button.
+    const auto clicked = [&](std::initializer_list<std::pair<float, float>> downUp, std::string_view text)
+    {
+        bool down = true;
+
+        for (const auto& [x, y] : downUp)
+        {
+            SDL_Event event{};
+            event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            event.button.button = SDL_BUTTON_LEFT;
+            event.button.down = down;
+            event.button.x = x;
+            event.button.y = y;
+            REQUIRE(SDL_PushEvent(&event));
+            down = !down;
+        }
+
+        return MCFirstStart::Ask(Heading, text, Buttons, {.Hidden = true});
+    };
+
+    constexpr float ButtonsMiddle = 120;
+    constexpr float RepairMiddle = 272;
+    constexpr float QuitMiddle = 392;
+    CHECK(clicked({{RepairMiddle, ButtonsMiddle}, {RepairMiddle, ButtonsMiddle}}, "ONE LINE.") ==
+          std::optional<size_t>(1));
+    CHECK(clicked({{RepairMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle},
+                   {QuitMiddle, ButtonsMiddle}},
+                  "ONE LINE.") == std::optional<size_t>(2));
+
+    // Closed: no answer.
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    REQUIRE(SDL_PushEvent(&quit));
+    CHECK(!MCFirstStart::Ask(Heading, Text, Buttons, {.Hidden = true}).has_value());
     SDL_Quit();
 }
 

@@ -19,6 +19,7 @@ namespace
     using MCContentFixture::KeyList;
     using MCContentFixture::KeyPair;
     using MCContentPlan::MCAction;
+    using MCContentSwap::MCKeep;
 
     /// <summary>A scratch folder of the test's own, deleted with it.</summary>
     class ScratchFolder : public MCScratchFolder
@@ -349,11 +350,11 @@ TEST_CASE("content plan: kept, patched, fetched, the player's replaced and kept,
 
     // Kept in Redux backup: every file replaced or removed that an update didn't place as it is (the folder's own, the
     // mod, the one the player changed); the file the earlier release placed goes.
-    CHECK(StepFor(*plan, "data/patched.fit")->Backup);
-    CHECK(StepFor(*plan, "data/fetched.fit")->Backup);
-    CHECK(StepFor(*plan, "data/mod.fit")->Backup);
-    CHECK(StepFor(*plan, "DATA/changed.fit")->Backup);
-    CHECK(!StepFor(*plan, "DATA/dropped.fit")->Backup);
+    CHECK(StepFor(*plan, "data/patched.fit")->Keep == MCKeep::Always);
+    CHECK(StepFor(*plan, "data/fetched.fit")->Keep == MCKeep::Always);
+    CHECK(StepFor(*plan, "data/mod.fit")->Keep == MCKeep::Always);
+    CHECK(StepFor(*plan, "DATA/changed.fit")->Keep == MCKeep::Always);
+    CHECK(StepFor(*plan, "DATA/dropped.fit")->Keep == MCKeep::IfChanged);
 
     // Files go where the folders are on disk; the patch is the one from the copy found.
     CHECK_EQ(StepFor(*plan, "data/fetched.fit")->OnDisk, std::string("DATA/fetched.fit"));
@@ -427,14 +428,14 @@ TEST_CASE("content plan: a file as recorded keeps its hash; one changed since is
     const auto rehashed = MCContentPlan::Make(third, *record, list, MCSha256::Of("list"), GameAndHd);
     REQUIRE(rehashed.has_value());
     CHECK(ActionFor(*rehashed, "ART.FST") == MCAction::Fetch);
-    CHECK(StepFor(*rehashed, "ART.FST")->Backup);
+    CHECK(StepFor(*rehashed, "ART.FST")->Keep == MCKeep::Always);
 
-    // HD removed from the copy's sets: its files go, kept in Redux backup as the folder's own.
+    // HD removed from the copy's sets: its files go, deleted though found in place (GET downloads them again).
     MCContentFolder fourth(root);
     const auto dropped = MCContentPlan::Make(fourth, *record, list, MCSha256::Of("list"), GameOnly);
     REQUIRE(dropped.has_value());
     CHECK(ActionFor(*dropped, "HD/terrain.hda") == MCAction::Remove);
-    CHECK(StepFor(*dropped, "HD/terrain.hda")->Backup);
+    CHECK(StepFor(*dropped, "HD/terrain.hda")->Keep == MCKeep::Never);
     CHECK(!dropped->Record.Sets.contains(std::string(MCContentList::HdSet)));
 }
 

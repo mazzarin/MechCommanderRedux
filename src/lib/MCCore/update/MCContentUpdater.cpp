@@ -7,6 +7,7 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 #include "update/MCUpdateLock.h"
+#include "update/MCUpdatePlace.h"
 
 #include <random>
 
@@ -393,6 +394,11 @@ std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, M
     if (offer.Content == nullptr)
     {
         return {};
+    }
+
+    if (const auto placed = MCUpdatePlace::Check(setup.GameFolder, offer.Content->Plan); !placed)
+    {
+        return placed;
     }
 
     return MCContentStage::Stage(disk, source, setup.GameFolder, offer.Content->Plan, offer.Content->List, progress);

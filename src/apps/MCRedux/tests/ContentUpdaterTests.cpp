@@ -18,6 +18,8 @@
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCSetupBackend.h"
+#include "update/MCSyncedFolder.h"
+#include "update/MCUpdatePlace.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
@@ -1074,6 +1076,24 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
     // The new build's start: the setup's folder goes.
     CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), NewerBuild, FakeWindows(log)));
     CHECK(!std::filesystem::exists(release.Game.Path() / "Redux update" / "program"));
+}
+
+TEST_CASE("update place: every path an update installs, stages, downloads and sets aside is held to Windows' limit; "
+          "a folder no client syncs passes")
+{
+    MCHostedRelease release("place");
+    const std::filesystem::path& game = release.Game.Path();
+    const MCContentPlan::MCPlan plan = release.Plan();
+    CHECK(MCUpdatePlace::FitPaths(game, plan, MCUpdatePlace::WindowsFileLimit, MCUpdatePlace::WindowsFolderLimit));
+
+    // The patch's download is the longest: a limit just under it refuses the plan, naming it.
+    const std::string patch = MCFileSystem::ToUtf8(std::filesystem::absolute(game) / "Redux update" / "download" /
+                                                   "patches" / "terrain-1-2.hdiff");
+    const auto under = MCUpdatePlace::FitPaths(game, plan, patch.size() - 1, patch.size());
+    REQUIRE(!under.has_value());
+    CHECK(under.error().find("terrain-1-2.hdiff's path is too long for Windows") != std::string::npos);
+    CHECK(MCUpdatePlace::FitPaths(game, plan, patch.size(), patch.size()));
+    CHECK(!MCSyncedBy(game).has_value());
 }
 
 TEST_CASE("content removal: the uninstaller's removal takes what updates put there, leaves what a copy taken over had "

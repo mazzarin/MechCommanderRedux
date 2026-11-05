@@ -26,8 +26,11 @@ namespace
 {
     /// <summary>The file in the user folder that remembers the chosen game folder: its path, UTF-8, on one line.</summary>
     constexpr std::string_view RememberedFile = "gamefolder.txt";
-    /// <summary>The settings file, in the game folder and the user folder.</summary>
-    constexpr std::string_view PrefsFile = "PREFS.CFG";
+    /// <summary>
+    /// The file in the user folder that marks the original's VirtualStore files as carried over: the store's path,
+    /// UTF-8, on one line.
+    /// </summary>
+    constexpr std::string_view CarriedOverFile = "carriedover.txt";
     /// <summary>How deep a chosen folder that isn't an install is searched (a folder of games, a CD, a Wine drive).</summary>
     constexpr int ChosenFolderDepth = 4;
     /// <summary>How deep a Wine drive is searched: Program Files\MicroProse\MCX, where the installer puts it, is 3.</summary>
@@ -219,6 +222,31 @@ namespace
         std::vector<std::filesystem::path>& _Found;
         int _Read = 0;
     };
+
+    /// <summary>Writes <paramref name="folder"/>, UTF-8, as the one line of the user folder's file <paramref name="name"/>.</summary>
+    /// <returns>Empty, or what went wrong.</returns>
+    std::string WritePathFile(const std::filesystem::path& userFolder, std::string_view name,
+                              const std::filesystem::path& folder)
+    {
+        std::error_code error;
+        std::filesystem::create_directories(userFolder, error);
+
+        if (error)
+        {
+            return std::format("Can't make {}: {}", ToUtf8(userFolder), error.message());
+        }
+
+        const std::filesystem::path file = userFolder / name;
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << ToUtf8(folder) << '\n';
+
+        if (!out.flush())
+        {
+            return std::format("Can't write {}", ToUtf8(file));
+        }
+
+        return {};
+    }
 
     /// <summary>Adds the installs of <paramref name="more"/> that <paramref name="found"/> lacks, in order.</summary>
     void AddNew(std::vector<std::filesystem::path>& found, const std::vector<std::filesystem::path>& more)
@@ -543,7 +571,9 @@ std::filesystem::path MCGameFolder::VirtualStore(const std::filesystem::path& fo
 
 std::string MCGameFolder::CarryOver(const std::filesystem::path& store, const std::filesystem::path& userFolder)
 {
-    if (HasFile(userFolder, PrefsFile))
+    std::error_code markError;
+
+    if (std::filesystem::exists(userFolder / CarriedOverFile, markError))
     {
         return {};
     }
@@ -581,6 +611,12 @@ std::string MCGameFolder::CarryOver(const std::filesystem::path& store, const st
         failed += std::format("\n  {}: {}", ToUtf8(store), error.message());
     }
 
+    // Marked even when something wasn't copied: another try would bring back the saves deleted since.
+    if (const std::string marked = WritePathFile(userFolder, CarriedOverFile, store); !marked.empty())
+    {
+        failed += std::format("\n  {}", marked);
+    }
+
     return failed.empty() ? failed : std::format("Not copied from {}:{}", ToUtf8(store), failed);
 }
 
@@ -604,24 +640,7 @@ std::filesystem::path MCGameFolder::Remembered(const std::filesystem::path& user
 
 std::string MCGameFolder::Remember(const std::filesystem::path& userFolder, const std::filesystem::path& folder)
 {
-    std::error_code error;
-    std::filesystem::create_directories(userFolder, error);
-
-    if (error)
-    {
-        return std::format("Can't make {}: {}", ToUtf8(userFolder), error.message());
-    }
-
-    const std::filesystem::path file = userFolder / RememberedFile;
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out << ToUtf8(folder) << '\n';
-
-    if (!out.flush())
-    {
-        return std::format("Can't write {}", ToUtf8(file));
-    }
-
-    return {};
+    return WritePathFile(userFolder, RememberedFile, folder);
 }
 
 std::string MCGameFolder::Label(const std::filesystem::path& install)

@@ -115,8 +115,8 @@ TEST_CASE("launcher: the chosen game folder is remembered for the next start")
 
 /// <summary>
 /// The first start copies what the original wrote (Windows' VirtualStore copy of the game folder) into the user folder,
-/// never over the user folder's own files; once the user folder has its PREFS.CFG, nothing is copied, so a save
-/// deleted in Redux stays deleted. Off Windows there's no VirtualStore.
+/// never over the user folder's own files; later starts copy nothing, so a save deleted in Redux stays deleted. Off
+/// Windows there's no VirtualStore.
 /// </summary>
 TEST_CASE("launcher: the first start carries over the original's settings and saves")
 {
@@ -136,9 +136,12 @@ TEST_CASE("launcher: the first start carries over the original's settings and sa
     CHECK_EQ(ReadAll(user / saves / "mine.sav"), std::string("the original's save"));
     CHECK_EQ(ReadAll(user / saves / "both.sav"), std::string("Redux's save"));
 
+    // A later start, the user folder without a PREFS.CFG of its own even.
     std::filesystem::remove(user / saves / "mine.sav");
+    std::filesystem::remove(user / "prefs.cfg");
     CHECK(MCGameFolder::CarryOver(store, user).empty());
     CHECK(!std::filesystem::exists(user / saves / "mine.sav"));
+    CHECK(!std::filesystem::exists(user / "prefs.cfg"));
 
     const std::filesystem::path game = scratch.Path() / "game";
     std::filesystem::create_directories(game);

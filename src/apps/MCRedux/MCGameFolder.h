@@ -55,9 +55,9 @@ namespace MCGameFolder
     std::filesystem::path VirtualStore(const std::filesystem::path& folder);
 
     /// <summary>
-    /// At the first start (no PREFS.CFG in <paramref name="userFolder"/> yet), copies into the user folder the files
-    /// of <paramref name="store"/> it lacks: what the original wrote (its settings, saves and missions), so the game
-    /// sees the folder as the original did. Later starts copy nothing, so a save deleted in Redux stays deleted.
+    /// Once, copies into <paramref name="userFolder"/> the files of <paramref name="store"/> it lacks: what the
+    /// original wrote (its settings, saves and missions), so the game sees the folder as the original did. A file in
+    /// the user folder marks it done, so a save deleted in Redux stays deleted.
     /// </summary>
     /// <returns>Empty, or what couldn't be copied.</returns>
     std::string CarryOver(const std::filesystem::path& store, const std::filesystem::path& userFolder);

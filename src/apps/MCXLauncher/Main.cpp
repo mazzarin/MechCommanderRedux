@@ -146,7 +146,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     AllowSetForegroundWindow(process.dwProcessId);
-    ResumeThread(process.hThread);
+
+    if (ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+    {
+        const DWORD resumeError = GetLastError();
+        TerminateProcess(process.hProcess, FailedExitCode);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return Fail(std::format(L"MechCommander Redux couldn't start {}: {}", game, SystemMessage(resumeError)));
+    }
+
     CloseHandle(process.hThread);
 
     DWORD exitCode = FailedExitCode;

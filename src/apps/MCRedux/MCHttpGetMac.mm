@@ -7,6 +7,7 @@
 #include <deque>
 #include <format>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace
@@ -16,6 +17,13 @@ namespace
     /// <summary>Our own user agent, as the reports': the system's names the macOS version, which isn't the host's.</summary>
     NSString* const UserAgent = @"MechCommander Redux";
     NSString* const ContentRangeHeader = @"Content-Range";
+    /// <summary>
+    /// The bytes arrived and not yet taken past which the transfer is paused (the session reads no more from the
+    /// connection), and the bytes it's taken down to before it goes on.
+    /// </summary>
+    constexpr size_t QueuedMost = size_t{16} << 20;
+    constexpr size_t QueuedResume = QueuedMost / 2;
+    constexpr std::string_view StoppedError = "stopped";
 
     /// <summary>What the session's delegate passes to the thread that asked, in order.</summary>
     struct MCEvent
@@ -35,31 +43,75 @@ namespace
         std::string Error;
     };
 
-    /// <summary>One transfer's events: the delegate adds them, the thread that asked takes them.</summary>
+    /// <summary>
+    /// One transfer's events: the delegate adds them, the thread that asked takes them. Its task is paused while more
+    /// than <see cref="QueuedMost"/> bytes wait, and a cancel ends the wait at once.
+    /// </summary>
     struct MCTransfer
     {
-        NSUInteger Task = 0;
+        NSURLSessionDataTask* Task = nil;
+        NSUInteger TaskId = 0;
         std::mutex Lock;
         std::condition_variable Arrived;
         std::deque<MCEvent> Events;
+        size_t Queued = 0;
+        bool Paused = false;
+        bool Cancelled = false;
 
         void Add(MCEvent event)
         {
+            const std::scoped_lock lock(Lock);
+
+            if (event.Kind == MCEvent::MCKind::Body)
             {
-                const std::scoped_lock lock(Lock);
-                Events.push_back(std::move(event));
+                Queued += event.Bytes.length;
+
+                if (Queued > QueuedMost && !Paused && !Cancelled)
+                {
+                    Paused = true;
+                    [Task suspend];
+                }
             }
 
+            Events.push_back(std::move(event));
             Arrived.notify_one();
         }
 
-        MCEvent Take()
+        /// <summary>The next event, or none once cancelled.</summary>
+        std::optional<MCEvent> Take()
         {
             std::unique_lock lock(Lock);
-            Arrived.wait(lock, [&] { return !Events.empty(); });
+            Arrived.wait(lock, [&] { return Cancelled || !Events.empty(); });
+
+            if (Cancelled)
+            {
+                return std::nullopt;
+            }
+
             MCEvent event = std::move(Events.front());
             Events.pop_front();
+
+            if (event.Kind == MCEvent::MCKind::Body)
+            {
+                Queued -= event.Bytes.length;
+
+                if (Paused && Queued <= QueuedResume)
+                {
+                    Paused = false;
+                    [Task resume];
+                }
+            }
+
             return event;
+        }
+
+        /// <summary>From any thread: the task ends, and the thread waiting for its events wakes.</summary>
+        void Cancel()
+        {
+            const std::scoped_lock lock(Lock);
+            Cancelled = true;
+            [Task cancel];
+            Arrived.notify_all();
         }
     };
 }
@@ -84,7 +136,7 @@ namespace
 - (std::shared_ptr<MCTransfer>)transferFor:(NSURLSessionTask*)task
 {
     const std::scoped_lock lock(_Lock);
-    return _Transfer != nullptr && _Transfer->Task == task.taskIdentifier ? _Transfer : nullptr;
+    return _Transfer != nullptr && _Transfer->TaskId == task.taskIdentifier ? _Transfer : nullptr;
 }
 
 - (void)URLSession:(NSURLSession*)session
@@ -171,23 +223,69 @@ namespace
             }
 
             const auto transfer = std::make_shared<MCTransfer>();
-            NSURLSessionDataTask* task = [_Session dataTaskWithRequest:request];
-            transfer->Task = task.taskIdentifier;
-            [_Delegate follow:transfer];
-            [task resume];
+            transfer->Task = [_Session dataTaskWithRequest:request];
+            transfer->TaskId = transfer->Task.taskIdentifier;
 
+            {
+                const std::scoped_lock lock(_Lock);
+
+                if (_Cancelled)
+                {
+                    return std::unexpected(std::string(StoppedError));
+                }
+
+                _Current = transfer;
+            }
+
+            [_Delegate follow:transfer];
+            [transfer->Task resume];
+            const auto done = Follow(*transfer, reply);
+            [_Delegate follow:nullptr];
+            [transfer->Task cancel];
+            const std::scoped_lock lock(_Lock);
+            _Current.reset();
+
+            if (_Cancelled)
+            {
+                return std::unexpected(std::string(StoppedError));
+            }
+
+            return done;
+        }
+
+        void Cancel() override
+        {
+            const std::scoped_lock lock(_Lock);
+            _Cancelled = true;
+
+            if (_Current != nullptr)
+            {
+                _Current->Cancel();
+            }
+        }
+
+    private:
+        /// <summary>Passes the transfer's events to the reply until the answer ends, the reply stops it or it's cancelled.</summary>
+        std::expected<void, std::string> Follow(MCTransfer& transfer, MCHttpSource::MCReply& reply)
+        {
             for (;;)
             {
-                MCEvent event = transfer->Take();
+                std::optional<MCEvent> event = transfer.Take();
+
+                if (!event)
+                {
+                    return std::unexpected(std::string(StoppedError));
+                }
+
                 __block bool goOn = true;
 
-                switch (event.Kind)
+                switch (event->Kind)
                 {
                     case MCEvent::MCKind::Status:
-                        goOn = reply.Status(event.Status, event.ContentRange);
+                        goOn = reply.Status(event->Status, event->ContentRange);
                         break;
                     case MCEvent::MCKind::Body:
-                        [event.Bytes enumerateByteRangesUsingBlock:^(const void* bytes, NSRange range, BOOL* stop) {
+                        [event->Bytes enumerateByteRangesUsingBlock:^(const void* bytes, NSRange range, BOOL* stop) {
                           if (!reply.Body({static_cast<const char*>(bytes), range.length}))
                           {
                               goOn = false;
@@ -196,28 +294,26 @@ namespace
                         }];
                         break;
                     case MCEvent::MCKind::Done:
-                        [_Delegate follow:nullptr];
-
-                        if (event.Error.empty())
+                        if (event->Error.empty())
                         {
                             return {};
                         }
 
-                        return std::unexpected(event.Error);
+                        return std::unexpected(event->Error);
                 }
 
                 if (!goOn)
                 {
-                    [_Delegate follow:nullptr];
-                    [task cancel];
                     return {};
                 }
             }
         }
 
-    private:
         MCHttpDelegate* _Delegate;
         NSURLSession* _Session;
+        std::mutex _Lock;
+        bool _Cancelled = false;
+        std::shared_ptr<MCTransfer> _Current;
     };
 }
 

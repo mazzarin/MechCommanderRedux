@@ -21,6 +21,9 @@ namespace
     constexpr auto CutWait = 300ms;
     /// <summary>A cancel ends a wait to try again (a second, the first) well before it would end.</summary>
     constexpr auto CancelledWithin = 800ms;
+    /// <summary>The longest a stalled answer holds its connection, and how soon a cancel ends a transfer stalled.</summary>
+    constexpr auto HoldTime = 20s;
+    constexpr auto StalledCancelledWithin = 5s;
 
     /// <summary>Bytes no two runs differ in, and no two places in them repeat soon.</summary>
     std::string Bytes(size_t count)
@@ -47,8 +50,8 @@ namespace
     /// <summary>
     /// A host on this machine for the tests: serves files from memory under /content/, whole or from a byte on
     /// ("Range: bytes=N-"), one connection at a time, each closed after its answer. It can ignore ranges, as a host
-    /// may, cut the next answer off after some bytes, as a lost connection does, and answer the next requests with a
-    /// failure, as a busy host does.
+    /// may, cut the next answer off after some bytes, as a lost connection does, answer the next requests with a
+    /// failure, as a busy host does, stall the next answer after some bytes, and send its answers slowly.
     /// </summary>
     class MCTestHost
     {
@@ -78,6 +81,19 @@ namespace
 
         /// <summary>The next answer's body stops after <paramref name="bytes"/> bytes.</summary>
         void CutAfter(int64_t bytes) { _CutAfter = bytes; }
+
+        /// <summary>
+        /// The next answer sends <paramref name="bytes"/> bytes of its body, then nothing more, the connection held
+        /// open until the client closes it.
+        /// </summary>
+        void StallAfter(int64_t bytes) { _StallAfter = bytes; }
+
+        /// <summary>Answers send their body <paramref name="bytes"/> at a time, waiting <paramref name="wait"/> after each.</summary>
+        void Pace(size_t bytes, std::chrono::milliseconds wait)
+        {
+            _PaceBytes = bytes;
+            _PaceWait = wait;
+        }
 
         /// <summary>The next <paramref name="count"/> requests are answered <paramref name="status"/>, with no body.</summary>
         void FailNext(int status, int count)
@@ -200,9 +216,33 @@ namespace
                                      : std::string("HTTP/1.1 200 OK\r\n");
             answer += std::format("Content-Length: {}\r\nConnection: close\r\n\r\n", bytes.size() - first);
             const int64_t cut = _CutAfter.exchange(-1);
-            const size_t sent = cut >= 0 ? static_cast<size_t>(cut) : bytes.size() - first;
-            answer.append(bytes, static_cast<size_t>(first), sent);
+            const int64_t stall = _StallAfter.exchange(-1);
+            const int64_t shortened = cut >= 0 ? cut : stall;
+            const size_t sent = shortened >= 0 ? static_cast<size_t>(shortened) : bytes.size() - first;
+            const std::string_view body = std::string_view(bytes).substr(static_cast<size_t>(first), sent);
             Send(client, answer);
+
+            for (size_t at = 0; at < body.size() && !_Stop;)
+            {
+                const size_t piece = _PaceBytes > 0 ? std::min<size_t>(_PaceBytes, body.size() - at) : body.size();
+
+                if (!Send(client, body.substr(at, piece)))
+                {
+                    return;
+                }
+
+                at += piece;
+
+                if (_PaceBytes > 0)
+                {
+                    std::this_thread::sleep_for(_PaceWait.load());
+                }
+            }
+
+            if (stall >= 0)
+            {
+                Hold(client);
+            }
 
             // A connection lost midway has been passing bytes on all along; NSURLSession drops what it holds unpassed
             // when the connection goes, so the cut waits for what was sent to be passed on.
@@ -212,7 +252,26 @@ namespace
             }
         }
 
-        void Send(MCSocket::Handle client, std::string_view data)
+        /// <summary>Sends nothing more, until the client closes the connection or the host stops (or a long while).</summary>
+        void Hold(MCSocket::Handle client)
+        {
+            const auto deadline = std::chrono::steady_clock::now() + HoldTime;
+
+            while (!_Stop && std::chrono::steady_clock::now() < deadline)
+            {
+                std::array<uint8_t, 256> buffer{};
+
+                if (_Net.Receive(client, buffer) < 0)
+                {
+                    return;
+                }
+
+                std::this_thread::sleep_for(PollTime);
+            }
+        }
+
+        /// <summary>Sends all of <paramref name="data"/>: false when the connection failed (or the host stops).</summary>
+        bool Send(MCSocket::Handle client, std::string_view data)
         {
             while (!data.empty() && !_Stop)
             {
@@ -220,7 +279,7 @@ namespace
 
                 if (sent < 0)
                 {
-                    return;
+                    return false;
                 }
 
                 if (sent == 0)
@@ -230,6 +289,8 @@ namespace
 
                 data.remove_prefix(static_cast<size_t>(sent));
             }
+
+            return data.empty();
         }
 
         MCSocketTransport _Net;
@@ -240,6 +301,9 @@ namespace
         std::atomic<bool> _Stop = false;
         std::atomic<bool> _IgnoreRanges = false;
         std::atomic<int64_t> _CutAfter = -1;
+        std::atomic<int64_t> _StallAfter = -1;
+        std::atomic<size_t> _PaceBytes = 0;
+        std::atomic<std::chrono::milliseconds> _PaceWait{};
         std::atomic<int> _FailStatus = 0;
         std::atomic<int> _FailCount = 0;
         std::mutex _Lock;
@@ -351,6 +415,83 @@ TEST_CASE("content source: a busy host is tried again, a missing file isn't; a c
     CHECK_EQ(Fetch(*source, ZipName, folder.Path() / "later.zip", zip.size(), received).error_or(""),
              std::string("stopped"));
     CHECK_EQ(host.Ranges().size(), size_t{7});
+}
+
+TEST_CASE("content source: a cancel from another thread ends a transfer at once, stalled or streaming")
+{
+    const std::string zip = Bytes(ZipBytes);
+    const MCScratchFolder folder(TestGroup, "cancelled");
+
+    // Fetches with the host as set, cancelling from another thread once bytes have come: how long it took.
+    const auto cancelledFetch = [&](MCTestHost& host, std::string_view name)
+    {
+        const auto source = SourceAt(host);
+        std::atomic<uint64_t> received = 0;
+        std::thread canceller(
+            [&]
+            {
+                const auto deadline = std::chrono::steady_clock::now() + RequestTime;
+
+                while (received == 0 && std::chrono::steady_clock::now() < deadline)
+                {
+                    std::this_thread::sleep_for(PollTime);
+                }
+
+                source->Cancel();
+            });
+        const auto start = std::chrono::steady_clock::now();
+        const auto fetched = source->Fetch(ZipName, folder.Path() / name, zip.size(),
+                                           [&](std::span<const char> bytes)
+                                           {
+                                               received += bytes.size();
+                                               return true;
+                                           });
+        const auto took = std::chrono::steady_clock::now() - start;
+        canceller.join();
+        CHECK_EQ(fetched.error_or(""), std::string("stopped"));
+        CHECK(received > 0);
+        CHECK(std::filesystem::file_size(folder.Path() / name) < zip.size());
+        return took;
+    };
+
+    // The host sends a part, then nothing: the cancel doesn't wait for the idle timeout.
+    {
+        MCTestHost host({{std::string(ZipName), zip}});
+        constexpr int64_t StallBytes = 20'000;
+        host.StallAfter(StallBytes);
+        CHECK(cancelledFetch(host, "stalled.zip") < StalledCancelledWithin);
+    }
+
+    // Streaming slowly: it ends at once, not at the end of the file.
+    MCTestHost host({{std::string(ZipName), zip}});
+    constexpr size_t PaceBytes = 4096;
+    constexpr auto PaceWait = 20ms;
+    host.Pace(PaceBytes, PaceWait);
+    CHECK(cancelledFetch(host, "streaming.zip") < StalledCancelledWithin);
+}
+
+TEST_CASE("content source: a reader slower than the host gets every byte in order (the transfer paused meanwhile)")
+{
+    // More than the transfer holds unread before it pauses (16 MB), read slowly at first.
+    constexpr size_t BigBytes = size_t{40} << 20;
+    const std::string big = Bytes(BigBytes);
+    MCTestHost host({{std::string(ZipName), big}});
+    const auto source = SourceAt(host);
+    const MCScratchFolder folder(TestGroup, "slow-reader");
+    constexpr auto SlowStart = 500ms;
+    bool first = true;
+    const auto fetched = source->Fetch(ZipName, folder.Path() / "big.zip", big.size(),
+                                       [&](std::span<const char>)
+                                       {
+                                           if (std::exchange(first, false))
+                                           {
+                                               std::this_thread::sleep_for(SlowStart);
+                                           }
+
+                                           return true;
+                                       });
+    CHECK_EQ(fetched.error_or(""), std::string());
+    CHECK(FileText(folder.Path() / "big.zip") == big);
 }
 
 TEST_CASE("content source: from a host that ignores the range, the bytes already here are skipped")

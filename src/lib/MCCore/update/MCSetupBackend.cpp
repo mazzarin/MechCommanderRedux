@@ -8,6 +8,7 @@
 #include "update/MCUpdateLock.h"
 
 #include <mutex>
+#include <stop_token>
 #include <thread>
 
 namespace
@@ -163,6 +164,8 @@ namespace
             return std::unexpected(source.error());
         }
 
+        // Let go of (Later, a new check) ends the download at once, even while the host sends nothing.
+        const std::stop_callback cancel(stop, [&] { (*source)->Cancel(); });
         const std::filesystem::path setup = SetupPath(gameFolder, program.Build);
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
         const auto fetched =

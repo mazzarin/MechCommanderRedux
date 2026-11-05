@@ -14,8 +14,11 @@
 #include "update/MCHttpSource.h"
 #include "update/MCInstalled.h"
 #include "update/MCReleaseFile.h"
+#include "update/MCSetupBackend.h"
 #include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
+
+#include <condition_variable>
 
 namespace
 {
@@ -95,6 +98,51 @@ namespace
     {
         return release.Game.Path() / "Redux update" / "staged" / MCFileSystem::FromUtf8(path);
     }
+
+    /// <summary>
+    /// A host that sends nothing: a fetch ends only when cancelled (or after a long while, so a cancel not made shows
+    /// as a failed check, not a test that never ends).
+    /// </summary>
+    class MCSilentSource final : public MCContentStage::MCSource
+    {
+    public:
+        struct MCShared
+        {
+            std::mutex Lock;
+            std::condition_variable Changed;
+            bool Reached = false;
+            bool Cancelled = false;
+        };
+
+        explicit MCSilentSource(std::shared_ptr<MCShared> shared) : _Shared(std::move(shared)) {}
+
+        std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
+                                               const std::function<bool(std::span<const char>)>&) override
+        {
+            std::unique_lock lock(_Shared->Lock);
+            _Shared->Reached = true;
+            _Shared->Changed.notify_all();
+            _Shared->Changed.wait_for(lock, SilentTime, [&] { return _Shared->Cancelled; });
+            return std::unexpected(_Shared->Cancelled ? "stopped" : "the host sent nothing");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view, size_t) override
+        {
+            return std::unexpected("the host sent nothing");
+        }
+
+        void Cancel() override
+        {
+            const std::scoped_lock lock(_Shared->Lock);
+            _Shared->Cancelled = true;
+            _Shared->Changed.notify_all();
+        }
+
+        static constexpr std::chrono::seconds SilentTime{20};
+
+    private:
+        std::shared_ptr<MCShared> _Shared;
+    };
 
     /// <summary>The bytes of the step at <paramref name="path"/>'s file, as listed.</summary>
     uint64_t ListedSize(const MCContentList::MCList& list, std::string_view path)
@@ -376,6 +424,36 @@ TEST_CASE("content stage: a zip whose entry can't be written stays for the next 
     REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
     CHECK(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
+}
+
+TEST_CASE("setup download: letting go of it ends its download at once, even while the host sends nothing")
+{
+    using namespace std::chrono_literals;
+    const MCScratchFolder game(Group, "setup-stop");
+    const auto shared = std::make_shared<MCSilentSource::MCShared>();
+    const MCSetupBackend::MCSourceFor sources =
+        [shared](std::string_view) -> std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string>
+    { return std::make_unique<MCSilentSource>(shared); };
+    constexpr uint64_t Build = 600;
+    const std::unique_ptr<MCUpdater::MCBackend> backend =
+        MCSetupBackend::Make(game.Path(), "0.2.1 (500)", sources, MCSetupBackend::MCPlatform{});
+    backend->Offered({.Build = Build,
+                      .Size = 100,
+                      .Sha256 = MCSha256::Of("a setup"),
+                      .Url = "https://example.test/programs/setup-600.exe",
+                      .Silent = "/VERYSILENT"});
+    backend->Check(Build);
+    backend->Answer(MCUpdater::MCAnswer::Install);
+
+    {
+        std::unique_lock lock(shared->Lock);
+        REQUIRE(shared->Changed.wait_for(lock, 5s, [&] { return shared->Reached; }));
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    backend->Answer(MCUpdater::MCAnswer::Later);
+    CHECK(std::chrono::steady_clock::now() - start < 2s);
+    CHECK(shared->Cancelled);
 }
 
 /// <summary>

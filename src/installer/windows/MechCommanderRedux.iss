@@ -1,15 +1,27 @@
-; Port-only (the personal build): the Windows setup. It installs the program into the player's MechCommander Gold
-; folder, for the player alone (no admin, unless Windows protects that folder: then Windows asks once, and the player's
-; account is let change it). The folder is the one the game was last pointed at, else the one the original's installer
-; recorded. MCX.EXE becomes a launcher that starts Redux, so whatever starts the original gets Redux. What the program
-; replaces there (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup" and
-; put back by the uninstaller, which leaves the folder as it was. The game's download and the HD question come with
-; the content updater.
+; Port-only (the personal build): the Windows setup (SPEC-install-and-updates.md's Install, The player's copy and
+; Uninstalling). For the player alone (no admin, unless Windows protects the folder: then Windows asks once, and the
+; player's account is let change it), it asks two things beside the folder: the game, downloaded into a folder of its
+; own (by default %LOCALAPPDATA%\Programs\MechCommander Redux) or the player's copy, which Redux installs into and
+; takes over (the folder the game was last pointed at, else the one the original's installer recorded); and HD,
+; ticked. It puts the program in, leaves the answers for the game (Redux update\sets.json), and starts the game,
+; whose first start downloads what the folder lacks: the setup itself downloads and copies no content. In a copy taken
+; over, MCX.EXE becomes a launcher that starts Redux, so whatever starts the original gets Redux; what the program
+; replaces there (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup".
+;
+; The uninstaller has the game remove its content first (MCRedux --remove-content: the files updates put there),
+; then removes the program and puts back what's in the backup, so a copy taken over is as it was. A program update is
+; this setup run silently by the game (main/MCUpdater.h's Windows backend): it waits for the game that started it to
+; end, closes any other copy running (Windows' Restart Manager), and starts the game again when asked.
 ;
 ; Built by .github/workflows/windows.yml with Inno Setup 6.7:
 ;   ISCC /DAppVersionNumber=0.2.1.548 "/DAppVersionShown=0.2.1 (548)" /DBinDir=<the exes' folder>
-;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> /O<output folder>
-;        src\installer\windows\MechCommanderRedux.iss
+;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> [/DGameBytes=<n> /DHdBytes=<n>]
+;        /O<output folder> src\installer\windows\MechCommanderRedux.iss
+; GameBytes and HdBytes are the release's sets' sizes, which make_release.py's setup-sizes prints from its content
+; list; a build without them (a work branch's) shows no sizes.
+;
+; Silently: /DIR=<folder>, /GAME=DOWNLOAD or COPY (by default COPY for a folder holding the game, else DOWNLOAD), and
+; /HD=NO to leave HD out.
 
 #ifndef AppVersionNumber
   #error Pass /DAppVersionNumber=<major.minor.patch.build> (MC_VERSION in MCVersion.h)
@@ -25,6 +37,12 @@
 #endif
 #ifndef LicencesFile
   #error Pass /DLicencesFile=<the licences file make_licences.ps1 writes>
+#endif
+#ifndef GameBytes
+  #define GameBytes "0"
+#endif
+#ifndef HdBytes
+  #define HdBytes "0"
 #endif
 
 #define AppName "MechCommander Redux"
@@ -57,6 +75,15 @@
 ; Where the setup keeps the settings it took off the original's MCX.EXE, by its path, until the uninstall.
 #define ProductKey "Software\MechCommander Redux"
 #define KeptLayersKey ProductKey + "\Original compatibility settings"
+; The sets the player chose, for the game (update/MCContentUpdater.h's ChosenFile), in the install folder.
+#define ChosenFolder "Redux update"
+#define ChosenFile "sets.json"
+; What the game sets when it runs this setup as an update (MCSetupBackend): its process, which the setup waits for, and
+; whether to start the game again once installed (RESTART).
+#define UpdatePidVariable "MCREDUX_UPDATE_PID"
+#define UpdateRestartVariable "MCREDUX_UPDATE_RESTART"
+; How long an update waits for the game that started it to end, in milliseconds.
+#define GameEndWait "60000"
 
 [Setup]
 ; Never change the AppId: Windows' Apps list, updates and the uninstaller find the install by it.
@@ -71,7 +98,7 @@ VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} Setup
 ; For the player alone: the uninstall entry in HKCU, the shortcuts in the player's Start menu.
 PrivilegesRequired=lowest
-; The game folder is the player's to give. DefaultDirName only satisfies Inno: InitializeWizard replaces it.
+; For the player alone, {autopf} is %LOCALAPPDATA%\Programs: the download's folder. The player's copy is its own.
 DefaultDirName={autopf}\{#AppName}
 AppendDefaultDirName=no
 DirExistsWarning=no
@@ -99,14 +126,21 @@ OutputBaseFilename=MechCommander-Redux-Setup
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WizardSelectDir=Your MechCommander Gold
-SelectDirDesc=Where is MechCommander Gold installed?
-SelectDirLabel3={#AppName} plays your copy of MechCommander Gold and installs into its folder, the one with {#GameDataFile}.
-ReadyMemoDir=MechCommander Gold folder:
+WizardSelectDir=The game
+SelectDirDesc=Where should {#AppName} play MechCommander Gold from?
+SelectDirLabel3={#AppName} downloads the game into a folder of its own, or installs into your copy and plays it.
 
 [CustomMessages]
+DownloadGame=&Download it
+UseMyCopy=&Use my copy (its folder holds {#GameDataFile})
+HdChoice=Redux &HD art, sound and movies
+GameSize=%1 (%2 GB)
+HdSize=%1 (%2 GB more)
+Totals=About %1 GB with HD, %2 GB without.
+ChooseFolder=Choose a folder for the game.
 ChooseGameFolder=Choose the folder MechCommander Gold is installed in, the one with {#GameDataFile}.
 NotGameFolder=%1 has no {#GameDataFile}, so it isn't a MechCommander Gold folder.
+SyncedFolder=OneDrive syncs %1. Choose a folder outside it: the game's files would fill it, and OneDrive would hold them while it syncs.
 FolderProtected=Windows protects %1. Setup will ask Windows to let you change it.
 FolderStillProtected=Setup couldn't get permission to change %1.
 BackupFailed=Setup couldn't copy %1 to %2.
@@ -132,11 +166,27 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{ap
 
 [Run]
 Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Description: "{cm:PlayGame}"; Flags: postinstall nowait skipifsilent
+; An update the game ran for RESTART: the new version starts by itself.
+Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"; Flags: nowait; Check: StartAfterUpdate
+
+[UninstallRun]
+; First, the game removes its content (the files updates put here; the setup never owns content), leaving the
+; player's own and what a copy taken over had. Then the program goes, and the backup comes back.
+Filename: "{app}\{#GameExe}"; Parameters: "--remove-content --data ""{app}"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveContent"
 
 [Code]
 const
   // Written and deleted to learn whether the player can change the folder.
   WriteTestName = 'MechCommander Redux setup.tmp';
+  // The bytes in a GB, as Windows shows sizes.
+  BytesPerGB = 1073741824;
+  // Waiting for a process to end (OpenProcess, WaitForSingleObject).
+  SYNCHRONIZE = $00100000;
+  WAIT_OBJECT_0 = 0;
+  // The answers on the command line (silent installs).
+  CopyAnswer = 'COPY';
+  DownloadAnswer = 'DOWNLOAD';
+  NoAnswer = 'NO';
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -144,6 +194,18 @@ var
   CopiedFolder: String;
   CopiedNames: TArrayOfString;
   Installed: Boolean;
+  // The folder page's questions: the game downloaded or the player's copy, and HD; and the folder each choice shows.
+  GameDownload, GameCopy: TNewRadioButton;
+  HdBox: TNewCheckBox;
+  DownloadFolder, CopyFolder: String;
+  CopyShown: Boolean;
+
+function OpenProcess(Access: Cardinal; Inherit: Integer; ProcessId: Cardinal): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: THandle; Milliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): Integer;
+  external 'CloseHandle@kernel32.dll stdcall';
 
 // The names of the files [Files] puts in the game folder.
 function ProgramFileNames: TArrayOfString;
@@ -225,24 +287,153 @@ begin
     Result := GameFolderOrNone(Folder);
 end;
 
-procedure InitializeWizard;
+// A size in bytes (the build's), in GB to a tenth, as shown: "0.6".
+function ShownGB(const Bytes: String): String;
 var
-  Folder: String;
+  Tenths: Int64;
 begin
-  // An install keeps its folder (its folder page is skipped), and /DIR= names one. Otherwise the folder the game was
-  // last pointed at, else the one the original's installer recorded, else none: the setup has no folder of its own.
-  if (WizardForm.PrevAppDir <> '') or (ExpandConstant('{param:DIR|}') <> '') then
+  Tenths := (StrToInt64Def(Bytes, 0) * 10 + BytesPerGB div 2) div BytesPerGB;
+  Result := IntToStr(Tenths div 10) + '.' + IntToStr(Tenths mod 10);
+end;
+
+function SizesKnown: Boolean;
+begin
+  Result := (StrToInt64Def('{#GameBytes}', 0) > 0) and (StrToInt64Def('{#HdBytes}', 0) > 0);
+end;
+
+// The folder page's line under the folder: what the game takes on disk, with HD and without.
+procedure ShowTotals;
+begin
+  WizardForm.DiskSpaceLabel.Visible := SizesKnown;
+
+  if SizesKnown then
+    WizardForm.DiskSpaceLabel.Caption :=
+      FmtMessage(CustomMessage('Totals'),
+                 [ShownGB(IntToStr(StrToInt64('{#GameBytes}') + StrToInt64('{#HdBytes}'))), ShownGB('{#GameBytes}')]);
+end;
+
+// The player picked the other answer to the game: the folder box shows that answer's folder, keeping the one edited.
+procedure GameChosen(Sender: TObject);
+begin
+  if GameCopy.Checked = CopyShown then
     Exit;
 
-  Folder := RememberedGameFolder;
+  if CopyShown then
+    CopyFolder := WizardForm.DirEdit.Text
+  else
+    DownloadFolder := WizardForm.DirEdit.Text;
 
-  if Folder = '' then
-    Folder := RecordedGameFolder('{#OriginalKey}');
+  CopyShown := GameCopy.Checked;
 
-  if Folder = '' then
-    Folder := RecordedGameFolder('{#LobbyKey}');
+  if CopyShown then
+    WizardForm.DirEdit.Text := CopyFolder
+  else
+    WizardForm.DirEdit.Text := DownloadFolder;
+end;
 
-  WizardForm.DirEdit.Text := Folder;
+// The folder page's questions, above and below the folder: the game, and HD.
+procedure AddQuestions;
+var
+  Page: TWizardPage;
+  Top: Integer;
+  DownloadCaption, HdCaption: String;
+begin
+  DownloadCaption := CustomMessage('DownloadGame');
+  HdCaption := CustomMessage('HdChoice');
+
+  if SizesKnown then
+  begin
+    DownloadCaption := FmtMessage(CustomMessage('GameSize'), [DownloadCaption, ShownGB('{#GameBytes}')]);
+    HdCaption := FmtMessage(CustomMessage('HdSize'), [HdCaption, ShownGB('{#HdBytes}')]);
+  end;
+
+  Page := PageFromID(wpSelectDir);
+  Top := WizardForm.SelectDirBrowseLabel.Top;
+  WizardForm.SelectDirBrowseLabel.Visible := False;
+
+  GameDownload := TNewRadioButton.Create(WizardForm);
+  GameDownload.Parent := Page.Surface;
+  GameDownload.Left := WizardForm.DirEdit.Left;
+  GameDownload.Top := Top;
+  GameDownload.Width := Page.SurfaceWidth - GameDownload.Left;
+  GameDownload.Caption := DownloadCaption;
+
+  GameCopy := TNewRadioButton.Create(WizardForm);
+  GameCopy.Parent := Page.Surface;
+  GameCopy.Left := GameDownload.Left;
+  GameCopy.Top := GameDownload.Top + GameDownload.Height + ScaleY(4);
+  GameCopy.Width := GameDownload.Width;
+  GameCopy.Caption := CustomMessage('UseMyCopy');
+
+  WizardForm.DirEdit.Top := GameCopy.Top + GameCopy.Height + ScaleY(10);
+  WizardForm.DirBrowseButton.Top := WizardForm.DirEdit.Top;
+
+  HdBox := TNewCheckBox.Create(WizardForm);
+  HdBox.Parent := Page.Surface;
+  HdBox.Left := GameDownload.Left;
+  HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
+  HdBox.Width := GameDownload.Width;
+  HdBox.Caption := HdCaption;
+end;
+
+procedure InitializeWizard;
+var
+  Given, Answer: String;
+begin
+  AddQuestions;
+  HdBox.Checked := Uppercase(ExpandConstant('{param:HD|}')) <> NoAnswer;
+  DownloadFolder := ExpandConstant('{autopf}\{#AppName}');
+  // The player's copy: the folder the game was last pointed at, else the one the original's installer recorded.
+  CopyFolder := RememberedGameFolder;
+
+  if CopyFolder = '' then
+    CopyFolder := RecordedGameFolder('{#OriginalKey}');
+
+  if CopyFolder = '' then
+    CopyFolder := RecordedGameFolder('{#LobbyKey}');
+
+  // /DIR= names the folder, for the answer /GAME= gives, or by default the one the folder fits. Otherwise the player's
+  // copy when one was found, else the download. (An install keeps its folder: its folder page is skipped.)
+  Given := ExpandConstant('{param:DIR|}');
+  Answer := Uppercase(ExpandConstant('{param:GAME|}'));
+
+  if Answer = '' then
+  begin
+    if ((Given <> '') and IsGameFolder(Given)) or ((Given = '') and (CopyFolder <> '')) then
+      Answer := CopyAnswer
+    else
+      Answer := DownloadAnswer;
+  end;
+
+  CopyShown := Answer = CopyAnswer;
+
+  if Given <> '' then
+  begin
+    if CopyShown then
+      CopyFolder := Given
+    else
+      DownloadFolder := Given;
+  end;
+
+  GameCopy.Checked := CopyShown;
+  GameDownload.Checked := not CopyShown;
+
+  if WizardForm.PrevAppDir = '' then
+  begin
+    if CopyShown then
+      WizardForm.DirEdit.Text := CopyFolder
+    else
+      WizardForm.DirEdit.Text := DownloadFolder;
+  end;
+
+  GameDownload.OnClick := @GameChosen;
+  GameCopy.OnClick := @GameChosen;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpSelectDir then
+    ShowTotals;
 end;
 
 function CanChange(const Folder: String): Boolean;
@@ -267,11 +458,37 @@ begin
   Result := '"' + Result + '"';
 end;
 
+// The player's account, named here: an elevated command may run as another account (an administrator's).
+function PlayerAccount: String;
+begin
+  Result := GetEnv('USERDOMAIN') + '\' + GetUserNameString;
+end;
+
+// Lets the player's account change Folder and everything in it, making it first if need be; elevated by Windows' prompt
+// unless Setup already is. Whether the player can now change it.
+function Grant(const Folder: String): Boolean;
+var
+  Verb, Command: String;
+  ErrorCode: Integer;
+begin
+  if IsAdmin then
+    Verb := ''
+  else
+    Verb := 'runas';
+
+  Command := '/c mkdir ' + QuotedFolder(Folder) + ' 2>nul & "' + ExpandConstant('{sys}\icacls.exe') + '" ' +
+             QuotedFolder(Folder) + ' /grant "' + PlayerAccount + ':(OI)(CI)M"';
+
+  if not ShellExec(Verb, ExpandConstant('{cmd}'), Command, '', SW_HIDE, ewWaitUntilTerminated, ErrorCode) then
+    Log(Format('icacls for %s on %s didn''t run: %s', [PlayerAccount, Folder, SysErrorMessage(ErrorCode)]))
+  else
+    Log(Format('Let %s change %s', [PlayerAccount, Folder]));
+
+  Result := DirExists(Folder) and CanChange(Folder);
+end;
+
 // Asks Windows, once, to let the player's account change Folder and everything in it; whether it now can.
 function GetPermission(const Folder: String): Boolean;
-var
-  Account: String;
-  ErrorCode: Integer;
 begin
   Result := False;
 
@@ -279,18 +496,42 @@ begin
                         IDOK) <> IDOK then
     Exit;
 
-  // The player's account, named here: the elevated icacls may run as another account (an administrator's).
-  Account := GetEnv('USERDOMAIN') + '\' + GetUserNameString;
-
-  if not ShellExec('runas', ExpandConstant('{sys}\icacls.exe'),
-                   QuotedFolder(Folder) + ' /grant "' + Account + ':(OI)(CI)M"', '', SW_HIDE,
-                   ewWaitUntilTerminated, ErrorCode) then
-    Log(Format('icacls for %s on %s didn''t run: %s', [Account, Folder, SysErrorMessage(ErrorCode)]));
-
-  Result := CanChange(Folder);
+  Result := Grant(Folder);
 
   if not Result then
     SuppressibleMsgBox(FmtMessage(CustomMessage('FolderStillProtected'), [Folder]), mbError, MB_OK, IDOK);
+end;
+
+// The folder, or the nearest folder holding it that exists: where Setup will make it.
+function ExistingFolder(const Folder: String): String;
+begin
+  Result := RemoveBackslashUnlessRoot(Folder);
+
+  while (Result <> '') and not DirExists(Result) and (ExtractFileDir(Result) <> Result) do
+    Result := ExtractFileDir(Result);
+end;
+
+// Whether Folder is in the folder OneDrive syncs (the player's own, or a work or school one).
+function OneDriveSyncs(const Folder: String): Boolean;
+var
+  Variables: TArrayOfString;
+  Synced: String;
+  I: Integer;
+begin
+  Result := False;
+  SetArrayLength(Variables, 3);
+  Variables[0] := 'OneDrive';
+  Variables[1] := 'OneDriveConsumer';
+  Variables[2] := 'OneDriveCommercial';
+
+  for I := 0 to GetArrayLength(Variables) - 1 do
+  begin
+    Synced := RemoveBackslashUnlessRoot(GetEnv(Variables[I]));
+
+    if (Synced <> '') and ((CompareText(Folder, Synced) = 0) or
+                           (CompareText(Copy(Folder, 1, Length(Synced) + 1), AddBackslash(Synced)) = 0)) then
+      Result := True;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -299,22 +540,36 @@ var
 begin
   Result := True;
 
-  if CurPageID <> wpSelectDir then
+  // An install keeps its folder, whatever it holds by now.
+  if (CurPageID <> wpSelectDir) or (WizardForm.PrevAppDir <> '') then
     Exit;
 
-  Folder := WizardDirValue;
+  Folder := RemoveBackslashUnlessRoot(WizardDirValue);
 
   if Folder = '' then
   begin
-    SuppressibleMsgBox(CustomMessage('ChooseGameFolder'), mbError, MB_OK, IDOK);
+    if GameCopy.Checked then
+      SuppressibleMsgBox(CustomMessage('ChooseGameFolder'), mbError, MB_OK, IDOK)
+    else
+      SuppressibleMsgBox(CustomMessage('ChooseFolder'), mbError, MB_OK, IDOK);
+
     Result := False;
   end
-  else if not IsGameFolder(Folder) then
+  else if GameCopy.Checked and not IsGameFolder(Folder) then
   begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('NotGameFolder'), [Folder]), mbError, MB_OK, IDOK);
     Result := False;
   end
-  else if not CanChange(Folder) then
+  else if OneDriveSyncs(Folder) then
+  begin
+    SuppressibleMsgBox(FmtMessage(CustomMessage('SyncedFolder'), [Folder]), mbError, MB_OK, IDOK);
+    Result := False;
+  end
+  // Run as administrator, Setup can't tell whether the player can change the folder: the game, run as the player,
+  // must, to update itself. Otherwise Windows asks only when the player can't.
+  else if IsAdmin then
+    Result := Grant(Folder)
+  else if not CanChange(ExistingFolder(Folder)) then
     Result := GetPermission(Folder);
 end;
 
@@ -378,6 +633,39 @@ begin
   SetPreviousData(PreviousDataKey, '{#ProgramFilesData}', JoinedNames(ProgramFileNames));
 end;
 
+// An update the game ran: waits for that game to end, so its files are free before Windows' Restart Manager looks for
+// programs using them (one quitting has no window left to be asked to close). Past the wait, the Restart Manager
+// closes it as it does any other copy running.
+procedure WaitForGame;
+var
+  Id: Cardinal;
+  Process: THandle;
+begin
+  Id := StrToIntDef(GetEnv('{#UpdatePidVariable}'), 0);
+
+  if Id = 0 then
+    Exit;
+
+  Process := OpenProcess(SYNCHRONIZE, 0, Id);
+
+  // Ended already, or never there.
+  if Process = 0 then
+    Exit;
+
+  if WaitForSingleObject(Process, {#GameEndWait}) = WAIT_OBJECT_0 then
+    Log(Format('The game that started the update (process %d) has ended', [Id]))
+  else
+    Log(Format('The game that started the update (process %d) is still running', [Id]));
+
+  CloseHandle(Process);
+end;
+
+// Whether the game ran this setup as an update and asked to be started again once it's in (RESTART).
+function StartAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (GetEnv('{#UpdateRestartVariable}') = '1');
+end;
+
 // Before the files go in: the ones they replace are copied into the backup, unless an earlier install put them there.
 // Copied, not moved: the originals stay where Windows' Restart Manager finds a running game by them, and Setup's
 // rollback puts them back if the install fails.
@@ -388,6 +676,7 @@ var
   I: Integer;
 begin
   Result := '';
+  WaitForGame;
   // A second call (the player went back) starts afresh.
   DropCopies;
   Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
@@ -479,12 +768,33 @@ begin
   RegDeleteKeyIfEmpty(HKCU, '{#ProductKey}');
 end;
 
+// A new install leaves the player's answers for the game (update/MCContentUpdater.h's ChosenFile): the game's data
+// always, HD when ticked. The game's first start downloads them; HD OPTIONS changes them later.
+procedure LeaveAnswers(const Folder: String);
+var
+  Path, Sets: String;
+begin
+  Path := AddBackslash(Folder) + '{#ChosenFolder}\{#ChosenFile}';
+  Sets := '"game"';
+
+  if HdBox.Checked then
+    Sets := Sets + ', "hd"';
+
+  if ForceDirectories(ExtractFileDir(Path)) and SaveStringToFile(Path, '{"format": 1, "sets": [' + Sets + ']}', False) then
+    Log(Format('The answers for the game: %s', [Sets]))
+  else
+    Log(Format('Couldn''t write the answers for the game, %s', [Path]));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     Installed := True;
     LiftCompatibility(ExpandConstant('{app}'));
+
+    if WizardForm.PrevAppDir = '' then
+      LeaveAnswers(ExpandConstant('{app}'));
   end;
 end;
 
@@ -494,40 +804,55 @@ begin
     DropCopies;
 end;
 
-// After the program's files are gone: everything in the backup goes back, so the folder is as it was, and the
-// original's MCX.EXE gets its compatibility settings back.
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+// Moves everything in Folder's backup under Relative ('' for the backup itself) back into Folder at the same place,
+// making the folders on its way; the names of what couldn't go back are added to Left.
+procedure PutBackAll(const Folder, Relative: String; var Left: String);
 var
-  Folder: String;
   FindRec: TFindRec;
-  Names: TArrayOfString;
-  Left: String;
+  Files, Folders: TArrayOfString;
+  Kept: String;
   I: Integer;
 begin
-  if CurUninstallStep <> usPostUninstall then
-    Exit;
-
-  Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+  Kept := AddBackslash(BackupFolder(Folder)) + Relative;
 
   // The names first: moving files out while the folder is listed could skip some.
-  if FindFirst(AddBackslash(BackupFolder(Folder)) + '*', FindRec) then
+  if FindFirst(AddBackslash(Kept) + '*', FindRec) then
   begin
     try
       repeat
         if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
-          Append(Names, FindRec.Name);
+          Append(Files, Relative + FindRec.Name)
+        else if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+          Append(Folders, Relative + FindRec.Name);
       until not FindNext(FindRec);
     finally
       FindClose(FindRec);
     end;
   end;
 
+  for I := 0 to GetArrayLength(Files) - 1 do
+    if not (ForceDirectories(ExtractFileDir(AddBackslash(Folder) + Files[I])) and PutBack(Folder, Files[I])) then
+      Left := Left + #13#10 + Files[I];
+
+  for I := 0 to GetArrayLength(Folders) - 1 do
+  begin
+    PutBackAll(Folder, AddBackslash(Folders[I]), Left);
+    RemoveDir(AddBackslash(BackupFolder(Folder)) + Folders[I]);
+  end;
+end;
+
+// After the game removed its content and the program's files are gone: everything in the backup goes back, so the
+// folder is as it was, and the original's MCX.EXE gets its compatibility settings back.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Folder, Left: String;
+begin
+  if CurUninstallStep <> usPostUninstall then
+    Exit;
+
+  Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
   Left := '';
-
-  for I := 0 to GetArrayLength(Names) - 1 do
-    if not PutBack(Folder, Names[I]) then
-      Left := Left + #13#10 + Names[I];
-
+  PutBackAll(Folder, '', Left);
   RemoveDir(BackupFolder(Folder));
   RestoreCompatibility(Folder);
 

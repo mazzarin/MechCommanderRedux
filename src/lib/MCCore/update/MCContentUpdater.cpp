@@ -165,7 +165,9 @@ namespace
         if (!text)
         {
             const std::string name = std::format("{}/{}", ListsFolder, ListFileName(list.Hash));
-            auto fetched = source.Read(name, MostListBytes);
+            // No more than release.json signs for it, when it says.
+            auto fetched = source.Read(
+                name, list.Size ? static_cast<size_t>(std::min<uint64_t>(*list.Size, MostListBytes)) : MostListBytes);
 
             if (!fetched)
             {

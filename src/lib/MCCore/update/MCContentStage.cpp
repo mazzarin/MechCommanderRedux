@@ -30,6 +30,23 @@ namespace
     /// <summary>How often staging tells its progress while the workers fetch.</summary>
     constexpr std::chrono::milliseconds ProgressEvery{100};
 
+    /// <summary>
+    /// A sum of sizes that can't wrap: one past the most a count holds stays there (a list's sizes are signed, but a
+    /// count read wrong mustn't pass the space check as a small one).
+    /// </summary>
+    class MCBytesNeeded
+    {
+    public:
+        void Add(uint64_t bytes)
+        {
+            Overflowed = Overflowed || bytes > std::numeric_limits<uint64_t>::max() - Total;
+            Total = Overflowed ? Total : Total + bytes;
+        }
+
+        uint64_t Total = 0;
+        bool Overflowed = false;
+    };
+
     /// <summary>miniz reads the zip through this.</summary>
     size_t ReadZip(void* opaque, mz_uint64 offset, void* buffer, size_t count)
     {
@@ -418,7 +435,7 @@ namespace
         std::expected<void, std::string> CheckSpace(const std::vector<MCPatchJob>& patches,
                                                     const std::vector<const MCStep*>& whole)
         {
-            uint64_t needed = 0;
+            MCBytesNeeded needed;
             uint64_t biggestZip = 0;
             std::vector<uint64_t> patchesLeft;
 
@@ -426,7 +443,7 @@ namespace
             {
                 for (const MCStep* step : job.Steps)
                 {
-                    needed += step->File->Size;
+                    needed.Add(step->File->Size);
                 }
 
                 patchesLeft.push_back(job.Patch->Size - Downloaded(job.Patch->Name, job.Patch->Size));
@@ -435,12 +452,15 @@ namespace
             const size_t ahead = std::min(PatchWorkers, patchesLeft.size());
             std::ranges::partial_sort(patchesLeft, patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead),
                                       std::greater<>());
-            needed =
-                std::accumulate(patchesLeft.begin(), patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead), needed);
+
+            for (size_t i = 0; i < ahead; ++i)
+            {
+                needed.Add(patchesLeft[i]);
+            }
 
             for (const MCStep* step : whole)
             {
-                needed += step->File->Size;
+                needed.Add(step->File->Size);
             }
 
             for (const MCContentList::MCZip* zip : ZipsHolding(whole))
@@ -448,7 +468,13 @@ namespace
                 biggestZip = std::max(biggestZip, zip->Size - Downloaded(zip->Name, zip->Size));
             }
 
-            needed += biggestZip;
+            needed.Add(biggestZip);
+
+            if (needed.Overflowed)
+            {
+                return std::unexpected("the update's sizes add up to more than any disk holds");
+            }
+
             const auto free = _Disk.FreeBytes(_Game);
 
             if (!free)
@@ -457,11 +483,12 @@ namespace
                 return {};
             }
 
-            if (*free < needed)
+            if (*free < needed.Total)
             {
-                return std::unexpected(std::format(
-                    "the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
-                    static_cast<double>(needed) / BytesPerGigabyte, static_cast<double>(*free) / BytesPerGigabyte));
+                return std::unexpected(
+                    std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
+                                static_cast<double>(needed.Total) / BytesPerGigabyte,
+                                static_cast<double>(*free) / BytesPerGigabyte));
             }
 
             return {};

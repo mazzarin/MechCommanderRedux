@@ -675,6 +675,25 @@ TEST_CASE("content stage: refused without room for what's still to stage; a resu
     release.CheckIsRelease2();
 }
 
+TEST_CASE("content stage: sizes that add up past what a count holds are refused, never wrapped; an entry longer than "
+          "listed stops")
+{
+    MCRelease release(Group, "sizes");
+    release.List.Files[1].Size = std::numeric_limits<uint64_t>::max() - 4;
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(uint64_t{1} << 30);
+    const auto overflowed =
+        MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
+    CHECK(overflowed.error_or("").find("more than any disk holds") != std::string::npos);
+    CHECK(source.Asked().empty());
+
+    // data/changed.fit listed shorter than its entry: the unpacking stops there.
+    release.List.Files[1].Size = 5;
+    const auto longer = MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
+    CHECK(longer.error_or("").find("data/changed.fit from update-2.zip isn't the release's") != std::string::npos);
+    CHECK(!std::filesystem::exists(StagedAt(release, "data/changed.fit")));
+}
+
 TEST_CASE("content stage: a patch that falls back on a zip not otherwise fetched is checked for room for it")
 {
     MCRelease release(Group, "space-fallback");

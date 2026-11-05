@@ -503,6 +503,16 @@ TEST_CASE("content updater: release.json checked, the content planned, staged, a
     CHECK((*program)->Content == nullptr);
     CHECK_EQ((*program)->ShownVersion(RunningBuild), std::string("0.2.2 (600)"));
 
+    // A list bigger than release.json signs for isn't read past that (the host's read refuses it).
+    {
+        MCHostedRelease padded("check-padded");
+        Write(padded.Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(padded.ListText)) + ".json"),
+              padded.ListText + std::string(SendBytes, ' '));
+        MCFolderSource paddedSource(padded.Host.Path());
+        const auto refused = MCContentUpdater::Check(padded.Setup(), *disk, paddedSource);
+        CHECK(refused.error_or("").find("too big") != std::string::npos);
+    }
+
     // An older release.json served again is refused.
     release.Publish(1, 2, RunningBuild);
     const auto older = MCContentUpdater::Check(setup, *disk, source);

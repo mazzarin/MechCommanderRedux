@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "main/MCUpdater.h"
 #include "platform/MCInput.h"
+#include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCInstalled.h"
 #include "update/MCReleaseFile.h"
@@ -402,6 +404,39 @@ namespace
     }
 
     /// <summary>
+    /// The HD pack's choice is back to what's installed, and nothing is armed: what an earlier change (or an update)
+    /// staged or downloaded would never be used, so it goes. On the work's thread, under the staging lock.
+    /// </summary>
+    void ClearUnused(const std::filesystem::path& gameFolder, MCUpdateDisk& disk)
+    {
+        if (MCContentSwap::Waiting(disk, gameFolder) || MCContentSwap::Repairing(disk, gameFolder))
+        {
+            return;
+        }
+
+        for (const std::string_view folder : {MCContentSwap::StagedFolder, MCContentStage::DownloadFolder})
+        {
+            const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(folder);
+
+            if (!disk.Stat(path).Exists)
+            {
+                continue;
+            }
+
+            if (disk.Remove(path))
+            {
+                SDL_Log("Updater: %.*s is cleared: the HD pack's choice is back to what's installed",
+                        static_cast<int>(folder.size()), folder.data());
+            }
+            else
+            {
+                SDL_Log("Updater: %.*s can't be cleared; what it holds stays unused", static_cast<int>(folder.size()),
+                        folder.data());
+            }
+        }
+    }
+
+    /// <summary>
     /// Plans, stages and arms the sets the player chose on the work's thread (no update: the release installed). The
     /// staging lock is held until it ends.
     /// </summary>
@@ -432,6 +467,11 @@ namespace
                         {
                             const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
                             auto change = MCContentUpdater::CheckSets(setup, *disk, source);
+
+                            if (change && !*change)
+                            {
+                                ClearUnused(setup.GameFolder, *disk);
+                            }
 
                             if (!change || !*change)
                             {
@@ -1112,7 +1152,8 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
             break;
         case MCStep::ChangingSets:
         {
-            // Stopped where it is (staged files stay); its end plans the new choice.
+            // Stopped where it is (staged files stay); its end plans the new choice, and clears them when that's back to
+            // what's installed.
             SetsChosenAgain = true;
             Hd.Stopping = true;
 

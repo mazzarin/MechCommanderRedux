@@ -1378,7 +1378,8 @@ TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a lat
     CHECK(InstalledSets(release) == WithHd);
 }
 
-TEST_CASE("updater: HD's choice changed while it downloads stops the download for the new choice")
+TEST_CASE("updater: HD's choice changed while it downloads stops the download for the new choice; back to what's "
+          "installed, what it staged and downloaded goes")
 {
     MCHostedRelease release("updater-hd-stop");
     const std::filesystem::path& game = release.Game.Path();
@@ -1395,6 +1396,12 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(MCUpdater::HdPack().Stage == MCStage::Downloading);
     CHECK(MCUpdater::HdPack().Hold == MCUpdater::MCHdHold::None);
 
+    // What it has staged and downloaded so far.
+    const std::filesystem::path staged = game / "Redux update" / "staged";
+    const std::filesystem::path download = game / "Redux update" / "download";
+    Write(staged / "HD" / "terrain.hda", "half the terrain");
+    Write(download / "hd-2.zip", "half the zip");
+
     MCUpdater::ChooseHd(false);
     CHECK(MCUpdater::HdPack().Stopping);
     REQUIRE(FramesUntilIdle());
@@ -1404,6 +1411,8 @@ TEST_CASE("updater: HD's choice changed while it downloads stops the download fo
     CHECK(!release.Armed());
     CHECK(StagingFree(game));
     CHECK(MCContentUpdater::Chosen(*MakeDisk(), game) == WithoutHd);
+    CHECK(!std::filesystem::exists(staged));
+    CHECK(!std::filesystem::exists(download));
 }
 
 namespace

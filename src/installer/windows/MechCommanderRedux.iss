@@ -18,7 +18,8 @@
 ;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> [/DGameBytes=<n> /DHdBytes=<n>]
 ;        /O<output folder> src\installer\windows\MechCommanderRedux.iss
 ; GameBytes and HdBytes are the release's sets' sizes, which make_release.py's setup-sizes prints from its content
-; list; a build without them (a work branch's) shows no sizes.
+; list. A build without them (a work branch's) has no release to download from, so its folder page asks only for the
+; player's copy, without HD; silent installs still take their answers.
 ;
 ; Silently: /DIR=<folder>, /GAME=DOWNLOAD or COPY (by default COPY for a folder holding the game, else DOWNLOAD), and
 ; /HD=NO to leave HD out.
@@ -194,6 +195,8 @@ const
   // GetUserNameExW's form for an account as Windows' tools take it: "MACHINE\name", "DOMAIN\name".
   NameSamCompatible = 2;
   AccountNameLength = 256;
+  // The number of an update's second copy of a file in the backup, "name (2).ext" (update/MCContentSwap.cpp's KeptAt).
+  FirstNumberedCopy = 2;
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -310,6 +313,14 @@ begin
   Result := (StrToInt64Def('{#GameBytes}', 0) > 0) and (StrToInt64Def('{#HdBytes}', 0) > 0);
 end;
 
+// Whether the folder page asks to download the game and HD: only in a setup the release script built (it has the
+// release's sizes), as nothing can be downloaded without a release. Otherwise the page asks only for the player's
+// copy. A silent install takes its answers from the command line either way.
+function AsksDownloads: Boolean;
+begin
+  Result := SizesKnown or WizardSilent;
+end;
+
 // The folder page's line under the folder: what the game takes on disk, with HD and without.
 procedure ShowTotals;
 begin
@@ -358,7 +369,7 @@ begin
 
   Page := PageFromID(wpSelectDir);
   Top := WizardForm.SelectDirBrowseLabel.Top;
-  WizardForm.SelectDirBrowseLabel.Visible := False;
+  WizardForm.SelectDirBrowseLabel.Visible := not AsksDownloads;
 
   GameDownload := TNewRadioButton.Create(WizardForm);
   GameDownload.Parent := Page.Surface;
@@ -374,15 +385,24 @@ begin
   GameCopy.Width := GameDownload.Width;
   GameCopy.Caption := CustomMessage('UseMyCopy');
 
-  WizardForm.DirEdit.Top := GameCopy.Top + GameCopy.Height + ScaleY(10);
-  WizardForm.DirBrowseButton.Top := WizardForm.DirEdit.Top;
-
   HdBox := TNewCheckBox.Create(WizardForm);
   HdBox.Parent := Page.Surface;
   HdBox.Left := GameDownload.Left;
-  HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
   HdBox.Width := GameDownload.Width;
   HdBox.Caption := HdCaption;
+
+  // Without the questions the page stays Inno's own: the folder under its browse line.
+  GameDownload.Visible := AsksDownloads;
+  GameCopy.Visible := AsksDownloads;
+  HdBox.Visible := AsksDownloads;
+
+  if AsksDownloads then
+  begin
+    WizardForm.DirEdit.Top := GameCopy.Top + GameCopy.Height + ScaleY(10);
+    WizardForm.DirBrowseButton.Top := WizardForm.DirEdit.Top;
+  end;
+
+  HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
 end;
 
 procedure InitializeWizard;
@@ -406,7 +426,12 @@ begin
   Given := ExpandConstant('{param:DIR|}');
   Answer := Uppercase(ExpandConstant('{param:GAME|}'));
 
-  if Answer = '' then
+  if not AsksDownloads then
+  begin
+    Answer := CopyAnswer;
+    HdBox.Checked := False;
+  end
+  else if Answer = '' then
   begin
     if ((Given <> '') and IsGameFolder(Given)) or ((Given = '') and (CopyFolder <> '')) then
       Answer := CopyAnswer
@@ -823,8 +848,46 @@ begin
     DropCopies;
 end;
 
+// Whether Name, one of Files in the backup, is a later copy an update kept of a file the backup already holds:
+// "name (2).ext" beside "name.ext" (update/MCContentSwap.cpp's KeptAt). It was never in the folder by that name, so it
+// stays in the backup with the player's other copies.
+function IsNumberedCopy(const Name: String; const Files: TArrayOfString): Boolean;
+var
+  Extension, Stem, Base: String;
+  Open, I: Integer;
+begin
+  Result := False;
+  Extension := ExtractFileExt(Name);
+  Stem := Copy(Name, 1, Length(Name) - Length(Extension));
+
+  if (Stem = '') or (Stem[Length(Stem)] <> ')') then
+    Exit;
+
+  // Back from the ")" over the digits to the "(", which a space and at least one letter of the name come before.
+  Open := Length(Stem) - 1;
+
+  while (Open > 0) and (Stem[Open] >= '0') and (Stem[Open] <= '9') do
+    Open := Open - 1;
+
+  if (Open < 3) or (Open = Length(Stem) - 1) or (Copy(Stem, Open - 1, 2) <> ' (') then
+    Exit;
+
+  if StrToIntDef(Copy(Stem, Open + 1, Length(Stem) - Open - 1), 0) < FirstNumberedCopy then
+    Exit;
+
+  Base := Copy(Stem, 1, Open - 2) + Extension;
+
+  for I := 0 to GetArrayLength(Files) - 1 do
+    if CompareText(Files[I], Base) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
 // Moves everything in Folder's backup under Relative ('' for the backup itself) back into Folder at the same place,
-// making the folders on its way; the names of what couldn't go back are added to Left.
+// making the folders on its way, but an update's later copies (IsNumberedCopy), which stay; the names of what couldn't
+// go back are added to Left.
 procedure PutBackAll(const Folder, Relative: String; var Left: String);
 var
   FindRec: TFindRec;
@@ -850,7 +913,9 @@ begin
   end;
 
   for I := 0 to GetArrayLength(Files) - 1 do
-    if not (ForceDirectories(ExtractFileDir(AddBackslash(Folder) + Files[I])) and PutBack(Folder, Files[I])) then
+    if IsNumberedCopy(Files[I], Files) then
+      Log(Format('Left %s in the backup: an update''s later copy', [Files[I]]))
+    else if not (ForceDirectories(ExtractFileDir(AddBackslash(Folder) + Files[I])) and PutBack(Folder, Files[I])) then
       Left := Left + #13#10 + Files[I];
 
   for I := 0 to GetArrayLength(Folders) - 1 do
@@ -861,7 +926,8 @@ begin
 end;
 
 // After the game removed its content and the program's files are gone: everything in the backup goes back, so the
-// folder is as it was, and the original's MCX.EXE gets its compatibility settings back.
+// folder is as it was, and the original's MCX.EXE gets its compatibility settings back. An update's later copies of the
+// player's files stay in the backup, which then stays too.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Folder, Left: String;

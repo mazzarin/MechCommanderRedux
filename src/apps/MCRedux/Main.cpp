@@ -16,10 +16,12 @@
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
+#include "update/MCContentList.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
+#include "update/MCInstalled.h"
 #include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
@@ -61,6 +63,12 @@ namespace
     /// updates no content and takes no lock, and the Mac's Sparkle updates the program alone.
     /// </summary>
     constexpr std::array<std::string_view, 0> RootKeys = {};
+
+    /// <summary>
+    /// The lowest content release this program plays (SPEC-install-and-updates.md's The content list; 0: any): a copy
+    /// with an older one gets the release at its start, before anything opens, as a first start does.
+    /// </summary>
+    constexpr uint64_t LowestContentRelease = 0;
 
     /// <summary>What the first start's window says while the game's content downloads.</summary>
     constexpr std::string_view FirstStartHeading = "GETTING THE GAME READY";
@@ -519,18 +527,28 @@ namespace
 #endif
 
     /// <summary>
-    /// The first start of a copy an installer prepared: its content downloaded, checked and put in place before
-    /// anything opens, a window showing the progress (MCFirstStart.h).
+    /// The content a start must get before anything opens (MCInstalled::AtStart: a first start, a release older than
+    /// the program plays, or the one its program was installed alone for): downloaded, checked and put in place, a window
+    /// showing the progress (MCFirstStart.h). <paramref name="record"/> is then the installed record as it is.
     /// </summary>
     /// <returns>
     /// None to play; else the exit code to quit with: the player closed the window (the next start carries on), or the
-    /// content couldn't come or go in place (they're told).
+    /// content needed couldn't come or go in place (they're told). Content only due that can't come leaves the files to
+    /// play as they are.
     /// </returns>
-    std::optional<int> InstallAtFirstStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
-                                           MCUpdateLock* lock)
+    std::optional<int> GetContentAtStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
+                                         MCUpdateLock* lock, MCInstalled::MCStartNeed need,
+                                         MCInstalled::MCRecord& record)
     {
-        SDL_Log("Updates: the first start gets the game's content");
+        const bool needed = need == MCInstalled::MCStartNeed::Needed;
+        SDL_Log("Updates: the start gets the game's content%s", needed ? "" : ", which its program was installed for");
         const auto done = MCFirstStart::Run(FirstStartHeading, ContentWork(setup, MCContentUpdater::Install));
+
+        if (!done && !needed)
+        {
+            SDL_Log("Updates: the content due didn't come (%s): the files play as they are", done.error().c_str());
+            return std::nullopt;
+        }
 
         if (!done)
         {
@@ -550,8 +568,19 @@ namespace
             return 1;
         }
 
+        auto swapped = MCInstalled::Read(*MakeDisk(), setup.GameFolder);
+
+        if (!swapped)
+        {
+            SDL_Log("Updates: %s", swapped.error().c_str());
+            return std::nullopt;
+        }
+
+        record = std::move(*swapped);
+
         // Put back (another copy of the game holds the folder): the files go in at the next start.
-        if (MCContentUpdater::AwaitsInstall(*MakeDisk(), setup.GameFolder))
+        if (needed && MCInstalled::AtStart(*MakeDisk(), setup.GameFolder, record, MC_VERSION_BUILD,
+                                           LowestContentRelease) == MCInstalled::MCStartNeed::Needed)
         {
             Report("The game's files are downloaded. Close any other copy of the game, then start it again.", true);
             return 1;
@@ -742,13 +771,27 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (AwaitsInstall(options->DataFolder, contentUpdates))
+    // The installed record, read once the swap is done, for what the start must get first and the build's defaults
+    // (one that can't be read asks for nothing: the updater says why).
+    auto installed = contentUpdates ? MCInstalled::Read(*MakeDisk(), options->DataFolder)
+                                    : std::expected<MCInstalled::MCRecord, std::string>();
+
+    if (!installed)
     {
-        if (const std::optional<int> quit =
-                InstallAtFirstStart(ContentSetup(*options, rootKeys), options->GameCommandLine, gameLock.get()))
+        SDL_Log("Updates: %s", installed.error().c_str());
+    }
+    else if (contentUpdates)
+    {
+        if (const MCInstalled::MCStartNeed need = MCInstalled::AtStart(*MakeDisk(), options->DataFolder, *installed,
+                                                                       MC_VERSION_BUILD, LowestContentRelease);
+            need != MCInstalled::MCStartNeed::Nothing)
         {
-            SDL_Quit();
-            return *quit;
+            if (const std::optional<int> quit = GetContentAtStart(
+                    ContentSetup(*options, rootKeys), options->GameCommandLine, gameLock.get(), need, *installed))
+            {
+                SDL_Quit();
+                return *quit;
+            }
         }
     }
 
@@ -769,8 +812,17 @@ int main(int argc, char** argv)
 
     // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
     // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h). The snow
-    // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h).
-    UseHdByDefault();
+    // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h). In a build that updates
+    // its content, the HD options' defaults follow the HD answer: Redux HD's looks for a copy with HD (the installer's
+    // answer, or HD OPTIONS'), the original's without.
+    const MCInstalled::MCRecord noRecord;
+    const MCInstalled::MCRecord* const record = installed ? &*installed : &noRecord;
+
+    if (!contentUpdates || MCInstalled::Has(*record, options->DataFolder, MCContentList::HdSet))
+    {
+        UseHdByDefault();
+    }
+
     MCWeatherPacing::Follow(true);
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());

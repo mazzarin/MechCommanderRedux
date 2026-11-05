@@ -104,9 +104,9 @@ namespace
             }
 
             // Flushed before the journal goes, or a crash could keep its deletion and lose the record of what to clear.
-            // A repair under way is done once a swap is committed.
+            // A repair under way is done once a swap is committed, and so is the content due, once it's this or older.
             if (!_Disk.Remove(At(ReplacedFolder)) || !_Disk.Remove(At(StagedFolder)) || !_Disk.Remove(At(RepairFile)) ||
-                !_Disk.FlushFolder(At(UpdateFolder)))
+                !ClearDue() || !_Disk.FlushFolder(At(UpdateFolder)))
             {
                 return "the update's folders can't be cleared";
             }
@@ -118,6 +118,22 @@ namespace
 
             RemoveEmptiedFolders();
             return {};
+        }
+
+        /// <summary>
+        /// Deletes the content noted due (MCInstalled::DueFile) when this swap's release is it or later: false when it
+        /// can't be. One that can't be read goes too (it waits for nothing).
+        /// </summary>
+        bool ClearDue()
+        {
+            const std::optional<MCInstalled::MCDue> due = MCInstalled::ReadDue(_Disk, _Game);
+
+            if (due && due->Release > _Journal.Record.Release)
+            {
+                return true;
+            }
+
+            return _Disk.Remove(At(MCInstalled::DueFile));
         }
 
         /// <summary>Whether the installed record says the new set: the swap can then only go forward.</summary>

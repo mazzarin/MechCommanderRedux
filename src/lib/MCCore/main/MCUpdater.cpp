@@ -198,10 +198,8 @@ namespace
         }
 
         const MCInstalled::MCRecord record = installed.value_or(MCInstalled::MCRecord{});
-        const MCContentUpdater::MCSets has =
-            record.Release != 0 ? record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
         Hd = {.Managed = true,
-              .Installed = has.contains(MCContentList::HdSet),
+              .Installed = MCInstalled::Has(record, Content->GameFolder, MCContentList::HdSet),
               .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, record).contains(MCContentList::HdSet)};
 
         if (const auto bytes = record.SetBytes.find(MCContentList::HdSet); bytes != record.SetBytes.end())

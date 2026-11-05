@@ -3,6 +3,7 @@
 #include "platform/MCFileSystem.h"
 #include "update/MCInstalledJson.h"
 #include "update/MCContentList.h"
+#include "update/MCContentUpdater.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 
@@ -24,6 +25,9 @@ namespace
     constexpr std::string_view PlacedKey = "placed";
     constexpr std::string_view SwapKey = "swap";
     constexpr uint64_t RecordFormat = 1;
+    /// <summary>The due note's keys (its release is ReleaseKey's) and format.</summary>
+    constexpr std::string_view LowestProgramKey = "lowestProgram";
+    constexpr uint64_t DueFormat = 1;
 
     /// <summary>The record <paramref name="json"/> holds (an object); it throws MCBadFile at a rule broken.</summary>
     MCInstalled::MCRecord ReadRecord(const MCJson& json)
@@ -177,4 +181,71 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(MCUpdateDisk
 std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(const std::filesystem::path& gameFolder)
 {
     return Read(*MakeDisk(), gameFolder);
+}
+
+bool MCInstalled::Has(const MCRecord& record, const std::filesystem::path& gameFolder, std::string_view set)
+{
+    return record.Release != 0 ? record.Sets.contains(set) : MCContentUpdater::SetsFound(gameFolder).contains(set);
+}
+
+std::expected<void, std::string> MCInstalled::NoteDue(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                      const MCDue& due)
+{
+    const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(DueFile);
+    const std::string text =
+        MCJson{{FormatKey, DueFormat}, {ReleaseKey, due.Release}, {LowestProgramKey, due.LowestProgram}}.dump();
+
+    if (!WriteDurably(disk, path, text))
+    {
+        return std::unexpected(std::format("{} can't be written", MCFileSystem::ToUtf8(path)));
+    }
+
+    return {};
+}
+
+std::optional<MCInstalled::MCDue> MCInstalled::ReadDue(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(DueFile);
+
+    if (!disk.Stat(path).Exists)
+    {
+        return std::nullopt;
+    }
+
+    const auto text = disk.ReadText(path);
+    const auto due = text ? MCUpdateJson::Read(DueFile,
+                                               [&]()
+                                               {
+                                                   const MCJson json = Object(*text);
+                                                   return MCDue{.Release = Count(json, ReleaseKey),
+                                                                .LowestProgram = Count(json, LowestProgramKey)};
+                                               })
+                          : std::expected<MCDue, std::string>(std::unexpected(text.error()));
+
+    if (!due)
+    {
+        SDL_Log("Updates: the content due can't be read (%s): the start doesn't wait for it", due.error().c_str());
+        return std::nullopt;
+    }
+
+    return *due;
+}
+
+MCInstalled::MCStartNeed MCInstalled::AtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                              const MCRecord& record, uint64_t runningBuild, uint64_t lowestContent)
+{
+    if ((record.Release == 0 && disk.Stat(gameFolder / MCFileSystem::FromUtf8(MCContentUpdater::ChosenFile)).Exists) ||
+        record.Release < lowestContent)
+    {
+        return MCStartNeed::Needed;
+    }
+
+    // Due only to a program that takes it: an older one plays the files it has, and is offered the update again.
+    if (const std::optional<MCDue> due = ReadDue(disk, gameFolder);
+        due && due->Release > record.Release && runningBuild >= due->LowestProgram)
+    {
+        return MCStartNeed::Due;
+    }
+
+    return MCStartNeed::Nothing;
 }

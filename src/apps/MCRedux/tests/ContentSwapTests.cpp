@@ -7,6 +7,7 @@
 #include "update/MCContentList.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
+#include "update/MCContentUpdater.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
@@ -1446,4 +1447,84 @@ TEST_CASE("content swap: putting the previous set back after a fast swap failed 
     CHECK(disk.Files().contains(GamePath(MCContentSwap::ReadyFile)));
     CHECK(movedBack * slow > deadline);
     CHECK(took >= movedBack * slow);
+}
+
+TEST_CASE("content at a start: a first start, a release older than the program plays, and the release a program was "
+          "installed alone for, when this program takes it")
+{
+    using MCInstalled::MCStartNeed;
+    const MCScratchFolder game(Group, "at-start");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCInstalled::MCRecord record;
+    constexpr uint64_t noLowest = 0;
+
+    // Nothing installed and no installer's answer: nothing (a copy pointed at by hand updates when asked).
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+
+    // The installer's answer and nothing installed: the first start's install.
+    REQUIRE(MCContentUpdater::Choose(*disk, game.Path(), {std::string(MCContentList::HdSet)}).has_value());
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Needed);
+
+    // A release installed, as old as the program plays or newer: nothing; older: needed.
+    record.Release = 3;
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, 3) == MCStartNeed::Nothing);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, 4) == MCStartNeed::Needed);
+
+    // A program armed alone for release 5: due only to a program that takes it, and only until it's in.
+    const MCInstalled::MCDue due{.Release = 5, .LowestProgram = NewProgram};
+    REQUIRE(MCInstalled::NoteDue(*disk, game.Path(), due).has_value());
+    CHECK(MCInstalled::ReadDue(*disk, game.Path()) == due);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, OldProgram, noLowest) == MCStartNeed::Nothing);
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Due);
+    record.Release = 5;
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+
+    // A note that can't be read waits for nothing.
+    record.Release = 3;
+    REQUIRE(WriteDurably(*disk, game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile), "{ damaged"));
+    CHECK(!MCInstalled::ReadDue(*disk, game.Path()).has_value());
+    CHECK(MCInstalled::AtStart(*disk, game.Path(), record, NewProgram, noLowest) == MCStartNeed::Nothing);
+}
+
+TEST_CASE("content at a start: the program armed alone notes its release's content due; a committed swap of it, or "
+          "a later one, ends it")
+{
+    const MCScratchFolder game(Group, "due");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup{.GameFolder = game.Path(), .RunningBuild = OldProgram};
+    const MCContentUpdater::MCOffer alone{.Release = {.Number = 2}, .ProgramBuild = NewProgram};
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, alone).has_value());
+    const MCInstalled::MCDue due{.Release = 2, .LowestProgram = NewProgram};
+    CHECK(MCInstalled::ReadDue(*disk, game.Path()) == due);
+
+    // A swap of an earlier release leaves it; of that release, it goes.
+    for (const uint64_t release : {uint64_t{1}, uint64_t{2}})
+    {
+        MCUpdate update;
+        update.After.Release = release;
+        update.Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(update.Journal()), 1};
+        update.Files[GamePath(MCInstalled::DueFile)] = {
+            *disk->ReadText(game.Path() / MCFileSystem::FromUtf8(MCInstalled::DueFile)), 1};
+        MCCrashDisk crash(update.Files);
+        REQUIRE(MCContentSwap::Run(crash, Game).Outcome == MCOutcome::Swapped);
+        CHECK_EQ(crash.Files().contains(GamePath(MCInstalled::DueFile)), release < 2);
+    }
+}
+
+TEST_CASE(
+    "content at a start: the copy has HD as its record says once a release is installed, else as its folder holds "
+    "it")
+{
+    const MCScratchFolder game(Group, "has-hd");
+    MCInstalled::MCRecord record;
+    CHECK(!MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+    std::filesystem::create_directories(game.Path() / "HD");
+    CHECK(MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+
+    // Installed without HD (or HD removed), its folder left behind: no HD.
+    record.Release = 2;
+    record.Sets = {std::string(MCContentList::GameSet)};
+    CHECK(!MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
+    record.Sets.emplace(MCContentList::HdSet);
+    CHECK(MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
 }

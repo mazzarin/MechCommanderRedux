@@ -474,6 +474,7 @@
     <ClCompile Include="update\MCHttpSource.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
+    <ClCompile Include="update\MCSetupBackend.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
     <ClCompile Include="update\MCUpdateDisk.cpp">
       <!-- The update's file operations include windows.h, which must not meet the game's Win32 stand-ins in the
@@ -921,6 +922,7 @@
     <ClInclude Include="update\MCHttpTransfer.h" />
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
+    <ClInclude Include="update\MCSetupBackend.h" />
     <ClInclude Include="update\MCSignedFile.h" />
     <ClInclude Include="update\MCUpdateDisk.h" />
     <ClInclude Include="update\MCUpdateJson.h" />

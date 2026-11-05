@@ -25,6 +25,9 @@
 
 #if defined(__APPLE__)
 #include "MCSparkleUpdater.h"
+#elif defined(_WIN32)
+#include "MCSetupRun.h"
+#include "update/MCSetupBackend.h"
 #endif
 
 namespace
@@ -355,6 +358,20 @@ namespace
         return std::move(*source);
     }
 
+#ifdef _WIN32
+    /// <summary>What Windows does for the program's updates: the setup judged and started (MCSetupRun.h).</summary>
+    MCSetupBackend::MCPlatform SetupPlatform()
+    {
+        return {.Runnable = MCSetupRunnable, .Start = MCStartSetup, .Quit = nullptr};
+    }
+
+    /// <summary>The folder a program is hosted in (the fork's releases), over https.</summary>
+    std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MakeProgramSource(std::string_view folder)
+    {
+        return MCHttpSource::Make(folder, MCMakeHttpGet());
+    }
+#endif
+
     /// <summary>
     /// The first start of a copy an installer prepared: its content downloaded, checked and put in place before
     /// anything opens, a window showing the progress (MCFirstStart.h).
@@ -546,6 +563,15 @@ int main(int argc, char** argv)
     }
 
     options->DataFolder = *dataFolder;
+#ifdef _WIN32
+    // A program update armed before the game last ended and never run (a crash) installs first, with its content.
+    if (contentUpdates && MCSetupBackend::RunLeftOver(options->DataFolder, MC_VERSION_BUILD, SetupPlatform()))
+    {
+        SDL_Quit();
+        return 0;
+    }
+#endif
+
     // A build that updates its content holds the game's lock for its run, so no other copy swaps an update in under
     // it (update/MCUpdateLock.h); one that doesn't leaves the game folder as it is.
     std::unique_ptr<MCUpdateLock> gameLock =
@@ -589,6 +615,12 @@ int main(int argc, char** argv)
     MCWeatherPacing::Follow(true);
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
+#elif defined(_WIN32)
+    if (contentUpdates)
+    {
+        MCUpdater::SetBackend(
+            MCSetupBackend::Make(options->DataFolder, MC_VERSION_SHOWN, MakeProgramSource, SetupPlatform()));
+    }
 #endif
 
     if (contentUpdates)

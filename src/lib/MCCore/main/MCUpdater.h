@@ -32,6 +32,11 @@ namespace MCContentUpdater
     struct MCSetup;
 }
 
+namespace MCReleaseFile
+{
+    struct MCProgram;
+}
+
 namespace MCUpdater
 {
     /// <summary>Where the update is.</summary>
@@ -137,6 +142,19 @@ namespace MCUpdater
 
         /// <summary>Passes on the player's answer to the update shown (its stage: <see cref="Status"/>).</summary>
         virtual void Answer(MCAnswer answer) = 0;
+
+        /// <summary>
+        /// The program release.json gives this copy, told just before <see cref="Check"/> looks for its build: a
+        /// backend that installs the program itself (Windows', update/MCSetupBackend.h) fetches it from here; Sparkle
+        /// reads its own feed.
+        /// </summary>
+        virtual void Offered([[maybe_unused]] const MCReleaseFile::MCProgram& program) {}
+
+        /// <summary>Each frame, on the main thread: a backend working on a thread of its own reports its steps here.</summary>
+        virtual void Frame() {}
+
+        /// <summary>The game is quitting: an update ready to install goes in as it ends (Sparkle sees to its own).</summary>
+        virtual void Quit() {}
     };
 
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>

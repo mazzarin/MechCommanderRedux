@@ -4,6 +4,7 @@
 #include "update/MCContentList.h"
 #include "update/MCContentUpdater.h"
 #include "update/MCInstalled.h"
+#include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
@@ -140,6 +141,18 @@ namespace
         {
             Listener();
         }
+    }
+
+    /// <summary>The program's backend looks for the build release.json gives this copy, told its entry there first.</summary>
+    void CheckProgram()
+    {
+        if (const auto program = Offer->Release.Programs.find(Content->Platform);
+            program != Offer->Release.Programs.end())
+        {
+            Backend->Offered(program->second);
+        }
+
+        Backend->Check(Offer->ProgramBuild);
     }
 
     /// <summary>Stops the work under way and waits for its thread.</summary>
@@ -552,7 +565,7 @@ namespace
 
             if (!ProgramClosing)
             {
-                Backend->Check(Offer->ProgramBuild);
+                CheckProgram();
             }
 
             return;
@@ -721,6 +734,11 @@ auto MCUpdater::Working() -> bool
 
 auto MCUpdater::Frame() -> void
 {
+    if (Backend != nullptr)
+    {
+        Backend->Frame();
+    }
+
     if (Work == nullptr)
     {
         return;
@@ -815,6 +833,11 @@ auto MCUpdater::Quit() -> void
 
     Work.reset();
     StagingLock.reset();
+
+    if (Backend != nullptr)
+    {
+        Backend->Quit();
+    }
 }
 
 auto MCUpdater::RestartWanted() -> bool
@@ -1146,7 +1169,7 @@ auto MCUpdater::Closed() -> void
 
             if (Step == MCStep::CheckingProgram)
             {
-                Backend->Check(Offer->ProgramBuild);
+                CheckProgram();
             }
 
             return;

@@ -17,6 +17,7 @@
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
+#include "update/MCSetupBackend.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
@@ -857,6 +858,222 @@ TEST_CASE("content updater: the first start installs the sets chosen into a fold
     const auto newer = MCContentUpdater::CheckInstall(setup, *disk, source);
     REQUIRE(!newer.has_value());
     CHECK(newer.error().find("newer than") != std::string::npos);
+}
+
+namespace
+{
+    /// <summary>The Windows setup a release names, as hosted, and the arguments that run it silently.</summary>
+    constexpr std::string_view ProgramsAddress = "https://example.test/programs";
+    constexpr std::string_view SetupName = "MechCommander-Redux-Setup-600.exe";
+    constexpr std::string_view SetupArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
+    constexpr std::string_view SetupBytes = "a stand-in for the setup";
+    constexpr std::string_view Blocked = "Windows blocked the update (Smart App Control, error 4551)";
+
+    /// <summary>release.json naming <paramref name="setup"/> as Windows' program for build 600 (its hash, unless given).</summary>
+    void PublishSetup(const MCHostedRelease& release, std::string_view setup,
+                      std::optional<MCSha256::MCDigest> hash = std::nullopt)
+    {
+        Write(release.Host.Path() / "programs" / SetupName, setup);
+        MCReleaseFile::MCRelease entry{.Number = 2,
+                                       .Version = std::string(ReleaseVersion),
+                                       .Notes = std::string(ReleaseNotes),
+                                       .List = MCSha256::Of(release.ListText),
+                                       .ListSize = release.ListText.size()};
+        entry.Programs["windows"] = {.Build = NewerBuild,
+                                     .Size = setup.size(),
+                                     .Sha256 = hash.value_or(MCSha256::Of(setup)),
+                                     .Url = std::format("{}/{}", ProgramsAddress, SetupName),
+                                     .Silent = std::string(SetupArguments)};
+        const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = entry};
+        Write(release.Host.Path() / "release.json",
+              release.ReleaseKey.Envelope(MCSignedFile::ReleaseType, MCReleaseFile::ReleasesPayload(releases)));
+    }
+
+    /// <summary>What the stand-in for Windows was asked: the setups judged and started, the quits.</summary>
+    struct MCSetupLog
+    {
+        std::vector<std::filesystem::path> Judged;
+        std::vector<std::tuple<std::filesystem::path, std::string, bool>> Started;
+        int32_t Quits = 0;
+        /// <summary>Why it won't run a setup (empty: it runs it).</summary>
+        std::string Refusal;
+    };
+
+    MCSetupBackend::MCPlatform FakeWindows(const std::shared_ptr<MCSetupLog>& log)
+    {
+        return {.Runnable =
+                    [log](const std::filesystem::path& setup)
+                {
+                    log->Judged.push_back(setup);
+                    return log->Refusal;
+                },
+                .Start =
+                    [log](const std::filesystem::path& setup, std::string_view arguments, bool restart)
+                {
+                    log->Started.emplace_back(setup, std::string(arguments), restart);
+                    return std::string();
+                },
+                .Quit = [log] { log->Quits++; }};
+    }
+
+    /// <summary>The updater on Windows for the test's length: the content's, and the setup's backend.</summary>
+    class MCSetupScope
+    {
+    public:
+        explicit MCSetupScope(const MCHostedRelease& release)
+        {
+            MCSetupBackend::MCSourceFor programs = [host = release.Host.Path()](std::string_view folder)
+                -> std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string>
+            {
+                if (folder != ProgramsAddress)
+                {
+                    return std::unexpected(std::format("{} isn't hosted", folder));
+                }
+
+                return std::make_unique<MCFolderSource>(host / "programs");
+            };
+
+            MCContentUpdater::MCSetup setup = release.Setup();
+            setup.Platform = "windows";
+            MCUpdater::SetBackend(
+                MCSetupBackend::Make(release.Game.Path(), std::string(RunningShown), programs, FakeWindows(Log)));
+            MCUpdater::SetContent(setup,
+                                  [host = release.Host.Path()] { return std::make_unique<MCFolderSource>(host); });
+        }
+
+        ~MCSetupScope()
+        {
+            MCUpdater::ClearContent();
+            MCUpdater::SetBackend(nullptr);
+        }
+
+        MCSetupScope(const MCSetupScope&) = delete;
+        MCSetupScope& operator=(const MCSetupScope&) = delete;
+
+        std::shared_ptr<MCSetupLog> Log = std::make_shared<MCSetupLog>();
+    };
+
+    std::filesystem::path Downloaded(const MCHostedRelease& release)
+    {
+        return release.Game.Path() / "Redux update" / "program" / "setup-600.exe";
+    }
+
+    std::filesystem::path ArmedRecord(const MCHostedRelease& release)
+    {
+        return release.Game.Path() / "Redux update" / "program" / "armed.json";
+    }
+
+    /// <summary>The update found, then INSTALL: on to READY, or a failure.</summary>
+    void InstallUntilDone()
+    {
+        MCUpdater::CheckAtStart();
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+        MCUpdater::Answer(MCAnswer::Install);
+        REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready || Stage() == MCStage::Failed; }));
+    }
+}
+
+TEST_CASE("updater on Windows: the setup release.json names is downloaded, checked and armed with the content; RESTART "
+          "runs it as the game ends, asking it to start the game again")
+{
+    MCHostedRelease release("setup-backend");
+    PublishSetup(release, SetupBytes);
+    MCSetupScope scope(release);
+    MCUpdater::CheckAtStart();
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Found; }));
+    CHECK_EQ(MCUpdater::Status().Version, std::string("0.2.2 (600)"));
+    CHECK_EQ(MCUpdater::Status().Expected, release.ContentBytes() + SetupBytes.size());
+
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() == MCStage::Ready || Stage() == MCStage::Failed; }));
+    REQUIRE(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK_EQ(Read(Downloaded(release)), std::string(SetupBytes));
+    CHECK(std::filesystem::exists(ArmedRecord(release)));
+    CHECK(scope.Log->Judged == std::vector{Downloaded(release)});
+
+    // RESTART: the game quits, and the setup starts as it ends.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(Stage() == MCStage::Installing);
+    CHECK_EQ(scope.Log->Quits, 1);
+    CHECK(scope.Log->Started.empty());
+    MCUpdater::Quit();
+    REQUIRE_EQ(scope.Log->Started.size(), size_t{1});
+    CHECK(std::get<0>(scope.Log->Started.front()) == Downloaded(release));
+    CHECK_EQ(std::get<1>(scope.Log->Started.front()), std::string(SetupArguments));
+    CHECK(std::get<2>(scope.Log->Started.front()));
+    CHECK(!std::filesystem::exists(ArmedRecord(release)));
+}
+
+TEST_CASE("updater on Windows: a setup that isn't release.json's, or that Windows won't run, fails the update, saying "
+          "why; nothing is armed")
+{
+    {
+        MCHostedRelease release("setup-not-named");
+        PublishSetup(release, SetupBytes, MCSha256::Of("another setup"));
+        MCSetupScope scope(release);
+        InstallUntilDone();
+        CHECK(Stage() == MCStage::Failed);
+        CHECK(MCUpdater::Status().Error.find("isn't the one release.json names") != std::string::npos);
+        CHECK(!release.Armed());
+        CHECK(!std::filesystem::exists(Downloaded(release)));
+        CHECK(scope.Log->Judged.empty());
+        MCUpdater::Quit();
+        CHECK(scope.Log->Started.empty());
+    }
+
+    MCHostedRelease release("setup-blocked");
+    PublishSetup(release, SetupBytes);
+    MCSetupScope scope(release);
+    scope.Log->Refusal = Blocked;
+    InstallUntilDone();
+    CHECK(Stage() == MCStage::Failed);
+    CHECK_EQ(MCUpdater::Status().Error, std::string(Blocked));
+    CHECK(!release.Armed());
+    CHECK(!std::filesystem::exists(ArmedRecord(release)));
+    MCUpdater::Quit();
+    CHECK(scope.Log->Started.empty());
+}
+
+TEST_CASE("updater on Windows: quitting with the update ready runs the setup; one armed and never run (the game ended "
+          "first) runs at the next start, once; once in, its files go")
+{
+    MCHostedRelease release("setup-quit");
+    PublishSetup(release, SetupBytes);
+
+    {
+        MCSetupScope scope(release);
+        InstallUntilDone();
+        REQUIRE(Stage() == MCStage::Ready);
+        MCUpdater::Quit();
+        REQUIRE_EQ(scope.Log->Started.size(), size_t{1});
+        CHECK(!std::get<2>(scope.Log->Started.front()));
+    }
+
+    // Armed, and the game ended before it quit: the next start runs it, asking for the game again; a start after that
+    // doesn't (it ran once).
+    std::filesystem::remove_all(release.Game.Path() / "Redux update");
+    Write(release.Game.Path() / "Redux update" / "installed.json", MCInstalled::Text(release.Installed));
+
+    {
+        MCSetupScope scope(release);
+        InstallUntilDone();
+        REQUIRE(Stage() == MCStage::Ready);
+    }
+
+    REQUIRE(std::filesystem::exists(ArmedRecord(release)));
+    const auto log = std::make_shared<MCSetupLog>();
+    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
+    REQUIRE_EQ(log->Started.size(), size_t{1});
+    CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
+    CHECK(std::get<2>(log->Started.front()));
+    CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
+    CHECK_EQ(log->Started.size(), size_t{1});
+    CHECK(std::filesystem::exists(Downloaded(release)));
+
+    // The new build's start: the setup's folder goes.
+    CHECK(!MCSetupBackend::RunLeftOver(release.Game.Path(), NewerBuild, FakeWindows(log)));
+    CHECK(!std::filesystem::exists(release.Game.Path() / "Redux update" / "program"));
 }
 
 TEST_CASE("content removal: the uninstaller's removal takes what updates put there, leaves what a copy taken over had "

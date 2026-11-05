@@ -1340,6 +1340,9 @@
     <ClCompile Include="update\MCReleaseFile.cpp">
       <Filter>update</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCSetupBackend.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="update\MCSignedFile.cpp">
       <Filter>update</Filter>
     </ClCompile>
@@ -2649,6 +2652,9 @@
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCReleaseFile.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCSetupBackend.h">
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCSignedFile.h">

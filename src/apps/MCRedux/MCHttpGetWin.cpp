@@ -3,16 +3,12 @@
 
 #ifdef _WIN32
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <winhttp.h>
+#include "MCWinHttp.h"
 
 #pragma comment(lib, "winhttp.lib")
 
 #include <algorithm>
 #include <condition_variable>
-#include <filesystem>
 #include <format>
 #include <mutex>
 #include <string>
@@ -22,26 +18,11 @@ namespace
 {
     /// <summary>A wait this long for each step (resolve, connect, send, the host's next bytes) ends the transfer.</summary>
     constexpr int IdleMilliseconds = 30000;
-    /// <summary>Our own user agent, as the reports'.</summary>
-    constexpr std::wstring_view UserAgent = L"MechCommander Redux";
     /// <summary>The body is read in pieces this big.</summary>
     constexpr size_t PieceBytes = 64 * 1024;
     constexpr std::string_view StoppedError = "stopped";
     /// <summary>The notices a request's callback gets: each step's end, and its handle's closing (its last).</summary>
     constexpr DWORD CallbackNotices = WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES;
-
-    struct MCInternetCloser
-    {
-        void operator()(HINTERNET handle) const { WinHttpCloseHandle(handle); }
-    };
-
-    using MCInternetHandle = std::unique_ptr<void, MCInternetCloser>;
-
-    std::wstring Wide(std::string_view text)
-    {
-        return std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size()))
-            .wstring();
-    }
 
     /// <summary>What failed, with WinHTTP's error (12002 a timeout, 12007 no such host, 12029 no connection).</summary>
     std::string Failed(std::string_view what, DWORD error)
@@ -143,17 +124,12 @@ namespace
     class MCWinGet final : public MCHttpSource::MCGet
     {
     public:
-        MCWinGet()
-            : _Session(WinHttpOpen(UserAgent.data(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                   WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC))
+        MCWinGet() : _Session(MCWinHttp::OpenSession(IdleMilliseconds, WINHTTP_FLAG_ASYNC))
         {
             if (_Session == nullptr)
             {
                 _OpenError = GetLastError();
-                return;
             }
-
-            WinHttpSetTimeouts(_Session.get(), IdleMilliseconds, IdleMilliseconds, IdleMilliseconds, IdleMilliseconds);
         }
 
         std::expected<void, std::string> Get(const std::string& url, uint64_t from,
@@ -164,7 +140,7 @@ namespace
                 return std::unexpected(Failed("Opening WinHTTP", _OpenError));
             }
 
-            const std::wstring address = Wide(url);
+            const std::wstring address = MCWinHttp::Wide(url);
             URL_COMPONENTS parts{};
             parts.dwStructSize = sizeof(parts);
             parts.dwHostNameLength = static_cast<DWORD>(-1);
@@ -178,7 +154,7 @@ namespace
             const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
             const std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
             // The session keeps connections open, so the next file reuses this one.
-            const MCInternetHandle connection(WinHttpConnect(_Session.get(), host.c_str(), parts.nPort, 0));
+            const MCWinHttp::MCHandle connection(WinHttpConnect(_Session.get(), host.c_str(), parts.nPort, 0));
 
             if (connection == nullptr)
             {
@@ -406,7 +382,7 @@ namespace
             }
         }
 
-        MCInternetHandle _Session;
+        MCWinHttp::MCHandle _Session;
         DWORD _OpenError = 0;
         /// <summary>The request under way (none: none, or a cancel closed it), and whether a cancel came.</summary>
         std::mutex _Lock;

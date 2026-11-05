@@ -6,10 +6,8 @@
 #include "MCCrashTrace.h"
 #include "MCVersion.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <winhttp.h>
+#include "MCWinHttp.h"
+
 #include <SDL3/SDL_log.h>
 
 #pragma comment(lib, "winhttp.lib")
@@ -44,17 +42,8 @@ namespace
     /// <summary>A reply's bytes kept, at most (the server's are a line).</summary>
     constexpr size_t MaxReplyBytes = 4096;
     constexpr double BytesPerGb = 1024.0 * 1024.0 * 1024.0;
-    constexpr std::wstring_view UserAgent = L"MechCommander Redux";
     constexpr BYTE BatterySaverOn = 1;
     constexpr BYTE OnLinePower = 1;
-
-    std::wstring Wide(std::string_view text)
-    {
-        const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-        std::wstring wide(static_cast<size_t>(std::max(length, 0)), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), length);
-        return wide;
-    }
 
     std::string Narrow(std::wstring_view text)
     {
@@ -136,13 +125,6 @@ namespace
         return std::format("{}.{}.{}", version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber);
     }
 
-    struct MCInternetCloser
-    {
-        void operator()(HINTERNET handle) const { WinHttpCloseHandle(handle); }
-    };
-
-    using MCInternetHandle = std::unique_ptr<void, MCInternetCloser>;
-
     /// <summary>
     /// Sends <paramref name="body"/> to <paramref name="url"/> (a POST of JSON, or a GET when empty), waiting for the
     /// answer: the HTTP status (0: none) and the reply.
@@ -161,22 +143,19 @@ namespace
 
         const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
         const std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
-        const MCInternetHandle session(WinHttpOpen(UserAgent.data(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+        const MCWinHttp::MCHandle session = MCWinHttp::OpenSession(RequestMilliseconds);
 
         if (session == nullptr)
         {
             return {0, {}};
         }
 
-        WinHttpSetTimeouts(session.get(), RequestMilliseconds, RequestMilliseconds, RequestMilliseconds,
-                           RequestMilliseconds);
-        const MCInternetHandle connection(WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
-        const MCInternetHandle request(connection != nullptr
-                                           ? WinHttpOpenRequest(connection.get(), body.empty() ? L"GET" : L"POST",
-                                                                path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                                WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-                                           : nullptr);
+        const MCWinHttp::MCHandle connection(WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
+        const MCWinHttp::MCHandle request(connection != nullptr
+                                              ? WinHttpOpenRequest(connection.get(), body.empty() ? L"GET" : L"POST",
+                                                                   path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                                                   WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
+                                              : nullptr);
         const wchar_t* headers = body.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : L"Content-Type: application/json";
         const auto size = static_cast<DWORD>(body.size());
 
@@ -317,7 +296,7 @@ namespace
             try
             {
                 std::thread(
-                    [url = Wide(_Server + path), body = std::move(body), reply]
+                    [url = MCWinHttp::Wide(_Server + path), body = std::move(body), reply]
                     {
                         auto [status, text] = Send(url, body);
                         (*reply)(status, std::move(text));

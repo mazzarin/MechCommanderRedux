@@ -2,10 +2,9 @@
 #include "MCSetupRun.h"
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#include "MCWinHttp.h"
+
 #include <format>
-#include <windows.h>
 
 namespace
 {
@@ -21,20 +20,6 @@ namespace
     /// </summary>
     constexpr DWORD FirstIntegrityError = 4550;
     constexpr DWORD LastIntegrityError = 4599;
-
-    /// <summary><paramref name="text"/> (UTF-8) as Windows' UTF-16.</summary>
-    std::wstring Wide(std::string_view text)
-    {
-        if (text.empty())
-        {
-            return {};
-        }
-
-        const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-        std::wstring wide(static_cast<size_t>(length), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), length);
-        return wide;
-    }
 
     /// <summary>Why Windows didn't start the setup, as the UPDATE page says it.</summary>
     std::string Why(DWORD error)
@@ -66,7 +51,7 @@ namespace
 
         if (!arguments.empty())
         {
-            commandLine += L" " + Wide(arguments);
+            commandLine += L" " + MCWinHttp::Wide(arguments);
         }
 
         STARTUPINFOW startup{};

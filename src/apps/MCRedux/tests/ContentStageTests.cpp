@@ -70,6 +70,32 @@ namespace
         uint64_t _Free;
     };
 
+    /// <summary>
+    /// Adds to <paramref name="release"/> another big file the copy has, <c>HD/name.hda</c>, patched as the terrain
+    /// is (the same bytes, its own patch's name); it would come whole from the update zip, which doesn't hold it.
+    /// </summary>
+    void AddPatched(MCRelease& release, std::string_view name)
+    {
+        const std::string path = std::format("HD/{}.hda", name);
+        const std::string patchName = std::format("patches/{}-1-2.hdiff", name);
+        const std::string bigOld = Text(MCFilePatchFixture::PatchOld());
+        const std::string bigNew = Text(MCFilePatchFixture::PatchNew());
+        const std::string patch = Text(MCFilePatchFixture::CheckedPatch);
+        Write(release.Game.Path() / MCFileSystem::FromUtf8(path), bigOld);
+        release.Installed.Files[MCContentList::FoldedPath(path)] = {
+            .Path = path, .Set = "hd", .Sha256 = MCSha256::Of(bigOld), .Size = bigOld.size()};
+        Write(release.Host.Path() / MCFileSystem::FromUtf8(patchName), patch);
+        MCContentList::MCFile file{
+            .Path = path, .Set = "hd", .Size = bigNew.size(), .Sha256 = MCSha256::Of(bigNew), .Zip = "update-2.zip"};
+        file.Patches.push_back({MCSha256::Of(bigOld), patchName, patch.size(), MCSha256::Of(patch)});
+        release.List.Files.push_back(std::move(file));
+    }
+
+    std::filesystem::path StagedAt(const MCRelease& release, std::string_view path)
+    {
+        return release.Game.Path() / "Redux update" / "staged" / MCFileSystem::FromUtf8(path);
+    }
+
     /// <summary>The bytes of the step at <paramref name="path"/>'s file, as listed.</summary>
     uint64_t ListedSize(const MCContentList::MCList& list, std::string_view path)
     {
@@ -194,6 +220,38 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
     CHECK(!MCContentSwap::Waiting(*disk, other.Game.Path()));
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
+}
+
+TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched or applied, no zip fetched")
+{
+    MCRelease release(Group, "stop");
+    AddPatched(release, "a");
+    AddPatched(release, "b");
+    AddPatched(release, "c");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    REQUIRE(std::ranges::count(plan.Steps, MCAction::Patch, &MCContentPlan::MCStep::Action) == 4);
+    // b's patch downloaded whole by an earlier attempt.
+    Write(release.Game.Path() / "Redux update" / "download" / "patches" / "b-1-2.hdiff",
+          Text(MCFilePatchFixture::CheckedPatch));
+    MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    // STOP as the first patch's bytes arrive.
+    const auto stopped = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                               [](uint64_t received, uint64_t) { return received == 0; });
+    REQUIRE(!stopped.has_value());
+    CHECK_EQ(stopped.error(), std::string("stopped"));
+    CHECK((source.Asked() == std::vector<std::string>{"patches/terrain-1-2.hdiff"}));
+    CHECK(!std::filesystem::exists(StagedAt(release, "HD/b.hda")));
+    CHECK(std::filesystem::exists(release.Game.Path() / "Redux update" / "download" / "patches" / "b-1-2.hdiff"));
+
+    // The next attempt does the rest, b's patch not fetched again.
+    REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK(std::ranges::count(source.Asked(), std::string("patches/b-1-2.hdiff")) == 0);
+
+    for (const std::string_view path : {"HD/terrain.hda", "HD/a.hda", "HD/b.hda", "HD/c.hda"})
+    {
+        CHECK(Read(StagedAt(release, path)) == Text(MCFilePatchFixture::PatchNew()));
+    }
 }
 
 TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "

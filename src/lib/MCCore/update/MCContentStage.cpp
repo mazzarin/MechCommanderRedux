@@ -15,6 +15,8 @@ namespace
     using MCContentPlan::MCStep;
 
     constexpr double BytesPerGigabyte = 1e9;
+    /// <summary>What a stop ends staging with, as a source's Cancel ends its fetch (MCSource::Cancel).</summary>
+    constexpr std::string_view StoppedError = "stopped";
 
     std::string Shown(const std::filesystem::path& path)
     {
@@ -104,14 +106,15 @@ namespace
             {
                 if (const auto patched = Patch(*step); !patched)
                 {
+                    // A stop isn't a patch that failed: nothing more is fetched or applied.
+                    if (Stopped())
+                    {
+                        return Stop();
+                    }
+
                     SDL_Log("Updates: %s is fetched whole: %s", step->Path.c_str(), patched.error().c_str());
                     whole.push_back(step);
                 }
-            }
-
-            if (_Stopped)
-            {
-                return std::unexpected("stopped");
             }
 
             // A patch that fell back on a zip not otherwise fetched needs room for it too.
@@ -148,11 +151,11 @@ namespace
 
                 if (const auto unpacked = FetchAndUnpack(zip, entries); !unpacked)
                 {
-                    return unpacked;
+                    return Stopped() ? Stop() : unpacked;
                 }
             }
 
-            return Flush();
+            return Stopped() ? Stop() : Flush();
         }
 
     private:
@@ -253,7 +256,7 @@ namespace
             return {};
         }
 
-        /// <summary>Downloads a hosted file (resuming), and checks it's the list's.</summary>
+        /// <summary>Downloads a hosted file (resuming), and checks it's the list's; a stop ends it at once.</summary>
         std::expected<std::filesystem::path, std::string> FetchChecked(std::string_view name, uint64_t size,
                                                                        const MCSha256::MCDigest& sha256)
         {
@@ -271,7 +274,10 @@ namespace
                 return std::unexpected(std::format("{} can't be made", Shown(path.parent_path())));
             }
 
-            Received(stat.Size);
+            if (!Received(stat.Size))
+            {
+                return Stop();
+            }
 
             if (stat.Size < size)
             {
@@ -279,8 +285,18 @@ namespace
 
                 if (!fetched)
                 {
+                    if (Stopped() || fetched.error() == StoppedError)
+                    {
+                        return Stop();
+                    }
+
                     return std::unexpected(std::format("{} didn't download: {}", name, fetched.error()));
                 }
+            }
+
+            if (Stopped())
+            {
+                return Stop();
             }
 
             const auto hash = _Disk.Hash(path);
@@ -311,12 +327,22 @@ namespace
                 return std::unexpected(std::format("{} can't be made", Shown(staged.parent_path())));
             }
 
+            if (Stopped())
+            {
+                return Stop();
+            }
+
             const auto applied = MCFilePatch::Apply(At(step.OnDisk), *patch, staged);
             _Disk.Remove(*patch);
 
             if (!applied)
             {
                 return std::unexpected(applied.error());
+            }
+
+            if (Stopped())
+            {
+                return Stop();
             }
 
             if (!IsStaged(step))
@@ -342,6 +368,11 @@ namespace
                 return std::unexpected(path.error());
             }
 
+            if (Stopped())
+            {
+                return Stop();
+            }
+
             std::ifstream file(*path, std::ios::binary);
             mz_zip_archive archive{};
             archive.m_pRead = ReadZip;
@@ -359,6 +390,14 @@ namespace
 
             for (const MCStep* step : entries)
             {
+                // Stopped, the zip stays for the next attempt.
+                if (Stopped())
+                {
+                    error = StoppedError;
+                    keepZip = true;
+                    break;
+                }
+
                 const int index =
                     mz_zip_reader_locate_file(&archive, step->File->Path.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE);
                 const std::filesystem::path staged = StagedPath(*step);
@@ -466,6 +505,16 @@ namespace
             }
 
             return !_Stopped;
+        }
+
+        /// <summary>Whether staging is to stop: asked before each request, hash, patch and unpack.</summary>
+        bool Stopped() { return !Received(0); }
+
+        /// <summary>Ends staging as stopped: what's in stays for the next attempt.</summary>
+        std::unexpected<std::string> Stop()
+        {
+            _Stopped = true;
+            return std::unexpected(std::string(StoppedError));
         }
 
         MCUpdateDisk& _Disk;

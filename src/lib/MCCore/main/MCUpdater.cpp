@@ -325,6 +325,12 @@ namespace
                                 return std::unexpected(staged.error());
                             }
 
+                            // Stopped since staging ended: not armed.
+                            if (context.Stop.stop_requested())
+                            {
+                                return std::unexpected(std::string(MCSha256::StoppedError));
+                            }
+
                             if (const auto armed = arm ? MCContentUpdater::Arm(setup, *disk, offer)
                                                        : std::expected<void, std::string>();
                                 !armed)
@@ -464,7 +470,8 @@ namespace
                         [&](MCContentStage::MCSource& source) -> MCWorkResult
                         {
                             const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                            auto change = MCContentUpdater::CheckSets(setup, *disk, source);
+                            auto change =
+                                MCContentUpdater::CheckSets(setup, *disk, source, MCUpdateWork::GoOn(context.Stop));
 
                             if (change && !*change)
                             {
@@ -484,6 +491,11 @@ namespace
                                 !staged)
                             {
                                 return std::unexpected(staged.error());
+                            }
+
+                            if (context.Stop.stop_requested())
+                            {
+                                return std::unexpected(std::string(MCSha256::StoppedError));
                             }
 
                             if (const auto armed = MCContentUpdater::Arm(setup, *disk, **change); !armed)
@@ -561,13 +573,14 @@ namespace
     void LookForUpdate()
     {
         Step = MCStep::CheckingContent;
-        RunWork("the update's check",
-                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
-                {
-                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
-                        makeSource, context.Stop, [&](MCContentStage::MCSource& source)
-                        { return MCContentUpdater::Check(setup, *MakeDisk(), source); });
-                });
+        RunWork(
+            "the update's check",
+            [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
+            {
+                return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                    makeSource, context.Stop, [&](MCContentStage::MCSource& source)
+                    { return MCContentUpdater::Check(setup, *MakeDisk(), source, MCUpdateWork::GoOn(context.Stop)); });
+            });
     }
 
     /// <summary>

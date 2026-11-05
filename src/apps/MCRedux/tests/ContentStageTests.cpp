@@ -69,9 +69,21 @@ namespace
             return _Disk->WriteFlushed(path, bytes);
         }
 
-        bool FlushFile(const std::filesystem::path& path) override { return _Disk->FlushFile(path); }
+        bool FlushFile(const std::filesystem::path& path) override
+        {
+            if (OnFlush)
+            {
+                OnFlush();
+            }
+
+            return _Disk->FlushFile(path);
+        }
+
         bool FlushFolder(const std::filesystem::path& path) override { return _Disk->FlushFolder(path); }
         std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override { return _Free; }
+
+        /// <summary>Called as each file is flushed (none: nothing).</summary>
+        std::function<void()> OnFlush;
 
     private:
         std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
@@ -424,6 +436,25 @@ TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched
     {
         CHECK(Read(StagedAt(release, path)) == Text(MCFilePatchFixture::PatchNew()));
     }
+}
+
+TEST_CASE("content stage: a stop while the staged files are flushed ends staging as stopped, never as done")
+{
+    MCRelease release(Group, "stop-flush");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(std::numeric_limits<uint64_t>::max());
+    std::atomic<bool> stop = false;
+    disk.OnFlush = [&] { stop = true; };
+    const auto stopped = MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List,
+                                               [&](uint64_t, uint64_t) { return !stop; });
+    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+
+    // The next attempt finishes, with what came kept.
+    disk.OnFlush = nullptr;
+    const uint64_t sent = source.Sent();
+    REQUIRE(MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK_EQ(source.Sent(), sent);
 }
 
 TEST_CASE("content stage: patches are fetched several at once, each over a source of its own, applied in order")

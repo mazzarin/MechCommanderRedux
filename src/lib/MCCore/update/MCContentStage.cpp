@@ -187,7 +187,7 @@ namespace
                 }
             }
 
-            return Stopped() ? Stop() : Flush();
+            return Flush();
         }
 
     private:
@@ -778,7 +778,10 @@ namespace
             return {};
         }
 
-        /// <summary>Flushes every staged file and the folders holding them; the downloads go.</summary>
+        /// <summary>
+        /// Flushes every staged file and the folders holding them (each a full flush to the disk, asked before whether
+        /// to stop); the downloads go. Stopped, staging isn't done, so the update is never armed.
+        /// </summary>
         std::expected<void, std::string> Flush()
         {
             std::set<std::filesystem::path> folders;
@@ -792,6 +795,11 @@ namespace
                 }
 
                 const std::filesystem::path staged = StagedPath(step);
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
 
                 if (!_Disk.FlushFile(staged))
                 {
@@ -809,10 +817,20 @@ namespace
 
             for (const std::filesystem::path& folder : folders)
             {
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
                 if (!_Disk.FlushFolder(folder))
                 {
                     return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(folder)));
                 }
+            }
+
+            if (Stopped())
+            {
+                return Stop();
             }
 
             _Disk.Remove(At(MCContentStage::DownloadFolder));

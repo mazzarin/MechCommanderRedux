@@ -68,6 +68,11 @@ std::function<bool(uint64_t, uint64_t)> MCUpdateWork::Reporter(MCProgress& progr
     };
 }
 
+std::function<bool()> MCUpdateWork::GoOn(std::stop_token stop)
+{
+    return [stop = std::move(stop)] { return !stop.stop_requested(); };
+}
+
 MCUpdateWork::MCWorkSource::MCWorkSource(const MCSourceMaker& maker, std::stop_token stop)
     : _Source(maker ? maker() : nullptr)
 {

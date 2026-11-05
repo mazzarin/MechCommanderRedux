@@ -611,6 +611,55 @@ TEST_CASE("content updater: a copy with no record hashes its files once; later c
     CHECK_EQ(hashedAtCheck(), size_t{0});
 }
 
+TEST_CASE("content updater: a stop while a check, a change of sets or an install plans ends it at once, as stopped; "
+          "nothing is hashed on, fetched or armed")
+{
+    MCHostedRelease release("plan-stop");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path hashesFile = game / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    // No record: every file found is hashed, as at a copy's first check.
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    int asked = 0;
+    const auto stopAtOnce = [&]
+    {
+        ++asked;
+        return false;
+    };
+
+    MCFolderSource source(release.Host.Path());
+    const auto checked = MCContentUpdater::Check(setup, *disk, source, stopAtOnce);
+    CHECK_EQ(checked.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK_EQ(asked, 1);
+    CHECK(!std::filesystem::exists(hashesFile));
+
+    // HD OPTIONS' REMOVE, planned from the record: the same.
+    MCInstalled::MCRecord withHd = release.Installed;
+
+    for (auto& [folded, file] : withHd.Files)
+    {
+        file.Set = file.Path.starts_with("HD/") ? "hd" : "game";
+    }
+
+    Write(game / "Redux update" / "installed.json", MCInstalled::Text(withHd));
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    asked = 0;
+    const auto removal = MCContentUpdater::CheckSets(setup, *disk, source, stopAtOnce);
+    CHECK_EQ(removal.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK_EQ(asked, 1);
+
+    // The first start's window closed while it hashes: nothing is downloaded but what plans it, nothing armed.
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    MCFolderSource installing(release.Host.Path());
+    const auto installed =
+        MCContentUpdater::Install(setup, *disk, installing, [](uint64_t, uint64_t) { return false; });
+    CHECK_EQ(installed.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK(std::ranges::none_of(installing.Asked(), [](const std::string& name) { return name.ends_with(".zip"); }));
+    CHECK(!release.Armed());
+}
+
 TEST_CASE("updater: content alone is checked off the main thread, staged on INSTALL, ready once armed, and RESTART "
           "starts the game again")
 {

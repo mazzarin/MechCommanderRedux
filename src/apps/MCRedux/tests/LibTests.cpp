@@ -1020,18 +1020,34 @@ TEST_CASE("file patch: one for another file, damaged, without checksums or no pa
     CHECK(ReadFile(old) == PatchOld());
 }
 
-/// <summary>A patch asked to stop as it writes ends at once, as stopped, and leaves nothing.</summary>
-TEST_CASE("file patch: a patch stopped as it writes ends at once and writes nothing")
+/// <summary>
+/// A patch asked to stop as it reads (the old file's checksum first) or writes ends at once, as stopped, and leaves
+/// nothing, wherever it's asked.
+/// </summary>
+TEST_CASE("file patch: a patch stopped as it reads or writes ends at once and writes nothing")
 {
     ScratchFolder folder("file-patch-stopped");
     WriteFile(folder.Path() / "old.bin", PatchOld());
     WriteFile(folder.Path() / "patch.hdiff", CheckedPatch);
-    int asked = 0;
-    const auto stopped = MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff",
-                                            folder.Path() / "new.bin", [&] { return ++asked == 0; });
-    CHECK_EQ(stopped.error_or(""), std::string(MCFilePatch::StoppedError));
-    CHECK_EQ(asked, 1);
-    CHECK(!std::filesystem::exists(folder.Path() / "new.bin"));
+    int asks = 0;
+    REQUIRE(MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff", folder.Path() / "new.bin",
+                               [&]
+                               {
+                                   ++asks;
+                                   return true;
+                               })
+                .has_value());
+    REQUIRE(asks > 1);
+
+    for (int stopAt = 1; stopAt <= asks; ++stopAt)
+    {
+        int asked = 0;
+        const auto stopped = MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff",
+                                                folder.Path() / "new.bin", [&] { return ++asked < stopAt; });
+        CHECK_EQ(stopped.error_or(""), std::string(MCFilePatch::StoppedError));
+        CHECK_EQ(asked, stopAt);
+        CHECK(!std::filesystem::exists(folder.Path() / "new.bin"));
+    }
 }
 
 /// <summary>

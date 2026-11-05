@@ -67,6 +67,9 @@ namespace MCUpdateWork
     /// </summary>
     std::function<bool(uint64_t, uint64_t)> Reporter(MCProgress& progress, std::stop_token stop);
 
+    /// <summary>The goOn a check's planning takes (MCContentUpdater::Check and the like): true until <paramref name="stop"/> is asked.</summary>
+    std::function<bool()> GoOn(std::stop_token stop);
+
     /// <summary>
     /// The transfer for a piece of work, made by <c>maker</c> on the work's thread, and cancelled the moment the work is
     /// asked to stop, so a read stalled on the network ends then rather than at its timeout.

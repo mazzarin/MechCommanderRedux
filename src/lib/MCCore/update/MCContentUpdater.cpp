@@ -230,14 +230,15 @@ namespace
     /// <summary>
     /// Plans <paramref name="content"/>'s list for the copy: <paramref name="sets"/> against what
     /// <paramref name="installed"/> records, and the hashes the last plan kept; this plan's are kept in their place.
+    /// <paramref name="goOn"/> is asked as it hashes (MCContentPlan::Make).
     /// </summary>
     std::expected<void, std::string> PlanFor(const MCSetup& setup, MCUpdateDisk& disk, MCContent& content,
                                              const MCListRef& list, const MCInstalled::MCRecord& installed,
-                                             const MCSets& sets)
+                                             const MCSets& sets, const MCGoOn& goOn)
     {
         const MCContentPlan::MCHashes hashes = ReadHashes(setup, disk);
         MCContentFolder folder(setup.GameFolder);
-        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes);
+        auto plan = MCContentPlan::Make(folder, installed, content.List, list.Hash, sets, hashes, goOn);
 
         if (!plan)
         {
@@ -268,11 +269,9 @@ namespace
     /// <see cref="PlanFor"/>).
     /// </summary>
     /// <returns>The content; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                             MCContentStage::MCSource& source,
-                                                                             const MCListRef& list,
-                                                                             const MCInstalled::MCRecord& installed,
-                                                                             const MCSets& sets, uint64_t build)
+    std::expected<std::shared_ptr<const MCContent>, std::string> PlanContent(
+        const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source, const MCListRef& list,
+        const MCInstalled::MCRecord& installed, const MCSets& sets, uint64_t build, const MCGoOn& goOn)
     {
         auto content = FetchList(setup, disk, source, list, build);
 
@@ -286,7 +285,7 @@ namespace
             return nullptr;
         }
 
-        if (const auto planned = PlanFor(setup, disk, **content, list, installed, sets); !planned)
+        if (const auto planned = PlanFor(setup, disk, **content, list, installed, sets, goOn); !planned)
         {
             return std::unexpected(planned.error());
         }
@@ -374,7 +373,8 @@ std::string MCContentUpdater::MCOffer::ShownVersion(uint64_t runningBuild) const
 }
 
 std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                           MCContentStage::MCSource& source)
+                                                                           MCContentStage::MCSource& source,
+                                                                           const MCGoOn& goOn)
 {
     const auto chosen = ReleaseFor(setup, disk, source);
 
@@ -427,9 +427,9 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 
     if (newContent)
     {
-        auto content =
-            PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number}, *installed,
-                        Wanted(disk, setup.GameFolder, *installed), offer.ProgramBuild.value_or(setup.RunningBuild));
+        auto content = PlanContent(setup, disk, source, {release.List, release.ListSize, release.Number}, *installed,
+                                   Wanted(disk, setup.GameFolder, *installed),
+                                   offer.ProgramBuild.value_or(setup.RunningBuild), goOn);
 
         if (!content)
         {
@@ -454,7 +454,8 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 }
 
 std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                               MCContentStage::MCSource& source)
+                                                                               MCContentStage::MCSource& source,
+                                                                               const MCGoOn& goOn)
 {
     const auto installed = MCInstalled::Read(setup.GameFolder);
 
@@ -491,7 +492,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
     if (std::ranges::includes(installed->Sets, sets))
     {
         MCContentFolder folder(setup.GameFolder);
-        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk));
+        auto removal = MCContentPlan::Removal(folder, *installed, sets, ReadHashes(setup, disk), goOn);
 
         if (!removal)
         {
@@ -506,7 +507,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
     }
 
     auto content = PlanContent(setup, disk, source, {installed->List, std::nullopt, installed->Release}, *installed,
-                               sets, setup.RunningBuild);
+                               sets, setup.RunningBuild, goOn);
 
     if (!content)
     {
@@ -529,10 +530,12 @@ namespace
 
     /// <summary>
     /// The first start's install (<see cref="MCContentUpdater::CheckInstall"/>): the release the copy takes and its list
-    /// fetched and checked, then <paramref name="beforePlan"/> (none: nothing), then the plan from the files as they are.
+    /// fetched and checked, then <paramref name="beforePlan"/> (none: nothing), then the plan from the files as they are,
+    /// <paramref name="goOn"/> asked as it hashes.
     /// </summary>
     std::expected<MCOffer, std::string> CheckRelease(const MCSetup& setup, MCUpdateDisk& disk,
-                                                     MCContentStage::MCSource& source, const MCBeforePlan& beforePlan)
+                                                     MCContentStage::MCSource& source, const MCBeforePlan& beforePlan,
+                                                     const MCGoOn& goOn)
     {
         const auto chosen = ReleaseFor(setup, disk, source);
 
@@ -577,7 +580,7 @@ namespace
         }
 
         if (const auto planned =
-                PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed));
+                PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed), goOn);
             !planned)
         {
             return std::unexpected(planned.error());
@@ -589,8 +592,32 @@ namespace
     }
 
     /// <summary>
+    /// An install's progress, told on as it comes and kept, so asking whether to go on between its steps (planning,
+    /// arming) tells it again as it was.
+    /// </summary>
+    class MCToldProgress
+    {
+    public:
+        explicit MCToldProgress(const std::function<bool(uint64_t, uint64_t)>& progress) : _Progress(progress) {}
+
+        bool Tell(uint64_t received, uint64_t expected)
+        {
+            _Received = received;
+            _Expected = expected;
+            return GoOn();
+        }
+
+        bool GoOn() const { return !_Progress || _Progress(_Received, _Expected); }
+
+    private:
+        const std::function<bool(uint64_t, uint64_t)>& _Progress;
+        uint64_t _Received = 0;
+        uint64_t _Expected = 0;
+    };
+
+    /// <summary>
     /// The first start's install or a repair, under the staging lock: checked (<see cref="CheckRelease"/>), staged and
-    /// armed.
+    /// armed; <paramref name="progress"/> asked whether to go on at each step, arming too (stopped, nothing is armed).
     /// </summary>
     std::expected<void, std::string> InstallRelease(const MCSetup& setup, MCUpdateDisk& disk,
                                                     MCContentStage::MCSource& source,
@@ -604,7 +631,8 @@ namespace
             return std::unexpected("another copy of the game is downloading it");
         }
 
-        const auto offer = CheckRelease(setup, disk, source, beforePlan);
+        MCToldProgress told(progress);
+        const auto offer = CheckRelease(setup, disk, source, beforePlan, [&told] { return told.GoOn(); });
 
         if (!offer)
         {
@@ -615,9 +643,17 @@ namespace
                 static_cast<unsigned long long>(offer->Release.Number),
                 static_cast<unsigned long long>(offer->ContentBytes()));
 
-        if (const auto staged = MCContentUpdater::Stage(setup, disk, source, *offer, progress); !staged)
+        if (const auto staged =
+                MCContentUpdater::Stage(setup, disk, source, *offer, [&told](uint64_t received, uint64_t expected)
+                                        { return told.Tell(received, expected); });
+            !staged)
         {
             return staged;
+        }
+
+        if (!told.GoOn())
+        {
+            return std::unexpected(std::string(MCSha256::StoppedError));
         }
 
         return MCContentUpdater::Arm(setup, disk, *offer);
@@ -625,9 +661,9 @@ namespace
 }
 
 std::expected<MCOffer, std::string> MCContentUpdater::CheckInstall(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                   MCContentStage::MCSource& source)
+                                                                   MCContentStage::MCSource& source, const MCGoOn& goOn)
 {
-    return CheckRelease(setup, disk, source, {});
+    return CheckRelease(setup, disk, source, {}, goOn);
 }
 
 std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, MCUpdateDisk& disk,

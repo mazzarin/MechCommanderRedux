@@ -28,6 +28,28 @@ namespace
         return MCFileSystem::ToUtf8(path);
     }
 
+    /// <summary>
+    /// Whether the patch is to stop: its <c>goOn</c> (none: never) is asked before each read and write, the old file's
+    /// whole reading for its checksum too; once it says to stop, every one fails.
+    /// </summary>
+    struct StopCheck
+    {
+        const std::function<bool()>* GoOn = nullptr;
+        bool Stopped = false;
+
+        bool Stop()
+        {
+            Stopped = Stopped || (GoOn != nullptr && *GoOn && !(*GoOn)());
+            return Stopped;
+        }
+    };
+
+    /// <summary>Whether <paramref name="stop"/>, when given, says to stop.</summary>
+    bool Stops(StopCheck* stop)
+    {
+        return stop != nullptr && stop->Stop();
+    }
+
     /// <summary>A file HDiffPatch reads at any position (the old file, the patch).</summary>
     struct InputFile
     {
@@ -39,6 +61,8 @@ namespace
         std::ifstream File;
         /// <summary>Where the next read starts unless it seeks (none: unknown). A seek drops the stream's buffer.</summary>
         std::optional<hpatch_StreamPos_t> At;
+        /// <summary>Asked before each read while the patch is applied (none: while its header is read).</summary>
+        StopCheck* Stop = nullptr;
     };
 
     /// <summary>The file HDiffPatch writes (the new file), which it may read back.</summary>
@@ -51,9 +75,8 @@ namespace
         hpatch_TStreamOutput Stream{};
         std::fstream File;
         bool WriteFailed = false;
-        /// <summary>Asked before each write (none: always on); once it says to stop, every write fails.</summary>
-        const std::function<bool()>* GoOn = nullptr;
-        bool Stopped = false;
+        /// <summary>Asked before each read and write.</summary>
+        StopCheck* Stop = nullptr;
         /// <summary>
         /// Where the file stands after the last read or write, and whether it was a write (none: unknown): a read after
         /// a write, or a write after a read, seeks first, as a file stream needs.
@@ -67,6 +90,12 @@ namespace
     {
         auto* const input = static_cast<InputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
+
+        if (Stops(input->Stop))
+        {
+            return hpatch_FALSE;
+        }
+
         input->File.clear();
 
         if (input->At != from)
@@ -91,6 +120,12 @@ namespace
     {
         auto* const output = static_cast<OutputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
+
+        if (Stops(output->Stop))
+        {
+            return hpatch_FALSE;
+        }
+
         output->File.clear();
 
         if (output->LastWrote || output->At != from)
@@ -117,9 +152,8 @@ namespace
         auto* const output = static_cast<OutputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
 
-        if (output->Stopped || (output->GoOn != nullptr && *output->GoOn && !(*output->GoOn)()))
+        if (Stops(output->Stop))
         {
-            output->Stopped = true;
             return hpatch_FALSE;
         }
 
@@ -273,8 +307,11 @@ namespace
                                            const std::filesystem::path& oldPath, const std::filesystem::path& patchPath,
                                            const std::filesystem::path& out, const std::function<bool()>& goOn)
     {
+        StopCheck stop{.GoOn = &goOn};
         OutputFile output;
-        output.GoOn = &goOn;
+        output.Stop = &stop;
+        old.Stop = &stop;
+        patch.Stop = &stop;
         output.File.open(out, std::ios::in | std::ios::out | std::ios::trunc | std::ios::binary);
 
         if (!output.File.is_open())
@@ -294,7 +331,7 @@ namespace
         const TWindowPatchResult result =
             patch_window_diff(&listener, &output.Stream, &old.Stream, &patch.Stream, 0, SingleThread);
 
-        if (output.Stopped)
+        if (stop.Stopped)
         {
             return std::unexpected(std::string(MCFilePatch::StoppedError));
         }

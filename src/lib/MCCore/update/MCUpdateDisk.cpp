@@ -20,12 +20,16 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace
 {
     constexpr std::string_view TemporarySuffix = ".writing";
+#ifndef _WIN32
+    constexpr int64_t NanosecondsPerSecond = 1'000'000'000;
+#endif
 
 #ifdef _WIN32
     /// <summary>A move of a file another program holds: tried this many times, this far apart (a second in all).</summary>
@@ -135,6 +139,33 @@ namespace
     public:
         MCStat Stat(const std::filesystem::path& path) override
         {
+#ifndef _WIN32
+            // One stat call, not three (the swap looks at each file several times): its time as
+            // std::filesystem::last_write_time gives it, nanoseconds since 1970.
+            struct stat info{};
+
+            if (::stat(path.c_str(), &info) != 0)
+            {
+                // Missing only when the system says so: any other error (no access, a failing drive) is told as one.
+                if (errno == ENOENT || errno == ENOTDIR)
+                {
+                    return {};
+                }
+
+                return Unseen(path, std::error_code(errno, std::generic_category()));
+            }
+
+#ifdef __APPLE__
+            const timespec& written = info.st_mtimespec;
+#else
+            const timespec& written = info.st_mtim;
+#endif
+            const bool folder = S_ISDIR(info.st_mode);
+            return {.Exists = true,
+                    .Folder = folder,
+                    .Size = folder ? 0 : static_cast<uint64_t>(info.st_size),
+                    .Written = static_cast<int64_t>(written.tv_sec) * NanosecondsPerSecond + written.tv_nsec};
+#else
             std::error_code error;
             const std::filesystem::file_status status = std::filesystem::status(path, error);
 
@@ -170,6 +201,7 @@ namespace
 
             stat.Written = static_cast<int64_t>(written.time_since_epoch().count());
             return stat;
+#endif
         }
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override

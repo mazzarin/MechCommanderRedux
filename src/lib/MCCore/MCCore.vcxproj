@@ -931,6 +931,7 @@
     <ClInclude Include="update\MCHttpSource.h" />
     <ClInclude Include="update\MCHttpTransfer.h" />
     <ClInclude Include="update\MCInstalled.h" />
+    <ClInclude Include="update\MCInstalledJson.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSetupBackend.h" />
     <ClInclude Include="update\MCSignedFile.h" />

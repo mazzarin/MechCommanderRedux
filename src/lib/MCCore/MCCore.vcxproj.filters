@@ -2669,6 +2669,9 @@
     <ClInclude Include="update\MCInstalled.h">
       <Filter>update</Filter>
     </ClInclude>
+    <ClInclude Include="update\MCInstalledJson.h">
+      <Filter>update</Filter>
+    </ClInclude>
     <ClInclude Include="update\MCReleaseFile.h">
       <Filter>update</Filter>
     </ClInclude>

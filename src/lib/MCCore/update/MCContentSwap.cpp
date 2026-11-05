@@ -2,6 +2,7 @@
 #include "update/MCContentSwap.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCInstalledJson.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 #include "update/MCUpdateLock.h"
@@ -855,7 +856,7 @@ std::string MCContentSwap::JournalText(const MCJournal& journal)
     }
 
     return MCJson{{MovesKey, std::move(moves)},
-                  {RecordKey, MCJson::parse(MCInstalled::Text(journal.Record))},
+                  {RecordKey, MCInstalled::ToJson(journal.Record)},
                   {LowestProgramKey, journal.LowestProgram}}
         .dump(1);
 }
@@ -873,7 +874,7 @@ std::expected<MCJournal, std::string> MCContentSwap::ReadJournal(std::string_vie
                                       journal.Moves.push_back(ReadMove(move));
                                   }
 
-                                  auto record = MCInstalled::FromText(Child(json, RecordKey).dump());
+                                  auto record = MCInstalled::FromJson(Child(json, RecordKey));
 
                                   if (!record)
                                   {

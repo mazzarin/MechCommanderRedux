@@ -882,6 +882,11 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(disk->Move(folder / "c.json", folder / "a" / "e.json"));
     CHECK_EQ(*disk->ReadText(folder / "a" / "e.json"), std::string("second"));
 
+    // A file's time is the one std::filesystem gives (as the records written before kept it).
+    CHECK_EQ(disk->Stat(folder / "d.json").Written,
+             static_cast<int64_t>(std::filesystem::last_write_time(folder / "d.json").time_since_epoch().count()));
+    CHECK_EQ(MCInstalled::WrittenAt(folder / "d.json").value_or(0), disk->Stat(folder / "d.json").Written);
+
     // Missing is only what isn't there: a file in a folder that can't be read can't be looked at.
     const MCUpdateDisk::MCStat missing = disk->Stat(folder / "none.json");
     CHECK(!missing.Exists);

@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "MCHttpGet.h"
+#include "../MCHttpGet.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "platform/MCSocket.h"

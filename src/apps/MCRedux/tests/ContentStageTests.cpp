@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "MCFilePatchFixture.h"
-#include "MCHttpGet.h"
+#include "../MCHttpGet.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "lib/MCSha256.h"

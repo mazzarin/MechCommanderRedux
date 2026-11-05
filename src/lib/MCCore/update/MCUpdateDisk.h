@@ -58,7 +58,8 @@ public:
 
     /// <summary>
     /// Moves a file to <paramref name="to"/>, where nothing may be: false when something is (it's never replaced) or
-    /// the move fails. Both on one disk, so it's all or nothing.
+    /// the move fails. Both on one disk, so it's all or nothing. On a volume whose system can't refuse a move where
+    /// something is (<see cref="MCMoves"/>), it looks first.
     /// </summary>
     virtual bool Move(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
 
@@ -81,8 +82,19 @@ public:
     virtual std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) = 0;
 };
 
+/// <summary>
+/// How the disk moves an update's files where nothing may be (MCUpdateDisk::Move): as the system does in one step (on
+/// the Mac renamex_np's RENAME_EXCL; Windows' MoveFileExW without replacing), falling back on a volume without it to
+/// looking at the place first, then the rename; or always looking first (the tests', for that fallback).
+/// </summary>
+enum class MCMoves : uint8_t
+{
+    InOneStep,
+    LookingFirst,
+};
+
 /// <summary>The disk.</summary>
-std::unique_ptr<MCUpdateDisk> MakeDisk();
+std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves = MCMoves::InOneStep);
 
 /// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path);

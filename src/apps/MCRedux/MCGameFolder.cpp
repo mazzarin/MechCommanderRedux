@@ -484,7 +484,20 @@ bool MCGameFolder::HasGameData(const std::filesystem::path& folder)
 {
     // An update stopped midway may have set SYSTEM.CFG aside: the folder is still the game's, so the start finishes the
     // swap, or shows the recovery screen.
-    return HasFile(folder, GameDataFile) || MCContentSwap::UnderWay(*MakeDisk(), folder);
+    if (HasFile(folder, GameDataFile))
+    {
+        return true;
+    }
+
+    // One whose update can't be looked for is taken for the game's too: the start says why it can't play it.
+    const auto underWay = MCContentSwap::UnderWay(*MakeDisk(), folder);
+
+    if (!underWay)
+    {
+        SDL_Log("Updates: %s", underWay.error().c_str());
+    }
+
+    return underWay.value_or(true);
 }
 
 bool MCGameFolder::IsInstall(const std::filesystem::path& folder)

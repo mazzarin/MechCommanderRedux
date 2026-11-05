@@ -413,8 +413,13 @@ namespace
     /// </summary>
     void ClearUnused(const std::filesystem::path& gameFolder, MCUpdateDisk& disk)
     {
-        if (MCContentSwap::Waiting(disk, gameFolder) || MCContentSwap::Repairing(disk, gameFolder))
+        if (const auto underWay = MCContentSwap::UnderWay(disk, gameFolder); !underWay || *underWay)
         {
+            if (!underWay)
+            {
+                SDL_Log("Updater: what's staged stays: %s", underWay.error().c_str());
+            }
+
             return;
         }
 

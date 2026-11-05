@@ -96,7 +96,7 @@ namespace
         }
 
         /// <summary>Whether an update is armed, waiting for the next start.</summary>
-        bool Armed() const { return MCContentSwap::Waiting(*MakeDisk(), Game.Path()); }
+        bool Armed() const { return MCContentSwap::Waiting(*MakeDisk(), Game.Path()) == true; }
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() { return Plan().DownloadBytes; }
@@ -396,7 +396,7 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
                                                                    std::chrono::steady_clock::now() + shortWait);
     CHECK(held.Outcome == MCContentSwap::MCOutcome::PutBack);
     CHECK(held.Error.find("another copy") != std::string::npos);
-    CHECK(MCContentSwap::Waiting(*disk, game));
+    CHECK(MCContentSwap::Waiting(*disk, game) == true);
     CHECK_EQ(Read(game / "data" / "changed.fit"), std::string("changed v1"));
     running->Release();
     CHECK(!running->TryExclusive());
@@ -1904,7 +1904,7 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     const auto unchanged = [&]()
     {
         CHECK(std::filesystem::exists(update / "journal.json"));
-        CHECK(!MCContentSwap::Repairing(*disk, game));
+        CHECK(MCContentSwap::Repairing(*disk, game) == false);
         CHECK_EQ(Read(update / "replaced" / "data" / "missions" / "new.fit"), std::string("the player's own mission"));
         CHECK_EQ(Read(update / "replaced" / "data" / "removed.fit"), std::string("removed in v2"));
     };
@@ -1921,9 +1921,9 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     std::filesystem::rename(listsAway, lists);
 
     REQUIRE(MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
-    CHECK(MCContentSwap::Repairing(*disk, game));
+    CHECK(MCContentSwap::Repairing(*disk, game) == true);
     REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
-    CHECK(!MCContentSwap::Repairing(*disk, game));
+    CHECK(MCContentSwap::Repairing(*disk, game) == false);
     release.CheckIsRelease2();
 
     // The player's mission kept; the update's own files, and the release's already in place, recorded as placed.

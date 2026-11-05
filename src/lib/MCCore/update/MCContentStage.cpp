@@ -99,10 +99,13 @@ namespace
 
         std::expected<void, std::string> Run()
         {
-            // Staging over a ready update would change files its journal moves: that update swaps in first.
-            if (MCContentSwap::Waiting(_Disk, _Game))
+            // Staging over a ready update would change files its journal moves: that update swaps in first. One that
+            // can't be looked for is never cleared away.
+            if (const auto waiting = MCContentSwap::Waiting(_Disk, _Game); !waiting || *waiting)
             {
-                return std::unexpected("an update is already staged; it goes in at the next start");
+                return std::unexpected(waiting
+                                           ? std::string("an update is already staged; it goes in at the next start")
+                                           : waiting.error());
             }
 
             if (auto cleared = ClearUnplanned(); !cleared)

@@ -6,6 +6,7 @@
 #include "platform/MCUtf8Path.h"
 
 #include <SDL3/SDL_log.h>
+#include <atomic>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -125,6 +126,46 @@ namespace
     }
 #endif
 
+    /// <summary>Moves a file with the system's rename, which replaces what's at <paramref name="to"/>.</summary>
+    bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to)
+    {
+#ifdef _WIN32
+        return MoveWithFlags(from, to, MOVEFILE_REPLACE_EXISTING);
+#else
+        std::error_code error;
+        std::filesystem::rename(from, to, error);
+
+        if (error)
+        {
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), error.message().c_str());
+        }
+
+        return !error;
+#endif
+    }
+
+    /// <summary>
+    /// A move where nothing may be, for a volume whose system can't refuse one where something is (on the Mac, SMB, NFS
+    /// and FAT volumes lack RENAME_EXCL): <paramref name="to"/> looked at first, then the rename. The two steps aren't
+    /// one, but the swap holds the game's lock exclusive while it moves, so no copy of the game puts a file there in
+    /// between; anything else must have been there already.
+    /// </summary>
+    bool MoveLookingFirst(const std::filesystem::path& from, const std::filesystem::path& to)
+    {
+        std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(to, error);
+
+        if (status.type() != std::filesystem::file_type::not_found)
+        {
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), error ? error.message().c_str() : "something is there already");
+            return false;
+        }
+
+        return RenameReplacing(from, to);
+    }
+
     /// <summary>A stat that couldn't be made: why, naming <paramref name="path"/>.</summary>
     MCUpdateDisk::MCStat Unseen(const std::filesystem::path& path, const std::error_code& error)
     {
@@ -134,6 +175,8 @@ namespace
     class MCDisk final : public MCUpdateDisk
     {
     public:
+        explicit MCDisk(MCMoves moves) : _Moves(moves) {}
+
         MCStat Stat(const std::filesystem::path& path) override
         {
 #ifndef _WIN32
@@ -229,10 +272,22 @@ namespace
         {
             std::vector<std::string> files;
             std::error_code error;
+            const std::filesystem::file_status status = std::filesystem::symlink_status(folder, error);
 
-            if (!std::filesystem::is_directory(std::filesystem::symlink_status(folder, error)))
+            // None only when the system says it isn't there: a folder that can't be looked at isn't an empty one.
+            if (status.type() == std::filesystem::file_type::not_found)
             {
                 return files;
+            }
+
+            if (error)
+            {
+                return std::unexpected(MCFileSystem::ToUtf8(folder) + " can't be looked at (" + error.message() + ")");
+            }
+
+            if (!std::filesystem::is_directory(status))
+            {
+                return std::unexpected(MCFileSystem::ToUtf8(folder) + " isn't a folder");
             }
 
             // Links aren't followed: one is listed as a file is.
@@ -271,38 +326,44 @@ namespace
 
         bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
-#ifdef _WIN32
-            return MoveWithFlags(from, to, MOVEFILE_REPLACE_EXISTING);
-#else
-            std::error_code error;
-            std::filesystem::rename(from, to, error);
-
-            if (error)
-            {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
-                        MCFileSystem::ToUtf8(to).c_str(), error.message().c_str());
-            }
-
-            return !error;
-#endif
+            return RenameReplacing(from, to);
         }
 
         bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
+            if (_Moves == MCMoves::LookingFirst)
+            {
+                return MoveLookingFirst(from, to);
+            }
+
 #ifdef _WIN32
             // Without MOVEFILE_REPLACE_EXISTING: a file at to fails it (ERROR_ALREADY_EXISTS), never tried again.
             constexpr DWORD replacingNothing = 0;
             return MoveWithFlags(from, to, replacingNothing);
 #else
             // RENAME_EXCL: one step, failing with EEXIST when something is at to.
-            if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) != 0)
+            if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
-                        MCFileSystem::ToUtf8(to).c_str(), std::strerror(errno));
-                return false;
+                return true;
             }
 
-            return true;
+            const int error = errno;
+
+            // A volume without it (SMB, NFS, FAT): every move there looks first.
+            if (error == ENOTSUP || error == EINVAL)
+            {
+                if (!ToldLookingFirst.exchange(true))
+                {
+                    SDL_Log("Updates: %s's volume can't move a file only where nothing is (%s): moves there look first",
+                            MCFileSystem::ToUtf8(to.parent_path()).c_str(), std::strerror(error));
+                }
+
+                return MoveLookingFirst(from, to);
+            }
+
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), std::strerror(error));
+            return false;
 #endif
         }
 
@@ -375,12 +436,19 @@ namespace
 
             return space.available;
         }
+
+    private:
+        MCMoves _Moves;
+#ifndef _WIN32
+        /// <summary>Whether a volume without RENAME_EXCL was logged (once a run).</summary>
+        static inline std::atomic<bool> ToldLookingFirst = false;
+#endif
     };
 }
 
-std::unique_ptr<MCUpdateDisk> MakeDisk()
+std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves)
 {
-    return std::make_unique<MCDisk>();
+    return std::make_unique<MCDisk>(moves);
 }
 
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path)

@@ -139,17 +139,23 @@ namespace MCContentSwap
     /// </summary>
     bool MarkReady(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal);
 
-    /// <summary>Whether an update is staged and ready, or a swap was stopped midway.</summary>
-    bool Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+    // Each of these says why when its files can't be looked at (a failing drive, no access): never taken for none, so
+    // nothing staged is cleared, nothing more offered, and no start plays a folder a swap may have left half done.
 
-    /// <summary>Whether a repair is under way: the game can't play the files until a swap is committed.</summary>
-    bool Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+    /// <summary>Whether an update is staged and ready, or a swap was stopped midway; or why it can't be told.</summary>
+    std::expected<bool, std::string> Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+
+    /// <summary>
+    /// Whether a repair is under way: the game can't play the files until a swap is committed; or why it can't be told.
+    /// </summary>
+    std::expected<bool, std::string> Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
     /// <summary>
     /// Whether an update is under way: ready, stopped midway or being repaired (<see cref="Waiting"/>,
-    /// <see cref="Repairing"/>). Its game files may be set aside, SYSTEM.CFG among them, until a start finishes it.
+    /// <see cref="Repairing"/>). Its game files may be set aside, SYSTEM.CFG among them, until a start finishes it. Or
+    /// why it can't be told.
     /// </summary>
-    bool UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+    std::expected<bool, std::string> UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
 
     /// <summary>
     /// REPAIR's first step, under the game's lock held exclusive: gives up a swap that can neither finish nor go back.

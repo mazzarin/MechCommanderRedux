@@ -32,7 +32,15 @@ namespace
     public:
         explicit MCRoomDisk(uint64_t free) : _Free(free) {}
 
-        MCStat Stat(const std::filesystem::path& path) override { return _Disk->Stat(path); }
+        MCStat Stat(const std::filesystem::path& path) override
+        {
+            if (!Unseen.empty() && path == Unseen)
+            {
+                return {.Error = MCFileSystem::ToUtf8(path) + " can't be looked at"};
+            }
+
+            return _Disk->Stat(path);
+        }
 
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
@@ -84,6 +92,9 @@ namespace
 
         /// <summary>Called as each file is flushed (none: nothing).</summary>
         std::function<void()> OnFlush;
+
+        /// <summary>What can't be looked at (a drive failing; empty: none).</summary>
+        std::filesystem::path Unseen;
 
     private:
         std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
@@ -263,11 +274,11 @@ TEST_CASE("content stage: the patch applied, files fetched from the zips holding
     CHECK_EQ(lastExpected, plan.DownloadBytes);
 
     // Staged, not armed: the next start swaps nothing in until it is (the program's half comes in first).
-    CHECK(!MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == false);
     REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
 
     // Armed; nothing in place changed until the swap.
-    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == true);
     CHECK_EQ(Read(release.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
     CHECK(Read(release.Game.Path() / "Redux update" / "staged" / "HD" / "terrain.hda") ==
           Text(MCFilePatchFixture::PatchNew()));
@@ -313,7 +324,7 @@ TEST_CASE("content stage: a cut-off download resumes where it stopped; files alr
     const auto cut = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!cut.has_value());
     CHECK(cut.error().find("connection was lost") != std::string::npos);
-    CHECK(!MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == false);
 
     // The patch had staged before the zip was cut off: the next attempt fetches only the rest of the zip.
     const uint64_t before = source.Sent();
@@ -351,7 +362,7 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     const auto refused = MCContentStage::Stage(*disk, otherSource, other.Game.Path(), otherPlan, other.List, GoOn);
     REQUIRE(!refused.has_value());
     CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
-    CHECK(!MCContentSwap::Waiting(*disk, other.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, other.Game.Path()) == false);
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
 }
 
@@ -540,6 +551,14 @@ TEST_CASE("content stage: what an update dropped midway left in staged/ and down
     Write(update / "staged" / "data" / "not-planned.fit", "kept while an update waits");
     CHECK(!MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
     CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
+
+    // Nor when ready.json can't be looked at: it isn't taken for none, and staging stops, saying why.
+    MCRoomDisk failing(std::numeric_limits<uint64_t>::max());
+    failing.Unseen = update / "ready.json";
+    const auto unseen = MCContentStage::Stage(failing, source, release.Game.Path(), plan, release.List, GoOn);
+    CHECK(unseen.error_or("").find("can't be looked at") != std::string::npos);
+    CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
+    CHECK(!MCContentSwap::Waiting(failing, release.Game.Path()).has_value());
 }
 
 TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "

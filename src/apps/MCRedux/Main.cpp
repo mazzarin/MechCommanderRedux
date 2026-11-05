@@ -391,7 +391,15 @@ namespace
                 }
 
                 // Another copy may have finished the update while the player chose: then there's nothing to repair.
-                if (MCContentSwap::UnderWay(*MakeDisk(), gameFolder))
+                const auto underWay = MCContentSwap::UnderWay(*MakeDisk(), gameFolder);
+
+                if (!underWay)
+                {
+                    problem = underWay.error();
+                    continue;
+                }
+
+                if (*underWay)
                 {
                     const auto repaired =
                         MCFirstStart::Run(RepairHeading, ContentWork(*setup, MCContentUpdater::Repair));

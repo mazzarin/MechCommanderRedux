@@ -414,8 +414,13 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         return std::nullopt;
     }
 
-    if (MCContentSwap::Waiting(disk, setup.GameFolder))
+    if (const auto waiting = MCContentSwap::Waiting(disk, setup.GameFolder); !waiting || *waiting)
     {
+        if (!waiting)
+        {
+            return std::unexpected(waiting.error());
+        }
+
         SDL_Log("Updates: an update already waits for the next start");
         return std::nullopt;
     }
@@ -476,9 +481,9 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
         return std::unexpected("no release is installed yet");
     }
 
-    if (MCContentSwap::Waiting(disk, setup.GameFolder))
+    if (const auto waiting = MCContentSwap::Waiting(disk, setup.GameFolder); !waiting || *waiting)
     {
-        return std::unexpected("an update waits for the game's next start");
+        return std::unexpected(waiting ? std::string("an update waits for the game's next start") : waiting.error());
     }
 
     if (const auto writable = Writable(setup.GameFolder); !writable)

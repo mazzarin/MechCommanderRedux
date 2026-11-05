@@ -960,10 +960,29 @@ bool MCContentSwap::MarkReady(MCUpdateDisk& disk, const std::filesystem::path& g
     return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
 }
 
-bool MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+namespace
 {
-    return disk.Stat(gameFolder / MCFileSystem::FromUtf8(JournalFile)).Exists ||
-           disk.Stat(gameFolder / MCFileSystem::FromUtf8(ReadyFile)).Exists;
+    /// <summary>Whether any of <paramref name="files"/> (in the update folder) is there, or why one can't be looked at.</summary>
+    std::expected<bool, std::string> AnyThere(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                              std::initializer_list<std::string_view> files)
+    {
+        for (const std::string_view file : files)
+        {
+            const auto there = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(file));
+
+            if (!there || *there)
+            {
+                return there;
+            }
+        }
+
+        return false;
+    }
+}
+
+std::expected<bool, std::string> MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    return AnyThere(disk, gameFolder, {JournalFile, ReadyFile});
 }
 
 namespace
@@ -1094,22 +1113,25 @@ namespace
     }
 }
 
-bool MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+std::expected<bool, std::string> MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
-    return disk.Stat(gameFolder / MCFileSystem::FromUtf8(RepairFile)).Exists;
+    return AnyThere(disk, gameFolder, {RepairFile});
 }
 
-bool MCContentSwap::UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+std::expected<bool, std::string> MCContentSwap::UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
-    return Waiting(disk, gameFolder) || Repairing(disk, gameFolder);
+    return AnyThere(disk, gameFolder, {JournalFile, ReadyFile, RepairFile});
 }
 
 namespace
 {
-    /// <summary>Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are.</summary>
-    bool Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+    /// <summary>
+    /// Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are; or why it
+    /// can't be told.
+    /// </summary>
+    std::expected<bool, std::string> Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
     {
-        return disk.Stat(gameFolder / MCFileSystem::FromUtf8(JournalFile)).Exists || Repairing(disk, gameFolder);
+        return AnyThere(disk, gameFolder, {JournalFile, RepairFile});
     }
 }
 
@@ -1192,8 +1214,21 @@ MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesy
 {
     MCResult result = SwapOnce(disk, gameFolder, deadline, runningBuild);
 
-    // The files a repair gave up on aren't a set to play: only a committed swap ends it.
-    if (result.Outcome != MCOutcome::Swapped && result.Outcome != MCOutcome::Stuck && Repairing(disk, gameFolder))
+    if (result.Outcome == MCOutcome::Swapped || result.Outcome == MCOutcome::Stuck)
+    {
+        return result;
+    }
+
+    // The files a repair gave up on aren't a set to play: only a committed swap ends it. Nor are files whose repair
+    // can't be looked for.
+    const auto repairing = Repairing(disk, gameFolder);
+
+    if (!repairing)
+    {
+        return {MCOutcome::Stuck, repairing.error()};
+    }
+
+    if (*repairing)
     {
         return {MCOutcome::Stuck,
                 result.Outcome == MCOutcome::Nothing ? std::string(RepairUnfinishedError) : std::move(result.Error)};
@@ -1214,23 +1249,37 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
     const auto now = std::chrono::steady_clock::now();
     const auto until = deadline.value_or(now + MidwayWait);
     MCResult result;
+    // A folder whose update can't be looked for may be half swapped: it isn't played.
+    const auto underWay = UnderWay(disk, gameFolder);
 
-    if (UnderWay(disk, gameFolder))
+    if (!underWay)
+    {
+        return {MCOutcome::Stuck, underWay.error()};
+    }
+
+    if (*underWay)
     {
         // A copy quitting (RESTART starts this one as it closes) is waited for briefly; one midway through a swap or a
         // repair, whose files can't be played, up to the deadline.
-        if (lock->ExclusiveBy(std::min(until, now + QuittingWait)) ||
-            (Midway(disk, gameFolder) && lock->ExclusiveBy(until)))
+        if (lock->ExclusiveBy(std::min(until, now + QuittingWait)))
         {
             result = Run(disk, gameFolder, deadline, runningBuild);
         }
-        else if (Midway(disk, gameFolder))
+        else if (const auto midway = Midway(disk, gameFolder); !midway)
         {
-            return {MCOutcome::Stuck, std::string(AnotherSwappingError)};
+            return {MCOutcome::Stuck, midway.error()};
+        }
+        else if (!*midway)
+        {
+            result = {MCOutcome::PutBack, "another copy of the game is running"};
+        }
+        else if (lock->ExclusiveBy(until))
+        {
+            result = Run(disk, gameFolder, deadline, runningBuild);
         }
         else
         {
-            result = {MCOutcome::PutBack, "another copy of the game is running"};
+            return {MCOutcome::Stuck, std::string(AnotherSwappingError)};
         }
     }
 

@@ -33,7 +33,7 @@ namespace MCContentSwap
     /// How long a multiplayer lobby's start lets the swap take before putting the previous set back: a room is never
     /// held up (a normal swap takes well under a second).
     /// </summary>
-    constexpr std::chrono::seconds LobbyStartTime{5};
+    constexpr std::chrono::seconds LobbyStartTime{15};
 
     /// <summary>A file the swap moves: added (no old), replaced, or removed (no new).</summary>
     struct MCMove

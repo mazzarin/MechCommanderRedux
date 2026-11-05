@@ -16,7 +16,8 @@ enum class MCRoomRefusal : uint8_t;
 //   back, a minute at most, holding the match's start meanwhile; a match started anyway lets the places go and closes
 //   the room. A room keeps a place only for a build that says it rejoins, and once a guest: a guest whose place it has
 //   kept (its restart called off, or back from its update) installs its next update after the match. A host's guests
-//   say so and join the same address again for up to a minute.
+//   say so and join the same address again for up to a minute: a new room there (the host's new version) has kept no
+//   one's place; the same room (the host's restart called off) still has.
 // - RESTART is off when the update fails after it (or the room's match starts before the update goes in): the note
 //   goes, and the room is told (MCMPMessageType::RestartOff), dropping the place it keeps; a host keeps its guests'
 //   places, as they left to wait for it.

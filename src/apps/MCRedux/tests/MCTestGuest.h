@@ -479,7 +479,10 @@ namespace MCTestGuest
         }
 
         /// <summary>Closes the room to new players, as a host's GO does (on the listener, which owns the connection).</summary>
-        void Lock() { _LockWanted = true; }
+        void Lock() { _AdmitWanted = Admit::Close; }
+
+        /// <summary>Opens the room to new players again, as a host's restart called off does (on the listener).</summary>
+        void Unlock() { _AdmitWanted = Admit::Open; }
 
         /// <summary>The players who joined, by id, as DirectPlay announced them.</summary>
         std::vector<uint32_t> Joined()
@@ -514,20 +517,40 @@ namespace MCTestGuest
             }
         }
 
-        /// <summary>The room closed to new players when the test asked.</summary>
+        /// <summary>The room closed to new players, or opened to them again, when the test asked.</summary>
         void EachPass() override
         {
-            if (_LockWanted.exchange(false))
+            const Admit wanted = _AdmitWanted.exchange(Admit::AsIs);
+
+            if (wanted == Admit::AsIs)
+            {
+                return;
+            }
+
+            if (wanted == Admit::Close)
             {
                 _Desc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
-                _DirectPlay.SetSessionDesc(_Desc, 0);
             }
+            else
+            {
+                _Desc.dwFlags &= ~DPSESSION_NEWPLAYERSDISABLED;
+            }
+
+            _DirectPlay.SetSessionDesc(_Desc, 0);
         }
 
+        /// <summary>What the test wants of the room's new players: as it is, closed out, or let in.</summary>
+        enum class Admit : uint8_t
+        {
+            AsIs,
+            Close,
+            Open
+        };
+
         std::vector<uint32_t> _Joined;
-        /// <summary>The session as hosted, and whether the test wants it closed to new players.</summary>
+        /// <summary>The session as hosted, and what the test wants of its new players.</summary>
         DPSESSIONDESC2 _Desc{};
-        std::atomic<bool> _LockWanted = false;
+        std::atomic<Admit> _AdmitWanted = Admit::AsIs;
     };
 
     /// <summary>Runs one frame of a fifteenth of a second, giving the network a moment first.</summary>

@@ -367,10 +367,11 @@ TEST_CASE("update files: the Mac's program is held to release.json's: its build,
     CHECK(read->Current.Programs.at("mac").EdSignatures == held.EdSignatures);
     CHECK(read->Current.Programs.at("windows").EdSignatures.empty());
     MCUpdateJson::MCJson json = MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(releases));
-    json["current"]["programs"]["mac"]["edSignatures"] = {MCUpdateJson::ToBase64(std::span(signature).first(63))};
-    CHECK(!MCReleaseFile::ReadReleases(json.dump()).has_value());
+    json["current"]["programs"]["mac"]["edSignatures"] =
+        MCUpdateJson::MCJson::array({MCUpdateJson::ToBase64(std::span(signature).first(63))});
+    CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("63 bytes") != std::string::npos);
     json["current"]["programs"]["mac"]["edSignatures"] = MCUpdateJson::ToBase64(signature);
-    CHECK(!MCReleaseFile::ReadReleases(json.dump()).has_value());
+    CHECK(MCReleaseFile::ReadReleases(json.dump()).error_or("").find("isn't an array") != std::string::npos);
 }
 
 TEST_CASE("content list: paths outside the folder, alike but for case, or that Windows can't hold are refused")

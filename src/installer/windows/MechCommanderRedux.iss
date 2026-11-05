@@ -205,6 +205,9 @@ const
   // couldn't in (--report), in the uninstaller's temporary folder.
   RemovedCode = 0;
   RemovalReportName = 'content removal.txt';
+  // The attribute of a file or folder that is a link to elsewhere (a junction, a symbolic link):
+  // FILE_ATTRIBUTE_REPARSE_POINT.
+  ReparsePointAttribute = $00000400;
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -770,13 +773,39 @@ begin
     Result := GetPermission(Folder);
 end;
 
-// Moves Name from Folder's backup back into Folder, unless a file of that name is there now.
+// Whether Path is a link to elsewhere (a junction, a symbolic link): what's in the backup is put back only when it is
+// the backup's own, never through a link planted there, which would move another folder's files into the game's.
+function IsLink(const Path: String): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+
+  if FindFirst(RemoveBackslashUnlessRoot(Path), FindRec) then
+  begin
+    try
+      Result := (FindRec.Attributes and ReparsePointAttribute) <> 0;
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+// Moves Name from Folder's backup back into Folder, unless a file of that name is there now, or it is a link.
 function PutBack(const Folder, Name: String): Boolean;
 var
   Source, Target: String;
 begin
   Source := AddBackslash(BackupFolder(Folder)) + Name;
   Target := AddBackslash(Folder) + Name;
+
+  if IsLink(Source) then
+  begin
+    Log(Format('Left %s in the backup: a link to elsewhere', [Source]));
+    Result := False;
+    Exit;
+  end;
+
   Result := not FileExists(Target) and RenameFile(Source, Target);
 
   if Result then
@@ -1039,8 +1068,8 @@ begin
 end;
 
 // Moves everything in Folder's backup under Relative ('' for the backup itself) back into Folder at the same place,
-// making the folders on its way, but an update's later copies (IsNumberedCopy), which stay; the names of what couldn't
-// go back are added to Left.
+// making the folders on its way, but an update's later copies (IsNumberedCopy), which stay, and links to elsewhere
+// (IsLink), which are neither gone into nor moved; the names of what couldn't go back are added to Left.
 procedure PutBackAll(const Folder, Relative: String; var Left: String);
 var
   FindRec: TFindRec;
@@ -1050,12 +1079,20 @@ var
 begin
   Kept := AddBackslash(BackupFolder(Folder)) + Relative;
 
+  if IsLink(Kept) then
+  begin
+    Log(Format('Left %s: a link to elsewhere', [Kept]));
+    Exit;
+  end;
+
   // The names first: moving files out while the folder is listed could skip some.
   if FindFirst(AddBackslash(Kept) + '*', FindRec) then
   begin
     try
       repeat
-        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+        if (FindRec.Attributes and ReparsePointAttribute) <> 0 then
+          Log(Format('Left %s in the backup: a link to elsewhere', [Relative + FindRec.Name]))
+        else if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
           Append(Files, Relative + FindRec.Name)
         else if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
           Append(Folders, Relative + FindRec.Name);

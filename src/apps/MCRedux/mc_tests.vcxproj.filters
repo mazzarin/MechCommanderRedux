@@ -160,6 +160,9 @@
     <ClCompile Include="tests\LinkupTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\LobbyUpdateTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\LogisticsControlTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

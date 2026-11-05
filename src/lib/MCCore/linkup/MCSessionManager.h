@@ -37,6 +37,11 @@ struct MCLobbyLaunchArgs
     std::string PlayerName;
     std::string SessionName;
     int32_t MaxPlayers = 6;
+    /// <summary>
+    /// Port-only (the personal build): the start is a rejoin (-rejoin, from network/MCRejoinNote.h): a join that fails
+    /// says why (the room gone, full or started).
+    /// </summary>
+    bool Rejoin = false;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;

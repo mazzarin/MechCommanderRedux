@@ -71,13 +71,19 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t DataHash = 1u << 23;
     /// <summary>
+    /// Not a rule the match plays by: the build takes a host's MCMPMessageType::Updating (network/MCLobbyUpdate.h),
+    /// waits for the host's game to come back and joins it again. The host tells only the guests whose builds say so;
+    /// the others drop as the host leaves.
+    /// </summary>
+    inline constexpr uint32_t RejoinsHost = 1u << 24;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
-    inline constexpr uint32_t Supported =
-        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes | DataHash;
+    inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
+                                          NoMines | NoProbes | DataHash | RejoinsHost;
 } // namespace MCMatchRule
 
 /// <summary>

@@ -283,6 +283,7 @@
     <ClCompile Include="network\MCMultiPlayer.cpp" />
     <ClCompile Include="network\MCMultiPlayerHandlers.cpp" />
     <ClCompile Include="network\MCMultiPlayerSend.cpp" />
+    <ClCompile Include="network\MCRejoinNote.cpp" />
     <ClCompile Include="network\MCWorldStateChunk.cpp" />
     <ClCompile Include="object\MCAIControl.cpp" />
     <ClCompile Include="object\MCArtillery.cpp" />
@@ -733,6 +734,7 @@
     <ClInclude Include="network\MCMultiPlayer.h" />
     <ClInclude Include="network\MCMultiPlayerHandlers.h" />
     <ClInclude Include="network\MCMultiPlayerMessages.h" />
+    <ClInclude Include="network\MCRejoinNote.h" />
     <ClInclude Include="network\MCWorldStateChunk.h" />
     <ClInclude Include="object\MCAIControl.h" />
     <ClInclude Include="object\MCArtillery.h" />

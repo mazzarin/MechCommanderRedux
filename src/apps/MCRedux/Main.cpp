@@ -12,6 +12,7 @@
 #include "main/MCHdSettings.h"
 #include "main/MCSystemConfig.h"
 #include "main/MCUpdater.h"
+#include "network/MCRejoinNote.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
@@ -480,6 +481,17 @@ int main(int argc, char** argv)
     {
         Report(std::format("SDL_Init failed: {}", SDL_GetError()), true);
         return 1;
+    }
+
+    // A start with no command line after a lobby's game restarted into an update (Sparkle starts the new version with
+    // none): the rejoin note's words, so it joins or hosts the room again (network/MCRejoinNote.h).
+    if (options->GameCommandLine.empty())
+    {
+        if (std::optional<std::string> rejoin =
+                MCRejoinNote::TakeAtStart(options->UserFolder, MC_VERSION_BUILD, MCRejoinNote::Now()))
+        {
+            options->GameCommandLine = std::move(*rejoin);
+        }
     }
 
     // A build that updates its content carries the root keys (none until the root key is made).

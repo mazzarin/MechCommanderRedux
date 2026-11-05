@@ -1310,6 +1310,62 @@ TEST_CASE("content removal: a repair's giving up stopped at any step is finished
     CHECK(tried > 0);
 }
 
+TEST_CASE("content removal: a repair's giving up of a swap that only added files, stopped before it recorded them, is "
+          "finished first: the new files go with the rest")
+{
+    const MCScratchFolder locks(Group, GameName);
+    constexpr int64_t ArtWritten = 101;
+    constexpr int64_t MissionWritten = 102;
+    const std::string art = "art v1";
+    const std::string mission = "a new mission";
+    MCInstalled::MCRecord before{.Release = 1, .Sets = {"game"}};
+    before.Files["ART.FST"] = {.Path = "ART.FST",
+                               .Set = "game",
+                               .Sha256 = MCSha256::Of(art),
+                               .Size = art.size(),
+                               .Written = ArtWritten,
+                               .Placed = true};
+    MCInstalled::MCRecord after = before;
+    after.Release = 2;
+    after.Swap = "an additions-only swap";
+    after.Files["DATA/MISSIONS/NEW.FIT"] = {
+        .Path = "data/missions/new.fit", .Set = "game", .Sha256 = MCSha256::Of(mission), .Size = mission.size()};
+    const MCContentSwap::MCMove added{.Path = "data/missions/new.fit",
+                                      .New = MCSha256::Of(mission),
+                                      .NewSize = mission.size(),
+                                      .NewWritten = MissionWritten};
+
+    // Given up (the journal is repair.json), the new mission in place, the record not yet naming it; no replaced/.
+    MCCrashDisk disk(
+        {{GamePath(MCInstalled::RecordPath), {MCInstalled::Text(before), 1}},
+         {GamePath("ART.FST"), {art, ArtWritten}},
+         {GamePath("data/missions/new.fit"), {mission, MissionWritten}},
+         {GamePath(MCContentSwap::RepairFile), {MCContentSwap::JournalText({.Moves = {added}, .Record = after}), 1}}});
+    const auto removed = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    REQUIRE(removed.has_value());
+    CHECK_EQ(removed->Removed, size_t{2});
+    CHECK(disk.Files().empty());
+}
+
+TEST_CASE("content removal: a recorded file that can't be looked at keeps the record and fails the removal; looked at "
+          "again, it goes")
+{
+    const MCScratchFolder locks(Group, GameName);
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    REQUIRE(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    disk.FailStat(GamePath("ART.FST"));
+    const auto unseen = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    CHECK(unseen.error_or("").find("ART.FST") != std::string::npos);
+    CHECK(disk.Files().contains(GamePath(MCInstalled::RecordPath)));
+    CHECK(disk.Files().contains(GamePath("ART.FST")));
+
+    disk.FailStat({});
+    REQUIRE(MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0)).has_value());
+    CHECK(!disk.Files().contains(GamePath("ART.FST")));
+    CHECK(!disk.Files().contains(GamePath(MCInstalled::RecordPath)));
+}
+
 TEST_CASE("update lock: held exclusive by one copy, another can't hold it shared; a wait for it ends at its deadline")
 {
     const MCScratchFolder game(Group, "lock-waits");

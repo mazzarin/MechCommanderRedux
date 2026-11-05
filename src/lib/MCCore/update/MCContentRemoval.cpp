@@ -11,17 +11,17 @@ namespace
     /// <summary>
     /// Under the game's lock held exclusive, finishes what an update left under way, so the record says what's on disk
     /// and nothing the player had is left in <c>Redux update/replaced/</c>: a swap a crash stopped midway is finished,
-    /// or the previous set put back, its clearing done; a repair's giving up (MCContentSwap::Abandon) is finished. One
+    /// or the previous set put back, its clearing done; a repair's giving up (MCContentSwap::Abandon) is finished, which
+    /// also records the new files the swap given up had put in place (one that only added files has no replaced/). One
     /// armed and not begun leaves the record as it is: its staged files go with the update folder.
     /// </summary>
     /// <returns>Empty, or what's left undone: then nothing may go, as the player's originals may still be set aside.</returns>
     std::string FinishUnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
     {
         const auto begun = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile));
-        const auto setAside = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::ReplacedFolder));
         const auto repairing = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::RepairFile));
 
-        for (const auto* seen : {&begun, &setAside, &repairing})
+        for (const auto* seen : {&begun, &repairing})
         {
             if (!*seen)
             {
@@ -41,8 +41,9 @@ namespace
             return {};
         }
 
-        // The journal becomes repair.json before the files set aside are sorted: replaced/ still there, it isn't done.
-        if (*repairing && *setAside)
+        // The journal becomes repair.json before the files set aside are sorted and the new ones recorded: done again,
+        // it ends as it does whole.
+        if (*repairing)
         {
             if (const auto given = MCContentSwap::Abandon(disk, gameFolder); !given)
             {
@@ -53,18 +54,37 @@ namespace
         return {};
     }
 
-    /// <summary>Whether the file at <paramref name="path"/> is still <paramref name="file"/> as recorded.</summary>
-    bool StillAsRecorded(MCUpdateDisk& disk, const std::filesystem::path& path, const MCInstalled::MCFile& file)
+    /// <summary>
+    /// Whether the file at <paramref name="path"/> is still <paramref name="file"/> as recorded, or why it can't be told
+    /// (it can't be looked at or read: never taken for the player's, nor for the update's).
+    /// </summary>
+    std::expected<bool, std::string> StillAsRecorded(MCUpdateDisk& disk, const std::filesystem::path& path,
+                                                     const MCInstalled::MCFile& file)
     {
         std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
 
         // A link put in a file's place is the player's: removing it could reach outside the folder.
-        if (std::filesystem::is_symlink(path, error))
+        if (status.type() != std::filesystem::file_type::not_found)
         {
-            return false;
+            if (error)
+            {
+                return std::unexpected(
+                    std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), error.message()));
+            }
+
+            if (std::filesystem::is_symlink(status))
+            {
+                return false;
+            }
         }
 
         const MCUpdateDisk::MCStat stat = disk.Stat(path);
+
+        if (!stat.Error.empty())
+        {
+            return std::unexpected(stat.Error);
+        }
 
         if (!stat.Exists || stat.Folder || stat.Size != file.Size)
         {
@@ -78,7 +98,13 @@ namespace
         }
 
         const auto hash = disk.Hash(path);
-        return hash && *hash == file.Sha256;
+
+        if (!hash)
+        {
+            return std::unexpected(hash.error());
+        }
+
+        return *hash == file.Sha256;
     }
 }
 
@@ -132,7 +158,17 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
         const std::filesystem::path listed = MCFileSystem::FromUtf8(file.Path);
         const std::filesystem::path path = gameFolder / listed;
 
-        if (!file.Placed || !StillAsRecorded(disk, path, file))
+        const auto still = file.Placed ? StillAsRecorded(disk, path, file) : std::expected<bool, std::string>(false);
+
+        // One that can't be told keeps the record (and the update folder), for another try.
+        if (!still)
+        {
+            failed = still.error();
+            SDL_Log("Removing the content: %s", failed.c_str());
+            continue;
+        }
+
+        if (!*still)
         {
             removed.Kept += disk.Stat(path).Exists ? 1 : 0;
             continue;

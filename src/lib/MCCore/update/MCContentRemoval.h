@@ -33,7 +33,8 @@ namespace MCContentRemoval
     /// of the game to quit. A folder with no update folder has none to remove.
     /// </summary>
     /// <returns>What it removed and left, or why it couldn't (a copy still running, an update it can't finish, then
-    /// nothing gone; a record it can't read; a file it can't remove: what it could remove is gone).</returns>
+    /// nothing gone; a record it can't read; a file it can't look at, read or remove: what it could remove is gone, and
+    /// the record stays for another try).</returns>
     std::expected<MCRemoved, std::string> Remove(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
                                                  std::chrono::milliseconds wait = GameWait);
 }

@@ -474,6 +474,38 @@ TEST_CASE("content stage: patches are fetched several at once, each over a sourc
     CHECK(stoppingShared->Asked.size() < size_t{Extra + 1});
 }
 
+TEST_CASE("content stage: what an update dropped midway left in staged/ and download/ goes; this plan's own stays")
+{
+    MCRelease release(Group, "leftovers");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    const std::filesystem::path update = release.Game.Path() / "Redux update";
+    // An earlier release's, never swapped in: a staged file and downloads this plan doesn't name.
+    Write(update / "staged" / "data" / "old-release.fit", "staged for release 1");
+    Write(update / "download" / "update-1.zip", "a zip of release 1");
+    Write(update / "download" / "patches" / "terrain-0-1.hdiff", "a patch of release 1");
+    // This plan's own: a file staged right, and the update zip cut off.
+    Write(update / "staged" / "data" / "changed.fit", "changed v2");
+    const std::string zip = Read(release.Host.Path() / "update-2.zip");
+    Write(update / "download" / "update-2.zip", zip.substr(0, SendBytes));
+    MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto stopped = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                               [](uint64_t, uint64_t) { return false; });
+    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+    CHECK(!std::filesystem::exists(update / "staged" / "data" / "old-release.fit"));
+    CHECK(!std::filesystem::exists(update / "download" / "update-1.zip"));
+    CHECK(!std::filesystem::exists(update / "download" / "patches" / "terrain-0-1.hdiff"));
+    CHECK_EQ(Read(update / "staged" / "data" / "changed.fit"), std::string("changed v2"));
+    CHECK_EQ(Read(update / "download" / "update-2.zip"), zip.substr(0, SendBytes));
+
+    // A ready update's staged files are its journal's: nothing is touched.
+    REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
+    Write(update / "staged" / "data" / "not-planned.fit", "kept while an update waits");
+    CHECK(!MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
+}
+
 TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "
           "alone")
 {

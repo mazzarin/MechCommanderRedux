@@ -110,6 +110,11 @@ namespace
                 return std::unexpected("an update is already staged; it goes in at the next start");
             }
 
+            if (auto cleared = ClearUnplanned(); !cleared)
+            {
+                return cleared;
+            }
+
             // What an earlier attempt staged as the list has it stays; the rest is still to do.
             std::vector<const MCStep*> patches;
             std::vector<const MCStep*> whole;
@@ -217,6 +222,74 @@ namespace
 
             const auto hash = MCSha256::OfFile(StagedPath(step), _GoOn);
             return hash && *hash == step.File->Sha256;
+        }
+
+        /// <summary>
+        /// Deletes what's in staged/ and download/ that this plan doesn't name: an update dropped midway (a release
+        /// replaced since, HD's download stopped) leaves nothing behind, however big. Logged with what it freed.
+        /// </summary>
+        std::expected<void, std::string> ClearUnplanned()
+        {
+            std::set<std::string, std::less<>> staged;
+            std::set<std::string, std::less<>> downloads;
+
+            for (const MCStep& step : _Plan.Steps)
+            {
+                if (step.Action != MCAction::Fetch && step.Action != MCAction::Patch)
+                {
+                    continue;
+                }
+
+                staged.insert(MCContentList::FoldedPath(step.OnDisk));
+                downloads.insert(MCContentList::FoldedPath(step.File->Zip));
+
+                if (step.Patch != nullptr)
+                {
+                    downloads.insert(MCContentList::FoldedPath(step.Patch->Name));
+                }
+            }
+
+            uint64_t freed = 0;
+            size_t files = 0;
+
+            for (const auto& [folder, named] : {std::pair{At(MCContentSwap::StagedFolder), &staged},
+                                                std::pair{At(MCContentStage::DownloadFolder), &downloads}})
+            {
+                const auto found = _Disk.Files(folder);
+
+                if (!found)
+                {
+                    return std::unexpected(found.error());
+                }
+
+                for (const std::string& relative : *found)
+                {
+                    if (named->contains(MCContentList::FoldedPath(relative)))
+                    {
+                        continue;
+                    }
+
+                    const std::filesystem::path path = folder / MCFileSystem::FromUtf8(relative);
+                    const uint64_t size = _Disk.Stat(path).Size;
+
+                    if (!_Disk.Remove(path))
+                    {
+                        return std::unexpected(
+                            std::format("{}, left by an earlier update, can't be deleted", Shown(path)));
+                    }
+
+                    freed += size;
+                    ++files;
+                }
+            }
+
+            if (files != 0)
+            {
+                SDL_Log("Updates: %zu files an earlier update left in %s cleared, %llu bytes freed", files,
+                        MCContentSwap::UpdateFolder.data(), static_cast<unsigned long long>(freed));
+            }
+
+            return {};
         }
 
         /// <summary>The zips holding <paramref name="steps"/>' files.</summary>

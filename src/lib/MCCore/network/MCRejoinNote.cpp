@@ -15,14 +15,6 @@ namespace
     /// <summary>The most a note may hold: a few words, so anything bigger isn't one.</summary>
     constexpr uintmax_t MaxNoteBytes = 4096;
 
-    /// <summary><paramref name="word"/> as one word of a command line: its quotes dropped, in quotes when it has a space.</summary>
-    std::string Word(std::string_view word)
-    {
-        std::string kept;
-        std::ranges::copy_if(word, std::back_inserter(kept), [](char c) { return c != '"'; });
-        return kept.find_first_of(" \t") == std::string::npos ? kept : std::format("\"{}\"", kept);
-    }
-
     /// <summary>Deletes the note at <paramref name="path"/>, saying why (a failure only logged: it ages out).</summary>
     void Delete(const std::filesystem::path& path, std::string_view why)
     {
@@ -84,52 +76,15 @@ namespace
 
 auto MCRejoinNote::LobbyCommandLine(const MCLobbyLaunchArgs& args) -> std::string
 {
-    std::vector<std::string> words;
-
-    if (args.IsHost)
+    // A rejoin's start has the switch already.
+    if (args.Rejoin)
     {
-        words.emplace_back("-host");
-
-        // A host's address is its port after a colon.
-        if (args.Address.size() > 1 && args.Address.front() == ':')
-        {
-            words.emplace_back("-port");
-            words.push_back(Word(std::string_view(args.Address).substr(1)));
-        }
-    }
-    else
-    {
-        words.emplace_back("-join");
-
-        if (!args.Address.empty())
-        {
-            words.push_back(Word(args.Address));
-        }
+        return args.CommandLine;
     }
 
-    if (!args.PlayerName.empty())
-    {
-        words.emplace_back("-player");
-        words.push_back(Word(args.PlayerName));
-    }
-
-    if (!args.SessionName.empty())
-    {
-        words.emplace_back("-session");
-        words.push_back(Word(args.SessionName));
-    }
-
-    words.emplace_back("-maxplayers");
-    words.push_back(std::to_string(args.MaxPlayers));
-    words.emplace_back(RejoinSwitch);
-    std::string line;
-
-    for (const std::string& word : words)
-    {
-        line += line.empty() ? word : " " + word;
-    }
-
-    return line;
+    const size_t end = args.CommandLine.find_last_not_of(" \t");
+    const std::string_view words = std::string_view(args.CommandLine).substr(0, end == std::string::npos ? 0 : end + 1);
+    return words.empty() ? std::string(RejoinSwitch) : std::format("{} {}", words, RejoinSwitch);
 }
 
 auto MCRejoinNote::Write(const std::filesystem::path& userFolder, const MCNote& note)
@@ -140,8 +95,16 @@ auto MCRejoinNote::Write(const std::filesystem::path& userFolder, const MCNote& 
     object[std::string(CommandLineKey)] = note.CommandLine;
     object[std::string(BuildKey)] = note.Build;
     object[std::string(TimeKey)] = note.Time;
+    const std::string text = object.dump() + "\n";
+
+    // One its reader would take as no note.
+    if (text.size() > MaxNoteBytes)
+    {
+        return std::unexpected(std::format("{} would be too big ({} bytes)", MCFileSystem::ToUtf8(path), text.size()));
+    }
+
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    file << object.dump() << "\n";
+    file << text;
     file.close();
 
     if (!file)

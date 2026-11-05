@@ -32,9 +32,8 @@ namespace MCRejoinNote
     };
 
     /// <summary>
-    /// The lobby's words <paramref name="args"/> came from (the -host with its port, or the -join with its address;
-    /// -player, -session and -maxplayers) with <see cref="RejoinSwitch"/>: a word with spaces in quotes, its quotes
-    /// dropped (the command line can't carry them).
+    /// The command line the lobby started the game with (<paramref name="args"/>'), whole, so the restart starts as the
+    /// lobby started it (its match's options, slots and teams too), with <see cref="RejoinSwitch"/> once.
     /// </summary>
     std::string LobbyCommandLine(const MCLobbyLaunchArgs& args);
 

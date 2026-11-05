@@ -42,6 +42,11 @@ struct MCLobbyLaunchArgs
     /// says why (the room gone, full or started).
     /// </summary>
     bool Rejoin = false;
+    /// <summary>
+    /// Port-only (the personal build): the command line the lobby started the game with, whole (a restart into an
+    /// update starts again with it: network/MCRejoinNote.h).
+    /// </summary>
+    std::string CommandLine;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;

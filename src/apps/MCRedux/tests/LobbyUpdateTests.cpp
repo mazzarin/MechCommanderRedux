@@ -48,27 +48,29 @@ namespace
 
 TEST_CASE("lobby updates: the rejoin note holds the words the lobby started the game with")
 {
-    MCLobbyLaunchArgs host{.Active = true, .IsHost = true, .Address = ":28800", .PlayerName = "Big Bob"};
-    CHECK_EQ(MCRejoinNote::LobbyCommandLine(host),
-             std::string("-host -port 28800 -player \"Big Bob\" -maxplayers 6 -rejoin"));
-
-    MCLobbyLaunchArgs guest{.Active = true,
-                            .IsHost = false,
-                            .Address = "192.168.1.5:28801",
-                            .PlayerName = "Ann \"Ace\" Lee",
-                            .SessionName = "Ann's room",
-                            .MaxPlayers = 4};
-    const std::string line = MCRejoinNote::LobbyCommandLine(guest);
-    CHECK_EQ(
-        line,
-        std::string("-join 192.168.1.5:28801 -player \"Ann Ace Lee\" -session \"Ann's room\" -maxplayers 4 -rejoin"));
+    // The whole command line, so the restart starts as the lobby started it: its match's options and slots too.
+    constexpr std::string_view HostLine = "-host -port 28800 -player \"Big Bob\" -matchweather rain -matchtime night "
+                                          "-matchmap ARENA -slot \"Big Bob\" 1 0 -slot ANN 2 0 -team1tech clan  ";
+    const MCLobbyLaunchArgs host{.Active = true, .IsHost = true, .CommandLine = std::string(HostLine)};
+    const std::string line = MCRejoinNote::LobbyCommandLine(host);
+    CHECK_EQ(line, std::string(HostLine.substr(0, HostLine.find_last_not_of(' ') + 1)) + " -rejoin");
     CHECK(StartsInLobby(line));
 
-    // A join with no address (the game's own default), and a host on the default port.
-    CHECK_EQ(MCRejoinNote::LobbyCommandLine(MCLobbyLaunchArgs{.Active = true}),
-             std::string("-join -maxplayers 6 -rejoin"));
-    CHECK_EQ(MCRejoinNote::LobbyCommandLine(MCLobbyLaunchArgs{.Active = true, .IsHost = true}),
-             std::string("-host -maxplayers 6 -rejoin"));
+    // A rejoin's start has the switch already: once is enough.
+    constexpr std::string_view RejoinLine =
+        "-join 192.168.1.5:28801 -player \"Ann Lee\" -rejoin -session \"Ann's room\"";
+    CHECK_EQ(MCRejoinNote::LobbyCommandLine(
+                 MCLobbyLaunchArgs{.Active = true, .Rejoin = true, .CommandLine = std::string(RejoinLine)}),
+             std::string(RejoinLine));
+}
+
+TEST_CASE("lobby updates: a rejoin note too big to read back isn't written")
+{
+    const MCScratchFolder folder(ScratchGroup, "too big");
+    constexpr size_t Long = 5000;
+    CHECK(!MCRejoinNote::Write(folder.Path(),
+                               {.CommandLine = std::string(Long, 'x'), .Build = NoteBuild, .Time = WrittenAt}));
+    CHECK(!std::filesystem::exists(NotePath(folder)));
 }
 
 TEST_CASE("lobby updates: a start with no command line takes a fresh rejoin note for its build, once")
@@ -347,7 +349,7 @@ TEST_CASE_ISOLATED(
     const std::optional<std::string> note =
         MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
     REQUIRE(note.has_value());
-    CHECK_EQ(*note, std::string("-host -port 28885 -player BOB -maxplayers 6 -rejoin"));
+    CHECK_EQ(*note, std::string("-host -port 28885 -player BOB -rejoin"));
 
     ann.Leave();
     cal.Leave();
@@ -800,7 +802,7 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the ro
     const std::optional<std::string> note =
         MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
     REQUIRE(note.has_value());
-    CHECK_EQ(*note, std::format("-join 127.0.0.1:28897 -player ANN -session \"{}\" -maxplayers 6 -rejoin", RoomName));
+    CHECK_EQ(*note, std::format("-join 127.0.0.1:28897 -player ANN -session \"{}\" -rejoin", RoomName));
 }
 
 /// <summary>

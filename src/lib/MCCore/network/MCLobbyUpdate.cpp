@@ -47,6 +47,9 @@ namespace
     constexpr std::string_view HostAloneRestartText = "DOWNLOADED: ON RESTART, THE ROOM OPENS AGAIN.";
     constexpr std::string_view HostRestartText = "DOWNLOADED: ON RESTART, EVERYONE REJOINS.";
 
+    /// <summary>The session screen's line while the room's start waits for guests restarting into an update.</summary>
+    constexpr std::string_view StartWaitsFormat = "WAITING FOR {} TO UPDATE.";
+
     /// <summary>A guest restarting into an update, whose place the room keeps until it is back or the wait is over.</summary>
     struct MCComing
     {
@@ -84,6 +87,38 @@ namespace
     std::string UpdatingText(std::string_view name)
     {
         return std::format("{} IS UPDATING.", Upper(name));
+    }
+
+    /// <summary>
+    /// The places kept changed: the session screen holds its start while any is kept, and lets it go after
+    /// (MCSessionScreen::CheckGoodToGo).
+    /// </summary>
+    void PlacesChanged()
+    {
+        if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
+            logistics != nullptr && logistics->SessionScreen != nullptr &&
+            logistics->SessionScreen->StartButton != nullptr)
+        {
+            logistics->SessionScreen->CheckGoodToGo();
+        }
+    }
+
+    /// <summary>
+    /// The match starts while places are kept (a configured match, or a start that crossed a guest's Updating): they go,
+    /// and the room takes no new players again.
+    /// </summary>
+    void DropPlaces()
+    {
+        SDL_Log("Lobby updates: the match starts: the room no longer keeps %zu updating players' places",
+                Coming.size());
+        Coming.clear();
+
+        if (MultiPlayer()->IsHost)
+        {
+            MultiPlayer()->SessionManager->AdmitNewPlayers(false);
+        }
+
+        PlacesChanged();
     }
 
     /// <summary>The players in the room other than this game's.</summary>
@@ -242,6 +277,8 @@ namespace
                 MultiPlayer()->SessionManager->AdmitNewPlayers(false);
             }
 
+            PlacesChanged();
+
             if (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
             {
                 ShowPlayerLeft(name);
@@ -286,8 +323,21 @@ auto MCLobbyUpdate::ReadyText() -> std::string
 
 auto MCLobbyUpdate::CanRestart() -> bool
 {
-    return InRoom() && !MatchUnderWay() &&
+    // A guest away updating can't be told: the room restarts only once it is back.
+    return InRoom() && !MatchUnderWay() && Coming.empty() &&
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
+}
+
+auto MCLobbyUpdate::StartWaitsText() -> std::string
+{
+    if (Coming.empty())
+    {
+        return {};
+    }
+
+    return std::format(StartWaitsFormat, MCNamedPlayers(
+                                             Coming, [](const MCComing&) { return true; },
+                                             [](const MCComing& coming) { return Upper(coming.Name); }));
 }
 
 auto MCLobbyUpdate::Restart() -> bool
@@ -352,6 +402,11 @@ auto MCLobbyUpdate::Frame() -> void
         TryHostAgain(now);
     }
 
+    if (!Coming.empty() && MatchUnderWay())
+    {
+        DropPlaces();
+    }
+
     KeepPlaces(now);
 
     // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
@@ -397,6 +452,8 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
         game.SessionManager->AdmitNewPlayers(true);
     }
 
+    PlacesChanged();
+
     if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
     {
         chat->AddLine(UpdatingText(player->Name));
@@ -437,6 +494,8 @@ auto MCLobbyUpdate::PlayerJoined(uint32_t playerId) -> void
 
         RefreshAt = Clock::now() + SettleTime;
     }
+
+    PlacesChanged();
 }
 
 auto MCLobbyUpdate::RejoinFailedText(MCRoomRefusal refusal) -> std::string

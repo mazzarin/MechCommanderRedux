@@ -29,6 +29,7 @@
 #include "logistics/MCMainMenu.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
+#include "network/MCLobbyUpdate.h"
 #include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
@@ -54,6 +55,12 @@ namespace
     constexpr int32_t UpdateLineTop = 0x1b4;
     constexpr int32_t UpdateLineWidth = 0xd8;
     constexpr int32_t UpdateLineHeight = 0x13;
+    /// <summary>
+    /// Port-only (the personal build): the line saying whom the start waits for, in the update's line's place: its
+    /// field and outline, the palette's grey ramp's black and middle grey.
+    /// </summary>
+    constexpr uint8_t WaitsLineField = 0x10;
+    constexpr uint8_t WaitsLineOutline = 0x18;
 
     MCSessionScreen& Screen()
     {
@@ -458,6 +465,7 @@ auto MCSessionScreen::Draw() -> void
     MedWhiteFont->WriteString(frame, 0x180, 199, MissionName);
     MedWhiteFont->WriteString(frame, 0x180, 0xe3, MapName);
     MedWhiteFont->WriteString(frame, 0x20e, 199, MissionLabel.empty() ? LoadGameString(0x37f, 0xfe) : MissionLabel);
+    DrawStartWaits(frame);
 
     // Each team's resource points per player.
     if (MultiPlayer()->ClanGroupID == 0)
@@ -496,6 +504,26 @@ auto MCSessionScreen::Draw() -> void
 
     LgWhiteFont->WriteString(frame, 0x219, 0x185, std::format("{}", ReadPoints(*Team2RPText) / divisor));
     GlobalLog()->DrawScreenChrome(*this, frame);
+}
+
+auto MCSessionScreen::DrawStartWaits(const MCPane& frame) -> void
+{
+    if (StartWaits.empty())
+    {
+        return;
+    }
+
+    constexpr auto Left = static_cast<int16_t>(UpdateLineLeft);
+    constexpr auto Top = static_cast<int16_t>(UpdateLineTop);
+    constexpr auto Right = static_cast<int16_t>(UpdateLineLeft + UpdateLineWidth - 1);
+    constexpr auto Bottom = static_cast<int16_t>(UpdateLineTop + UpdateLineHeight - 1);
+    FillBox(Left, Top, Right, Bottom, WaitsLineOutline);
+    FillBox(static_cast<int16_t>(Left + 1), static_cast<int16_t>(Top + 1), static_cast<int16_t>(Right - 1),
+            static_cast<int16_t>(Bottom - 1), WaitsLineField);
+    // A line too long for the field (long names) is cut at its end.
+    MCGuiFont& font = *WhiteFont;
+    font.WriteString(frame, UpdateLineLeft + std::max((UpdateLineWidth - font.Width(StartWaits)) / 2, 1),
+                     UpdateLineTop + (UpdateLineHeight - font.Height()) / 2, StartWaits, UpdateLineWidth - 2);
 }
 
 auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
@@ -1372,14 +1400,23 @@ auto MCSessionScreen::PublishMatchState() const -> void
     match.Team2Points = std::atoi(Team2RPText->Buffer.c_str());
 }
 
-auto MCSessionScreen::CheckGoodToGo() const -> void
+auto MCSessionScreen::CheckGoodToGo() -> void
 {
     auto filled = [](const std::array<uint32_t, TeamSlots>& team)
     { return std::ranges::any_of(team, [](uint32_t id) { return id != NoPlayer; }); };
 
     const bool goodToGo = NumUnassigned == 0 && !MissionFile.empty() && !MultiPlayer()->PlayersOnHomeTeam()->empty() &&
                           !MultiPlayer()->PlayersOnEnemyTeam()->empty() && filled(Team1Players) && filled(Team2Players);
-    StartButton->Disabled = !goodToGo;
+
+    // Port-only (the personal build): a guest away updating holds the start until it's back (network/MCLobbyUpdate.h),
+    // its line in the update's line's place meanwhile.
+    StartWaits = MCLobbyUpdate::StartWaitsText();
+    StartButton->Disabled = !goodToGo || !StartWaits.empty();
+
+    if (UpdateLine != nullptr)
+    {
+        UpdateLine->ShowGuiWindow(StartWaits.empty());
+    }
 }
 
 auto MCSessionScreen::SetTeamTechBase(int8_t team, int8_t techBase) -> void

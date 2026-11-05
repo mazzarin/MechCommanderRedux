@@ -380,6 +380,82 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update keeps its pl
 
 namespace
 {
+    /// <summary>A mission the host's start needs loaded (the screen asks only that one is).</summary>
+    constexpr std::string_view StartMission = "ARENA";
+
+    /// <summary>
+    /// The host's picks that light START: itself on team 1, <paramref name="others"/> on team 2, a mission loaded.
+    /// </summary>
+    void PickTeams(MCSessionScreen& screen, std::initializer_list<uint32_t> others)
+    {
+        screen.AssignPlayer(MultiPlayer()->SessionManager->MyPlayer()->Id, 1, 0, false);
+        int8_t slot = 0;
+
+        for (const uint32_t id : others)
+        {
+            screen.AssignPlayer(id, 2, slot++, false);
+        }
+
+        screen.MissionFile = StartMission;
+        screen.CheckGoodToGo();
+    }
+}
+
+/// <summary>
+/// The room holds its start while a guest is away updating: START grays, and the line left of it says whom it waits
+/// for; once the guest is back (the room shown again, its picks started over) START lights with the picks made again.
+/// A match that starts anyway (a configured one) lets the places kept go and closes the room, so no new game joins it.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's room holds its start while a guest is away updating, and closes as a match starts")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Guest ann("ANN");
+    Guest cal("CAL");
+    REQUIRE(HostLobbyRoom("28899", {ann, cal}));
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
+    PickTeams(screen, {ann.Id(), cal.Id()});
+    REQUIRE(!screen.StartButton->Disabled);
+    CHECK(screen.StartWaits.empty());
+
+    ann.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    CHECK(screen.StartButton->Disabled);
+    CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN TO UPDATE."));
+    MCScreenInput::SaveShot("lobby start waits 0 guest away", MCScreenInput::ScreenHash());
+
+    // The guest gone (as it quits), its name left in its slot: START still waits, whatever the picks say.
+    ann.Leave();
+    Settle();
+    screen.CheckGoodToGo();
+    CHECK(screen.StartButton->Disabled);
+
+    Guest back("ANN");
+    REQUIRE(back.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
+    REQUIRE(SettleUntil([&] { return back.SessionScreens() > 0; }));
+    CHECK(screen.StartWaits.empty());
+    CHECK(!RoomOpen());
+    PickTeams(screen, {back.Id(), cal.Id()});
+    CHECK(!screen.StartButton->Disabled);
+
+    // A match started with a place kept: the place goes, and the room closes.
+    cal.SendUpdating(hostId);
+    REQUIRE(SettleUntil(RoomOpen));
+    CHECK(MCLobbyUpdate::LeftToUpdate(cal.Id()));
+    MultiPlayer()->InLogistics = true;
+    Settle();
+    CHECK(!RoomOpen());
+    CHECK(!MCLobbyUpdate::LeftToUpdate(cal.Id()));
+    CHECK(MCLobbyUpdate::StartWaitsText().empty());
+    MultiPlayer()->InLogistics = false;
+}
+
+namespace
+{
     using MCTestGuest::Host;
 
     /// <summary>The room the guest tests join: its host's name and the session's.</summary>

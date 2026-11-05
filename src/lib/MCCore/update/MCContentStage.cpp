@@ -30,11 +30,6 @@ namespace
     /// <summary>How often staging tells its progress while the workers fetch.</summary>
     constexpr std::chrono::milliseconds ProgressEvery{100};
 
-    std::string Shown(const std::filesystem::path& path)
-    {
-        return MCFileSystem::ToUtf8(path);
-    }
-
     /// <summary>miniz reads the zip through this.</summary>
     size_t ReadZip(void* opaque, mz_uint64 offset, void* buffer, size_t count)
     {
@@ -275,7 +270,7 @@ namespace
                     if (!_Disk.Remove(path))
                     {
                         return std::unexpected(
-                            std::format("{}, left by an earlier update, can't be deleted", Shown(path)));
+                            std::format("{}, left by an earlier update, can't be deleted", MCFileSystem::ToUtf8(path)));
                     }
 
                     freed += size;
@@ -638,7 +633,7 @@ namespace
 
             if (!_Disk.MakeFolders(staged.parent_path()))
             {
-                return std::unexpected(std::format("{} can't be made", Shown(staged.parent_path())));
+                return std::unexpected(std::format("{} can't be made", MCFileSystem::ToUtf8(staged.parent_path())));
             }
 
             if (Stopped())
@@ -732,7 +727,7 @@ namespace
 
                 if (!_Disk.MakeFolders(staged.parent_path()))
                 {
-                    error = std::format("{} can't be made", Shown(staged.parent_path()));
+                    error = std::format("{} can't be made", MCFileSystem::ToUtf8(staged.parent_path()));
                     keepZip = true;
                     break;
                 }
@@ -754,7 +749,7 @@ namespace
                 if (!sink.Out || sink.WriteFailed)
                 {
                     _Disk.Remove(staged);
-                    error = std::format("{} can't be written", Shown(staged));
+                    error = std::format("{} can't be written", MCFileSystem::ToUtf8(staged));
                     keepZip = true;
                     break;
                 }
@@ -800,7 +795,7 @@ namespace
 
                 if (!_Disk.FlushFile(staged))
                 {
-                    return std::unexpected(std::format("{} can't be flushed", Shown(staged)));
+                    return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(staged)));
                 }
 
                 for (std::filesystem::path folder = staged.parent_path();
@@ -816,7 +811,7 @@ namespace
             {
                 if (!_Disk.FlushFolder(folder))
                 {
-                    return std::unexpected(std::format("{} can't be flushed", Shown(folder)));
+                    return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(folder)));
                 }
             }
 
@@ -903,7 +898,8 @@ std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
     {
         if (!disk.Remove(to))
         {
-            return std::unexpected(MCFetchError{MCKind::Download, std::format("{} can't be deleted", Shown(to))});
+            return std::unexpected(
+                MCFetchError{MCKind::Download, std::format("{} can't be deleted", MCFileSystem::ToUtf8(to))});
         }
 
         stat = {};
@@ -912,7 +908,7 @@ std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
     if (!disk.MakeFolders(to.parent_path()))
     {
         return std::unexpected(
-            MCFetchError{MCKind::Download, std::format("{} can't be made", Shown(to.parent_path()))});
+            MCFetchError{MCKind::Download, std::format("{} can't be made", MCFileSystem::ToUtf8(to.parent_path()))});
     }
 
     // The bytes already here hashed once; those that arrive, as they come.
@@ -967,7 +963,7 @@ std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
     {
         if (!disk.Remove(to))
         {
-            SDL_Log("Updates: %s, not as named, can't be deleted", Shown(to).c_str());
+            SDL_Log("Updates: %s, not as named, can't be deleted", MCFileSystem::ToUtf8(to).c_str());
         }
 
         return std::unexpected(MCFetchError{MCKind::NotAsNamed, std::format("{} isn't as named", name)});
@@ -1030,7 +1026,7 @@ std::expected<void, std::string> MCContentStage::Arm(MCUpdateDisk& disk, const s
             (!disk.Remove(ready) ||
              !disk.FlushFolder(gameFolder / MCFileSystem::FromUtf8(MCContentSwap::UpdateFolder))))
         {
-            SDL_Log("Updates: %s can't be taken back after a failed write", Shown(ready).c_str());
+            SDL_Log("Updates: %s can't be taken back after a failed write", MCFileSystem::ToUtf8(ready).c_str());
         }
 
         return std::unexpected("the update can't be marked ready");

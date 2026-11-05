@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "update/MCUpdateJson.h"
 #include "update/MCUpdateDisk.h"
+#include "platform/MCUtf8Path.h"
 
 #ifndef SODIUM_STATIC
 #define SODIUM_STATIC 1
@@ -176,7 +177,15 @@ const MCUpdateJson::MCJson& MCUpdateJson::Child(const MCJson& object, std::strin
 std::expected<std::optional<std::string>, std::string> MCUpdateJson::FileText(MCUpdateDisk& disk,
                                                                               const std::filesystem::path& path)
 {
-    if (!disk.Stat(path).Exists)
+    // A file that can't be looked at is an error, never taken for one that isn't there.
+    const auto there = IsThere(disk, path);
+
+    if (!there)
+    {
+        return std::unexpected(std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), there.error()));
+    }
+
+    if (!*there)
     {
         return std::nullopt;
     }

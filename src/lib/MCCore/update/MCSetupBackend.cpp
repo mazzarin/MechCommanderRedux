@@ -58,28 +58,19 @@ namespace
     std::expected<std::optional<MCArmed>, std::string> ReadArmed(const std::filesystem::path& gameFolder)
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-        const std::filesystem::path path = In(gameFolder, MCSetupBackend::ArmedFile);
-
-        if (!disk->Stat(path).Exists)
-        {
-            return std::nullopt;
-        }
-
-        const auto text = disk->ReadText(path);
-
-        if (!text)
-        {
-            return std::unexpected(text.error());
-        }
-
-        return MCUpdateJson::Read(MCSetupBackend::ArmedFile,
-                                  [&]() -> std::optional<MCArmed>
-                                  {
-                                      const MCUpdateJson::MCJson json = MCUpdateJson::Object(*text);
-                                      return MCArmed{.Build = MCUpdateJson::Count(json, BuildKey),
-                                                     .Sha256 = MCUpdateJson::Digest(json, Sha256Key),
-                                                     .Arguments = MCUpdateJson::Text(json, ArgumentsKey)};
-                                  });
+        return MCUpdateJson::ReadFile(*disk, In(gameFolder, MCSetupBackend::ArmedFile),
+                                      [](std::string_view text)
+                                      {
+                                          return MCUpdateJson::Read(
+                                              MCSetupBackend::ArmedFile,
+                                              [&]
+                                              {
+                                                  const MCUpdateJson::MCJson json = MCUpdateJson::Object(text);
+                                                  return MCArmed{.Build = MCUpdateJson::Count(json, BuildKey),
+                                                                 .Sha256 = MCUpdateJson::Digest(json, Sha256Key),
+                                                                 .Arguments = MCUpdateJson::Text(json, ArgumentsKey)};
+                                              });
+                                      });
     }
 
     /// <summary>Forgets the setup armed: it ran, or isn't to.</summary>

@@ -3,6 +3,8 @@
 
 #include "update/MCUpdateDisk.h"
 
+#include "platform/MCUtf8Path.h"
+
 #include <SDL3/SDL_log.h>
 #include <format>
 #include <fstream>
@@ -37,12 +39,6 @@ namespace
     constexpr std::chrono::milliseconds HeldWait{100};
 #endif
 
-    std::string Shown(const std::filesystem::path& path)
-    {
-        const std::u8string text = path.u8string();
-        return std::string(text.begin(), text.end());
-    }
-
 #ifdef _WIN32
     /// <summary>Flushes the file's bytes to the disk.</summary>
     bool FlushPath(const std::filesystem::path& path)
@@ -52,7 +48,7 @@ namespace
 
         if (file == INVALID_HANDLE_VALUE)
         {
-            SDL_Log("Updates: %s can't be opened to flush (%lu)", Shown(path).c_str(), GetLastError());
+            SDL_Log("Updates: %s can't be opened to flush (%lu)", MCFileSystem::ToUtf8(path).c_str(), GetLastError());
             return false;
         }
 
@@ -60,7 +56,7 @@ namespace
 
         if (!flushed)
         {
-            SDL_Log("Updates: %s can't be flushed (%lu)", Shown(path).c_str(), GetLastError());
+            SDL_Log("Updates: %s can't be flushed (%lu)", MCFileSystem::ToUtf8(path).c_str(), GetLastError());
         }
 
         CloseHandle(file);
@@ -77,7 +73,8 @@ namespace
 
         if (descriptor < 0)
         {
-            SDL_Log("Updates: %s can't be opened to flush (%s)", Shown(path).c_str(), std::strerror(errno));
+            SDL_Log("Updates: %s can't be opened to flush (%s)", MCFileSystem::ToUtf8(path).c_str(),
+                    std::strerror(errno));
             return false;
         }
 
@@ -89,7 +86,7 @@ namespace
 
         if (!flushed)
         {
-            SDL_Log("Updates: %s can't be flushed (%s)", Shown(path).c_str(), std::strerror(errno));
+            SDL_Log("Updates: %s can't be flushed (%s)", MCFileSystem::ToUtf8(path).c_str(), std::strerror(errno));
         }
 
         close(descriptor);
@@ -118,8 +115,8 @@ namespace
 
             if (!held || attempt >= HeldTries)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%lu, try %d)", Shown(from).c_str(), Shown(to).c_str(), error,
-                        attempt);
+                SDL_Log("Updates: %s can't be moved to %s (%lu, try %d)", MCFileSystem::ToUtf8(from).c_str(),
+                        MCFileSystem::ToUtf8(to).c_str(), error, attempt);
                 return false;
             }
 
@@ -131,7 +128,7 @@ namespace
     /// <summary>A stat that couldn't be made: why, naming <paramref name="path"/>.</summary>
     MCUpdateDisk::MCStat Unseen(const std::filesystem::path& path, const std::error_code& error)
     {
-        return {.Error = std::format("{} can't be looked at ({})", Shown(path), error.message())};
+        return {.Error = std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), error.message())};
     }
 
     class MCDisk final : public MCUpdateDisk
@@ -215,14 +212,14 @@ namespace
 
             if (!file)
             {
-                return std::unexpected(Shown(path) + " can't be opened");
+                return std::unexpected(MCFileSystem::ToUtf8(path) + " can't be opened");
             }
 
             std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
             if (file.bad())
             {
-                return std::unexpected(Shown(path) + " can't be read");
+                return std::unexpected(MCFileSystem::ToUtf8(path) + " can't be read");
             }
 
             return text;
@@ -253,7 +250,7 @@ namespace
 
             if (error)
             {
-                return std::unexpected(Shown(folder) + " can't be listed (" + error.message() + ")");
+                return std::unexpected(MCFileSystem::ToUtf8(folder) + " can't be listed (" + error.message() + ")");
             }
 
             return files;
@@ -266,7 +263,7 @@ namespace
 
             if (error)
             {
-                SDL_Log("Updates: %s can't be made (%s)", Shown(path).c_str(), error.message().c_str());
+                SDL_Log("Updates: %s can't be made (%s)", MCFileSystem::ToUtf8(path).c_str(), error.message().c_str());
             }
 
             return !error;
@@ -282,8 +279,8 @@ namespace
 
             if (error)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", Shown(from).c_str(), Shown(to).c_str(),
-                        error.message().c_str());
+                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                        MCFileSystem::ToUtf8(to).c_str(), error.message().c_str());
             }
 
             return !error;
@@ -300,8 +297,8 @@ namespace
             // RENAME_EXCL: one step, failing with EEXIST when something is at to.
             if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) != 0)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", Shown(from).c_str(), Shown(to).c_str(),
-                        std::strerror(errno));
+                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                        MCFileSystem::ToUtf8(to).c_str(), std::strerror(errno));
                 return false;
             }
 
@@ -316,7 +313,8 @@ namespace
 
             if (error)
             {
-                SDL_Log("Updates: %s can't be deleted (%s)", Shown(path).c_str(), error.message().c_str());
+                SDL_Log("Updates: %s can't be deleted (%s)", MCFileSystem::ToUtf8(path).c_str(),
+                        error.message().c_str());
             }
 
             return !error;
@@ -344,7 +342,7 @@ namespace
 
                 if (!file)
                 {
-                    SDL_Log("Updates: %s can't be written", Shown(path).c_str());
+                    SDL_Log("Updates: %s can't be written", MCFileSystem::ToUtf8(path).c_str());
                     return false;
                 }
             }
@@ -371,7 +369,7 @@ namespace
 
             if (error)
             {
-                return std::unexpected("the free space on " + Shown(path) + "'s disk can't be read (" +
+                return std::unexpected("the free space on " + MCFileSystem::ToUtf8(path) + "'s disk can't be read (" +
                                        error.message() + ")");
             }
 

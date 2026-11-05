@@ -3,6 +3,8 @@
 
 #include "update/MCUpdateLock.h"
 
+#include "platform/MCUtf8Path.h"
+
 #include <algorithm>
 #include <cstdarg>
 #include <system_error>
@@ -112,9 +114,7 @@ namespace
 
 std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& gameFolder, std::string_view name)
 {
-    const std::filesystem::path path =
-        gameFolder /
-        std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(name.data()), name.size()));
+    const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(name);
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
 
@@ -133,8 +133,7 @@ std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& ga
 
     if (handle == INVALID_HANDLE_VALUE)
     {
-        Note("Updates: the lock %s can't be opened (error %lu)", reinterpret_cast<const char*>(path.u8string().c_str()),
-             GetLastError());
+        Note("Updates: the lock %s can't be opened (error %lu)", MCFileSystem::ToUtf8(path).c_str(), GetLastError());
         return nullptr;
     }
 

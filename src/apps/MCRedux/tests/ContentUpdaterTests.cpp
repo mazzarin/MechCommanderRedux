@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "MCContentFixture.h"
-#include "MCFirstStart.h"
+#include "../MCFirstStart.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"

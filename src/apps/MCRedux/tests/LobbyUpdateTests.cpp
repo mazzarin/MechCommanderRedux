@@ -644,13 +644,13 @@ TEST_CASE_ISOLATED("game: a lobby's room keeps a guest's place only for a build 
 }
 
 /// <summary>
-/// START asks before it starts without the guests away updating, naming them all, and never waits for them: the match
-/// started, they leave their teams before the teams are published, so the match's teams and their slots are the
-/// players there; the places go and the room closes.
+/// START counts only the players there: a team of guests away updating alone grays it (the line says whom the room
+/// waits for), and with a player there on each team it asks before it starts without the guests away, naming them all.
+/// Its OK starts the match: they leave their teams before the teams are published, so the match's teams and their slots
+/// are the players there; the places go and the room closes.
 /// </summary>
-TEST_CASE_ISOLATED(
-    "game: a lobby's START asks before it starts without the guests away updating, who leave their teams "
-    "first")
+TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and asks before it starts without the guests "
+                   "away updating, who leave their teams first")
 {
     if (!MCTestGame::Available())
     {
@@ -659,12 +659,23 @@ TEST_CASE_ISOLATED(
 
     Guest ann("ANN");
     Guest cal("CAL");
-    REQUIRE(HostLobbyRoom("28919", {ann, cal}));
+    Guest dan("DAN");
+    REQUIRE(HostLobbyRoom("28919", {ann, cal, dan}));
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
-    ann.SendRules(hostId, MCMatchRule::Supported);
-    cal.SendRules(hostId, MCMatchRule::Supported);
-    PickTeams(screen, {ann.Id(), cal.Id()});
+
+    for (Guest* guest : {&ann, &cal, &dan})
+    {
+        guest->SendRules(hostId, MCMatchRule::Supported);
+    }
+
+    // The host and DAN on team 1, ANN and CAL on team 2.
+    screen.AssignPlayer(hostId, 1, 0, false);
+    screen.AssignPlayer(dan.Id(), 1, 1, false);
+    screen.AssignPlayer(ann.Id(), 2, 0, false);
+    screen.AssignPlayer(cal.Id(), 2, 1, false);
+    screen.MissionFile = StartMission;
+    screen.CheckGoodToGo();
     REQUIRE(!screen.StartButton->Disabled);
 
     for (Guest* guest : {&ann, &cal})
@@ -675,15 +686,24 @@ TEST_CASE_ISOLATED(
         Settle();
     }
 
-    CHECK(!screen.StartButton->Disabled);
+    // Team 2 only the guests away: START grays, and a click asks nothing.
+    CHECK(screen.StartButton->Disabled);
     CHECK_EQ(screen.StartWaits, std::string("WAITING FOR ANN, CAL TO REJOIN."));
-    CHECK_EQ(MCLobbyUpdate::StartQuestion(), std::string("ANN, CAL ARE UPDATING. START WITHOUT THEM?"));
+    MCReusableDialog& question = *GlobalLog()->QuestionDialog;
+    ClickOn(*screen.StartButton);
+    CHECK(!question.IsShowing());
 
-    // The host starts (START's OK): the guests away leave their teams before the teams are published.
-    REQUIRE(std::ranges::contains(screen.Team2Players, ann.Id()));
-    REQUIRE(std::ranges::contains(screen.Team2Players, cal.Id()));
-    MCLobbyUpdate::MatchStarts();
-    screen.PublishMatchState();
+    // DAN on team 2 too: START asks, naming both, and OK starts the match without them.
+    screen.AssignPlayer(dan.Id(), 2, 2, false);
+    CHECK(!screen.StartButton->Disabled);
+    ClickOn(*screen.StartButton);
+    REQUIRE(question.IsShowing());
+    CHECK_EQ(question.Text, std::string("ANN, CAL ARE UPDATING. START WITHOUT THEM?"));
+    ClickOn(*question.OkButton);
+    CHECK(!question.IsShowing());
+    CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
+    CHECK(std::ranges::contains(MultiPlayer()->Match.Team1Players, hostId));
+    CHECK(std::ranges::contains(MultiPlayer()->Match.Team2Players, dan.Id()));
 
     for (const uint32_t id : {ann.Id(), cal.Id()})
     {
@@ -692,7 +712,6 @@ TEST_CASE_ISOLATED(
         CHECK(!MCLobbyUpdate::LeftToUpdate(id));
     }
 
-    CHECK(screen.StartWaits.empty());
     CHECK(MCLobbyUpdate::StartQuestion().empty());
     CHECK(!RoomOpen());
 }

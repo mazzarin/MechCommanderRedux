@@ -1467,14 +1467,27 @@ auto MCSessionScreen::PublishMatchState() const -> void
 
 auto MCSessionScreen::CheckGoodToGo() -> void
 {
-    auto filled = [](const std::array<uint32_t, TeamSlots>& team)
-    { return std::ranges::any_of(team, [](uint32_t id) { return id != NoPlayer; }); };
+    // Port-only (the personal build): a guest away updating (network/MCLobbyUpdate.h) isn't counted: START needs a player
+    // there on each team, and a guest away unpicked doesn't hold it.
+    const auto there = [](uint32_t id) { return id != NoPlayer && !MCLobbyUpdate::Away(id); };
+    const auto filled = [&](const auto& players) { return std::ranges::any_of(players, there); };
+    const auto awayUnpicked =
+        static_cast<int32_t>(std::ranges::count_if(PlayerNames,
+                                                   [&](const auto& name)
+                                                   {
+                                                       return name != nullptr && MCLobbyUpdate::Away(name->PlayerId) &&
+                                                              FindSlot(Team1Players, name->PlayerId) < 0 &&
+                                                              FindSlot(Team2Players, name->PlayerId) < 0;
+                                                   }));
+    const std::optional<std::vector<uint32_t>> homeTeam = MultiPlayer()->PlayersOnHomeTeam();
+    const std::optional<std::vector<uint32_t>> enemyTeam = MultiPlayer()->PlayersOnEnemyTeam();
 
-    const bool goodToGo = NumUnassigned == 0 && !MissionFile.empty() && !MultiPlayer()->PlayersOnHomeTeam()->empty() &&
-                          !MultiPlayer()->PlayersOnEnemyTeam()->empty() && filled(Team1Players) && filled(Team2Players);
+    const bool goodToGo = NumUnassigned == awayUnpicked && !MissionFile.empty() && homeTeam.has_value() &&
+                          filled(*homeTeam) && enemyTeam.has_value() && filled(*enemyTeam) && filled(Team1Players) &&
+                          filled(Team2Players);
 
-    // Port-only (the personal build): while a guest away updating has its place kept, its line is in the update's line's
-    // place, and START asks before it starts without it (network/MCLobbyUpdate.h).
+    // Port-only: while a guest away updating has its place kept, its line is in the update's line's place, and START
+    // asks before it starts without it.
     StartWaits = MCLobbyUpdate::StartWaitsText();
     StartButton->Disabled = !goodToGo;
 

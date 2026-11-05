@@ -68,6 +68,12 @@ namespace MCLobbyUpdate
     std::string StartQuestion();
 
     /// <summary>
+    /// Whether player <paramref name="playerId"/> is away updating: its place kept, it gone from the session. START
+    /// counts only the players there (MCSessionScreen::CheckGoodToGo): a team of such guests alone can't start.
+    /// </summary>
+    bool Away(uint32_t playerId);
+
+    /// <summary>
     /// The UPDATE page's line for an update ready in a room: what RESTART does there, or that the update installs after
     /// the match (<see cref="CanRestart"/>); empty outside a room.
     /// </summary>
@@ -116,6 +122,12 @@ namespace MCLobbyUpdate
 
     /// <summary>Player <paramref name="playerId"/> joined: a guest back from its update is shown in the room.</summary>
     void PlayerJoined(uint32_t playerId);
+
+    /// <summary>
+    /// Player <paramref name="playerId"/> left the session: a guest away updating, gone, no longer counts for START
+    /// (<see cref="Away"/>).
+    /// </summary>
+    void PlayerLeft(uint32_t playerId);
 
     /// <summary>What a rejoin that failed says, for <paramref name="refusal"/>.</summary>
     std::string RejoinFailedText(MCRoomRefusal refusal);

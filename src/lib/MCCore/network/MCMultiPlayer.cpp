@@ -848,7 +848,10 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
 
     if (!InLogistics)
     {
-        // Port (personal): a player restarting into an update comes back (network/MCLobbyUpdate.h).
+        // Port (personal): a player restarting into an update comes back (network/MCLobbyUpdate.h); gone meanwhile, it
+        // no longer counts for START.
+        MCLobbyUpdate::PlayerLeft(playerID);
+
         if ((GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
              GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen) &&
             !MCLobbyUpdate::LeftToUpdate(playerID))

@@ -269,6 +269,25 @@ TEST_CASE("content stage: the patch applied, files fetched from the zips holding
     const auto again = MCContentPlan::Make(folder, *record, release.List, MCSha256::Of("list 2"), {"game", "hd"});
     REQUIRE(again.has_value());
     CHECK(!again->Changes());
+
+    // A file the player deleted comes back from the same release: the repair's swap is its own, not the last one's.
+    std::filesystem::remove(release.Game.Path() / "data" / "changed.fit");
+    MCContentFolder repairFolder(release.Game.Path());
+    const auto repair =
+        MCContentPlan::Make(repairFolder, *record, release.List, MCSha256::Of("list 2"), {"game", "hd"});
+    REQUIRE(repair.has_value());
+    CHECK(repair->Changes());
+    REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), *repair, release.List, GoOn).has_value());
+
+    // Staging again over a ready update is refused: it swaps in first.
+    const auto twice = MCContentStage::Stage(*disk, source, release.Game.Path(), *repair, release.List, GoOn);
+    REQUIRE(!twice.has_value());
+    CHECK(twice.error().find("already staged") != std::string::npos);
+    CHECK(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+    const auto repaired = MCInstalled::Read(release.Game.Path());
+    REQUIRE(repaired.has_value());
+    CHECK(repaired->Swap != record->Swap);
 }
 
 TEST_CASE("content stage: a cut-off download resumes where it stopped; files already staged aren't fetched again")

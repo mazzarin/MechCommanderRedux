@@ -57,6 +57,12 @@ namespace
 
         std::expected<void, std::string> Run()
         {
+            // Staging over a ready update would change files its journal moves: that update swaps in first.
+            if (MCContentSwap::Waiting(_Disk, _Game))
+            {
+                return std::unexpected("an update is already staged; it goes in at the next start");
+            }
+
             if (auto space = CheckSpace(); !space)
             {
                 return space;

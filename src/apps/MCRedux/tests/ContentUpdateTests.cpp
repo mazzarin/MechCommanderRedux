@@ -301,9 +301,10 @@ TEST_CASE("content list: paths outside the folder, alike but for case, or that W
         CHECK_EQ(MCContentList::PathProblem(good), std::string());
     }
 
-    for (const std::string_view bad : {"", "/etc/passwd", "../up", "data/../../up", "data//x", "data/./x", "data/",
-                                       "C:/x", "data\\x", "a?b", "data/con", "data/LPT1.txt", "data/aux.fit", "data/x.",
-                                       "data/x ", "Redux update/installed.json", "redux BACKUP/MCX.EXE", "tab\there"})
+    for (const std::string_view bad :
+         {"", "/etc/passwd", "../up", "data/../../up", "data//x", "data/./x", "data/", "C:/x", "data\\x", "a?b",
+          "data/con", "data/LPT1.txt", "data/aux.fit", "data/x.", "data/x ", "Redux update/installed.json",
+          "redux BACKUP/MCX.EXE", "tab\there", "Redux update"})
     {
         CHECK(!MCContentList::PathProblem(bad).empty());
     }

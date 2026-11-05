@@ -19,6 +19,7 @@ namespace
     constexpr std::string_view SizeKey = "size";
     constexpr std::string_view WrittenKey = "written";
     constexpr std::string_view OursKey = "ours";
+    constexpr std::string_view SwapKey = "swap";
     constexpr uint64_t RecordFormat = 1;
 }
 
@@ -49,11 +50,8 @@ std::string MCInstalled::Text(const MCRecord& record)
                          {OursKey, file.Ours}});
     }
 
-    return MCJson{{FormatKey, RecordFormat},
-                  {ReleaseKey, record.Release},
-                  {ListKey, MCSha256::Hex(record.List)},
-                  {SetsKey, record.Sets},
-                  {FilesKey, std::move(files)}}
+    return MCJson{{FormatKey, RecordFormat}, {ReleaseKey, record.Release}, {ListKey, MCSha256::Hex(record.List)},
+                  {SetsKey, record.Sets},    {SwapKey, record.Swap},       {FilesKey, std::move(files)}}
         .dump(1);
 }
 
@@ -67,6 +65,7 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::str
             MCRecord record;
             record.Release = Count(json, ReleaseKey);
             record.List = Digest(json, ListKey);
+            record.Swap = TextOr(json, SwapKey, "");
 
             for (const MCJson& set : Array(json, SetsKey))
             {

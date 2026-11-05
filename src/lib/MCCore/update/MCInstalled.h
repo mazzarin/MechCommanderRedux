@@ -35,6 +35,11 @@ namespace MCInstalled
         MCSha256::MCDigest List{};
         /// <summary>The sets the copy has.</summary>
         std::set<std::string, std::less<>> Sets;
+        /// <summary>
+        /// The swap that wrote it (a random id each update's journal carries; empty none): the swap is committed once
+        /// the record on disk is its own, whatever the release (a repair keeps the same one).
+        /// </summary>
+        std::string Swap;
         /// <summary>The files, by their listed paths folded (MCContentList::FoldedPath).</summary>
         std::map<std::string, MCFile, std::less<>> Files;
     };

@@ -71,7 +71,10 @@ namespace MCContentSwap
     std::string JournalText(const MCJournal& journal);
     std::expected<MCJournal, std::string> ReadJournal(std::string_view text);
 
-    /// <summary>Staging is done (each staged file and its folder flushed): writes <c>ready.json</c> durably.</summary>
+    /// <summary>
+    /// Staging is done (each staged file and its folder flushed): writes <c>ready.json</c> durably, the record given a
+    /// swap id of its own.
+    /// </summary>
     bool MarkReady(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal);
 
     /// <summary>Whether an update is staged and ready, or a swap was stopped midway.</summary>

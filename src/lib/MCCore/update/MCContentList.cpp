@@ -214,10 +214,10 @@ std::string MCContentList::PathProblem(std::string_view path)
             return std::format("has \"{}\", a name Windows keeps for a device", part);
         }
 
-        if (start == 0 && end < path.size() &&
+        if (start == 0 &&
             (FoldedPath(part) == FoldedPath(UpdateFolder) || FoldedPath(part) == FoldedPath(BackupFolder)))
         {
-            return std::format("is in \"{}\", which updates keep for themselves", part);
+            return std::format("is \"{}\" or in it, which updates keep for themselves", part);
         }
 
         start = end + 1;

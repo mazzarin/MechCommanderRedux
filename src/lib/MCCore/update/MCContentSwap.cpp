@@ -5,6 +5,8 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 
+#include <random>
+
 namespace
 {
     using namespace MCContentSwap;
@@ -126,9 +128,10 @@ namespace
                     continue;
                 }
 
-                if (!_Disk.Stat(Staged(move)).Exists)
+                if (const MCUpdateDisk::MCStat staged = _Disk.Stat(Staged(move));
+                    !staged.Exists || staged.Folder || staged.Size != move.NewSize)
                 {
-                    return std::format("{}'s staged copy is missing", move.Path);
+                    return std::format("{}'s staged copy is missing or the wrong size", move.Path);
                 }
 
                 if (!Move(Staged(move), Destination(move)))
@@ -145,13 +148,17 @@ namespace
             return {};
         }
 
-        /// <summary>Whether the installed record on disk is already the journal's (same release, list and sets).</summary>
+        /// <summary>Whether the installed record on disk is the one this journal writes (its swap's id).</summary>
         bool RecordWritten()
         {
+            if (_Journal.Record.Swap.empty())
+            {
+                return false;
+            }
+
             const auto text = _Disk.ReadText(At(MCInstalled::RecordPath));
             const auto record = text ? MCInstalled::FromText(*text) : std::unexpected(text.error());
-            return record && record->Release == _Journal.Record.Release && record->List == _Journal.Record.List &&
-                   record->Sets == _Journal.Record.Sets;
+            return record && record->Swap == _Journal.Record.Swap;
         }
 
     public:
@@ -435,7 +442,11 @@ std::expected<MCJournal, std::string> MCContentSwap::ReadJournal(std::string_vie
 
 bool MCContentSwap::MarkReady(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, const MCJournal& journal)
 {
-    return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(journal));
+    // A random id per swap: the record it writes says it's done, even when an earlier swap wrote the same release.
+    std::random_device random;
+    MCJournal ready = journal;
+    ready.Record.Swap = std::format("{:08x}{:08x}{:08x}{:08x}", random(), random(), random(), random());
+    return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
 }
 
 bool MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)

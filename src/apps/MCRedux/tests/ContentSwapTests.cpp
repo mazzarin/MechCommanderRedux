@@ -276,6 +276,8 @@ namespace
             Before.Release = 1;
             After.Release = 2;
             After.List = MCSha256::Of("list 2");
+            // What MarkReady gives a journal: the record says the swap is done once it's this one.
+            After.Swap = "a swap of the tests";
             Before.Sets = After.Sets = {"game", "hd"};
             Files[GamePath(MCInstalled::RecordPath)] = {MCInstalled::Text(Before), 1};
             Files[GamePath(MCContentSwap::ReadyFile)] = {MCContentSwap::JournalText(Journal()), 1};

@@ -294,7 +294,8 @@ namespace
         {
 #ifdef _WIN32
             // Without MOVEFILE_REPLACE_EXISTING: a file at to fails it (ERROR_ALREADY_EXISTS), never tried again.
-            return MoveWithFlags(from, to, 0);
+            constexpr DWORD replacingNothing = 0;
+            return MoveWithFlags(from, to, replacingNothing);
 #else
             // RENAME_EXCL: one step, failing with EEXIST when something is at to.
             if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) != 0)

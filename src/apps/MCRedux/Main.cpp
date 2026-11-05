@@ -435,9 +435,10 @@ namespace
 
     /// <summary>
     /// Puts a staged content update in place, or finishes one a crash stopped (update/MCContentSwap.h), before any of
-    /// the game's files opens. A lobby's start gives it <see cref="MCContentSwap::LobbyStartTime"/>, past which the
-    /// previous files play and the next start tries again. Files it can't play go to the recovery screen
-    /// (<see cref="Recover"/>; REPAIR in a build that updates its content, <paramref name="setup"/>).
+    /// the game's files opens. A lobby's start aims to keep it within <see cref="MCContentSwap::LobbyStartTime"/> (a
+    /// target): past half of it the files stop moving, the previous ones play, and the next start tries again. The
+    /// program starting is this build: content needing a newer one waits for it. Files it can't play go to the recovery
+    /// screen (<see cref="Recover"/>; REPAIR in a build that updates its content, <paramref name="setup"/>).
     /// </summary>
     /// <returns>False when the game can't play the files as they are (the player quit the recovery screen).</returns>
     bool SwapStagedUpdate(const std::filesystem::path& gameFolder, std::string_view commandLine, MCUpdateLock* lock,

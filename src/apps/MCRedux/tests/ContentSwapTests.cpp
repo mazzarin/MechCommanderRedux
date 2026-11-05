@@ -192,6 +192,12 @@ namespace
             return true;
         }
 
+        // The swap only moves files staging wrote: it never asks.
+        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override
+        {
+            return std::numeric_limits<uint64_t>::max();
+        }
+
     private:
         enum class MCKind : uint8_t
         {

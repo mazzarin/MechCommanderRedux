@@ -61,6 +61,9 @@ public:
 
     /// <summary>Flushes a folder's entries: what was moved, made or deleted in it.</summary>
     virtual bool FlushFolder(const std::filesystem::path& path) = 0;
+
+    /// <summary>The bytes free to this program on the disk holding <paramref name="path"/>, or what failed.</summary>
+    virtual std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) = 0;
 };
 
 /// <summary>The disk.</summary>

@@ -277,6 +277,20 @@ namespace
             return FlushPath(path);
 #endif
         }
+
+        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) override
+        {
+            std::error_code error;
+            const std::filesystem::space_info space = std::filesystem::space(path, error);
+
+            if (error)
+            {
+                return std::unexpected("the free space on " + Shown(path) + "'s disk can't be read (" +
+                                       error.message() + ")");
+            }
+
+            return space.available;
+        }
     };
 }
 

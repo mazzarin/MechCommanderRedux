@@ -31,12 +31,20 @@ namespace
         return static_cast<size_t>(file.gcount());
     }
 
+    /// <summary>Where an entry is unpacked to, and whether writing it failed (the disk's fault, not the zip's).</summary>
+    struct MCEntrySink
+    {
+        std::ofstream Out;
+        bool WriteFailed = false;
+    };
+
     /// <summary>miniz writes an entry, in order, through this.</summary>
     size_t WriteEntry(void* opaque, mz_uint64, const void* buffer, size_t count)
     {
-        auto& file = *static_cast<std::ofstream*>(opaque);
-        file.write(static_cast<const char*>(buffer), static_cast<std::streamsize>(count));
-        return file ? count : 0;
+        auto& sink = *static_cast<MCEntrySink*>(opaque);
+        sink.Out.write(static_cast<const char*>(buffer), static_cast<std::streamsize>(count));
+        sink.WriteFailed = sink.WriteFailed || !sink.Out;
+        return sink.WriteFailed ? 0 : count;
     }
 
     class MCStager
@@ -63,37 +71,56 @@ namespace
                 return std::unexpected("an update is already staged; it goes in at the next start");
             }
 
-            if (auto space = CheckSpace(); !space)
-            {
-                return space;
-            }
-
+            // What an earlier attempt staged as the list has it stays; the rest is still to do.
+            std::vector<const MCStep*> patches;
             std::vector<const MCStep*> whole;
 
             for (const MCStep& step : _Plan.Steps)
             {
-                if (step.Action == MCAction::Patch && !IsStaged(step))
+                if (step.Action != MCAction::Patch && step.Action != MCAction::Fetch)
                 {
-                    if (const auto patched = Patch(step); !patched)
-                    {
-                        SDL_Log("Updates: %s is fetched whole: %s", step.Path.c_str(), patched.error().c_str());
-                        whole.push_back(&step);
-                    }
+                    continue;
+                }
+
+                if (!IsStaged(step))
+                {
+                    (step.Action == MCAction::Patch ? patches : whole).push_back(&step);
                 }
                 else if (step.Action == MCAction::Patch)
                 {
                     // Staged by an earlier attempt: its patch counts as in.
                     Received(step.Patch->Size);
                 }
-                else if (step.Action == MCAction::Fetch && !IsStaged(step))
+            }
+
+            const std::set<const MCContentList::MCZip*> zipsPlanned = ZipsHolding(whole);
+
+            if (auto space = CheckSpace(patches, whole); !space)
+            {
+                return space;
+            }
+
+            for (const MCStep* step : patches)
+            {
+                if (const auto patched = Patch(*step); !patched)
                 {
-                    whole.push_back(&step);
+                    SDL_Log("Updates: %s is fetched whole: %s", step->Path.c_str(), patched.error().c_str());
+                    whole.push_back(step);
                 }
             }
 
             if (_Stopped)
             {
                 return std::unexpected("stopped");
+            }
+
+            // A patch that fell back on a zip not otherwise fetched needs room for it too.
+            if (!std::ranges::includes(zipsPlanned, ZipsHolding(whole)))
+            {
+                if (auto space = CheckSpace({}, whole); !space)
+                {
+                    return space;
+                }
             }
 
             for (const MCContentList::MCZip& zip : _List.Zips)
@@ -155,35 +182,72 @@ namespace
             return hash && *hash == step.File->Sha256;
         }
 
-        /// <summary>Refuses to start without room for the staged files, the biggest zip and the biggest patch.</summary>
-        std::expected<void, std::string> CheckSpace()
+        /// <summary>The zips holding <paramref name="steps"/>' files.</summary>
+        std::set<const MCContentList::MCZip*> ZipsHolding(const std::vector<const MCStep*>& steps) const
         {
-            uint64_t biggestZip = 0;
-            uint64_t biggestPatch = 0;
+            std::set<const MCContentList::MCZip*> zips;
 
-            for (const MCContentList::MCZip* zip : _Plan.Zips)
+            for (const MCContentList::MCZip& zip : _List.Zips)
             {
-                biggestZip = std::max(biggestZip, zip->Size);
-            }
-
-            for (const MCStep& step : _Plan.Steps)
-            {
-                if (step.Patch != nullptr)
+                if (std::ranges::any_of(steps, [&](const MCStep* step) { return step->File->Zip == zip.Name; }))
                 {
-                    biggestPatch = std::max(biggestPatch, step.Patch->Size);
+                    zips.insert(&zip);
                 }
             }
 
-            const uint64_t needed = _Plan.StagedBytes + biggestZip + biggestPatch;
-            std::error_code error;
-            const std::filesystem::space_info space = std::filesystem::space(_Game, error);
+            return zips;
+        }
 
-            if (!error && space.available < needed)
+        /// <summary>The bytes of the hosted file <paramref name="name"/> already in download/ (a cut-off download's).</summary>
+        uint64_t Downloaded(std::string_view name, uint64_t size)
+        {
+            const MCUpdateDisk::MCStat stat = _Disk.Stat(DownloadPath(name));
+            return stat.Exists && !stat.Folder && stat.Size <= size ? stat.Size : 0;
+        }
+
+        /// <summary>
+        /// Refuses to go on without room for what's still to stage (<paramref name="patches"/>' and <paramref
+        /// name="whole"/>'s files), the biggest patch still to fetch and the biggest zip; what's already staged or
+        /// downloaded takes its room already. When the free space can't be read, it's logged and staging goes on.
+        /// </summary>
+        std::expected<void, std::string> CheckSpace(const std::vector<const MCStep*>& patches,
+                                                    const std::vector<const MCStep*>& whole)
+        {
+            uint64_t needed = 0;
+            uint64_t biggestPatch = 0;
+            uint64_t biggestZip = 0;
+
+            for (const MCStep* step : patches)
             {
-                return std::unexpected(
-                    std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
-                                static_cast<double>(needed) / BytesPerGigabyte,
-                                static_cast<double>(space.available) / BytesPerGigabyte));
+                needed += step->File->Size;
+                biggestPatch =
+                    std::max(biggestPatch, step->Patch->Size - Downloaded(step->Patch->Name, step->Patch->Size));
+            }
+
+            for (const MCStep* step : whole)
+            {
+                needed += step->File->Size;
+            }
+
+            for (const MCContentList::MCZip* zip : ZipsHolding(whole))
+            {
+                biggestZip = std::max(biggestZip, zip->Size - Downloaded(zip->Name, zip->Size));
+            }
+
+            needed += biggestPatch + biggestZip;
+            const auto free = _Disk.FreeBytes(_Game);
+
+            if (!free)
+            {
+                SDL_Log("Updates: staging goes on unchecked: %s", free.error().c_str());
+                return {};
+            }
+
+            if (*free < needed)
+            {
+                return std::unexpected(std::format(
+                    "the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
+                    static_cast<double>(needed) / BytesPerGigabyte, static_cast<double>(*free) / BytesPerGigabyte));
             }
 
             return {};
@@ -264,7 +328,10 @@ namespace
             return {};
         }
 
-        /// <summary>Downloads a zip and unpacks the entries wanted from it into staged/, each checked.</summary>
+        /// <summary>
+        /// Downloads a zip and unpacks the entries wanted from it into staged/, each checked. The zip goes once done, or
+        /// when it's at fault; one whose entry couldn't be written (a full disk) stays for the next attempt.
+        /// </summary>
         std::expected<void, std::string> FetchAndUnpack(const MCContentList::MCZip& zip,
                                                         const std::vector<const MCStep*>& entries)
         {
@@ -282,10 +349,13 @@ namespace
 
             if (!file || !mz_zip_reader_init(&archive, zip.Size, 0))
             {
+                file.close();
+                _Disk.Remove(*path);
                 return std::unexpected(std::format("{} can't be opened as a zip", zip.Name));
             }
 
             std::string error;
+            bool keepZip = false;
 
             for (const MCStep* step : entries)
             {
@@ -302,19 +372,25 @@ namespace
                 if (!_Disk.MakeFolders(staged.parent_path()))
                 {
                     error = std::format("{} can't be made", Shown(staged.parent_path()));
+                    keepZip = true;
                     break;
                 }
 
-                bool written = false;
+                MCEntrySink sink;
+                sink.Out.open(staged, std::ios::binary | std::ios::trunc);
+                const bool unpacked = sink.Out && mz_zip_reader_extract_to_callback(
+                                                      &archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
+                sink.Out.close();
+
+                if (!sink.Out || sink.WriteFailed)
                 {
-                    std::ofstream out(staged, std::ios::binary | std::ios::trunc);
-                    written = out && mz_zip_reader_extract_to_callback(&archive, static_cast<mz_uint>(index),
-                                                                       WriteEntry, &out, 0);
-                    out.close();
-                    written = written && out;
+                    _Disk.Remove(staged);
+                    error = std::format("{} can't be written", Shown(staged));
+                    keepZip = true;
+                    break;
                 }
 
-                if (!written || !IsStaged(*step))
+                if (!unpacked || !IsStaged(*step))
                 {
                     _Disk.Remove(staged);
                     error = std::format("{} from {} isn't the release's", step->File->Path, zip.Name);
@@ -324,7 +400,11 @@ namespace
 
             mz_zip_reader_end(&archive);
             file.close();
-            _Disk.Remove(*path);
+
+            if (!keepZip)
+            {
+                _Disk.Remove(*path);
+            }
 
             if (!error.empty())
             {

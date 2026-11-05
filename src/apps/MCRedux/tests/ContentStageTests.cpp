@@ -22,6 +22,61 @@ namespace
     using MCContentPlan::MCAction;
     constexpr std::string_view Group = "mc_content_stage_tests";
     using namespace MCContentFixture;
+
+    /// <summary>The disk, but with as much free space as the test sets.</summary>
+    class MCRoomDisk final : public MCUpdateDisk
+    {
+    public:
+        explicit MCRoomDisk(uint64_t free) : _Free(free) {}
+
+        MCStat Stat(const std::filesystem::path& path) override { return _Disk->Stat(path); }
+
+        std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
+        {
+            return _Disk->Hash(path);
+        }
+
+        std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) override
+        {
+            return _Disk->ReadText(path);
+        }
+
+        std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) override
+        {
+            return _Disk->Files(folder);
+        }
+
+        bool MakeFolders(const std::filesystem::path& path) override { return _Disk->MakeFolders(path); }
+
+        bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            return _Disk->Rename(from, to);
+        }
+
+        bool Remove(const std::filesystem::path& path) override { return _Disk->Remove(path); }
+        bool RemoveIfEmpty(const std::filesystem::path& path) override { return _Disk->RemoveIfEmpty(path); }
+
+        bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
+        {
+            return _Disk->WriteFlushed(path, bytes);
+        }
+
+        bool FlushFile(const std::filesystem::path& path) override { return _Disk->FlushFile(path); }
+        bool FlushFolder(const std::filesystem::path& path) override { return _Disk->FlushFolder(path); }
+        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override { return _Free; }
+
+    private:
+        std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
+        uint64_t _Free;
+    };
+
+    /// <summary>The bytes of the step at <paramref name="path"/>'s file, as listed.</summary>
+    uint64_t ListedSize(const MCContentList::MCList& list, std::string_view path)
+    {
+        const auto file = std::ranges::find(list.Files, path, &MCContentList::MCFile::Path);
+        REQUIRE(file != list.Files.end());
+        return file->Size;
+    }
 }
 
 TEST_CASE("content stage: the patch applied, files fetched from the zips holding them, checked, then swapped in")
@@ -139,6 +194,79 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
     CHECK(!MCContentSwap::Waiting(*disk, other.Game.Path()));
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
+}
+
+TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "
+          "alone")
+{
+    MCRelease release(Group, "space");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+
+    // A full disk: nothing is fetched.
+    MCRoomDisk full(0);
+    const auto refused = MCContentStage::Stage(full, source, release.Game.Path(), plan, release.List, GoOn);
+    REQUIRE(!refused.has_value());
+    CHECK(refused.error().find("GB free") != std::string::npos);
+    CHECK(source.Asked().empty());
+
+    // Cut off in the zip, with the patched file staged: what's left is the two small files and the zip's rest, though
+    // the plan as a whole needs far more.
+    MCRoomDisk roomy(std::numeric_limits<uint64_t>::max());
+    source.CutAfter(SendBytes * 3);
+    REQUIRE(!MCContentStage::Stage(roomy, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    const uint64_t rest = ListedSize(release.List, "data/changed.fit") +
+                          ListedSize(release.List, "data/missions/new.fit") + release.List.Zips[1].Size - SendBytes * 3;
+    REQUIRE(rest < plan.StagedBytes);
+    MCRoomDisk tight(rest);
+    REQUIRE(MCContentStage::Stage(tight, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    REQUIRE(MCContentStage::Arm(tight, release.Game.Path(), plan).has_value());
+    CHECK(MCContentSwap::Run(tight, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+}
+
+TEST_CASE("content stage: a patch that falls back on a zip not otherwise fetched is checked for room for it")
+{
+    MCRelease release(Group, "space-fallback");
+    // Only the big file changes, and its patch is damaged: the update zip holding it is fetched only as a fallback.
+    Write(release.Game.Path() / "data" / "changed.fit", "changed v2");
+    Write(release.Game.Path() / "data" / "missions" / "new.fit", "a new mission");
+    std::string damaged = Text(MCFilePatchFixture::CheckedPatch);
+    damaged[damaged.size() - MCFilePatchFixture::PatchDataFromEnd] ^= 0x5a;
+    Write(release.Host.Path() / "patches" / "terrain-1-2.hdiff", damaged);
+    release.List.Files[0].Patches[0].Sha256 = MCSha256::Of(damaged);
+    const MCContentPlan::MCPlan plan = release.Plan();
+    REQUIRE(plan.Zips.empty());
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(plan.StagedBytes + damaged.size());
+    const auto refused = MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn);
+    REQUIRE(!refused.has_value());
+    CHECK(refused.error().find("GB free") != std::string::npos);
+    CHECK((source.Asked() == std::vector<std::string>{"patches/terrain-1-2.hdiff"}));
+}
+
+TEST_CASE("content stage: a zip whose entry can't be written stays for the next attempt; one at fault goes")
+{
+    MCRelease release(Group, "keep-zip");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    // A folder where an entry is unpacked to: it can't be written, as on a full disk.
+    const std::filesystem::path blocked = release.Game.Path() / "Redux update" / "staged" / "data" / "changed.fit";
+    std::filesystem::create_directories(blocked);
+    const auto failed = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
+    REQUIRE(!failed.has_value());
+    CHECK(failed.error().find("can't be written") != std::string::npos);
+    CHECK(std::filesystem::exists(release.Game.Path() / "Redux update" / "download" / "update-2.zip"));
+
+    // Written once there's room: the zip isn't fetched again.
+    std::filesystem::remove(blocked);
+    const size_t asked = source.Asked().size();
+    REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK(source.Asked().size() == asked);
+    REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
+    CHECK(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
 }
 
 /// <summary>

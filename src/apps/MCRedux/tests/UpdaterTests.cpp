@@ -280,7 +280,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     REQUIRE_EQ(updater.Log->Answers.size(), size_t{1});
     CHECK(updater.Log->Answers[0] == MCAnswer::Install);
     CHECK(!install->IsShowing());
-    constexpr uint64_t megabyte = 1024 * 1024;
+    constexpr uint64_t megabyte = 1'000'000;
     MCUpdater::Downloading(megabyte * 3 / 2, megabyte * 5);
     Frames();
     CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADING: 1.5 OF 5.0 MB."));
@@ -331,6 +331,19 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK_EQ(updater.Log->Checks, checks + 1);
     CHECK(!install->IsShowing());
     CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+}
+
+TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth from 1 GB, MB below")
+{
+    CHECK_EQ(MCUpdateWork::SizeText(5'500'000'000), std::string("5.5 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(1'000'000'000), std::string("1.0 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(999'960'000), std::string("1.0 GB"));
+    CHECK_EQ(MCUpdateWork::SizeText(999'940'000), std::string("999.9 MB"));
+    CHECK_EQ(MCUpdateWork::SizeText(350'200'000), std::string("350.2 MB"));
+    CHECK_EQ(MCUpdateWork::SizeText(0), std::string("0.0 MB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(1'200'000'000, 5'500'000'000), std::string("1.2 OF 5.5 GB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(300'000'000, 5'500'000'000), std::string("0.3 OF 5.5 GB"));
+    CHECK_EQ(MCUpdateWork::ProgressText(1'500'000, 7'000'000), std::string("1.5 OF 7.0 MB"));
 }
 
 /// <summary>

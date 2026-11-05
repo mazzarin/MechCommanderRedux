@@ -53,6 +53,15 @@ namespace MCUpdateWork
     };
 
     /// <summary>
+    /// A size as the game's screens show it (the UPDATE page, HD OPTIONS, the first start's window), in decimal units as
+    /// the setup gives them: GB to a tenth from 1 GB ("5.5 GB"), else MB ("350.2 MB").
+    /// </summary>
+    std::string SizeText(uint64_t bytes);
+
+    /// <summary>Bytes in of a whole, both in the whole's unit: "1.2 OF 5.5 GB".</summary>
+    std::string ProgressText(uint64_t received, uint64_t whole);
+
+    /// <summary>
     /// The progress callback the content's steps take (MCContentUpdater::Stage and the like): it reports to
     /// <paramref name="progress"/> and goes on until <paramref name="stop"/> is asked.
     /// </summary>

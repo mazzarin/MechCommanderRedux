@@ -2046,7 +2046,8 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' HD PACK button gets HD with its size shown
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
     const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK(list->Description(HdPackRow).find("GB TO DOWNLOAD.") != std::string::npos);
+    CHECK_EQ(list->Description(HdPackRow),
+             std::format("THE HD ART, SOUND AND MOVIES: {} TO DOWNLOAD.", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> get = ShownButton("GET");
     CHECK(!ButtonShown("RESTART"));
     MCScreenInput::SaveShot("hd options get", MCScreenInput::ScreenHash());
@@ -2078,7 +2079,8 @@ TEST_CASE_ISOLATED("game: HD OPTIONS' REMOVE asks first, then RESTART takes HD o
     MCUpdaterScope scope(release, false);
     REQUIRE(MCTestGame::StartLogistics());
     const std::shared_ptr<MCLogOptionList> list = OpenHdOptions();
-    CHECK(list->Description(HdPackRow).find("GB).") != std::string::npos);
+    CHECK_EQ(list->Description(HdPackRow),
+             std::format("THE HD ART, SOUND AND MOVIES ({}).", MCUpdateWork::SizeText(Terrain().size())));
     const std::shared_ptr<MCLogTextButton> remove = ShownButton("REMOVE");
 
     // Asked first: CANCEL keeps it.

@@ -2,6 +2,50 @@
 #include "update/MCUpdateWork.h"
 #include "update/MCContentStage.h"
 
+namespace
+{
+    /// <summary>Decimal units, as the setup and the release give sizes.</summary>
+    constexpr double BytesPerGigabyte = 1e9;
+    constexpr double BytesPerMegabyte = 1e6;
+
+    /// <summary>From here a size shows in GB: 999.95 MB would be written 1000.0 MB, so it's 1.0 GB.</summary>
+    constexpr double ShownInGigabytes = 999.95e6;
+
+    /// <summary>A size's unit, as the screens write it, and its bytes.</summary>
+    struct MCUnit
+    {
+        std::string_view Name;
+        double Bytes = 1;
+    };
+
+    MCUnit UnitFor(uint64_t bytes)
+    {
+        if (static_cast<double>(bytes) >= ShownInGigabytes)
+        {
+            return {.Name = "GB", .Bytes = BytesPerGigabyte};
+        }
+
+        return {.Name = "MB", .Bytes = BytesPerMegabyte};
+    }
+
+    double InUnit(uint64_t bytes, const MCUnit& unit)
+    {
+        return static_cast<double>(bytes) / unit.Bytes;
+    }
+}
+
+std::string MCUpdateWork::SizeText(uint64_t bytes)
+{
+    const MCUnit unit = UnitFor(bytes);
+    return std::format("{:.1f} {}", InUnit(bytes, unit), unit.Name);
+}
+
+std::string MCUpdateWork::ProgressText(uint64_t received, uint64_t whole)
+{
+    const MCUnit unit = UnitFor(whole);
+    return std::format("{:.1f} OF {:.1f} {}", InUnit(received, unit), InUnit(whole, unit), unit.Name);
+}
+
 void MCUpdateWork::MCProgress::Set(uint64_t received, uint64_t expected)
 {
     const std::lock_guard lock(_Mutex);

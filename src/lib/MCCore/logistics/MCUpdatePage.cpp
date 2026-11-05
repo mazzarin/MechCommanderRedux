@@ -600,9 +600,6 @@ namespace
     constexpr std::string_view FoundTitle = "NEW: {}";
     constexpr std::string_view RunningTitle = "RUNNING: {}";
 
-    /// <summary>A megabyte, for the download's progress.</summary>
-    constexpr double Megabyte = 1024.0 * 1024.0;
-
     /// <summary>What the status line says the update is doing.</summary>
     std::string StatusText(const MCStatus& status)
     {
@@ -617,18 +614,16 @@ namespace
                     return "A NEWER VERSION IS OUT.";
                 }
 
-                return std::format("A NEWER VERSION IS OUT: {:.1f} MB TO DOWNLOAD.",
-                                   static_cast<double>(status.Expected) / Megabyte);
+                return std::format("A NEWER VERSION IS OUT: {} TO DOWNLOAD.", MCUpdateWork::SizeText(status.Expected));
             }
             case MCStage::Downloading:
             {
                 if (status.Expected == 0)
                 {
-                    return std::format("DOWNLOADING: {:.1f} MB.", static_cast<double>(status.Received) / Megabyte);
+                    return std::format("DOWNLOADING: {}.", MCUpdateWork::SizeText(status.Received));
                 }
 
-                return std::format("DOWNLOADING: {:.1f} OF {:.1f} MB.", static_cast<double>(status.Received) / Megabyte,
-                                   static_cast<double>(status.Expected) / Megabyte);
+                return std::format("DOWNLOADING: {}.", MCUpdateWork::ProgressText(status.Received, status.Expected));
             }
             case MCStage::Ready:
             {

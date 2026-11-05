@@ -37,8 +37,6 @@ namespace
     /// </summary>
     constexpr std::chrono::seconds StopWait{1};
 
-    constexpr double BytesPerGigabyte = 1e9;
-
     struct MCColor
     {
         uint8_t Red = 0;
@@ -215,11 +213,6 @@ namespace
         Present(renderer, shot);
     }
 
-    double Gigabytes(uint64_t bytes)
-    {
-        return static_cast<double>(bytes) / BytesPerGigabyte;
-    }
-
     /// <summary>The second line: how much is in, or what's happening.</summary>
     std::string AmountLine(uint64_t received, uint64_t expected, bool stopping)
     {
@@ -233,7 +226,7 @@ namespace
             return "LOOKING AT WHAT'S NEEDED.";
         }
 
-        return std::format("{:.1f} OF {:.1f} GB", Gigabytes(received), Gigabytes(expected));
+        return MCUpdateWork::ProgressText(received, expected);
     }
 
     /// <summary>Draws the window: the heading, the amount and the bar; saved to <paramref name="shot"/> when given.</summary>

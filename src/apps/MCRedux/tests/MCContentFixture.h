@@ -12,6 +12,7 @@
 #include "update/MCInstalled.h"
 #include "update/MCReleaseFile.h"
 #include "update/MCSignedFile.h"
+#include "update/MCUpdateDisk.h"
 
 #define MINIZ_NO_STDIO
 #define MINIZ_NO_TIME
@@ -151,6 +152,103 @@ namespace MCContentFixture
         std::optional<uint64_t> _CutAfter;
         uint64_t _Sent = 0;
         std::vector<std::string> _Asked;
+    };
+
+    /// <summary>
+    /// The disk, but with as much free space as the test sets (none: the disk's own), what can't be looked at or read
+    /// (a drive failing), and calls as files are flushed and the free space asked.
+    /// </summary>
+    class MCTestDisk final : public MCUpdateDisk
+    {
+    public:
+        MCTestDisk() = default;
+        explicit MCTestDisk(uint64_t free) : _Free(free) {}
+
+        MCStat Stat(const std::filesystem::path& path) override
+        {
+            if (!Unseen.empty() && path == Unseen)
+            {
+                return {.Error = MCFileSystem::ToUtf8(path) + " can't be looked at"};
+            }
+
+            return _Disk->Stat(path);
+        }
+
+        std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
+        {
+            return _Disk->Hash(path);
+        }
+
+        std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) override
+        {
+            if (!Unread.empty() && path == Unread)
+            {
+                return std::unexpected(MCFileSystem::ToUtf8(path) + " can't be read (the test's disk)");
+            }
+
+            return _Disk->ReadText(path);
+        }
+
+        std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) override
+        {
+            return _Disk->Files(folder);
+        }
+
+        bool MakeFolders(const std::filesystem::path& path) override { return _Disk->MakeFolders(path); }
+
+        bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            return _Disk->Rename(from, to);
+        }
+
+        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
+        {
+            return _Disk->Move(from, to);
+        }
+
+        bool Remove(const std::filesystem::path& path) override { return _Disk->Remove(path); }
+        bool RemoveIfEmpty(const std::filesystem::path& path) override { return _Disk->RemoveIfEmpty(path); }
+
+        bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
+        {
+            return _Disk->WriteFlushed(path, bytes);
+        }
+
+        bool FlushFile(const std::filesystem::path& path) override
+        {
+            if (OnFlush)
+            {
+                OnFlush();
+            }
+
+            return _Disk->FlushFile(path);
+        }
+
+        bool FlushFolder(const std::filesystem::path& path) override { return _Disk->FlushFolder(path); }
+
+        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) override
+        {
+            if (OnFreeBytes)
+            {
+                OnFreeBytes();
+            }
+
+            return _Free ? std::expected<uint64_t, std::string>(*_Free) : _Disk->FreeBytes(path);
+        }
+
+        /// <summary>Called as the free space is asked (none: nothing).</summary>
+        std::function<void()> OnFreeBytes;
+
+        /// <summary>Called as each file is flushed (none: nothing).</summary>
+        std::function<void()> OnFlush;
+
+        /// <summary>What can't be looked at, and what can't be read (empty: none).</summary>
+        std::filesystem::path Unseen;
+        std::filesystem::path Unread;
+
+    private:
+        std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
+        std::optional<uint64_t> _Free;
     };
 
     /// <summary>

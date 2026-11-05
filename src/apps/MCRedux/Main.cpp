@@ -843,7 +843,9 @@ int main(int argc, char** argv)
 
     if (contentUpdates)
     {
-        MCUpdater::SetContent(ContentSetup(*options, std::move(rootKeys)), MakeContentSource);
+        // The record as the start read it (after any install it made), not read again.
+        MCUpdater::SetContent(ContentSetup(*options, std::move(rootKeys)), MakeContentSource,
+                              installed ? &*installed : nullptr);
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));

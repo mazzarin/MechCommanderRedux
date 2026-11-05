@@ -670,6 +670,26 @@ TEST_CASE("content updater: a stop while a check, a change of sets or an install
     CHECK(!release.Armed());
 }
 
+TEST_CASE("content updater: the record is read from the disk it's given: one it can't read fails the check and the "
+          "change of sets, saying why")
+{
+    MCHostedRelease release("record-disk");
+    const std::filesystem::path& game = release.Game.Path();
+    MCTestDisk disk;
+    disk.Unread = game / MCFileSystem::FromUtf8(MCInstalled::RecordPath);
+    MCFolderSource source(release.Host.Path());
+    CHECK(MCContentUpdater::Check(release.Setup(), disk, source).error_or("").find("the test's disk") !=
+          std::string::npos);
+    REQUIRE(MCContentUpdater::Choose(disk, game, WithoutHd).has_value());
+    CHECK(MCContentUpdater::CheckSets(release.Setup(), disk, source).error_or("").find("the test's disk") !=
+          std::string::npos);
+
+    // An installer's answer with a record of no release that can't be read: not taken for a first start.
+    Write(game / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(MCInstalled::MCRecord{}));
+    CHECK(MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    CHECK(!MCContentUpdater::AwaitsInstall(disk, game));
+}
+
 TEST_CASE("updater: content alone is checked off the main thread, staged on INSTALL, ready once armed, and RESTART "
           "starts the game again")
 {
@@ -1506,6 +1526,19 @@ TEST_CASE("content removal: the uninstaller's removal takes what updates placed,
     CHECK(!std::filesystem::exists(game / "HD"));
     CHECK(!std::filesystem::exists(game / "data" / "missions"));
     CHECK_EQ(Read(game / "data" / "same.fit"), std::string("changed by the player"));
+}
+
+TEST_CASE("updater: the HD pack's state is told from the record the start read, which isn't read again")
+{
+    MCHostedRelease release("updater-record");
+    constexpr uint64_t HdBytes = 12345;
+    MCInstalled::MCRecord record = release.Installed;
+    record.SetBytes[std::string(MCContentList::HdSet)] = HdBytes;
+    MCUpdater::SetContent(
+        release.Setup(), [host = release.Host.Path()] { return std::make_unique<MCFolderSource>(host); }, &record);
+    CHECK(MCUpdater::HdPack().Installed);
+    CHECK_EQ(MCUpdater::HdPack().Bytes, HdBytes);
+    MCUpdater::ClearContent();
 }
 
 TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a later start gets it back as chosen")

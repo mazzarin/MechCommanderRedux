@@ -203,18 +203,30 @@ namespace
         InstallAgain = MCAgain::No;
     }
 
-    /// <summary>What the copy has of the HD pack, from its record (read here, and kept) and the sets chosen.</summary>
-    void ReadHd()
+    /// <summary>
+    /// What the copy has of the HD pack, from its record (<paramref name="known"/>, the one the start read; none: read
+    /// here), kept, and the sets chosen.
+    /// </summary>
+    void ReadHd(const MCInstalled::MCRecord* known)
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-        const auto installed = MCInstalled::Read(Content->GameFolder);
 
-        if (!installed)
+        if (known != nullptr)
         {
-            SDL_Log("Updater: %s", installed.error().c_str());
+            Record = *known;
+        }
+        else
+        {
+            const auto installed = MCInstalled::Read(*disk, Content->GameFolder);
+
+            if (!installed)
+            {
+                SDL_Log("Updater: %s", installed.error().c_str());
+            }
+
+            Record = installed.value_or(MCInstalled::MCRecord{});
         }
 
-        Record = installed.value_or(MCInstalled::MCRecord{});
         Hd = {.Managed = true,
               .Installed = MCInstalled::Has(Record, Content->GameFolder, MCContentList::HdSet),
               .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record).contains(MCContentList::HdSet)};
@@ -849,14 +861,15 @@ auto MCUpdater::SetBackend(std::unique_ptr<MCBackend> backend) -> void
     Changed();
 }
 
-auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source) -> void
+auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source,
+                           const MCInstalled::MCRecord* installed) -> void
 {
     ResetContent();
     Content = setup;
     MakeSource = std::move(source);
     Current = {};
     CheckedAtStart = false;
-    ReadHd();
+    ReadHd(installed);
     Changed();
 }
 

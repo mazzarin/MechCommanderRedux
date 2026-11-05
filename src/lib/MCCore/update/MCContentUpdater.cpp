@@ -129,7 +129,7 @@ namespace
             return;
         }
 
-        const auto installed = MCInstalled::Read(setup.GameFolder);
+        const auto installed = MCInstalled::Read(disk, setup.GameFolder);
         const auto files = disk.Files(folder);
 
         if (!installed || !files)
@@ -402,7 +402,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         offer.ProgramBytes = program->second.Size;
     }
 
-    const auto installed = MCInstalled::Read(setup.GameFolder);
+    const auto installed = MCInstalled::Read(disk, setup.GameFolder);
 
     if (!installed)
     {
@@ -464,7 +464,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::CheckSets(c
                                                                                MCContentStage::MCSource& source,
                                                                                const MCGoOn& goOn)
 {
-    const auto installed = MCInstalled::Read(setup.GameFolder);
+    const auto installed = MCInstalled::Read(disk, setup.GameFolder);
 
     if (!installed)
     {
@@ -579,7 +579,7 @@ namespace
             }
         }
 
-        const auto installed = MCInstalled::Read(setup.GameFolder);
+        const auto installed = MCInstalled::Read(disk, setup.GameFolder);
 
         if (!installed)
         {
@@ -814,7 +814,7 @@ bool MCContentUpdater::AwaitsInstall(MCUpdateDisk& disk, const std::filesystem::
         return false;
     }
 
-    const auto installed = MCInstalled::Read(gameFolder);
+    const auto installed = MCInstalled::Read(disk, gameFolder);
 
     if (!installed)
     {

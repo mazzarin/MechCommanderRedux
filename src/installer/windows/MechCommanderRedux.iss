@@ -1,12 +1,15 @@
 ; Port-only (the personal build): the Windows setup. It installs the program into the player's MechCommander Gold
 ; folder, for the player alone (no admin, unless Windows protects that folder: then Windows asks once, and the player's
-; account is let change it). What the program replaces there (the original's MCEditor.exe, a Redux copied in by hand)
-; is kept in "Redux backup" and put back by the uninstaller, which leaves the folder as it was. The game's download and
-; the HD question come with the content updater.
+; account is let change it). The folder is the one the game was last pointed at, else the one the original's installer
+; recorded. MCX.EXE becomes a launcher that starts Redux, so whatever starts the original gets Redux. What the program
+; replaces there (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup" and
+; put back by the uninstaller, which leaves the folder as it was. The game's download and the HD question come with
+; the content updater.
 ;
 ; Built by .github/workflows/windows.yml with Inno Setup 6.7:
 ;   ISCC /DAppVersionNumber=0.2.1.548 "/DAppVersionShown=0.2.1 (548)" /DBinDir=<the exes' folder>
-;        /DDocsDir=<src\docs> /O<output folder> src\installer\windows\MechCommanderRedux.iss
+;        /DDocsDir=<src\docs> /DLicencesFile=<make_licences.ps1's file> /O<output folder>
+;        src\installer\windows\MechCommanderRedux.iss
 
 #ifndef AppVersionNumber
   #error Pass /DAppVersionNumber=<major.minor.patch.build> (MC_VERSION in MCVersion.h)
@@ -20,6 +23,9 @@
 #ifndef DocsDir
   #error Pass /DDocsDir=<src\docs>
 #endif
+#ifndef LicencesFile
+  #error Pass /DLicencesFile=<the licences file make_licences.ps1 writes>
+#endif
 
 #define AppName "MechCommander Redux"
 #define ProjectUrl "https://github.com/mazzarin/MechCommanderRedux"
@@ -27,14 +33,30 @@
 #define GameExe "MCRedux.exe"
 #define SdlDll "SDL3.dll"
 #define EditorExe "MCEditor.exe"
+; The launcher (src/apps/MCXLauncher), in the original's place.
+#define LauncherExe "MCX.EXE"
 ; Not README.txt: the original's Readme.txt is in the same folder, and Windows doesn't tell the two names apart.
 #define ReadmeName "MechCommander Redux README.txt"
+#define LicencesName "MechCommander Redux licences.txt"
+; The files the first setups put in the game folder, before each install recorded its own (RegisterPreviousData).
+#define FirstProgramFiles "|MCRedux.exe|SDL3.dll|MCEditor.exe|MechCommander Redux README.txt|"
+#define ProgramFilesData "ProgramFiles"
 ; Where the files the program replaced are kept, in the game folder.
 #define BackupFolderName "Redux backup"
 ; What makes a folder the game's (as the game and the editor judge a folder the player names).
 #define GameDataFile "SYSTEM.CFG"
 ; The folder the game was last pointed at: the user folder's gamefolder.txt (MCGameFolder::Remember), UTF-8.
 #define RememberedFolderFile "MechCommander Redux\gamefolder.txt"
+; Where the original's installer (32-bit, so under WOW6432Node) recorded the game folder, as Path: its own key, which
+; the CD's Mission Editor setup reads, and DirectPlay's entry for lobbies, which MechCommander Online writes too.
+#define OriginalKey "Software\FASA Interactive\MechCommander Expansion"
+#define LobbyKey "Software\Microsoft\DirectPlay\Applications\MechCommander Expansion 1.0"
+#define FolderValue "Path"
+; The player's compatibility settings for a program, by its path (the Compatibility tab's, for the player alone).
+#define LayersKey "Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
+; Where the setup keeps the settings it took off the original's MCX.EXE, by its path, until the uninstall.
+#define ProductKey "Software\MechCommander Redux"
+#define KeptLayersKey ProductKey + "\Original compatibility settings"
 
 [Setup]
 ; Never change the AppId: Windows' Apps list, updates and the uninstaller find the install by it.
@@ -99,7 +121,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BinDir}\{#GameExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#SdlDll}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#EditorExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinDir}\MCX.exe"; DestDir: "{app}"; DestName: "{#LauncherExe}"; Flags: ignoreversion
 Source: "{#DocsDir}\README.txt"; DestDir: "{app}"; DestName: "{#ReadmeName}"; Flags: ignoreversion
+Source: "{#LicencesFile}"; DestDir: "{app}"; DestName: "{#LicencesName}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#GameExe}"; WorkingDir: "{app}"
@@ -124,11 +148,29 @@ var
 // The names of the files [Files] puts in the game folder.
 function ProgramFileNames: TArrayOfString;
 begin
-  SetArrayLength(Result, 4);
+  SetArrayLength(Result, 6);
   Result[0] := '{#GameExe}';
   Result[1] := '{#SdlDll}';
   Result[2] := '{#EditorExe}';
-  Result[3] := '{#ReadmeName}';
+  Result[3] := '{#LauncherExe}';
+  Result[4] := '{#ReadmeName}';
+  Result[5] := '{#LicencesName}';
+end;
+
+// Names as one string, each between bars: '|a|b|'.
+function JoinedNames(const Names: TArrayOfString): String;
+var
+  I: Integer;
+begin
+  Result := '|';
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+    Result := Result + Names[I] + '|';
+end;
+
+function IsListed(const Joined, Name: String): Boolean;
+begin
+  Result := Pos('|' + Lowercase(Name) + '|', Lowercase(Joined)) > 0;
 end;
 
 function IsGameFolder(const Folder: String): Boolean;
@@ -150,6 +192,15 @@ begin
   Names[Count] := Name;
 end;
 
+// Folder, without spaces around it or a trailing backslash, when it's a game folder; else empty.
+function GameFolderOrNone(const Folder: String): String;
+begin
+  Result := RemoveBackslashUnlessRoot(Trim(Folder));
+
+  if not IsGameFolder(Result) then
+    Result := '';
+end;
+
 // The game folder the game was last pointed at, when it's still one; else empty.
 function RememberedGameFolder: String;
 var
@@ -160,18 +211,38 @@ begin
   // Nested: the line is read only once the file is known to have one.
   if LoadStringsFromFile(ExpandConstant('{userappdata}\{#RememberedFolderFile}'), Lines) then
     if GetArrayLength(Lines) > 0 then
-      if IsGameFolder(Trim(Lines[0])) then
-        Result := Trim(Lines[0]);
+      Result := GameFolderOrNone(Lines[0]);
+end;
+
+// The game folder the original's installer recorded under Key, when it's still one; else empty.
+function RecordedGameFolder(const Key: String): String;
+var
+  Folder: String;
+begin
+  Result := '';
+
+  if RegQueryStringValue(HKLM32, Key, '{#FolderValue}', Folder) then
+    Result := GameFolderOrNone(Folder);
 end;
 
 procedure InitializeWizard;
+var
+  Folder: String;
 begin
   // An install keeps its folder (its folder page is skipped), and /DIR= names one. Otherwise the folder the game was
-  // last pointed at, else none: the setup has no folder of its own to offer.
+  // last pointed at, else the one the original's installer recorded, else none: the setup has no folder of its own.
   if (WizardForm.PrevAppDir <> '') or (ExpandConstant('{param:DIR|}') <> '') then
     Exit;
 
-  WizardForm.DirEdit.Text := RememberedGameFolder;
+  Folder := RememberedGameFolder;
+
+  if Folder = '' then
+    Folder := RecordedGameFolder('{#OriginalKey}');
+
+  if Folder = '' then
+    Folder := RecordedGameFolder('{#LobbyKey}');
+
+  WizardForm.DirEdit.Text := Folder;
 end;
 
 function CanChange(const Folder: String): Boolean;
@@ -301,13 +372,19 @@ begin
   CopiedFolder := '';
 end;
 
-// Before the files go in: the ones they replace are copied into the backup, unless the folder is this setup's own
-// install. Copied, not moved: the originals stay where Windows' Restart Manager finds a running game by them, and
-// Setup's rollback puts them back if the install fails.
+// The next setup learns which files this install put in the game folder.
+procedure RegisterPreviousData(PreviousDataKey: Integer);
+begin
+  SetPreviousData(PreviousDataKey, '{#ProgramFilesData}', JoinedNames(ProgramFileNames));
+end;
+
+// Before the files go in: the ones they replace are copied into the backup, unless an earlier install put them there.
+// Copied, not moved: the originals stay where Windows' Restart Manager finds a running game by them, and Setup's
+// rollback puts them back if the install fails.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Names: TArrayOfString;
-  Folder, Source, Target: String;
+  Folder, Source, Target, PutThereBefore: String;
   I: Integer;
 begin
   Result := '';
@@ -316,7 +393,9 @@ begin
   Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
 
   if CompareText(RemoveBackslashUnlessRoot(WizardForm.PrevAppDir), Folder) = 0 then
-    Exit;
+    PutThereBefore := GetPreviousData('{#ProgramFilesData}', '{#FirstProgramFiles}')
+  else
+    PutThereBefore := '';
 
   CopiedFolder := Folder;
   Names := ProgramFileNames;
@@ -327,7 +406,7 @@ begin
     Target := AddBackslash(BackupFolder(Folder)) + Names[I];
 
     // A backup already there is the folder's from before an earlier install, so it stays the one put back.
-    if FileExists(Source) and not FileExists(Target) then
+    if FileExists(Source) and not FileExists(Target) and not IsListed(PutThereBefore, Names[I]) then
     begin
       if not ForceDirectories(BackupFolder(Folder)) or not FileCopy(Source, Target, True) then
       begin
@@ -344,10 +423,69 @@ begin
   end;
 end;
 
+// MCX.EXE's path in Folder: the name its compatibility settings have under the Layers key.
+function LauncherPath(const Folder: String): String;
+begin
+  Result := AddBackslash(RemoveBackslashUnlessRoot(Folder)) + '{#LauncherExe}';
+end;
+
+// Takes the player's compatibility settings for the original's MCX.EXE (Windows 98, 256 colours, 640x480, run as
+// administrator) off its path, now the launcher's, and keeps them for the uninstall: Windows would apply them to the
+// launcher. Settings put on the launcher after an earlier install go too; the kept ones stay the original's.
+procedure LiftCompatibility(const Folder: String);
+var
+  Path, Layers, Kept: String;
+begin
+  Path := LauncherPath(Folder);
+
+  if not RegQueryStringValue(HKCU, '{#LayersKey}', Path, Layers) then
+    Exit;
+
+  if not RegQueryStringValue(HKCU, '{#KeptLayersKey}', Path, Kept) then
+  begin
+    // Not kept, they stay on MCX.EXE: the launcher runs with them rather than the original losing them.
+    if not RegWriteStringValue(HKCU, '{#KeptLayersKey}', Path, Layers) then
+    begin
+      Log(Format('Couldn''t keep %s''s compatibility settings (%s); left on it', [Path, Layers]));
+      Exit;
+    end;
+  end;
+
+  if RegDeleteValue(HKCU, '{#LayersKey}', Path) then
+    Log(Format('Took %s''s compatibility settings (%s) off it', [Path, Layers]))
+  else
+    Log(Format('Couldn''t take %s''s compatibility settings (%s) off it', [Path, Layers]));
+end;
+
+// Gives the original's MCX.EXE back the compatibility settings LiftCompatibility kept.
+procedure RestoreCompatibility(const Folder: String);
+var
+  Path, Kept: String;
+begin
+  Path := LauncherPath(Folder);
+
+  if not RegQueryStringValue(HKCU, '{#KeptLayersKey}', Path, Kept) then
+    Exit;
+
+  if not RegWriteStringValue(HKCU, '{#LayersKey}', Path, Kept) then
+  begin
+    Log(Format('Couldn''t give %s its compatibility settings (%s) back; still kept', [Path, Kept]));
+    Exit;
+  end;
+
+  Log(Format('Gave %s its compatibility settings (%s) back', [Path, Kept]));
+  RegDeleteValue(HKCU, '{#KeptLayersKey}', Path);
+  RegDeleteKeyIfEmpty(HKCU, '{#KeptLayersKey}');
+  RegDeleteKeyIfEmpty(HKCU, '{#ProductKey}');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     Installed := True;
+    LiftCompatibility(ExpandConstant('{app}'));
+  end;
 end;
 
 procedure DeinitializeSetup;
@@ -356,7 +494,8 @@ begin
     DropCopies;
 end;
 
-// After the program's files are gone: everything in the backup goes back, so the folder is as it was.
+// After the program's files are gone: everything in the backup goes back, so the folder is as it was, and the
+// original's MCX.EXE gets its compatibility settings back.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Folder: String;
@@ -390,6 +529,7 @@ begin
       Left := Left + #13#10 + Names[I];
 
   RemoveDir(BackupFolder(Folder));
+  RestoreCompatibility(Folder);
 
   if Left <> '' then
     SuppressibleMsgBox(FmtMessage(CustomMessage('RestoreFailed'), [BackupFolder(Folder), Left]), mbInformation,

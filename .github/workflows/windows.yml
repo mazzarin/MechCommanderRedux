@@ -1,7 +1,7 @@
 # Port-only (the personal build): builds the game, the editor and the tests on Windows and runs the tests, as
 # checks.yml's build job does for pull requests, on a push of the fork's windows-* branches (or by hand from the Actions
-# tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes, the setup, the
-# version header and MSBuild's log are kept as the run's artifact.
+# tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes (the launcher
+# MCX.exe too), the setup, the version header and MSBuild's log are kept as the run's artifact.
 name: Windows (personal)
 
 on:
@@ -41,8 +41,8 @@ jobs:
       - name: Test
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
 
-      # The setup (src/installer/windows), stamped with the version built into the exes. Inno Setup 6 is on the
-      # runner's image.
+      # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
+      # built into them. Inno Setup 6 is on the runner's image.
       - name: Setup
         shell: pwsh
         run: |
@@ -50,10 +50,12 @@ jobs:
           $number = [regex]::Match($header, '#define MC_VERSION "([0-9.]+)"').Groups[1].Value
           $shown = [regex]::Match($header, '#define MC_VERSION_SHOWN "([^"]+)"').Groups[1].Value
           if (-not $number -or -not $shown) { throw "MCVersion.h has no MC_VERSION or MC_VERSION_SHOWN." }
+          $licences = "$pwd\src\build\setup\licences.txt"
+          & src\installer\windows\make_licences.ps1 -LibDir "$pwd\src\lib" -Out $licences
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "No Inno Setup 6 on this runner ($iscc)." }
           & $iscc "/DAppVersionNumber=$number" "/DAppVersionShown=$shown" "/DBinDir=$pwd\src\build\bin\x64\Release" `
-            "/DDocsDir=$pwd\src\docs" "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
+            "/DDocsDir=$pwd\src\docs" "/DLicencesFile=$licences" "/O$pwd\dist" src\installer\windows\MechCommanderRedux.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
 
       - name: Keep the build
@@ -67,6 +69,7 @@ jobs:
             src/build/bin/x64/Release/MCRedux.exe
             src/build/bin/x64/Release/SDL3.dll
             src/build/bin/x64/Release/MCEditor.exe
+            src/build/bin/x64/Release/MCX.exe
             src/build/generated/MCVersion.h
             dist/MechCommander-Redux-Setup.exe
             msbuild.log

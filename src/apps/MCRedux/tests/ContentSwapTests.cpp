@@ -904,9 +904,43 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(!lookingFirst->Move(folder / "f.json", folder / "d.json"));
     CHECK(!lookingFirst->Move(folder / "f.json", folder / "a"));
     CHECK_EQ(*lookingFirst->ReadText(folder / "d.json"), std::string("third"));
+#ifndef _WIN32
+    // Nor where a link is, even one to nothing.
+    std::filesystem::create_symlink(folder / "nothing.json", folder / "dangling.json");
+    CHECK(!lookingFirst->Move(folder / "f.json", folder / "dangling.json"));
+    CHECK(!disk->Move(folder / "f.json", folder / "dangling.json"));
+    CHECK(!std::filesystem::exists(folder / "nothing.json"));
+    REQUIRE(disk->Remove(folder / "dangling.json"));
+#endif
     CHECK(lookingFirst->Move(folder / "f.json", folder / "a" / "g.json"));
     CHECK_EQ(*lookingFirst->ReadText(folder / "a" / "g.json"), std::string("fourth"));
     CHECK(!lookingFirst->Stat(folder / "f.json").Exists);
+
+    // A file made anew replaces what's there, never through a link; a folder there refuses it.
+    {
+        auto made = MCNewFile::Create(folder / "d.json");
+        REQUIRE(made.has_value());
+        CHECK(made->WriteAt(2, std::string_view("ew")));
+        CHECK(made->WriteAt(0, std::string_view("n")));
+        CHECK(made->WriteAt(1, std::string_view("n")));
+        std::array<char, 4> back{};
+        CHECK(made->ReadAt(0, back));
+        CHECK_EQ(std::string_view(back.data(), back.size()), std::string_view("nnew"));
+        CHECK(!made->ReadAt(1, back));
+        CHECK(made->Close());
+        CHECK_EQ(*disk->ReadText(folder / "d.json"), std::string("nnew"));
+        CHECK(!MCNewFile::Create(folder / "a").has_value());
+        CHECK(disk->Stat(folder / "a").Folder);
+    }
+
+#ifndef _WIN32
+    std::filesystem::create_symlink(folder / "d.json", folder / "link.json");
+    REQUIRE(MCNewFile::Create(folder / "link.json").has_value());
+    CHECK(!std::filesystem::is_symlink(folder / "link.json"));
+    CHECK_EQ(disk->Stat(folder / "link.json").Size, uint64_t{0});
+    CHECK_EQ(*disk->ReadText(folder / "d.json"), std::string("nnew"));
+    REQUIRE(disk->Remove(folder / "link.json"));
+#endif
 
     // A folder lists its files; one that isn't there, none; a file isn't a folder.
     const auto listed = disk->Files(folder);

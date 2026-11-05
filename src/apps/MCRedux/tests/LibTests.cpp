@@ -970,6 +970,27 @@ TEST_CASE("file patch: an update's patch turns its old file into the new one, by
         MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff", folder.Path() / "new.bin");
     REQUIRE(applied.has_value());
     CHECK(ReadFile(folder.Path() / "new.bin") == PatchNew());
+
+    // Held to the size wanted (the list's): another is refused before anything is written.
+    const auto sized = MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff",
+                                          folder.Path() / "sized.bin", {}, PatchNew().size());
+    REQUIRE(sized.has_value());
+    CHECK(ReadFile(folder.Path() / "sized.bin") == PatchNew());
+    const auto longer = MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff",
+                                           folder.Path() / "longer.bin", {}, PatchNew().size() + 1);
+    CHECK(longer.error_or("").find("makes a file of") != std::string::npos);
+    CHECK(!std::filesystem::exists(folder.Path() / "longer.bin"));
+
+#ifndef _WIN32
+    // A link where the new file goes is replaced, never written through.
+    WriteFile(folder.Path() / "elsewhere.bin", Bytes("not the patch's"));
+    std::filesystem::create_symlink(folder.Path() / "elsewhere.bin", folder.Path() / "linked.bin");
+    REQUIRE(MCFilePatch::Apply(folder.Path() / "old.bin", folder.Path() / "patch.hdiff", folder.Path() / "linked.bin")
+                .has_value());
+    CHECK(!std::filesystem::is_symlink(folder.Path() / "linked.bin"));
+    CHECK(ReadFile(folder.Path() / "linked.bin") == PatchNew());
+    CHECK(ReadFile(folder.Path() / "elsewhere.bin") == Bytes("not the patch's"));
+#endif
 }
 
 /// <summary>

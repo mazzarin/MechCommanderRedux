@@ -41,18 +41,24 @@ namespace
     }
 
     /// <summary>
-    /// Where an entry is unpacked to, its bytes and hash as they're written, whether writing failed (the disk's fault,
-    /// not the zip's), and whether it was stopped (asked before each piece).
+    /// Where an entry is unpacked to (a file made anew), its bytes and hash as they're written, the most it may hold (the
+    /// list's size: more isn't the release's, and stops it), whether writing failed (the disk's fault, not the zip's),
+    /// and whether it was stopped (asked before each piece).
     /// </summary>
     struct MCEntrySink
     {
-        explicit MCEntrySink(const std::function<bool()>& goOn) : GoOn(goOn) {}
+        MCEntrySink(MCNewFile file, uint64_t most, const std::function<bool()>& goOn)
+            : File(std::move(file)), Most(most), GoOn(goOn)
+        {
+        }
 
-        std::ofstream Out;
+        MCNewFile File;
         MCSha256::MCHasher Hasher;
         uint64_t Written = 0;
+        uint64_t Most = 0;
         const std::function<bool()>& GoOn;
         bool WriteFailed = false;
+        bool TooLong = false;
         bool Stopped = false;
     };
 
@@ -67,12 +73,17 @@ namespace
             return 0;
         }
 
-        const std::span<const char> bytes(static_cast<const char*>(buffer), count);
-        sink.Out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        sink.WriteFailed = sink.WriteFailed || !sink.Out;
-
-        if (sink.WriteFailed)
+        if (count > sink.Most - sink.Written)
         {
+            sink.TooLong = true;
+            return 0;
+        }
+
+        const std::span<const char> bytes(static_cast<const char*>(buffer), count);
+
+        if (!sink.File.WriteAt(sink.Written, bytes))
+        {
+            sink.WriteFailed = true;
             return 0;
         }
 
@@ -744,7 +755,7 @@ namespace
                 return Stop();
             }
 
-            const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn);
+            const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn, step.File->Size);
 
             if (Stopped())
             {
@@ -832,11 +843,20 @@ namespace
                     break;
                 }
 
-                MCEntrySink sink(_GoOn);
-                sink.Out.open(staged, std::ios::binary | std::ios::trunc);
-                const bool unpacked = sink.Out && mz_zip_reader_extract_to_callback(
-                                                      &archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
-                sink.Out.close();
+                // Made anew: never through a link, nor over what an earlier attempt left.
+                auto made = MCNewFile::Create(staged);
+
+                if (!made)
+                {
+                    error = made.error();
+                    keepZip = true;
+                    break;
+                }
+
+                MCEntrySink sink(std::move(*made), step->File->Size, _GoOn);
+                const bool unpacked =
+                    mz_zip_reader_extract_to_callback(&archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
+                const bool closed = sink.File.Close();
 
                 if (sink.Stopped)
                 {
@@ -846,7 +866,7 @@ namespace
                     break;
                 }
 
-                if (!sink.Out || sink.WriteFailed)
+                if (!closed || sink.WriteFailed)
                 {
                     _Disk.Remove(staged);
                     error = std::format("{} can't be written", MCFileSystem::ToUtf8(staged));
@@ -854,7 +874,8 @@ namespace
                     break;
                 }
 
-                if (!unpacked || sink.Written != step->File->Size || sink.Hasher.Finish() != step->File->Sha256)
+                if (!unpacked || sink.TooLong || sink.Written != step->File->Size ||
+                    sink.Hasher.Finish() != step->File->Sha256)
                 {
                     _Disk.Remove(staged);
                     error = std::format("{} from {} isn't the release's", step->File->Path, zip.Name);

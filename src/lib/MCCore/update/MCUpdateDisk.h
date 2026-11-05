@@ -7,6 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -95,6 +96,41 @@ enum class MCMoves : uint8_t
 
 /// <summary>The disk.</summary>
 std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves = MCMoves::InOneStep);
+
+/// <summary>
+/// A file made anew for writing (staging's outputs: an entry unpacked, a file patched): whatever is at its path (a file
+/// cut short, a link) is deleted first, a folder refused, then it's created only where nothing is, never through a link
+/// (O_EXCL and O_NOFOLLOW; Windows' CREATE_NEW on the reparse point itself), and read and written at any position.
+/// </summary>
+class MCNewFile
+{
+public:
+    /// <returns>The file, open to read and write, or why it can't be made.</returns>
+    static std::expected<MCNewFile, std::string> Create(const std::filesystem::path& path);
+
+    MCNewFile(MCNewFile&& other) noexcept;
+    MCNewFile& operator=(MCNewFile&&) = delete;
+    MCNewFile(const MCNewFile&) = delete;
+    MCNewFile& operator=(const MCNewFile&) = delete;
+    ~MCNewFile();
+
+    /// <summary>Writes <paramref name="bytes"/> at <paramref name="at"/>; false when they can't all be (logged).</summary>
+    bool WriteAt(uint64_t at, std::span<const char> bytes);
+
+    /// <summary>Reads as many bytes as <paramref name="bytes"/> holds from <paramref name="at"/>; false when they can't all be.</summary>
+    bool ReadAt(uint64_t at, std::span<char> bytes);
+
+    /// <summary>Closes it; false when that fails (logged: what was written may not all be there).</summary>
+    bool Close();
+
+private:
+    MCNewFile(std::filesystem::path path, intptr_t handle) : _Path(std::move(path)), _Handle(handle) {}
+
+    std::filesystem::path _Path;
+    /// <summary>The descriptor (the Mac's) or HANDLE (Windows'); <see cref="Closed"/> once closed.</summary>
+    intptr_t _Handle;
+    static constexpr intptr_t Closed = -1;
+};
 
 /// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path);

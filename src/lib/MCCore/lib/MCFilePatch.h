@@ -14,13 +14,16 @@ namespace MCFilePatch
     /// streaming, whatever the files' sizes: in the patch's window and step (2 MB and 256 KB as hdiffz makes them; at
     /// most 256 MB each) and 1 MB more. A patch without checksums, or compressed, is refused. <paramref name="goOn"/>,
     /// when given, is asked before each piece read (the old file's checksum reads it whole first) or written, and
-    /// returns false to stop.
+    /// returns false to stop. With <paramref name="newSize"/>, a patch making a file of another size is refused before
+    /// anything is written. <paramref name="out"/> is made anew: whatever is there goes first (a link itself, never what
+    /// it points to), and it's never written through a link.
     /// </summary>
     /// <returns>
     /// Nothing, or what failed (<see cref="StoppedError"/>: stopped); nothing is then left at <paramref name="out"/>.
     /// </returns>
     std::expected<void, std::string> Apply(const std::filesystem::path& old, const std::filesystem::path& patch,
-                                           const std::filesystem::path& out, const std::function<bool()>& goOn = {});
+                                           const std::filesystem::path& out, const std::function<bool()>& goOn = {},
+                                           std::optional<uint64_t> newSize = std::nullopt);
 
     /// <summary>What a patch ends with when its <c>goOn</c> says to stop.</summary>
     constexpr std::string_view StoppedError = "stopped";

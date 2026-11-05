@@ -10,6 +10,8 @@
 #include "update/MCContentStage.h"
 #include "update/MCContentSwap.h"
 #include "update/MCInstalled.h"
+#include "update/MCReleaseFile.h"
+#include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
 
 #define MINIZ_NO_STDIO
@@ -317,4 +319,93 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
     CHECK(!MCContentSwap::Waiting(*disk, other.Game.Path()));
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
+}
+
+/// <summary>
+/// Tool: <c>--content-install &lt;game folder&gt; --content-host &lt;host folder&gt; --root-key &lt;base64&gt;
+/// [--content-sets game,hd]</c> installs or updates the content of a release the release script made
+/// (tools/release/make_release.py), as the game will: the key list and <c>release.json</c> checked against the root
+/// key, the list against its hash, then planned, staged and swapped in. Prints what it did.
+/// </summary>
+TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a host folder")
+{
+    const std::optional<std::string_view> gameOption = MCTest::Option("content-install");
+
+    if (!gameOption.has_value())
+    {
+        return;
+    }
+
+    const std::optional<std::string_view> hostOption = MCTest::Option("content-host");
+    const std::optional<std::string_view> rootOption = MCTest::Option("root-key");
+    REQUIRE(hostOption.has_value());
+    REQUIRE(rootOption.has_value());
+    const std::filesystem::path game = MCFileSystem::FromUtf8(*gameOption);
+    const std::filesystem::path host = MCFileSystem::FromUtf8(*hostOption);
+    const std::optional<MCSignedFile::MCPublicKey> root = MCSignedFile::KeyFromBase64(*rootOption);
+    REQUIRE(root.has_value());
+    const std::array<MCSignedFile::MCPublicKey, 1> roots = {*root};
+    std::set<std::string, std::less<>> sets = {"game", "hd"};
+
+    if (const std::optional<std::string_view> chosen = MCTest::Option("content-sets"))
+    {
+        sets.clear();
+
+        for (const auto part : std::views::split(*chosen, ','))
+        {
+            sets.emplace(std::string_view(part.begin(), part.end()));
+        }
+    }
+
+    const auto trusted = MCReleaseFile::Check(Read(host / "keys.json"), Read(host / "release.json"), roots, {});
+
+    if (!trusted)
+    {
+        std::cout << std::format("  {}\n", trusted.error());
+    }
+
+    REQUIRE(trusted.has_value());
+    const MCReleaseFile::MCRelease& release = trusted->Releases.Current;
+    const std::string listText = Read(host / "lists" / (MCSha256::Hex(release.List) + ".json"));
+    REQUIRE(MCSha256::Of(listText) == release.List);
+    const auto list = MCContentList::Read(listText);
+
+    if (!list)
+    {
+        std::cout << std::format("  {}\n", list.error());
+    }
+
+    REQUIRE(list.has_value());
+    std::filesystem::create_directories(game);
+    const auto installed = MCInstalled::Read(game);
+    REQUIRE(installed.has_value());
+    MCContentFolder folder(game);
+    const auto plan = MCContentPlan::Make(folder, *installed, *list, release.List, sets);
+
+    if (!plan)
+    {
+        std::cout << std::format("  {}\n", plan.error());
+    }
+
+    REQUIRE(plan.has_value());
+    const auto count = [&](MCAction action)
+    { return std::ranges::count(plan->Steps, action, &MCContentPlan::MCStep::Action); };
+    std::cout << std::format("  release {} ({}): {} kept, {} patched, {} fetched, {} removed, {} the player's; {} "
+                             "bytes to download in {} zips\n",
+                             release.Number, release.Version, count(MCAction::Keep), count(MCAction::Patch),
+                             count(MCAction::Fetch), count(MCAction::Remove), count(MCAction::LeaveTheirs),
+                             plan->DownloadBytes, plan->Zips.size());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    MCFolderSource source(host);
+    const auto staged = MCContentStage::Stage(*disk, source, game, *plan, *list, GoOn);
+
+    if (!staged)
+    {
+        std::cout << std::format("  {}\n", staged.error());
+    }
+
+    REQUIRE(staged.has_value());
+    const MCContentSwap::MCResult swapped = MCContentSwap::Run(*disk, game);
+    REQUIRE(swapped.Outcome == MCContentSwap::MCOutcome::Swapped || !plan->Changes());
+    std::cout << std::format("  installed: {} bytes downloaded\n", source.Sent());
 }

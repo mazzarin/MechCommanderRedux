@@ -1083,7 +1083,19 @@ TEST_CASE("updater on Windows: quitting with the update ready runs the setup; on
         CHECK(std::filesystem::exists(ArmedRecord(release)));
     }
 
-    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, FakeWindows(log)));
+    // Alone, it runs, the game's lock held exclusive until the setup has started: no copy plays meanwhile.
+    MCSetupBackend::MCPlatform probing = FakeWindows(log);
+    bool heldWhileStarting = false;
+    probing.Start = [start = probing.Start, &heldWhileStarting, &release](const std::filesystem::path& setup,
+                                                                          std::string_view arguments, bool restart)
+    {
+        const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(release.Game.Path(), MCUpdateLock::GameLock);
+        heldWhileStarting = other != nullptr && !other->TryShared();
+        return start(setup, arguments, restart);
+    };
+
+    CHECK(MCSetupBackend::RunLeftOver(release.Game.Path(), RunningBuild, probing));
+    CHECK(heldWhileStarting);
     REQUIRE_EQ(log->Started.size(), size_t{1});
     CHECK(std::get<0>(log->Started.front()) == Downloaded(release));
     CHECK(std::get<2>(log->Started.front()));

@@ -1,0 +1,23 @@
+{
+    "About": "Port-only: the code in src/lib built into the game, by folder, with its name and licence (a file in the folder, or a note for code whose licence is a line in its source). The Windows setup's licences (src/installer/windows/make_licences.ps1) and the Mac bundle's are made from it; both refuse a folder here that it doesn't name. Only: the one platform the code is built for.",
+    "Ours": ["MCCore"],
+    "Libraries": [
+        { "Folder": "SDL-release-3.4.12", "Name": "SDL 3.4.12", "File": "LICENSE.txt" },
+        { "Folder": "Sparkle-2.10.1", "Name": "Sparkle 2.10.1", "File": "LICENSE", "Only": "mac" },
+        { "Folder": "dav1d-1.5.4", "Name": "dav1d 1.5.4", "File": "COPYING" },
+        { "Folder": "libdeflate-1.26", "Name": "libdeflate 1.26", "File": "COPYING" },
+        { "Folder": "mimalloc-3.3.1", "Name": "mimalloc 3.3.1", "File": "LICENSE" },
+        { "Folder": "miniz-3.0.2", "Name": "miniz 3.0.2", "File": "LICENSE" },
+        { "Folder": "xxHash-0.8.4", "Name": "xxHash 0.8.4", "File": "LICENSE" },
+        { "Folder": "bc7enc_rdo", "Name": "bc7enc_rdo", "File": "LICENSE" },
+        { "Folder": "HDiffPatch-5.1.3", "Name": "HDiffPatch 5.1.3", "File": "LICENSE" },
+        { "Folder": "libsodium-1.0.22", "Name": "libsodium 1.0.22", "File": "LICENSE" },
+        { "Folder": "nlohmann-json-3.12.0", "Name": "JSON for Modern C++ 3.12.0", "File": "LICENSE.MIT" },
+        {
+            "Folder": "dr_flac",
+            "Name": "dr_flac (David Reid)",
+            "Note": "Public domain (Unlicense) or MIT No Attribution, at your choice (dr_flac.h)."
+        },
+        { "Folder": "sqlite-3.50.4", "Name": "SQLite 3.50.4", "Note": "Public domain (https://sqlite.org/copyright.html)." }
+    ]
+}

@@ -1,5 +1,7 @@
 # Port-only (the personal build): writes the setup's licences file, the open-source code built into the Windows
-# program (MCRedux.exe, SDL3.dll, MCEditor.exe) with each one's licence, for MechCommanderRedux.iss.
+# program (MCRedux.exe, SDL3.dll, MCEditor.exe) with each one's licence, for MechCommanderRedux.iss. The libraries and
+# their licences are src\lib\licences.json's (the Mac bundle's are made from it too); a folder in src\lib it doesn't
+# name stops it.
 #
 #   pwsh -NoProfile -File src\installer\windows\make_licences.ps1 -LibDir src\lib -Out <file>
 param(
@@ -9,46 +11,46 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Each library and its licence file under src\lib.
-$licenceFiles = [ordered]@{
-    'SDL 3.4.12'                 = 'SDL-release-3.4.12\LICENSE.txt'
-    'dav1d 1.5.4'                = 'dav1d-1.5.4\COPYING'
-    'libdeflate 1.26'            = 'libdeflate-1.26\COPYING'
-    'mimalloc 3.3.1'             = 'mimalloc-3.3.1\LICENSE'
-    'miniz 3.0.2'                = 'miniz-3.0.2\LICENSE'
-    'xxHash 0.8.4'               = 'xxHash-0.8.4\LICENSE'
-    'bc7enc_rdo'                 = 'bc7enc_rdo\LICENSE'
-    'HDiffPatch 5.1.3'           = 'HDiffPatch-5.1.3\LICENSE'
-    'libsodium 1.0.22'           = 'libsodium-1.0.22\LICENSE'
-    'JSON for Modern C++ 3.12.0' = 'nlohmann-json-3.12.0\LICENSE.MIT'
+$platform = 'windows'
+$manifest = Get-Content -LiteralPath (Join-Path $LibDir 'licences.json') -Raw -Encoding utf8 | ConvertFrom-Json
+$named = @($manifest.Ours) + @($manifest.Libraries | ForEach-Object { $_.Folder })
+$unnamed = @(Get-ChildItem -LiteralPath $LibDir -Directory | Where-Object { $named -notcontains $_.Name })
+
+if ($unnamed.Count -gt 0) {
+    throw "src\lib holds $(($unnamed | ForEach-Object Name) -join ', '), which licences.json doesn't name: add its licence there"
 }
-# Code whose licence is a line in its source, not a file.
-$licenceNotes = [ordered]@{
-    'dr_flac (David Reid)' = 'Public domain (Unlicense) or MIT No Attribution, at your choice (dr_flac.h).'
-    'SQLite 3.50.4'        = 'Public domain (https://sqlite.org/copyright.html).'
+
+$missing = @($named | Where-Object { -not (Test-Path -LiteralPath (Join-Path $LibDir $_) -PathType Container) })
+
+if ($missing.Count -gt 0) {
+    throw "licences.json names $($missing -join ', '), which src\lib doesn't hold"
 }
 
 $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add('The open-source code in MechCommander Redux, and its licences.')
 $lines.Add('')
 
-foreach ($name in $licenceFiles.Keys) {
-    $file = Join-Path $LibDir $licenceFiles[$name]
-
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        throw "No licence file for ${name}: $file"
+foreach ($library in $manifest.Libraries) {
+    if ($library.Only -and $library.Only -ne $platform) {
+        continue
     }
 
-    $lines.Add("==== $name ====")
-    $lines.Add('')
-    $lines.Add((Get-Content -LiteralPath $file -Raw -Encoding utf8).Trim())
-    $lines.Add('')
-}
+    if ($library.Note) {
+        $licence = $library.Note
+    }
+    else {
+        $file = Join-Path (Join-Path $LibDir $library.Folder) $library.File
 
-foreach ($name in $licenceNotes.Keys) {
-    $lines.Add("==== $name ====")
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "No licence file for $($library.Name): $file"
+        }
+
+        $licence = (Get-Content -LiteralPath $file -Raw -Encoding utf8).Trim()
+    }
+
+    $lines.Add("==== $($library.Name) ====")
     $lines.Add('')
-    $lines.Add($licenceNotes[$name])
+    $lines.Add($licence)
     $lines.Add('')
 }
 

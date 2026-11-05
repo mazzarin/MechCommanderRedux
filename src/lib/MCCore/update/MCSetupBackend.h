@@ -17,8 +17,8 @@
 namespace MCSetupBackend
 {
     /// <summary>Where the setup goes, and the record of the one armed, in the game folder.</summary>
-    constexpr std::string_view ProgramFolder = "Redux update/program";
-    constexpr std::string_view ArmedFile = "Redux update/program/armed.json";
+    constexpr std::string_view ProgramFolder = MCContentList::InUpdateFolder<"program">;
+    constexpr std::string_view ArmedFile = MCContentList::InUpdateFolder<"program/armed.json">;
 
     /// <summary>What the platform does for the backend.</summary>
     struct MCPlatform

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCSha256.h"
+#include "update/MCContentList.h"
 
 #include <functional>
 #include <map>
@@ -17,7 +18,7 @@
 namespace MCInstalled
 {
     /// <summary>Where the record is, in the game folder.</summary>
-    constexpr std::string_view RecordPath = "Redux update/installed.json";
+    constexpr std::string_view RecordPath = MCContentList::InUpdateFolder<"installed.json">;
 
     struct MCFile
     {

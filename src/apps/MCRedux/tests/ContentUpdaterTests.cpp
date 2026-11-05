@@ -819,6 +819,8 @@ TEST_CASE(
     // A sets file that can't be read is left aside: the copy keeps the sets its record has.
     Write(game / "Redux update" / "sets.json", "not json");
     CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
+    Write(game / "Redux update" / "sets.json", R"({"format": 1, "sets": ["game", 2]})");
+    CHECK(!MCContentUpdater::Chosen(*disk, game).has_value());
     CHECK(MCContentUpdater::Wanted(*disk, game, *MCInstalled::Read(game)) == WithoutHd);
 }
 

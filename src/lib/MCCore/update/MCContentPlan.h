@@ -26,7 +26,7 @@ class MCContentFolder;
 namespace MCContentPlan
 {
     /// <summary>The hashes kept from the last plan, in the game folder.</summary>
-    constexpr std::string_view HashesFile = "Redux update/hashes.json";
+    constexpr std::string_view HashesFile = MCContentList::InUpdateFolder<"hashes.json">;
 
     /// <summary>A file found and hashed, as found.</summary>
     struct MCHash

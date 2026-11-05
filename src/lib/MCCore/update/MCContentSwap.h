@@ -1,5 +1,6 @@
 #pragma once
 
+#include "update/MCContentList.h"
 #include "update/MCInstalled.h"
 
 #include <chrono>
@@ -36,13 +37,13 @@ class MCUpdateLock;
 namespace MCContentSwap
 {
     /// <summary>The update's folders and files, in the game folder.</summary>
-    constexpr std::string_view UpdateFolder = "Redux update";
-    constexpr std::string_view StagedFolder = "Redux update/staged";
-    constexpr std::string_view ReplacedFolder = "Redux update/replaced";
-    constexpr std::string_view ReadyFile = "Redux update/ready.json";
-    constexpr std::string_view JournalFile = "Redux update/journal.json";
+    constexpr std::string_view UpdateFolder = MCContentList::UpdateFolder;
+    constexpr std::string_view StagedFolder = MCContentList::InUpdateFolder<"staged">;
+    constexpr std::string_view ReplacedFolder = MCContentList::InUpdateFolder<"replaced">;
+    constexpr std::string_view ReadyFile = MCContentList::InUpdateFolder<"ready.json">;
+    constexpr std::string_view JournalFile = MCContentList::InUpdateFolder<"journal.json">;
     /// <summary>A repair under way: the journal of the swap it gave up, kept until a swap is committed.</summary>
-    constexpr std::string_view RepairFile = "Redux update/repair.json";
+    constexpr std::string_view RepairFile = MCContentList::InUpdateFolder<"repair.json">;
     /// <summary>
     /// How long a multiplayer lobby's start lets the swap take before putting the previous set back: a room is never
     /// held up (a normal swap takes well under a second).

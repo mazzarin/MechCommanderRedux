@@ -27,7 +27,7 @@ namespace MCContentUpdater
     /// when read): the installed release's, so a change of sets plans offline, and the newest fetched, so a check while
     /// an update waits doesn't fetch it again.
     /// </summary>
-    constexpr std::string_view KeptListsFolder = "Redux update/lists";
+    constexpr std::string_view KeptListsFolder = MCContentList::InUpdateFolder<"lists">;
 
     /// <summary>The most a signed file (the key list, <c>release.json</c>) and a content list may hold.</summary>
     constexpr size_t MostSignedBytes = 1 << 20;
@@ -38,7 +38,7 @@ namespace MCContentUpdater
     /// JSON: <c>{"format": 1, "sets": ["game", "hd"]}</c>. The copy plans for these; without the file, for the sets its
     /// record has.
     /// </summary>
-    constexpr std::string_view ChosenFile = "Redux update/sets.json";
+    constexpr std::string_view ChosenFile = MCContentList::InUpdateFolder<"sets.json">;
 
     using MCSets = std::set<std::string, std::less<>>;
 

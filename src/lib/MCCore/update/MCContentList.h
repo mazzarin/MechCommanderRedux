@@ -1,6 +1,12 @@
 #pragma once
 
+// Standard headers and lib/MCSha256.h only: update/MCUpdateLock.h, built without the precompiled header on Windows,
+// takes the update folder's name from here.
 #include "lib/MCSha256.h"
+
+#include <array>
+#include <cstddef>
+#include <vector>
 
 /// <summary>
 /// Port-only: a release's content list (SPEC-install-and-updates.md's The content list), named on the host by its
@@ -23,9 +29,62 @@ namespace MCContentList
     constexpr std::string_view GameSet = "game";
     constexpr std::string_view HdSet = "hd";
 
-    /// <summary>The folders in the game folder updates keep for themselves, never content.</summary>
+    /// <summary>
+    /// The folders in the game folder updates keep for themselves, never content. Every path in the update folder is
+    /// made from its name (<see cref="InUpdateFolder"/>).
+    /// </summary>
     constexpr std::string_view UpdateFolder = "Redux update";
     constexpr std::string_view BackupFolder = "Redux backup";
+
+    /// <summary>A name given as a template argument (<see cref="InUpdateFolder"/>'s), ended by a zero.</summary>
+    template <size_t Size> struct MCName
+    {
+        std::array<char, Size> Chars{};
+
+        // Not explicit: a string literal becomes one as a template argument.
+        constexpr MCName(const char (&name)[Size])
+        {
+            for (size_t i = 0; i < Size; ++i)
+            {
+                Chars[i] = name[i];
+            }
+        }
+    };
+
+    /// <summary>The characters of <see cref="UpdateFolder"/>, '/' and <c>Name</c>, ended by a zero.</summary>
+    template <MCName Name> constexpr auto InUpdateFolderChars()
+    {
+        std::array<char, UpdateFolder.size() + 1 + Name.Chars.size()> chars{};
+        size_t at = 0;
+
+        for (const char c : UpdateFolder)
+        {
+            chars[at++] = c;
+        }
+
+        chars[at++] = '/';
+
+        for (const char c : Name.Chars)
+        {
+            chars[at++] = c;
+        }
+
+        return chars;
+    }
+
+    /// <summary>The characters <see cref="InUpdateFolder"/> names, made once.</summary>
+    template <MCName Name> struct MCInUpdateFolder
+    {
+        static constexpr auto Chars = InUpdateFolderChars<Name>();
+    };
+
+    /// <summary>
+    /// The path of <c>Name</c> in the update folder, relative to the game folder ("Redux update/installed.json"):
+    /// <c>InUpdateFolder&lt;"installed.json"&gt;</c>.
+    /// </summary>
+    template <MCName Name>
+    constexpr std::string_view InUpdateFolder{MCInUpdateFolder<Name>::Chars.data(),
+                                              MCInUpdateFolder<Name>::Chars.size() - 1};
 
     /// <summary>A zip the content comes in: stored (not compressed), never changed once uploaded.</summary>
     struct MCZip

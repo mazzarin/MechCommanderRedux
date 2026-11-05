@@ -144,6 +144,23 @@ const MCUpdateJson::MCJson& MCUpdateJson::Array(const MCJson& object, std::strin
     return member;
 }
 
+std::vector<std::string> MCUpdateJson::Strings(const MCJson& object, std::string_view key)
+{
+    std::vector<std::string> strings;
+
+    for (const MCJson& member : Array(object, key))
+    {
+        if (!member.is_string())
+        {
+            Fail("\"{}\" holds something that isn't a string", key);
+        }
+
+        strings.push_back(member.get<std::string>());
+    }
+
+    return strings;
+}
+
 const MCUpdateJson::MCJson& MCUpdateJson::Child(const MCJson& object, std::string_view key)
 {
     const MCJson& member = Member(object, key);

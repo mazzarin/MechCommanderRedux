@@ -35,15 +35,7 @@ namespace
     MCReleaseFile::MCKept ReadKept(const MCSetup& setup, MCUpdateDisk& disk)
     {
         const std::filesystem::path path = KeptPath(setup);
-
-        if (!disk.Stat(path).Exists)
-        {
-            return {};
-        }
-
-        const auto text = disk.ReadText(path);
-        const auto kept = text ? MCReleaseFile::ReadKept(*text)
-                               : std::expected<MCReleaseFile::MCKept, std::string>(std::unexpected(text.error()));
+        const auto kept = MCUpdateJson::ReadFile(disk, path, MCReleaseFile::ReadKept);
 
         if (!kept)
         {
@@ -52,7 +44,7 @@ namespace
             return {};
         }
 
-        return *kept;
+        return kept->value_or(MCReleaseFile::MCKept{});
     }
 
     std::expected<void, std::string> WriteKept(const MCSetup& setup, MCUpdateDisk& disk,
@@ -716,34 +708,20 @@ MCContentUpdater::MCSets MCContentUpdater::SetsFound(const std::filesystem::path
 std::optional<MCContentUpdater::MCSets> MCContentUpdater::Chosen(MCUpdateDisk& disk,
                                                                  const std::filesystem::path& gameFolder)
 {
-    const std::filesystem::path path = ChosenPath(gameFolder);
-
-    if (!disk.Stat(path).Exists)
-    {
-        return std::nullopt;
-    }
-
-    const auto text = disk.ReadText(path);
-    const auto sets =
-        text ? MCUpdateJson::Read(ChosenFile,
-                                  [&]()
-                                  {
-                                      const MCUpdateJson::MCJson json = MCUpdateJson::Object(*text);
-                                      MCSets read = {std::string(MCContentList::GameSet)};
-
-                                      for (const MCUpdateJson::MCJson& set : MCUpdateJson::Array(json, SetsKey))
-                                      {
-                                          if (!set.is_string())
-                                          {
-                                              MCUpdateJson::Fail("a set isn't a string");
-                                          }
-
-                                          read.insert(set.get<std::string>());
-                                      }
-
-                                      return read;
-                                  })
-             : std::expected<MCSets, std::string>(std::unexpected(text.error()));
+    const auto sets = MCUpdateJson::ReadFile(disk, ChosenPath(gameFolder),
+                                             [](std::string_view text)
+                                             {
+                                                 return MCUpdateJson::Read(
+                                                     ChosenFile,
+                                                     [&]()
+                                                     {
+                                                         const std::vector<std::string> chosen =
+                                                             MCUpdateJson::Strings(MCUpdateJson::Object(text), SetsKey);
+                                                         MCSets read(chosen.begin(), chosen.end());
+                                                         read.emplace(MCContentList::GameSet);
+                                                         return read;
+                                                     });
+                                             });
 
     if (!sets)
     {

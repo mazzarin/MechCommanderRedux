@@ -76,6 +76,9 @@ namespace MCUpdateJson
     /// <summary>The member, an array (empty without one when <paramref name="required"/> is false).</summary>
     const MCJson& Array(const MCJson& object, std::string_view key, bool required = true);
 
+    /// <summary>The member, an array of strings.</summary>
+    std::vector<std::string> Strings(const MCJson& object, std::string_view key);
+
     /// <summary>The member, an object.</summary>
     const MCJson& Child(const MCJson& object, std::string_view key);
 

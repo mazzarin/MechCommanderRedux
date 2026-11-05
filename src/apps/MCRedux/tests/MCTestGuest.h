@@ -365,24 +365,26 @@ namespace MCTestGuest
     class Host
     {
     public:
+        /// <summary>The most players a room holds.</summary>
+        static constexpr uint32_t MaxPlayers = 6;
+
         /// <summary>
         /// Hosts session <paramref name="session"/> on <paramref name="port"/> as player <paramref name="name"/>, with
-        /// <paramref name="flags"/> (DPSESSION_*: a started room's).
+        /// <paramref name="flags"/> (DPSESSION_*: a started room's), for <paramref name="places"/> players.
         /// </summary>
-        bool Open(std::string_view port, std::string name, std::string session, uint32_t flags = 0)
+        bool Open(std::string_view port, std::string name, std::string session, uint32_t flags = 0,
+                  uint32_t places = MaxPlayers)
         {
-            constexpr uint32_t MaxPlayers = 6;
-
             if (Connect(_DirectPlay, std::format(":{}", port)) != DP_OK)
             {
                 return false;
             }
 
-            DPSESSIONDESC2 desc{};
+            DPSESSIONDESC2& desc = _Desc;
             desc.dwSize = sizeof(desc);
             desc.dwFlags = flags;
             desc.guidApplication = MultiPlayerAppGuid;
-            desc.dwMaxPlayers = MaxPlayers;
+            desc.dwMaxPlayers = places;
             desc.SessionName = std::move(session);
 
             if (_DirectPlay.Open(desc, DPOPEN_CREATE | DPOPEN_RETURNSTATUS) != DP_OK ||
@@ -408,12 +410,22 @@ namespace MCTestGuest
                         }
 
                         SendWaiting();
+
+                        if (_LockWanted.exchange(false))
+                        {
+                            _Desc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
+                            _DirectPlay.SetSessionDesc(_Desc, 0);
+                        }
+
                         _DirectPlay.Pump();
                         SDL_Delay(1);
                     }
                 });
             return true;
         }
+
+        /// <summary>Closes the room to new players, as a host's GO does (on the listener, which owns the connection).</summary>
+        void Lock() { _LockWanted = true; }
 
         /// <summary>The host's player id.</summary>
         uint32_t Id() const { return _Id; }
@@ -531,5 +543,8 @@ namespace MCTestGuest
         std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
         std::vector<uint32_t> _Joined;
         std::atomic<int32_t> _Updatings = 0;
+        /// <summary>The session as hosted, and whether the test wants it closed to new players.</summary>
+        DPSESSIONDESC2 _Desc{};
+        std::atomic<bool> _LockWanted = false;
     };
 }

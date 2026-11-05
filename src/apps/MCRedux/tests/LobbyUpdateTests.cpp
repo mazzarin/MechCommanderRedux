@@ -386,3 +386,176 @@ TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update keeps its pl
     CHECK(!GlobalLog()->MessageDialog->IsShowing());
     MCScreenInput::SaveShot("lobby guest 1 back", MCScreenInput::ScreenHash());
 }
+
+namespace
+{
+    using MCTestGuest::Host;
+
+    /// <summary>The room the guest tests join: its host's name and the session's.</summary>
+    constexpr std::string_view HostName = "BOB";
+    constexpr std::string_view RoomName = "BOB's room";
+
+    /// <summary>Whether this game is in a room.</summary>
+    bool InSession()
+    {
+        return MultiPlayer() != nullptr && MultiPlayer()->SessionManager->CurrentSession() != nullptr;
+    }
+
+    /// <summary>The message dialog's text, when it shows.</summary>
+    std::string DialogText()
+    {
+        const MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+        return dialog.ShowWindow ? dialog.Text : std::string();
+    }
+
+    /// <summary>
+    /// Boots the game as a lobby's start after its restart into an update: with no command line, the rejoin note
+    /// <paramref name="noteLine"/> left for this build in the user folder gives its words (as the app's start takes
+    /// them), and it joins.
+    /// </summary>
+    bool StartFromNote(std::string_view noteLine)
+    {
+        const std::filesystem::path user = MCTestGame::UserFolder();
+        std::filesystem::create_directories(user);
+        REQUIRE(MCRejoinNote::Write(
+            user, {.CommandLine = std::string(noteLine), .Build = NewBuild, .Time = MCRejoinNote::Now()}));
+        const std::optional<std::string> line = MCRejoinNote::TakeAtStart(user, NewBuild, MCRejoinNote::Now());
+        REQUIRE(line.has_value());
+        return MCTestGame::StartLobby(*line);
+    }
+
+    /// <summary>Boots the game to rejoin a room at <paramref name="port"/>, which fails: what it says.</summary>
+    std::string RejoinFails(std::string_view port)
+    {
+        if (!StartFromNote(
+                std::format("-join 127.0.0.1:{} -player ANN -session \"{}\" -maxplayers 6 -rejoin", port, RoomName)))
+        {
+            return {};
+        }
+
+        CHECK(!InSession());
+        return DialogText();
+    }
+}
+
+/// <summary>
+/// A lobby's guest started again from the rejoin note joins the room as it says. When its host restarts into an
+/// update, its game leaves the room at once, says "BOB IS UPDATING." and joins the same address again: the old room
+/// (closed, still answering) doesn't take it, the new one on the same port does, and it waits there for the host's GO.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest started from the rejoin note joins, and waits for its host restarting into "
+                   "an update")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28889";
+    auto bob = std::make_unique<Host>();
+    REQUIRE(bob->Open(Port, std::string(HostName), std::string(RoomName)));
+    REQUIRE(StartFromNote(
+        std::format("-join 127.0.0.1:{} -player ANN -session \"{}\" -maxplayers 6 -rejoin", Port, RoomName)));
+    REQUIRE(InSession());
+    REQUIRE(SettleUntil([&] { return !bob->Joined().empty(); }));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
+
+    // The host's GO closed the room. The room's numbering tells a guest which player is its host (the test's host
+    // numbers no one).
+    bob->Lock();
+    MultiPlayer()->ServerID = bob->Id();
+    bob->SendUpdating(MultiPlayer()->SessionManager->MyPlayerID);
+    CHECK(SettleUntil([] { return !InSession(); }));
+    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
+    MCScreenInput::SaveShot("lobby guest wait 0 host updating", MCScreenInput::ScreenHash());
+
+    // The host's game quits, and its new version opens the room again.
+    bob->Close();
+    bob.reset();
+    Settle();
+    CHECK(!InSession());
+    Host newBob;
+    REQUIRE(newBob.Open(Port, std::string(HostName), std::string(RoomName)));
+    CHECK(SettleUntil([&] { return !newBob.Joined().empty(); }));
+    CHECK(InSession());
+    CHECK(DialogText().empty());
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
+}
+
+/// <summary>
+/// A lobby's guest restarting into an update from the session screen: its page says it joins the room again; RESTART
+/// tells every player, writes the rejoin note with the lobby's words for the update's build, then the update installs.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest restarting into an update tells the room, and leaves the rejoin note")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCFakeUpdater updater;
+    Host bob;
+    REQUIRE(bob.Open("28897", std::string(HostName), std::string(RoomName)));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1:28897 -player ANN -session \"{}\"", RoomName)));
+    REQUIRE(SettleUntil([&] { return !bob.Joined().empty(); }));
+
+    // The host's GO takes its guests to the session screen.
+    GlobalLog()->SetUpSessionScreen();
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    MCSessionScreen& screen = *GlobalLog()->SessionScreen;
+    UpdateReady();
+    ShowUpdatePageOver(screen);
+    Settle();
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: ON RESTART, YOU JOIN THIS ROOM AGAIN."));
+
+    const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
+    REQUIRE(restart != nullptr);
+    ClickOn(*restart);
+    CHECK(SettleUntil([&] { return bob.Updatings() == 1; }));
+    REQUIRE(SettleUntil([&] { return updater.Log->Answers.size() == 2; }));
+    CHECK(updater.Log->Answers.back() == MCAnswer::Install);
+
+    const std::optional<std::string> note =
+        MCRejoinNote::TakeAtStart(MCTestGame::UserFolder(), NewBuild, MCRejoinNote::Now());
+    REQUIRE(note.has_value());
+    CHECK_EQ(*note, std::format("-join 127.0.0.1:28897 -player ANN -session \"{}\" -maxplayers 6 -rejoin", RoomName));
+}
+
+/// <summary>A rejoin finding no room at the address says the room has closed (its OK ends the game).</summary>
+TEST_CASE_ISOLATED("game: a rejoin that finds no room says it has closed")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    CHECK_EQ(RejoinFails("28891"), std::string("Couldn't join the room again: it has closed."));
+}
+
+/// <summary>A rejoin finding the room's match started says so.</summary>
+TEST_CASE_ISOLATED("game: a rejoin to a room whose match started says so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Host bob;
+    REQUIRE(bob.Open("28893", std::string(HostName), std::string(RoomName), DPSESSION_NEWPLAYERSDISABLED));
+    CHECK_EQ(RejoinFails("28893"), std::string("Couldn't join the room again: its match has started."));
+}
+
+/// <summary>A rejoin finding the room full says so.</summary>
+TEST_CASE_ISOLATED("game: a rejoin to a full room says so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Host bob;
+    REQUIRE(bob.Open("28895", std::string(HostName), std::string(RoomName), 0, 1));
+    CHECK_EQ(RejoinFails("28895"), std::string("Couldn't join the room again: it is full."));
+}

@@ -531,9 +531,9 @@ namespace
     /// showing the progress (MCFirstStart.h). <paramref name="record"/> is then the installed record as it is.
     /// </summary>
     /// <returns>
-    /// None to play; else the exit code to quit with: the player closed the window (the next start carries on), or the
-    /// content needed couldn't come or go in place (they're told). Content only due that can't come leaves the files to
-    /// play as they are.
+    /// None to play; else the exit code to quit with: the player closed the window on content needed (the next start
+    /// carries on), or the content needed couldn't come or go in place (they're told). Content only due that can't come,
+    /// or whose window the player closed, leaves the files to play as they are.
     /// </returns>
     std::optional<int> GetContentAtStart(const MCContentUpdater::MCSetup& setup, std::string_view commandLine,
                                          MCUpdateLock* lock, MCInstalled::MCStartNeed need,
@@ -557,8 +557,16 @@ namespace
             return 1;
         }
 
+        // The window closed: content only due can wait, so the files play as they are; content needed ends the start
+        // (the next one carries on).
         if (!*done)
         {
+            if (!needed)
+            {
+                SDL_Log("Updates: the content due waits for a later start: the files play as they are");
+                return std::nullopt;
+            }
+
             return 0;
         }
 

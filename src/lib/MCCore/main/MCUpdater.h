@@ -3,14 +3,34 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
-// Port-only (the personal build): the updater. A backend the app sets before the game starts (the Mac app's Sparkle,
-// apps/MCRedux/MCSparkleUpdater.mm) looks for a newer version when the game starts and reports each step here; the
-// main menu's UPDATE button and page (logistics/MCUpdatePage.h) show where it is and pass on the player's answers:
-// nothing downloads until the player chooses INSTALL. Without a backend (the tests, a build without one) there is nothing to update and the main menu
-// keeps ORIGINAL CINEMA. Everything happens on the main thread: Sparkle calls its driver there, as the frame pumps the
-// window's events.
+// Port-only (the personal build): the updater. An update has two halves (SPEC-install-and-updates.md):
+//
+// - The program, through a backend the app sets before the game starts (the Mac app's Sparkle,
+//   apps/MCRedux/MCSparkleUpdater.mm), which reports each step here.
+// - The content, through the game's own updater (update/MCContentUpdater.h), worked on a thread of its own and picked
+//   up each frame (Frame). Set (SetContent), it leads: the check reads release.json, holds the program's backend to
+//   the build it gives this copy, and plans the content; INSTALL stages the content, then downloads the program, and
+//   the content is armed the moment the program is, so READY means both are in and neither goes in without the other.
+//   Without it, the program's backend alone finds, downloads and installs its newest version.
+//
+// The main menu's UPDATE button and page (logistics/MCUpdatePage.h) show where it is and pass on the player's answers:
+// nothing downloads until the player chooses INSTALL. With neither half (the tests, a build without one) there is
+// nothing to update and the main menu keeps ORIGINAL CINEMA. Everything here happens on the main thread: Sparkle calls
+// its driver there, as the frame pumps the window's events. Standard headers only: the Mac's Sparkle backend includes
+// it without the precompiled header.
+
+namespace MCContentStage
+{
+    class MCSource;
+}
+
+namespace MCContentUpdater
+{
+    struct MCSetup;
+}
 
 namespace MCUpdater
 {
@@ -31,13 +51,15 @@ namespace MCUpdater
         Failed,
     };
 
-    /// <summary>The player's answer to the update shown.</summary>
+    /// <summary>The player's answer to the update shown, or the updater's own to the program's backend.</summary>
     enum class MCAnswer : uint8_t
     {
         /// <summary>Found: download and install it. Ready: restart to install it now.</summary>
         Install,
-        /// <summary>Found: never offer this version again.</summary>
+        /// <summary>Found: never offer this version again. Ready: install nothing after all (the content couldn't be armed).</summary>
         Skip,
+        /// <summary>Found: not now (the content's own updater keeps the player's skip).</summary>
+        Later,
     };
 
     /// <summary>The update as the backend last reported it.</summary>
@@ -48,7 +70,10 @@ namespace MCUpdater
         std::string Version;
         /// <summary>What it brings, as plain text (lines apart by newlines).</summary>
         std::string Notes;
-        /// <summary>Downloading: the bytes in so far, and of the whole (0 until known).</summary>
+        /// <summary>
+        /// Downloading: the bytes in so far, and of the whole (0 until known). Found: the download's size, when known
+        /// (the content's updater knows it).
+        /// </summary>
         uint64_t Received = 0;
         uint64_t Expected = 0;
         /// <summary>Failed: what went wrong.</summary>
@@ -64,8 +89,11 @@ namespace MCUpdater
         /// <summary>The version running, as shown ("0.2.1 (468)").</summary>
         virtual std::string RunningVersion() = 0;
 
-        /// <summary>Looks for a newer version; what it finds comes later, through the reports below.</summary>
-        virtual void Check() = 0;
+        /// <summary>
+        /// Looks for a newer version: build <paramref name="build"/> (release.json's for this copy), or with none its
+        /// own newest. What it finds comes later, through the reports below; the build not found, it closes.
+        /// </summary>
+        virtual void Check(std::optional<uint64_t> build) = 0;
 
         /// <summary>Passes on the player's answer to the update shown (its stage: <see cref="Status"/>).</summary>
         virtual void Answer(MCAnswer answer) = 0;
@@ -74,7 +102,34 @@ namespace MCUpdater
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>
     void SetBackend(std::unique_ptr<MCBackend> backend);
 
-    /// <summary>Whether this build updates itself (it has a backend).</summary>
+    /// <summary>A transfer to the release's host, made for each piece of the content's work, on that work's thread.</summary>
+    using MCSourceMaker = std::function<std::unique_ptr<MCContentStage::MCSource>()>;
+
+    /// <summary>
+    /// The game's own updater for the content, for the copy <paramref name="setup"/> describes, reading the release's
+    /// host through what <paramref name="source"/> makes (before the game starts).
+    /// </summary>
+    void SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source);
+
+    /// <summary>No content updater: any work under way stops.</summary>
+    void ClearContent();
+
+    /// <summary>How RESTART quits the game for an update with no program (none: the input's quit; the tests count it).</summary>
+    void SetQuit(std::function<void()> quit);
+
+    /// <summary>Whether the content's work runs: a check, or staging (the tests wait on it).</summary>
+    bool Working();
+
+    /// <summary>Picks up the content's work (each frame): its progress, and its end.</summary>
+    void Frame();
+
+    /// <summary>The game is quitting: work under way stops (staged files stay for the next try).</summary>
+    void Quit();
+
+    /// <summary>Whether RESTART asked for the game to start again once it has quit (an update with no program).</summary>
+    bool RestartWanted();
+
+    /// <summary>Whether this build updates itself (it has a backend, or the content's updater).</summary>
     bool Available();
 
     /// <summary>The version running, as shown, or empty without a backend.</summary>

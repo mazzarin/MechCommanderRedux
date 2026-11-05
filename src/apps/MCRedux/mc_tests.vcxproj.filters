@@ -54,6 +54,9 @@
     <ClCompile Include="tests\ContentSwapTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ContentUpdaterTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ContentUpdateTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -307,6 +310,9 @@
     </ClInclude>
     <ClInclude Include="tests\fixtures\MCTinyMap.h">
       <Filter>tests\fixtures</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\MCContentFixture.h">
+      <Filter>tests</Filter>
     </ClInclude>
     <ClInclude Include="tests\MCFilePatchFixture.h">
       <Filter>tests</Filter>

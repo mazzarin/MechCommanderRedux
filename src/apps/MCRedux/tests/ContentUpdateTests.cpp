@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCContentFixture.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "lib/MCSha256.h"
@@ -13,13 +14,10 @@
 
 #include <regex>
 
-#ifndef SODIUM_STATIC
-#define SODIUM_STATIC 1
-#endif
-#include <sodium/crypto_sign_ed25519.h>
-
 namespace
 {
+    using MCContentFixture::KeyList;
+    using MCContentFixture::KeyPair;
     using MCContentPlan::MCAction;
 
     /// <summary>A scratch folder of the test's own, deleted with it.</summary>
@@ -28,46 +26,6 @@ namespace
     public:
         explicit ScratchFolder(std::string_view name) : MCScratchFolder("mc_content_update_tests", name) {}
     };
-
-    /// <summary>An Ed25519 key pair made from one seed byte, so each test's keys are the same every run.</summary>
-    struct KeyPair
-    {
-        explicit KeyPair(uint8_t seed)
-        {
-            std::array<uint8_t, crypto_sign_ed25519_SEEDBYTES> bytes{};
-            bytes.fill(seed);
-            crypto_sign_ed25519_seed_keypair(Public.data(), Secret.data(), bytes.data());
-        }
-
-        /// <summary>The signature of <paramref name="message"/>.</summary>
-        std::vector<uint8_t> Sign(std::string_view message) const
-        {
-            std::vector<uint8_t> signature(crypto_sign_ed25519_BYTES);
-            crypto_sign_ed25519_detached(signature.data(), nullptr,
-                                         reinterpret_cast<const unsigned char*>(message.data()), message.size(),
-                                         Secret.data());
-            return signature;
-        }
-
-        /// <summary>An envelope of <paramref name="payload"/> as <paramref name="type"/>, signed by this key.</summary>
-        std::string Envelope(std::string_view type, std::string_view payload) const
-        {
-            const std::array signatures = {Sign(MCSignedFile::SignedBytes(type, payload))};
-            return MCSignedFile::Envelope(type, payload, signatures);
-        }
-
-        MCSignedFile::MCPublicKey Public{};
-        std::array<uint8_t, crypto_sign_ed25519_SECRETKEYBYTES> Secret{};
-    };
-
-    /// <summary>The key list naming <paramref name="releaseKeys"/>, signed by <paramref name="root"/>.</summary>
-    std::string KeyList(const KeyPair& root, uint64_t issue, std::vector<MCSignedFile::MCPublicKey> releaseKeys,
-                        uint64_t lowestRelease = 0)
-    {
-        MCReleaseFile::MCKeyList keys{
-            .Format = 1, .Issue = issue, .ReleaseKeys = std::move(releaseKeys), .LowestRelease = lowestRelease};
-        return root.Envelope(MCSignedFile::KeyListType, MCReleaseFile::KeyListPayload(keys));
-    }
 
     MCReleaseFile::MCRelease Release(uint64_t number)
     {

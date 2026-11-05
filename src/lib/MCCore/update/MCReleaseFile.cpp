@@ -25,6 +25,10 @@ namespace
     constexpr std::string_view Sha256Key = "sha256";
     constexpr std::string_view UrlKey = "url";
     constexpr std::string_view SilentKey = "silent";
+    constexpr std::string_view KeyListIssueKey = "keyListIssue";
+    constexpr std::string_view ReleaseIssueKey = "releaseIssue";
+    constexpr std::string_view RolloutNumberKey = "rolloutNumber";
+    constexpr std::string_view SkippedKey = "skipped";
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -236,7 +240,58 @@ std::expected<MCTrusted, std::string> MCReleaseFile::Check(std::string_view keyL
 
 MCKept MCReleaseFile::Keep(const MCKept& kept, const MCTrusted& trusted)
 {
-    return MCKept{std::max(kept.KeyListIssue, trusted.Keys.Issue), std::max(kept.ReleaseIssue, trusted.Releases.Issue)};
+    MCKept taken = kept;
+    taken.KeyListIssue = std::max(kept.KeyListIssue, trusted.Keys.Issue);
+    taken.ReleaseIssue = std::max(kept.ReleaseIssue, trusted.Releases.Issue);
+    return taken;
+}
+
+std::expected<MCKept, std::string> MCReleaseFile::ReadKept(std::string_view text)
+{
+    return Read(KeptFile,
+                [&]
+                {
+                    const MCJson json = Object(text);
+                    MCKept kept;
+                    kept.KeyListIssue = Count(json, KeyListIssueKey);
+                    kept.ReleaseIssue = Count(json, ReleaseIssueKey);
+
+                    if (json.contains(RolloutNumberKey))
+                    {
+                        const uint64_t number = Count(json, RolloutNumberKey);
+
+                        if (number > std::numeric_limits<uint32_t>::max())
+                        {
+                            Fail("\"{}\" is past 32 bits", RolloutNumberKey);
+                        }
+
+                        kept.RolloutNumber = static_cast<uint32_t>(number);
+                    }
+
+                    if (json.contains(SkippedKey))
+                    {
+                        kept.Skipped = Count(json, SkippedKey);
+                    }
+
+                    return kept;
+                });
+}
+
+std::string MCReleaseFile::KeptText(const MCKept& kept)
+{
+    MCJson json{{KeyListIssueKey, kept.KeyListIssue}, {ReleaseIssueKey, kept.ReleaseIssue}};
+
+    if (kept.RolloutNumber)
+    {
+        json[std::string(RolloutNumberKey)] = *kept.RolloutNumber;
+    }
+
+    if (kept.Skipped != 0)
+    {
+        json[std::string(SkippedKey)] = kept.Skipped;
+    }
+
+    return json.dump(2);
 }
 
 const MCRelease& MCReleaseFile::For(const MCReleases& releases, uint32_t rolloutNumber)

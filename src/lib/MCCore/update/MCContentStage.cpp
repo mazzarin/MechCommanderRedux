@@ -114,7 +114,7 @@ namespace
                 }
             }
 
-            return MarkReady();
+            return Flush();
         }
 
     private:
@@ -323,8 +323,8 @@ namespace
             return {};
         }
 
-        /// <summary>Flushes every staged file and the folders holding them, then writes the journal-to-be.</summary>
-        std::expected<void, std::string> MarkReady()
+        /// <summary>Flushes every staged file and the folders holding them; the downloads go.</summary>
+        std::expected<void, std::string> Flush()
         {
             std::set<std::filesystem::path> folders;
             const std::filesystem::path update = At(MCContentSwap::UpdateFolder);
@@ -361,12 +361,6 @@ namespace
             }
 
             _Disk.Remove(At(MCContentStage::DownloadFolder));
-
-            if (!MCContentSwap::MarkReady(_Disk, _Game, {MCContentStage::Moves(_Plan), _Plan.Record}))
-            {
-                return std::unexpected("the update can't be marked ready");
-            }
-
             return {};
         }
 
@@ -434,4 +428,26 @@ std::expected<void, std::string> MCContentStage::Stage(MCUpdateDisk& disk, MCSou
                                                        const std::function<bool(uint64_t, uint64_t)>& progress)
 {
     return MCStager(disk, source, gameFolder, plan, list, progress).Run();
+}
+
+std::expected<void, std::string> MCContentStage::Arm(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                     const MCContentPlan::MCPlan& plan)
+{
+    if (!MCContentSwap::MarkReady(disk, gameFolder, {Moves(plan), plan.Record}))
+    {
+        // A write that failed only at its last flush left the file: it goes, or the next start would swap in content
+        // whose program was never armed.
+        const std::filesystem::path ready = gameFolder / MCFileSystem::FromUtf8(MCContentSwap::ReadyFile);
+
+        if (disk.Stat(ready).Exists &&
+            (!disk.Remove(ready) ||
+             !disk.FlushFolder(gameFolder / MCFileSystem::FromUtf8(MCContentSwap::UpdateFolder))))
+        {
+            SDL_Log("Updates: %s can't be taken back after a failed write", Shown(ready).c_str());
+        }
+
+        return std::unexpected("the update can't be marked ready");
+    }
+
+    return {};
 }

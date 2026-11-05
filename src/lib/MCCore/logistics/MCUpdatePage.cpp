@@ -609,7 +609,15 @@ namespace
             case MCStage::None:
                 return {};
             case MCStage::Found:
-                return "A NEWER VERSION IS OUT.";
+            {
+                if (status.Expected == 0)
+                {
+                    return "A NEWER VERSION IS OUT.";
+                }
+
+                return std::format("A NEWER VERSION IS OUT: {:.1f} MB TO DOWNLOAD.",
+                                   static_cast<double>(status.Expected) / Megabyte);
+            }
             case MCStage::Downloading:
             {
                 if (status.Expected == 0)

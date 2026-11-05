@@ -74,13 +74,22 @@ namespace MCReleaseFile
         double RolloutShare = 0.0;
     };
 
-    /// <summary>What the game keeps of the files it has read (the user folder's <c>update.json</c>).</summary>
+    /// <summary>What the game keeps of the files it has read, and of the copy (the user folder's <c>update.json</c>).</summary>
     struct MCKept
     {
         /// <summary>The highest issues read; none is taken lower.</summary>
         uint64_t KeyListIssue = 0;
         uint64_t ReleaseIssue = 0;
+        /// <summary>The copy's rollout number (<see cref="For"/>), made once at random and never sent; none yet.</summary>
+        std::optional<uint32_t> RolloutNumber;
+        /// <summary>The release the player skipped (0: none): it isn't offered again, and a higher one is.</summary>
+        uint64_t Skipped = 0;
+
+        bool operator==(const MCKept&) const = default;
     };
+
+    /// <summary>Where the game keeps it, in the user folder.</summary>
+    constexpr std::string_view KeptFile = "update.json";
 
     /// <summary>Both files, checked.</summary>
     struct MCTrusted
@@ -113,6 +122,12 @@ namespace MCReleaseFile
     /// rolling-out one when the number falls below its share, else the one every copy takes.
     /// </summary>
     const MCRelease& For(const MCReleases& releases, uint32_t rolloutNumber);
+
+    /// <summary>What <c>update.json</c>'s <paramref name="text"/> keeps.</summary>
+    std::expected<MCKept, std::string> ReadKept(std::string_view text);
+
+    /// <summary><c>update.json</c> as written.</summary>
+    std::string KeptText(const MCKept& kept);
 
     /// <summary>The payloads as the release script writes them (the tests make files with them).</summary>
     std::string KeyListPayload(const MCKeyList& keys);

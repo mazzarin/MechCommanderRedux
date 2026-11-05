@@ -3,6 +3,7 @@
 #include "update/MCInstalled.h"
 
 class MCUpdateDisk;
+class MCUpdateLock;
 
 /// <summary>
 /// Port-only: putting a staged update in place (SPEC-install-and-updates.md's Applying an update: Swap and If it can't
@@ -34,6 +35,15 @@ namespace MCContentSwap
     /// held up (a normal swap takes well under a second).
     /// </summary>
     constexpr std::chrono::seconds LobbyStartTime{15};
+
+    /// <summary>How long a start waits for another copy to finish a swap it's midway through.</summary>
+    constexpr std::chrono::seconds MidwayWait{15};
+
+    /// <summary>
+    /// How long a start with a ready update waits for another copy to quit: RESTART starts the new copy as the old one
+    /// closes, and the old one holds the lock until its process ends.
+    /// </summary>
+    constexpr std::chrono::seconds QuittingWait{5};
 
     /// <summary>A file the swap moves: added (no old), replaced, or removed (no new).</summary>
     struct MCMove
@@ -91,4 +101,14 @@ namespace MCContentSwap
     /// </summary>
     MCResult Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
                  std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
+
+    /// <summary>
+    /// The start's swap (<see cref="Run"/>) under the game's lock (update/MCUpdateLock.h), which then stays held shared
+    /// for the game's run. The swap takes the lock exclusive: a ready update waits <see cref="QuittingWait"/> for
+    /// another copy to quit, then for a later start. A swap stopped midway, whose files can't be played, is waited for
+    /// (another copy finishing it) until <paramref name="deadline"/> or, with none, <see cref="MidwayWait"/>. Neither
+    /// wait passes <paramref name="deadline"/>. Without a lock (none could be opened) the swap runs as it is.
+    /// </summary>
+    MCResult RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
+                        std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
 }

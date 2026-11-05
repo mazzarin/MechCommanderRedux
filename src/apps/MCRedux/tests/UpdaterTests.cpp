@@ -30,6 +30,8 @@ namespace
     struct MCBackendLog
     {
         int32_t Checks = 0;
+        /// <summary>The build each check looked for (none: the backend's own newest).</summary>
+        std::vector<std::optional<uint64_t>> Builds;
         std::vector<MCAnswer> Answers;
     };
 
@@ -41,7 +43,11 @@ namespace
 
         std::string RunningVersion() override { return "0.2.1 (468)"; }
 
-        void Check() override { _Log->Checks++; }
+        void Check(std::optional<uint64_t> build) override
+        {
+            _Log->Checks++;
+            _Log->Builds.push_back(build);
+        }
 
         void Answer(MCAnswer answer) override { _Log->Answers.push_back(answer); }
 

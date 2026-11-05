@@ -76,8 +76,17 @@ namespace
 
 - (void)answer:(MCUpdater::MCAnswer)answer
 {
-    const SPUUserUpdateChoice choice =
-        answer == MCUpdater::MCAnswer::Install ? SPUUserUpdateChoiceInstall : SPUUserUpdateChoiceSkip;
+    // Skip at the ready step cancels the install without skipping the version; Later leaves the update for now.
+    SPUUserUpdateChoice choice = SPUUserUpdateChoiceDismiss;
+
+    if (answer == MCUpdater::MCAnswer::Install)
+    {
+        choice = SPUUserUpdateChoiceInstall;
+    }
+    else if (answer == MCUpdater::MCAnswer::Skip)
+    {
+        choice = SPUUserUpdateChoiceSkip;
+    }
 
     if (_FoundReply != nil)
     {
@@ -85,7 +94,7 @@ namespace
         _FoundReply = nil;
         reply(choice);
     }
-    else if (_ReadyReply != nil && answer == MCUpdater::MCAnswer::Install)
+    else if (_ReadyReply != nil)
     {
         void (^reply)(SPUUserUpdateChoice) = _ReadyReply;
         _ReadyReply = nil;
@@ -197,14 +206,37 @@ namespace
 }
 @end
 
-/// <summary>Sparkle's delegate: no permission asked (the game looks at each start), and the session's end logged.</summary>
+/// <summary>
+/// Sparkle's delegate: no permission asked (the game looks at each start), the session's end logged, and the update
+/// held to the build release.json gives this copy when the game's own updater asks for one (main/MCUpdater.h).
+/// </summary>
 @interface MCSparkleDelegate : NSObject <SPUUpdaterDelegate>
+/// <summary>The build to take (its CFBundleVersion), or nil for Sparkle's own newest.</summary>
+@property(nonatomic, copy) NSString* heldBuild;
 @end
 
 @implementation MCSparkleDelegate
 - (BOOL)updaterShouldPromptForPermissionToCheckForUpdates:(SPUUpdater*)updater
 {
     return NO;
+}
+
+- (SUAppcastItem*)bestValidUpdateInAppcast:(SUAppcast*)appcast forUpdater:(SPUUpdater*)updater
+{
+    if (self.heldBuild == nil)
+    {
+        return nil;
+    }
+
+    for (SUAppcastItem* item in appcast.items)
+    {
+        if ([item.versionString isEqualToString:self.heldBuild])
+        {
+            return item;
+        }
+    }
+
+    return SUAppcastItem.emptyAppcastItem;
 }
 
 - (void)updater:(SPUUpdater*)updater didAbortWithError:(NSError*)error
@@ -236,7 +268,12 @@ namespace
                                 [bundle objectForInfoDictionaryKey:BuildKey]);
         }
 
-        void Check() override { [_Updater checkForUpdatesInBackground]; }
+        void Check(std::optional<uint64_t> build) override
+        {
+            _Delegate.heldBuild = build ? [NSString stringWithFormat:@"%llu", static_cast<unsigned long long>(*build)]
+                                        : nil;
+            [_Updater checkForUpdatesInBackground];
+        }
 
         void Answer(MCUpdater::MCAnswer answer) override { [_Driver answer:answer]; }
 

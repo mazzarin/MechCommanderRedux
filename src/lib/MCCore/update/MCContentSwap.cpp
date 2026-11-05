@@ -4,13 +4,18 @@
 #include "update/MCContentList.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
+#include "update/MCUpdateLock.h"
 
 #include <random>
+#include <thread>
 
 namespace
 {
     using namespace MCContentSwap;
     using namespace MCUpdateJson;
+
+    /// <summary>How often a start waiting for another copy's swap tries the lock again.</summary>
+    constexpr std::chrono::milliseconds LockRetry{100};
 
     constexpr std::string_view MovesKey = "moves";
     constexpr std::string_view RecordKey = "record";
@@ -528,4 +533,57 @@ MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesy
     }
 
     return {MCOutcome::PutBack, forward};
+}
+
+MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                                  MCUpdateLock* lock,
+                                                  std::optional<std::chrono::steady_clock::time_point> deadline)
+{
+    if (lock == nullptr)
+    {
+        return Run(disk, gameFolder, deadline);
+    }
+
+    MCResult result;
+
+    if (Waiting(disk, gameFolder))
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const auto midwayUntil = deadline.value_or(now + MidwayWait);
+        const auto quittingUntil = std::min(midwayUntil, now + QuittingWait);
+        const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
+
+        for (;;)
+        {
+            if (lock->TryExclusive())
+            {
+                result = Run(disk, gameFolder, deadline);
+                break;
+            }
+
+            const bool midway = disk.Stat(journalPath).Exists;
+            const auto waited = std::chrono::steady_clock::now();
+
+            if (!midway && waited >= quittingUntil)
+            {
+                result = {MCOutcome::PutBack, "another copy of the game is running"};
+                break;
+            }
+
+            if (midway && waited >= midwayUntil)
+            {
+                result = {MCOutcome::Stuck, "another copy of the game is putting an update in place"};
+                break;
+            }
+
+            std::this_thread::sleep_for(LockRetry);
+        }
+    }
+
+    if (!lock->Shared())
+    {
+        SDL_Log("Updates: the game's lock can't be held: another copy may swap an update in under this one");
+    }
+
+    return result;
 }

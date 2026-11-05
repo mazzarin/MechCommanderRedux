@@ -6,6 +6,7 @@
     <ClCompile Include="MCCrashTrace.cpp" />
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
+    <ClCompile Include="MCRestart.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
@@ -14,6 +15,7 @@
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
+    <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>

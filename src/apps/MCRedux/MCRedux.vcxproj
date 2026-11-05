@@ -71,6 +71,9 @@
     <ClCompile Include="MCHttpGetWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCRestart.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -81,6 +84,7 @@
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
+    <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>

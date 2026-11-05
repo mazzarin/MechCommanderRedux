@@ -84,6 +84,7 @@
     <ClCompile Include="tests\ContentSourceTests.cpp" />
     <ClCompile Include="tests\ContentStageTests.cpp" />
     <ClCompile Include="tests\ContentSwapTests.cpp" />
+    <ClCompile Include="tests\ContentUpdaterTests.cpp" />
     <ClCompile Include="tests\ContentUpdateTests.cpp" />
     <ClCompile Include="tests\ControlsTests.cpp" />
     <ClCompile Include="tests\ControlTests.cpp" />
@@ -174,6 +175,7 @@
     <ClInclude Include="tests\fixtures\MCRetailData.h" />
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />
     <ClInclude Include="tests\fixtures\MCTinyMap.h" />
+    <ClInclude Include="tests\MCContentFixture.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />
     <ClInclude Include="tests\MCHdMovieFixture.h" />
     <ClInclude Include="tests\MCMock.h" />

@@ -2,17 +2,24 @@
 #include "MCConsole.h"
 #include "MCCrashTrace.h"
 #include "MCGameFolder.h"
+#include "MCHttpGet.h"
+#include "MCRestart.h"
 #include "MCTelemetryBackend.h"
 #include "MCVersion.h"
 #include "abl/MCAblRuntime.h"
 #include "gui/MCGuiStartup.h"
 #include "main/MCHdSettings.h"
 #include "main/MCSystemConfig.h"
+#include "main/MCUpdater.h"
 #include "platform/MCAllocator.h"
 #include "platform/MCFileSystem.h"
 #include "sprite/MCWeatherPace.h"
 #include "update/MCContentSwap.h"
+#include "update/MCContentUpdater.h"
+#include "update/MCHttpSource.h"
+#include "update/MCSignedFile.h"
 #include "update/MCUpdateDisk.h"
+#include "update/MCUpdateLock.h"
 
 #if defined(__APPLE__)
 #include "MCSparkleUpdater.h"
@@ -27,6 +34,26 @@ namespace
         std::filesystem::path UserFolder;
         std::string GameCommandLine;
     };
+
+    /// <summary>
+    /// The release's host for the game's own updater: the downloads Worker (tools/cloudflare/downloads in the
+    /// workspace), laid out as the release script writes it (SPEC-install-and-updates.md's Hosting).
+    /// </summary>
+    constexpr std::string_view ContentHost = "https://mechcommander-redux-downloads.mazzarin.workers.dev";
+
+    /// <summary>
+    /// The root keys' public halves (base64), one of which signs the key list (SPEC-install-and-updates.md's Signing
+    /// keys). None yet: until the root key is made (tools/release/make_release.py new-key in the workspace), the game
+    /// updates no content and takes no lock, and the Mac's Sparkle updates the program alone.
+    /// </summary>
+    constexpr std::array<std::string_view, 0> RootKeys = {};
+
+    /// <summary>This platform's name in release.json.</summary>
+#ifdef _WIN32
+    constexpr std::string_view ReleasePlatform = "windows";
+#else
+    constexpr std::string_view ReleasePlatform = "mac";
+#endif
 
     /// <summary>The command line's help text.</summary>
     constexpr std::string_view UsageText =
@@ -208,7 +235,7 @@ namespace
     /// previous files play and the next start tries again.
     /// </summary>
     /// <returns>False when the game can't play the files as they are (the player is told).</returns>
-    bool SwapStagedUpdate(const std::filesystem::path& gameFolder, std::string_view commandLine)
+    bool SwapStagedUpdate(const std::filesystem::path& gameFolder, std::string_view commandLine, MCUpdateLock* lock)
     {
         std::optional<std::chrono::steady_clock::time_point> deadline;
 
@@ -217,7 +244,7 @@ namespace
             deadline = std::chrono::steady_clock::now() + MCContentSwap::LobbyStartTime;
         }
 
-        const MCContentSwap::MCResult result = MCContentSwap::Run(*MakeDisk(), gameFolder, deadline);
+        const MCContentSwap::MCResult result = MCContentSwap::RunAtStart(*MakeDisk(), gameFolder, lock, deadline);
 
         switch (result.Outcome)
         {
@@ -244,6 +271,49 @@ namespace
         }
 
         return true;
+    }
+
+    /// <summary>The root keys the build carries (<see cref="RootKeys"/>).</summary>
+    std::vector<MCSignedFile::MCPublicKey> BuildRootKeys()
+    {
+        std::vector<MCSignedFile::MCPublicKey> keys;
+
+        for (const std::string_view text : RootKeys)
+        {
+            if (const std::optional<MCSignedFile::MCPublicKey> key = MCSignedFile::KeyFromBase64(text))
+            {
+                keys.push_back(*key);
+            }
+            else
+            {
+                SDL_Log("Updates: the root key \"%.*s\" isn't a key", static_cast<int>(text.size()), text.data());
+            }
+        }
+
+        return keys;
+    }
+
+    /// <summary>The game's own updater for the content (main/MCUpdater.h), reading the host over https.</summary>
+    void SetContentUpdater(const MCLaunchOptions& options, std::vector<MCSignedFile::MCPublicKey> rootKeys)
+    {
+        MCUpdater::SetContent({.GameFolder = options.DataFolder,
+                               .UserFolder = options.UserFolder,
+                               .RootKeys = std::move(rootKeys),
+                               .Platform = std::string(ReleasePlatform),
+                               .RunningBuild = MC_VERSION_BUILD,
+                               .RunningVersion = MC_VERSION_SHOWN},
+                              []() -> std::unique_ptr<MCContentStage::MCSource>
+                              {
+                                  auto source = MCHttpSource::Make(ContentHost, MCMakeHttpGet());
+
+                                  if (!source)
+                                  {
+                                      SDL_Log("Updates: %s", source.error().c_str());
+                                      return nullptr;
+                                  }
+
+                                  return std::move(*source);
+                              });
     }
 
     /// <summary>Crash reporter: where the ABL interpreter was (module, routine, source line, code position).</summary>
@@ -337,8 +407,13 @@ int main(int argc, char** argv)
     }
 
     options->DataFolder = *dataFolder;
+    // A build that updates its content holds the game's lock for its run, so no other copy swaps an update in under
+    // it (update/MCUpdateLock.h); one that doesn't leaves the game folder as it is.
+    std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();
+    std::unique_ptr<MCUpdateLock> gameLock =
+        rootKeys.empty() ? nullptr : MCUpdateLock::Open(options->DataFolder, MCUpdateLock::GameLock);
 
-    if (!SwapStagedUpdate(options->DataFolder, options->GameCommandLine))
+    if (!SwapStagedUpdate(options->DataFolder, options->GameCommandLine, gameLock.get()))
     {
         SDL_Quit();
         return 1;
@@ -357,11 +432,27 @@ int main(int argc, char** argv)
 #if defined(__APPLE__)
     MCUpdater::SetBackend(MCMakeSparkleBackend());
 #endif
+
+    if (!rootKeys.empty())
+    {
+        SetContentUpdater(*options, std::move(rootKeys));
+    }
+
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));
     const int result = RunGame(options->GameCommandLine);
-    // A clean quit: the reports' black box marks the run as ended.
+    // A clean quit: staging stops (what's staged stays for the next try), and the reports' black box marks the run as
+    // ended.
+    MCUpdater::Quit();
     MCTelemetry::Quit();
     MCTelemetry::SetBackend(nullptr);
+
+    // RESTART into an update with no program: the new copy waits for this one's lock, which the system lets go once
+    // this process has ended and closed every file it held, then swaps the content in.
+    if (MCUpdater::RestartWanted() && MCStartAgain(utf8Arguments))
+    {
+        static_cast<void>(gameLock.release());
+    }
+
     SDL_Quit();
     return result;
 }

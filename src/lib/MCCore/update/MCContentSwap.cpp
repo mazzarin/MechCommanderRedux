@@ -433,7 +433,20 @@ namespace
                         return at.error();
                     }
 
+                    // Its staged copy still there, the swap never moved it in (it was in place already): it stays.
+                    std::expected<bool, std::string> staged = true;
+
                     if (*at == MCAt::New)
+                    {
+                        staged = IsThere(_Disk, Staged(move));
+                    }
+
+                    if (!staged)
+                    {
+                        return staged.error();
+                    }
+
+                    if (*at == MCAt::New && !*staged)
                     {
                         if (!Move(Destination(move), Staged(move)))
                         {

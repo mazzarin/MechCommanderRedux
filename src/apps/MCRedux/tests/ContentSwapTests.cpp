@@ -1528,3 +1528,49 @@ TEST_CASE(
     record.Sets.emplace(MCContentList::HdSet);
     CHECK(MCInstalled::Has(record, game.Path(), MCContentList::HdSet));
 }
+
+TEST_CASE("content swap: a new file already in place before the swap stays there when the previous set goes back, the "
+          "machine stopping at any step or not")
+{
+    MCUpdate update;
+    update.Files[GamePath("data/missions/new.fit")] = {"a new mission", 7};
+    MCCrashDisk measure(update.Files);
+    REQUIRE(MCContentSwap::Run(measure, Game).Outcome == MCOutcome::Swapped);
+    const int steps = measure.Changes();
+
+    for (int step = 0; step <= steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk(update.Files);
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Run(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+            disk.HoldOpen(GamePath("HD/terrain.hda"));
+            const MCContentSwap::MCResult held = MCContentSwap::Run(disk, Game);
+
+            if (held.Outcome == MCOutcome::Stuck ||
+                disk.Files().at(GamePath("data/missions/new.fit")).Bytes != "a new mission")
+            {
+                FAIL_CHECK(
+                    std::format("step {} keep {}: {} ({})", step, keepAll, static_cast<int>(held.Outcome), held.Error));
+            }
+
+            disk.HoldOpen({});
+
+            if (MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Stuck ||
+                !update.WhichSet(disk.Files(), update.New))
+            {
+                FAIL_CHECK(std::format("step {} keep {}: let go, the start after didn't finish", step, keepAll));
+            }
+        }
+    }
+}

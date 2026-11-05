@@ -63,7 +63,4 @@ namespace MCLobbyUpdate
     /// message; either OK ends the game.
     /// </summary>
     void JoinFailed();
-
-    /// <summary>Forgets everything under way (a test's start).</summary>
-    void Reset();
 }

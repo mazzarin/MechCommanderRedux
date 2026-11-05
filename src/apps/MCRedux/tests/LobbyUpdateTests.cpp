@@ -271,7 +271,8 @@ namespace
 /// <summary>
 /// A lobby's host restarting into an update: its page says how many of the other players join again (the guests whose
 /// builds wait for it); RESTART tells them, writes the rejoin note with the lobby's words for the update's build, and
-/// then the update installs; the guests leaving as it goes don't stop it with "has left the game".
+/// then the update installs; the guests leaving as it goes don't stop it with "has left the game". Once the match is
+/// under way, RESTART waits for the game to exit at its end.
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's host restarting into an update tells the guests that wait for it, and leaves the "
                    "rejoin note")
@@ -297,6 +298,17 @@ TEST_CASE_ISOLATED("game: a lobby's host restarting into an update tells the gue
 
     const std::shared_ptr<MCLogTextButton> restart = MCScreenInput::FindTextButton(screen, "RESTART");
     REQUIRE(restart != nullptr);
+
+    // Once the match is under way RESTART waits: the update goes in as the game exits at its end.
+    MultiPlayer()->InLogistics = true;
+    CHECK_EQ(UpdatePageStatus(), std::string("DOWNLOADED: IT INSTALLS WHEN THE MATCH IS OVER."));
+    ClickOn(*restart);
+    Settle();
+    CHECK_EQ(updater.Log->Answers.size(), size_t{1});
+    CHECK_EQ(ann.Updatings(), 0);
+    MultiPlayer()->InLogistics = false;
+
+    // Before it, the game restarts into the update.
     ClickOn(*restart);
     CHECK(SettleUntil([&] { return ann.Updatings() == 1; }));
     CHECK_EQ(cal.Updatings(), 0);

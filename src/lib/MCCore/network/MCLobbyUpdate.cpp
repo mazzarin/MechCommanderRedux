@@ -463,12 +463,3 @@ auto MCLobbyUpdate::JoinFailed() -> void
     ShowJoinFailed(LobbyLaunchArgs.Rejoin ? RejoinFailedText(MultiPlayer()->SessionManager->LastRoomRefusal)
                                           : LoadGameString(JoinFailedString, StringBuffer));
 }
-
-auto MCLobbyUpdate::Reset() -> void
-{
-    RestartAt.reset();
-    Restarting = false;
-    Coming.clear();
-    RefreshAt.reset();
-    HostWait.reset();
-}

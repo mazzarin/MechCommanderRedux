@@ -59,10 +59,10 @@ namespace
 
     /// <summary>
     /// The root keys' public halves (base64), one of which signs the key list (SPEC-install-and-updates.md's Signing
-    /// keys). None yet: until the root key is made (tools/release/make_release.py new-key in the workspace), the game
-    /// updates no content and takes no lock, and the Mac's Sparkle updates the program alone.
+    /// keys): the root key made 4 Nov 2026, kept offline. A build without one updates no content and takes no lock, and
+    /// the Mac's Sparkle updates the program alone.
     /// </summary>
-    constexpr std::array<std::string_view, 0> RootKeys = {};
+    constexpr std::array<std::string_view, 1> RootKeys = {"XRHmDBox9rew2PKwZEWSV7OygkHBplwIC4Ugl1Dvll0="};
 
     /// <summary>
     /// The lowest key list issue this build takes, even on a fresh install with none kept (SPEC-install-and-updates.md's
@@ -744,7 +744,7 @@ int main(int argc, char** argv)
         MCRejoinNote::Discard(options->UserFolder);
     }
 
-    // A build that updates its content carries the root keys (none until the root key is made).
+    // A build that updates its content carries the root keys.
     std::vector<MCSignedFile::MCPublicKey> rootKeys = BuildRootKeys();
     const bool contentUpdates = !rootKeys.empty();
     const auto dataFolder = FindGameData(options->DataFolder, options->UserFolder, contentUpdates);

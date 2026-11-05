@@ -33,10 +33,10 @@
 #include "object/MCForces.h"
 #include "object/MCMechGameSystem.h"
 #include "object/MCMechWarrior.h"
+#include "object/MCMiscTerrainObject.h"
 #include "object/MCMover.h"
 #include "object/MCMoverGroup.h"
 #include "object/MCObjectSystem.h"
-#include "object/MCTerrainObject.h"
 #include "object/MCTree.h"
 #include "object/MCTreeBuilding.h"
 #include "object/MCTurret.h"
@@ -1025,7 +1025,7 @@ namespace
 
             case MCObjectClass::MiscTerrainObject:
             {
-                static_cast<MCTerrainObject&>(*object).LightOnFire(seconds);
+                static_cast<MCMiscTerrainObject&>(*object).LightOnFire(seconds);
                 break;
             }
 

@@ -8,8 +8,15 @@
 #include "network/MCMultiPlayerHandlers.h"
 #include "object/MCArtilleryChunk.h"
 #include "object/MCBattleMech.h"
+#include "object/MCEffectSystem.h"
+#include "object/MCFire.h"
 #include "object/MCMasterComponent.h"
 #include "object/MCMechWarrior.h"
+#include "object/MCMiscTerrainObject.h"
+#include "object/MCMiscTerrainObjectType.h"
+#include "object/MCObjectQueue.h"
+#include "object/MCObjectSystem.h"
+#include "object/MCObjectTypeManager.h"
 #include "object/MCTurret.h"
 #include "object/MCTurretType.h"
 #include "object/MCWeaponFireChunk.h"
@@ -709,6 +716,39 @@ TEST_CASE("network: a client skips update entries that name movers, turrets or e
     fire[9] = 1;
     HandleAppMoverWeaponFireUpdate(1, fire);
     CHECK_EQ(mover->NumWeaponFireChunks[1], 1);
+}
+
+/// <summary>
+/// The server's fire spreading to a forest tile, a bridge or a wall (a misc terrain object) gives that object's fire
+/// more burn time on each client. Clients took the object for a terrain object, another class, and crashed.
+/// </summary>
+TEST_CASE("network: a client lights the forest tile the server's fire spread to")
+{
+    ClientGame client;
+    client.Scope.Context().SetObjectSystem(std::make_shared<MCObjectSystem>(std::make_unique<MCObjectTypeManager>()));
+    client.Scope.Context().SetEffectSystem(std::make_unique<MCEffectSystem>(4, 30.0f));
+
+    // A forest tile in block 3 (vertex 17, item 5), burning with a second left.
+    const auto forest = std::make_shared<MCMiscTerrainObject>();
+    forest->ObjType = std::make_shared<MCMiscTerrainObjectType>();
+    forest->ObjectClass = MCObjectClass::MiscTerrainObject;
+    forest->PartId = 0x1000 + 3 * 0xc80 + 17 * 8 + 5;
+    const std::shared_ptr<MCObjectList> block = ObjectList()->FindOrAddList("RBlk3");
+    block->Add(forest);
+    const auto fire = std::make_shared<MCFire>();
+    fire->Flames.resize(1);
+    fire->Flames[0].TimeLeftToBurn = 1.0f;
+    forest->FireObject.Light(fire);
+
+    MCWorldStateChunk spread;
+    spread.BuildTerrainFire(*forest, 10);
+    spread.Pack();
+    std::vector<uint8_t> world = Message(MCMPMessageType::WorldStateUpdate, {0, 0, 0, 0, 0, 0, 1, 0});
+    PutWord(world, spread.Data);
+    HandleAppWorldStateUpdate(1, world);
+    CHECK_EQ(fire->Flames[0].TimeLeftToBurn, 11.0f);
+
+    CHECK(block->Remove(*forest));
 }
 
 /// <summary>

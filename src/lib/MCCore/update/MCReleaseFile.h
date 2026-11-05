@@ -68,11 +68,12 @@ namespace MCReleaseFile
         std::string Url;
         std::string Silent;
         /// <summary>
-        /// The Mac's: its archive's EdDSA signature, as Sparkle's feed gives it (<c>sparkle:edSignature</c>). Ed25519
-        /// signs deterministically, so it pins the archive's bytes: Sparkle installs only that archive
-        /// (<see cref="FeedItemProblem"/>). Without it the Mac takes no program from the release.
+        /// The Mac's: its archive's EdDSA signatures as Sparkle's feed gives them (<c>sparkle:edSignature</c>), one for
+        /// each release key the feed signs it with (two while a key is replaced). Ed25519 signs deterministically, so
+        /// each pins the archive's bytes: Sparkle installs only that archive (<see cref="FeedItemProblem"/>). Without
+        /// one the Mac takes no program from the release.
         /// </summary>
-        std::optional<MCEdSignature> EdSignature;
+        std::vector<MCEdSignature> EdSignatures;
     };
 
     /// <summary>A release.</summary>
@@ -186,8 +187,9 @@ namespace MCReleaseFile
     /// <summary>
     /// Why the Mac's Sparkle may not install <paramref name="item"/> over build <paramref name="runningBuild"/> (the
     /// running app's CFBundleVersion), or empty: only the program <paramref name="held"/>, the one release.json gives
-    /// this copy, goes in: its build, newer than the one running, with no delta updates, its archive's signature and size
-    /// as held (Sparkle then checks the signature against the app's key, so the archive is the one release.json names).
+    /// this copy, goes in: its build, newer than the one running, with no delta updates, its archive's size and one of
+    /// its signatures as held (Sparkle then checks the signature against the app's key, so the archive is the one
+    /// release.json names).
     /// </summary>
     std::string FeedItemProblem(const MCProgram& held, std::string_view runningBuild, const MCFeedItem& item);
 

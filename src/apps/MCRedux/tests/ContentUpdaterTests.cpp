@@ -91,7 +91,8 @@ namespace
                                              .ListSize = ListText.size()};
             release.Programs["mac"] = {.Build = build,
                                        .Size = ProgramSize,
-                                       .EdSignature = macSigned ? std::optional(MacSignature) : std::nullopt};
+                                       .EdSignatures = macSigned ? std::vector{MacSignature}
+                                                                 : std::vector<MCReleaseFile::MCEdSignature>{}};
             release.Programs["windows"] = {.Build = build, .Size = ProgramSize};
             const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = issue, .Current = release};
             Write(Host.Path() / "release.json",

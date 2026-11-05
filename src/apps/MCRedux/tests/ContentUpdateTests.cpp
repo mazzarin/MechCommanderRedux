@@ -330,7 +330,10 @@ TEST_CASE("update files: the Mac's program is held to release.json's: its build,
     signature.fill(7);
     MCReleaseFile::MCEdSignature other = signature;
     other.back() = 8;
-    const MCReleaseFile::MCProgram held{.Build = 600, .Size = 7'000'000, .EdSignature = signature};
+    MCReleaseFile::MCEdSignature retired = signature;
+    retired.front() = 1;
+    // Both release keys' signatures while one is replaced: either archive item is the one release.json names.
+    const MCReleaseFile::MCProgram held{.Build = 600, .Size = 7'000'000, .EdSignatures = {retired, signature}};
     const MCReleaseFile::MCFeedItem item{
         .Build = "600", .EdSignature = MCUpdateJson::ToBase64(signature), .Size = 7'000'000};
     CHECK_EQ(MCReleaseFile::FeedItemProblem(held, "500", item), std::string());
@@ -352,16 +355,21 @@ TEST_CASE("update files: the Mac's program is held to release.json's: its build,
     CHECK(refused("500", {.Build = "600", .EdSignature = item.EdSignature, .Size = item.Size, .Deltas = 1}));
     CHECK(refused("500", {.Build = "600", .EdSignature = item.EdSignature, .Size = item.Size, .Delta = true}));
     CHECK(refused("500", item, {.Build = 600, .Size = 7'000'000}));
+    CHECK_EQ(MCReleaseFile::FeedItemProblem(
+                 held, "500", {.Build = "600", .EdSignature = MCUpdateJson::ToBase64(retired), .Size = item.Size}),
+             std::string());
 
     // release.json carries it, in base64; one that isn't 64 bytes is refused.
     MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = Release(7)};
-    releases.Current.Programs["mac"].EdSignature = signature;
+    releases.Current.Programs["mac"].EdSignatures = held.EdSignatures;
     const auto read = MCReleaseFile::ReadReleases(MCReleaseFile::ReleasesPayload(releases));
     REQUIRE(read.has_value());
-    CHECK(read->Current.Programs.at("mac").EdSignature == signature);
-    CHECK(!read->Current.Programs.at("windows").EdSignature.has_value());
+    CHECK(read->Current.Programs.at("mac").EdSignatures == held.EdSignatures);
+    CHECK(read->Current.Programs.at("windows").EdSignatures.empty());
     MCUpdateJson::MCJson json = MCUpdateJson::Object(MCReleaseFile::ReleasesPayload(releases));
-    json["current"]["programs"]["mac"]["edSignature"] = MCUpdateJson::ToBase64(std::span(signature).first(63));
+    json["current"]["programs"]["mac"]["edSignatures"] = {MCUpdateJson::ToBase64(std::span(signature).first(63))};
+    CHECK(!MCReleaseFile::ReadReleases(json.dump()).has_value());
+    json["current"]["programs"]["mac"]["edSignatures"] = MCUpdateJson::ToBase64(signature);
     CHECK(!MCReleaseFile::ReadReleases(json.dump()).has_value());
 }
 

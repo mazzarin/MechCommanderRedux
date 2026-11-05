@@ -32,7 +32,7 @@ namespace
     constexpr std::string_view RolloutNumberKey = "rolloutNumber";
     constexpr std::string_view SkippedKey = "skipped";
     constexpr std::string_view EpochKey = "epoch";
-    constexpr std::string_view EdSignatureKey = "edSignature";
+    constexpr std::string_view EdSignaturesKey = "edSignatures";
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -56,7 +56,7 @@ namespace
     /// <summary>The Ed25519 signature the base64 <paramref name="text"/> spells, for <paramref name="platform"/>'s program.</summary>
     MCEdSignature EdSignatureOf(std::string_view text, std::string_view platform)
     {
-        const std::vector<uint8_t> bytes = Base64(text, EdSignatureKey);
+        const std::vector<uint8_t> bytes = Base64(text, EdSignaturesKey);
 
         if (bytes.size() != EdSignatureBytes)
         {
@@ -98,9 +98,15 @@ namespace
             program.Url = TextOr(entry, UrlKey, "");
             program.Silent = TextOr(entry, SilentKey, "");
 
-            if (entry.contains(EdSignatureKey))
+            for (const MCJson& signature : Array(entry, EdSignaturesKey, false))
             {
-                program.EdSignature = EdSignatureOf(Text(entry, EdSignatureKey), platform);
+                if (!signature.is_string() || program.EdSignatures.size() == MaxReleaseKeys)
+                {
+                    Fail("the program for \"{}\" has signatures that aren't up to {} strings", platform,
+                         MaxReleaseKeys);
+                }
+
+                program.EdSignatures.push_back(EdSignatureOf(signature.get_ref<const std::string&>(), platform));
             }
 
             release.Programs.emplace(platform, std::move(program));
@@ -132,9 +138,16 @@ namespace
                 entry[std::string(SilentKey)] = program.Silent;
             }
 
-            if (program.EdSignature)
+            if (!program.EdSignatures.empty())
             {
-                entry[std::string(EdSignatureKey)] = ToBase64(*program.EdSignature);
+                MCJson signatures = MCJson::array();
+
+                for (const MCEdSignature& signature : program.EdSignatures)
+                {
+                    signatures.push_back(ToBase64(signature));
+                }
+
+                entry[std::string(EdSignaturesKey)] = std::move(signatures);
             }
 
             programs[platform] = std::move(entry);
@@ -396,15 +409,15 @@ std::string MCReleaseFile::FeedItemProblem(const MCProgram& held, std::string_vi
         return "it comes with delta updates, which release.json doesn't sign for";
     }
 
-    if (!held.EdSignature)
+    if (held.EdSignatures.empty())
     {
         return "release.json gives no signature for the Mac's program";
     }
 
-    if (const auto signature = Read(EdSignatureKey, [&] { return EdSignatureOf(item.EdSignature, MacPlatform); });
-        !signature || *signature != *held.EdSignature)
+    if (const auto signature = Read(EdSignaturesKey, [&] { return EdSignatureOf(item.EdSignature, MacPlatform); });
+        !signature || std::ranges::find(held.EdSignatures, *signature) == held.EdSignatures.end())
     {
-        return "its archive's signature isn't the one release.json gives";
+        return "its archive's signature isn't one release.json gives";
     }
 
     if (item.Size != held.Size)

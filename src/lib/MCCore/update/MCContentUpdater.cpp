@@ -434,7 +434,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
         program != release.Programs.end() && program->second.Build > setup.RunningBuild)
     {
         // The Mac's program is held to its archive's signature (MCReleaseFile::FeedItemProblem): without one, none.
-        if (setup.Platform == MCReleaseFile::MacPlatform && !program->second.EdSignature)
+        if (setup.Platform == MCReleaseFile::MacPlatform && program->second.EdSignatures.empty())
         {
             SDL_Log("Updates: release %llu gives no signature for the Mac's build %llu: the program isn't offered",
                     static_cast<unsigned long long>(release.Number),

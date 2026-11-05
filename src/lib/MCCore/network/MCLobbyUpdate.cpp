@@ -299,10 +299,7 @@ namespace
             }
         }
     }
-}
 
-namespace
-{
     /// <summary>
     /// RESTART is off (<paramref name="why"/>): the update failed, or the room can't rejoin now. The note goes, the room
     /// is told so that it drops the place it keeps for this game, and a host keeps its guests' places: they left to wait

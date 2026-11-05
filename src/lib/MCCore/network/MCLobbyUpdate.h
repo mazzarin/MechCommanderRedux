@@ -63,13 +63,16 @@ namespace MCLobbyUpdate
 
     /// <summary>
     /// RESTART with an update ready. In a room that can (<see cref="CanRestart"/>): the note is written, the room told,
-    /// and a moment later (the messages out) the update installs; otherwise nothing happens (it installs as the game
-    /// exits).
+    /// and a moment later (the messages out) the update installs, unless the room can't rejoin by then; otherwise, or
+    /// with no note written, nothing happens (it installs as the game exits).
     /// </summary>
     /// <returns>Whether it took RESTART; false outside a room (the page answers as usual).</returns>
     bool Restart();
 
-    /// <summary>Each frame: a restart's moment, the places kept for updating guests, a guest's wait for its host.</summary>
+    /// <summary>
+    /// Each frame: a restart's moment, and the restart called off when the update no longer installs; the places kept
+    /// for updating guests; a guest's wait for its host.
+    /// </summary>
     void Frame();
 
     /// <summary>Player <paramref name="fromId"/>'s game restarts into an update (its MCMPMessageType::Updating).</summary>

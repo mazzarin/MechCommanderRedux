@@ -154,9 +154,33 @@ TEST_CASE("updater: the check is made once a start, and an update waits through 
     MCUpdater::Answer(MCAnswer::Install);
     MCUpdater::Failed("The update is improperly signed.");
     CHECK(MCUpdater::Status().Stage == MCStage::Failed);
+    CHECK(MCUpdater::Status().Retry);
     MCUpdater::Closed();
     CHECK(MCUpdater::Status().Stage == MCStage::Failed);
     CHECK(changes > 0);
+
+    // INSTALL tries again: a fresh check, and what it finds downloads a frame later, with no second INSTALL.
+    const size_t answered = updater.Log->Answers.size();
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK_EQ(updater.Log->Checks, 2);
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    MCUpdater::Found(std::string(NewVersion), std::string(Notes));
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    CHECK_EQ(updater.Log->Answers.size(), answered);
+    MCUpdater::Frame();
+    REQUIRE_EQ(updater.Log->Answers.size(), answered + 1);
+    CHECK(updater.Log->Answers.back() == MCAnswer::Install);
+    MCUpdater::Ready();
+    CHECK(MCUpdater::Status().Stage == MCStage::Ready);
+
+    // Again, and nothing is found this time: nothing is shown.
+    MCUpdater::Failed("The update is improperly signed.");
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
+    MCUpdater::Closed();
+    CHECK(MCUpdater::Status().Stage == MCStage::None);
+    MCUpdater::Frame();
+    CHECK_EQ(updater.Log->Answers.size(), answered + 1);
     MCUpdater::SetListener(nullptr);
 }
 
@@ -290,6 +314,23 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     CHECK(updater.Log->Answers[2] == MCAnswer::Skip);
     CHECK(!UpdatePageShown());
     CHECK(cinema->Disabled);
+
+    // A failed download: INSTALL is offered again, and tries again.
+    MCUpdater::Found("0.2.4 (500)", "Even more.");
+    MCUpdater::Answer(MCAnswer::Install);
+    MCUpdater::Failed("the download was cut off");
+    Frames();
+    RealClickOn(*cinema);
+    REQUIRE(UpdatePageShown());
+    CHECK_EQ(UpdatePageStatus(), std::string("THE UPDATE FAILED: THE DOWNLOAD WAS CUT OFF"));
+    CHECK(install->IsShowing());
+    CHECK(!skip->IsShowing());
+    MCScreenInput::SaveShot("update failed", MCScreenInput::ScreenHash());
+    const int32_t checks = updater.Log->Checks;
+    RealClickOn(*install);
+    CHECK_EQ(updater.Log->Checks, checks + 1);
+    CHECK(!install->IsShowing());
+    CHECK(MCUpdater::Status().Stage == MCStage::Downloading);
 }
 
 /// <summary>

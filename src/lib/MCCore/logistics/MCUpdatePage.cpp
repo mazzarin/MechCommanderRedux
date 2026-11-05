@@ -928,7 +928,7 @@ namespace
 
     /// <summary>
     /// The updater changed: the UPDATE button lit (amber) while an update waits and grayed otherwise, the page's buttons
-    /// for its stage.
+    /// for its stage: INSTALL also after a failed download, to try again.
     /// </summary>
     void Refresh()
     {
@@ -937,13 +937,13 @@ namespace
             button->Disabled = !MCUpdater::Waiting();
         }
 
-        const MCStage stage = MCUpdater::Status().Stage;
-        ShowButton(InstallButton, stage == MCStage::Found);
-        ShowButton(SkipButton, stage == MCStage::Found);
-        ShowRestart(stage);
+        const MCStatus& status = MCUpdater::Status();
+        ShowButton(InstallButton, status.Stage == MCStage::Found || (status.Stage == MCStage::Failed && status.Retry));
+        ShowButton(SkipButton, status.Stage == MCStage::Found);
+        ShowRestart(status.Stage);
     }
 
-    /// <summary>INSTALL: the download starts.</summary>
+    /// <summary>INSTALL: the download starts (after a failure, once a fresh check finds the update again).</summary>
     void Install()
     {
         MCUpdater::Answer(MCAnswer::Install);

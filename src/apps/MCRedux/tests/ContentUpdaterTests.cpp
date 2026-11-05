@@ -837,7 +837,8 @@ TEST_CASE("updater: Sparkle installing without its ready step with content that 
 }
 #endif
 
-TEST_CASE("updater: Sparkle ending its session while the update is shown fails it rather than wait")
+TEST_CASE("updater: Sparkle ending its session while the update is shown fails it rather than wait; INSTALL then "
+          "looks again")
 {
     MCHostedRelease release("session-ends");
     release.Publish(1, 2, NewerBuild);
@@ -845,10 +846,16 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CheckUntilFound(scope, NewerBuild);
     MCUpdater::Closed();
     CHECK(Stage() == MCStage::Failed);
-    MCUpdater::Answer(MCAnswer::Install);
-    CHECK(Stage() == MCStage::Failed);
     CHECK(scope.Program->Answers.empty());
     CHECK(!release.Armed());
+
+    // INSTALL: the check again, and the program's backend asked for its build again; nothing passed on to it yet.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(Stage() == MCStage::Downloading);
+    REQUIRE(FramesUntil([&] { return scope.Program->Checks.size() == 2; }));
+    CHECK(scope.Program->Checks.back() == NewerBuild);
+    CHECK(scope.Program->Answers.empty());
+    CHECK(Stage() == MCStage::Downloading);
 }
 
 TEST_CASE(
@@ -1455,6 +1462,64 @@ TEST_CASE("updater: the program's backend failing while the content stages stops
     CHECK(Stage() == MCStage::Failed);
     CHECK(!release.Armed());
     CHECK(scope.Program->Answers.empty());
+}
+
+namespace
+{
+    /// <summary>The release's files hosted in a folder, every download failing as a lost connection does.</summary>
+    class MCCutSource final : public MCContentStage::MCSource
+    {
+    public:
+        explicit MCCutSource(std::filesystem::path folder) : _Inner(std::move(folder)) {}
+
+        std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
+                                               const std::function<bool(uint64_t)>&) override
+        {
+            return std::unexpected("the connection was lost");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+    private:
+        MCFolderSource _Inner;
+    };
+}
+
+TEST_CASE("updater: after a failed download INSTALL tries again: a fresh check, then the update it finds installs")
+{
+    MCHostedRelease release("install-again");
+
+    // The first staging's downloads are cut off; every other transfer works.
+    const auto made = std::make_shared<int32_t>(0);
+    constexpr int32_t cutTransfer = 2;
+    MCUpdaterScope scope(release, false,
+                         [host = release.Host.Path(), made]() -> std::unique_ptr<MCContentStage::MCSource>
+                         {
+                             if (++*made == cutTransfer)
+                             {
+                                 return std::make_unique<MCCutSource>(host);
+                             }
+
+                             return std::make_unique<MCFolderSource>(host);
+                         });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    REQUIRE(Stage() == MCStage::Failed);
+    CHECK(MCUpdater::Status().Retry);
+    CHECK(StagingFree(release.Game.Path()));
+
+    // INSTALL: it shows downloading while the check runs, and goes on to READY with no second INSTALL.
+    MCUpdater::Answer(MCAnswer::Install);
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK_EQ(MCUpdater::Status().Version, std::string("0.2.2 (500)"));
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(release.Armed());
+    CHECK_EQ(*made, cutTransfer + 2);
 }
 
 TEST_CASE("updater: quitting cancels a download stalled on the network and waits for its end; nothing is left running")

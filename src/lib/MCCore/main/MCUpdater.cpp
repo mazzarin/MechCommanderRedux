@@ -83,6 +83,17 @@ namespace
         SetsArmed,
     };
 
+    /// <summary>INSTALL after a failure: the fresh check looks for the update, then it installs once found.</summary>
+    enum class MCAgain : uint8_t
+    {
+        /// <summary>No INSTALL waits.</summary>
+        No,
+        /// <summary>The fresh check runs (the page shows the download).</summary>
+        Looking,
+        /// <summary>Found: it installs at the next frame.</summary>
+        Found,
+    };
+
     /// <summary>
     /// The content's work off the main thread (a check, staging, arming, the HD pack's change): its progress and end,
     /// read each frame. It ends with the update found, when it looked for one, or what failed.
@@ -122,6 +133,8 @@ namespace
     bool ProgramClosing = false;
     /// <summary>A match's mission plays: the content's downloads wait (<see cref="MCUpdater::PauseWork"/>).</summary>
     bool Paused = false;
+    /// <summary>The player chose INSTALL after a failure (<see cref="MCAgain"/>).</summary>
+    MCAgain InstallAgain = MCAgain::No;
     /// <summary>The download the pause stopped (staging or the change of sets), to go on with after it; none, Idle.</summary>
     MCStep PausedStep = MCStep::Idle;
 
@@ -185,6 +198,7 @@ namespace
         SetsChosenAgain = false;
         ProgramClosing = false;
         PausedStep = MCStep::Idle;
+        InstallAgain = MCAgain::No;
     }
 
     /// <summary>What the copy has of the HD pack, from its record (read here, and kept) and the sets chosen.</summary>
@@ -222,10 +236,11 @@ namespace
     }
 
     /// <summary>
-    /// A step failed: the page says why, and nothing more happens this run. Work still under way (the program's
-    /// backend failing while the content stages) stops before the staging lock goes, so no copy stages beside it.
+    /// A step failed: the page says why, and nothing more happens until the player chooses INSTALL again, when
+    /// <paramref name="retry"/> (a fresh check first). Work still under way (the program's backend failing while the
+    /// content stages) stops before the staging lock goes, so no copy stages beside it.
     /// </summary>
-    void Fail(std::string_view error)
+    void Fail(std::string_view error, bool retry = true)
     {
         SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), std::string(error).c_str());
         StopWork();
@@ -234,6 +249,8 @@ namespace
         Step = MCStep::Finished;
         Current.Stage = MCStage::Failed;
         Current.Error = Printable(error, MaxErrorLength, false);
+        Current.Retry = retry;
+        InstallAgain = MCAgain::No;
         Changed();
     }
 
@@ -243,11 +260,16 @@ namespace
         return Offer->ContentBytes() + (Offer->ProgramBuild ? Offer->ProgramBytes : 0);
     }
 
-    /// <summary>The update is shown, with what it brings and its size.</summary>
+    /// <summary>
+    /// The update is shown, with what it brings and its size; after INSTALL again, it shows downloading and installs at
+    /// the next frame.
+    /// </summary>
     void ShowOffer()
     {
+        const bool again = InstallAgain == MCAgain::Looking;
+        InstallAgain = again ? MCAgain::Found : MCAgain::No;
         Step = MCStep::Offered;
-        Current = {.Stage = MCStage::Found,
+        Current = {.Stage = again ? MCStage::Downloading : MCStage::Found,
                    .Version = Printable(Offer->ShownVersion(Content->RunningBuild), MaxVersionLength, false),
                    .Notes = Printable(Offer->Release.Notes, MaxNotesLength, true),
                    .Expected = DownloadBytes()};
@@ -436,6 +458,17 @@ namespace
                 });
     }
 
+    /// <summary>INSTALL again found nothing to install (the release gone, or armed by another copy): nothing is shown.</summary>
+    void LookedInVain()
+    {
+        if (std::exchange(InstallAgain, MCAgain::No) != MCAgain::No && Current.Stage == MCStage::Downloading)
+        {
+            SDL_Log("Updater: the fresh check found nothing to install");
+            Current = {};
+            Changed();
+        }
+    }
+
     /// <summary>
     /// Nothing more for an update this run: a change of sets the player chose and the copy lacks starts, as the start's
     /// check found no update to carry it (one chosen in an earlier run, stopped as the game quit).
@@ -443,6 +476,7 @@ namespace
     void Settle()
     {
         Step = MCStep::Idle;
+        LookedInVain();
 
         if (Hd.Managed && Hd.Chosen != Hd.Installed && Hd.Stage != MCStage::Failed)
         {
@@ -542,6 +576,13 @@ namespace
 
         if (!error.empty())
         {
+            // INSTALL again: the player is told.
+            if (InstallAgain != MCAgain::No)
+            {
+                Fail(error);
+                return;
+            }
+
             // No news for the player (offline, say): the next start looks again. A change of sets the player chose
             // still tries, and says so if it fails too.
             SDL_Log("Updater: the check failed: %s", error.c_str());
@@ -565,6 +606,7 @@ namespace
             {
                 SDL_Log("Updater: another copy of the game is staging an update");
                 Offer.reset();
+                LookedInVain();
                 return;
             }
 
@@ -641,39 +683,64 @@ namespace
         Settle();
     }
 
+    /// <summary>INSTALL at the update shown: the content stages, then the program downloads.</summary>
+    void InstallOffer()
+    {
+        SDL_Log("Updater: install at %s", Current.Version.c_str());
+        Current.Stage = MCStage::Downloading;
+        Current.Received = 0;
+        Current.Expected = DownloadBytes();
+
+        // The program alone too: the lock keeps another copy from downloading the same setup at once.
+        if (!TakeStagingLock())
+        {
+            if (Offer->ProgramBuild)
+            {
+                Backend->Answer(MCAnswer::Later);
+            }
+
+            Fail("another copy of the game is installing it");
+            return;
+        }
+
+        if (Offer->Content == nullptr)
+        {
+            Step = MCStep::DownloadingProgram;
+            Changed();
+            Backend->Answer(MCAnswer::Install);
+            return;
+        }
+
+        Step = MCStep::StagingContent;
+        Changed();
+        StartStaging(false);
+    }
+
+    /// <summary>
+    /// INSTALL after a failure: a fresh check (the release may have changed), then the update it finds installs with
+    /// no second INSTALL (<see cref="MCUpdater::Frame"/>). The page shows the download meanwhile.
+    /// </summary>
+    void InstallAfterFailure()
+    {
+        SDL_Log("Updater: install %s again: a fresh check first", Current.Version.c_str());
+        InstallAgain = MCAgain::Looking;
+        Offer.reset();
+        Current = {.Stage = MCStage::Downloading, .Version = Current.Version};
+        Changed();
+        LookForUpdate();
+    }
+
     /// <summary>The player's answer, with the content's updater set.</summary>
     void AnswerContent(MCAnswer answer)
     {
         if (Current.Stage == MCStage::Found && Step == MCStep::Offered && answer == MCAnswer::Install)
         {
-            SDL_Log("Updater: install at %s", Current.Version.c_str());
-            Current.Stage = MCStage::Downloading;
-            Current.Received = 0;
-            Current.Expected = DownloadBytes();
-
-            // The program alone too: the lock keeps another copy from downloading the same setup at once.
-            if (!TakeStagingLock())
-            {
-                if (Offer->ProgramBuild)
-                {
-                    Backend->Answer(MCAnswer::Later);
-                }
-
-                Fail("another copy of the game is installing it");
-                return;
-            }
-
-            if (Offer->Content == nullptr)
-            {
-                Step = MCStep::DownloadingProgram;
-                Changed();
-                Backend->Answer(MCAnswer::Install);
-                return;
-            }
-
-            Step = MCStep::StagingContent;
-            Changed();
-            StartStaging(false);
+            InstallOffer();
+        }
+        else if (Current.Stage == MCStage::Failed && Current.Retry && answer == MCAnswer::Install &&
+                 (Step == MCStep::Finished || Step == MCStep::Idle))
+        {
+            InstallAfterFailure();
         }
         else if (Current.Stage == MCStage::Found && Step == MCStep::Offered && answer == MCAnswer::Skip)
         {
@@ -762,6 +829,22 @@ auto MCUpdater::Frame() -> void
     if (Backend != nullptr)
     {
         Backend->Frame();
+    }
+
+    // INSTALL again: the update the fresh check found installs now, a frame after it was found (never from inside the
+    // backend's own report).
+    if (InstallAgain == MCAgain::Found)
+    {
+        InstallAgain = MCAgain::No;
+
+        if (Content && Step == MCStep::Offered)
+        {
+            InstallOffer();
+        }
+        else if (!Content && Backend != nullptr && Current.Stage == MCStage::Downloading)
+        {
+            Backend->Answer(MCAnswer::Install);
+        }
     }
 
     if (Work == nullptr)
@@ -1013,9 +1096,12 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
             break;
         case MCStep::Finished:
         {
-            // After a failed update this run; one installing goes in as the game quits, the choice at a later start.
+            // After a failed update this run, which then waits for the next start (INSTALL is no longer offered); one
+            // installing goes in as the game quits, the choice at a later start.
             if (Current.Stage == MCStage::Failed)
             {
+                Current.Retry = false;
+                Changed();
                 StartSetsChange();
             }
 
@@ -1100,6 +1186,15 @@ auto MCUpdater::Answer(MCAnswer answer) -> void
         Current.Stage = MCStage::Installing;
         Changed();
     }
+    else if (answer == MCAnswer::Install && stage == MCStage::Failed && Current.Retry)
+    {
+        // A fresh check, then the update it finds installs with no second INSTALL (Frame).
+        InstallAgain = MCAgain::Looking;
+        Current = {.Stage = MCStage::Downloading, .Version = Current.Version};
+        Changed();
+        Backend->Check(std::nullopt);
+        return;
+    }
     else
     {
         return;
@@ -1127,7 +1222,10 @@ auto MCUpdater::Found(std::string version, std::string notes) -> void
         return;
     }
 
-    Current = {.Stage = MCStage::Found,
+    // After INSTALL again, it shows downloading and installs at the next frame.
+    const bool again = InstallAgain == MCAgain::Looking;
+    InstallAgain = again ? MCAgain::Found : MCAgain::No;
+    Current = {.Stage = again ? MCStage::Downloading : MCStage::Found,
                .Version = Printable(version, MaxVersionLength, false),
                .Notes = Printable(notes, MaxNotesLength, true)};
     SDL_Log("Updater: %s is out", Current.Version.c_str());
@@ -1194,7 +1292,7 @@ auto MCUpdater::Installing() -> void
         {
             if (const std::string error = ArmNow(); !error.empty())
             {
-                Fail(error);
+                Fail(error, false);
                 SDL_Log("Updater: %s's program installs without its content", Current.Version.c_str());
                 return;
             }
@@ -1241,6 +1339,8 @@ auto MCUpdater::Failed(std::string error) -> void
     SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), error.c_str());
     Current.Stage = MCStage::Failed;
     Current.Error = Printable(error, MaxErrorLength, false);
+    Current.Retry = true;
+    InstallAgain = MCAgain::No;
     Changed();
 }
 
@@ -1285,6 +1385,7 @@ auto MCUpdater::Closed() -> void
         return;
     }
 
+    InstallAgain = MCAgain::No;
     Current = {};
     Changed();
 }

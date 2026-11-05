@@ -49,14 +49,20 @@ namespace MCUpdater
         Ready,
         /// <summary>The game is quitting so it can be installed; the new version starts by itself.</summary>
         Installing,
-        /// <summary>A step failed (<see cref="MCStatus::Error"/> says how); the next start looks again.</summary>
+        /// <summary>
+        /// A step failed (<see cref="MCStatus::Error"/> says how): INSTALL tries again when it can
+        /// (<see cref="MCStatus::Retry"/>), else the next start looks again.
+        /// </summary>
         Failed,
     };
 
     /// <summary>The player's answer to the update shown, or the updater's own to the program's backend.</summary>
     enum class MCAnswer : uint8_t
     {
-        /// <summary>Found: download and install it. Ready: restart to install it now.</summary>
+        /// <summary>
+        /// Found: download and install it. Ready: restart to install it now. Failed: look again, then download and
+        /// install what's found.
+        /// </summary>
         Install,
         /// <summary>Found: never offer this version again. Ready: install nothing after all (the content couldn't be armed).</summary>
         Skip,
@@ -120,6 +126,8 @@ namespace MCUpdater
         uint64_t Expected = 0;
         /// <summary>Failed: what went wrong.</summary>
         std::string Error;
+        /// <summary>Failed: whether INSTALL tries again (a fresh check first), the download having failed.</summary>
+        bool Retry = false;
     };
 
     /// <summary>What the app gives the updater: the version running, the check and the answers.</summary>

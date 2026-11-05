@@ -14,7 +14,9 @@ enum class MCRoomRefusal : uint8_t;
 //   game quits and the update goes in; the new version joins or hosts again as the note says. A guest's room keeps its
 //   place (no "has left the game", which ends a lobby's game), and its host opens the room to it again until it is
 //   back, a minute at most, holding the match's start meanwhile; a match started anyway lets the places go and closes
-//   the room. A host's guests say so and join the same address again for up to a minute.
+//   the room. A room keeps a place only for a build that says it rejoins, and once a guest: a guest whose place it has
+//   kept (its restart called off, or back from its update) installs its next update after the match. A host's guests
+//   say so and join the same address again for up to a minute.
 // - RESTART is off when the update fails after it (or the room's match starts before the update goes in): the note
 //   goes, and the room is told (MCMPMessageType::RestartOff), dropping the place it keeps; a host keeps its guests'
 //   places, as they left to wait for it.
@@ -75,12 +77,15 @@ namespace MCLobbyUpdate
     /// </summary>
     void Frame();
 
-    /// <summary>Player <paramref name="fromId"/>'s game restarts into an update (its MCMPMessageType::Updating).</summary>
+    /// <summary>
+    /// Player <paramref name="fromId"/>'s game restarts into an update (its MCMPMessageType::Updating). A guest's is
+    /// ignored unless its rules say it rejoins (MCMatchRule::RejoinsHost), and once the room has kept its place.
+    /// </summary>
     void Updating(uint32_t fromId);
 
     /// <summary>
     /// Player <paramref name="fromId"/>'s restart into an update is off (its MCMPMessageType::RestartOff): it stays, and
-    /// the room no longer keeps its place.
+    /// the room no longer keeps its place (its own alone).
     /// </summary>
     void RestartOff(uint32_t fromId);
 

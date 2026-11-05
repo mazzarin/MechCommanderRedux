@@ -47,8 +47,8 @@ class MCShape;
 /// <para>A folder's frames may instead be entries of an archive standing for it, <c>X.hda</c> beside folder
 /// <c>X</c> (a FastFile, lib/MCFastFile.h: each entry named by the rest of its path with <c>\</c> between folders,
 /// DEFLATE-packed or stored), the nearest of the folder's own and its parents'. An update writes a changed archive anew
-/// (lib/MCBundlePatch.h), so each is one file. At most 128 archives' files are kept open; the others keep their
-/// directories and open again when read.</para>
+/// (its patch applied in full, lib/MCFilePatch.h), so each is one file. At most 128 archives' files are kept open; the
+/// others keep their directories and open again when read.</para>
 /// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>).</para>
 /// </remarks>
 namespace MCHdArt

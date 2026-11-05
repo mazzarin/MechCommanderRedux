@@ -387,9 +387,6 @@
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp">
       <Filter>iface</Filter>
     </ClCompile>
-    <ClCompile Include="lib\MCBundlePatch.cpp">
-      <Filter>lib</Filter>
-    </ClCompile>
     <ClCompile Include="lib\MCDice.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -406,6 +403,9 @@
       <Filter>lib</Filter>
     </ClCompile>
     <ClCompile Include="lib\MCFile.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\MCFilePatch.cpp">
       <Filter>lib</Filter>
     </ClCompile>
     <ClCompile Include="lib\MCFitIniFile.cpp">
@@ -1648,9 +1648,6 @@
     <ClInclude Include="iface\MCTacticalInterface.h">
       <Filter>iface</Filter>
     </ClInclude>
-    <ClInclude Include="lib\MCBundlePatch.h">
-      <Filter>lib</Filter>
-    </ClInclude>
     <ClInclude Include="lib\MCDice.h">
       <Filter>lib</Filter>
     </ClInclude>
@@ -1667,6 +1664,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFile.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCFilePatch.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCFitIniFile.h">

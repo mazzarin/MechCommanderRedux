@@ -54,9 +54,3 @@ uint32_t MCDiskFile::Length()
     _Stream.seekg(here);
     return length;
 }
-
-bool MCDiskFile::Flush()
-{
-    _Stream.flush();
-    return _Stream.good();
-}

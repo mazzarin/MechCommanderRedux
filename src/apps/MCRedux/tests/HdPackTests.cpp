@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "TestGame.h"
-#include "lib/MCBundlePatch.h"
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
@@ -361,33 +360,11 @@ namespace
             .write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
-    /// <summary>The whole of a file, or empty when it can't be read.</summary>
-    std::vector<uint8_t> ReadBytes(const std::filesystem::path& path)
-    {
-        std::ifstream in(path, std::ios::binary);
-        return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-
     /// <summary>A bundle entry of <paramref name="name"/> holding <paramref name="bytes"/>, stored raw.</summary>
     ArchiveEntry Raw(std::string name, std::vector<uint8_t> bytes)
     {
         const size_t size = bytes.size();
         return {std::move(name), std::move(bytes), size, std::nullopt};
-    }
-
-    /// <summary>
-    /// A bundle entry of <paramref name="name"/> whose stored <paramref name="bytes"/> unpack to
-    /// <paramref name="realSize"/> (the bundle code copies them as stored, never unpacking).
-    /// </summary>
-    ArchiveEntry Packed(std::string name, std::vector<uint8_t> bytes, size_t realSize)
-    {
-        return {std::move(name), std::move(bytes), realSize, std::nullopt};
-    }
-
-    /// <summary>A zero-size entry: the name deleted.</summary>
-    ArchiveEntry Deleted(std::string name)
-    {
-        return {std::move(name), {}, 0, std::nullopt};
     }
 
     /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
@@ -790,128 +767,6 @@ TEST_CASE("hd art: no more than 128 archive files stay open, a closed one openin
 }
 
 /// <summary>
-/// A patch made between two bundles holds what changed (an entry's new bytes, a new entry, a new spelling) and a
-/// zero-size entry for each one gone, never what stayed. Applied to the first, it writes byte for byte the bundle the
-/// second is written as: one entry a name (a bundle's first, as the game reads it), in name order, identical bytes
-/// shared, packed entries as they are stored. Writing a bundle again changes nothing.
-/// </summary>
-TEST_CASE("hd art: a patch between two bundles turns the first into the second, byte for byte")
-{
-    const ScratchFolder scratch("patch");
-    const std::filesystem::path& folder = scratch.Path();
-    const std::vector<uint8_t> same = {1, 2, 3, 4};
-    const std::vector<uint8_t> packed = {9, 8, 7};
-    constexpr size_t Unpacked = 300;
-    WriteBytes(
-        folder / "old.hda",
-        BuildArchive({Raw("tiles\\b.hdf", {5, 5, 5}), Packed("Tiles\\A.hdf", packed, Unpacked),
-                      Raw("tiles\\a.hdf", {6}), Raw("same.hdf", same), Raw("Case.hdf", {7, 7}), Raw("gone.hdf", {8})}));
-    WriteBytes(folder / "new.hda",
-               BuildArchive({Raw("same.hdf", same), Raw("tiles\\b.hdf", {5, 5, 6}), Raw("CASE.hdf", {7, 7}),
-                             Packed("Tiles\\A.hdf", packed, Unpacked), Raw("added.hdf", same), Deleted("empty.hdf")}));
-
-    REQUIRE(MCBundlePatch::Make(folder / "old.hda", folder / "new.hda", folder / "patch.hda").has_value());
-    auto patch = MCFastFile::Create(MCFileSystem::ToUtf8(folder / "patch.hda"));
-    REQUIRE(patch.has_value());
-    std::vector<std::string> names;
-
-    for (const MCFileEntry& entry : (*patch)->GetEntries())
-    {
-        names.emplace_back(entry.GetName());
-    }
-
-    CHECK((names == std::vector<std::string>{"added.hdf", "CASE.hdf", "gone.hdf", "tiles\\b.hdf"}));
-    REQUIRE_EQ(names.size(), size_t{4});
-    CHECK_EQ((*patch)->GetEntries()[2].RealSize, 0);
-    patch->reset();
-
-    const std::array<std::filesystem::path, 1> patches = {folder / "patch.hda"};
-    REQUIRE(MCBundlePatch::Apply(folder / "old.hda", patches, folder / "applied.hda").has_value());
-    REQUIRE(MCBundlePatch::Apply(folder / "new.hda", {}, folder / "written.hda").has_value());
-    const std::vector<uint8_t> written = ReadBytes(folder / "written.hda");
-    CHECK(!written.empty());
-    CHECK(ReadBytes(folder / "applied.hda") == written);
-
-    auto bundle = MCFastFile::Create(MCFileSystem::ToUtf8(folder / "written.hda"));
-    REQUIRE(bundle.has_value());
-    names.clear();
-
-    for (const MCFileEntry& entry : (*bundle)->GetEntries())
-    {
-        names.emplace_back(entry.GetName());
-    }
-
-    CHECK((names == std::vector<std::string>{"added.hdf", "CASE.hdf", "same.hdf", "Tiles\\A.hdf", "tiles\\b.hdf"}));
-    REQUIRE_EQ(names.size(), size_t{5});
-    const std::span<const MCFileEntry> entries = (*bundle)->GetEntries();
-    CHECK_EQ(entries[0].Offset, entries[2].Offset);
-    CHECK_EQ(entries[3].RealSize, static_cast<int32_t>(Unpacked));
-    CHECK((*bundle)->ReadStored(3) == packed);
-    bundle->reset();
-
-    REQUIRE(MCBundlePatch::Apply(folder / "written.hda", {}, folder / "again.hda").has_value());
-    CHECK(ReadBytes(folder / "again.hda") == written);
-}
-
-/// <summary>
-/// Patches apply in turn, each name's entry the last one's: a name the first deletes stays deleted until a later one
-/// brings it back, and the bundle written is the one the last release's is written as.
-/// </summary>
-TEST_CASE("hd art: patches apply in turn, a deleted entry staying deleted till one brings it back")
-{
-    const ScratchFolder scratch("patches");
-    const std::filesystem::path& folder = scratch.Path();
-    WriteBytes(folder / "a.hda", BuildArchive({Raw("x.hdf", {1}), Raw("y.hdf", {2}), Raw("z.hdf", {3})}));
-    WriteBytes(folder / "b.hda", BuildArchive({Raw("x.hdf", {1}), Raw("z.hdf", {4})}));
-    WriteBytes(folder / "c.hda", BuildArchive({Raw("x.hdf", {5}), Raw("y.hdf", {6}), Raw("z.hdf", {4})}));
-    REQUIRE(MCBundlePatch::Make(folder / "a.hda", folder / "b.hda", folder / "1.hda").has_value());
-    REQUIRE(MCBundlePatch::Make(folder / "b.hda", folder / "c.hda", folder / "2.hda").has_value());
-
-    const std::array<std::filesystem::path, 1> first = {folder / "1.hda"};
-    REQUIRE(MCBundlePatch::Apply(folder / "a.hda", first, folder / "ab.hda").has_value());
-    REQUIRE(MCBundlePatch::Apply(folder / "b.hda", {}, folder / "b-written.hda").has_value());
-    CHECK(ReadBytes(folder / "ab.hda") == ReadBytes(folder / "b-written.hda"));
-    {
-        auto ab = MCFastFile::Create(MCFileSystem::ToUtf8(folder / "ab.hda"));
-        REQUIRE(ab.has_value());
-        CHECK(!(*ab)->Find("y.hdf").has_value());
-    }
-
-    const std::array<std::filesystem::path, 2> both = {folder / "1.hda", folder / "2.hda"};
-    REQUIRE(MCBundlePatch::Apply(folder / "a.hda", both, folder / "abc.hda").has_value());
-    REQUIRE(MCBundlePatch::Apply(folder / "c.hda", {}, folder / "c-written.hda").has_value());
-    CHECK(ReadBytes(folder / "abc.hda") == ReadBytes(folder / "c-written.hda"));
-}
-
-/// <summary>
-/// A bundle that can't be read, a patch that isn't a bundle, or a bundle to be written over one it reads writes nothing,
-/// leaving what it reads as it was.
-/// </summary>
-TEST_CASE("hd art: a bundle or patch that can't be read leaves nothing written")
-{
-    const ScratchFolder scratch("patch-failures");
-    const std::filesystem::path& folder = scratch.Path();
-    const std::filesystem::path out = folder / "out.hda";
-    WriteBytes(folder / "a.hda", BuildArchive({Raw("x.hdf", {1})}));
-    WriteBytes(folder / "bad.hda", std::vector<uint8_t>{1, 2, 3});
-
-    const auto missing = MCBundlePatch::Apply(folder / "missing.hda", {}, out);
-    REQUIRE(!missing.has_value());
-    CHECK(missing.error().find("missing.hda") != std::string::npos);
-    CHECK(!std::filesystem::exists(out));
-
-    const std::array<std::filesystem::path, 1> bad = {folder / "bad.hda"};
-    CHECK(!MCBundlePatch::Apply(folder / "a.hda", bad, out).has_value());
-    CHECK(!std::filesystem::exists(out));
-    CHECK(!MCBundlePatch::Make(folder / "a.hda", folder / "missing.hda", out).has_value());
-    CHECK(!std::filesystem::exists(out));
-
-    const std::vector<uint8_t> before = ReadBytes(folder / "a.hda");
-    CHECK(!MCBundlePatch::Apply(folder / "a.hda", {}, folder / "a.hda").has_value());
-    CHECK(ReadBytes(folder / "a.hda") == before);
-}
-
-/// <summary>
 /// With no pack folder set, the pack is the user folder's <c>HD</c> when there is one, else the game folder's (a pack
 /// unzipped into the game's folder, as mods are).
 /// </summary>
@@ -1225,79 +1080,5 @@ TEST_CASE_ISOLATED("tool: --hd-measure-lz packs frame files with the game's LZ")
     std::cout << std::format("  {} files: {:.1f} MB raw, {:.1f} MB with the game's LZ ({:.1f}%), {:.1f} s\n", files,
                              static_cast<double>(raw) / 1e6, static_cast<double>(packed) / 1e6,
                              100.0 * static_cast<double>(packed) / static_cast<double>(std::max<uint64_t>(raw, 1)),
-                             std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
-}
-
-/// <summary>
-/// Tool: <c>--bundle-apply &lt;out&gt; --bundle-base &lt;bundle&gt;</c> writes the bundle in the bundles' one layout
-/// (MCBundlePatch::Apply), with <c>--bundle-patch &lt;patch&gt;</c> applied when given; it prints the bundle's size and
-/// the time taken. For the release script, which writes a release's bundles with it and checks their patches.
-/// </summary>
-TEST_CASE_ISOLATED("tool: --bundle-apply writes a bundle in the one layout, a patch applied")
-{
-    const std::optional<std::string_view> out = MCTest::Option("bundle-apply");
-
-    if (!out.has_value())
-    {
-        return;
-    }
-
-    const std::optional<std::string_view> base = MCTest::Option("bundle-base");
-    REQUIRE(base.has_value());
-    std::vector<std::filesystem::path> patches;
-
-    if (const std::optional<std::string_view> patch = MCTest::Option("bundle-patch"); patch.has_value())
-    {
-        patches.push_back(MCFileSystem::FromUtf8(*patch));
-    }
-
-    const auto started = std::chrono::steady_clock::now();
-    const auto applied = MCBundlePatch::Apply(MCFileSystem::FromUtf8(*base), patches, MCFileSystem::FromUtf8(*out));
-
-    if (!applied)
-    {
-        std::cout << std::format("  {}\n", applied.error());
-    }
-
-    REQUIRE(applied.has_value());
-    std::cout << std::format("  {}: {} bytes, {:.1f} s\n", *out,
-                             std::filesystem::file_size(MCFileSystem::FromUtf8(*out)),
-                             std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
-}
-
-/// <summary>
-/// Tool: <c>--bundle-make &lt;out&gt; --bundle-from &lt;bundle&gt; --bundle-to &lt;bundle&gt;</c> writes the patch
-/// that turns the first bundle into the second (MCBundlePatch::Make); it prints the patch's entries, size and the time
-/// taken. For the release script.
-/// </summary>
-TEST_CASE_ISOLATED("tool: --bundle-make writes the patch from one bundle to another")
-{
-    const std::optional<std::string_view> out = MCTest::Option("bundle-make");
-
-    if (!out.has_value())
-    {
-        return;
-    }
-
-    const std::optional<std::string_view> from = MCTest::Option("bundle-from");
-    const std::optional<std::string_view> to = MCTest::Option("bundle-to");
-    REQUIRE(from.has_value());
-    REQUIRE(to.has_value());
-    const auto started = std::chrono::steady_clock::now();
-    const auto made =
-        MCBundlePatch::Make(MCFileSystem::FromUtf8(*from), MCFileSystem::FromUtf8(*to), MCFileSystem::FromUtf8(*out));
-
-    if (!made)
-    {
-        std::cout << std::format("  {}\n", made.error());
-    }
-
-    REQUIRE(made.has_value());
-    auto patch = MCFastFile::Create(std::string(*out));
-    REQUIRE(patch.has_value());
-    const std::span<const MCFileEntry> entries = (*patch)->GetEntries();
-    const auto deleted = std::ranges::count_if(entries, [](const MCFileEntry& entry) { return entry.RealSize == 0; });
-    std::cout << std::format("  {}: {} entries ({} deleted), {} bytes, {:.1f} s\n", *out, entries.size(), deleted,
-                             std::filesystem::file_size(MCFileSystem::FromUtf8(*out)),
                              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
 }

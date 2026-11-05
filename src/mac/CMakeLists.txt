@@ -135,6 +135,12 @@ add_library(mc_libdeflate STATIC ${MC_LIBDEFLATE_DIR}/lib/deflate_decompress.c $
 target_compile_options(mc_libdeflate PRIVATE -w)
 target_include_directories(mc_libdeflate PUBLIC ${MC_LIBDEFLATE_DIR})
 target_link_libraries(MCCore PUBLIC mc_libdeflate)
+# HDiffPatch's patcher (lib/MCFilePatch applies updates' patches): one C file, single-threaded, as on Windows.
+add_library(mc_hpatch STATIC ${MC_SRC}/lib/HDiffPatch-5.1.3/libHDiffPatch/HPatch/patch.c)
+target_compile_definitions(mc_hpatch PRIVATE _IS_USED_MULTITHREAD=0)
+target_compile_options(mc_hpatch PRIVATE -w)
+target_include_directories(mc_hpatch PUBLIC ${MC_SRC}/lib/HDiffPatch-5.1.3)
+target_link_libraries(MCCore PUBLIC mc_hpatch)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
 add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)

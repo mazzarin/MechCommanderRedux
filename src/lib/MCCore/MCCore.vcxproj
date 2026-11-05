@@ -150,13 +150,13 @@
     <ClCompile Include="iface\MCTacticalInterfaceKeys.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceMouseState.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp" />
-    <ClCompile Include="lib\MCBundlePatch.cpp" />
     <ClCompile Include="lib\MCDice.cpp" />
     <ClCompile Include="lib\MCDiskFile.cpp" />
     <ClCompile Include="lib\MCFastFile.cpp" />
     <ClCompile Include="lib\MCFastFileSet.cpp" />
     <ClCompile Include="lib\MCFatal.cpp" />
     <ClCompile Include="lib\MCFile.cpp" />
+    <ClCompile Include="lib\MCFilePatch.cpp" />
     <ClCompile Include="lib\MCFitIniFile.cpp" />
     <ClCompile Include="lib\MCInflate.cpp" />
     <ClCompile Include="lib\MCLzCompress.cpp" />
@@ -577,13 +577,13 @@
     <ClInclude Include="iface\MCMechIcon.h" />
     <ClInclude Include="iface\MCOrderSink.h" />
     <ClInclude Include="iface\MCTacticalInterface.h" />
-    <ClInclude Include="lib\MCBundlePatch.h" />
     <ClInclude Include="lib\MCDice.h" />
     <ClInclude Include="lib\MCDiskFile.h" />
     <ClInclude Include="lib\MCFastFile.h" />
     <ClInclude Include="lib\MCFastFileSet.h" />
     <ClInclude Include="lib\MCFatal.h" />
     <ClInclude Include="lib\MCFile.h" />
+    <ClInclude Include="lib\MCFilePatch.h" />
     <ClInclude Include="lib\MCFitIniFile.h" />
     <ClInclude Include="lib\MCFrameOfRef.h" />
     <ClInclude Include="lib\MCIDString.h" />
@@ -1053,6 +1053,16 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <!-- HDiffPatch 5.1.3's patcher (src\lib\HDiffPatch-5.1.3, MIT): applies updates' patches (lib\MCFilePatch),
+       single-threaded. A C unit outside MCCore, so its own ItemGroup too. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)HDiffPatch-5.1.3\libHDiffPatch\HPatch\patch.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>_IS_USED_MULTITHREAD=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemGroup>
   <!-- bc7enc_rdo (src\lib\bc7enc_rdo, MIT or public domain): the HD art pack's BC7 encoder, decoder and entropy

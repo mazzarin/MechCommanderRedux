@@ -72,8 +72,8 @@ namespace
     using MCKind = MCFailure::MCKind;
 
     /// <summary>
-    /// What a source's Cancel reaches: its transfer and its waits to try again. Once cancelled, it stays so: every
-    /// later fetch fails at once.
+    /// What a source's Cancel reaches: its transfer, its waits to try again, and the sources made from it. Once
+    /// cancelled, it stays so: every later fetch fails at once.
     /// </summary>
     class MCStopper
     {
@@ -86,9 +86,39 @@ namespace
                 const std::scoped_lock lock(_Lock);
                 _Cancelled = true;
                 _Get.Cancel();
+
+                // Always this one's lock before a child's: a child takes none of its parent's while it holds its own.
+                for (MCStopper* child : _Children)
+                {
+                    child->Cancel();
+                }
             }
 
             _Woken.notify_all();
+        }
+
+        /// <summary>A source made from this one: cancelled with it (at once, when this one is already).</summary>
+        void Adopt(MCStopper& child)
+        {
+            bool cancelled = false;
+
+            {
+                const std::scoped_lock lock(_Lock);
+                _Children.push_back(&child);
+                cancelled = _Cancelled;
+            }
+
+            if (cancelled)
+            {
+                child.Cancel();
+            }
+        }
+
+        /// <summary>A source made from this one, as it goes.</summary>
+        void Drop(MCStopper& child)
+        {
+            const std::scoped_lock lock(_Lock);
+            std::erase(_Children, &child);
         }
 
         bool Cancelled()
@@ -110,6 +140,7 @@ namespace
         std::condition_variable _Woken;
         bool _Cancelled = false;
         MCHttpSource::MCGet& _Get;
+        std::vector<MCStopper*> _Children;
     };
 
     /// <summary>
@@ -233,10 +264,30 @@ namespace
     class MCSource final : public MCContentStage::MCSource
     {
     public:
-        MCSource(std::string address, std::unique_ptr<MCHttpSource::MCGet> get)
-            : _Address(std::move(address)), _Get(std::move(get)), _Stopper(*_Get)
+        MCSource(std::string address, MCHttpSource::MCGetMaker makeGet, std::unique_ptr<MCHttpSource::MCGet> get,
+                 std::shared_ptr<MCStopper> parent)
+            : _Address(std::move(address))
+            , _MakeGet(std::move(makeGet))
+            , _Get(std::move(get))
+            , _Stopper(std::make_shared<MCStopper>(*_Get))
+            , _Parent(std::move(parent))
         {
+            if (_Parent != nullptr)
+            {
+                _Parent->Adopt(*_Stopper);
+            }
         }
+
+        ~MCSource() override
+        {
+            if (_Parent != nullptr)
+            {
+                _Parent->Drop(*_Stopper);
+            }
+        }
+
+        MCSource(const MCSource&) = delete;
+        MCSource& operator=(const MCSource&) = delete;
 
         std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
                                                const std::function<bool(std::span<const char>)>& received) override
@@ -275,7 +326,19 @@ namespace
             return text;
         }
 
-        void Cancel() override { _Stopper.Cancel(); }
+        void Cancel() override { _Stopper->Cancel(); }
+
+        std::unique_ptr<MCContentStage::MCSource> Another() override
+        {
+            std::unique_ptr<MCHttpSource::MCGet> get = _MakeGet ? _MakeGet() : nullptr;
+
+            if (get == nullptr)
+            {
+                return nullptr;
+            }
+
+            return std::make_unique<MCSource>(_Address, _MakeGet, std::move(get), _Stopper);
+        }
 
     private:
         std::string Url(std::string_view name) const { return std::format("{}/{}", _Address, Escaped(name)); }
@@ -291,7 +354,7 @@ namespace
 
             for (;;)
             {
-                if (_Stopper.Cancelled())
+                if (_Stopper->Cancelled())
                 {
                     return std::unexpected(std::string(StoppedError));
                 }
@@ -304,7 +367,7 @@ namespace
                     return {};
                 }
 
-                if (done.error().Kind == MCKind::Stopped || _Stopper.Cancelled())
+                if (done.error().Kind == MCKind::Stopped || _Stopper->Cancelled())
                 {
                     return std::unexpected(std::string(StoppedError));
                 }
@@ -323,7 +386,7 @@ namespace
                 SDL_Log("Updates: %.*s: %s; tried again in %lld ms", static_cast<int>(name.size()), name.data(),
                         done.error().Reason.c_str(), static_cast<long long>(wait.count()));
 
-                if (!_Stopper.Wait(wait))
+                if (!_Stopper->Wait(wait))
                 {
                     return std::unexpected(std::string(StoppedError));
                 }
@@ -388,8 +451,11 @@ namespace
         }
 
         std::string _Address;
+        MCHttpSource::MCGetMaker _MakeGet;
         std::unique_ptr<MCHttpSource::MCGet> _Get;
-        MCStopper _Stopper;
+        std::shared_ptr<MCStopper> _Stopper;
+        /// <summary>The source this one was made from (none: made by Make), whose Cancel reaches this one.</summary>
+        std::shared_ptr<MCStopper> _Parent;
     };
 }
 
@@ -435,7 +501,7 @@ std::optional<std::pair<std::string, std::string>> MCHttpSource::SchemeAndHost(s
 }
 
 std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSource::Make(std::string_view address,
-                                                                                         std::unique_ptr<MCGet> get)
+                                                                                         MCGetMaker makeGet)
 {
     const auto parts = SchemeAndHost(address);
 
@@ -456,5 +522,12 @@ std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSour
         address.remove_suffix(1);
     }
 
-    return std::make_unique<MCSource>(std::string(address), std::move(get));
+    std::unique_ptr<MCGet> get = makeGet ? makeGet() : nullptr;
+
+    if (get == nullptr)
+    {
+        return std::unexpected("this build has no transfer");
+    }
+
+    return std::make_unique<MCSource>(std::string(address), std::move(makeGet), std::move(get), nullptr);
 }

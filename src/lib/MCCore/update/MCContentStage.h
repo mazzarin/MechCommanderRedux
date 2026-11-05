@@ -47,9 +47,16 @@ namespace MCContentStage
 
         /// <summary>
         /// From any thread: ends the fetch or read under way at once, and fails every later one, with "stopped" (a
-        /// work's stop calls it). Here it does nothing (the fetch stops at its next bytes, as received says).
+        /// work's stop calls it), and those of the sources made from it (<see cref="Another"/>). Here it does nothing
+        /// (the fetch stops at its next bytes, as received says).
         /// </summary>
         virtual void Cancel() {}
+
+        /// <summary>
+        /// Another source to the same host with a transfer of its own, so files are fetched several at once (staging's
+        /// patches, from other threads); this one's Cancel reaches it too. Here none: files are fetched one at a time.
+        /// </summary>
+        virtual std::unique_ptr<MCSource> Another() { return nullptr; }
     };
 
     /// <summary>Why a checked download (<see cref="FetchChecked"/>) failed.</summary>
@@ -88,7 +95,9 @@ namespace MCContentStage
     /// <summary>
     /// Stages <paramref name="plan"/> (made against <paramref name="list"/>) in <paramref name="gameFolder"/> from
     /// <paramref name="source"/>, each staged file and its folder flushed (not yet armed: <see cref="Arm"/>).
-    /// <paramref name="progress"/> gets the bytes downloaded so far and expected, and returns false to stop.
+    /// <paramref name="progress"/> gets the bytes downloaded so far and expected, on this thread, and returns false to
+    /// stop. The patches are fetched ahead from the source's others (MCSource::Another), on threads of their own; the
+    /// disk is used from those threads too.
     /// </summary>
     /// <returns>Nothing, or what failed (not enough space, a download, a file that doesn't check out).</returns>
     std::expected<void, std::string> Stage(MCUpdateDisk& disk, MCSource& source,

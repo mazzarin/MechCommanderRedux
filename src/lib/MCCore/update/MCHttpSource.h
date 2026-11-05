@@ -20,11 +20,14 @@ namespace MCHttpSource
     /// <summary>The scheme and host of <paramref name="url"/> ("https", "example.com"), when it has them.</summary>
     std::optional<std::pair<std::string, std::string>> SchemeAndHost(std::string_view url);
 
+    /// <summary>Makes a platform's transfer (MCMakeHttpGet).</summary>
+    using MCGetMaker = std::function<std::unique_ptr<MCGet>()>;
+
     /// <summary>
     /// The source whose files are under <paramref name="address"/> ("https://host/folder"), fetched through
-    /// <paramref name="get"/>.
+    /// transfers <paramref name="makeGet"/> makes: one for it, and one for each source made from it (Another).
     /// </summary>
     /// <returns>The source, or why the address can't be one (not https, nor http to this machine).</returns>
     std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> Make(std::string_view address,
-                                                                               std::unique_ptr<MCGet> get);
+                                                                               MCGetMaker makeGet);
 }

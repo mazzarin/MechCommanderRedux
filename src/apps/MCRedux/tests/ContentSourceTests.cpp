@@ -312,7 +312,7 @@ namespace
 
     std::unique_ptr<MCContentStage::MCSource> SourceAt(const MCTestHost& host)
     {
-        auto source = MCHttpSource::Make(host.Address(), MCMakeHttpGet());
+        auto source = MCHttpSource::Make(host.Address(), MCMakeHttpGet);
         REQUIRE(source.has_value());
         return std::move(*source);
     }
@@ -415,6 +415,67 @@ TEST_CASE("content source: a busy host is tried again, a missing file isn't; a c
     CHECK_EQ(Fetch(*source, ZipName, folder.Path() / "later.zip", zip.size(), received).error_or(""),
              std::string("stopped"));
     CHECK_EQ(host.Ranges().size(), size_t{7});
+
+    // A source made from one cancelled is too, and one cancelled after it's made: neither asks the host.
+    const auto cancelledAnother = source->Another();
+    REQUIRE(cancelledAnother != nullptr);
+    CHECK_EQ(Fetch(*cancelledAnother, ZipName, folder.Path() / "another.zip", zip.size(), received).error_or(""),
+             std::string("stopped"));
+    const auto fresh = SourceAt(host);
+    const auto another = fresh->Another();
+    REQUIRE(another != nullptr);
+    fresh->Cancel();
+    CHECK_EQ(Fetch(*another, ZipName, folder.Path() / "another.zip", zip.size(), received).error_or(""),
+             std::string("stopped"));
+    CHECK_EQ(host.Ranges().size(), size_t{7});
+}
+
+TEST_CASE("content source: sources made from one fetch files at the same time, each over a transfer of its own")
+{
+    constexpr int Files = 4;
+    std::map<std::string, std::string, std::less<>> hosted;
+
+    for (int i = 0; i < Files; ++i)
+    {
+        hosted[std::format("patches/{}.hdiff", i)] = Bytes(ZipBytes + static_cast<size_t>(i));
+    }
+
+    MCTestHost host(hosted);
+    const auto source = SourceAt(host);
+    const MCScratchFolder folder(TestGroup, "another");
+    std::vector<std::unique_ptr<MCContentStage::MCSource>> others;
+    std::vector<std::expected<void, std::string>> fetched(Files);
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < Files; ++i)
+    {
+        others.push_back(source->Another());
+        REQUIRE(others.back() != nullptr);
+    }
+
+    for (int i = 0; i < Files; ++i)
+    {
+        threads.emplace_back(
+            [&, i]
+            {
+                uint64_t received = 0;
+                const std::string name = std::format("patches/{}.hdiff", i);
+                fetched[static_cast<size_t>(i)] =
+                    Fetch(*others[static_cast<size_t>(i)], name, folder.Path() / std::format("{}.hdiff", i),
+                          hosted.at(name).size(), received);
+            });
+    }
+
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    for (int i = 0; i < Files; ++i)
+    {
+        CHECK_EQ(fetched[static_cast<size_t>(i)].error_or(""), std::string());
+        CHECK(FileText(folder.Path() / std::format("{}.hdiff", i)) == hosted[std::format("patches/{}.hdiff", i)]);
+    }
 }
 
 TEST_CASE("content source: a cancel from another thread ends a transfer at once, stalled or streaming")
@@ -546,8 +607,7 @@ TEST_CASE("content source: a small file is read whole, one too big refused; only
     CHECK(source->Read("release.json", release.size() - 1).error_or("").find("bigger than") != std::string::npos);
     CHECK(source->Read("keys.json", release.size()).error_or("").find("404") != std::string::npos);
 
-    const auto makes = [](std::string_view address)
-    { return MCHttpSource::Make(address, MCMakeHttpGet()).has_value(); };
+    const auto makes = [](std::string_view address) { return MCHttpSource::Make(address, MCMakeHttpGet).has_value(); };
     CHECK(makes("https://mechcommander-redux-downloads.mazzarin.workers.dev/content"));
     CHECK(makes("HTTPS://example.com"));
     CHECK(makes("http://127.0.0.1:8080/content/"));

@@ -144,6 +144,74 @@ namespace
         std::shared_ptr<MCShared> _Shared;
     };
 
+    /// <summary>
+    /// The release's files hosted in a folder, each fetch taking a while (a request's first byte), from sources made
+    /// from one another (Another) that count what they fetch at once.
+    /// </summary>
+    class MCParallelSource final : public MCContentStage::MCSource
+    {
+    public:
+        struct MCShared
+        {
+            std::mutex Lock;
+            std::vector<std::string> Asked;
+            /// <summary>The names asked of the first source (staging's own), not one made from it.</summary>
+            std::vector<std::string> AskedFirst;
+            int Fetching = 0;
+            int MostAtOnce = 0;
+        };
+
+        MCParallelSource(std::filesystem::path folder, std::shared_ptr<MCShared> shared, bool first)
+            : _Folder(std::move(folder)), _Shared(std::move(shared)), _First(first)
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(std::span<const char>)>& received) override
+        {
+            {
+                const std::scoped_lock lock(_Shared->Lock);
+                _Shared->Asked.emplace_back(name);
+
+                if (_First)
+                {
+                    _Shared->AskedFirst.emplace_back(name);
+                }
+
+                _Shared->MostAtOnce = std::max(_Shared->MostAtOnce, ++_Shared->Fetching);
+            }
+
+            std::this_thread::sleep_for(FirstByte);
+            const std::string bytes = MCContentFixture::Read(_Folder / MCFileSystem::FromUtf8(name));
+            std::error_code error;
+            const uint64_t start = std::filesystem::exists(to) ? std::filesystem::file_size(to, error) : 0;
+            std::ofstream out(to, std::ios::binary | std::ios::app);
+            out.write(bytes.data() + start, static_cast<std::streamsize>(size - start));
+            out.close();
+            const bool goOn = received(std::span(bytes).subspan(static_cast<size_t>(start)));
+            const std::scoped_lock lock(_Shared->Lock);
+            --_Shared->Fetching;
+            return goOn ? std::expected<void, std::string>() : std::unexpected("stopped");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view, size_t) override
+        {
+            return std::unexpected("not hosted");
+        }
+
+        std::unique_ptr<MCContentStage::MCSource> Another() override
+        {
+            return std::make_unique<MCParallelSource>(_Folder, _Shared, false);
+        }
+
+        static constexpr std::chrono::milliseconds FirstByte{30};
+
+    private:
+        std::filesystem::path _Folder;
+        std::shared_ptr<MCShared> _Shared;
+        bool _First;
+    };
+
     /// <summary>The bytes of the step at <paramref name="path"/>'s file, as listed.</summary>
     uint64_t ListedSize(const MCContentList::MCList& list, std::string_view path)
     {
@@ -353,6 +421,59 @@ TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched
     }
 }
 
+TEST_CASE("content stage: patches are fetched several at once, each over a source of its own, applied in order")
+{
+    MCRelease release(Group, "parallel");
+    constexpr int Extra = 15;
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        AddPatched(release, std::format("bundle-{}", i));
+    }
+
+    const MCContentPlan::MCPlan plan = release.Plan();
+    const auto shared = std::make_shared<MCParallelSource::MCShared>();
+    MCParallelSource source(release.Host.Path(), shared, true);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    uint64_t lastReceived = 0;
+    const auto staged = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                              [&](uint64_t received, uint64_t)
+                                              {
+                                                  lastReceived = received;
+                                                  return true;
+                                              });
+    REQUIRE(staged.has_value());
+    CHECK_EQ(lastReceived, plan.DownloadBytes);
+    // At once, but never more than the workers; each patch once; the zips one at a time from staging's own source.
+    CHECK(shared->MostAtOnce > 1);
+    CHECK(shared->MostAtOnce <= 8);
+    CHECK_EQ(shared->Asked.size(), size_t{Extra + 2});
+    CHECK((shared->AskedFirst == std::vector<std::string>{"update-2.zip"}));
+    CHECK(Read(StagedAt(release, "HD/terrain.hda")) == Text(MCFilePatchFixture::PatchNew()));
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        CHECK(Read(StagedAt(release, std::format("HD/bundle-{}.hda", i))) == Text(MCFilePatchFixture::PatchNew()));
+    }
+
+    // Stopped while they fetch: staging ends, its workers with it, and no zip is asked for.
+    MCRelease stopping(Group, "parallel-stop");
+
+    for (int i = 0; i < Extra; ++i)
+    {
+        AddPatched(stopping, std::format("bundle-{}", i));
+    }
+
+    const auto stoppingShared = std::make_shared<MCParallelSource::MCShared>();
+    MCParallelSource stoppingSource(stopping.Host.Path(), stoppingShared, true);
+    const auto stopped =
+        MCContentStage::Stage(*disk, stoppingSource, stopping.Game.Path(), stopping.Plan(), stopping.List,
+                              [](uint64_t received, uint64_t) { return received == 0; });
+    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+    CHECK(std::ranges::count(stoppingShared->Asked, std::string("update-2.zip")) == 0);
+    CHECK(stoppingShared->Asked.size() < size_t{Extra + 1});
+}
+
 TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "
           "alone")
 {
@@ -499,7 +620,7 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
 
     if (hostOption->starts_with("http"))
     {
-        auto made = MCHttpSource::Make(*hostOption, MCMakeHttpGet());
+        auto made = MCHttpSource::Make(*hostOption, MCMakeHttpGet);
 
         if (!made)
         {

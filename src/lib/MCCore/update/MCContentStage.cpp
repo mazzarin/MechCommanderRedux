@@ -9,6 +9,10 @@
 #define MINIZ_NO_TIME
 #include "miniz.h"
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace
 {
     using MCContentPlan::MCAction;
@@ -17,6 +21,14 @@ namespace
     constexpr double BytesPerGigabyte = 1e9;
     /// <summary>What a stop ends staging with, as a source's Cancel ends its fetch (MCSource::Cancel).</summary>
     constexpr std::string_view StoppedError = "stopped";
+    /// <summary>
+    /// The most patches fetched at once, each by a worker with a source of its own (MCSource::Another), and so the
+    /// most downloaded ahead of their applying, in order: a request's first byte takes 110-310 ms, so a thousand
+    /// patches fetched one by one would wait minutes for nothing.
+    /// </summary>
+    constexpr size_t PatchWorkers = 8;
+    /// <summary>How often staging tells its progress while the workers fetch.</summary>
+    constexpr std::chrono::milliseconds ProgressEvery{100};
 
     std::string Shown(const std::filesystem::path& path)
     {
@@ -132,19 +144,9 @@ namespace
                 return space;
             }
 
-            for (const MCStep* step : patches)
+            if (auto patched = PatchAll(patches, whole); !patched)
             {
-                if (const auto patched = Patch(*step); !patched)
-                {
-                    // A stop isn't a patch that failed: nothing more is fetched or applied.
-                    if (Stopped())
-                    {
-                        return Stop();
-                    }
-
-                    SDL_Log("Updates: %s is fetched whole: %s", step->Path.c_str(), patched.error().c_str());
-                    whole.push_back(step);
-                }
+                return patched;
             }
 
             // A patch that fell back on a zip not otherwise fetched needs room for it too.
@@ -242,22 +244,28 @@ namespace
 
         /// <summary>
         /// Refuses to go on without room for what's still to stage (<paramref name="patches"/>' and <paramref
-        /// name="whole"/>'s files), the biggest patch still to fetch and the biggest zip; what's already staged or
-        /// downloaded takes its room already. When the free space can't be read, it's logged and staging goes on.
+        /// name="whole"/>'s files), the biggest patches still to fetch (as many as are fetched ahead) and the biggest
+        /// zip; what's already staged or downloaded takes its room already. When the free space can't be read, it's
+        /// logged and staging goes on.
         /// </summary>
         std::expected<void, std::string> CheckSpace(const std::vector<const MCStep*>& patches,
                                                     const std::vector<const MCStep*>& whole)
         {
             uint64_t needed = 0;
-            uint64_t biggestPatch = 0;
             uint64_t biggestZip = 0;
+            std::vector<uint64_t> patchesLeft;
 
             for (const MCStep* step : patches)
             {
                 needed += step->File->Size;
-                biggestPatch =
-                    std::max(biggestPatch, step->Patch->Size - Downloaded(step->Patch->Name, step->Patch->Size));
+                patchesLeft.push_back(step->Patch->Size - Downloaded(step->Patch->Name, step->Patch->Size));
             }
+
+            const size_t ahead = std::min(PatchWorkers, patchesLeft.size());
+            std::ranges::partial_sort(patchesLeft, patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead),
+                                      std::greater<>());
+            needed =
+                std::accumulate(patchesLeft.begin(), patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead), needed);
 
             for (const MCStep* step : whole)
             {
@@ -269,7 +277,7 @@ namespace
                 biggestZip = std::max(biggestZip, zip->Size - Downloaded(zip->Name, zip->Size));
             }
 
-            needed += biggestPatch + biggestZip;
+            needed += biggestZip;
             const auto free = _Disk.FreeBytes(_Game);
 
             if (!free)
@@ -288,13 +296,18 @@ namespace
             return {};
         }
 
-        /// <summary>Downloads a hosted file (resuming), and checks it's the list's; a stop ends it at once.</summary>
-        std::expected<std::filesystem::path, std::string> FetchChecked(std::string_view name, uint64_t size,
-                                                                       const MCSha256::MCDigest& sha256)
+        /// <summary>
+        /// Downloads a hosted file (resuming) from <paramref name="source"/>, and checks it's the list's; a stop ends it
+        /// at once. <paramref name="received"/> counts the bytes (Received on staging's own thread, Counted on a
+        /// worker's).
+        /// </summary>
+        std::expected<std::filesystem::path, std::string> FetchChecked(MCContentStage::MCSource& source,
+                                                                       std::string_view name, uint64_t size,
+                                                                       const MCSha256::MCDigest& sha256,
+                                                                       const std::function<bool(uint64_t)>& received)
         {
             const std::filesystem::path path = DownloadPath(name);
-            const auto fetched = MCContentStage::FetchChecked(_Disk, _Source, name, path, size, sha256,
-                                                              [this](uint64_t count) { return Received(count); });
+            const auto fetched = MCContentStage::FetchChecked(_Disk, source, name, path, size, sha256, received);
 
             if (fetched)
             {
@@ -304,7 +317,7 @@ namespace
             switch (fetched.error().Kind)
             {
                 case MCContentStage::MCFetchError::MCKind::Stopped:
-                    return Stop();
+                    return std::unexpected(std::string(StoppedError));
                 case MCContentStage::MCFetchError::MCKind::NotAsNamed:
                     return std::unexpected(std::format("{} isn't as the list has it", name));
                 case MCContentStage::MCFetchError::MCKind::Download:
@@ -314,16 +327,240 @@ namespace
             return std::unexpected(std::format("{} didn't download: {}", name, fetched.error().Reason));
         }
 
-        /// <summary>Writes the patched file to staged/; fails (and leaves nothing) when it can't.</summary>
-        std::expected<void, std::string> Patch(const MCStep& step)
+        /// <summary>
+        /// Stages <paramref name="patches"/>' files, each patch applied in order; one whose patch doesn't come or
+        /// doesn't apply joins <paramref name="whole"/>. With a source that makes others, the patches are fetched
+        /// ahead by workers, <see cref="PatchWorkers"/> at once; otherwise one by one.
+        /// </summary>
+        /// <returns>Nothing, or stopped.</returns>
+        std::expected<void, std::string> PatchAll(const std::vector<const MCStep*>& patches,
+                                                  std::vector<const MCStep*>& whole)
         {
-            const auto patch = FetchChecked(step.Patch->Name, step.Patch->Size, step.Patch->Sha256);
+            std::vector<std::unique_ptr<MCContentStage::MCSource>> sources;
 
-            if (!patch)
+            while (patches.size() > 1 && sources.size() < std::min(PatchWorkers, patches.size()))
             {
-                return std::unexpected(patch.error());
+                std::unique_ptr<MCContentStage::MCSource> another = _Source.Another();
+
+                if (another == nullptr)
+                {
+                    break;
+                }
+
+                sources.push_back(std::move(another));
             }
 
+            if (sources.empty())
+            {
+                for (const MCStep* step : patches)
+                {
+                    const auto fetched = FetchPatch(_Source, *step, [this](uint64_t count) { return Received(count); });
+
+                    if (auto patched = Patched(*step, fetched, whole); !patched)
+                    {
+                        return patched;
+                    }
+                }
+
+                return {};
+            }
+
+            return PatchAhead(patches, sources, whole);
+        }
+
+        /// <summary>The patches fetched ahead, shared by the workers and staging's thread, which applies them.</summary>
+        struct MCAhead
+        {
+            std::mutex Lock;
+            std::condition_variable Changed;
+            /// <summary>The next patch to fetch, and the patches applied so far (a worker fetches no further ahead).</summary>
+            size_t Next = 0;
+            size_t Applied = 0;
+            bool Ending = false;
+            std::vector<std::optional<std::expected<std::filesystem::path, std::string>>> Fetched;
+        };
+
+        /// <summary>The workers fetching ahead, ended and their sources let go of whichever way staging goes on.</summary>
+        class MCWorkers
+        {
+        public:
+            MCWorkers(MCStager& stager, MCAhead& ahead) : _Stager(stager), _Ahead(ahead) {}
+            MCWorkers(const MCWorkers&) = delete;
+            MCWorkers& operator=(const MCWorkers&) = delete;
+
+            ~MCWorkers()
+            {
+                {
+                    const std::scoped_lock lock(_Ahead.Lock);
+                    _Ahead.Ending = true;
+                }
+
+                _Ahead.Changed.notify_all();
+                Threads.clear();
+                const std::scoped_lock lock(_Stager._WorkersLock);
+                _Stager._Workers.clear();
+            }
+
+            std::vector<std::jthread> Threads;
+
+        private:
+            MCStager& _Stager;
+            MCAhead& _Ahead;
+        };
+
+        std::expected<void, std::string> PatchAhead(const std::vector<const MCStep*>& patches,
+                                                    std::vector<std::unique_ptr<MCContentStage::MCSource>>& sources,
+                                                    std::vector<const MCStep*>& whole)
+        {
+            MCAhead ahead;
+            ahead.Fetched.resize(patches.size());
+            MCWorkers workers(*this, ahead);
+
+            {
+                // A stop cancels them, so a fetch that's stalled ends at once.
+                const std::scoped_lock lock(_WorkersLock);
+
+                for (const std::unique_ptr<MCContentStage::MCSource>& source : sources)
+                {
+                    _Workers.push_back(source.get());
+                }
+            }
+
+            if (_Stopped)
+            {
+                return Stop();
+            }
+
+            for (const std::unique_ptr<MCContentStage::MCSource>& source : sources)
+            {
+                workers.Threads.emplace_back([this, &ahead, &patches, worker = source.get()]
+                                             { FetchAhead(*worker, ahead, patches); });
+            }
+
+            for (size_t index = 0; index < patches.size(); ++index)
+            {
+                std::expected<std::filesystem::path, std::string> fetched;
+
+                {
+                    std::unique_lock lock(ahead.Lock);
+
+                    // The progress is told, and asked whether to go on, from this thread alone.
+                    while (
+                        !ahead.Changed.wait_for(lock, ProgressEvery, [&] { return ahead.Fetched[index].has_value(); }))
+                    {
+                        lock.unlock();
+
+                        if (!Received(0))
+                        {
+                            return Stop();
+                        }
+
+                        lock.lock();
+                    }
+
+                    fetched = std::move(*ahead.Fetched[index]);
+                }
+
+                if (!Received(0))
+                {
+                    return Stop();
+                }
+
+                auto patched = Patched(*patches[index], fetched, whole);
+
+                {
+                    const std::scoped_lock lock(ahead.Lock);
+                    ahead.Applied = index + 1;
+                }
+
+                ahead.Changed.notify_all();
+
+                if (!patched)
+                {
+                    return patched;
+                }
+            }
+
+            return {};
+        }
+
+        /// <summary>A worker: fetches the next patch, no further ahead of those applied than there are workers.</summary>
+        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<const MCStep*>& patches)
+        {
+            for (;;)
+            {
+                size_t index = 0;
+
+                {
+                    std::unique_lock lock(ahead.Lock);
+                    ahead.Changed.wait(lock,
+                                       [&]
+                                       {
+                                           return ahead.Ending || ahead.Next >= patches.size() ||
+                                                  ahead.Next < ahead.Applied + PatchWorkers;
+                                       });
+
+                    if (ahead.Ending || ahead.Next >= patches.size() || _Stopped)
+                    {
+                        return;
+                    }
+
+                    index = ahead.Next++;
+                }
+
+                auto fetched = FetchPatch(source, *patches[index], [this](uint64_t count) { return Counted(count); });
+
+                {
+                    const std::scoped_lock lock(ahead.Lock);
+                    ahead.Fetched[index] = std::move(fetched);
+                }
+
+                ahead.Changed.notify_all();
+            }
+        }
+
+        /// <summary>
+        /// Applies a patch fetched; one that didn't come, or doesn't apply, leaves its file to fetch whole (<paramref
+        /// name="whole"/>).
+        /// </summary>
+        /// <returns>Nothing, or stopped: a stop isn't a patch that failed, so nothing more is fetched or applied.</returns>
+        std::expected<void, std::string> Patched(const MCStep& step,
+                                                 const std::expected<std::filesystem::path, std::string>& fetched,
+                                                 std::vector<const MCStep*>& whole)
+        {
+            std::expected<void, std::string> patched = std::unexpected(fetched.error_or(std::string()));
+
+            if (fetched)
+            {
+                patched = Apply(step, *fetched);
+            }
+
+            if (patched)
+            {
+                return {};
+            }
+
+            if (Stopped())
+            {
+                return Stop();
+            }
+
+            SDL_Log("Updates: %s is fetched whole: %s", step.Path.c_str(), patched.error().c_str());
+            whole.push_back(&step);
+            return {};
+        }
+
+        /// <summary>Downloads a step's patch into download/, checked.</summary>
+        std::expected<std::filesystem::path, std::string> FetchPatch(MCContentStage::MCSource& source,
+                                                                     const MCStep& step,
+                                                                     const std::function<bool(uint64_t)>& received)
+        {
+            return FetchChecked(source, step.Patch->Name, step.Patch->Size, step.Patch->Sha256, received);
+        }
+
+        /// <summary>Writes the patched file to staged/; fails (and leaves nothing) when it can't.</summary>
+        std::expected<void, std::string> Apply(const MCStep& step, const std::filesystem::path& patch)
+        {
             const std::filesystem::path staged = StagedPath(step);
 
             if (!_Disk.MakeFolders(staged.parent_path()))
@@ -336,7 +573,7 @@ namespace
                 return Stop();
             }
 
-            const auto applied = MCFilePatch::Apply(At(step.OnDisk), *patch, staged, _GoOn);
+            const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn);
 
             // Stopped, the patch stays for the next attempt.
             if (Stopped())
@@ -344,7 +581,7 @@ namespace
                 return Stop();
             }
 
-            _Disk.Remove(*patch);
+            _Disk.Remove(patch);
 
             if (!applied)
             {
@@ -372,7 +609,8 @@ namespace
         std::expected<void, std::string> FetchAndUnpack(const MCContentList::MCZip& zip,
                                                         const std::vector<const MCStep*>& entries)
         {
-            const auto path = FetchChecked(zip.Name, zip.Size, zip.Sha256);
+            const auto path = FetchChecked(_Source, zip.Name, zip.Size, zip.Sha256,
+                                           [this](uint64_t count) { return Received(count); });
 
             if (!path)
             {
@@ -513,17 +751,36 @@ namespace
             return {};
         }
 
-        /// <summary>Counts bytes in, and asks whether to go on.</summary>
+        /// <summary>On staging's own thread: counts bytes in, tells the progress, and asks whether to go on.</summary>
         bool Received(uint64_t count)
         {
             _Received += count;
 
             if (_Progress && !_Progress(_Received, _Expected))
             {
-                _Stopped = true;
+                MarkStopped();
             }
 
             return !_Stopped;
+        }
+
+        /// <summary>On a worker's thread: counts bytes in (staging's thread tells them), and whether to go on.</summary>
+        bool Counted(uint64_t count)
+        {
+            _Received += count;
+            return !_Stopped;
+        }
+
+        /// <summary>Stopped: the workers' fetches are cancelled, so one that's stalled ends at once.</summary>
+        void MarkStopped()
+        {
+            _Stopped = true;
+            const std::scoped_lock lock(_WorkersLock);
+
+            for (MCContentStage::MCSource* worker : _Workers)
+            {
+                worker->Cancel();
+            }
         }
 
         /// <summary>Whether staging is to stop: asked before each request, hash, patch and unpack.</summary>
@@ -532,7 +789,7 @@ namespace
         /// <summary>Ends staging as stopped: what's in stays for the next attempt.</summary>
         std::unexpected<std::string> Stop()
         {
-            _Stopped = true;
+            MarkStopped();
             return std::unexpected(std::string(StoppedError));
         }
 
@@ -542,9 +799,13 @@ namespace
         const MCContentPlan::MCPlan& _Plan;
         const MCContentList::MCList& _List;
         const std::function<bool(uint64_t, uint64_t)>& _Progress;
-        uint64_t _Received = 0;
+        /// <summary>The bytes in, counted by the workers too; those expected; whether staging is to stop.</summary>
+        std::atomic<uint64_t> _Received = 0;
         uint64_t _Expected = 0;
-        bool _Stopped = false;
+        std::atomic<bool> _Stopped = false;
+        /// <summary>The workers' sources while they fetch ahead.</summary>
+        std::mutex _WorkersLock;
+        std::vector<MCContentStage::MCSource*> _Workers;
         /// <summary>Asked in the long loops (a hash's reads, a patch's writes, an entry's): false once stopped.</summary>
         const std::function<bool()> _GoOn = [this] { return !Stopped(); };
     };

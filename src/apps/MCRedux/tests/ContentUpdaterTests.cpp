@@ -23,6 +23,8 @@
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
 
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 // The game's own updater (update/MCContentUpdater.h, main/MCUpdater.h) and its locks (update/MCUpdateLock.h): a
@@ -196,6 +198,57 @@ namespace
     private:
         MCFolderSource _Inner;
         std::shared_ptr<MCGate> _Gate;
+    };
+
+    /// <summary>A transfer stalled on the network: its downloads wait, saying nothing, until it's cancelled.</summary>
+    struct MCStall
+    {
+        std::mutex Mutex;
+        std::condition_variable Changed;
+        bool Reached = false;
+        bool Cancelled = false;
+    };
+
+    /// <summary>The release's files hosted in a folder, each download stalled until the transfer is cancelled.</summary>
+    class MCStalledSource final : public MCContentStage::MCSource
+    {
+    public:
+        MCStalledSource(std::filesystem::path folder, std::shared_ptr<MCStall> stall)
+            : _Inner(std::move(folder)), _Stall(std::move(stall))
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
+                                               const std::function<bool(uint64_t)>&) override
+        {
+            std::unique_lock lock(_Stall->Mutex);
+            _Stall->Reached = true;
+            _Stall->Changed.notify_all();
+
+            // Never the bytes callback: only a cancel ends it (or the test's own wait, failing it).
+            if (!_Stall->Changed.wait_for(lock, WorkWait, [&] { return _Stall->Cancelled; }))
+            {
+                return std::unexpected("the stalled download was never cancelled");
+            }
+
+            return std::unexpected("stopped");
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+        void Cancel() override
+        {
+            const std::lock_guard lock(_Stall->Mutex);
+            _Stall->Cancelled = true;
+            _Stall->Changed.notify_all();
+        }
+
+    private:
+        MCFolderSource _Inner;
+        std::shared_ptr<MCStall> _Stall;
     };
 
     /// <summary>What the stand-in program backend was asked.</summary>
@@ -1374,6 +1427,82 @@ TEST_CASE("updater: the program's backend failing while the content stages stops
     CHECK(Stage() == MCStage::Failed);
     CHECK(!release.Armed());
     CHECK(scope.Program->Answers.empty());
+}
+
+TEST_CASE("updater: quitting cancels a download stalled on the network and waits for its end; nothing is left running")
+{
+    MCHostedRelease release("stalled-quit");
+    const auto stall = std::make_shared<MCStall>();
+    MCUpdaterScope scope(release, false, [host = release.Host.Path(), stall]
+                         { return std::make_unique<MCStalledSource>(host, stall); });
+    CheckUntilFound(scope, std::nullopt);
+    MCUpdater::Answer(MCAnswer::Install);
+
+    {
+        std::unique_lock lock(stall->Mutex);
+        REQUIRE(stall->Changed.wait_for(lock, WorkWait, [&] { return stall->Reached; }));
+    }
+
+    // A cancel ends it at once, well before the stall's own wait.
+    constexpr std::chrono::seconds prompt{5};
+    const auto began = std::chrono::steady_clock::now();
+    MCUpdater::Quit();
+    CHECK(std::chrono::steady_clock::now() - began < prompt);
+    CHECK(stall->Cancelled);
+    CHECK(!MCUpdater::Working());
+    CHECK(StagingFree(release.Game.Path()));
+    CHECK(!release.Armed());
+}
+
+TEST_CASE("update work: a piece of work's transfer is cancelled when it's asked to stop; with none it fails, saying so")
+{
+    MCHostedRelease release("work-source");
+    const auto stall = std::make_shared<MCStall>();
+    MCUpdateWork::MCWork<void> work(
+        "a test's download",
+        [host = release.Host.Path(), stall](MCUpdateWork::MCContext& context)
+        {
+            return MCUpdateWork::WithSource<void>(
+                [&] { return std::make_unique<MCStalledSource>(host, stall); }, context.Stop,
+                [](MCContentStage::MCSource& source)
+                { return source.Fetch("update-2.zip", {}, 1, [](uint64_t) { return true; }); });
+        });
+
+    {
+        std::unique_lock lock(stall->Mutex);
+        REQUIRE(stall->Changed.wait_for(lock, WorkWait, [&] { return stall->Reached; }));
+    }
+
+    CHECK(!work.Finished());
+    work.Stop();
+    const std::expected<void, std::string> stopped = work.Join();
+    REQUIRE(!stopped.has_value());
+    CHECK_EQ(stopped.error(), std::string("stopped"));
+    CHECK(stall->Cancelled);
+
+    // Stopped before its transfer is made, the transfer is cancelled as it's made.
+    const auto early = std::make_shared<MCStall>();
+    std::stop_source stop;
+    stop.request_stop();
+    const MCUpdateWork::MCWorkSource cancelled(
+        [&] { return std::make_unique<MCStalledSource>(release.Host.Path(), early); }, stop.get_token());
+    CHECK(early->Cancelled);
+
+    // No transfer: the work fails, saying why.
+    const auto none = MCUpdateWork::WithSource<void>(
+        [] { return std::unique_ptr<MCContentStage::MCSource>(); }, std::stop_token(),
+        [](MCContentStage::MCSource&) -> std::expected<void, std::string> { return {}; });
+    REQUIRE(!none.has_value());
+    CHECK_EQ(none.error(), std::string(MCUpdateWork::NoSourceError));
+
+    // Progress reported, until the stop.
+    MCUpdateWork::MCProgress progress;
+    std::stop_source reporting;
+    const auto report = MCUpdateWork::Reporter(progress, reporting.get_token());
+    CHECK(report(3, 10));
+    CHECK((progress.Get() == std::pair<uint64_t, uint64_t>{3, 10}));
+    reporting.request_stop();
+    CHECK(!report(4, 10));
 }
 
 TEST_CASE("updater: an update's download stops while a match's mission plays, and goes on after it")

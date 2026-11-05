@@ -1,10 +1,11 @@
 #pragma once
 
+#include "update/MCUpdateWork.h"
+
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <functional>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <stop_token>
@@ -22,21 +23,11 @@
 namespace MCFirstStart
 {
     /// <summary>The work's progress, as the window shows it: bytes in, and of the whole (0: not known yet).</summary>
-    class MCProgress
-    {
-    public:
-        void Set(uint64_t received, uint64_t expected);
-        std::pair<uint64_t, uint64_t> Get() const;
-
-    private:
-        mutable std::mutex _Mutex;
-        uint64_t _Received = 0;
-        uint64_t _Expected = 0;
-    };
+    using MCProgress = MCUpdateWork::MCProgress;
 
     /// <summary>
-    /// The work shown: it reports to the progress and stops when asked. It owns everything it uses: a window closed
-    /// while it won't stop leaves it to end with the process.
+    /// The work shown: it reports to the progress and stops when asked (its transfer cancelled: the window waits for
+    /// it to end).
     /// </summary>
     using MCWork = std::function<std::expected<void, std::string>(MCProgress& progress, std::stop_token stop)>;
 
@@ -52,7 +43,8 @@ namespace MCFirstStart
 
     /// <summary>
     /// Runs <paramref name="work"/> on a thread of its own while a window shows <paramref name="heading"/> and its
-    /// progress, until it ends. Closing the window (or the system asking the game to quit) asks the work to stop.
+    /// progress, until it ends. Closing the window (or the system asking the game to quit) asks the work to stop, and
+    /// waits for it.
     /// </summary>
     /// <returns>True when the work was done, false when the player closed the window, or what failed.</returns>
     std::expected<bool, std::string> Run(std::string_view heading, MCWork work, const MCWindowOptions& options = {});

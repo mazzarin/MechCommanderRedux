@@ -7,9 +7,7 @@
 #include "update/MCReleaseFile.h"
 #include "update/MCUpdateDisk.h"
 #include "update/MCUpdateLock.h"
-
-#include <mutex>
-#include <thread>
+#include "update/MCUpdateWork.h"
 
 namespace
 {
@@ -24,13 +22,6 @@ namespace
     constexpr size_t MaxVersionLength = 40;
     constexpr size_t MaxNotesLength = 8192;
     constexpr size_t MaxErrorLength = 300;
-
-    /// <summary>
-    /// How long quitting waits for the work to stop, and how often it looks: a download stalled on the network stops
-    /// only at its timeout, so past this it ends with the game (staging resumes at the next try).
-    /// </summary>
-    constexpr std::chrono::seconds QuitWait{1};
-    constexpr std::chrono::milliseconds QuitLook{10};
 
     /// <summary>
     /// <paramref name="text"/> with only what the game's fonts write (printable ASCII, and newlines when
@@ -87,18 +78,13 @@ namespace
         SetsArmed,
     };
 
-    /// <summary>The content's work off the main thread (a check, or staging): its progress and end, read each frame.</summary>
-    struct MCWork
-    {
-        std::mutex Mutex;
-        uint64_t Received = 0;
-        uint64_t Expected = 0;
-        bool Finished = false;
-        /// <summary>What failed; empty, it went well.</summary>
-        std::string Error;
-        /// <summary>The check's update, when it found one.</summary>
-        std::optional<MCOffer> Offer;
-    };
+    /// <summary>
+    /// The content's work off the main thread (a check, staging, arming, the HD pack's change): its progress and end,
+    /// read each frame. It ends with the update found, when it looked for one, or what failed.
+    /// </summary>
+    using MCWorkResult = std::expected<std::optional<MCOffer>, std::string>;
+    using MCContentWork = MCUpdateWork::MCWork<std::optional<MCOffer>>;
+    using MCJob = std::function<MCWorkResult(MCUpdateWork::MCContext& context)>;
 
     std::unique_ptr<MCUpdater::MCBackend> Backend;
     MCUpdater::MCStatus Current;
@@ -111,9 +97,8 @@ namespace
     MCUpdater::MCSourceMaker MakeSource;
     MCStep Step = MCStep::Idle;
     std::optional<MCOffer> Offer;
-    /// <summary>The work under way, and its thread.</summary>
-    std::shared_ptr<MCWork> Work;
-    std::jthread Worker;
+    /// <summary>The work under way.</summary>
+    std::unique_ptr<MCContentWork> Work;
     /// <summary>Held from INSTALL until both halves are armed or it fails: one copy stages at a time.</summary>
     std::unique_ptr<MCUpdateLock> StagingLock;
     /// <summary>The HD pack as HD OPTIONS shows it.</summary>
@@ -160,13 +145,19 @@ namespace
         Backend->Check(Offer->ProgramBuild);
     }
 
-    /// <summary>Stops the work under way and waits for its thread.</summary>
+    /// <summary>Stops the work under way (its transfer cancelled at once) and waits for it.</summary>
     void StopWork()
     {
-        if (Worker.joinable())
+        if (Work == nullptr)
         {
-            Worker.request_stop();
-            Worker.join();
+            return;
+        }
+
+        Work->Stop();
+
+        if (const MCWorkResult ended = Work->Join(); !ended)
+        {
+            SDL_Log("Updater: the work under way stopped: %s", ended.error().c_str());
         }
 
         Work.reset();
@@ -210,32 +201,14 @@ namespace
         }
     }
 
-    /// <summary>Runs <paramref name="job"/> on a thread of its own; <see cref="MCUpdater::Frame"/> picks up its end.</summary>
-    void RunWork(std::function<void(MCWork&, std::stop_token)> job)
+    /// <summary>
+    /// Runs <paramref name="job"/> (<paramref name="name"/> in the logs) on a thread of its own;
+    /// <see cref="MCUpdater::Frame"/> picks up its end.
+    /// </summary>
+    void RunWork(std::string name, MCJob job)
     {
         StopWork();
-        Work = std::make_shared<MCWork>();
-        Worker = std::jthread(
-            [work = Work, job = std::move(job)](std::stop_token stop)
-            {
-                job(*work, stop);
-                const std::lock_guard lock(work->Mutex);
-                work->Finished = true;
-            });
-    }
-
-    /// <summary>The transfer to the host for a piece of work, or what's wrong.</summary>
-    std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> SourceFor(
-        const MCUpdater::MCSourceMaker& makeSource)
-    {
-        std::unique_ptr<MCContentStage::MCSource> source = makeSource ? makeSource() : nullptr;
-
-        if (source == nullptr)
-        {
-            return std::unexpected("the release's host has no usable address in this build");
-        }
-
-        return source;
+        Work = std::make_unique<MCContentWork>(std::move(name), std::move(job));
     }
 
     /// <summary>
@@ -303,37 +276,33 @@ namespace
     /// <summary>Stages the update's content on the work's thread; <paramref name="arm"/>, arms it there too.</summary>
     void StartStaging(bool arm)
     {
-        RunWork(
-            [setup = *Content, makeSource = MakeSource, offer = *Offer, arm](MCWork& work, std::stop_token stop)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                std::expected<void, std::string> done =
-                    source ? std::expected<void, std::string>() : std::unexpected(source.error());
-
-                if (done)
+        RunWork("the update's staging",
+                [setup = *Content, makeSource = MakeSource, offer = *Offer, arm](MCUpdateWork::MCContext& context)
                 {
-                    done = MCContentUpdater::Stage(setup, *disk, **source, offer,
-                                                   [&](uint64_t received, uint64_t expected)
-                                                   {
-                                                       const std::lock_guard lock(work.Mutex);
-                                                       work.Received = received;
-                                                       work.Expected = expected;
-                                                       return !stop.stop_requested();
-                                                   });
-                }
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop,
+                        [&](MCContentStage::MCSource& source) -> MCWorkResult
+                        {
+                            const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
-                if (done && arm)
-                {
-                    done = MCContentUpdater::Arm(setup, *disk, offer);
-                }
+                            if (const auto staged =
+                                    MCContentUpdater::Stage(setup, *disk, source, offer,
+                                                            MCUpdateWork::Reporter(context.Progress, context.Stop));
+                                !staged)
+                            {
+                                return std::unexpected(staged.error());
+                            }
 
-                if (!done)
-                {
-                    const std::lock_guard lock(work.Mutex);
-                    work.Error = done.error();
-                }
-            });
+                            if (const auto armed = arm ? MCContentUpdater::Arm(setup, *disk, offer)
+                                                       : std::expected<void, std::string>();
+                                !armed)
+                            {
+                                return std::unexpected(armed.error());
+                            }
+
+                            return {};
+                        });
+                });
     }
 
     /// <summary>Arms the staged content once the program is in too: READY, or neither half goes in.</summary>
@@ -385,50 +354,39 @@ namespace
         SDL_Log("Updater: the HD pack is %s", Hd.Chosen ? "coming" : "going");
         Step = MCStep::ChangingSets;
         Hd.Stage = MCStage::Downloading;
-        RunWork(
-            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token stop)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                auto change = source
-                                  ? MCContentUpdater::CheckSets(setup, *disk, **source)
-                                  : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
-                std::expected<void, std::string> done =
-                    change ? std::expected<void, std::string>() : std::unexpected(change.error());
-
-                if (done && *change)
+        RunWork("the HD pack's change",
+                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
                 {
-                    {
-                        const std::lock_guard lock(work.Mutex);
-                        work.Expected = (*change)->ContentBytes();
-                    }
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop,
+                        [&](MCContentStage::MCSource& source) -> MCWorkResult
+                        {
+                            const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+                            auto change = MCContentUpdater::CheckSets(setup, *disk, source);
 
-                    done = MCContentUpdater::Stage(setup, *disk, **source, **change,
-                                                   [&](uint64_t received, uint64_t expected)
-                                                   {
-                                                       const std::lock_guard lock(work.Mutex);
-                                                       work.Received = received;
-                                                       work.Expected = expected;
-                                                       return !stop.stop_requested();
-                                                   });
+                            if (!change || !*change)
+                            {
+                                return change;
+                            }
 
-                    if (done)
-                    {
-                        done = MCContentUpdater::Arm(setup, *disk, **change);
-                    }
-                }
+                            context.Progress.Set(0, (*change)->ContentBytes());
 
-                const std::lock_guard lock(work.Mutex);
+                            if (const auto staged =
+                                    MCContentUpdater::Stage(setup, *disk, source, **change,
+                                                            MCUpdateWork::Reporter(context.Progress, context.Stop));
+                                !staged)
+                            {
+                                return std::unexpected(staged.error());
+                            }
 
-                if (!done)
-                {
-                    work.Error = done.error();
-                }
-                else if (*change)
-                {
-                    work.Offer = std::move(*change);
-                }
-            });
+                            if (const auto armed = MCContentUpdater::Arm(setup, *disk, **change); !armed)
+                            {
+                                return std::unexpected(armed.error());
+                            }
+
+                            return change;
+                        });
+                });
     }
 
     /// <summary>
@@ -484,25 +442,13 @@ namespace
     void LookForUpdate()
     {
         Step = MCStep::CheckingContent;
-        RunWork(
-            [setup = *Content, makeSource = MakeSource](MCWork& work, std::stop_token)
-            {
-                auto source = SourceFor(makeSource);
-                const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                auto offer = source
-                                 ? MCContentUpdater::Check(setup, *disk, **source)
-                                 : std::expected<std::optional<MCOffer>, std::string>(std::unexpected(source.error()));
-                const std::lock_guard lock(work.Mutex);
-
-                if (offer)
+        RunWork("the update's check",
+                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
                 {
-                    work.Offer = std::move(*offer);
-                }
-                else
-                {
-                    work.Error = offer.error();
-                }
-            });
+                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                        makeSource, context.Stop, [&](MCContentStage::MCSource& source)
+                        { return MCContentUpdater::Check(setup, *MakeDisk(), source); });
+                });
     }
 
     /// <summary>
@@ -776,27 +722,10 @@ auto MCUpdater::Frame() -> void
         return;
     }
 
-    uint64_t received = 0;
-    uint64_t expected = 0;
-    bool finished = false;
-    std::string error;
-    std::optional<MCOffer> offer;
-
+    if (!Work->Finished())
     {
-        const std::lock_guard lock(Work->Mutex);
-        received = Work->Received;
-        expected = Work->Expected;
-        finished = Work->Finished;
+        const auto [received, expected] = Work->Progress().Get();
 
-        if (finished)
-        {
-            error = std::move(Work->Error);
-            offer = std::move(Work->Offer);
-        }
-    }
-
-    if (!finished)
-    {
         // Staging's whole is the plan's until its first bytes say more (a patch that fell back on its zip).
         if (Step == MCStep::StagingContent && Offer)
         {
@@ -812,7 +741,10 @@ auto MCUpdater::Frame() -> void
         return;
     }
 
-    StopWork();
+    MCWorkResult ended = Work->Join();
+    Work.reset();
+    const std::string error = ended ? std::string() : std::move(ended.error());
+    std::optional<MCOffer> offer = ended ? std::move(*ended) : std::nullopt;
 
     // Stopped for a match's mission: it goes on once the mission is over (at once, if it already is). Done just as the
     // mission began, it ends as it would have.
@@ -857,12 +789,12 @@ auto MCUpdater::PauseWork(bool paused) -> void
         // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
         Paused = true;
 
-        if (Worker.joinable() && PausedStep == MCStep::Idle &&
+        if (Work != nullptr && PausedStep == MCStep::Idle &&
             (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
         {
             SDL_Log("Updater: the download stops while the mission plays");
             PausedStep = Step;
-            Worker.request_stop();
+            Work->Stop();
         }
 
         return;
@@ -882,35 +814,8 @@ auto MCUpdater::PauseWork(bool paused) -> void
 
 auto MCUpdater::Quit() -> void
 {
-    if (Worker.joinable())
-    {
-        Worker.request_stop();
-        const auto until = std::chrono::steady_clock::now() + QuitWait;
-        const auto finished = [work = Work]
-        {
-            const std::lock_guard lock(work->Mutex);
-            return work->Finished;
-        };
-
-        while (!finished() && std::chrono::steady_clock::now() < until)
-        {
-            std::this_thread::sleep_for(QuitLook);
-        }
-
-        if (finished())
-        {
-            Worker.join();
-        }
-        else
-        {
-            // It holds what it uses, the staging lock too, which the system lets go as the process ends.
-            SDL_Log("Updater: the download is still stopping as the game quits; the next try resumes it");
-            Worker.detach();
-            static_cast<void>(StagingLock.release());
-        }
-    }
-
-    Work.reset();
+    // Its transfer cancelled, work under way ends at once (staged files stay for the next try).
+    StopWork();
     StagingLock.reset();
 
     if (Backend != nullptr)
@@ -1065,7 +970,12 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
             // Stopped where it is (staged files stay); its end plans the new choice.
             SetsChosenAgain = true;
             Hd.Stopping = true;
-            Worker.request_stop();
+
+            if (Work != nullptr)
+            {
+                Work->Stop();
+            }
+
             break;
         }
         default:

@@ -1367,6 +1367,9 @@
     <ClCompile Include="update\MCUpdatePlace.cpp">
       <Filter>update</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCUpdateWork.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="vfx\MCAgEllipse.cpp">
       <Filter>vfx</Filter>
     </ClCompile>
@@ -2691,6 +2694,9 @@
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCUpdatePlace.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCUpdateWork.h">
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCAgShape.h">

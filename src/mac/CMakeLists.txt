@@ -56,7 +56,7 @@ endif()
 
 # Personal build: the reports' server (main/MCTelemetry.h), an https address the Info.plist names: the project's
 # reports Worker (tools/cloudflare/reports in the workspace); empty, the app sends no reports.
-set(MC_REPORTS_URL "https://mechcommander-redux-reports.mazzarin.workers.dev" CACHE STRING "The reports' server (https), or empty for none")
+set(MC_REPORTS_URL "" CACHE STRING "The reports' server (https), or empty for none")
 
 # MCVersion.h and the app's Info.plist, from version.json and the commit count on every build as on Windows
 # (version.cmake).

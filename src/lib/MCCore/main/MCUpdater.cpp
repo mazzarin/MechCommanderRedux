@@ -149,6 +149,18 @@ namespace
     std::function<void()> QuitGame = InputQuit;
     bool RestartAfterQuit = false;
 
+    // TRIAL BUILD ONLY (release-trial; never merged): the player's part, unattended. An update found is installed
+    // (INSTALL), one ready restarts the game (RESTART), and once the start's check leaves nothing to do the game quits,
+    // so every run ends by itself.
+    constexpr uint64_t TrialQuietMs = 20000;
+    bool TrialInstalled = false;
+    bool TrialRestarted = false;
+    bool TrialQuit = false;
+    uint64_t TrialQuietSince = 0;
+
+    bool TrialBusy();
+    void TrialPilot();
+
     /// <summary>Tells the listener <see cref="Current"/> changed.</summary>
     void Changed()
     {
@@ -864,8 +876,79 @@ auto MCUpdater::Working() -> bool
     return Work != nullptr;
 }
 
+namespace
+{
+    bool TrialBusy()
+    {
+        switch (Step)
+        {
+            case MCStep::CheckingContent:
+            case MCStep::CheckingProgram:
+            case MCStep::Offered:
+            case MCStep::StagingContent:
+            case MCStep::DownloadingProgram:
+            case MCStep::ArmingQuietly:
+            case MCStep::Armed:
+            case MCStep::ChangingSets:
+                return true;
+            default:
+                return Work != nullptr;
+        }
+    }
+
+    void TrialPilot()
+    {
+        if (!CheckedAtStart || TrialQuit)
+        {
+            return;
+        }
+
+        if (Current.Stage == MCUpdater::MCStage::Found && !TrialInstalled)
+        {
+            TrialInstalled = true;
+            SDL_Log("Trial: INSTALL %s (%llu bytes)", Current.Version.c_str(),
+                    static_cast<unsigned long long>(Current.Expected));
+            MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+            return;
+        }
+
+        if (Current.Stage == MCUpdater::MCStage::Ready && !TrialRestarted)
+        {
+            TrialRestarted = true;
+            SDL_Log("Trial: RESTART into %s", Current.Version.c_str());
+            MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+            return;
+        }
+
+        const bool quiet =
+            !TrialBusy() && (Current.Stage == MCUpdater::MCStage::None || Current.Stage == MCUpdater::MCStage::Failed);
+
+        if (!quiet)
+        {
+            TrialQuietSince = 0;
+            return;
+        }
+
+        const uint64_t now = SDL_GetTicks();
+
+        if (TrialQuietSince == 0)
+        {
+            TrialQuietSince = now;
+        }
+        else if (now - TrialQuietSince >= TrialQuietMs)
+        {
+            TrialQuit = true;
+            SDL_Log("Trial: nothing left to do (%s); quitting",
+                    Current.Stage == MCUpdater::MCStage::Failed ? Current.Error.c_str() : "up to date");
+            InputQuit();
+        }
+    }
+}
+
 auto MCUpdater::Frame() -> void
 {
+    TrialPilot();
+
     if (Backend != nullptr)
     {
         Backend->Frame();

@@ -416,7 +416,7 @@ std::expected<void, std::string> MCContentUpdater::Install(const MCSetup& setup,
         return std::unexpected(offer.error());
     }
 
-    SDL_Log("Updates: the first start installs release %llu (%llu bytes to download)",
+    SDL_Log("Updates: installing release %llu (%llu bytes to download)",
             static_cast<unsigned long long>(offer->Release.Number),
             static_cast<unsigned long long>(offer->ContentBytes()));
 
@@ -426,6 +426,19 @@ std::expected<void, std::string> MCContentUpdater::Install(const MCSetup& setup,
     }
 
     return Arm(setup, disk, *offer);
+}
+
+std::expected<void, std::string> MCContentUpdater::Repair(const MCSetup& setup, MCUpdateDisk& disk,
+                                                          MCContentStage::MCSource& source,
+                                                          const std::function<bool(uint64_t, uint64_t)>& progress)
+{
+    if (const auto given = MCContentSwap::Abandon(disk, setup.GameFolder); !given)
+    {
+        return given;
+    }
+
+    SDL_Log("Updates: the update stopped partway is given up; the repair installs the release");
+    return Install(setup, disk, source, progress);
 }
 
 std::expected<void, std::string> MCContentUpdater::Arm(const MCSetup& setup, MCUpdateDisk& disk, const MCOffer& offer)

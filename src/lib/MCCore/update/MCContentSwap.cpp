@@ -33,6 +33,7 @@ namespace
     constexpr int FirstNumberedCopy = 2;
     constexpr int LastNumberedCopy = 999;
     constexpr std::string_view TooLateError = "the swap took longer than a lobby's start allows";
+    constexpr std::string_view RepairUnfinishedError = "a repair stopped before it was done";
 
     /// <summary>What's at a move's path.</summary>
     enum class MCAt : uint8_t
@@ -87,7 +88,8 @@ namespace
             }
 
             // Flushed before the journal goes, or a crash could keep its deletion and lose the record of what to clear.
-            if (!_Disk.Remove(At(ReplacedFolder)) || !_Disk.Remove(At(StagedFolder)) ||
+            // A repair under way is done once a swap is committed.
+            if (!_Disk.Remove(At(ReplacedFolder)) || !_Disk.Remove(At(StagedFolder)) || !_Disk.Remove(At(RepairFile)) ||
                 !_Disk.FlushFolder(At(UpdateFolder)))
             {
                 return "the update's folders can't be cleared";
@@ -104,6 +106,49 @@ namespace
 
         /// <summary>Whether the installed record says the new set: the swap can then only go forward.</summary>
         bool Committed() const { return _Committed; }
+
+        /// <summary>
+        /// Gives the swap up, for a repair (<see cref="MCContentSwap::Abandon"/>): each file in replaced/
+        /// (<paramref name="setAside"/>, relative to it) kept or let go as the commit would, one the journal doesn't name
+        /// kept; then the record names each new file in place as an update's, and replaced/ goes. Empty, or what failed.
+        /// </summary>
+        std::string GiveUp(const std::vector<std::string>& setAside)
+        {
+            std::map<std::string_view, const MCMove*> moves;
+
+            for (const MCMove& move : _Journal.Moves)
+            {
+                moves.emplace(move.Path, &move);
+            }
+
+            for (const std::string& path : setAside)
+            {
+                const auto found = moves.find(path);
+                const MCMove unknown{.Path = path, .Keep = MCKeep::Always};
+
+                if (std::string error = KeepOne(found != moves.end() ? *found->second : unknown); !error.empty())
+                {
+                    return error;
+                }
+            }
+
+            if (!FlushTouched())
+            {
+                return std::format("{}'s folders can't be flushed", MCContentList::BackupFolder);
+            }
+
+            if (std::string error = RecordPlacedNewFiles(); !error.empty())
+            {
+                return error;
+            }
+
+            if (!_Disk.Remove(At(ReplacedFolder)) || !_Disk.FlushFolder(At(UpdateFolder)))
+            {
+                return "the files set aside can't be cleared";
+            }
+
+            return {};
+        }
 
     private:
         /// <summary>
@@ -375,41 +420,108 @@ namespace
                     continue;
                 }
 
-                if (move.Keep == MCKeep::Never)
+                if (std::string error = KeepOne(move); !error.empty())
                 {
-                    continue;
-                }
-
-                if (move.Keep == MCKeep::IfChanged)
-                {
-                    const auto at = What(Replaced(move), move);
-
-                    if (!at)
-                    {
-                        return at.error();
-                    }
-
-                    if (*at == MCAt::Old)
-                    {
-                        continue;
-                    }
-                }
-
-                const std::optional<std::filesystem::path> kept = KeptAt(move);
-
-                if (!kept)
-                {
-                    return std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder);
-                }
-
-                if (!Move(Replaced(move), *kept))
-                {
-                    return std::format("{} can't be kept in {}", move.Path, MCContentList::BackupFolder);
+                    return error;
                 }
             }
 
             return FlushTouched() ? std::string()
                                   : std::format("{}'s folders can't be flushed", MCContentList::BackupFolder);
+        }
+
+        /// <summary>
+        /// The file <paramref name="move"/> set aside, in replaced/: moved into Redux backup when an update didn't place
+        /// it as it is, else left to go with replaced/. Empty, or what failed.
+        /// </summary>
+        std::string KeepOne(const MCMove& move)
+        {
+            if (move.Keep == MCKeep::Never)
+            {
+                return {};
+            }
+
+            if (move.Keep == MCKeep::IfChanged)
+            {
+                const auto at = What(Replaced(move), move);
+
+                if (!at)
+                {
+                    return at.error();
+                }
+
+                if (*at == MCAt::Old)
+                {
+                    return {};
+                }
+            }
+
+            const std::optional<std::filesystem::path> kept = KeptAt(move);
+
+            if (!kept)
+            {
+                return std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder);
+            }
+
+            if (!Move(Replaced(move), *kept))
+            {
+                return std::format("{} can't be kept in {}", move.Path, MCContentList::BackupFolder);
+            }
+
+            return {};
+        }
+
+        /// <summary>
+        /// The installed record with each new file the swap moved into place named as the journal's record has it,
+        /// placed, so a plan neither hashes it again nor keeps it in Redux backup when it goes. A record that can't be
+        /// read starts again empty (a plan then hashes every file). Empty, or what failed.
+        /// </summary>
+        std::string RecordPlacedNewFiles()
+        {
+            const auto text = _Disk.ReadText(At(MCInstalled::RecordPath));
+            auto read = text ? MCInstalled::FromText(*text) : std::unexpected(text.error());
+            MCInstalled::MCRecord record;
+
+            if (read)
+            {
+                record = std::move(*read);
+            }
+            else if (_Disk.Stat(At(MCInstalled::RecordPath)).Exists)
+            {
+                SDL_Log("Updates: the installed record can't be read (%s): the repair starts it again",
+                        read.error().c_str());
+            }
+
+            for (const MCMove& move : _Journal.Moves)
+            {
+                const auto entry = _Journal.Record.Files.find(MCContentList::FoldedPath(move.Path));
+
+                if (!move.New || entry == _Journal.Record.Files.end())
+                {
+                    continue;
+                }
+
+                const auto at = Classify(move);
+
+                if (!at)
+                {
+                    return at.error();
+                }
+
+                if (*at != MCAt::New)
+                {
+                    continue;
+                }
+
+                MCInstalled::MCFile file = entry->second;
+                file.Written = _Disk.Stat(Destination(move)).Written;
+                file.Placed = true;
+                record.Files.insert_or_assign(entry->first, std::move(file));
+            }
+
+            return WriteDurably(_Disk, At(MCInstalled::RecordPath), MCInstalled::Text(record))
+                       ? std::string()
+                       : std::string("the installed record can't be written");
         }
 
         /// <summary>
@@ -625,63 +737,139 @@ bool MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gam
            disk.Stat(gameFolder / MCFileSystem::FromUtf8(ReadyFile)).Exists;
 }
 
-MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                           std::optional<std::chrono::steady_clock::time_point> deadline)
+namespace
+{
+    /// <summary>The swap, a repair under way aside (<see cref="MCContentSwap::Run"/>).</summary>
+    MCContentSwap::MCResult SwapOnce(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                     std::optional<std::chrono::steady_clock::time_point> deadline)
+    {
+        const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
+
+        if (!disk.Stat(journalPath).Exists)
+        {
+            const std::filesystem::path readyPath = gameFolder / MCFileSystem::FromUtf8(ReadyFile);
+
+            if (!disk.Stat(readyPath).Exists)
+            {
+                return {};
+            }
+
+            if (!disk.Rename(readyPath, journalPath) ||
+                !disk.FlushFolder(gameFolder / MCFileSystem::FromUtf8(UpdateFolder)))
+            {
+                return {MCOutcome::PutBack, "the swap couldn't begin"};
+            }
+        }
+
+        const auto text = disk.ReadText(journalPath);
+
+        if (!text)
+        {
+            return {MCOutcome::Stuck, text.error()};
+        }
+
+        auto journal = ReadJournal(*text);
+
+        if (!journal)
+        {
+            return {MCOutcome::Stuck, journal.error()};
+        }
+
+        MCSwapper swapper(disk, gameFolder, std::move(*journal), deadline);
+        const std::string forward = swapper.Forward();
+
+        if (forward.empty())
+        {
+            return {MCOutcome::Swapped, {}};
+        }
+
+        if (swapper.Committed())
+        {
+            SDL_Log("Updates: the update is in place, but %s: the next start finishes clearing it", forward.c_str());
+            return {MCOutcome::Swapped, forward};
+        }
+
+        SDL_Log("Updates: the swap stopped (%s): putting the previous files back", forward.c_str());
+
+        if (const std::string back = swapper.Back(); !back.empty())
+        {
+            return {MCOutcome::Stuck, std::format("{}; then {}", forward, back)};
+        }
+
+        return {MCOutcome::PutBack, forward};
+    }
+}
+
+bool MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    return disk.Stat(gameFolder / MCFileSystem::FromUtf8(RepairFile)).Exists;
+}
+
+std::expected<void, std::string> MCContentSwap::Abandon(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
     const std::filesystem::path journalPath = gameFolder / MCFileSystem::FromUtf8(JournalFile);
+    const std::filesystem::path repairPath = gameFolder / MCFileSystem::FromUtf8(RepairFile);
+    const std::filesystem::path readyPath = gameFolder / MCFileSystem::FromUtf8(ReadyFile);
+    const std::filesystem::path updateFolder = gameFolder / MCFileSystem::FromUtf8(UpdateFolder);
 
-    if (!disk.Stat(journalPath).Exists)
+    // The journal becomes the repair's first, so from here the game doesn't play the files until a swap is committed. One
+    // already there was given up before (a journal now is the repair's own swap, stopped midway).
+    if (disk.Stat(journalPath).Exists && (!disk.Rename(journalPath, repairPath) || !disk.FlushFolder(updateFolder)))
     {
-        const std::filesystem::path readyPath = gameFolder / MCFileSystem::FromUtf8(ReadyFile);
-
-        if (!disk.Stat(readyPath).Exists)
-        {
-            return {};
-        }
-
-        if (!disk.Rename(readyPath, journalPath) ||
-            !disk.FlushFolder(gameFolder / MCFileSystem::FromUtf8(UpdateFolder)))
-        {
-            return {MCOutcome::PutBack, "the swap couldn't begin"};
-        }
+        return std::unexpected("the update's journal can't be set aside for the repair");
     }
 
-    const auto text = disk.ReadText(journalPath);
-
-    if (!text)
+    if (!disk.Stat(repairPath).Exists)
     {
-        return {MCOutcome::Stuck, text.error()};
+        return {};
     }
 
-    auto journal = ReadJournal(*text);
+    // The repair's own update, put back whole: its files wait in staged/, where the next staging finds them.
+    if (disk.Stat(readyPath).Exists && (!disk.Remove(readyPath) || !disk.FlushFolder(updateFolder)))
+    {
+        return std::unexpected("the update put back can't be cleared for the repair");
+    }
+
+    const auto text = disk.ReadText(repairPath);
+    auto journal = text ? ReadJournal(*text) : std::unexpected(text.error());
 
     if (!journal)
     {
-        return {MCOutcome::Stuck, journal.error()};
+        // Every file set aside is then kept: nothing says which an update placed.
+        SDL_Log("Updates: the journal of the update given up can't be read (%s): every file it set aside is kept",
+                journal.error().c_str());
+        journal = MCJournal{};
     }
 
-    MCSwapper swapper(disk, gameFolder, std::move(*journal), deadline);
-    const std::string forward = swapper.Forward();
+    const auto setAside = disk.Files(gameFolder / MCFileSystem::FromUtf8(ReplacedFolder));
 
-    if (forward.empty())
+    if (!setAside)
     {
-        return {MCOutcome::Swapped, {}};
+        return std::unexpected(setAside.error());
     }
 
-    if (swapper.Committed())
+    if (std::string error = MCSwapper(disk, gameFolder, std::move(*journal), std::nullopt).GiveUp(*setAside);
+        !error.empty())
     {
-        SDL_Log("Updates: the update is in place, but %s: the next start finishes clearing it", forward.c_str());
-        return {MCOutcome::Swapped, forward};
+        return std::unexpected(error);
     }
 
-    SDL_Log("Updates: the swap stopped (%s): putting the previous files back", forward.c_str());
+    return {};
+}
 
-    if (const std::string back = swapper.Back(); !back.empty())
+MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                           std::optional<std::chrono::steady_clock::time_point> deadline)
+{
+    MCResult result = SwapOnce(disk, gameFolder, deadline);
+
+    // The files a repair gave up on aren't a set to play: only a committed swap ends it.
+    if (result.Outcome != MCOutcome::Swapped && result.Outcome != MCOutcome::Stuck && Repairing(disk, gameFolder))
     {
-        return {MCOutcome::Stuck, std::format("{}; then {}", forward, back)};
+        return {MCOutcome::Stuck,
+                result.Outcome == MCOutcome::Nothing ? std::string(RepairUnfinishedError) : std::move(result.Error)};
     }
 
-    return {MCOutcome::PutBack, forward};
+    return result;
 }
 
 MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
@@ -695,7 +883,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
 
     MCResult result;
 
-    if (Waiting(disk, gameFolder))
+    if (Waiting(disk, gameFolder) || Repairing(disk, gameFolder))
     {
         const auto now = std::chrono::steady_clock::now();
         const auto midwayUntil = deadline.value_or(now + MidwayWait);
@@ -710,7 +898,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
                 break;
             }
 
-            const bool midway = disk.Stat(journalPath).Exists;
+            const bool midway = disk.Stat(journalPath).Exists || Repairing(disk, gameFolder);
             const auto waited = std::chrono::steady_clock::now();
 
             if (!midway && waited >= quittingUntil)

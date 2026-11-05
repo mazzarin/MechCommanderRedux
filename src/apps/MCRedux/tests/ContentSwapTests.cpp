@@ -119,6 +119,22 @@ namespace
             return found->second.Bytes;
         }
 
+        std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) override
+        {
+            const std::string key = Key(folder);
+            std::vector<std::string> files;
+
+            for (const auto& [path, file] : _Seen)
+            {
+                if (Inside(path, key))
+                {
+                    files.push_back(path.substr(key.size() + 1));
+                }
+            }
+
+            return files;
+        }
+
         bool MakeFolders(const std::filesystem::path&) override { return true; }
 
         bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
@@ -429,6 +445,38 @@ namespace
 
             const auto record = MCInstalled::FromText(files.at(GamePath(MCInstalled::RecordPath)).Bytes);
             return record && record->Release == 1;
+        }
+
+        /// <summary>
+        /// The swap stopped where neither way works: the old files set aside and ART.FST and the new mission moved in,
+        /// when HD/terrain.hda's staged copy was found lost; then the set taken out's file, held open, couldn't go back.
+        /// Returns the disk, the hold let go (the player closed the program).
+        /// </summary>
+        MCCrashDisk Stuck() const
+        {
+            MCCrashDisk disk(Files);
+            disk.HoldOpen(GamePath("Redux update/replaced/HD/taken/out.hda"));
+            disk.Remove(Game / "Redux update/staged/HD/terrain.hda");
+            const MCContentSwap::MCResult result = MCContentSwap::Run(disk, Game);
+            REQUIRE(result.Outcome == MCOutcome::Stuck);
+            CHECK(result.Error.find("HD/terrain.hda's staged copy") != std::string::npos);
+            CHECK(result.Error.find("HD/taken/out.hda can't be put back") != std::string::npos);
+            disk.HoldOpen({});
+            disk.Cut([](size_t) { return true; });
+            return disk;
+        }
+
+        /// <summary>What giving <see cref="Stuck"/> up leaves, but the record: each file by its bytes.</summary>
+        static std::map<std::string, std::string> Bytes(const MCCrashDisk::MCFiles& files)
+        {
+            std::map<std::string, std::string> bytes;
+
+            for (const auto& [path, file] : files)
+            {
+                bytes[path] = file.Bytes;
+            }
+
+            return bytes;
         }
 
         std::vector<MCContentSwap::MCMove> Moves;
@@ -747,4 +795,127 @@ TEST_CASE("content swap: the disk's writes are durable and replace a file whole"
     CHECK(!disk->Stat(folder / "a" / "b.json").Exists);
     CHECK(disk->Remove(folder));
     CHECK(!disk->Stat(folder).Exists);
+}
+
+TEST_CASE("content swap: REPAIR gives up a swap that can neither finish nor go back; until a swap is committed the "
+          "game doesn't play the files")
+{
+    const MCUpdate update;
+    MCCrashDisk disk = update.Stuck();
+    REQUIRE(MCContentSwap::Abandon(disk, Game).has_value());
+    const MCCrashDisk::MCFiles& files = disk.Files();
+
+    // The set aside go: kept in Redux backup when an update didn't place them, else deleted with replaced/.
+    CHECK(MCContentSwap::Repairing(disk, Game));
+    CHECK(!MCContentSwap::Waiting(disk, Game));
+    CHECK(update.BackupKept(files));
+    CHECK(!std::ranges::any_of(files, [](const auto& entry)
+                               { return entry.first.find("Redux update/replaced") != std::string::npos; }));
+    CHECK(!files.contains(GamePath("HD/terrain.hda")));
+    CHECK(!files.contains(GamePath("HD/taken/out.hda")));
+    CHECK(!files.contains(GamePath("data/old.fit")));
+
+    // The new files already in place stay, recorded as an update's; staged/ stays for the repair's staging.
+    CHECK_EQ(files.at(GamePath("ART.FST")).Bytes, std::string("art v2"));
+    CHECK_EQ(files.at(GamePath("data/missions/new.fit")).Bytes, std::string("a new mission"));
+    CHECK_EQ(files.at(GamePath("Redux update/staged/data/mod.fit")).Bytes, std::string("mod v2"));
+    const auto record = MCInstalled::FromText(files.at(GamePath(MCInstalled::RecordPath)).Bytes);
+    REQUIRE(record.has_value());
+    CHECK_EQ(record->Release, uint64_t{1});
+    CHECK(record->Files.at("ART.FST").Sha256 == MCSha256::Of("art v2"));
+    CHECK(record->Files.at("ART.FST").Placed);
+    CHECK_EQ(record->Files.at("ART.FST").Written, files.at(GamePath("ART.FST")).Written);
+    CHECK(record->Files.at("DATA/MISSIONS/NEW.FIT").Placed);
+    CHECK(record->Files.at("DATA/MOD.FIT").Sha256 == MCSha256::Of("the folder's own mod"));
+
+    // Nothing to play until the repair's update goes in.
+    const MCContentSwap::MCResult waiting = MCContentSwap::Run(disk, Game);
+    CHECK(waiting.Outcome == MCOutcome::Stuck);
+    CHECK(waiting.Error.find("repair") != std::string::npos);
+
+    // The repair's update put back (its staged copy lost) is still no set to play; given up again, it goes too.
+    MCContentSwap::MCJournal repair{.Moves = {{.Path = "HD/terrain.hda",
+                                               .New = MCSha256::Of("terrain v2"),
+                                               .NewSize = std::string_view("terrain v2").size()}},
+                                    .Record = update.After};
+    REQUIRE(MCContentSwap::MarkReady(disk, Game, repair));
+    const MCContentSwap::MCResult putBack = MCContentSwap::Run(disk, Game);
+    CHECK(putBack.Outcome == MCOutcome::Stuck);
+    CHECK(putBack.Error.find("staged copy") != std::string::npos);
+    REQUIRE(MCContentSwap::Abandon(disk, Game).has_value());
+    CHECK(!MCContentSwap::Waiting(disk, Game));
+    CHECK(MCContentSwap::Repairing(disk, Game));
+
+    // Committed, the repair is done.
+    REQUIRE(disk.WriteFlushed(Game / "Redux update/staged/HD/terrain.hda", "terrain v2"));
+    REQUIRE(MCContentSwap::MarkReady(disk, Game, repair));
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Swapped);
+    CHECK(!MCContentSwap::Repairing(disk, Game));
+    CHECK_EQ(disk.Files().at(GamePath("HD/terrain.hda")).Bytes, std::string("terrain v2"));
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Nothing);
+}
+
+TEST_CASE(
+    "content swap: REPAIR's giving up stopped at any step, any unflushed changes lost, ends as it does whole when "
+    "done again")
+{
+    const MCUpdate update;
+    MCCrashDisk whole = update.Stuck();
+    REQUIRE(MCContentSwap::Abandon(whole, Game).has_value());
+    const int steps = whole.Changes();
+    CHECK(steps > 5);
+    const std::map<std::string, std::string> given = MCUpdate::Bytes(whole.Files());
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk = update.Stuck();
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Abandon(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+
+            // Begun, it's a repair: the game doesn't play the files.
+            if (MCContentSwap::Repairing(disk, Game))
+            {
+                MCCrashDisk start = disk;
+
+                if (MCContentSwap::Run(start, Game).Outcome != MCOutcome::Stuck)
+                {
+                    FAIL_CHECK(
+                        std::format("step {} keep {}: a start played the files a repair gave up", step, keepAll));
+                }
+            }
+
+            const auto again = MCContentSwap::Abandon(disk, Game);
+
+            if (!again || MCUpdate::Bytes(disk.Files()) != given)
+            {
+                FAIL_CHECK(std::format("step {} keep {}: done again, it didn't end as whole ({})", step, keepAll,
+                                       again ? std::string("its files differ") : again.error()));
+            }
+        }
+    }
+}
+
+TEST_CASE("content swap: REPAIR keeps every file set aside when the journal can't be read")
+{
+    const MCUpdate update;
+    MCCrashDisk disk = update.Stuck();
+    REQUIRE(disk.WriteFlushed(Game / MCFileSystem::FromUtf8(MCContentSwap::JournalFile), "{ damaged"));
+    REQUIRE(MCContentSwap::Abandon(disk, Game).has_value());
+    const auto kept = MCUpdate::InBackup(disk.Files());
+    CHECK_EQ(kept.at(GamePath("Redux backup/ART.FST")), std::string("art v1"));
+    CHECK_EQ(kept.at(GamePath("Redux backup/HD/taken/out.hda")), std::string("a set taken out"));
+    CHECK_EQ(kept.at(GamePath("Redux backup/data/mod.fit")), std::string("the folder's own mod"));
+    CHECK(MCContentSwap::Repairing(disk, Game));
+    CHECK(MCContentSwap::Run(disk, Game).Outcome == MCOutcome::Stuck);
 }

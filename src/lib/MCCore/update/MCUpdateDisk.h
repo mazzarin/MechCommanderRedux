@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 /// <summary>
 /// Port-only: the file operations updates make durable (update/MCContentSwap.h). A system keeps writes in its cache
@@ -33,6 +34,12 @@ public:
     virtual MCStat Stat(const std::filesystem::path& path) = 0;
     virtual std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) = 0;
     virtual std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) = 0;
+
+    /// <summary>
+    /// The files in <paramref name="folder"/> and its folders, as paths relative to it ('/' apart, UTF-8); none when
+    /// it isn't there, or what failed.
+    /// </summary>
+    virtual std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) = 0;
 
     /// <summary>Makes the folder and those on its way.</summary>
     virtual bool MakeFolders(const std::filesystem::path& path) = 0;

@@ -23,6 +23,7 @@
 #include "network/MCMultiPlayer.h"
 #include "network/MCRejoinNote.h"
 #include "platform/MCDirectPlay.h"
+#include "platform/MCSocket.h"
 
 // Port-only (the personal build): updates for players a multiplayer lobby starts (SPEC-install-and-updates.md's
 // "Players who come from a multiplayer lobby"): the rejoin note a lobby's game leaves as it restarts into an update.
@@ -62,6 +63,50 @@ TEST_CASE("lobby updates: the rejoin note holds the words the lobby started the 
     CHECK_EQ(MCRejoinNote::LobbyCommandLine(
                  MCLobbyLaunchArgs{.Active = true, .Rejoin = true, .CommandLine = std::string(RejoinLine)}),
              std::string(RejoinLine));
+}
+
+/// <summary>
+/// A host starting again (a restart into an update) takes its port at once, though its last run's end of each link
+/// waits out TIME_WAIT (the host's end closes first): the listener reuses the address.
+/// </summary>
+TEST_CASE("lobby updates: a host's port is taken again at once after its own end closed the last run's links")
+{
+    constexpr uint16_t Port = 28911;
+    constexpr int32_t MostWaits = 200;
+    const MCSocket::Handle listener = MCSocket::ListenTcp(Port);
+    REQUIRE(listener != MCSocket::InvalidHandle);
+    const MCSocket::Handle guest = MCSocket::ConnectTcp({MCSocket::LoopbackIp, Port}, 1000);
+    REQUIRE(guest != MCSocket::InvalidHandle);
+    MCSocket::Handle accepted = MCSocket::InvalidHandle;
+    MCSocket::Address from;
+
+    for (int32_t wait = 0; wait < MostWaits && accepted == MCSocket::InvalidHandle; wait++)
+    {
+        accepted = MCSocket::AcceptTcp(listener, from);
+        SDL_Delay(5);
+    }
+
+    REQUIRE(accepted != MCSocket::InvalidHandle);
+
+    // The host's end closes first, as its game quits: that end of the link waits out TIME_WAIT. The guest's end sees it
+    // close, and closes too.
+    MCSocket::Close(accepted);
+    MCSocket::Close(listener);
+    std::array<uint8_t, 16> buffer{};
+    int32_t read = 0;
+
+    for (int32_t wait = 0; wait < MostWaits && read >= 0; wait++)
+    {
+        read = MCSocket::Receive(guest, buffer);
+        SDL_Delay(5);
+    }
+
+    CHECK(read < 0);
+    MCSocket::Close(guest);
+
+    const MCSocket::Handle again = MCSocket::ListenTcp(Port);
+    CHECK(again != MCSocket::InvalidHandle);
+    MCSocket::Close(again);
 }
 
 TEST_CASE("lobby updates: a rejoin note too big to read back isn't written")
@@ -889,6 +934,26 @@ TEST_CASE_ISOLATED("game: a lobby's guest calls its restart off when the match s
     CHECK(!std::filesystem::exists(GameNotePath()));
     CHECK(!MCLobbyUpdate::LeftToUpdate(bob.Id()));
     CHECK(InSession());
+}
+
+/// <summary>
+/// A lobby's host started again from the rejoin note that can't open its room on its port (something else holds it)
+/// says so, not a guest's reason; its OK ends the game.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's host whose rejoin can't open its room says so")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28913";
+    Host other;
+    REQUIRE(other.Open(Port, "CAL", "CAL's room"));
+    REQUIRE(StartFromNote(std::format("-host -port {} -player BOB -rejoin", Port)));
+    CHECK(!InSession());
+    CHECK_EQ(DialogText(), std::string("Couldn't open the room again."));
+    CHECK(OkEndsTheGame());
 }
 
 /// <summary>A rejoin finding no room at the address says the room has closed (its OK ends the game).</summary>

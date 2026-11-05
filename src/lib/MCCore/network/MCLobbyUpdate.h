@@ -97,8 +97,8 @@ namespace MCLobbyUpdate
     std::string RejoinFailedText(MCRoomRefusal refusal);
 
     /// <summary>
-    /// The lobby's join at the game's start failed: a rejoin (from the note) says why, another start the original's
-    /// message; either OK ends the game.
+    /// The lobby's join (or a host's room) at the game's start failed: a guest's rejoin (from the note) says why, a
+    /// host's that it couldn't open the room again, another start the original's message; each OK ends the game.
     /// </summary>
     void JoinFailed();
 }

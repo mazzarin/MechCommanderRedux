@@ -33,6 +33,8 @@ namespace
     constexpr std::string_view RoomGoneText = "Couldn't join the room again: it has closed.";
     constexpr std::string_view RoomFullText = "Couldn't join the room again: it is full.";
     constexpr std::string_view RoomStartedText = "Couldn't join the room again: its match has started.";
+    /// <summary>What a host's rejoin that failed says: it couldn't host the room on its port again.</summary>
+    constexpr std::string_view RoomNotReopenedText = "Couldn't open the room again.";
 
     /// <summary>The UPDATE page's line for an update ready in a room (MCLobbyUpdate::ReadyText).</summary>
     constexpr std::string_view AfterMatchText = "DOWNLOADED: IT INSTALLS AFTER THE MATCH.";
@@ -643,6 +645,16 @@ auto MCLobbyUpdate::RejoinFailedText(MCRoomRefusal refusal) -> std::string
 
 auto MCLobbyUpdate::JoinFailed() -> void
 {
-    ShowJoinFailed(LobbyLaunchArgs.Rejoin ? RejoinFailedText(MultiPlayer()->SessionManager->LastRoomRefusal)
-                                          : LoadGameString(JoinFailedString, StringBuffer));
+    if (!LobbyLaunchArgs.Rejoin)
+    {
+        ShowJoinFailed(LoadGameString(JoinFailedString, StringBuffer));
+    }
+    else if (LobbyLaunchArgs.IsHost)
+    {
+        ShowJoinFailed(RoomNotReopenedText);
+    }
+    else
+    {
+        ShowJoinFailed(RejoinFailedText(MultiPlayer()->SessionManager->LastRoomRefusal));
+    }
 }

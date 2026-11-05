@@ -1,12 +1,13 @@
 ; Port-only (the personal build): the Windows setup (SPEC-install-and-updates.md's Install, The player's copy and
 ; Uninstalling). For the player alone (no admin, unless Windows protects the folder: then Windows asks once, and the
-; player's account is let change it), it asks two things beside the folder: the game, downloaded into a folder of its
-; own (by default %LOCALAPPDATA%\Programs\MechCommander Redux) or the player's copy, which Redux installs into and
-; takes over (the folder the game was last pointed at, else the one the original's installer recorded); and HD,
-; ticked. It puts the program in, leaves the answers for the game (Redux update\sets.json), and starts the game,
-; whose first start downloads what the folder lacks: the setup itself downloads and copies no content. In a copy taken
-; over, MCX.EXE becomes a launcher that starts Redux, so whatever starts the original gets Redux; what the program
-; replaces there (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup".
+; player's account is let change it; so the folder must be the game's own, never a drive, Windows', the programs' or
+; another account's, or one holding them), it asks two things beside the folder: the game, downloaded into a folder of
+; its own (by default %LOCALAPPDATA%\Programs\MechCommander Redux) or the player's copy, which Redux installs into and
+; takes over (the folder the game was last pointed at, else the one the original's installer recorded); and HD, ticked.
+; It puts the program in, leaves the answers for the game (Redux update\sets.json), and starts the game, whose first
+; start downloads what the folder lacks: the setup itself downloads and copies no content. In a copy taken over, MCX.EXE
+; becomes a launcher that starts Redux, so whatever starts the original gets Redux; what the program replaces there (the
+; original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup".
 ;
 ; The uninstaller has the game remove its content first (MCRedux --remove-content: the files updates put there),
 ; then removes the program and puts back what's in the backup, so a copy taken over is as it was. When the game can't
@@ -144,6 +145,9 @@ ChooseFolder=Choose a folder for the game.
 ChooseGameFolder=Choose the folder MechCommander Gold is installed in, the one with {#GameDataFile}.
 NotGameFolder=%1 has no {#GameDataFile}, so it isn't a MechCommander Gold folder.
 SyncedFolder=OneDrive syncs %1. Choose a folder outside it: the game's files would fill it, and OneDrive would hold them while it syncs.
+DriveFolder=%1 is a whole drive. Choose a folder on it for the game.
+SharedFolder=%1 belongs to Windows, the programs or another account, or holds their folders. Choose a folder of the game's own.
+FolderNotEmpty=%1 holds other files already. Choose an empty folder for the game, or a new one.
 FolderProtected=Windows protects %1. Setup will ask Windows to let you change it.
 FolderStillProtected=Setup couldn't get permission to change %1.
 BackupFailed=Setup couldn't copy %1 to %2.
@@ -512,7 +516,7 @@ begin
 end;
 
 // Lets the player's account change Folder and everything in it, making it first if need be; elevated by Windows' prompt
-// unless Setup already is. Whether the player can now change it.
+// unless Setup already is. Folder alone: the folders holding it stay as they are. Whether the player can now change it.
 function Grant(const Folder: String): Boolean;
 var
   Verb, Command: String;
@@ -581,9 +585,112 @@ begin
   end;
 end;
 
+// Path in full, lower case and ending in a backslash, for telling whether one folder is in another; '' for none.
+function ComparablePath(const Path: String): String;
+begin
+  Result := RemoveBackslashUnlessRoot(Trim(Path));
+
+  if Result <> '' then
+    Result := AddBackslash(AnsiLowercase(ExpandFileName(Result)));
+end;
+
+// Whether Folder is Holder or inside it (both ComparablePath's; never inside none).
+function IsInside(const Folder, Holder: String): Boolean;
+begin
+  Result := (Holder <> '') and (Copy(Folder, 1, Length(Holder)) = Holder);
+end;
+
+// The folder holding the accounts' own (C:\Users), by the player's own.
+function UsersFolder: String;
+begin
+  Result := ExtractFileDir(RemoveBackslashUnlessRoot(GetEnv('USERPROFILE')));
+end;
+
+// Whether Folder (ComparablePath's) is in the player's own account folder.
+function InOwnProfile(const Folder: String): Boolean;
+begin
+  Result := IsInside(Folder, ComparablePath(GetEnv('USERPROFILE')));
+end;
+
+// Whether Folder (ComparablePath's) is in another account's folder: in Users, but not the player's own, nor the one
+// every account shares (Public).
+function InOthersProfile(const Folder: String): Boolean;
+begin
+  Result := IsInside(Folder, ComparablePath(UsersFolder)) and not InOwnProfile(Folder) and
+            not IsInside(Folder, ComparablePath(GetEnv('PUBLIC')));
+end;
+
+// Windows' folders, the programs' and the accounts', which the game's folder can never be or hold.
+function SharedFolders: TArrayOfString;
+begin
+  SetArrayLength(Result, 6);
+  Result[0] := ExpandConstant('{win}');
+  Result[1] := ExpandConstant('{sys}');
+  Result[2] := ExpandConstant('{commonpf}');
+  Result[3] := ExpandConstant('{commonpf32}');
+  Result[4] := ExpandConstant('{commonappdata}');
+  Result[5] := UsersFolder;
+end;
+
+// Whether Folder holds nothing; not when it can't be listed.
+function IsEmptyFolder(const Folder: String): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+
+  if not FindFirst(AddBackslash(Folder) + '*', FindRec) then
+    Exit;
+
+  try
+    Result := True;
+
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        Result := False;
+    until not Result or not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+// Why Folder can't be the game's (the message to show), or '' when it can. Setup may let the player's account change
+// the game's folder and everything in it, so it must be the game's own: never a whole drive, nor in Windows' folder or
+// another account's, nor one of the programs' or accounts' folders or one holding them (a folder of the game's in
+// Program Files, an original install, is its own). Downloaded into (Download), a folder there already holds nothing or
+// the game.
+function FolderRefusal(const Folder: String; Download: Boolean): String;
+var
+  Path: String;
+  Shared: TArrayOfString;
+  Shares: Boolean;
+  I: Integer;
+begin
+  Result := '';
+  Path := ComparablePath(Folder);
+
+  if Path = AddBackslash(AnsiLowercase(ExtractFileDrive(Path))) then
+  begin
+    Result := FmtMessage(CustomMessage('DriveFolder'), [Folder]);
+    Exit;
+  end;
+
+  Shares := IsInside(Path, ComparablePath(ExpandConstant('{win}'))) or InOthersProfile(Path);
+  Shared := SharedFolders;
+
+  for I := 0 to GetArrayLength(Shared) - 1 do
+    if IsInside(ComparablePath(Shared[I]), Path) then
+      Shares := True;
+
+  if Shares then
+    Result := FmtMessage(CustomMessage('SharedFolder'), [Folder])
+  else if Download and DirExists(Folder) and not IsGameFolder(Folder) and not IsEmptyFolder(Folder) then
+    Result := FmtMessage(CustomMessage('FolderNotEmpty'), [Folder]);
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  Folder: String;
+  Folder, Refusal: String;
 begin
   Result := True;
 
@@ -601,10 +708,19 @@ begin
       SuppressibleMsgBox(CustomMessage('ChooseFolder'), mbError, MB_OK, IDOK);
 
     Result := False;
-  end
-  else if GameCopy.Checked and not IsGameFolder(Folder) then
+    Exit;
+  end;
+
+  Refusal := FolderRefusal(Folder, not GameCopy.Checked);
+
+  if GameCopy.Checked and not IsGameFolder(Folder) then
   begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('NotGameFolder'), [Folder]), mbError, MB_OK, IDOK);
+    Result := False;
+  end
+  else if Refusal <> '' then
+  begin
+    SuppressibleMsgBox(Refusal, mbError, MB_OK, IDOK);
     Result := False;
   end
   else if OneDriveSyncs(Folder) then
@@ -612,10 +728,14 @@ begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('SyncedFolder'), [Folder]), mbError, MB_OK, IDOK);
     Result := False;
   end
-  // Run as administrator, Setup can't tell whether the player can change the folder: the game, run as the player,
-  // must, to update itself. Otherwise Windows asks only when the player can't.
+  // Run as administrator, Setup can't tell whether the player can change the folder, but for one in the player's own
+  // account folder: the game, run as the player, must, to update itself. Otherwise Windows asks only when the player
+  // can't.
   else if IsAdmin then
-    Result := Grant(Folder)
+  begin
+    if not InOwnProfile(ComparablePath(Folder)) then
+      Result := Grant(Folder);
+  end
   else if not CanChange(ExistingFolder(Folder)) then
     Result := GetPermission(Folder);
 end;

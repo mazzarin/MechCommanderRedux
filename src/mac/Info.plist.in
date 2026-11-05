@@ -41,7 +41,8 @@
     <true/>
   </dict>
   <key>SUPublicEDKey</key>
-  <string>uJU9bzHfuaVaOzO0OUxodWg8ExKCBxWjoVxYLyoWrqw=</string>
+  <!-- TRIAL BUILD ONLY: the trial's throwaway feed key. -->
+  <string>Y3t8/jqByZA+WvEeDUNe+zu/NF/W+hRnZ2Z8TONkPzI=</string>
   <key>SUEnableAutomaticChecks</key>
   <false/>
   <!-- The reports' server (main/MCTelemetry.h): empty, the app sends no reports. -->

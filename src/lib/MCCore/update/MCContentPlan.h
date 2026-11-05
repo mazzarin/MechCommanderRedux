@@ -74,7 +74,10 @@ namespace MCContentPlan
     /// The plan to bring <paramref name="folder"/> from <paramref name="installed"/> to <paramref name="list"/>'s
     /// files of <paramref name="sets"/>; <paramref name="listHash"/> is the list's own hash, for the record.
     /// </summary>
-    /// <returns>The plan, or why there's none (a file can't be read, a link or folder in a file's place).</returns>
+    /// <returns>
+    /// The plan, or why there's none (a file can't be read, a folder can't be listed, a link or folder in a file's
+    /// place).
+    /// </returns>
     std::expected<MCPlan, std::string> Make(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                             const MCContentList::MCList& list, const MCSha256::MCDigest& listHash,
                                             const std::set<std::string, std::less<>>& sets);

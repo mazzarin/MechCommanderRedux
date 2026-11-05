@@ -112,27 +112,40 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         const std::string folded = FoldedPath(file.Path);
         listed.insert(folded);
         const MCInstalled::MCFile* const had = Recorded(installed, folded);
-        const MCContentFolder::MCFound found = folder.Find(file.Path);
+        const auto found = folder.Find(file.Path);
+
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
         MCStep step;
         step.Path = file.Path;
         step.File = &file;
         MCInstalled::MCFile record{.Path = {}, .Set = file.Set, .Sha256 = file.Sha256, .Size = file.Size};
 
-        switch (found.Kind)
+        switch (found->Kind)
         {
             case MCContentFolder::MCKind::Link:
             case MCContentFolder::MCKind::Blocked:
-                return std::unexpected(InTheWay(file.Path, found));
+                return std::unexpected(InTheWay(file.Path, *found));
             case MCContentFolder::MCKind::Missing:
             {
+                auto placed = folder.Place(file.Path);
+
+                if (!placed)
+                {
+                    return std::unexpected(placed.error());
+                }
+
                 step.Action = MCAction::Fetch;
-                step.OnDisk = folder.Place(file.Path);
+                step.OnDisk = std::move(*placed);
                 break;
             }
             case MCContentFolder::MCKind::File:
             {
-                step.OnDisk = found.Path;
-                const auto hashed = Hashed(folder, found.Path, had);
+                step.OnDisk = found->Path;
+                const auto hashed = Hashed(folder, found->Path, had);
 
                 if (!hashed)
                 {
@@ -184,14 +197,19 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             continue;
         }
 
-        const MCContentFolder::MCFound found = folder.Find(had.Path);
+        const auto found = folder.Find(had.Path);
 
-        if (found.Kind != MCContentFolder::MCKind::File)
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
+        if (found->Kind != MCContentFolder::MCKind::File)
         {
             continue;
         }
 
-        const auto hashed = Hashed(folder, found.Path, &had);
+        const auto hashed = Hashed(folder, found->Path, &had);
 
         if (!hashed)
         {
@@ -200,7 +218,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
         plan.Steps.push_back(MCStep{.Action = MCAction::Remove,
                                     .Path = had.Path,
-                                    .OnDisk = found.Path,
+                                    .OnDisk = found->Path,
                                     .File = nullptr,
                                     .Patch = nullptr,
                                     .Found = hashed->Sha256,

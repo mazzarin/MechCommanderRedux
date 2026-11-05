@@ -463,3 +463,47 @@ TEST_CASE("content plan: a folder or link in a file's place stops the plan, nami
     CHECK(link.error().find("link") != std::string::npos);
 #endif
 }
+
+TEST_CASE("content plan: a folder that can't be listed stops the plan, naming it; one that isn't there holds nothing")
+{
+    const ScratchFolder scratch("plan-unlisted");
+    const std::filesystem::path& root = scratch.Path();
+    WriteText(root / "data" / "a.fit", "a");
+    WriteText(root / "data" / "dropped.fit", "dropped");
+    MCContentList::MCList list{.Format = 1, .Release = 2};
+    list.Zips = {{"base-1.zip", 1000, MCSha256::Of("z1")}};
+    list.Files.push_back(Listed("data/a.fit", "a", "base-1.zip"));
+    MCInstalled::MCRecord installed;
+    installed.Files["DATA/DROPPED.FIT"] = {
+        .Path = "data/dropped.fit", .Set = "game", .Sha256 = MCSha256::Of("dropped"), .Size = 7};
+
+#ifndef _WIN32
+    // The Mac stands in for any listing that fails: a folder this account can't read.
+    const std::filesystem::path data = root / "data";
+    std::filesystem::permissions(data, std::filesystem::perms::none);
+    MCContentFolder folder(root);
+    const auto unlisted = MCContentPlan::Make(folder, installed, list, MCSha256::Of("list"), GameOnly);
+    MCContentList::MCList recordedOnly = list;
+    recordedOnly.Files.clear();
+    const auto removal = MCContentPlan::Make(folder, installed, recordedOnly, MCSha256::Of("list"), GameOnly);
+    std::filesystem::permissions(data, std::filesystem::perms::owner_all);
+    REQUIRE(!unlisted.has_value());
+    CHECK(unlisted.error().find("can't be listed") != std::string::npos);
+    CHECK(unlisted.error().find(MCFileSystem::ToUtf8(data)) != std::string::npos);
+    REQUIRE(!removal.has_value());
+    CHECK(removal.error().find("can't be listed") != std::string::npos);
+
+    // The failed listing isn't kept: listed again, the files are there.
+    const auto listed = MCContentPlan::Make(folder, installed, list, MCSha256::Of("list"), GameOnly);
+    REQUIRE(listed.has_value());
+    CHECK(ActionFor(*listed, "data/a.fit") == MCAction::Keep);
+    CHECK(ActionFor(*listed, "data/dropped.fit") == MCAction::Remove);
+#endif
+
+    // A game folder that isn't there: every file is fetched, placed as listed.
+    MCContentFolder missing(root / "not-there");
+    const auto fresh = MCContentPlan::Make(missing, {}, list, MCSha256::Of("list"), GameOnly);
+    REQUIRE(fresh.has_value());
+    CHECK(ActionFor(*fresh, "data/a.fit") == MCAction::Fetch);
+    CHECK_EQ(StepFor(*fresh, "data/a.fit")->OnDisk, std::string("data/a.fit"));
+}

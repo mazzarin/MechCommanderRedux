@@ -149,6 +149,7 @@ FolderStillProtected=Setup couldn't get permission to change %1.
 BackupFailed=Setup couldn't copy %1 to %2.
 RestoreFailed=These files couldn't go back into your MechCommander Gold folder, so they're still in %1:%2
 RemovalFailed=The game couldn't remove its downloaded files from %1, so the uninstall stopped:%n%n%2%n%nClose the game and its editor, then uninstall again.
+GameMissing=%2 is missing from %1, so the game's downloaded files can't be removed: they'll stay there.%n%nUninstall anyway?
 PlayGame=Play {#AppName}
 EditorShortcut={#AppName} Mission Editor
 
@@ -936,6 +937,17 @@ var
   ResultCode, I: Integer;
 begin
   Result := False;
+
+  // Without the game nothing can remove its content: the player chooses to uninstall anyway, leaving it (silently,
+  // the uninstall goes on), rather than an uninstall that can never finish.
+  if not FileExists(AddBackslash(Folder) + '{#GameExe}') then
+  begin
+    Log(Format('{#GameExe} is missing from %s: its content stays', [Folder]));
+    Result := SuppressibleMsgBox(FmtMessage(CustomMessage('GameMissing'), [Folder, '{#GameExe}']), mbConfirmation,
+                                 MB_YESNO, IDYES) = IDYES;
+    Exit;
+  end;
+
   Report := ExpandConstant('{tmp}\') + RemovalReportName;
   DeleteFile(Report);
 

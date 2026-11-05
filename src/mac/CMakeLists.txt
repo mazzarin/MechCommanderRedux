@@ -141,6 +141,19 @@ target_compile_definitions(mc_hpatch PRIVATE _IS_USED_MULTITHREAD=0)
 target_compile_options(mc_hpatch PRIVATE -w)
 target_include_directories(mc_hpatch PUBLIC ${MC_SRC}/lib/HDiffPatch-5.1.3)
 target_link_libraries(MCCore PUBLIC mc_hpatch)
+# libsodium (update/MCSignedFile and lib/MCSha256: updates' signatures and files): every C file MCCore.vcxproj lists,
+# libsodium's portable C (its README.md), a library of its own outside MCCore's C++ options.
+set(MC_SODIUM_DIR ${MC_SRC}/lib/libsodium-1.0.22/src/libsodium)
+mc_vcxproj_items(MC_SODIUM_ITEMS ${MC_SRC}/lib/MCCore/MCCore.vcxproj "" ClCompile
+                 "\\$\\(MCLibDir\\)libsodium-1\\.0\\.22[^\"]+\\.c")
+list(TRANSFORM MC_SODIUM_ITEMS REPLACE "^/\\$\\(MCLibDir\\)" "${MC_SRC}/lib/")
+add_library(mc_sodium STATIC ${MC_SODIUM_ITEMS})
+target_compile_definitions(mc_sodium PRIVATE CONFIGURED=1 NATIVE_LITTLE_ENDIAN=1 SODIUM_STATIC)
+target_compile_options(mc_sodium PRIVATE -w)
+target_include_directories(mc_sodium PRIVATE ${MC_SODIUM_DIR}/include/sodium PUBLIC ${MC_SODIUM_DIR}/include)
+target_link_libraries(MCCore PUBLIC mc_sodium)
+# JSON for Modern C++ (update/'s files), header-only; the tests write and read updates' files too.
+target_include_directories(MCCore PUBLIC ${MC_SRC}/lib/nlohmann-json-3.12.0/single_include)
 # dr_flac: one portable C decoder, outside MCCore's precompiled C++ header, as on Windows.
 add_library(mc_flac STATIC ${MC_SRC}/lib/dr_flac/dr_flac.c)
 target_compile_options(mc_flac PRIVATE -w)

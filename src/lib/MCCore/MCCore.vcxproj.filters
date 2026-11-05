@@ -61,6 +61,9 @@
     <Filter Include="terrain">
       <UniqueIdentifier>{a510aa55-db34-52a4-a81b-85f831f72367}</UniqueIdentifier>
     </Filter>
+    <Filter Include="update">
+      <UniqueIdentifier>{dff06fbe-53a7-5437-91d2-5d74ce819bec}</UniqueIdentifier>
+    </Filter>
     <Filter Include="vfx">
       <UniqueIdentifier>{7e14d8b9-67da-5881-b9a7-9259eb8213b5}</UniqueIdentifier>
     </Filter>
@@ -424,6 +427,9 @@
       <Filter>lib</Filter>
     </ClCompile>
     <ClCompile Include="lib\MCPriorityQueue.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\MCSha256.cpp">
       <Filter>lib</Filter>
     </ClCompile>
     <ClCompile Include="linkup\MCFidpGroup.cpp">
@@ -1304,6 +1310,27 @@
     <ClCompile Include="terrain\MCVideoWindow.cpp">
       <Filter>terrain</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCContentFolder.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCContentList.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCContentPlan.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCInstalled.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCReleaseFile.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCSignedFile.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
+    <ClCompile Include="update\MCUpdateJson.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="vfx\MCAgEllipse.cpp">
       <Filter>vfx</Filter>
     </ClCompile>
@@ -1694,6 +1721,9 @@
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCPriorityQueue.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCSha256.h">
       <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCVector2D.h">
@@ -2566,6 +2596,27 @@
     </ClInclude>
     <ClInclude Include="terrain\MCVideoWindow.h">
       <Filter>terrain</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCContentFolder.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCContentList.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCContentPlan.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCInstalled.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCReleaseFile.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCSignedFile.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCUpdateJson.h">
+      <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="vfx\MCAgShape.h">
       <Filter>vfx</Filter>

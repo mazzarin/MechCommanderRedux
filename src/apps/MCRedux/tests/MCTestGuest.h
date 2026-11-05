@@ -1,7 +1,12 @@
 #pragma once
 
 #include "MCTest.h"
+#include "TestGame.h"
 #include "linkup/MCLinkupMessages.h"
+#include "linkup/MCSessionManager.h"
+#include "logistics/MCConnectMenu.h"
+#include "logistics/MCSessionScreen.h"
+#include "main/MCLogistics.h"
 #include "network/MCMultiPlayer.h"
 #include "network/MCMultiPlayerMessages.h"
 #include "platform/MCDirectPlay.h"
@@ -547,4 +552,43 @@ namespace MCTestGuest
         DPSESSIONDESC2 _Desc{};
         std::atomic<bool> _LockWanted = false;
     };
+
+    /// <summary>Runs frames for two seconds of game time, giving the network a moment each.</summary>
+    inline void Settle()
+    {
+        constexpr int32_t Frames = 30;
+        constexpr uint32_t NetworkMs = 3;
+
+        for (int32_t frame = 0; frame < Frames; frame++)
+        {
+            SDL_Delay(NetworkMs);
+            MCTestGame::RunFrame(1.0f / 15.0f);
+        }
+    }
+
+    /// <summary>
+    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guests"/> join it, and opens the
+    /// session screen (the host's GO, which closes the room).
+    /// </summary>
+    inline bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
+    {
+        if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
+            MultiPlayer()->SessionManager->DirectPlay == nullptr)
+        {
+            return false;
+        }
+
+        for (Guest& guest : guests)
+        {
+            if (!guest.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", port)))
+            {
+                return false;
+            }
+        }
+
+        Settle();
+        Go();
+        Settle();
+        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+    }
 }

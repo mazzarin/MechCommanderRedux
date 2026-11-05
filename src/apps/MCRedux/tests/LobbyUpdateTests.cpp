@@ -120,6 +120,8 @@ TEST_CASE("lobby updates: a rejoin note too old, or for another build, is ignore
 namespace
 {
     using MCTestGuest::Guest;
+    using MCTestGuest::HostLobbyRoom;
+    using MCTestGuest::Settle;
     using MCUpdater::MCAnswer;
 
     /// <summary>What the stand-in for Sparkle was asked.</summary>
@@ -160,19 +162,6 @@ namespace
     constexpr std::string_view NewVersion = "0.2.2 (480)";
     constexpr std::string_view NewNotes = "Rooms keep their players through an update.";
 
-    /// <summary>Runs frames for two seconds of game time, giving the network a moment each.</summary>
-    void Settle()
-    {
-        constexpr int32_t Frames = 30;
-        constexpr uint32_t NetworkMs = 3;
-
-        for (int32_t frame = 0; frame < Frames; frame++)
-        {
-            SDL_Delay(NetworkMs);
-            MCTestGame::RunFrame(1.0f / 15.0f);
-        }
-    }
-
     /// <summary>Runs <see cref="Settle"/> until <paramref name="done"/> says so, at most a few times; whether it did.</summary>
     bool SettleUntil(const std::function<bool()>& done)
     {
@@ -200,31 +189,6 @@ namespace
         Settle();
     }
 
-    /// <summary>
-    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guests"/> join it, and opens the
-    /// session screen (the host's GO, which closes the room).
-    /// </summary>
-    bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
-    {
-        if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
-            MultiPlayer()->SessionManager->DirectPlay == nullptr)
-        {
-            return false;
-        }
-
-        for (Guest& guest : guests)
-        {
-            if (!guest.Join(*MultiPlayer()->SessionManager->DirectPlay, std::format("127.0.0.1:{}", port)))
-            {
-                return false;
-            }
-        }
-
-        Settle();
-        Go();
-        Settle();
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
-    }
 }
 
 /// <summary>

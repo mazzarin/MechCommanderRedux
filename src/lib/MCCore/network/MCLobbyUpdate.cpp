@@ -154,6 +154,8 @@ namespace
         GlobalLog()->DestroyMultiplayer();
         game.LeaveSession();
         game.PlayerRules.clear();
+        Coming.clear();
+        RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
         ShowWaiting(UpdatingText(name));
@@ -342,8 +344,9 @@ auto MCLobbyUpdate::Frame() -> void
     if (RestartAt.has_value() && now >= *RestartAt)
     {
         RestartAt.reset();
-        Restarting = true;
         MCUpdater::Answer(MCUpdater::MCAnswer::Install);
+        // An update no longer ready (it failed meanwhile) leaves the room as it was.
+        Restarting = MCUpdater::Status().Stage == MCUpdater::MCStage::Installing;
     }
 
     if (MultiPlayer() == nullptr || GlobalLog() == nullptr)
@@ -373,7 +376,7 @@ auto MCLobbyUpdate::Frame() -> void
 
 auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
 {
-    if (!InRoom() || MatchUnderWay() || Restarting || RestartAt.has_value())
+    if (!InRoom() || GlobalLog() == nullptr || MatchUnderWay() || Restarting || RestartAt.has_value())
     {
         return;
     }

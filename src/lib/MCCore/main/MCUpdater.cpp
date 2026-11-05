@@ -825,23 +825,25 @@ auto MCUpdater::Frame() -> void
 
 auto MCUpdater::PauseWork(bool paused) -> void
 {
-    if (paused == Paused)
-    {
-        return;
-    }
-
-    Paused = paused;
-
     if (paused)
     {
-        // Only downloads stop: a check or the quiet update's record is done in a moment.
-        if (Worker.joinable() && (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
+        // Each frame: a download that began during the mission (the start's check ending in the HD pack's change)
+        // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
+        Paused = true;
+
+        if (Worker.joinable() && PausedStep == MCStep::Idle &&
+            (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
         {
             SDL_Log("Updater: the download stops while the mission plays");
             PausedStep = Step;
             Worker.request_stop();
         }
 
+        return;
+    }
+
+    if (!std::exchange(Paused, false))
+    {
         return;
     }
 

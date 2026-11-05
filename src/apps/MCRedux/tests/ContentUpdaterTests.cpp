@@ -715,8 +715,8 @@ TEST_CASE("updater: Sparkle ending its session while the update is shown fails i
     CHECK(!release.Armed());
 }
 
-TEST_CASE("content updater: HD removed and got again at the release installed, its size recorded; the player's own HD "
-          "file kept")
+TEST_CASE("content updater: HD removed and got again at the release installed, its size recorded; the player's version "
+          "of an HD file kept in Redux backup, a file of their own left")
 {
     MCHostedRelease release("sets");
     const std::filesystem::path& game = release.Game.Path();
@@ -761,11 +761,23 @@ TEST_CASE("content updater: HD removed and got again at the release installed, i
     CHECK(InstalledSets(release) == WithHd);
     CHECK_EQ(MCInstalled::Read(game)->Files.size(), size_t{4});
 
-    // The player's own HD file stays when HD goes, and so does its folder.
+    // The player's version of an HD file goes when HD goes, kept in Redux backup; a file of their own in the folder
+    // stays, and so does the folder.
     Write(game / "HD" / "terrain.hda", "my own terrain");
+    Write(game / "HD" / "mine.hda", "added by the player");
     ChangeSets(release, WithoutHd);
-    CHECK_EQ(Read(game / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK(!std::filesystem::exists(game / "HD" / "terrain.hda"));
+    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK_EQ(Read(game / "HD" / "mine.hda"), std::string("added by the player"));
     CHECK(InstalledSets(release) == WithoutHd);
+
+    // Again: the backup's first copy stays (the uninstall puts it back), the later one kept beside it.
+    ChangeSets(release, WithHd);
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+    Write(game / "HD" / "terrain.hda", "my terrain again");
+    ChangeSets(release, WithoutHd);
+    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain.hda"), std::string("my own terrain"));
+    CHECK_EQ(Read(game / "Redux backup" / "HD" / "terrain (2).hda"), std::string("my terrain again"));
 
     // A sets file that can't be read is left aside: the copy keeps the sets its record has.
     Write(game / "Redux update" / "sets.json", "not json");
@@ -1096,14 +1108,15 @@ TEST_CASE("update place: every path an update installs, stages, downloads and se
     CHECK(!MCSyncedBy(game).has_value());
 }
 
-TEST_CASE("content removal: the uninstaller's removal takes what updates put there, leaves what a copy taken over had "
-          "and the player's own, and waits for running copies")
+TEST_CASE("content removal: the uninstaller's removal takes what updates placed, leaves what a copy taken over had in "
+          "place, its backup and the player's own, and waits for running copies")
 {
     MCHostedRelease release("removal");
     const std::filesystem::path& game = release.Game.Path();
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
-    // The player's copy, taken over: one file as the release has it, one the player modded, one they added.
+    // The player's copy, taken over: one file as the release has it, one the player modded (replaced, and kept in the
+    // backup), one they added.
     std::filesystem::remove_all(game);
     Write(game / "data" / "same.fit", "same in both");
     Write(game / "data" / "changed.fit", "the player's mod");
@@ -1115,9 +1128,9 @@ TEST_CASE("content removal: the uninstaller's removal takes what updates put the
     REQUIRE(std::filesystem::exists(game / "data" / "missions" / "new.fit"));
     const auto record = MCInstalled::Read(game);
     REQUIRE(record.has_value());
-    CHECK(record->Files.at("DATA/SAME.FIT").Found);
-    CHECK(!record->Files.at("DATA/MISSIONS/NEW.FIT").Found);
-    CHECK(!record->Files.at("DATA/CHANGED.FIT").Ours);
+    CHECK(!record->Files.at("DATA/SAME.FIT").Placed);
+    CHECK(record->Files.at("DATA/MISSIONS/NEW.FIT").Placed);
+    CHECK(record->Files.at("DATA/CHANGED.FIT").Placed);
 
     // A copy of the game running: removal waits for it, then gives up, removing nothing.
     {
@@ -1132,10 +1145,11 @@ TEST_CASE("content removal: the uninstaller's removal takes what updates put the
 
     const auto removed = MCContentRemoval::Remove(*disk, game);
     REQUIRE(removed.has_value());
-    CHECK_EQ(removed->Removed, size_t{1});
-    CHECK_EQ(removed->Kept, size_t{2});
+    CHECK_EQ(removed->Removed, size_t{2});
+    CHECK_EQ(removed->Kept, size_t{1});
     CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
-    CHECK_EQ(Read(game / "data" / "changed.fit"), std::string("the player's mod"));
+    CHECK(!std::filesystem::exists(game / "data" / "changed.fit"));
+    CHECK_EQ(Read(game / "Redux backup" / "data" / "changed.fit"), std::string("the player's mod"));
     CHECK_EQ(Read(game / "data" / "mine.fit"), std::string("the player's own"));
     CHECK(!std::filesystem::exists(game / "data" / "missions"));
     CHECK(!std::filesystem::exists(game / "Redux update"));

@@ -411,7 +411,7 @@ std::vector<MCContentSwap::MCMove> MCContentStage::Moves(const MCContentPlan::MC
             continue;
         }
 
-        MCContentSwap::MCMove move{.Path = step.OnDisk};
+        MCContentSwap::MCMove move{.Path = step.OnDisk, .Backup = step.Backup};
 
         if (step.Found)
         {

@@ -2,6 +2,9 @@
 
 #include "update/MCInstalled.h"
 
+#include <chrono>
+#include <vector>
+
 class MCUpdateDisk;
 class MCUpdateLock;
 
@@ -14,13 +17,17 @@ class MCUpdateLock;
 /// 1. <c>ready.json</c> becomes <c>journal.json</c> (a rename, its folder flushed): the swap has begun.
 /// 2. Each file replaced or removed is moved aside to <c>Redux update/replaced/</c>; the folders flushed.
 /// 3. Each new file is moved from <c>staged/</c> into place; the folders flushed.
-/// 4. The installed record is written durably; then the journal goes, then <c>replaced/</c> and <c>staged/</c>.
+/// 4. The installed record is written durably: the swap is committed. The old files an update didn't place, as placed
+///    (the folder's own, or the player's: planned so, or changed since staging), move from <c>replaced/</c> into
+///    <c>Redux backup/</c> at their paths, the folders flushed; then <c>replaced/</c> and <c>staged/</c> go, then
+///    the journal.
 ///
 /// A crash at any step leaves the journal, and the next start finishes the swap, judging each file by what's at its
-/// path (its size, else its hash): old, new or missing. Nothing new moves in before every old file is safely aside,
-/// so no old file is ever lost. If the swap can't finish (a file held open, a full disk), the previous set is put back
-/// from <c>replaced/</c> and the update stays staged for the next start; only a set that can't be put back stops the
-/// game. A file the player changed since staging is left as it is and recorded as theirs.
+/// path (its size, else its hash): old, new, missing, or another (the player's, set aside and kept as an old one is).
+/// Nothing new moves in before every old file is safely aside, so no old file is ever lost. If the swap can't finish
+/// (a file held open, a full disk), the previous set is put back from <c>replaced/</c> and the update stays staged
+/// for the next start; only a set that can't be put back stops the game. In <c>Redux backup/</c> the first copy of a
+/// path stays: it's the folder's own, which the uninstall puts back; a later one is kept beside it, numbered.
 /// </summary>
 namespace MCContentSwap
 {
@@ -56,6 +63,8 @@ namespace MCContentSwap
         int64_t OldWritten = 0;
         std::optional<MCSha256::MCDigest> New;
         uint64_t NewSize = 0;
+        /// <summary>The old file is kept in <c>Redux backup/</c> once the swap is committed: an update didn't place it.</summary>
+        bool Backup = false;
     };
 
     struct MCJournal

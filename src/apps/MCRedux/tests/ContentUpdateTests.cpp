@@ -297,12 +297,13 @@ TEST_CASE("content list: paths outside the folder, alike but for case, or that W
     CHECK(!MCContentList::Read(MCContentList::Write(badPath)).has_value());
 }
 
-TEST_CASE("content plan: kept, patched, fetched, the player's left, an old file removed, only the zips needed")
+TEST_CASE("content plan: kept, patched, fetched, the player's replaced and kept, old files removed, only the zips "
+          "needed")
 {
     const ScratchFolder scratch("plan");
     const std::filesystem::path& root = scratch.Path();
-    // On disk: a file as released, an earlier official one with a patch, one without, a mod, a file installed by an
-    // earlier release and dropped since, and one dropped that the player changed. "DATA" is spelled as a CD has it.
+    // On disk: a file as released, an earlier one with a patch, one without, a mod, a file installed by an earlier
+    // release and dropped since, and one dropped that the player changed. "DATA" is spelled as a CD has it.
     WriteText(root / "ART.FST", "art v2");
     WriteText(root / "DATA" / "patched.fit", "patched v1");
     WriteText(root / "DATA" / "fetched.fit", "fetched v1");
@@ -327,12 +328,8 @@ TEST_CASE("content plan: kept, patched, fetched, the player's left, an old file 
     MCContentList::MCFile patched = Listed("data/patched.fit", "patched v2", "update-2.zip");
     patched.Patches.push_back({MCSha256::Of("patched v1"), "patches/patched-1-2.hdiff", 40, MCSha256::Of("p")});
     list.Files.push_back(patched);
-    MCContentList::MCFile fetched = Listed("data/fetched.fit", "fetched v2", "update-2.zip");
-    fetched.Earlier.push_back(MCSha256::Of("fetched v1"));
-    list.Files.push_back(fetched);
-    MCContentList::MCFile mod = Listed("data/mod.fit", "mod v2", "base-2.zip");
-    mod.Earlier.push_back(MCSha256::Of("mod v1"));
-    list.Files.push_back(mod);
+    list.Files.push_back(Listed("data/fetched.fit", "fetched v2", "update-2.zip"));
+    list.Files.push_back(Listed("data/mod.fit", "mod v2", "base-2.zip"));
     list.Files.push_back(Listed("data/missions/new.fit", "new", "update-2.zip"));
     list.Files.push_back(Listed("HD/terrain.hda", "terrain", "hd-1.zip", std::string(MCContentList::HdSet)));
     const MCSha256::MCDigest listHash = MCSha256::Of("list 2");
@@ -343,39 +340,50 @@ TEST_CASE("content plan: kept, patched, fetched, the player's left, an old file 
     CHECK(ActionFor(*plan, "ART.FST") == MCAction::Keep);
     CHECK(ActionFor(*plan, "data/patched.fit") == MCAction::Patch);
     CHECK(ActionFor(*plan, "data/fetched.fit") == MCAction::Fetch);
-    CHECK(ActionFor(*plan, "data/mod.fit") == MCAction::LeaveTheirs);
+    CHECK(ActionFor(*plan, "data/mod.fit") == MCAction::Fetch);
     CHECK(ActionFor(*plan, "data/missions/new.fit") == MCAction::Fetch);
     CHECK(ActionFor(*plan, "DATA/dropped.fit") == MCAction::Remove);
-    CHECK(!ActionFor(*plan, "DATA/changed.fit").has_value());
+    CHECK(ActionFor(*plan, "DATA/changed.fit") == MCAction::Remove);
     CHECK(!ActionFor(*plan, "HD/terrain.hda").has_value());
     CHECK(plan->Changes());
+
+    // Kept in Redux backup: every file replaced or removed that an update didn't place as it is (the folder's own, the
+    // mod, the one the player changed); the file the earlier release placed goes.
+    CHECK(StepFor(*plan, "data/patched.fit")->Backup);
+    CHECK(StepFor(*plan, "data/fetched.fit")->Backup);
+    CHECK(StepFor(*plan, "data/mod.fit")->Backup);
+    CHECK(StepFor(*plan, "DATA/changed.fit")->Backup);
+    CHECK(!StepFor(*plan, "DATA/dropped.fit")->Backup);
 
     // Files go where the folders are on disk; the patch is the one from the copy found.
     CHECK_EQ(StepFor(*plan, "data/fetched.fit")->OnDisk, std::string("DATA/fetched.fit"));
     CHECK_EQ(StepFor(*plan, "data/missions/new.fit")->OnDisk, std::string("DATA/missions/new.fit"));
     CHECK_EQ(StepFor(*plan, "data/patched.fit")->Patch->Name, std::string("patches/patched-1-2.hdiff"));
 
-    // Only update-2.zip holds a fetched file: base-2.zip holds the mod's, which stays; hd-1.zip a set not chosen.
-    REQUIRE_EQ(plan->Zips.size(), size_t{1});
-    CHECK_EQ(plan->Zips[0]->Name, std::string("update-2.zip"));
-    CHECK_EQ(plan->DownloadBytes, uint64_t{300 + 40});
+    // Only the zips holding a fetched file: base-1.zip holds only what's kept; hd-1.zip a set not chosen.
+    REQUIRE_EQ(plan->Zips.size(), size_t{2});
+    CHECK_EQ(plan->Zips[0]->Name, std::string("base-2.zip"));
+    CHECK_EQ(plan->Zips[1]->Name, std::string("update-2.zip"));
+    CHECK_EQ(plan->DownloadBytes, uint64_t{2000 + 300 + 40});
     CHECK_EQ(plan->StagedBytes, uint64_t{std::string_view("patched v2").size() + std::string_view("fetched v2").size() +
-                                         std::string_view("new").size()});
+                                         std::string_view("mod v2").size() + std::string_view("new").size()});
 
-    // The record: the release's files as they'll be, the mod the player's.
+    // The record: every listed file the release's as it'll be, placed by the update, but the one found as released.
     CHECK_EQ(plan->Record.Release, uint64_t{2});
     CHECK(plan->Record.List == listHash);
     CHECK(plan->Record.Files.at("DATA/PATCHED.FIT").Sha256 == MCSha256::Of("patched v2"));
-    CHECK(!plan->Record.Files.at("DATA/MOD.FIT").Ours);
-    CHECK(plan->Record.Files.at("DATA/MOD.FIT").Sha256 == MCSha256::Of("the player's own"));
+    CHECK(plan->Record.Files.at("DATA/MOD.FIT").Sha256 == MCSha256::Of("mod v2"));
+    CHECK(plan->Record.Files.at("DATA/MOD.FIT").Placed);
+    CHECK(!plan->Record.Files.at("ART.FST").Placed);
     CHECK(!plan->Record.Files.contains("DATA/DROPPED.FIT"));
+    CHECK(!plan->Record.Files.contains("DATA/CHANGED.FIT"));
 
     // With HD chosen, its file is fetched from its zip too.
     MCContentFolder again(root);
     const auto withHd = MCContentPlan::Make(again, installed, list, listHash, GameAndHd);
     REQUIRE(withHd.has_value());
     CHECK(ActionFor(*withHd, "HD/terrain.hda") == MCAction::Fetch);
-    CHECK_EQ(withHd->Zips.size(), size_t{2});
+    CHECK_EQ(withHd->Zips.size(), size_t{3});
 }
 
 TEST_CASE("content plan: a file as recorded keeps its hash; one changed since is hashed; HD dropped is removed")
@@ -411,18 +419,22 @@ TEST_CASE("content plan: a file as recorded keeps its hash; one changed since is
     REQUIRE(trusted.has_value());
     CHECK(ActionFor(*trusted, "ART.FST") == MCAction::Keep);
 
-    // Its time moved on: it's hashed, and found to be neither the release's nor an earlier one: the player's.
+    // Its time moved on: it's hashed, and found not to be the release's: fetched again, the one found kept in Redux
+    // backup (found in place, no update placed it).
+    CHECK(!record->Files.at("ART.FST").Placed);
     std::filesystem::last_write_time(art, written + std::chrono::seconds(5));
     MCContentFolder third(root);
     const auto rehashed = MCContentPlan::Make(third, *record, list, MCSha256::Of("list"), GameAndHd);
     REQUIRE(rehashed.has_value());
-    CHECK(ActionFor(*rehashed, "ART.FST") == MCAction::LeaveTheirs);
+    CHECK(ActionFor(*rehashed, "ART.FST") == MCAction::Fetch);
+    CHECK(StepFor(*rehashed, "ART.FST")->Backup);
 
-    // HD removed from the copy's sets: its files, still as installed, go.
+    // HD removed from the copy's sets: its files go, kept in Redux backup as the folder's own.
     MCContentFolder fourth(root);
     const auto dropped = MCContentPlan::Make(fourth, *record, list, MCSha256::Of("list"), GameOnly);
     REQUIRE(dropped.has_value());
     CHECK(ActionFor(*dropped, "HD/terrain.hda") == MCAction::Remove);
+    CHECK(StepFor(*dropped, "HD/terrain.hda")->Backup);
     CHECK(!dropped->Record.Sets.contains(std::string(MCContentList::HdSet)));
 }
 

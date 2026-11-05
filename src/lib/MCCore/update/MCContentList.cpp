@@ -18,7 +18,6 @@ namespace
     constexpr std::string_view PathKey = "path";
     constexpr std::string_view SetKey = "set";
     constexpr std::string_view ZipKey = "zip";
-    constexpr std::string_view EarlierKey = "earlier";
     constexpr std::string_view PatchesKey = "patches";
     constexpr std::string_view FromKey = "from";
     constexpr char Separator = '/';
@@ -91,11 +90,6 @@ namespace
         if (!zips.contains(file.Zip))
         {
             Fail("\"{}\" is in the zip \"{}\", which isn't listed", file.Path, file.Zip);
-        }
-
-        for (const MCJson& earlier : Array(json, EarlierKey, false))
-        {
-            file.Earlier.push_back(DigestOf(earlier, EarlierKey));
         }
 
         for (const MCJson& patch : Array(json, PatchesKey, false))
@@ -279,18 +273,6 @@ std::string MCContentList::Write(const MCList& list)
                      {SizeKey, file.Size},
                      {Sha256Key, MCSha256::Hex(file.Sha256)},
                      {ZipKey, file.Zip}};
-
-        if (!file.Earlier.empty())
-        {
-            MCJson earlier = MCJson::array();
-
-            for (const MCSha256::MCDigest& digest : file.Earlier)
-            {
-                earlier.push_back(MCSha256::Hex(digest));
-            }
-
-            entry[std::string(EarlierKey)] = std::move(earlier);
-        }
 
         if (!file.Patches.empty())
         {

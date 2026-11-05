@@ -110,7 +110,7 @@ std::expected<MCContentRemoval::MCRemoved, std::string> MCContentRemoval::Remove
         const std::filesystem::path listed = MCFileSystem::FromUtf8(file.Path);
         const std::filesystem::path path = gameFolder / listed;
 
-        if (!file.Ours || file.Found || !StillAsRecorded(disk, path, file))
+        if (!file.Placed || !StillAsRecorded(disk, path, file))
         {
             removed.Kept += disk.Stat(path).Exists ? 1 : 0;
             continue;

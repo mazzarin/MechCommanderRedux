@@ -1,5 +1,7 @@
 #pragma once
 
+class MCUpdateLock;
+
 /// <summary>The animated 'Mech cursor (teditor\bMech.ani), loaded at startup.</summary>
 extern HCURSOR g_hMechCursor;
 
@@ -46,6 +48,13 @@ private:
     /// <summary>The rest of InitInstance, once no other editor is running.</summary>
     BOOL StartEditor();
 
+    /// <summary>
+    /// The port's: in a copy that updates its content, holds the game's lock as a running game does, so no game puts
+    /// an update in place under the editor (update/MCUpdateLock.h). False when an update stopped midway, whose files
+    /// only the game can finish putting in place (the player is told).
+    /// </summary>
+    BOOL HoldGameLock(const CString& dataPath);
+
     /// <summary>The multiplayer view (the document template's) and the solo view.</summary>
     CView* _views[VIEW_COUNT] = {};
 
@@ -54,6 +63,9 @@ private:
 
     /// <summary>Each view's Mission menu while the other view's is in the menu bar.</summary>
     HMENU _missionMenus[VIEW_COUNT] = {};
+
+    /// <summary>The game's lock, held shared while the editor runs (none in a copy that doesn't update).</summary>
+    std::unique_ptr<MCUpdateLock> _gameLock;
 };
 
 /// <summary>The one application object.</summary>

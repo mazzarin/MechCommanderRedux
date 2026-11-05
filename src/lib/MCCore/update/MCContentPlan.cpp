@@ -48,17 +48,10 @@ namespace
         return MCHashed{*digest, size, *written};
     }
 
-    /// <summary>Whether <paramref name="hash"/> is one of <paramref name="file"/>'s official versions.</summary>
-    bool IsOfficial(const MCContentList::MCFile& file, const MCSha256::MCDigest& hash, const MCInstalled::MCFile* had)
+    /// <summary>Whether the file found, <paramref name="hash"/>, is the one an update placed (so it can go).</summary>
+    bool PlacedAsIs(const MCInstalled::MCFile* had, const MCSha256::MCDigest& hash)
     {
-        if (had != nullptr && had->Ours && had->Sha256 == hash)
-        {
-            return true;
-        }
-
-        return std::ranges::find(file.Earlier, hash) != file.Earlier.end() ||
-               std::ranges::any_of(file.Patches,
-                                   [&](const MCContentList::MCPatch& patch) { return patch.From == hash; });
+        return had != nullptr && had->Placed && had->Sha256 == hash;
     }
 
     const MCInstalled::MCFile* Recorded(const MCInstalled::MCRecord& installed, std::string_view folded)
@@ -146,24 +139,16 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
                 if (hashed->Sha256 == file.Sha256)
                 {
-                    // Already there before any update put it there (the player's copy), or still as found then.
                     step.Action = MCAction::Keep;
                     record.Written = hashed->Written;
-                    record.Found = had == nullptr || had->Found;
+                    record.Placed = PlacedAsIs(had, hashed->Sha256);
                 }
-                else if (IsOfficial(file, hashed->Sha256, had))
+                else
                 {
                     const auto patch = std::ranges::find(file.Patches, hashed->Sha256, &MCContentList::MCPatch::From);
                     step.Action = patch != file.Patches.end() ? MCAction::Patch : MCAction::Fetch;
                     step.Patch = patch != file.Patches.end() ? &*patch : nullptr;
-                }
-                else
-                {
-                    step.Action = MCAction::LeaveTheirs;
-                    record.Sha256 = hashed->Sha256;
-                    record.Size = hashed->Size;
-                    record.Written = hashed->Written;
-                    record.Ours = false;
+                    step.Backup = !PlacedAsIs(had, hashed->Sha256);
                 }
 
                 break;
@@ -188,7 +173,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
     for (const auto& [folded, had] : installed.Files)
     {
-        if (listed.contains(folded) || !had.Ours)
+        if (listed.contains(folded))
         {
             continue;
         }
@@ -207,17 +192,15 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             return std::unexpected(hashed.error());
         }
 
-        if (hashed->Sha256 == had.Sha256)
-        {
-            plan.Steps.push_back(MCStep{.Action = MCAction::Remove,
-                                        .Path = had.Path,
-                                        .OnDisk = found.Path,
-                                        .File = nullptr,
-                                        .Patch = nullptr,
-                                        .Found = hashed->Sha256,
-                                        .FoundSize = hashed->Size,
-                                        .FoundWritten = hashed->Written});
-        }
+        plan.Steps.push_back(MCStep{.Action = MCAction::Remove,
+                                    .Path = had.Path,
+                                    .OnDisk = found.Path,
+                                    .File = nullptr,
+                                    .Patch = nullptr,
+                                    .Found = hashed->Sha256,
+                                    .FoundSize = hashed->Size,
+                                    .FoundWritten = hashed->Written,
+                                    .Backup = !PlacedAsIs(&had, hashed->Sha256)});
     }
 
     for (const MCContentList::MCZip& zip : list.Zips)

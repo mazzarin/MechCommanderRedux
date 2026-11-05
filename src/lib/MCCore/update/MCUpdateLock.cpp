@@ -1,10 +1,16 @@
 // Built without the precompiled header on Windows (MCCore.vcxproj): windows.h must not meet the game's Win32
-// stand-ins.
+// stand-ins. The editor builds it too, without SDL (MC_LOCK_NO_SDL, MCEditor.vcxproj).
 
 #include "update/MCUpdateLock.h"
 
-#include <SDL3/SDL_log.h>
+#include <cstdarg>
 #include <system_error>
+
+#ifdef MC_LOCK_NO_SDL
+#include <cstdio>
+#else
+#include <SDL3/SDL_log.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -20,6 +26,23 @@
 
 namespace
 {
+    /// <summary>Notes a lock's trouble, printf-style: in the game's log, or on stderr in the editor.</summary>
+#if defined(__clang__) || defined(__GNUC__)
+    __attribute__((format(printf, 1, 2)))
+#endif
+    void Note(const char* format, ...)
+    {
+        va_list arguments;
+        va_start(arguments, format);
+#ifdef MC_LOCK_NO_SDL
+        std::vfprintf(stderr, format, arguments);
+        std::fputc('\n', stderr);
+#else
+        SDL_LogMessageV(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, format, arguments);
+#endif
+        va_end(arguments);
+    }
+
 #ifdef _WIN32
     /// <summary>The byte LockFileEx locks: the file holds nothing, and a lock may lie past its end.</summary>
     constexpr DWORD LockedBytes = 1;
@@ -41,7 +64,7 @@ namespace
 
         if (!UnlockFileEx(HandleOf(handle), 0, LockedBytes, 0, &at))
         {
-            SDL_Log("Updates: a lock can't be let go (error %lu); it goes as the game ends", GetLastError());
+            Note("Updates: a lock can't be let go (error %lu); it goes as the game ends", GetLastError());
         }
     }
 #else
@@ -86,8 +109,8 @@ std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& ga
 
     if (handle == INVALID_HANDLE_VALUE)
     {
-        SDL_Log("Updates: the lock %s can't be opened (error %lu)",
-                reinterpret_cast<const char*>(path.u8string().c_str()), GetLastError());
+        Note("Updates: the lock %s can't be opened (error %lu)", reinterpret_cast<const char*>(path.u8string().c_str()),
+             GetLastError());
         return nullptr;
     }
 
@@ -103,7 +126,7 @@ std::unique_ptr<MCUpdateLock> MCUpdateLock::Open(const std::filesystem::path& ga
 
     if (handle < 0)
     {
-        SDL_Log("Updates: the lock %s can't be opened (%s)", path.c_str(), std::strerror(errno));
+        Note("Updates: the lock %s can't be opened (%s)", path.c_str(), std::strerror(errno));
         return nullptr;
     }
 
@@ -185,7 +208,7 @@ void MCUpdateLock::Release()
 #else
     if (!Flock(_Handle, LOCK_UN))
     {
-        SDL_Log("Updates: a lock can't be let go (%s); it goes as the game ends", std::strerror(errno));
+        Note("Updates: a lock can't be let go (%s); it goes as the game ends", std::strerror(errno));
     }
 #endif
     _Held = MCHeld::None;

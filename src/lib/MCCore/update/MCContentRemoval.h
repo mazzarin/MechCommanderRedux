@@ -7,10 +7,11 @@ class MCUpdateDisk;
 /// Windows uninstaller has the game do (<c>MCRedux --remove-content</c>) before it puts back what the setup replaced
 /// and removes the program: the installer never owns content, so the game is its one remover. Under the game's lock,
 /// taken exclusive so no copy plays meanwhile, a swap a crash stopped midway is finished first; then each file the
-/// installed record says updates put there goes, when its hash is still the recorded one; then the update folder
+/// installed record says an update placed goes, when its hash is still the recorded one; then the update folder
 /// (<c>Redux update/</c>, the record, the sets chosen and the locks with it); then each folder those files left empty.
-/// Files the player added or changed stay, with their folders, and so do the files a copy taken over already had as
-/// the release has them (MCInstalled::MCFile::Found), so that copy is as it was.
+/// Files the player added or changed since stay, with their folders, and so do those a copy taken over already had as
+/// the release has them (not placed). What updates replaced in that copy is in <c>Redux backup/</c>, which the
+/// uninstaller puts back, so the copy is as it was.
 /// </summary>
 namespace MCContentRemoval
 {
@@ -22,7 +23,7 @@ namespace MCContentRemoval
     {
         /// <summary>The files removed.</summary>
         size_t Removed = 0;
-        /// <summary>The recorded files left: the player's (changed, or theirs), and those found in a copy taken over.</summary>
+        /// <summary>The recorded files left: those the player changed since, and those found in place in a copy taken over.</summary>
         size_t Kept = 0;
     };
 

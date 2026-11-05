@@ -7,17 +7,16 @@ class MCContentFolder;
 
 /// <summary>
 /// Port-only: what a copy must do to hold a release's content (SPEC-install-and-updates.md's The player's copy and
-/// Applying an update's Plan). For each listed file of a set the copy has:
+/// Applying an update's Plan): every listed path is the release's. For each listed file of a set the copy has:
 ///
 /// - one whose hash already matches stays, wherever it came from;
-/// - one that's an earlier official version (a hash the list knows, or the one this copy installed) is replaced:
-///   patched when the list has a patch from it, else fetched whole;
-/// - one that's missing is fetched;
-/// - any other is the player's (a mod), left as it is and recorded as theirs.
+/// - any other is replaced: patched when the list has a patch from its bytes, else fetched whole;
+/// - one that's missing is fetched.
 ///
-/// A file the copy installed that the release no longer lists, or whose set the copy no longer has, is removed when
-/// it's still as installed. Only the zips holding a fetched file are downloaded. A copy several releases behind plans
-/// the same way, against the current list alone.
+/// A recorded file the release no longer lists, or whose set the copy no longer has, is removed. A file replaced or
+/// removed that isn't one an update placed, as placed (the folder's own, or one changed since), is kept in
+/// <c>Redux backup</c> (update/MCContentSwap.h); unlisted files are never touched. Only the zips holding a fetched file
+/// are downloaded. A copy several releases behind plans the same way, against the current list alone.
 /// </summary>
 namespace MCContentPlan
 {
@@ -29,10 +28,8 @@ namespace MCContentPlan
         Fetch,
         /// <summary>The copy on disk patched.</summary>
         Patch,
-        /// <summary>Installed by an earlier release, no longer listed (or its set dropped).</summary>
+        /// <summary>Recorded, no longer listed (or its set dropped).</summary>
         Remove,
-        /// <summary>The player's: left as it is.</summary>
-        LeaveTheirs,
     };
 
     struct MCStep
@@ -49,6 +46,8 @@ namespace MCContentPlan
         std::optional<MCSha256::MCDigest> Found;
         uint64_t FoundSize = 0;
         int64_t FoundWritten = 0;
+        /// <summary>Replaced or removed, the file found is kept in <c>Redux backup</c>: an update didn't place it.</summary>
+        bool Backup = false;
     };
 
     struct MCPlan

@@ -13,6 +13,11 @@
 #include "TacticalMapDialog.h"
 #include "resource.h"
 #include "../MCRedux/MCCrashTrace.h"
+#include "update/MCContentSwap.h"
+#include "update/MCUpdateLock.h"
+
+#include <filesystem>
+#include <system_error>
 
 namespace
 {
@@ -103,6 +108,39 @@ BOOL DreditorApp::InitInstance()
     return StartEditor();
 }
 
+BOOL DreditorApp::HoldGameLock(const CString& dataPath)
+{
+    // The editor is multibyte: the path is in the system's code page, as std::filesystem reads a char string.
+    const std::filesystem::path folder(static_cast<LPCTSTR>(dataPath));
+    std::error_code error;
+
+    if (!std::filesystem::is_directory(folder / MCContentSwap::UpdateFolder, error))
+    {
+        return TRUE;
+    }
+
+    // Held shared, it waits out a game putting an update in place right now; a journal left after that is an update
+    // stopped midway, which the game's next start finishes.
+    _gameLock = MCUpdateLock::Open(folder, MCUpdateLock::GameLock);
+
+    if (_gameLock == nullptr || !_gameLock->Shared())
+    {
+        _gameLock.reset();
+        return TRUE;
+    }
+
+    if (std::filesystem::exists(folder / MCContentSwap::JournalFile, error))
+    {
+        _gameLock.reset();
+        AfxMessageBox(
+            "The game's last update stopped partway. Start the game to finish it, then open the editor again.",
+            MB_OK | MB_ICONEXCLAMATION);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 BOOL DreditorApp::StartEditor()
 {
     {
@@ -135,6 +173,11 @@ BOOL DreditorApp::StartEditor()
                        "Put MCEditor.exe in your MechCommander Gold folder, or start it with -d <folder>.",
                        static_cast<LPCTSTR>(dataPath));
         AfxMessageBox(message, MB_OK | MB_ICONEXCLAMATION);
+        return FALSE;
+    }
+
+    if (!HoldGameLock(dataPath))
+    {
         return FALSE;
     }
 

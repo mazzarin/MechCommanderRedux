@@ -2,13 +2,17 @@
 
 #include "lib/MCSha256.h"
 
+#include <functional>
+#include <map>
+#include <set>
+
 /// <summary>
 /// Port-only: what a copy has installed (<c>Redux update/installed.json</c> in the game folder): the content release
 /// and its list, the sets the copy has (the installer's HD answer, then HD OPTIONS'), and each managed file as it was
 /// last seen, with its hash, size and time written. A file whose size and time are still as recorded keeps its
-/// recorded hash, so a plan hashes only what changed since. Files updates installed are the copy's ("ours"); a listed
-/// file the player changed is recorded as theirs, and updates leave it alone. A file already in the folder as the
-/// release has it is ours too, and recorded as found there, so removing the content leaves it.
+/// recorded hash, so a plan hashes only what changed since. Every listed file is the release's: one an update placed
+/// is deleted when replaced or dropped; any other (the folder's own, found as the release has it, or one changed since)
+/// is kept in <c>Redux backup</c> (update/MCContentSwap.h).
 /// </summary>
 namespace MCInstalled
 {
@@ -25,13 +29,11 @@ namespace MCInstalled
         uint64_t Size = 0;
         /// <summary>The time it was written, in the file system's own ticks (only ever compared on this machine).</summary>
         int64_t Written = 0;
-        /// <summary>Whether it's the release's (installed or found as the release has it), not the player's.</summary>
-        bool Ours = true;
         /// <summary>
-        /// Whether it was in the folder, as the release has it, before any update put it there (a copy the player's
-        /// installer took over): removing the content (MCContentRemoval) leaves it, so that copy stays as it was.
+        /// Whether an update put it there (fetched or patched), not found in place as the release has it: only a file an
+        /// update placed is deleted when replaced or dropped, and by the uninstall.
         /// </summary>
-        bool Found = false;
+        bool Placed = true;
     };
 
     struct MCRecord

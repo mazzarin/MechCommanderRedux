@@ -41,7 +41,13 @@ namespace
         std::string GameCommandLine;
         /// <summary>--remove-content: the content goes, and the game doesn't start (the Windows uninstaller's).</summary>
         bool RemoveContent = false;
+        /// <summary>--report: where --remove-content says why it failed (the uninstaller shows it); empty, nowhere.</summary>
+        std::filesystem::path ReportFile;
     };
+
+    /// <summary>The command line's words for the content's removal.</summary>
+    constexpr std::string_view RemoveContentOption = "--remove-content";
+    constexpr std::string_view ReportOption = "--report";
 
     /// <summary>
     /// The release's host for the game's own updater: the downloads Worker (tools/cloudflare/downloads in the
@@ -85,6 +91,7 @@ namespace
         "  --user         - Where saves, prefs and temp files go (default: the SDL pref path)\n"
         "  --remove-content - Remove the game's downloaded files from the install (or the\n"
         "                   --data folder), leaving the player's own, and quit\n"
+        "  --report <file> - With --remove-content: why it failed, written to the file\n"
         "                   game options, as MCX.EXE takes them.\n"
         "  -mission <n>   - Start game segment n of SYSTEM.CFG's missionName (skips logistics)\n"
         "  -load <file>   - Load a saved game\n"
@@ -222,16 +229,19 @@ namespace
         {
             const std::string_view arg = arguments[i];
 
-            if (arg == "--data" || arg == "-d" || arg == "--user")
+            if (arg == "--data" || arg == "-d" || arg == "--user" || arg == ReportOption)
             {
                 if (i + 1 >= arguments.size())
                 {
-                    return std::unexpected(std::format("{} needs a folder", arg));
+                    return std::unexpected(std::format("{} needs a {}", arg, arg == ReportOption ? "file" : "folder"));
                 }
 
-                (arg == "--user" ? options.UserFolder : options.DataFolder) = MCFileSystem::FromUtf8(arguments[++i]);
+                std::filesystem::path& path = arg == ReportOption ? options.ReportFile
+                                              : arg == "--user"   ? options.UserFolder
+                                                                  : options.DataFolder;
+                path = MCFileSystem::FromUtf8(arguments[++i]);
             }
-            else if (arg == "--remove-content")
+            else if (arg == RemoveContentOption)
             {
                 options.RemoveContent = true;
             }
@@ -552,21 +562,21 @@ namespace
 
     /// <summary>
     /// --remove-content: the game's content goes from the install folder, or the --data folder (update/MCContentRemoval.h).
-    /// The uninstaller runs it hidden, so it asks nothing and tells only a terminal it was started from.
+    /// The uninstaller runs it hidden, so it asks nothing and tells only a terminal it was started from, and the
+    /// --report file, where a failure's reason goes (the uninstaller shows it, and stops).
     /// </summary>
     /// <returns>The exit code: 0 once removed.</returns>
     int RemoveContent(const MCLaunchOptions& options)
     {
         const std::filesystem::path folder =
             options.DataFolder.empty() ? MCGameFolder::InstallFolder() : options.DataFolder;
+        std::expected<MCContentRemoval::MCRemoved, std::string> removed = std::unexpected("there's no install folder");
 
-        if (folder.empty())
+        if (!folder.empty())
         {
-            SDL_Log("Removing the content: no install folder");
-            return 1;
+            removed = MCContentRemoval::Remove(*MakeDisk(), folder);
         }
 
-        const auto removed = MCContentRemoval::Remove(*MakeDisk(), folder);
         const std::string told = removed
                                      ? std::format("Removed {} of the game's files from {}; {} left as the player's",
                                                    removed->Removed, MCFileSystem::ToUtf8(folder), removed->Kept)
@@ -577,6 +587,18 @@ namespace
         if (MCConsole::HasOutput())
         {
             (removed ? std::cout : std::cerr) << told << "\n";
+        }
+
+        if (!removed && !options.ReportFile.empty())
+        {
+            std::ofstream report(options.ReportFile, std::ios::binary | std::ios::trunc);
+            report << removed.error() << "\n";
+
+            if (!report)
+            {
+                SDL_Log("Removing the content: its report can't be written to %s",
+                        MCFileSystem::ToUtf8(options.ReportFile).c_str());
+            }
         }
 
         return removed ? 0 : 1;

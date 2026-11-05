@@ -990,7 +990,8 @@ TEST_CASE(
 
             try
             {
-                MCContentSwap::Abandon(disk, Game);
+                // Cut short by the power cut: what it returns is never reached.
+                static_cast<void>(MCContentSwap::Abandon(disk, Game));
             }
             catch (const MCPowerCut&)
             {
@@ -1202,7 +1203,8 @@ TEST_CASE("content removal: a repair's giving up stopped at any step is finished
 
             try
             {
-                MCContentSwap::Abandon(disk, Game);
+                // Cut short by the power cut: what it returns is never reached.
+                static_cast<void>(MCContentSwap::Abandon(disk, Game));
             }
             catch (const MCPowerCut&)
             {

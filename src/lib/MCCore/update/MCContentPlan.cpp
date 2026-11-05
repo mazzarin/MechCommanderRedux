@@ -186,6 +186,8 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     plan.LowestProgram = list.LowestProgram;
     std::set<std::string, std::less<>> zips;
     std::set<std::string, std::less<>> listed;
+    // A patch shared by identical files changed alike is downloaded once.
+    std::set<std::string, std::less<>> patches;
 
     for (const MCContentList::MCFile& file : list.Files)
     {
@@ -276,7 +278,11 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         }
         else if (step.Action == MCAction::Patch)
         {
-            plan.DownloadBytes += step.Patch->Size;
+            if (patches.insert(step.Patch->Name).second)
+            {
+                plan.DownloadBytes += step.Patch->Size;
+            }
+
             plan.StagedBytes += file.Size;
         }
 

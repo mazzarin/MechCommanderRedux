@@ -88,7 +88,18 @@ namespace
         }
 
         bool FlushFolder(const std::filesystem::path& path) override { return _Disk->FlushFolder(path); }
-        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override { return _Free; }
+        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override
+        {
+            if (OnFreeBytes)
+            {
+                OnFreeBytes();
+            }
+
+            return _Free;
+        }
+
+        /// <summary>Called as the free space is asked (none: nothing).</summary>
+        std::function<void()> OnFreeBytes;
 
         /// <summary>Called as each file is flushed (none: nothing).</summary>
         std::function<void()> OnFlush;
@@ -103,12 +114,13 @@ namespace
 
     /// <summary>
     /// Adds to <paramref name="release"/> another big file the copy has, <c>HD/name.hda</c>, patched as the terrain
-    /// is (the same bytes, its own patch's name); it would come whole from the update zip, which doesn't hold it.
+    /// is (the same bytes; its own patch's name, unless <paramref name="shared"/> names one); it would come whole from
+    /// the update zip, which doesn't hold it.
     /// </summary>
-    void AddPatched(MCRelease& release, std::string_view name)
+    void AddPatched(MCRelease& release, std::string_view name, std::string_view shared = {})
     {
         const std::string path = std::format("HD/{}.hda", name);
-        const std::string patchName = std::format("patches/{}-1-2.hdiff", name);
+        const std::string patchName = shared.empty() ? std::format("patches/{}-1-2.hdiff", name) : std::string(shared);
         const std::string bigOld = Text(MCFilePatchFixture::PatchOld());
         const std::string bigNew = Text(MCFilePatchFixture::PatchNew());
         const std::string patch = Text(MCFilePatchFixture::CheckedPatch);
@@ -466,6 +478,79 @@ TEST_CASE("content stage: a stop while the staged files are flushed ends staging
     const uint64_t sent = source.Sent();
     REQUIRE(MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
     CHECK_EQ(source.Sent(), sent);
+}
+
+TEST_CASE("content stage: a patch shared by identical files changed alike is fetched once, applied to each, counted "
+          "once")
+{
+    constexpr std::string_view Shared = "patches/terrain-1-2.hdiff";
+
+    for (const bool ahead : {false, true})
+    {
+        MCRelease release(Group, ahead ? "shared-patch-ahead" : "shared-patch");
+        AddPatched(release, "a", Shared);
+        AddPatched(release, "b", Shared);
+        // One of its own, so the patches are fetched ahead by workers when the source makes them.
+        AddPatched(release, "c");
+        const MCContentPlan::MCPlan plan = release.Plan();
+        REQUIRE(std::ranges::count(plan.Steps, MCAction::Patch, &MCContentPlan::MCStep::Action) == 4);
+        CHECK_EQ(plan.DownloadBytes, 2 * MCFilePatchFixture::CheckedPatch.size() + release.List.Zips[1].Size);
+        const auto shared = std::make_shared<MCParallelSource::MCShared>();
+        MCParallelSource parallel(release.Host.Path(), shared, true);
+        MCFolderSource single(release.Host.Path());
+        MCContentStage::MCSource& source = ahead ? static_cast<MCContentStage::MCSource&>(parallel) : single;
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        uint64_t lastReceived = 0;
+        REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                      [&](uint64_t received, uint64_t)
+                                      {
+                                          lastReceived = received;
+                                          return true;
+                                      })
+                    .has_value());
+        const std::vector<std::string>& asked = ahead ? shared->Asked : single.Asked();
+        CHECK(std::ranges::count(asked, std::string(Shared)) == 1);
+        CHECK(std::ranges::count(asked, std::string("update-2.zip")) == 1);
+        CHECK_EQ(lastReceived, plan.DownloadBytes);
+
+        CHECK(std::ranges::count(asked, std::string("patches/c-1-2.hdiff")) == 1);
+
+        if (ahead)
+        {
+            CHECK(shared->MostAtOnce > 1);
+        }
+
+        for (const std::string_view path : {"HD/terrain.hda", "HD/a.hda", "HD/b.hda", "HD/c.hda"})
+        {
+            CHECK(Read(StagedAt(release, path)) == Text(MCFilePatchFixture::PatchNew()));
+        }
+    }
+}
+
+TEST_CASE("content stage: a staged file cut short (a crash as it unpacked) is deleted before the space is measured, "
+          "then staged again")
+{
+    MCRelease release(Group, "cut-short");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(std::numeric_limits<uint64_t>::max());
+    // An entry's unpacking cut off halfway, and a file staged whole that's no longer the release's.
+    const std::filesystem::path cut = StagedAt(release, "data/changed.fit");
+    const std::filesystem::path changed = StagedAt(release, "data/missions/new.fit");
+    Write(cut, "chang");
+    Write(changed, "a new missio!");
+    bool measured = false;
+    disk.OnFreeBytes = [&]
+    {
+        measured = true;
+        CHECK(!std::filesystem::exists(cut));
+        CHECK(!std::filesystem::exists(changed));
+    };
+
+    REQUIRE(MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK(measured);
+    CHECK_EQ(Read(cut), std::string("changed v2"));
+    CHECK_EQ(Read(changed), std::string("a new mission"));
 }
 
 TEST_CASE("content stage: patches are fetched several at once, each over a source of its own, applied in order")

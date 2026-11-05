@@ -81,6 +81,16 @@ namespace
         return count;
     }
 
+    /// <summary>
+    /// A patch fetched once by its hosted name, and the steps it's applied to: it's named by the old file's hash and the
+    /// new one's, so identical files changed alike share one.
+    /// </summary>
+    struct MCPatchJob
+    {
+        const MCContentList::MCPatch* Patch = nullptr;
+        std::vector<const MCStep*> Steps;
+    };
+
     class MCStager
     {
     public:
@@ -114,8 +124,9 @@ namespace
             }
 
             // What an earlier attempt staged as the list has it stays; the rest is still to do.
-            std::vector<const MCStep*> patches;
+            std::vector<MCPatchJob> patches;
             std::vector<const MCStep*> whole;
+            std::map<std::string_view, const MCContentList::MCPatch*> patchesStaged;
 
             for (const MCStep& step : _Plan.Steps)
             {
@@ -124,14 +135,42 @@ namespace
                     continue;
                 }
 
-                if (!IsStaged(step))
+                const auto staged = FoundStaged(step);
+
+                if (!staged)
                 {
-                    (step.Action == MCAction::Patch ? patches : whole).push_back(&step);
+                    return std::unexpected(staged.error());
                 }
-                else if (step.Action == MCAction::Patch)
+
+                if (*staged)
                 {
-                    // Staged by an earlier attempt: its patch counts as in.
-                    Received(step.Patch->Size);
+                    if (step.Action == MCAction::Patch)
+                    {
+                        patchesStaged.emplace(step.Patch->Name, step.Patch);
+                    }
+                }
+                else if (step.Action == MCAction::Fetch)
+                {
+                    whole.push_back(&step);
+                }
+                else if (const auto job = std::ranges::find(patches, step.Patch->Name,
+                                                            [](const MCPatchJob& job) { return job.Patch->Name; });
+                         job != patches.end())
+                {
+                    job->Steps.push_back(&step);
+                }
+                else
+                {
+                    patches.push_back({.Patch = step.Patch, .Steps = {&step}});
+                }
+            }
+
+            // A patch whose every file an earlier attempt staged counts as in.
+            for (const auto& [name, patch] : patchesStaged)
+            {
+                if (std::ranges::none_of(patches, [&](const MCPatchJob& job) { return job.Patch->Name == name; }))
+                {
+                    Received(patch->Size);
                 }
             }
 
@@ -207,8 +246,54 @@ namespace
         }
 
         /// <summary>
-        /// Whether the step's file is staged as the list has it: found staged by an earlier attempt, or just patched.
+        /// Whether the step's file is staged as the list has it, found from an earlier attempt. A file there that isn't
+        /// (cut short by a crash, or changed since) is deleted, so it takes no room the space check counts again; a
+        /// folder is left as it is, for the unpacking to fail on.
         /// </summary>
+        /// <returns>Whether it's staged, or why it can't be told or cleared (stopped).</returns>
+        std::expected<bool, std::string> FoundStaged(const MCStep& step)
+        {
+            const std::filesystem::path path = StagedPath(step);
+            const MCUpdateDisk::MCStat stat = _Disk.Stat(path);
+
+            if (!stat.Error.empty())
+            {
+                return std::unexpected(stat.Error);
+            }
+
+            if (!stat.Exists || stat.Folder)
+            {
+                return false;
+            }
+
+            if (stat.Size == step.File->Size)
+            {
+                const auto hash = MCSha256::OfFile(path, _GoOn);
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
+                if (hash && *hash == step.File->Sha256)
+                {
+                    return true;
+                }
+            }
+
+            if (!_Disk.Remove(path))
+            {
+                return std::unexpected(
+                    std::format("{}, staged by an earlier attempt and not the release's, can't be deleted",
+                                MCFileSystem::ToUtf8(path)));
+            }
+
+            SDL_Log("Updates: %s, staged by an earlier attempt, isn't the release's: it's staged again",
+                    step.Path.c_str());
+            return false;
+        }
+
+        /// <summary>Whether the step's file is staged as the list has it (just patched).</summary>
         bool IsStaged(const MCStep& step)
         {
             const MCUpdateDisk::MCStat stat = _Disk.Stat(StagedPath(step));
@@ -319,17 +404,21 @@ namespace
         /// zip; what's already staged or downloaded takes its room already. When the free space can't be read, it's
         /// logged and staging goes on.
         /// </summary>
-        std::expected<void, std::string> CheckSpace(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> CheckSpace(const std::vector<MCPatchJob>& patches,
                                                     const std::vector<const MCStep*>& whole)
         {
             uint64_t needed = 0;
             uint64_t biggestZip = 0;
             std::vector<uint64_t> patchesLeft;
 
-            for (const MCStep* step : patches)
+            for (const MCPatchJob& job : patches)
             {
-                needed += step->File->Size;
-                patchesLeft.push_back(step->Patch->Size - Downloaded(step->Patch->Name, step->Patch->Size));
+                for (const MCStep* step : job.Steps)
+                {
+                    needed += step->File->Size;
+                }
+
+                patchesLeft.push_back(job.Patch->Size - Downloaded(job.Patch->Name, job.Patch->Size));
             }
 
             const size_t ahead = std::min(PatchWorkers, patchesLeft.size());
@@ -399,12 +488,12 @@ namespace
         }
 
         /// <summary>
-        /// Stages <paramref name="patches"/>' files, each patch applied in order; one whose patch doesn't come or
-        /// doesn't apply joins <paramref name="whole"/>. With a source that makes others, the patches are fetched
-        /// ahead by workers, <see cref="PatchWorkers"/> at once; otherwise one by one.
+        /// Stages <paramref name="patches"/>' files, each patch fetched once and applied in order to each of its files;
+        /// a file whose patch doesn't come or doesn't apply joins <paramref name="whole"/>. With a source that makes
+        /// others, the patches are fetched ahead by workers, <see cref="PatchWorkers"/> at once; otherwise one by one.
         /// </summary>
         /// <returns>Nothing, or stopped.</returns>
-        std::expected<void, std::string> PatchAll(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> PatchAll(const std::vector<MCPatchJob>& patches,
                                                   std::vector<const MCStep*>& whole)
         {
             std::vector<std::unique_ptr<MCContentStage::MCSource>> sources;
@@ -423,11 +512,11 @@ namespace
 
             if (sources.empty())
             {
-                for (const MCStep* step : patches)
+                for (const MCPatchJob& job : patches)
                 {
-                    const auto fetched = FetchPatch(_Source, *step, [this](uint64_t count) { return Received(count); });
+                    const auto fetched = FetchPatch(_Source, job, [this](uint64_t count) { return Received(count); });
 
-                    if (auto patched = Patched(*step, fetched, whole); !patched)
+                    if (auto patched = Patched(job, fetched, whole); !patched)
                     {
                         return patched;
                     }
@@ -479,7 +568,7 @@ namespace
             MCAhead& _Ahead;
         };
 
-        std::expected<void, std::string> PatchAhead(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> PatchAhead(const std::vector<MCPatchJob>& patches,
                                                     std::vector<std::unique_ptr<MCContentStage::MCSource>>& sources,
                                                     std::vector<const MCStep*>& whole)
         {
@@ -537,7 +626,7 @@ namespace
                     return Stop();
                 }
 
-                auto patched = Patched(*patches[index], fetched, whole);
+                auto patched = Patched(patches[index], fetched, whole);
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -556,7 +645,7 @@ namespace
         }
 
         /// <summary>A worker: fetches the next patch, no further ahead of those applied than there are workers.</summary>
-        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<const MCStep*>& patches)
+        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<MCPatchJob>& patches)
         {
             for (;;)
             {
@@ -579,7 +668,7 @@ namespace
                     index = ahead.Next++;
                 }
 
-                auto fetched = FetchPatch(source, *patches[index], [this](uint64_t count) { return Counted(count); });
+                auto fetched = FetchPatch(source, patches[index], [this](uint64_t count) { return Counted(count); });
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -591,42 +680,53 @@ namespace
         }
 
         /// <summary>
-        /// Applies a patch fetched; one that didn't come, or doesn't apply, leaves its file to fetch whole (<paramref
-        /// name="whole"/>).
+        /// Applies a patch fetched to each of its files; a file whose patch didn't come, or doesn't apply, is left to
+        /// fetch whole (<paramref name="whole"/>). The patch goes once its last file is done; stopped, it stays for
+        /// the next attempt.
         /// </summary>
         /// <returns>Nothing, or stopped: a stop isn't a patch that failed, so nothing more is fetched or applied.</returns>
-        std::expected<void, std::string> Patched(const MCStep& step,
+        std::expected<void, std::string> Patched(const MCPatchJob& job,
                                                  const std::expected<std::filesystem::path, std::string>& fetched,
                                                  std::vector<const MCStep*>& whole)
         {
-            std::expected<void, std::string> patched = std::unexpected(fetched.error_or(std::string()));
-
-            if (fetched)
+            for (const MCStep* step : job.Steps)
             {
-                patched = Apply(step, *fetched);
+                std::expected<void, std::string> patched = std::unexpected(fetched.error_or(std::string()));
+
+                if (fetched)
+                {
+                    patched = Apply(*step, *fetched);
+                }
+
+                if (patched)
+                {
+                    continue;
+                }
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
+                SDL_Log("Updates: %s is fetched whole: %s", step->Path.c_str(), patched.error().c_str());
+                whole.push_back(step);
             }
 
-            if (patched)
+            if (fetched && !_Disk.Remove(*fetched))
             {
-                return {};
+                SDL_Log("Updates: %s, applied, can't be deleted; it goes with download/",
+                        MCFileSystem::ToUtf8(*fetched).c_str());
             }
 
-            if (Stopped())
-            {
-                return Stop();
-            }
-
-            SDL_Log("Updates: %s is fetched whole: %s", step.Path.c_str(), patched.error().c_str());
-            whole.push_back(&step);
             return {};
         }
 
-        /// <summary>Downloads a step's patch into download/, checked.</summary>
+        /// <summary>Downloads a patch into download/, checked.</summary>
         std::expected<std::filesystem::path, std::string> FetchPatch(MCContentStage::MCSource& source,
-                                                                     const MCStep& step,
+                                                                     const MCPatchJob& job,
                                                                      const std::function<bool(uint64_t)>& received)
         {
-            return FetchChecked(source, step.Patch->Name, step.Patch->Size, step.Patch->Sha256, received);
+            return FetchChecked(source, job.Patch->Name, job.Patch->Size, job.Patch->Sha256, received);
         }
 
         /// <summary>Writes the patched file to staged/; fails (and leaves nothing) when it can't.</summary>
@@ -646,13 +746,10 @@ namespace
 
             const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn);
 
-            // Stopped, the patch stays for the next attempt.
             if (Stopped())
             {
                 return Stop();
             }
-
-            _Disk.Remove(patch);
 
             if (!applied)
             {

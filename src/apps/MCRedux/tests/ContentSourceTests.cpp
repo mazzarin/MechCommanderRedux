@@ -637,6 +637,13 @@ TEST_CASE("content source: a small file is read whole, one too big refused; only
     CHECK(makes("http://[::1]:8080/content"));
     CHECK(!makes("http://example.com/content"));
     CHECK(!makes("http://127.0.0.1.example.com/content"));
+    CHECK(!makes("http://127.0.0.1:80@evil.example/content"));
+    CHECK(!makes("http://localhost@evil.example"));
+    CHECK(!makes("http://127.0.0.1\\@evil.example/content"));
+    CHECK(!makes("http://localhost\\evil.example/content"));
+    CHECK(!makes("http://127.0.0.1 .evil.example/content"));
+    CHECK(!makes("http://127.0.0.1\t/content"));
+    CHECK(makes("https://example.com/content/a@b"));
     CHECK(!makes("ftp://example.com/content"));
     CHECK(!makes("https://example.com/content?release=1"));
     CHECK(!makes("example.com/content"));

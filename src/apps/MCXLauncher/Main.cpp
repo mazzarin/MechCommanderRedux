@@ -1,11 +1,14 @@
 // Port-only (the personal build): MCX.EXE in a MechCommander Gold folder Redux has taken over (the Windows setup puts
 // it there and keeps the original in "Redux backup"). Whatever starts the original's MCX.EXE (its shortcuts, a
 // DirectPlay lobby such as MechCommander Online's rooms) gets Redux: MCRedux.exe beside it, with the same command line
-// and current folder. It waits for the game and returns its exit code, so a lobby waiting on MCX.EXE sees the game end.
-// Asked to close (logging off, an installer's Restart Manager), it does, the game being asked the same.
+// (but the uninstaller's options: MCLauncherArguments.h) and current folder. It waits for the game and returns its exit
+// code, so a lobby waiting on MCX.EXE sees the game end. Asked to close (logging off, an installer's Restart Manager),
+// it does, the game being asked the same.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+
+#include "MCLauncherArguments.h"
 
 #include <format>
 #include <string>
@@ -210,7 +213,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     const std::wstring game = ownPath.substr(0, ownPath.find_last_of(L'\\') + 1) + std::wstring(GameExe);
     std::wstring commandLine = L"\"" + game + L"\"";
 
-    if (const wchar_t* arguments = Arguments(GetCommandLineW()); *arguments != L'\0')
+    if (const std::wstring arguments = MCLauncherArguments::PassedOn(Arguments(GetCommandLineW())); !arguments.empty())
     {
         commandLine += L' ';
         commandLine += arguments;

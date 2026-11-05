@@ -66,6 +66,11 @@ namespace
         StagingContent,
         /// <summary>The content is staged; the program downloads.</summary>
         DownloadingProgram,
+        /// <summary>
+        /// The program is in (or there's none): the content is armed on the work's thread, the program's ready answer
+        /// held until it is.
+        /// </summary>
+        ArmingContent,
         /// <summary>An update with nothing to fetch goes in unasked.</summary>
         ArmingQuietly,
         /// <summary>Both halves armed: RESTART or quitting installs them.</summary>
@@ -103,6 +108,11 @@ namespace
     std::unique_ptr<MCUpdateLock> StagingLock;
     /// <summary>The HD pack as HD OPTIONS shows it.</summary>
     MCUpdater::MCHdPack Hd;
+    /// <summary>
+    /// The copy's record, read once as the content's updater is set: nothing changes it until the next start's swap,
+    /// so HD OPTIONS never reads it again on the main thread.
+    /// </summary>
+    MCInstalled::MCRecord Record;
     /// <summary>The player chose again while the change of sets ran: it stops, then the new choice is planned.</summary>
     bool SetsChosenAgain = false;
     /// <summary>
@@ -177,7 +187,7 @@ namespace
         PausedStep = MCStep::Idle;
     }
 
-    /// <summary>What the copy has of the HD pack, read from its record and the sets chosen.</summary>
+    /// <summary>What the copy has of the HD pack, from its record (read here, and kept) and the sets chosen.</summary>
     void ReadHd()
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
@@ -188,14 +198,14 @@ namespace
             SDL_Log("Updater: %s", installed.error().c_str());
         }
 
-        const MCInstalled::MCRecord record = installed.value_or(MCInstalled::MCRecord{});
+        Record = installed.value_or(MCInstalled::MCRecord{});
         const MCContentUpdater::MCSets has =
-            record.Release != 0 ? record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
+            Record.Release != 0 ? Record.Sets : MCContentUpdater::SetsFound(Content->GameFolder);
         Hd = {.Managed = true,
               .Installed = has.contains(MCContentList::HdSet),
-              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, record).contains(MCContentList::HdSet)};
+              .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record).contains(MCContentList::HdSet)};
 
-        if (const auto bytes = record.SetBytes.find(MCContentList::HdSet); bytes != record.SetBytes.end())
+        if (const auto bytes = Record.SetBytes.find(MCContentList::HdSet); bytes != Record.SetBytes.end())
         {
             Hd.Bytes = bytes->second;
         }
@@ -305,22 +315,42 @@ namespace
                 });
     }
 
-    /// <summary>Arms the staged content once the program is in too: READY, or neither half goes in.</summary>
-    /// <returns>Whether it's armed; if not, the update failed.</returns>
-    bool ArmContent()
+    /// <summary>
+    /// The program is in (or there's none): the staged content is armed on the work's thread (its journal written
+    /// durably takes a while), READY once it is. The program's ready answer waits for it.
+    /// </summary>
+    void StartArming()
     {
-        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        Step = MCStep::ArmingContent;
+        RunWork("the update's arming",
+                [setup = *Content, offer = *Offer](MCUpdateWork::MCContext&) -> MCWorkResult
+                {
+                    if (const auto armed = MCContentUpdater::Arm(setup, *MakeDisk(), offer); !armed)
+                    {
+                        return std::unexpected(armed.error());
+                    }
 
-        if (const auto armed = MCContentUpdater::Arm(*Content, *disk, *Offer); !armed)
+                    return {};
+                });
+    }
+
+    /// <summary>The content can't be armed: the program's installer, armed already, is told to skip, so neither half goes in.</summary>
+    void CancelProgram()
+    {
+        if (Offer && Offer->ProgramBuild && Backend != nullptr)
         {
-            // The program's installer is armed already: told to skip, it installs nothing either.
-            if (Offer->ProgramBuild && Backend != nullptr)
-            {
-                Backend->Answer(MCAnswer::Skip);
-            }
+            Backend->Answer(MCAnswer::Skip);
+        }
+    }
 
-            Fail(armed.error());
-            return false;
+    /// <summary>The arming's end: READY, or neither half goes in.</summary>
+    void ArmingDone(const std::string& error)
+    {
+        if (!error.empty())
+        {
+            CancelProgram();
+            Fail(error);
+            return;
         }
 
         StagingLock.reset();
@@ -329,7 +359,24 @@ namespace
         Current.Stage = MCStage::Ready;
         Current.Received = Current.Expected;
         Changed();
-        return true;
+    }
+
+    /// <summary>
+    /// The game is quitting or the program installing: the content is armed now, an arming under way waited for (a
+    /// moment's write, not stopped).
+    /// </summary>
+    /// <returns>Empty once armed, or what failed.</returns>
+    std::string ArmNow()
+    {
+        if (Step == MCStep::ArmingContent && Work != nullptr)
+        {
+            const MCWorkResult armed = Work->Join();
+            Work.reset();
+            return armed ? std::string() : armed.error();
+        }
+
+        const auto armed = MCContentUpdater::Arm(*Content, *MakeDisk(), *Offer);
+        return armed ? std::string() : armed.error();
     }
 
     /// <summary>
@@ -572,7 +619,7 @@ namespace
             return;
         }
 
-        ArmContent();
+        StartArming();
     }
 
     /// <summary>The quiet update's end.</summary>
@@ -773,6 +820,9 @@ auto MCUpdater::Frame() -> void
         case MCStep::ArmingQuietly:
             QuietDone(error);
             break;
+        case MCStep::ArmingContent:
+            ArmingDone(error);
+            break;
         case MCStep::ChangingSets:
             SetsDone(error, offer.has_value());
             break;
@@ -814,6 +864,16 @@ auto MCUpdater::PauseWork(bool paused) -> void
 
 auto MCUpdater::Quit() -> void
 {
+    // An arming under way finishes (quitting installs the program armed: neither half goes in without the other).
+    if (Step == MCStep::ArmingContent)
+    {
+        if (const std::string error = ArmNow(); !error.empty())
+        {
+            SDL_Log("Updater: %s can't be armed as the game quits: %s", Current.Version.c_str(), error.c_str());
+            CancelProgram();
+        }
+    }
+
     // Its transfer cancelled, work under way ends at once (staged files stay for the next try).
     StopWork();
     StagingLock.reset();
@@ -896,6 +956,7 @@ auto MCUpdater::HdPack() -> const MCHdPack&
             break;
         case MCStep::StagingContent:
         case MCStep::DownloadingProgram:
+        case MCStep::ArmingContent:
             Hd.Hold = MCHdHold::UpdateDownloading;
             break;
         case MCStep::Armed:
@@ -924,9 +985,7 @@ auto MCUpdater::ChooseHd(bool chosen) -> void
     }
 
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-    const auto installed = MCInstalled::Read(Content->GameFolder);
-    MCContentUpdater::MCSets sets =
-        MCContentUpdater::Wanted(*disk, Content->GameFolder, installed.value_or(MCInstalled::MCRecord{}));
+    MCContentUpdater::MCSets sets = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record);
 
     if (chosen)
     {
@@ -1112,7 +1171,7 @@ auto MCUpdater::Ready() -> void
     {
         if (Step == MCStep::DownloadingProgram)
         {
-            ArmContent();
+            StartArming();
         }
 
         return;
@@ -1128,13 +1187,19 @@ auto MCUpdater::Installing() -> void
     if (Content)
     {
         // Sparkle can install without its ready step (an update it downloaded in an earlier run): the content goes in
-        // with it. Content that can't be armed leaves the update failed: with no step waiting for an answer, Sparkle
-        // installs the program alone, and the new build's start looks for the content again.
-        if (Step == MCStep::DownloadingProgram && !ArmContent())
+        // with it, armed now as the game quits. Content that can't be armed leaves the update failed: with no step
+        // waiting for an answer, Sparkle installs the program alone, and the new build's start looks for the content
+        // again.
+        if (Step == MCStep::DownloadingProgram || Step == MCStep::ArmingContent)
         {
-            SDL_Log("Updater: %s's program installs without its content (%s)", Current.Version.c_str(),
-                    Current.Error.c_str());
-            return;
+            if (const std::string error = ArmNow(); !error.empty())
+            {
+                Fail(error);
+                SDL_Log("Updater: %s's program installs without its content", Current.Version.c_str());
+                return;
+            }
+
+            StagingLock.reset();
         }
 
         Step = MCStep::Finished;

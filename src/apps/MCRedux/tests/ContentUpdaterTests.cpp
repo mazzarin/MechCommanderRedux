@@ -640,9 +640,14 @@ TEST_CASE("updater: the program held to release.json's build; the content stages
     CHECK_EQ(MCUpdater::Status().Received, contentBytes + programIn);
     CHECK_EQ(MCUpdater::Status().Expected, contentBytes + ProgramSize);
 
-    // The program's installer armed: the content is armed with it.
+    // The program's installer armed: the content is armed with it, on the work's thread (the frame never waits for its
+    // journal's writes), and READY only once it is; the program's ready answer waits.
     MCUpdater::Ready();
+    CHECK(Stage() == MCStage::Downloading);
+    CHECK(MCUpdater::Working());
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
     CHECK(Stage() == MCStage::Ready);
+    CHECK_EQ(scope.Program->Answers.size(), size_t{1});
     CHECK(release.Armed());
     CHECK(StagingFree(release.Game.Path()));
 
@@ -681,10 +686,33 @@ TEST_CASE("updater: the content can't be armed: the program's install is cancell
     const std::filesystem::path update = release.Game.Path() / "Redux update";
     std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
     MCUpdater::Ready();
+    const bool ended = FramesUntil([] { return Stage() != MCStage::Downloading; });
     std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    REQUIRE(ended);
     CHECK(scope.Program->Answers.back() == MCAnswer::Skip);
     CHECK(Stage() == MCStage::Failed);
     CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+
+TEST_CASE("updater: quitting while the content is armed waits for it; content that can't be armed cancels the "
+          "program's install")
+{
+    MCHostedRelease release("arm-fails-quitting");
+    release.Publish(1, 2, NewerBuild);
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return !scope.Program->Answers.empty(); }));
+    const std::filesystem::path update = release.Game.Path() / "Redux update";
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    MCUpdater::Ready();
+    MCUpdater::Quit();
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    CHECK(scope.Program->Answers.back() == MCAnswer::Skip);
+    CHECK(!MCUpdater::Working());
+    CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
 }
 #endif
 

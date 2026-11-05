@@ -655,7 +655,7 @@ int main(int argc, char** argv)
                 trialDefault(data, category, priority, message);
             },
             nullptr);
-        SDL_Log("Trial: started, user folder %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
+        SDL_Log("Trial: started (the second trial build), user folder %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
     }
 
     if (options->RemoveContent)

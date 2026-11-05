@@ -203,18 +203,30 @@ namespace
         InstallAgain = MCAgain::No;
     }
 
-    /// <summary>What the copy has of the HD pack, from its record (read here, and kept) and the sets chosen.</summary>
-    void ReadHd()
+    /// <summary>
+    /// What the copy has of the HD pack, from its record (<paramref name="known"/>, the one the start read; none: read
+    /// here), kept, and the sets chosen.
+    /// </summary>
+    void ReadHd(const MCInstalled::MCRecord* known)
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-        const auto installed = MCInstalled::Read(Content->GameFolder);
 
-        if (!installed)
+        if (known != nullptr)
         {
-            SDL_Log("Updater: %s", installed.error().c_str());
+            Record = *known;
+        }
+        else
+        {
+            const auto installed = MCInstalled::Read(*disk, Content->GameFolder);
+
+            if (!installed)
+            {
+                SDL_Log("Updater: %s", installed.error().c_str());
+            }
+
+            Record = installed.value_or(MCInstalled::MCRecord{});
         }
 
-        Record = installed.value_or(MCInstalled::MCRecord{});
         Hd = {.Managed = true,
               .Installed = MCInstalled::Has(Record, Content->GameFolder, MCContentList::HdSet),
               .Chosen = MCContentUpdater::Wanted(*disk, Content->GameFolder, Record).contains(MCContentList::HdSet)};
@@ -325,6 +337,12 @@ namespace
                                 return std::unexpected(staged.error());
                             }
 
+                            // Stopped since staging ended: not armed.
+                            if (context.Stop.stop_requested())
+                            {
+                                return std::unexpected(std::string(MCSha256::StoppedError));
+                            }
+
                             if (const auto armed = arm ? MCContentUpdater::Arm(setup, *disk, offer)
                                                        : std::expected<void, std::string>();
                                 !armed)
@@ -407,8 +425,13 @@ namespace
     /// </summary>
     void ClearUnused(const std::filesystem::path& gameFolder, MCUpdateDisk& disk)
     {
-        if (MCContentSwap::Waiting(disk, gameFolder) || MCContentSwap::Repairing(disk, gameFolder))
+        if (const auto underWay = MCContentSwap::UnderWay(disk, gameFolder); !underWay || *underWay)
         {
+            if (!underWay)
+            {
+                SDL_Log("Updater: what's staged stays: %s", underWay.error().c_str());
+            }
+
             return;
         }
 
@@ -464,7 +487,8 @@ namespace
                         [&](MCContentStage::MCSource& source) -> MCWorkResult
                         {
                             const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-                            auto change = MCContentUpdater::CheckSets(setup, *disk, source);
+                            auto change =
+                                MCContentUpdater::CheckSets(setup, *disk, source, MCUpdateWork::GoOn(context.Stop));
 
                             if (change && !*change)
                             {
@@ -484,6 +508,11 @@ namespace
                                 !staged)
                             {
                                 return std::unexpected(staged.error());
+                            }
+
+                            if (context.Stop.stop_requested())
+                            {
+                                return std::unexpected(std::string(MCSha256::StoppedError));
                             }
 
                             if (const auto armed = MCContentUpdater::Arm(setup, *disk, **change); !armed)
@@ -561,13 +590,14 @@ namespace
     void LookForUpdate()
     {
         Step = MCStep::CheckingContent;
-        RunWork("the update's check",
-                [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
-                {
-                    return MCUpdateWork::WithSource<std::optional<MCOffer>>(
-                        makeSource, context.Stop, [&](MCContentStage::MCSource& source)
-                        { return MCContentUpdater::Check(setup, *MakeDisk(), source); });
-                });
+        RunWork(
+            "the update's check",
+            [setup = *Content, makeSource = MakeSource](MCUpdateWork::MCContext& context)
+            {
+                return MCUpdateWork::WithSource<std::optional<MCOffer>>(
+                    makeSource, context.Stop, [&](MCContentStage::MCSource& source)
+                    { return MCContentUpdater::Check(setup, *MakeDisk(), source, MCUpdateWork::GoOn(context.Stop)); });
+            });
     }
 
     /// <summary>
@@ -831,14 +861,15 @@ auto MCUpdater::SetBackend(std::unique_ptr<MCBackend> backend) -> void
     Changed();
 }
 
-auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source) -> void
+auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source,
+                           const MCInstalled::MCRecord* installed) -> void
 {
     ResetContent();
     Content = setup;
     MakeSource = std::move(source);
     Current = {};
     CheckedAtStart = false;
-    ReadHd();
+    ReadHd(installed);
     Changed();
 }
 

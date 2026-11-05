@@ -42,6 +42,12 @@ namespace MCContentUpdater
 
     using MCSets = std::set<std::string, std::less<>>;
 
+    /// <summary>
+    /// Asked as a check plans (hashing the copy's files, which on a first plan may read gigabytes): false to stop, which
+    /// ends the check with MCSha256::StoppedError. None: never stops.
+    /// </summary>
+    using MCGoOn = std::function<bool()>;
+
     /// <summary>The copy and the build running.</summary>
     struct MCSetup
     {
@@ -89,34 +95,37 @@ namespace MCContentUpdater
 
     /// <summary>
     /// Looks for an update for the copy <paramref name="setup"/> describes on <paramref name="source"/>, keeping what
-    /// it read in <c>update.json</c>. Its content is planned for the sets the copy is to have (<see cref="Wanted"/>).
+    /// it read in <c>update.json</c>. Its content is planned for the sets the copy is to have (<see cref="Wanted"/>),
+    /// <paramref name="goOn"/> asked as it hashes.
     /// </summary>
     /// <returns>
     /// The update; none when nothing's newer, the player skipped it, or an update already waits for the next start; or
     /// why there's none (the files refused, the host out of reach, a game folder this account can't write).
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> Check(const MCSetup& setup, MCUpdateDisk& disk,
-                                                             MCContentStage::MCSource& source);
+                                                             MCContentStage::MCSource& source, const MCGoOn& goOn = {});
 
     /// <summary>
     /// The change of sets the player chose (HD OPTIONS getting or removing HD), planned against the release the copy
     /// has installed, so nothing else changes. Sets taken out alone are planned from the record (MCContentPlan::Removal),
     /// offline; a set added, from the release's list, read by the hash the record keeps (kept, else fetched).
+    /// <paramref name="goOn"/> is asked as it hashes.
     /// </summary>
     /// <returns>
     /// The change (no program); none when the copy has the sets chosen, or an update already waits for the next start;
     /// or why there's none (no release installed yet; adding, the list neither kept nor hosted, the host out of reach).
     /// </returns>
     std::expected<std::optional<MCOffer>, std::string> CheckSets(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                 MCContentStage::MCSource& source);
+                                                                 MCContentStage::MCSource& source,
+                                                                 const MCGoOn& goOn = {});
 
     /// <summary>
     /// The first start's install (<see cref="AwaitsInstall"/>): the release the copy takes, planned for the sets chosen,
-    /// for the program running (the content must not need a newer one).
+    /// for the program running (the content must not need a newer one); <paramref name="goOn"/> asked as it hashes.
     /// </summary>
     /// <returns>The install, its content always planned; or why there's none.</returns>
     std::expected<MCOffer, std::string> CheckInstall(const MCSetup& setup, MCUpdateDisk& disk,
-                                                     MCContentStage::MCSource& source);
+                                                     MCContentStage::MCSource& source, const MCGoOn& goOn = {});
 
     /// <summary>
     /// Stages <paramref name="offer"/>'s content from <paramref name="source"/> (MCContentStage::Stage), not yet armed.
@@ -128,9 +137,13 @@ namespace MCContentUpdater
     /// <summary>
     /// The first start's install whole (<see cref="AwaitsInstall"/>), under the staging lock: checked
     /// (<see cref="CheckInstall"/>), staged and armed, so the swap that follows puts the content in place.
-    /// <paramref name="progress"/> gets the bytes downloaded so far and expected, and returns false to stop.
+    /// <paramref name="progress"/> gets the bytes downloaded so far and expected, and returns false to stop; it's asked
+    /// too while the files are hashed and before arming, told the bytes as they were.
     /// </summary>
-    /// <returns>Nothing, or what failed (another copy downloading it, the host out of reach, a full disk).</returns>
+    /// <returns>
+    /// Nothing, or what failed (another copy downloading it, the host out of reach, a full disk; stopped). Stopped, nothing
+    /// is armed.
+    /// </returns>
     std::expected<void, std::string> Install(const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source,
                                              const std::function<bool(uint64_t, uint64_t)>& progress);
 

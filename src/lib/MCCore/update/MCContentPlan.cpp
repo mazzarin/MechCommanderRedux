@@ -28,12 +28,28 @@ namespace
     }
 
     /// <summary>
+    /// Whether planning is to stop (<paramref name="goOn"/>, when given, says no): asked before each file, and in each
+    /// hash's reads.
+    /// </summary>
+    bool Stopped(const std::function<bool()>& goOn)
+    {
+        return goOn && !goOn();
+    }
+
+    std::unexpected<std::string> Stop()
+    {
+        return std::unexpected(std::string(MCSha256::StoppedError));
+    }
+
+    /// <summary>
     /// The file at <paramref name="onDisk"/>: its recorded hash when its size and time are as <paramref name="had"/>
     /// recorded them, else the one <paramref name="hashes"/> kept when they're as it found them, else hashed now (counted
-    /// in <paramref name="plan"/>). One the record doesn't vouch for is kept in the plan's hashes.
+    /// in <paramref name="plan"/>; <paramref name="goOn"/> asked between its reads). One the record doesn't vouch for is
+    /// kept in the plan's hashes.
     /// </summary>
     std::expected<MCHash, std::string> Hashed(const MCContentFolder& folder, const std::string& onDisk,
-                                              const MCInstalled::MCFile* had, const MCHashes& hashes, MCPlan& plan)
+                                              const MCInstalled::MCFile* had, const MCHashes& hashes, MCPlan& plan,
+                                              const std::function<bool()>& goOn)
     {
         const std::filesystem::path path = folder.Full(onDisk);
         std::error_code error;
@@ -59,7 +75,7 @@ namespace
         }
         else
         {
-            const auto digest = MCSha256::OfFile(path);
+            const auto digest = MCSha256::OfFile(path, goOn);
 
             if (!digest)
             {
@@ -98,8 +114,14 @@ namespace
     /// (<paramref name="setTakenOut"/>: GET downloads it again).
     /// </summary>
     std::expected<void, std::string> AddRemoval(MCContentFolder& folder, const MCInstalled::MCFile& had,
-                                                bool setTakenOut, const MCHashes& hashes, MCPlan& plan)
+                                                bool setTakenOut, const MCHashes& hashes, MCPlan& plan,
+                                                const std::function<bool()>& goOn)
     {
+        if (Stopped(goOn))
+        {
+            return Stop();
+        }
+
         const auto found = folder.Find(had.Path);
 
         if (!found)
@@ -112,7 +134,7 @@ namespace
             return {};
         }
 
-        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan);
+        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan, goOn);
 
         if (!hashed)
         {
@@ -155,7 +177,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                                                        const MCContentList::MCList& list,
                                                        const MCSha256::MCDigest& listHash,
                                                        const std::set<std::string, std::less<>>& sets,
-                                                       const MCHashes& hashes)
+                                                       const MCHashes& hashes, const std::function<bool()>& goOn)
 {
     MCPlan plan;
     plan.Record.Release = list.Release;
@@ -164,6 +186,8 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     plan.LowestProgram = list.LowestProgram;
     std::set<std::string, std::less<>> zips;
     std::set<std::string, std::less<>> listed;
+    // A patch shared by identical files changed alike is downloaded once.
+    std::set<std::string, std::less<>> patches;
 
     for (const MCContentList::MCFile& file : list.Files)
     {
@@ -175,6 +199,11 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         if (!sets.contains(file.Set))
         {
             continue;
+        }
+
+        if (Stopped(goOn))
+        {
+            return Stop();
         }
 
         const std::string folded = FoldedPath(file.Path);
@@ -213,7 +242,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             case MCContentFolder::MCKind::File:
             {
                 step.OnDisk = found->Path;
-                const auto hashed = Hashed(folder, found->Path, had, hashes, plan);
+                const auto hashed = Hashed(folder, found->Path, had, hashes, plan, goOn);
 
                 if (!hashed)
                 {
@@ -249,7 +278,11 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
         }
         else if (step.Action == MCAction::Patch)
         {
-            plan.DownloadBytes += step.Patch->Size;
+            if (patches.insert(step.Patch->Name).second)
+            {
+                plan.DownloadBytes += step.Patch->Size;
+            }
+
             plan.StagedBytes += file.Size;
         }
 
@@ -265,7 +298,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
             continue;
         }
 
-        if (const auto removed = AddRemoval(folder, had, !sets.contains(had.Set), hashes, plan); !removed)
+        if (const auto removed = AddRemoval(folder, had, !sets.contains(had.Set), hashes, plan, goOn); !removed)
         {
             return std::unexpected(removed.error());
         }
@@ -286,7 +319,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folder,
                                                           const MCInstalled::MCRecord& installed,
                                                           const std::set<std::string, std::less<>>& sets,
-                                                          const MCHashes& hashes)
+                                                          const MCHashes& hashes, const std::function<bool()>& goOn)
 {
     MCPlan plan;
     plan.Record = installed;
@@ -299,7 +332,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Removal(MCContentFolder& folde
         {
             plan.Record.Files.insert_or_assign(folded, had);
         }
-        else if (const auto removed = AddRemoval(folder, had, true, hashes, plan); !removed)
+        else if (const auto removed = AddRemoval(folder, had, true, hashes, plan, goOn); !removed)
         {
             return std::unexpected(removed.error());
         }

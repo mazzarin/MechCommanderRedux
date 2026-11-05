@@ -17,7 +17,10 @@ namespace MCHttpSource
     /// <summary>The first byte a part's Content-Range names ("bytes 100-199/1000": 100), or none.</summary>
     std::optional<uint64_t> RangeFirst(std::string_view contentRange);
 
-    /// <summary>The scheme and host of <paramref name="url"/> ("https", "example.com"), when it has them.</summary>
+    /// <summary>
+    /// The scheme and host of <paramref name="url"/> ("https", "example.com"), when it has them, and nothing before its
+    /// path that could name another host: a user part ('@'), a backslash, a space or a control.
+    /// </summary>
     std::optional<std::pair<std::string, std::string>> SchemeAndHost(std::string_view url);
 
     /// <summary>Makes a platform's transfer (MCMakeHttpGet).</summary>

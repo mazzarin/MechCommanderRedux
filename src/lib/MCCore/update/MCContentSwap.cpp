@@ -39,6 +39,7 @@ namespace
     constexpr std::string_view TooLateError = "the swap took longer than a lobby's start allows";
     constexpr std::string_view RepairUnfinishedError = "a repair stopped before it was done";
     constexpr std::string_view AnotherSwappingError = "another copy of the game is putting an update in place";
+    constexpr std::string_view PutBackFailed = "something else is in its place, or it can't move";
 
     /// <summary>What's at a move's path.</summary>
     enum class MCAt : uint8_t
@@ -64,7 +65,7 @@ namespace
         /// </summary>
         MCSwapper(MCUpdateDisk& disk, std::filesystem::path game, MCJournal journal,
                   std::optional<std::chrono::steady_clock::time_point> deadline, bool fresh)
-            : _Disk(disk), _Game(std::move(game)), _Journal(std::move(journal)), _Fresh(fresh)
+            : _Disk(disk), _Game(std::move(game)), _NoLinks(disk, _Game), _Journal(std::move(journal)), _Fresh(fresh)
         {
             if (deadline)
             {
@@ -269,9 +270,9 @@ namespace
                     return std::format("{} can't be moved aside: another copy is already set aside", move.Path);
                 }
 
-                if (!Move(Destination(move), Replaced(move)))
+                if (const auto moved = Move(Destination(move), Replaced(move)); !moved)
                 {
-                    return std::format("{} can't be moved aside", move.Path);
+                    return Unmoved(std::format("{} can't be moved aside", move.Path), moved);
                 }
 
                 _MovedAside.push_back(&move);
@@ -336,9 +337,9 @@ namespace
                     return std::format("{}'s staged copy is missing or the wrong size", move.Path);
                 }
 
-                if (!Move(Staged(move), Destination(move)))
+                if (const auto moved = Move(Staged(move), Destination(move)); !moved)
                 {
-                    return std::format("{} can't be moved into place", move.Path);
+                    return Unmoved(std::format("{} can't be moved into place", move.Path), moved);
                 }
 
                 _MovedIn.push_back(&move);
@@ -395,9 +396,9 @@ namespace
             {
                 if (in != _MovedIn.rend() && (aside == _MovedAside.rend() || std::greater_equal()(*in, *aside)))
                 {
-                    if (!Move(Destination(**in), Staged(**in)))
+                    if (const auto moved = Move(Destination(**in), Staged(**in)); !moved)
                     {
-                        return std::format("{} can't be moved back to staged", (*in)->Path);
+                        return Unmoved(std::format("{} can't be moved back to staged", (*in)->Path), moved);
                     }
 
                     _At.insert_or_assign(*in, MCAt::Missing);
@@ -405,10 +406,9 @@ namespace
                     continue;
                 }
 
-                if (!Move(Replaced(**aside), Destination(**aside)))
+                if (const auto moved = Move(Replaced(**aside), Destination(**aside)); !moved)
                 {
-                    return std::format("{} can't be put back: something else is in its place, or it can't move",
-                                       (*aside)->Path);
+                    return Unmoved(std::format("{} can't be put back", (*aside)->Path), moved, PutBackFailed);
                 }
 
                 _At.erase(*aside);
@@ -448,9 +448,9 @@ namespace
 
                     if (*at == MCAt::New && !*staged)
                     {
-                        if (!Move(Destination(move), Staged(move)))
+                        if (const auto moved = Move(Destination(move), Staged(move)); !moved)
                         {
-                            return std::format("{} can't be moved back to staged", move.Path);
+                            return Unmoved(std::format("{} can't be moved back to staged", move.Path), moved);
                         }
 
                         _At.insert_or_assign(&move, MCAt::Missing);
@@ -466,10 +466,9 @@ namespace
 
                 if (*setAside)
                 {
-                    if (!Move(Replaced(move), Destination(move)))
+                    if (const auto moved = Move(Replaced(move), Destination(move)); !moved)
                     {
-                        return std::format("{} can't be put back: something else is in its place, or it can't move",
-                                           move.Path);
+                        return Unmoved(std::format("{} can't be put back", move.Path), moved, PutBackFailed);
                     }
 
                     _At.erase(&move);
@@ -630,9 +629,9 @@ namespace
                 return kept.error();
             }
 
-            if (!Move(Replaced(move), *kept))
+            if (const auto moved = Move(Replaced(move), *kept); !moved)
             {
-                return std::format("{} can't be kept in {}", move.Path, MCContentList::BackupFolder);
+                return Unmoved(std::format("{} can't be kept in {}", move.Path, MCContentList::BackupFolder), moved);
             }
 
             return {};
@@ -724,17 +723,42 @@ namespace
             return std::unexpected(std::format("{} has no free name in {}", move.Path, MCContentList::BackupFolder));
         }
 
-        /// <summary>Moves a file where nothing is (never replacing one), noting both folders for the next flush.</summary>
-        bool Move(const std::filesystem::path& from, const std::filesystem::path& to)
+        /// <summary>
+        /// Moves a file where nothing is (never replacing one), noting both folders for the next flush. Just before, no
+        /// part of either path below the game folder may be a link (MCNoLinks).
+        /// </summary>
+        /// <returns>Nothing, or why not: a link on its way (named), else empty (the move failed).</returns>
+        std::expected<void, std::string> Move(const std::filesystem::path& from, const std::filesystem::path& to)
         {
+            for (const std::filesystem::path& path : {from, to})
+            {
+                if (auto checked = _NoLinks.Check(path); !checked)
+                {
+                    SDL_Log("Updates: %s isn't moved to %s: %s", MCFileSystem::ToUtf8(from).c_str(),
+                            MCFileSystem::ToUtf8(to).c_str(), checked.error().c_str());
+                    return checked;
+                }
+            }
+
             if (!_Disk.MakeFolders(to.parent_path()) || !_Disk.Move(from, to))
             {
-                return false;
+                return std::unexpected(std::string());
             }
 
             _Touched.insert(from.parent_path());
             _Touched.insert(to.parent_path());
-            return true;
+            return {};
+        }
+
+        /// <summary>
+        /// A move that failed, as told: <paramref name="what"/>, and why (a link on its way, else
+        /// <paramref name="usual"/> when given).
+        /// </summary>
+        static std::string Unmoved(std::string what, const std::expected<void, std::string>& moved,
+                                   std::string_view usual = {})
+        {
+            const std::string_view why = moved.error().empty() ? usual : std::string_view(moved.error());
+            return why.empty() ? what : std::format("{}: {}", what, why);
         }
 
         /// <summary>Whether moving the files forward is past its share of the deadline (none: never).</summary>
@@ -772,6 +796,8 @@ namespace
 
         MCUpdateDisk& _Disk;
         std::filesystem::path _Game;
+        /// <summary>Each move's paths looked at just before it (<see cref="Move"/>).</summary>
+        MCNoLinks _NoLinks;
         MCJournal _Journal;
         /// <summary>The folders whose entries changed since the last flush.</summary>
         std::set<std::filesystem::path> _Touched;
@@ -960,10 +986,29 @@ bool MCContentSwap::MarkReady(MCUpdateDisk& disk, const std::filesystem::path& g
     return WriteDurably(disk, gameFolder / MCFileSystem::FromUtf8(ReadyFile), JournalText(ready));
 }
 
-bool MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+namespace
 {
-    return disk.Stat(gameFolder / MCFileSystem::FromUtf8(JournalFile)).Exists ||
-           disk.Stat(gameFolder / MCFileSystem::FromUtf8(ReadyFile)).Exists;
+    /// <summary>Whether any of <paramref name="files"/> (in the update folder) is there, or why one can't be looked at.</summary>
+    std::expected<bool, std::string> AnyThere(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
+                                              std::initializer_list<std::string_view> files)
+    {
+        for (const std::string_view file : files)
+        {
+            const auto there = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(file));
+
+            if (!there || *there)
+            {
+                return there;
+            }
+        }
+
+        return false;
+    }
+}
+
+std::expected<bool, std::string> MCContentSwap::Waiting(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+{
+    return AnyThere(disk, gameFolder, {JournalFile, ReadyFile});
 }
 
 namespace
@@ -1094,22 +1139,25 @@ namespace
     }
 }
 
-bool MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+std::expected<bool, std::string> MCContentSwap::Repairing(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
-    return disk.Stat(gameFolder / MCFileSystem::FromUtf8(RepairFile)).Exists;
+    return AnyThere(disk, gameFolder, {RepairFile});
 }
 
-bool MCContentSwap::UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+std::expected<bool, std::string> MCContentSwap::UnderWay(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
 {
-    return Waiting(disk, gameFolder) || Repairing(disk, gameFolder);
+    return AnyThere(disk, gameFolder, {JournalFile, ReadyFile, RepairFile});
 }
 
 namespace
 {
-    /// <summary>Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are.</summary>
-    bool Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
+    /// <summary>
+    /// Whether a swap was stopped midway, or a repair is under way: the files can't be played as they are; or why it
+    /// can't be told.
+    /// </summary>
+    std::expected<bool, std::string> Midway(MCUpdateDisk& disk, const std::filesystem::path& gameFolder)
     {
-        return disk.Stat(gameFolder / MCFileSystem::FromUtf8(JournalFile)).Exists || Repairing(disk, gameFolder);
+        return AnyThere(disk, gameFolder, {JournalFile, RepairFile});
     }
 }
 
@@ -1192,8 +1240,21 @@ MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesy
 {
     MCResult result = SwapOnce(disk, gameFolder, deadline, runningBuild);
 
-    // The files a repair gave up on aren't a set to play: only a committed swap ends it.
-    if (result.Outcome != MCOutcome::Swapped && result.Outcome != MCOutcome::Stuck && Repairing(disk, gameFolder))
+    if (result.Outcome == MCOutcome::Swapped || result.Outcome == MCOutcome::Stuck)
+    {
+        return result;
+    }
+
+    // The files a repair gave up on aren't a set to play: only a committed swap ends it. Nor are files whose repair
+    // can't be looked for.
+    const auto repairing = Repairing(disk, gameFolder);
+
+    if (!repairing)
+    {
+        return {MCOutcome::Stuck, repairing.error()};
+    }
+
+    if (*repairing)
     {
         return {MCOutcome::Stuck,
                 result.Outcome == MCOutcome::Nothing ? std::string(RepairUnfinishedError) : std::move(result.Error)};
@@ -1214,23 +1275,37 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
     const auto now = std::chrono::steady_clock::now();
     const auto until = deadline.value_or(now + MidwayWait);
     MCResult result;
+    // A folder whose update can't be looked for may be half swapped: it isn't played.
+    const auto underWay = UnderWay(disk, gameFolder);
 
-    if (UnderWay(disk, gameFolder))
+    if (!underWay)
+    {
+        return {MCOutcome::Stuck, underWay.error()};
+    }
+
+    if (*underWay)
     {
         // A copy quitting (RESTART starts this one as it closes) is waited for briefly; one midway through a swap or a
         // repair, whose files can't be played, up to the deadline.
-        if (lock->ExclusiveBy(std::min(until, now + QuittingWait)) ||
-            (Midway(disk, gameFolder) && lock->ExclusiveBy(until)))
+        if (lock->ExclusiveBy(std::min(until, now + QuittingWait)))
         {
             result = Run(disk, gameFolder, deadline, runningBuild);
         }
-        else if (Midway(disk, gameFolder))
+        else if (const auto midway = Midway(disk, gameFolder); !midway)
         {
-            return {MCOutcome::Stuck, std::string(AnotherSwappingError)};
+            return {MCOutcome::Stuck, midway.error()};
+        }
+        else if (!*midway)
+        {
+            result = {MCOutcome::PutBack, "another copy of the game is running"};
+        }
+        else if (lock->ExclusiveBy(until))
+        {
+            result = Run(disk, gameFolder, deadline, runningBuild);
         }
         else
         {
-            result = {MCOutcome::PutBack, "another copy of the game is running"};
+            return {MCOutcome::Stuck, std::string(AnotherSwappingError)};
         }
     }
 

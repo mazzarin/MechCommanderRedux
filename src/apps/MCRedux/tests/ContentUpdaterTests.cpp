@@ -96,7 +96,7 @@ namespace
         }
 
         /// <summary>Whether an update is armed, waiting for the next start.</summary>
-        bool Armed() const { return MCContentSwap::Waiting(*MakeDisk(), Game.Path()); }
+        bool Armed() const { return MCContentSwap::Waiting(*MakeDisk(), Game.Path()) == true; }
 
         /// <summary>What the content downloads.</summary>
         uint64_t ContentBytes() { return Plan().DownloadBytes; }
@@ -396,7 +396,7 @@ TEST_CASE("content swap at a start: another copy running holds the update for a 
                                                                    std::chrono::steady_clock::now() + shortWait);
     CHECK(held.Outcome == MCContentSwap::MCOutcome::PutBack);
     CHECK(held.Error.find("another copy") != std::string::npos);
-    CHECK(MCContentSwap::Waiting(*disk, game));
+    CHECK(MCContentSwap::Waiting(*disk, game) == true);
     CHECK_EQ(Read(game / "data" / "changed.fit"), std::string("changed v1"));
     running->Release();
     CHECK(!running->TryExclusive());
@@ -502,6 +502,16 @@ TEST_CASE("content updater: release.json checked, the content planned, staged, a
     CHECK_EQ((*program)->ProgramBytes, ProgramSize);
     CHECK((*program)->Content == nullptr);
     CHECK_EQ((*program)->ShownVersion(RunningBuild), std::string("0.2.2 (600)"));
+
+    // A list bigger than release.json signs for isn't read past that (the host's read refuses it).
+    {
+        MCHostedRelease padded("check-padded");
+        Write(padded.Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(padded.ListText)) + ".json"),
+              padded.ListText + std::string(SendBytes, ' '));
+        MCFolderSource paddedSource(padded.Host.Path());
+        const auto refused = MCContentUpdater::Check(padded.Setup(), *disk, paddedSource);
+        CHECK(refused.error_or("").find("too big") != std::string::npos);
+    }
 
     // An older release.json served again is refused.
     release.Publish(1, 2, RunningBuild);
@@ -609,6 +619,75 @@ TEST_CASE("content updater: a copy with no record hashes its files once; later c
     Write(hashesFile, "not json");
     CHECK_EQ(hashedAtCheck(), size_t{2});
     CHECK_EQ(hashedAtCheck(), size_t{0});
+}
+
+TEST_CASE("content updater: a stop while a check, a change of sets or an install plans ends it at once, as stopped; "
+          "nothing is hashed on, fetched or armed")
+{
+    MCHostedRelease release("plan-stop");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path hashesFile = game / MCFileSystem::FromUtf8(MCContentPlan::HashesFile);
+    // No record: every file found is hashed, as at a copy's first check.
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    int asked = 0;
+    const auto stopAtOnce = [&]
+    {
+        ++asked;
+        return false;
+    };
+
+    MCFolderSource source(release.Host.Path());
+    const auto checked = MCContentUpdater::Check(setup, *disk, source, stopAtOnce);
+    CHECK_EQ(checked.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK_EQ(asked, 1);
+    CHECK(!std::filesystem::exists(hashesFile));
+
+    // HD OPTIONS' REMOVE, planned from the record: the same.
+    MCInstalled::MCRecord withHd = release.Installed;
+
+    for (auto& [folded, file] : withHd.Files)
+    {
+        file.Set = file.Path.starts_with("HD/") ? "hd" : "game";
+    }
+
+    Write(game / "Redux update" / "installed.json", MCInstalled::Text(withHd));
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+    asked = 0;
+    const auto removal = MCContentUpdater::CheckSets(setup, *disk, source, stopAtOnce);
+    CHECK_EQ(removal.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK_EQ(asked, 1);
+
+    // The first start's window closed while it hashes: nothing is downloaded but what plans it, nothing armed.
+    std::filesystem::remove(game / "Redux update" / "installed.json");
+    REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
+    MCFolderSource installing(release.Host.Path());
+    const auto installed =
+        MCContentUpdater::Install(setup, *disk, installing, [](uint64_t, uint64_t) { return false; });
+    CHECK_EQ(installed.error_or(""), std::string(MCSha256::StoppedError));
+    CHECK(std::ranges::none_of(installing.Asked(), [](const std::string& name) { return name.ends_with(".zip"); }));
+    CHECK(!release.Armed());
+}
+
+TEST_CASE("content updater: the record is read from the disk it's given: one it can't read fails the check and the "
+          "change of sets, saying why")
+{
+    MCHostedRelease release("record-disk");
+    const std::filesystem::path& game = release.Game.Path();
+    MCTestDisk disk;
+    disk.Unread = game / MCFileSystem::FromUtf8(MCInstalled::RecordPath);
+    MCFolderSource source(release.Host.Path());
+    CHECK(MCContentUpdater::Check(release.Setup(), disk, source).error_or("").find("the test's disk") !=
+          std::string::npos);
+    REQUIRE(MCContentUpdater::Choose(disk, game, WithoutHd).has_value());
+    CHECK(MCContentUpdater::CheckSets(release.Setup(), disk, source).error_or("").find("the test's disk") !=
+          std::string::npos);
+
+    // An installer's answer with a record of no release that can't be read: not taken for a first start.
+    Write(game / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(MCInstalled::MCRecord{}));
+    CHECK(MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    CHECK(!MCContentUpdater::AwaitsInstall(disk, game));
 }
 
 TEST_CASE("updater: content alone is checked off the main thread, staged on INSTALL, ready once armed, and RESTART "
@@ -1449,6 +1528,19 @@ TEST_CASE("content removal: the uninstaller's removal takes what updates placed,
     CHECK_EQ(Read(game / "data" / "same.fit"), std::string("changed by the player"));
 }
 
+TEST_CASE("updater: the HD pack's state is told from the record the start read, which isn't read again")
+{
+    MCHostedRelease release("updater-record");
+    constexpr uint64_t HdBytes = 12345;
+    MCInstalled::MCRecord record = release.Installed;
+    record.SetBytes[std::string(MCContentList::HdSet)] = HdBytes;
+    MCUpdater::SetContent(
+        release.Setup(), [host = release.Host.Path()] { return std::make_unique<MCFolderSource>(host); }, &record);
+    CHECK(MCUpdater::HdPack().Installed);
+    CHECK_EQ(MCUpdater::HdPack().Bytes, HdBytes);
+    MCUpdater::ClearContent();
+}
+
 TEST_CASE("updater: HD OPTIONS' choice takes HD out at the next start, and a later start gets it back as chosen")
 {
     MCHostedRelease release("updater-hd");
@@ -1855,7 +1947,7 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     const auto unchanged = [&]()
     {
         CHECK(std::filesystem::exists(update / "journal.json"));
-        CHECK(!MCContentSwap::Repairing(*disk, game));
+        CHECK(MCContentSwap::Repairing(*disk, game) == false);
         CHECK_EQ(Read(update / "replaced" / "data" / "missions" / "new.fit"), std::string("the player's own mission"));
         CHECK_EQ(Read(update / "replaced" / "data" / "removed.fit"), std::string("removed in v2"));
     };
@@ -1872,9 +1964,9 @@ TEST_CASE("content updater: REPAIR gives up an update stopped partway and instal
     std::filesystem::rename(listsAway, lists);
 
     REQUIRE(MCContentUpdater::Repair(release.Setup(), *disk, source, GoOn).has_value());
-    CHECK(MCContentSwap::Repairing(*disk, game));
+    CHECK(MCContentSwap::Repairing(*disk, game) == true);
     REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
-    CHECK(!MCContentSwap::Repairing(*disk, game));
+    CHECK(MCContentSwap::Repairing(*disk, game) == false);
     release.CheckIsRelease2();
 
     // The player's mission kept; the update's own files, and the release's already in place, recorded as placed.

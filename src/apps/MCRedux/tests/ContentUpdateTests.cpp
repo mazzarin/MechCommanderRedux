@@ -262,18 +262,48 @@ TEST_CASE("update files: a rollout reaches its share of copies and no others; wi
 TEST_CASE("content list: paths outside the folder, alike but for case, or that Windows can't hold are refused")
 {
     for (const std::string_view good :
-         {"data/missions/m01.fit", "HD/terrain.hda", "ART.FST", "a/b c/d.e", "data/Redux update/x", "Pilóto/測試.txt"})
+         {"data/missions/m01.fit", "HD/terrain.hda", "ART.FST", "a/b c/d.e", "data/Redux update/x", "MCX.EXE",
+          "SMACKW32.DLL", "data/console.fit", "nul-a.txt"})
     {
         CHECK_EQ(MCContentList::PathProblem(good), std::string());
     }
 
-    for (const std::string_view bad :
-         {"", "/etc/passwd", "../up", "data/../../up", "data//x", "data/./x", "data/", "C:/x", "data\\x", "a?b",
-          "data/con", "data/LPT1.txt", "data/aux.fit", "data/x.", "data/x ", "Redux update/installed.json",
-          "redux BACKUP/MCX.EXE", "tab\there", "Redux update"})
+    for (const std::string_view bad : {"",
+                                       "/etc/passwd",
+                                       "../up",
+                                       "data/../../up",
+                                       "data//x",
+                                       "data/./x",
+                                       "data/",
+                                       "C:/x",
+                                       "data\\x",
+                                       "a?b",
+                                       "data/con",
+                                       "data/LPT1.txt",
+                                       "data/aux.fit",
+                                       "data/x.",
+                                       "data/x ",
+                                       "Redux update/installed.json",
+                                       "redux BACKUP/MCX.EXE",
+                                       "tab\there",
+                                       "Redux update",
+                                       "Pilóto/測試.txt",
+                                       "data/caf\xc3\xa9.fit",
+                                       "PROGRA~1/x",
+                                       "data/$MFT",
+                                       "a$b/c",
+                                       "NUL .txt",
+                                       "data/nul. .fit",
+                                       "com1 .x",
+                                       "CONIN$",
+                                       "data/conout$.txt"})
     {
         CHECK(!MCContentList::PathProblem(bad).empty());
     }
+
+    CHECK(MCContentList::PathProblem("NUL .txt").find("device") != std::string::npos);
+    CHECK(MCContentList::PathProblem("data/x~1.fit").find("another file") != std::string::npos);
+    CHECK(MCContentList::PathProblem("Pilóto/x").find("ASCII") != std::string::npos);
 
     CHECK(MCContentList::PathProblem("data/com10").empty());
     CHECK(MCContentList::PathProblem(std::string(201, 'a')).find("longer") != std::string::npos);

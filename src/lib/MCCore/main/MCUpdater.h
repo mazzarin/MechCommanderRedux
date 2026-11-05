@@ -34,6 +34,11 @@ namespace MCReleaseFile
     struct MCProgram;
 }
 
+namespace MCInstalled
+{
+    struct MCRecord;
+}
+
 namespace MCUpdater
 {
     /// <summary>Where the update is.</summary>
@@ -170,9 +175,11 @@ namespace MCUpdater
 
     /// <summary>
     /// The game's own updater for the content, for the copy <paramref name="setup"/> describes, reading the release's
-    /// host through what <paramref name="source"/> makes (before the game starts).
+    /// host through what <paramref name="source"/> makes (before the game starts). <paramref name="installed"/> is the
+    /// copy's record as the start read it (none: it's read here).
     /// </summary>
-    void SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source);
+    void SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source,
+                    const MCInstalled::MCRecord* installed = nullptr);
 
     /// <summary>No content updater: any work under way stops.</summary>
     void ClearContent();

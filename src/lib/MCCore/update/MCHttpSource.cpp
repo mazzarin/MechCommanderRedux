@@ -488,6 +488,16 @@ std::optional<std::pair<std::string, std::string>> MCHttpSource::SchemeAndHost(s
     }
 
     const std::string_view rest = url.substr(schemeEnd + SchemeEnd.size());
+
+    // Before the path: no user part (http://127.0.0.1:80@elsewhere/ is elsewhere), no backslash a transfer may take
+    // for a slash, no spaces or controls.
+    if (const std::string_view authority = rest.substr(0, rest.find('/'));
+        std::ranges::any_of(authority, [](char letter)
+                            { return letter == '@' || letter == '\\' || static_cast<unsigned char>(letter) <= ' '; }))
+    {
+        return std::nullopt;
+    }
+
     // A bracketed address ([::1]) keeps its colons; otherwise the host ends at its port or path.
     const size_t hostEnd = rest.starts_with('[') ? rest.find(']') + 1 : rest.find_first_of(":/");
     const std::string_view host = rest.substr(0, std::min(hostEnd, rest.size()));

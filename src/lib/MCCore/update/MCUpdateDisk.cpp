@@ -6,10 +6,13 @@
 #include "platform/MCUtf8Path.h"
 
 #include <SDL3/SDL_log.h>
+#include <atomic>
 #include <format>
 #include <fstream>
+#include <algorithm>
 #include <iterator>
 #include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -37,6 +40,8 @@ namespace
     /// <summary>A move of a file another program holds: tried this many times, this far apart (a second in all).</summary>
     constexpr int HeldTries = 10;
     constexpr std::chrono::milliseconds HeldWait{100};
+    /// <summary>An offset's high half, as OVERLAPPED takes it.</summary>
+    constexpr int DwordBits = 32;
 #endif
 
 #ifdef _WIN32
@@ -125,6 +130,46 @@ namespace
     }
 #endif
 
+    /// <summary>Moves a file with the system's rename, which replaces what's at <paramref name="to"/>.</summary>
+    bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to)
+    {
+#ifdef _WIN32
+        return MoveWithFlags(from, to, MOVEFILE_REPLACE_EXISTING);
+#else
+        std::error_code error;
+        std::filesystem::rename(from, to, error);
+
+        if (error)
+        {
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), error.message().c_str());
+        }
+
+        return !error;
+#endif
+    }
+
+    /// <summary>
+    /// A move where nothing may be, for a volume whose system can't refuse one where something is (on the Mac, SMB, NFS
+    /// and FAT volumes lack RENAME_EXCL): <paramref name="to"/> looked at first, then the rename. The two steps aren't
+    /// one, but the swap holds the game's lock exclusive while it moves, so no copy of the game puts a file there in
+    /// between; anything else must have been there already.
+    /// </summary>
+    bool MoveLookingFirst(const std::filesystem::path& from, const std::filesystem::path& to)
+    {
+        std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(to, error);
+
+        if (status.type() != std::filesystem::file_type::not_found)
+        {
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), error ? error.message().c_str() : "something is there already");
+            return false;
+        }
+
+        return RenameReplacing(from, to);
+    }
+
     /// <summary>A stat that couldn't be made: why, naming <paramref name="path"/>.</summary>
     MCUpdateDisk::MCStat Unseen(const std::filesystem::path& path, const std::error_code& error)
     {
@@ -134,6 +179,8 @@ namespace
     class MCDisk final : public MCUpdateDisk
     {
     public:
+        explicit MCDisk(MCMoves moves) : _Moves(moves) {}
+
         MCStat Stat(const std::filesystem::path& path) override
         {
 #ifndef _WIN32
@@ -201,6 +248,42 @@ namespace
 #endif
         }
 
+        std::expected<bool, std::string> IsLink(const std::filesystem::path& path) override
+        {
+#ifdef _WIN32
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+            {
+                const DWORD error = GetLastError();
+
+                if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                {
+                    return false;
+                }
+
+                return std::unexpected(std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), error));
+            }
+
+            return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+            struct stat info{};
+
+            if (::lstat(path.c_str(), &info) != 0)
+            {
+                if (errno == ENOENT || errno == ENOTDIR)
+                {
+                    return false;
+                }
+
+                return std::unexpected(
+                    std::format("{} can't be looked at ({})", MCFileSystem::ToUtf8(path), std::strerror(errno)));
+            }
+
+            return S_ISLNK(info.st_mode);
+#endif
+        }
+
         std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
         {
             return MCSha256::OfFile(path);
@@ -229,10 +312,22 @@ namespace
         {
             std::vector<std::string> files;
             std::error_code error;
+            const std::filesystem::file_status status = std::filesystem::symlink_status(folder, error);
 
-            if (!std::filesystem::is_directory(std::filesystem::symlink_status(folder, error)))
+            // None only when the system says it isn't there: a folder that can't be looked at isn't an empty one.
+            if (status.type() == std::filesystem::file_type::not_found)
             {
                 return files;
+            }
+
+            if (error)
+            {
+                return std::unexpected(MCFileSystem::ToUtf8(folder) + " can't be looked at (" + error.message() + ")");
+            }
+
+            if (!std::filesystem::is_directory(status))
+            {
+                return std::unexpected(MCFileSystem::ToUtf8(folder) + " isn't a folder");
             }
 
             // Links aren't followed: one is listed as a file is.
@@ -271,38 +366,44 @@ namespace
 
         bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
-#ifdef _WIN32
-            return MoveWithFlags(from, to, MOVEFILE_REPLACE_EXISTING);
-#else
-            std::error_code error;
-            std::filesystem::rename(from, to, error);
-
-            if (error)
-            {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
-                        MCFileSystem::ToUtf8(to).c_str(), error.message().c_str());
-            }
-
-            return !error;
-#endif
+            return RenameReplacing(from, to);
         }
 
         bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
         {
+            if (_Moves == MCMoves::LookingFirst)
+            {
+                return MoveLookingFirst(from, to);
+            }
+
 #ifdef _WIN32
             // Without MOVEFILE_REPLACE_EXISTING: a file at to fails it (ERROR_ALREADY_EXISTS), never tried again.
             constexpr DWORD replacingNothing = 0;
             return MoveWithFlags(from, to, replacingNothing);
 #else
             // RENAME_EXCL: one step, failing with EEXIST when something is at to.
-            if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) != 0)
+            if (renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0)
             {
-                SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
-                        MCFileSystem::ToUtf8(to).c_str(), std::strerror(errno));
-                return false;
+                return true;
             }
 
-            return true;
+            const int error = errno;
+
+            // A volume without it (SMB, NFS, FAT): every move there looks first.
+            if (error == ENOTSUP || error == EINVAL)
+            {
+                if (!ToldLookingFirst.exchange(true))
+                {
+                    SDL_Log("Updates: %s's volume can't move a file only where nothing is (%s): moves there look first",
+                            MCFileSystem::ToUtf8(to.parent_path()).c_str(), std::strerror(error));
+                }
+
+                return MoveLookingFirst(from, to);
+            }
+
+            SDL_Log("Updates: %s can't be moved to %s (%s)", MCFileSystem::ToUtf8(from).c_str(),
+                    MCFileSystem::ToUtf8(to).c_str(), std::strerror(error));
+            return false;
 #endif
         }
 
@@ -375,12 +476,19 @@ namespace
 
             return space.available;
         }
+
+    private:
+        MCMoves _Moves;
+#ifndef _WIN32
+        /// <summary>Whether a volume without RENAME_EXCL was logged (once a run).</summary>
+        static inline std::atomic<bool> ToldLookingFirst = false;
+#endif
     };
 }
 
-std::unique_ptr<MCUpdateDisk> MakeDisk()
+std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves)
 {
-    return std::make_unique<MCDisk>();
+    return std::make_unique<MCDisk>(moves);
 }
 
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path)
@@ -393,6 +501,205 @@ std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesyst
     }
 
     return stat.Exists;
+}
+
+std::expected<void, std::string> MCNoLinks::Check(const std::filesystem::path& path)
+{
+    const std::filesystem::path relative = path.lexically_normal().lexically_relative(_Game.lexically_normal());
+
+    if (relative.empty() || *relative.begin() == "..")
+    {
+        return std::unexpected(std::format("{} isn't in the game's folder", MCFileSystem::ToUtf8(path)));
+    }
+
+    const std::lock_guard lock(_Mutex);
+    const std::vector<std::filesystem::path> parts(relative.begin(), relative.end());
+    std::filesystem::path at = _Game;
+
+    for (size_t i = 0; i < parts.size(); ++i)
+    {
+        at /= parts[i];
+        const bool folder = i + 1 < parts.size();
+
+        if (folder && _Seen.contains(at))
+        {
+            continue;
+        }
+
+        const auto link = _Disk.IsLink(at);
+
+        if (!link)
+        {
+            return std::unexpected(link.error());
+        }
+
+        if (*link)
+        {
+            return std::unexpected(std::format("{} is a link, which updates don't follow", MCFileSystem::ToUtf8(at)));
+        }
+
+        if (folder)
+        {
+            _Seen.insert(at);
+        }
+    }
+
+    return {};
+}
+
+std::expected<MCNewFile, std::string> MCNewFile::Create(const std::filesystem::path& path)
+{
+    const std::string shown = MCFileSystem::ToUtf8(path);
+    std::error_code error;
+    const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+
+    if (status.type() != std::filesystem::file_type::not_found)
+    {
+        if (error)
+        {
+            return std::unexpected(
+                std::format("{} can't be written: it can't be looked at ({})", shown, error.message()));
+        }
+
+        if (std::filesystem::is_directory(status))
+        {
+            return std::unexpected(std::format("{} can't be written: a folder is there", shown));
+        }
+
+        // The file or link itself goes, never what a link points to.
+        if (!std::filesystem::remove(path, error))
+        {
+            return std::unexpected(
+                std::format("{} can't be written: what's there can't be deleted ({})", shown, error.message()));
+        }
+    }
+
+#ifdef _WIN32
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return std::unexpected(std::format("{} can't be written ({})", shown, GetLastError()));
+    }
+
+    return MCNewFile(path, reinterpret_cast<intptr_t>(file));
+#else
+    constexpr mode_t ReadableByAll = 0644;
+    const int descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, ReadableByAll);
+
+    if (descriptor < 0)
+    {
+        return std::unexpected(std::format("{} can't be written ({})", shown, std::strerror(errno)));
+    }
+
+    return MCNewFile(path, descriptor);
+#endif
+}
+
+MCNewFile::MCNewFile(MCNewFile&& other) noexcept
+    : _Path(std::move(other._Path)), _Handle(std::exchange(other._Handle, Closed))
+{
+}
+
+MCNewFile::~MCNewFile()
+{
+    Close();
+}
+
+bool MCNewFile::WriteAt(uint64_t at, std::span<const char> bytes)
+{
+    while (!bytes.empty())
+    {
+#ifdef _WIN32
+        OVERLAPPED where{};
+        where.Offset = static_cast<DWORD>(at);
+        where.OffsetHigh = static_cast<DWORD>(at >> DwordBits);
+        const auto count = static_cast<DWORD>(std::min<size_t>(bytes.size(), MAXDWORD));
+        DWORD written = 0;
+        const bool done = WriteFile(reinterpret_cast<HANDLE>(_Handle), bytes.data(), count, &written, &where) != 0;
+#else
+        const ssize_t wrote = pwrite(static_cast<int>(_Handle), bytes.data(), bytes.size(), static_cast<off_t>(at));
+
+        if (wrote < 0 && errno == EINTR)
+        {
+            continue;
+        }
+
+        const bool done = wrote > 0;
+        const auto written = static_cast<size_t>(std::max<ssize_t>(wrote, 0));
+#endif
+
+        if (!done || written == 0)
+        {
+            SDL_Log("Updates: %s can't be written at %llu", MCFileSystem::ToUtf8(_Path).c_str(),
+                    static_cast<unsigned long long>(at));
+            return false;
+        }
+
+        at += written;
+        bytes = bytes.subspan(written);
+    }
+
+    return true;
+}
+
+bool MCNewFile::ReadAt(uint64_t at, std::span<char> bytes)
+{
+    while (!bytes.empty())
+    {
+#ifdef _WIN32
+        OVERLAPPED where{};
+        where.Offset = static_cast<DWORD>(at);
+        where.OffsetHigh = static_cast<DWORD>(at >> DwordBits);
+        const auto count = static_cast<DWORD>(std::min<size_t>(bytes.size(), MAXDWORD));
+        DWORD read = 0;
+        const bool done = ReadFile(reinterpret_cast<HANDLE>(_Handle), bytes.data(), count, &read, &where) != 0;
+#else
+        const ssize_t got = pread(static_cast<int>(_Handle), bytes.data(), bytes.size(), static_cast<off_t>(at));
+
+        if (got < 0 && errno == EINTR)
+        {
+            continue;
+        }
+
+        const bool done = got > 0;
+        const auto read = static_cast<size_t>(std::max<ssize_t>(got, 0));
+#endif
+
+        // Past what's written there's nothing to read: the caller asked for what it wrote.
+        if (!done || read == 0)
+        {
+            return false;
+        }
+
+        at += read;
+        bytes = bytes.subspan(read);
+    }
+
+    return true;
+}
+
+bool MCNewFile::Close()
+{
+    if (_Handle == Closed)
+    {
+        return true;
+    }
+
+#ifdef _WIN32
+    const bool closed = CloseHandle(reinterpret_cast<HANDLE>(std::exchange(_Handle, Closed))) != 0;
+#else
+    const bool closed = close(static_cast<int>(std::exchange(_Handle, Closed))) == 0;
+#endif
+
+    if (!closed)
+    {
+        SDL_Log("Updates: %s can't be closed: what was written may not all be there",
+                MCFileSystem::ToUtf8(_Path).c_str());
+    }
+
+    return closed;
 }
 
 bool WriteDurably(MCUpdateDisk& disk, const std::filesystem::path& path, std::string_view bytes)

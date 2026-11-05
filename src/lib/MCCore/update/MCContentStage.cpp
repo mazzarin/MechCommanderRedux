@@ -30,6 +30,23 @@ namespace
     /// <summary>How often staging tells its progress while the workers fetch.</summary>
     constexpr std::chrono::milliseconds ProgressEvery{100};
 
+    /// <summary>
+    /// A sum of sizes that can't wrap: one past the most a count holds stays there (a list's sizes are signed, but a
+    /// count read wrong mustn't pass the space check as a small one).
+    /// </summary>
+    class MCBytesNeeded
+    {
+    public:
+        void Add(uint64_t bytes)
+        {
+            Overflowed = Overflowed || bytes > std::numeric_limits<uint64_t>::max() - Total;
+            Total = Overflowed ? Total : Total + bytes;
+        }
+
+        uint64_t Total = 0;
+        bool Overflowed = false;
+    };
+
     /// <summary>miniz reads the zip through this.</summary>
     size_t ReadZip(void* opaque, mz_uint64 offset, void* buffer, size_t count)
     {
@@ -41,18 +58,24 @@ namespace
     }
 
     /// <summary>
-    /// Where an entry is unpacked to, its bytes and hash as they're written, whether writing failed (the disk's fault,
-    /// not the zip's), and whether it was stopped (asked before each piece).
+    /// Where an entry is unpacked to (a file made anew), its bytes and hash as they're written, the most it may hold (the
+    /// list's size: more isn't the release's, and stops it), whether writing failed (the disk's fault, not the zip's),
+    /// and whether it was stopped (asked before each piece).
     /// </summary>
     struct MCEntrySink
     {
-        explicit MCEntrySink(const std::function<bool()>& goOn) : GoOn(goOn) {}
+        MCEntrySink(MCNewFile file, uint64_t most, const std::function<bool()>& goOn)
+            : File(std::move(file)), Most(most), GoOn(goOn)
+        {
+        }
 
-        std::ofstream Out;
+        MCNewFile File;
         MCSha256::MCHasher Hasher;
         uint64_t Written = 0;
+        uint64_t Most = 0;
         const std::function<bool()>& GoOn;
         bool WriteFailed = false;
+        bool TooLong = false;
         bool Stopped = false;
     };
 
@@ -67,12 +90,17 @@ namespace
             return 0;
         }
 
-        const std::span<const char> bytes(static_cast<const char*>(buffer), count);
-        sink.Out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        sink.WriteFailed = sink.WriteFailed || !sink.Out;
-
-        if (sink.WriteFailed)
+        if (count > sink.Most - sink.Written)
         {
+            sink.TooLong = true;
+            return 0;
+        }
+
+        const std::span<const char> bytes(static_cast<const char*>(buffer), count);
+
+        if (!sink.File.WriteAt(sink.Written, bytes))
+        {
+            sink.WriteFailed = true;
             return 0;
         }
 
@@ -80,6 +108,16 @@ namespace
         sink.Written += bytes.size();
         return count;
     }
+
+    /// <summary>
+    /// A patch fetched once by its hosted name, and the steps it's applied to: it's named by the old file's hash and the
+    /// new one's, so identical files changed alike share one.
+    /// </summary>
+    struct MCPatchJob
+    {
+        const MCContentList::MCPatch* Patch = nullptr;
+        std::vector<const MCStep*> Steps;
+    };
 
     class MCStager
     {
@@ -90,6 +128,7 @@ namespace
             : _Disk(disk)
             , _Source(source)
             , _Game(std::move(game))
+            , _NoLinks(disk, _Game)
             , _Plan(plan)
             , _List(list)
             , _Progress(progress)
@@ -99,10 +138,13 @@ namespace
 
         std::expected<void, std::string> Run()
         {
-            // Staging over a ready update would change files its journal moves: that update swaps in first.
-            if (MCContentSwap::Waiting(_Disk, _Game))
+            // Staging over a ready update would change files its journal moves: that update swaps in first. One that
+            // can't be looked for is never cleared away.
+            if (const auto waiting = MCContentSwap::Waiting(_Disk, _Game); !waiting || *waiting)
             {
-                return std::unexpected("an update is already staged; it goes in at the next start");
+                return std::unexpected(waiting
+                                           ? std::string("an update is already staged; it goes in at the next start")
+                                           : waiting.error());
             }
 
             if (auto cleared = ClearUnplanned(); !cleared)
@@ -111,8 +153,9 @@ namespace
             }
 
             // What an earlier attempt staged as the list has it stays; the rest is still to do.
-            std::vector<const MCStep*> patches;
+            std::vector<MCPatchJob> patches;
             std::vector<const MCStep*> whole;
+            std::map<std::string_view, const MCContentList::MCPatch*> patchesStaged;
 
             for (const MCStep& step : _Plan.Steps)
             {
@@ -121,14 +164,42 @@ namespace
                     continue;
                 }
 
-                if (!IsStaged(step))
+                const auto staged = FoundStaged(step);
+
+                if (!staged)
                 {
-                    (step.Action == MCAction::Patch ? patches : whole).push_back(&step);
+                    return std::unexpected(staged.error());
                 }
-                else if (step.Action == MCAction::Patch)
+
+                if (*staged)
                 {
-                    // Staged by an earlier attempt: its patch counts as in.
-                    Received(step.Patch->Size);
+                    if (step.Action == MCAction::Patch)
+                    {
+                        patchesStaged.emplace(step.Patch->Name, step.Patch);
+                    }
+                }
+                else if (step.Action == MCAction::Fetch)
+                {
+                    whole.push_back(&step);
+                }
+                else if (const auto job = std::ranges::find(patches, step.Patch->Name,
+                                                            [](const MCPatchJob& job) { return job.Patch->Name; });
+                         job != patches.end())
+                {
+                    job->Steps.push_back(&step);
+                }
+                else
+                {
+                    patches.push_back({.Patch = step.Patch, .Steps = {&step}});
+                }
+            }
+
+            // A patch whose every file an earlier attempt staged counts as in.
+            for (const auto& [name, patch] : patchesStaged)
+            {
+                if (std::ranges::none_of(patches, [&](const MCPatchJob& job) { return job.Patch->Name == name; }))
+                {
+                    Received(patch->Size);
                 }
             }
 
@@ -187,7 +258,7 @@ namespace
                 }
             }
 
-            return Stopped() ? Stop() : Flush();
+            return Flush();
         }
 
     private:
@@ -204,8 +275,60 @@ namespace
         }
 
         /// <summary>
-        /// Whether the step's file is staged as the list has it: found staged by an earlier attempt, or just patched.
+        /// Whether the step's file is staged as the list has it, found from an earlier attempt. A file there that isn't
+        /// (cut short by a crash, or changed since) is deleted, so it takes no room the space check counts again; a
+        /// folder is left as it is, for the unpacking to fail on.
         /// </summary>
+        /// <returns>Whether it's staged, or why it can't be told or cleared (stopped).</returns>
+        std::expected<bool, std::string> FoundStaged(const MCStep& step)
+        {
+            const std::filesystem::path path = StagedPath(step);
+
+            if (auto checked = _NoLinks.Check(path); !checked)
+            {
+                return std::unexpected(checked.error());
+            }
+
+            const MCUpdateDisk::MCStat stat = _Disk.Stat(path);
+
+            if (!stat.Error.empty())
+            {
+                return std::unexpected(stat.Error);
+            }
+
+            if (!stat.Exists || stat.Folder)
+            {
+                return false;
+            }
+
+            if (stat.Size == step.File->Size)
+            {
+                const auto hash = MCSha256::OfFile(path, _GoOn);
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
+                if (hash && *hash == step.File->Sha256)
+                {
+                    return true;
+                }
+            }
+
+            if (!_Disk.Remove(path))
+            {
+                return std::unexpected(
+                    std::format("{}, staged by an earlier attempt and not the release's, can't be deleted",
+                                MCFileSystem::ToUtf8(path)));
+            }
+
+            SDL_Log("Updates: %s, staged by an earlier attempt, isn't the release's: it's staged again",
+                    step.Path.c_str());
+            return false;
+        }
+
+        /// <summary>Whether the step's file is staged as the list has it (just patched).</summary>
         bool IsStaged(const MCStep& step)
         {
             const MCUpdateDisk::MCStat stat = _Disk.Stat(StagedPath(step));
@@ -316,28 +439,35 @@ namespace
         /// zip; what's already staged or downloaded takes its room already. When the free space can't be read, it's
         /// logged and staging goes on.
         /// </summary>
-        std::expected<void, std::string> CheckSpace(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> CheckSpace(const std::vector<MCPatchJob>& patches,
                                                     const std::vector<const MCStep*>& whole)
         {
-            uint64_t needed = 0;
+            MCBytesNeeded needed;
             uint64_t biggestZip = 0;
             std::vector<uint64_t> patchesLeft;
 
-            for (const MCStep* step : patches)
+            for (const MCPatchJob& job : patches)
             {
-                needed += step->File->Size;
-                patchesLeft.push_back(step->Patch->Size - Downloaded(step->Patch->Name, step->Patch->Size));
+                for (const MCStep* step : job.Steps)
+                {
+                    needed.Add(step->File->Size);
+                }
+
+                patchesLeft.push_back(job.Patch->Size - Downloaded(job.Patch->Name, job.Patch->Size));
             }
 
             const size_t ahead = std::min(PatchWorkers, patchesLeft.size());
             std::ranges::partial_sort(patchesLeft, patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead),
                                       std::greater<>());
-            needed =
-                std::accumulate(patchesLeft.begin(), patchesLeft.begin() + static_cast<std::ptrdiff_t>(ahead), needed);
+
+            for (size_t i = 0; i < ahead; ++i)
+            {
+                needed.Add(patchesLeft[i]);
+            }
 
             for (const MCStep* step : whole)
             {
-                needed += step->File->Size;
+                needed.Add(step->File->Size);
             }
 
             for (const MCContentList::MCZip* zip : ZipsHolding(whole))
@@ -345,7 +475,13 @@ namespace
                 biggestZip = std::max(biggestZip, zip->Size - Downloaded(zip->Name, zip->Size));
             }
 
-            needed += biggestZip;
+            needed.Add(biggestZip);
+
+            if (needed.Overflowed)
+            {
+                return std::unexpected("the update's sizes add up to more than any disk holds");
+            }
+
             const auto free = _Disk.FreeBytes(_Game);
 
             if (!free)
@@ -354,11 +490,12 @@ namespace
                 return {};
             }
 
-            if (*free < needed)
+            if (*free < needed.Total)
             {
-                return std::unexpected(std::format(
-                    "the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
-                    static_cast<double>(needed) / BytesPerGigabyte, static_cast<double>(*free) / BytesPerGigabyte));
+                return std::unexpected(
+                    std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
+                                static_cast<double>(needed.Total) / BytesPerGigabyte,
+                                static_cast<double>(*free) / BytesPerGigabyte));
             }
 
             return {};
@@ -375,6 +512,12 @@ namespace
                                                                        const std::function<bool(uint64_t)>& received)
         {
             const std::filesystem::path path = DownloadPath(name);
+
+            if (auto checked = _NoLinks.Check(path); !checked)
+            {
+                return std::unexpected(checked.error());
+            }
+
             const auto fetched = MCContentStage::FetchChecked(_Disk, source, name, path, size, sha256, received);
 
             if (fetched)
@@ -396,12 +539,12 @@ namespace
         }
 
         /// <summary>
-        /// Stages <paramref name="patches"/>' files, each patch applied in order; one whose patch doesn't come or
-        /// doesn't apply joins <paramref name="whole"/>. With a source that makes others, the patches are fetched
-        /// ahead by workers, <see cref="PatchWorkers"/> at once; otherwise one by one.
+        /// Stages <paramref name="patches"/>' files, each patch fetched once and applied in order to each of its files;
+        /// a file whose patch doesn't come or doesn't apply joins <paramref name="whole"/>. With a source that makes
+        /// others, the patches are fetched ahead by workers, <see cref="PatchWorkers"/> at once; otherwise one by one.
         /// </summary>
         /// <returns>Nothing, or stopped.</returns>
-        std::expected<void, std::string> PatchAll(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> PatchAll(const std::vector<MCPatchJob>& patches,
                                                   std::vector<const MCStep*>& whole)
         {
             std::vector<std::unique_ptr<MCContentStage::MCSource>> sources;
@@ -420,11 +563,11 @@ namespace
 
             if (sources.empty())
             {
-                for (const MCStep* step : patches)
+                for (const MCPatchJob& job : patches)
                 {
-                    const auto fetched = FetchPatch(_Source, *step, [this](uint64_t count) { return Received(count); });
+                    const auto fetched = FetchPatch(_Source, job, [this](uint64_t count) { return Received(count); });
 
-                    if (auto patched = Patched(*step, fetched, whole); !patched)
+                    if (auto patched = Patched(job, fetched, whole); !patched)
                     {
                         return patched;
                     }
@@ -476,7 +619,7 @@ namespace
             MCAhead& _Ahead;
         };
 
-        std::expected<void, std::string> PatchAhead(const std::vector<const MCStep*>& patches,
+        std::expected<void, std::string> PatchAhead(const std::vector<MCPatchJob>& patches,
                                                     std::vector<std::unique_ptr<MCContentStage::MCSource>>& sources,
                                                     std::vector<const MCStep*>& whole)
         {
@@ -534,7 +677,7 @@ namespace
                     return Stop();
                 }
 
-                auto patched = Patched(*patches[index], fetched, whole);
+                auto patched = Patched(patches[index], fetched, whole);
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -553,7 +696,7 @@ namespace
         }
 
         /// <summary>A worker: fetches the next patch, no further ahead of those applied than there are workers.</summary>
-        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<const MCStep*>& patches)
+        void FetchAhead(MCContentStage::MCSource& source, MCAhead& ahead, const std::vector<MCPatchJob>& patches)
         {
             for (;;)
             {
@@ -576,7 +719,7 @@ namespace
                     index = ahead.Next++;
                 }
 
-                auto fetched = FetchPatch(source, *patches[index], [this](uint64_t count) { return Counted(count); });
+                auto fetched = FetchPatch(source, patches[index], [this](uint64_t count) { return Counted(count); });
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -588,48 +731,64 @@ namespace
         }
 
         /// <summary>
-        /// Applies a patch fetched; one that didn't come, or doesn't apply, leaves its file to fetch whole (<paramref
-        /// name="whole"/>).
+        /// Applies a patch fetched to each of its files; a file whose patch didn't come, or doesn't apply, is left to
+        /// fetch whole (<paramref name="whole"/>). The patch goes once its last file is done; stopped, it stays for
+        /// the next attempt.
         /// </summary>
         /// <returns>Nothing, or stopped: a stop isn't a patch that failed, so nothing more is fetched or applied.</returns>
-        std::expected<void, std::string> Patched(const MCStep& step,
+        std::expected<void, std::string> Patched(const MCPatchJob& job,
                                                  const std::expected<std::filesystem::path, std::string>& fetched,
                                                  std::vector<const MCStep*>& whole)
         {
-            std::expected<void, std::string> patched = std::unexpected(fetched.error_or(std::string()));
-
-            if (fetched)
+            for (const MCStep* step : job.Steps)
             {
-                patched = Apply(step, *fetched);
+                std::expected<void, std::string> patched = std::unexpected(fetched.error_or(std::string()));
+
+                if (fetched)
+                {
+                    patched = Apply(*step, *fetched);
+                }
+
+                if (patched)
+                {
+                    continue;
+                }
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
+                SDL_Log("Updates: %s is fetched whole: %s", step->Path.c_str(), patched.error().c_str());
+                whole.push_back(step);
             }
 
-            if (patched)
+            if (fetched && !_Disk.Remove(*fetched))
             {
-                return {};
+                SDL_Log("Updates: %s, applied, can't be deleted; it goes with download/",
+                        MCFileSystem::ToUtf8(*fetched).c_str());
             }
 
-            if (Stopped())
-            {
-                return Stop();
-            }
-
-            SDL_Log("Updates: %s is fetched whole: %s", step.Path.c_str(), patched.error().c_str());
-            whole.push_back(&step);
             return {};
         }
 
-        /// <summary>Downloads a step's patch into download/, checked.</summary>
+        /// <summary>Downloads a patch into download/, checked.</summary>
         std::expected<std::filesystem::path, std::string> FetchPatch(MCContentStage::MCSource& source,
-                                                                     const MCStep& step,
+                                                                     const MCPatchJob& job,
                                                                      const std::function<bool(uint64_t)>& received)
         {
-            return FetchChecked(source, step.Patch->Name, step.Patch->Size, step.Patch->Sha256, received);
+            return FetchChecked(source, job.Patch->Name, job.Patch->Size, job.Patch->Sha256, received);
         }
 
         /// <summary>Writes the patched file to staged/; fails (and leaves nothing) when it can't.</summary>
         std::expected<void, std::string> Apply(const MCStep& step, const std::filesystem::path& patch)
         {
             const std::filesystem::path staged = StagedPath(step);
+
+            if (auto checked = _NoLinks.Check(staged); !checked)
+            {
+                return checked;
+            }
 
             if (!_Disk.MakeFolders(staged.parent_path()))
             {
@@ -641,15 +800,12 @@ namespace
                 return Stop();
             }
 
-            const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn);
+            const auto applied = MCFilePatch::Apply(At(step.OnDisk), patch, staged, _GoOn, step.File->Size);
 
-            // Stopped, the patch stays for the next attempt.
             if (Stopped())
             {
                 return Stop();
             }
-
-            _Disk.Remove(patch);
 
             if (!applied)
             {
@@ -725,6 +881,13 @@ namespace
                     break;
                 }
 
+                if (auto checked = _NoLinks.Check(staged); !checked)
+                {
+                    error = checked.error();
+                    keepZip = true;
+                    break;
+                }
+
                 if (!_Disk.MakeFolders(staged.parent_path()))
                 {
                     error = std::format("{} can't be made", MCFileSystem::ToUtf8(staged.parent_path()));
@@ -732,11 +895,20 @@ namespace
                     break;
                 }
 
-                MCEntrySink sink(_GoOn);
-                sink.Out.open(staged, std::ios::binary | std::ios::trunc);
-                const bool unpacked = sink.Out && mz_zip_reader_extract_to_callback(
-                                                      &archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
-                sink.Out.close();
+                // Made anew: never through a link, nor over what an earlier attempt left.
+                auto made = MCNewFile::Create(staged);
+
+                if (!made)
+                {
+                    error = made.error();
+                    keepZip = true;
+                    break;
+                }
+
+                MCEntrySink sink(std::move(*made), step->File->Size, _GoOn);
+                const bool unpacked =
+                    mz_zip_reader_extract_to_callback(&archive, static_cast<mz_uint>(index), WriteEntry, &sink, 0);
+                const bool closed = sink.File.Close();
 
                 if (sink.Stopped)
                 {
@@ -746,7 +918,7 @@ namespace
                     break;
                 }
 
-                if (!sink.Out || sink.WriteFailed)
+                if (!closed || sink.WriteFailed)
                 {
                     _Disk.Remove(staged);
                     error = std::format("{} can't be written", MCFileSystem::ToUtf8(staged));
@@ -754,7 +926,8 @@ namespace
                     break;
                 }
 
-                if (!unpacked || sink.Written != step->File->Size || sink.Hasher.Finish() != step->File->Sha256)
+                if (!unpacked || sink.TooLong || sink.Written != step->File->Size ||
+                    sink.Hasher.Finish() != step->File->Sha256)
                 {
                     _Disk.Remove(staged);
                     error = std::format("{} from {} isn't the release's", step->File->Path, zip.Name);
@@ -778,7 +951,10 @@ namespace
             return {};
         }
 
-        /// <summary>Flushes every staged file and the folders holding them; the downloads go.</summary>
+        /// <summary>
+        /// Flushes every staged file and the folders holding them (each a full flush to the disk, asked before whether
+        /// to stop); the downloads go. Stopped, staging isn't done, so the update is never armed.
+        /// </summary>
         std::expected<void, std::string> Flush()
         {
             std::set<std::filesystem::path> folders;
@@ -792,6 +968,11 @@ namespace
                 }
 
                 const std::filesystem::path staged = StagedPath(step);
+
+                if (Stopped())
+                {
+                    return Stop();
+                }
 
                 if (!_Disk.FlushFile(staged))
                 {
@@ -809,10 +990,20 @@ namespace
 
             for (const std::filesystem::path& folder : folders)
             {
+                if (Stopped())
+                {
+                    return Stop();
+                }
+
                 if (!_Disk.FlushFolder(folder))
                 {
                     return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(folder)));
                 }
+            }
+
+            if (Stopped())
+            {
+                return Stop();
             }
 
             _Disk.Remove(At(MCContentStage::DownloadFolder));
@@ -864,6 +1055,8 @@ namespace
         MCUpdateDisk& _Disk;
         MCContentStage::MCSource& _Source;
         std::filesystem::path _Game;
+        /// <summary>Each path staging writes or deletes looked at just before (MCNoLinks).</summary>
+        MCNoLinks _NoLinks;
         const MCContentPlan::MCPlan& _Plan;
         const MCContentList::MCList& _List;
         const std::function<bool(uint64_t, uint64_t)>& _Progress;

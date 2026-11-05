@@ -104,26 +104,30 @@ namespace MCContentPlan
     /// <summary>
     /// The plan to bring <paramref name="folder"/> from <paramref name="installed"/> to <paramref name="list"/>'s
     /// files of <paramref name="sets"/>; <paramref name="listHash"/> is the list's own hash, for the record;
-    /// <paramref name="hashes"/> those the last plan kept.
+    /// <paramref name="hashes"/> those the last plan kept. <paramref name="goOn"/>, when given, is asked before each file
+    /// and between a hash's reads, and returns false to stop (a copy's first plan may read gigabytes).
     /// </summary>
     /// <returns>
     /// The plan, or why there's none (a file can't be read, a folder can't be listed, a link or folder in a file's
-    /// place).
+    /// place; MCSha256::StoppedError: stopped).
     /// </returns>
     std::expected<MCPlan, std::string> Make(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                             const MCContentList::MCList& list, const MCSha256::MCDigest& listHash,
-                                            const std::set<std::string, std::less<>>& sets,
-                                            const MCHashes& hashes = {});
+                                            const std::set<std::string, std::less<>>& sets, const MCHashes& hashes = {},
+                                            const std::function<bool()>& goOn = {});
 
     /// <summary>
     /// The plan taking out of <paramref name="folder"/> every set <paramref name="installed"/> records but
     /// <paramref name="sets"/> (HD OPTIONS' REMOVE), from the record alone: no list is read. Each recorded file of a
-    /// set taken out is removed, deleted whatever it holds; those of the sets kept stay as recorded.
+    /// set taken out is removed, deleted whatever it holds; those of the sets kept stay as recorded. <paramref
+    /// name="goOn"/> as for <see cref="Make"/>.
     /// </summary>
-    /// <returns>The plan, or why there's none (a file can't be read, a folder can't be listed).</returns>
+    /// <returns>
+    /// The plan, or why there's none (a file can't be read, a folder can't be listed; MCSha256::StoppedError: stopped).
+    /// </returns>
     std::expected<MCPlan, std::string> Removal(MCContentFolder& folder, const MCInstalled::MCRecord& installed,
                                                const std::set<std::string, std::less<>>& sets,
-                                               const MCHashes& hashes = {});
+                                               const MCHashes& hashes = {}, const std::function<bool()>& goOn = {});
 
     /// <summary>The hashes kept as text (JSON).</summary>
     std::string HashesText(const MCHashes& hashes);

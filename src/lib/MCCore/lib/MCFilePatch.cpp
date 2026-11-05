@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "lib/MCFilePatch.h"
 #include "platform/MCFileSystem.h"
+#include "update/MCUpdateDisk.h"
 
 // HDiffPatch's patcher is built single-threaded (MCCore.vcxproj, src/mac/CMakeLists.txt); its headers are read the same.
 #define _IS_USED_MULTITHREAD 0
@@ -28,6 +29,28 @@ namespace
         return MCFileSystem::ToUtf8(path);
     }
 
+    /// <summary>
+    /// Whether the patch is to stop: its <c>goOn</c> (none: never) is asked before each read and write, the old file's
+    /// whole reading for its checksum too; once it says to stop, every one fails.
+    /// </summary>
+    struct StopCheck
+    {
+        const std::function<bool()>* GoOn = nullptr;
+        bool Stopped = false;
+
+        bool Stop()
+        {
+            Stopped = Stopped || (GoOn != nullptr && *GoOn && !(*GoOn)());
+            return Stopped;
+        }
+    };
+
+    /// <summary>Whether <paramref name="stop"/>, when given, says to stop.</summary>
+    bool Stops(StopCheck* stop)
+    {
+        return stop != nullptr && stop->Stop();
+    }
+
     /// <summary>A file HDiffPatch reads at any position (the old file, the patch).</summary>
     struct InputFile
     {
@@ -39,27 +62,25 @@ namespace
         std::ifstream File;
         /// <summary>Where the next read starts unless it seeks (none: unknown). A seek drops the stream's buffer.</summary>
         std::optional<hpatch_StreamPos_t> At;
+        /// <summary>Asked before each read while the patch is applied (none: while its header is read).</summary>
+        StopCheck* Stop = nullptr;
     };
 
-    /// <summary>The file HDiffPatch writes (the new file), which it may read back.</summary>
+    /// <summary>
+    /// The file HDiffPatch writes (the new file, made anew: never through a link, nor over what was there), which it may
+    /// read back.
+    /// </summary>
     struct OutputFile
     {
-        OutputFile() = default;
+        explicit OutputFile(MCNewFile file) : File(std::move(file)) {}
         OutputFile(const OutputFile&) = delete;
         OutputFile& operator=(const OutputFile&) = delete;
 
         hpatch_TStreamOutput Stream{};
-        std::fstream File;
+        MCNewFile File;
         bool WriteFailed = false;
-        /// <summary>Asked before each write (none: always on); once it says to stop, every write fails.</summary>
-        const std::function<bool()>* GoOn = nullptr;
-        bool Stopped = false;
-        /// <summary>
-        /// Where the file stands after the last read or write, and whether it was a write (none: unknown): a read after
-        /// a write, or a write after a read, seeks first, as a file stream needs.
-        /// </summary>
-        std::optional<hpatch_StreamPos_t> At;
-        bool LastWrote = false;
+        /// <summary>Asked before each read and write.</summary>
+        StopCheck* Stop = nullptr;
     };
 
     hpatch_BOOL ReadInput(const hpatch_TStreamInput* stream, hpatch_StreamPos_t from, unsigned char* data,
@@ -67,6 +88,12 @@ namespace
     {
         auto* const input = static_cast<InputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
+
+        if (Stops(input->Stop))
+        {
+            return hpatch_FALSE;
+        }
+
         input->File.clear();
 
         if (input->At != from)
@@ -90,57 +117,33 @@ namespace
                             unsigned char* end)
     {
         auto* const output = static_cast<OutputFile*>(stream->streamImport);
-        const auto count = static_cast<std::streamsize>(end - data);
-        output->File.clear();
+        const auto count = static_cast<size_t>(end - data);
 
-        if (output->LastWrote || output->At != from)
+        if (Stops(output->Stop))
         {
-            output->File.seekg(static_cast<std::streamoff>(from));
-        }
-
-        output->File.read(reinterpret_cast<char*>(data), count);
-        output->LastWrote = false;
-
-        if (output->File.gcount() != count)
-        {
-            output->At.reset();
             return hpatch_FALSE;
         }
 
-        output->At = from + static_cast<hpatch_StreamPos_t>(count);
-        return hpatch_TRUE;
+        return output->File.ReadAt(from, std::span(reinterpret_cast<char*>(data), count)) ? hpatch_TRUE : hpatch_FALSE;
     }
 
     hpatch_BOOL WriteOutput(const hpatch_TStreamOutput* stream, hpatch_StreamPos_t to, const unsigned char* data,
                             const unsigned char* end)
     {
         auto* const output = static_cast<OutputFile*>(stream->streamImport);
-        const auto count = static_cast<std::streamsize>(end - data);
+        const auto count = static_cast<size_t>(end - data);
 
-        if (output->Stopped || (output->GoOn != nullptr && *output->GoOn && !(*output->GoOn)()))
+        if (Stops(output->Stop))
         {
-            output->Stopped = true;
             return hpatch_FALSE;
         }
 
-        output->File.clear();
-
-        if (!output->LastWrote || output->At != to)
+        if (!output->File.WriteAt(to, std::span(reinterpret_cast<const char*>(data), count)))
         {
-            output->File.seekp(static_cast<std::streamoff>(to));
-        }
-
-        output->File.write(reinterpret_cast<const char*>(data), count);
-        output->LastWrote = true;
-
-        if (!output->File.good())
-        {
-            output->At.reset();
             output->WriteFailed = true;
             return hpatch_FALSE;
         }
 
-        output->At = to + static_cast<hpatch_StreamPos_t>(count);
         return hpatch_TRUE;
     }
 
@@ -273,14 +276,18 @@ namespace
                                            const std::filesystem::path& oldPath, const std::filesystem::path& patchPath,
                                            const std::filesystem::path& out, const std::function<bool()>& goOn)
     {
-        OutputFile output;
-        output.GoOn = &goOn;
-        output.File.open(out, std::ios::in | std::ios::out | std::ios::trunc | std::ios::binary);
+        auto made = MCNewFile::Create(out);
 
-        if (!output.File.is_open())
+        if (!made)
         {
-            return std::unexpected(std::format("{} can't be written", Shown(out)));
+            return std::unexpected(made.error());
         }
+
+        StopCheck stop{.GoOn = &goOn};
+        OutputFile output(std::move(*made));
+        output.Stop = &stop;
+        old.Stop = &stop;
+        patch.Stop = &stop;
 
         output.Stream.streamImport = &output;
         output.Stream.streamSize = info.newDataSize;
@@ -294,7 +301,7 @@ namespace
         const TWindowPatchResult result =
             patch_window_diff(&listener, &output.Stream, &old.Stream, &patch.Stream, 0, SingleThread);
 
-        if (output.Stopped)
+        if (stop.Stopped)
         {
             return std::unexpected(std::string(MCFilePatch::StoppedError));
         }
@@ -309,9 +316,7 @@ namespace
             return std::unexpected(Failure(result, patching, oldPath, patchPath));
         }
 
-        output.File.flush();
-
-        if (!output.File.good())
+        if (!output.File.Close())
         {
             return std::unexpected(std::format("{} can't be written", Shown(out)));
         }
@@ -324,7 +329,8 @@ namespace
     /// which the caller removes when it fails.
     /// </summary>
     std::expected<void, std::string> Patched(const std::filesystem::path& old, const std::filesystem::path& patch,
-                                             const std::filesystem::path& out, const std::function<bool()>& goOn)
+                                             const std::filesystem::path& out, const std::function<bool()>& goOn,
+                                             std::optional<uint64_t> newSize)
     {
         InputFile oldFile;
         InputFile patchFile;
@@ -364,13 +370,20 @@ namespace
                                                info.oldDataSize, Shown(old), oldFile.Stream.streamSize));
         }
 
+        if (newSize && info.newDataSize != *newSize)
+        {
+            return std::unexpected(std::format("{} makes a file of {} bytes, not the {} wanted", Shown(patch),
+                                               info.newDataSize, *newSize));
+        }
+
         return Write(oldFile, patchFile, info, old, patch, out, goOn);
     }
 }
 
 std::expected<void, std::string> MCFilePatch::Apply(const std::filesystem::path& old,
                                                     const std::filesystem::path& patch,
-                                                    const std::filesystem::path& out, const std::function<bool()>& goOn)
+                                                    const std::filesystem::path& out, const std::function<bool()>& goOn,
+                                                    std::optional<uint64_t> newSize)
 {
     // Refused before out is touched: it's a file this patch reads.
     for (const std::filesystem::path& source : {old, patch})
@@ -383,7 +396,7 @@ std::expected<void, std::string> MCFilePatch::Apply(const std::filesystem::path&
         }
     }
 
-    auto patched = Patched(old, patch, out, goOn);
+    auto patched = Patched(old, patch, out, goOn, newSize);
 
     if (!patched)
     {

@@ -27,65 +27,17 @@ namespace
     using namespace MCContentFixture;
 
     /// <summary>The disk, but with as much free space as the test sets.</summary>
-    class MCRoomDisk final : public MCUpdateDisk
-    {
-    public:
-        explicit MCRoomDisk(uint64_t free) : _Free(free) {}
-
-        MCStat Stat(const std::filesystem::path& path) override { return _Disk->Stat(path); }
-
-        std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) override
-        {
-            return _Disk->Hash(path);
-        }
-
-        std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) override
-        {
-            return _Disk->ReadText(path);
-        }
-
-        std::expected<std::vector<std::string>, std::string> Files(const std::filesystem::path& folder) override
-        {
-            return _Disk->Files(folder);
-        }
-
-        bool MakeFolders(const std::filesystem::path& path) override { return _Disk->MakeFolders(path); }
-
-        bool Rename(const std::filesystem::path& from, const std::filesystem::path& to) override
-        {
-            return _Disk->Rename(from, to);
-        }
-
-        bool Move(const std::filesystem::path& from, const std::filesystem::path& to) override
-        {
-            return _Disk->Move(from, to);
-        }
-
-        bool Remove(const std::filesystem::path& path) override { return _Disk->Remove(path); }
-        bool RemoveIfEmpty(const std::filesystem::path& path) override { return _Disk->RemoveIfEmpty(path); }
-
-        bool WriteFlushed(const std::filesystem::path& path, std::string_view bytes) override
-        {
-            return _Disk->WriteFlushed(path, bytes);
-        }
-
-        bool FlushFile(const std::filesystem::path& path) override { return _Disk->FlushFile(path); }
-        bool FlushFolder(const std::filesystem::path& path) override { return _Disk->FlushFolder(path); }
-        std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path&) override { return _Free; }
-
-    private:
-        std::unique_ptr<MCUpdateDisk> _Disk = MakeDisk();
-        uint64_t _Free;
-    };
+    using MCRoomDisk = MCContentFixture::MCTestDisk;
 
     /// <summary>
     /// Adds to <paramref name="release"/> another big file the copy has, <c>HD/name.hda</c>, patched as the terrain
-    /// is (the same bytes, its own patch's name); it would come whole from the update zip, which doesn't hold it.
+    /// is (the same bytes; its own patch's name, unless <paramref name="shared"/> names one); it would come whole from
+    /// the update zip, which doesn't hold it.
     /// </summary>
-    void AddPatched(MCRelease& release, std::string_view name)
+    void AddPatched(MCRelease& release, std::string_view name, std::string_view shared = {})
     {
         const std::string path = std::format("HD/{}.hda", name);
-        const std::string patchName = std::format("patches/{}-1-2.hdiff", name);
+        const std::string patchName = shared.empty() ? std::format("patches/{}-1-2.hdiff", name) : std::string(shared);
         const std::string bigOld = Text(MCFilePatchFixture::PatchOld());
         const std::string bigNew = Text(MCFilePatchFixture::PatchNew());
         const std::string patch = Text(MCFilePatchFixture::CheckedPatch);
@@ -251,11 +203,11 @@ TEST_CASE("content stage: the patch applied, files fetched from the zips holding
     CHECK_EQ(lastExpected, plan.DownloadBytes);
 
     // Staged, not armed: the next start swaps nothing in until it is (the program's half comes in first).
-    CHECK(!MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == false);
     REQUIRE(MCContentStage::Arm(*disk, release.Game.Path(), plan).has_value());
 
     // Armed; nothing in place changed until the swap.
-    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == true);
     CHECK_EQ(Read(release.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
     CHECK(Read(release.Game.Path() / "Redux update" / "staged" / "HD" / "terrain.hda") ==
           Text(MCFilePatchFixture::PatchNew()));
@@ -301,7 +253,7 @@ TEST_CASE("content stage: a cut-off download resumes where it stopped; files alr
     const auto cut = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!cut.has_value());
     CHECK(cut.error().find("connection was lost") != std::string::npos);
-    CHECK(!MCContentSwap::Waiting(*disk, release.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == false);
 
     // The patch had staged before the zip was cut off: the next attempt fetches only the rest of the zip.
     const uint64_t before = source.Sent();
@@ -339,7 +291,7 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     const auto refused = MCContentStage::Stage(*disk, otherSource, other.Game.Path(), otherPlan, other.List, GoOn);
     REQUIRE(!refused.has_value());
     CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
-    CHECK(!MCContentSwap::Waiting(*disk, other.Game.Path()));
+    CHECK(MCContentSwap::Waiting(*disk, other.Game.Path()) == false);
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
 }
 
@@ -426,6 +378,168 @@ TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched
     }
 }
 
+TEST_CASE("content stage: a stop while the staged files are flushed ends staging as stopped, never as done")
+{
+    MCRelease release(Group, "stop-flush");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(std::numeric_limits<uint64_t>::max());
+    std::atomic<bool> stop = false;
+    disk.OnFlush = [&] { stop = true; };
+    const auto stopped = MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List,
+                                               [&](uint64_t, uint64_t) { return !stop; });
+    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+
+    // The next attempt finishes, with what came kept.
+    disk.OnFlush = nullptr;
+    const uint64_t sent = source.Sent();
+    REQUIRE(MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK_EQ(source.Sent(), sent);
+}
+
+TEST_CASE("content stage: a patch shared by identical files changed alike is fetched once, applied to each, counted "
+          "once")
+{
+    constexpr std::string_view Shared = "patches/terrain-1-2.hdiff";
+
+    for (const bool ahead : {false, true})
+    {
+        MCRelease release(Group, ahead ? "shared-patch-ahead" : "shared-patch");
+        AddPatched(release, "a", Shared);
+        AddPatched(release, "b", Shared);
+        // One of its own, so the patches are fetched ahead by workers when the source makes them.
+        AddPatched(release, "c");
+        const MCContentPlan::MCPlan plan = release.Plan();
+        REQUIRE(std::ranges::count(plan.Steps, MCAction::Patch, &MCContentPlan::MCStep::Action) == 4);
+        CHECK_EQ(plan.DownloadBytes, 2 * MCFilePatchFixture::CheckedPatch.size() + release.List.Zips[1].Size);
+        const auto shared = std::make_shared<MCParallelSource::MCShared>();
+        MCParallelSource parallel(release.Host.Path(), shared, true);
+        MCFolderSource single(release.Host.Path());
+        MCContentStage::MCSource& source = ahead ? static_cast<MCContentStage::MCSource&>(parallel) : single;
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        uint64_t lastReceived = 0;
+        REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
+                                      [&](uint64_t received, uint64_t)
+                                      {
+                                          lastReceived = received;
+                                          return true;
+                                      })
+                    .has_value());
+        const std::vector<std::string>& asked = ahead ? shared->Asked : single.Asked();
+        CHECK(std::ranges::count(asked, std::string(Shared)) == 1);
+        CHECK(std::ranges::count(asked, std::string("update-2.zip")) == 1);
+        CHECK_EQ(lastReceived, plan.DownloadBytes);
+
+        CHECK(std::ranges::count(asked, std::string("patches/c-1-2.hdiff")) == 1);
+
+        if (ahead)
+        {
+            CHECK(shared->MostAtOnce > 1);
+        }
+
+        for (const std::string_view path : {"HD/terrain.hda", "HD/a.hda", "HD/b.hda", "HD/c.hda"})
+        {
+            CHECK(Read(StagedAt(release, path)) == Text(MCFilePatchFixture::PatchNew()));
+        }
+    }
+}
+
+TEST_CASE("content stage: a staged file cut short (a crash as it unpacked) is deleted before the space is measured, "
+          "then staged again")
+{
+    MCRelease release(Group, "cut-short");
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(std::numeric_limits<uint64_t>::max());
+    // An entry's unpacking cut off halfway, and a file staged whole that's no longer the release's.
+    const std::filesystem::path cut = StagedAt(release, "data/changed.fit");
+    const std::filesystem::path changed = StagedAt(release, "data/missions/new.fit");
+    Write(cut, "chang");
+    Write(changed, "a new missio!");
+    bool measured = false;
+    disk.OnFreeBytes = [&]
+    {
+        measured = true;
+        CHECK(!std::filesystem::exists(cut));
+        CHECK(!std::filesystem::exists(changed));
+    };
+
+    REQUIRE(MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
+    CHECK(measured);
+    CHECK_EQ(Read(cut), std::string("changed v2"));
+    CHECK_EQ(Read(changed), std::string("a new mission"));
+}
+
+#ifndef _WIN32
+TEST_CASE("content stage: a folder below the game folder put in as a link, before the plan or between it and the "
+          "swap, stops the plan, the staging or the swap, naming it; nothing is written through it")
+{
+    MCRelease release(Group, "planted-link");
+    const MCScratchFolder outside(Group, "planted-link-outside");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path data = game / "data";
+    const std::filesystem::path elsewhere = outside.Path() / "data";
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto plantLink = [&]
+    {
+        std::filesystem::rename(data, elsewhere);
+        std::filesystem::create_symlink(elsewhere, data);
+    };
+
+    const auto takeLinkAway = [&]
+    {
+        std::filesystem::remove(data);
+        std::filesystem::rename(elsewhere, data);
+    };
+
+    // Before the plan: refused there.
+    plantLink();
+    MCContentFolder linked(game);
+    const auto refused =
+        MCContentPlan::Make(linked, release.Installed, release.List, MCSha256::Of("list 2"), {"game", "hd"});
+    CHECK(refused.error_or("").find("is a link") != std::string::npos);
+    takeLinkAway();
+
+    // The update folder put in as a link since the plan: staging writes nothing through it.
+    const MCContentPlan::MCPlan plan = release.Plan();
+    MCFolderSource source(release.Host.Path());
+    const std::filesystem::path update = game / "Redux update";
+    const std::filesystem::path updateElsewhere = outside.Path() / "Redux update";
+    std::filesystem::create_directories(update);
+    std::filesystem::rename(update, updateElsewhere);
+    std::filesystem::create_symlink(updateElsewhere, update);
+    const auto staging = MCContentStage::Stage(*disk, source, game, plan, release.List, GoOn);
+    CHECK(staging.error_or("").find("Redux update is a link") != std::string::npos);
+    CHECK(std::filesystem::is_empty(updateElsewhere));
+    std::filesystem::remove(update);
+    std::filesystem::rename(updateElsewhere, update);
+
+    // A link in staged/ is cleared as anything unplanned there is (the link, not what it points to).
+    const std::filesystem::path stagedData = update / "staged" / "data";
+    std::filesystem::create_directories(outside.Path() / "staged-data");
+    std::filesystem::create_directories(stagedData.parent_path());
+    std::filesystem::create_symlink(outside.Path() / "staged-data", stagedData);
+    REQUIRE(MCContentStage::Stage(*disk, source, game, plan, release.List, GoOn).has_value());
+    CHECK(std::filesystem::is_empty(outside.Path() / "staged-data"));
+    CHECK(!std::filesystem::is_symlink(stagedData));
+
+    // Between the plan and the swap: the swap moves nothing through it, and the previous files play.
+    REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
+    plantLink();
+    const MCContentSwap::MCResult stopped = MCContentSwap::Run(*disk, game);
+    CHECK(stopped.Outcome == MCContentSwap::MCOutcome::PutBack);
+    CHECK(stopped.Error.find("data is a link") != std::string::npos);
+    CHECK_EQ(Read(elsewhere / "changed.fit"), std::string("changed v1"));
+    CHECK(!std::filesystem::exists(elsewhere / "missions"));
+    CHECK(Read(game / "HD" / "terrain.hda") == Text(MCFilePatchFixture::PatchOld()));
+
+    // Taken away, the next start swaps the update in.
+    takeLinkAway();
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+}
+#endif
+
 TEST_CASE("content stage: patches are fetched several at once, each over a source of its own, applied in order")
 {
     MCRelease release(Group, "parallel");
@@ -509,6 +623,14 @@ TEST_CASE("content stage: what an update dropped midway left in staged/ and down
     Write(update / "staged" / "data" / "not-planned.fit", "kept while an update waits");
     CHECK(!MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn).has_value());
     CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
+
+    // Nor when ready.json can't be looked at: it isn't taken for none, and staging stops, saying why.
+    MCRoomDisk failing(std::numeric_limits<uint64_t>::max());
+    failing.Unseen = update / "ready.json";
+    const auto unseen = MCContentStage::Stage(failing, source, release.Game.Path(), plan, release.List, GoOn);
+    CHECK(unseen.error_or("").find("can't be looked at") != std::string::npos);
+    CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
+    CHECK(!MCContentSwap::Waiting(failing, release.Game.Path()).has_value());
 }
 
 TEST_CASE("content stage: refused without room for what's still to stage; a resumed attempt needs room for the rest "
@@ -538,6 +660,25 @@ TEST_CASE("content stage: refused without room for what's still to stage; a resu
     REQUIRE(MCContentStage::Arm(tight, release.Game.Path(), plan).has_value());
     CHECK(MCContentSwap::Run(tight, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
+}
+
+TEST_CASE("content stage: sizes that add up past what a count holds are refused, never wrapped; an entry longer than "
+          "listed stops")
+{
+    MCRelease release(Group, "sizes");
+    release.List.Files[1].Size = std::numeric_limits<uint64_t>::max() - 4;
+    MCFolderSource source(release.Host.Path());
+    MCRoomDisk disk(uint64_t{1} << 30);
+    const auto overflowed =
+        MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
+    CHECK(overflowed.error_or("").find("more than any disk holds") != std::string::npos);
+    CHECK(source.Asked().empty());
+
+    // data/changed.fit listed shorter than its entry: the unpacking stops there.
+    release.List.Files[1].Size = 5;
+    const auto longer = MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
+    CHECK(longer.error_or("").find("data/changed.fit from update-2.zip isn't the release's") != std::string::npos);
+    CHECK(!std::filesystem::exists(StagedAt(release, "data/changed.fit")));
 }
 
 TEST_CASE("content stage: a patch that falls back on a zip not otherwise fetched is checked for room for it")

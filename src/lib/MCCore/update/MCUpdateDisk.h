@@ -7,6 +7,9 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <mutex>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +40,12 @@ public:
     virtual ~MCUpdateDisk() = default;
 
     virtual MCStat Stat(const std::filesystem::path& path) = 0;
+
+    /// <summary>
+    /// Whether what's at <paramref name="path"/> is itself a link, never followed (on Windows any reparse point: a
+    /// symbolic link, a junction); false when nothing is there; or why it can't be told.
+    /// </summary>
+    virtual std::expected<bool, std::string> IsLink(const std::filesystem::path& path) = 0;
     virtual std::expected<MCSha256::MCDigest, std::string> Hash(const std::filesystem::path& path) = 0;
     virtual std::expected<std::string, std::string> ReadText(const std::filesystem::path& path) = 0;
 
@@ -58,7 +67,8 @@ public:
 
     /// <summary>
     /// Moves a file to <paramref name="to"/>, where nothing may be: false when something is (it's never replaced) or
-    /// the move fails. Both on one disk, so it's all or nothing.
+    /// the move fails. Both on one disk, so it's all or nothing. On a volume whose system can't refuse a move where
+    /// something is (<see cref="MCMoves"/>), it looks first.
     /// </summary>
     virtual bool Move(const std::filesystem::path& from, const std::filesystem::path& to) = 0;
 
@@ -81,8 +91,75 @@ public:
     virtual std::expected<uint64_t, std::string> FreeBytes(const std::filesystem::path& path) = 0;
 };
 
+/// <summary>
+/// How the disk moves an update's files where nothing may be (MCUpdateDisk::Move): as the system does in one step (on
+/// the Mac renamex_np's RENAME_EXCL; Windows' MoveFileExW without replacing), falling back on a volume without it to
+/// looking at the place first, then the rename; or always looking first (the tests', for that fallback).
+/// </summary>
+enum class MCMoves : uint8_t
+{
+    InOneStep,
+    LookingFirst,
+};
+
 /// <summary>The disk.</summary>
-std::unique_ptr<MCUpdateDisk> MakeDisk();
+std::unique_ptr<MCUpdateDisk> MakeDisk(MCMoves moves = MCMoves::InOneStep);
+
+/// <summary>
+/// A file made anew for writing (staging's outputs: an entry unpacked, a file patched): whatever is at its path (a file
+/// cut short, a link) is deleted first, a folder refused, then it's created only where nothing is, never through a link
+/// (O_EXCL and O_NOFOLLOW; Windows' CREATE_NEW on the reparse point itself), and read and written at any position.
+/// </summary>
+class MCNewFile
+{
+public:
+    /// <returns>The file, open to read and write, or why it can't be made.</returns>
+    static std::expected<MCNewFile, std::string> Create(const std::filesystem::path& path);
+
+    MCNewFile(MCNewFile&& other) noexcept;
+    MCNewFile& operator=(MCNewFile&&) = delete;
+    MCNewFile(const MCNewFile&) = delete;
+    MCNewFile& operator=(const MCNewFile&) = delete;
+    ~MCNewFile();
+
+    /// <summary>Writes <paramref name="bytes"/> at <paramref name="at"/>; false when they can't all be (logged).</summary>
+    bool WriteAt(uint64_t at, std::span<const char> bytes);
+
+    /// <summary>Reads as many bytes as <paramref name="bytes"/> holds from <paramref name="at"/>; false when they can't all be.</summary>
+    bool ReadAt(uint64_t at, std::span<char> bytes);
+
+    /// <summary>Closes it; false when that fails (logged: what was written may not all be there).</summary>
+    bool Close();
+
+private:
+    MCNewFile(std::filesystem::path path, intptr_t handle) : _Path(std::move(path)), _Handle(handle) {}
+
+    std::filesystem::path _Path;
+    /// <summary>The descriptor (the Mac's) or HANDLE (Windows'); <see cref="Closed"/> once closed.</summary>
+    intptr_t _Handle;
+    static constexpr intptr_t Closed = -1;
+};
+
+/// <summary>
+/// Keeps an update's writes and moves inside the game folder: just before each, every part of the path below the folder
+/// is looked at, and a link (a junction on Windows) anywhere refuses it, so a folder swapped for a link since the plan
+/// (by a program granted only the game folder, say) never takes the game's writes elsewhere. The folders found to be no
+/// link are kept for the run (a swap, a staging), so each costs a look or two. From any thread.
+/// </summary>
+class MCNoLinks
+{
+public:
+    MCNoLinks(MCUpdateDisk& disk, std::filesystem::path gameFolder) : _Disk(disk), _Game(std::move(gameFolder)) {}
+
+    /// <returns>Nothing, or why <paramref name="path"/> can't be used (a link on its way, naming it; outside the folder).</returns>
+    std::expected<void, std::string> Check(const std::filesystem::path& path);
+
+private:
+    MCUpdateDisk& _Disk;
+    std::filesystem::path _Game;
+    std::mutex _Mutex;
+    std::set<std::filesystem::path> _Seen;
+};
 
 /// <summary>Whether something is at <paramref name="path"/>, or why it can't be told (MCUpdateDisk::MCStat::Error).</summary>
 std::expected<bool, std::string> IsThere(MCUpdateDisk& disk, const std::filesystem::path& path);

@@ -181,6 +181,13 @@ namespace MCUpdater
     /// <summary>Picks up the content's work (each frame): its progress, and its end.</summary>
     void Frame();
 
+    /// <summary>
+    /// Whether a match's mission plays (each frame, before <see cref="Frame"/>): the content's downloads (an update's
+    /// staging, or the HD pack's) stop where they are while it does, and go on from there once it's over, so they take
+    /// nothing from the match. The program's download, Sparkle's own, isn't paused.
+    /// </summary>
+    void PauseWork(bool paused);
+
     /// <summary>The game is quitting: work under way stops (staged files stay for the next try).</summary>
     void Quit();
 
@@ -207,6 +214,12 @@ namespace MCUpdater
 
     /// <summary>The version running, as shown, or empty without a backend.</summary>
     std::string RunningVersion();
+
+    /// <summary>
+    /// The build the game starts as once the update ready goes in (RESTART): the program's new build, or the one running
+    /// for content alone; none when it can't be told (the program's backend alone, its version shown without one).
+    /// </summary>
+    std::optional<uint64_t> ExpectedBuild();
 
     /// <summary>The game started: looks for a newer version (once a run).</summary>
     void CheckAtStart();

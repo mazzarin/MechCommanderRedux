@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCUpdatePage.h"
 #include "gui/MCGuiEvent.h"
+#include "gui/MCGuiOwned.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "logistics/MCGenericScreen.h"
@@ -12,6 +13,7 @@
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
 #include "main/MCUpdater.h"
+#include "network/MCLobbyUpdate.h"
 #include "vfx/MCVfxFunctions.h"
 
 namespace
@@ -629,7 +631,15 @@ namespace
                                    static_cast<double>(status.Expected) / Megabyte);
             }
             case MCStage::Ready:
+            {
+                // In a lobby's room, what RESTART does there (network/MCLobbyUpdate.h).
+                if (std::string room = MCLobbyUpdate::ReadyText(); !room.empty())
+                {
+                    return room;
+                }
+
                 return "DOWNLOADED: IT INSTALLS WHEN THE GAME RESTARTS OR QUITS.";
+            }
             case MCStage::Installing:
                 return "INSTALLING: THE GAME STARTS AGAIN BY ITSELF.";
             case MCStage::Failed:
@@ -649,6 +659,9 @@ namespace
     /// column titles, what the update brings a line a row (wrapped, in capitals as the fonts write), and what the update
     /// is doing on the status line. It draws every frame from the updater.
     /// </summary>
+    /// <summary>RESTART shown as the update's stage and a lobby's room allow (with the page's buttons, below).</summary>
+    void ShowRestart(MCStage stage);
+
     class MCLogUpdateNotes : public MCLogScrollList
     {
     public:
@@ -672,6 +685,8 @@ namespace
 
             const MCStatus& status = MCUpdater::Status();
             DrawFrame(StatusText(status), status.Stage == MCStage::Ready || status.Stage == MCStage::Failed);
+            // A room's players and match change without the updater: RESTART follows them every frame.
+            ShowRestart(status.Stage);
 
             const int32_t textRight = ScrollBarLeft() - HeadingLeft;
             const std::string running = std::format(RunningTitle, MCUpdater::RunningVersion());
@@ -796,38 +811,98 @@ namespace
     }
 
     std::weak_ptr<MCGuiObject> Page;
+    /// <summary>The main menu, the page's home: UPDATE shows it there, the session screen's line over that screen.</summary>
+    std::weak_ptr<MCGuiObject> Home;
 
     /// <summary>
-    /// Port-only: the line in the main menu's box under QUIT saying an update waits (and which), in UPDATE's amber,
-    /// centred under the buttons. It draws every frame from the updater; the mouse goes through it.
+    /// The session screen's line: a field as the screen's own (the darkest grey, outlined as the page is), its text
+    /// centred.
+    /// </summary>
+    constexpr uint8_t LineFieldColor = 0x10;
+    constexpr uint8_t LineOutlineColor = 0x18;
+
+    /// <summary>
+    /// Port-only: the line saying an update waits (and which), in UPDATE's amber. On the main menu it sits in the box
+    /// under QUIT, centred under the buttons, and the mouse goes through it; on the session screen of a game a lobby
+    /// started (which never shows the main menu) it is a field of its own, and a click on it opens the UPDATE page over
+    /// that screen. It draws every frame from the updater, and not while the page shows.
     /// </summary>
     class MCUpdateNotice : public MCLogObject
     {
     public:
-        explicit MCUpdateNotice(uint8_t color) : _Color(color) {}
+        MCUpdateNotice(uint8_t color, bool opensPage) : _Color(color), _OpensPage(opensPage) {}
 
         void Draw() override
         {
-            const std::shared_ptr<MCGuiObject> page = Page.lock();
             const std::string text = NoticeText(MCUpdater::Status());
 
-            if (text.empty() || (page != nullptr && page->IsShowing()))
+            if (text.empty() || UpdatePageShown())
             {
                 return;
             }
 
             const MCGuiFont& font = *WhiteFont;
-            VfxStringDraw(Lport()->Frame(), (Width() - font.Width(text)) / 2, 0, font.FontData.Bytes(), text,
+            int32_t top = 0;
+
+            if (_OpensPage)
+            {
+                const auto right = static_cast<int16_t>(Width() - 1);
+                const auto bottom = static_cast<int16_t>(Height() - 1);
+                FillBox(0, 0, right, bottom, LineOutlineColor);
+                FillBox(1, 1, static_cast<int16_t>(right - 1), static_cast<int16_t>(bottom - 1), LineFieldColor);
+                top = (Height() - font.Height()) / 2;
+            }
+
+            VfxStringDraw(Lport()->Frame(), (Width() - font.Width(text)) / 2, top, font.FontData.Bytes(), text,
                           FontColors(_Color));
         }
 
         bool DrawsLive() override { return true; }
 
-        std::shared_ptr<MCGuiObject> FindObject(int32_t, int32_t) override { return nullptr; }
+        std::shared_ptr<MCGuiObject> FindObject(int32_t xPos, int32_t yPos) override
+        {
+            if (!_OpensPage || !MCUpdater::Waiting() || UpdatePageShown())
+            {
+                return nullptr;
+            }
+
+            return MCLogObject::FindObject(xPos, yPos);
+        }
+
+        void HandleEvent(MCGuiEvent& event) override
+        {
+            if (const std::shared_ptr<MCGuiObject> screen = ParentObject();
+                _OpensPage && event.Type == MCGuiEventType::LeftButtonDown && screen != nullptr)
+            {
+                ShowUpdatePageOver(*screen);
+                return;
+            }
+
+            MCLogObject::HandleEvent(event);
+        }
 
     private:
         uint8_t _Color;
+        bool _OpensPage;
     };
+
+    /// <summary>Puts the page on <paramref name="screen"/>, in front of everything else on it (once there, it stays).</summary>
+    void MovePageTo(MCGuiObject& screen)
+    {
+        const std::shared_ptr<MCGuiObject> page = Page.lock();
+
+        if (page == nullptr)
+        {
+            return;
+        }
+
+        if (const std::shared_ptr<MCGuiObject> parent = page->ParentObject(); parent != nullptr)
+        {
+            parent->RemoveChild(*page);
+        }
+
+        screen.AddChild(page);
+    }
 
     /// <summary>The UPDATE button, the page's list and its buttons.</summary>
     std::weak_ptr<MCLogButton> MenuButton;
@@ -845,6 +920,12 @@ namespace
         }
     }
 
+    void ShowRestart(MCStage stage)
+    {
+        // In a lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
+        ShowButton(RestartButton, stage == MCStage::Ready && (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart()));
+    }
+
     /// <summary>
     /// The updater changed: the UPDATE button lit (amber) while an update waits and grayed otherwise, the page's buttons
     /// for its stage.
@@ -859,13 +940,22 @@ namespace
         const MCStage stage = MCUpdater::Status().Stage;
         ShowButton(InstallButton, stage == MCStage::Found);
         ShowButton(SkipButton, stage == MCStage::Found);
-        ShowButton(RestartButton, stage == MCStage::Ready);
+        ShowRestart(stage);
     }
 
-    /// <summary>INSTALL (the download starts) and RESTART (the game quits so the update installs).</summary>
+    /// <summary>INSTALL: the download starts.</summary>
     void Install()
     {
         MCUpdater::Answer(MCAnswer::Install);
+    }
+
+    /// <summary>RESTART: the game quits so the update installs; in a lobby's room, it comes back to the room.</summary>
+    void Restart()
+    {
+        if (!MCLobbyUpdate::Restart())
+        {
+            MCUpdater::Answer(MCAnswer::Install);
+        }
     }
 
     /// <summary>SKIP: this version is never offered again, and the page closes.</summary>
@@ -904,7 +994,7 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     MenuButton = cinema;
 
     // The line under QUIT, in amber at its brightest.
-    auto notice = MCMakeGui<MCUpdateNotice>(Nearest(mainScreen.Palette, Amber));
+    auto notice = MCMakeGui<MCUpdateNotice>(Nearest(mainScreen.Palette, Amber), false);
     const int32_t noticeHeight = WhiteFont->Height();
     notice->Init(cinema->X(), cinema->Y() + 2 * MenuButtonStep + (RowsUnderQuit - noticeHeight) / 2, cinema->Width(),
                  noticeHeight);
@@ -915,12 +1005,13 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     constexpr std::array<MCPageButton, 3> buttons = {
         MCPageButton{InstallLabel, Install},
         MCPageButton{SkipLabel, Skip},
-        MCPageButton{RestartLabel, Install},
+        MCPageButton{RestartLabel, Restart},
     };
 
     std::vector<std::weak_ptr<MCLogTextButton>> made;
     MCLogGroupBox& page = AddPrefsPage(mainScreen, Title, buttons, HideUpdatePage, &made);
     Page = page.weak_from_this();
+    Home = mainScreen.weak_from_this();
     InstallButton = made.at(0);
     SkipButton = made.at(1);
     RestartButton = made.at(2);
@@ -941,8 +1032,61 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     Refresh();
 }
 
+MCGuiOwned<MCLogObject> MakeUpdateLine(std::span<const uint8_t> palette)
+{
+    return MCMakeGui<MCUpdateNotice>(Nearest(palette, Amber), true);
+}
+
+void ShowUpdatePageOver(MCGuiObject& screen)
+{
+    MovePageTo(screen);
+    ShowUpdatePage();
+}
+
+std::shared_ptr<MCGuiObject> UpdatePageFind(const MCGuiObject& screen, int32_t xPos, int32_t yPos)
+{
+    const std::shared_ptr<MCGuiObject> page = Page.lock();
+
+    if (page == nullptr || !page->IsShowing() || page->ParentObject().get() != &screen)
+    {
+        return nullptr;
+    }
+
+    // The page takes every click on it, even between its buttons, so none reaches the screen's controls under it.
+    std::shared_ptr<MCGuiObject> found = page->FindObject(xPos, yPos);
+    return found != nullptr || !page->PointInside(xPos, yPos) ? found : page;
+}
+
+void UpdatePageLeaves(MCGuiObject& screen)
+{
+    const std::shared_ptr<MCGuiObject> page = Page.lock();
+
+    if (page == nullptr || page->ParentObject().get() != &screen)
+    {
+        return;
+    }
+
+    page->ShowGuiWindow(false);
+
+    if (const std::shared_ptr<MCGuiObject> home = Home.lock(); home != nullptr)
+    {
+        MovePageTo(*home);
+    }
+    else
+    {
+        screen.RemoveChild(*page);
+    }
+}
+
 void ShowUpdatePage()
 {
+    // From the main menu's UPDATE, the page goes back to the main menu.
+    if (const std::shared_ptr<MCGuiObject> home = Home.lock(), page = Page.lock();
+        home != nullptr && page != nullptr && page->ParentObject() != home && home->IsShowing())
+    {
+        MovePageTo(*home);
+    }
+
     if (const std::shared_ptr<MCLogUpdateNotes> notes = Notes.lock(); notes != nullptr)
     {
         notes->Reset();
@@ -966,8 +1110,10 @@ void HideUpdatePage()
 
 bool UpdatePageShown()
 {
+    // On a screen that has gone (the session screen as the match starts), it isn't.
     const std::shared_ptr<MCGuiObject> page = Page.lock();
-    return page != nullptr && page->IsShowing();
+    const std::shared_ptr<MCGuiObject> screen = page != nullptr ? page->ParentObject() : nullptr;
+    return page != nullptr && page->IsShowing() && (screen == nullptr || screen->IsShowing());
 }
 
 std::string UpdatePageStatus()

@@ -775,6 +775,9 @@
     <ClCompile Include="network\MCGameDataHash.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCLobbyUpdate.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCMPGameConfiguration.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -785,6 +788,9 @@
       <Filter>network</Filter>
     </ClCompile>
     <ClCompile Include="network\MCMultiPlayerSend.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
+    <ClCompile Include="network\MCRejoinNote.cpp">
       <Filter>network</Filter>
     </ClCompile>
     <ClCompile Include="network\MCWorldStateChunk.cpp">
@@ -2091,6 +2097,9 @@
     <ClInclude Include="network\MCGameDataHash.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCLobbyUpdate.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCMPGameConfiguration.h">
       <Filter>network</Filter>
     </ClInclude>
@@ -2101,6 +2110,9 @@
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCMultiPlayerMessages.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCRejoinNote.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCWorldStateChunk.h">

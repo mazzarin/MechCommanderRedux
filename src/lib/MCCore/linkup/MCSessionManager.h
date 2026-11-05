@@ -37,9 +37,25 @@ struct MCLobbyLaunchArgs
     std::string PlayerName;
     std::string SessionName;
     int32_t MaxPlayers = 6;
+    /// <summary>
+    /// Port-only (the personal build): the start is a rejoin (-rejoin, from network/MCRejoinNote.h): a join that fails
+    /// says why (the room gone, full or started).
+    /// </summary>
+    bool Rejoin = false;
 };
 
 extern MCLobbyLaunchArgs LobbyLaunchArgs;
+
+/// <summary>Port-only (the personal build): why a lobby's join found no room to join (rejoin's message says).</summary>
+enum class MCRoomRefusal : uint8_t
+{
+    /// <summary>No room at the address (gone, or never there).</summary>
+    Gone,
+    /// <summary>The room is there, with every place taken.</summary>
+    Full,
+    /// <summary>The room is there, its match started (it takes no new players).</summary>
+    Started,
+};
 
 /// <summary>
 /// The game's DirectPlay session. The MultiPlayer object owns it; the ABL debugger's console can make one of its own.
@@ -135,6 +151,19 @@ public:
     /// </summary>
     /// <returns>0 when connected; 0x8877042e (DPERR_NOTLOBBIED) when the game was not lobby-launched.</returns>
     uint32_t SetupLobbyConnection(const std::function<void()>& showStatus, const std::function<void()>& hideStatus);
+    /// <summary>
+    /// Port: one try at joining the lobby's room (<see cref="LobbyLaunchArgs"/>' session at its address, or the first
+    /// there) as <paramref name="playerName"/>, on the connection made to it (ConnectTcp).
+    /// </summary>
+    /// <returns>0 when joined; 1 when no room to join was found yet; else the join's error (a room refusing it).</returns>
+    int32_t TryLobbyJoin(std::string_view playerName);
+    /// <summary>
+    /// Port-only (the personal build): why the lobby's room can't be joined now: it isn't at the address, or it is,
+    /// full or started (listed whatever its state, the session's name as <see cref="TryLobbyJoin"/> picks it).
+    /// </summary>
+    MCRoomRefusal LobbyRoomRefusal();
+    /// <summary>Port-only (the personal build): opens the hosted session to new players again, or closes it (rejoins).</summary>
+    void AdmitNewPlayers(bool admit);
     /// <summary>Re-enumerates the sessions of this game on the current connection.</summary>
     /// <returns>The sessions listed, or none without DirectPlay.</returns>
     std::optional<std::vector<std::shared_ptr<MCFidpSession>>> GetSessions();
@@ -253,6 +282,8 @@ public:
     bool IsHost = false;
     /// <summary>Set once the game started (the session is locked, or the host said so).</summary>
     bool GameStarted = false;
+    /// <summary>Port-only (the personal build): why the last lobby join that failed found no room (SetupLobbyConnection).</summary>
+    MCRoomRefusal LastRoomRefusal = MCRoomRefusal::Gone;
     /// <summary>Whether this machine's player has a player number (set at once on the host).</summary>
     bool HasPlayerNumber = false;
     /// <summary>Guards the player list and the outgoing queues.</summary>

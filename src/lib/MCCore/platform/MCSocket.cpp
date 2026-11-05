@@ -207,6 +207,14 @@ MCSocket::Handle MCSocketTransport::ListenTcp(uint16_t port)
 
     const sockaddr_in local = ToSockaddr(MCSocket::Address{0, port});
 
+#ifndef _WIN32
+    // Port (personal): a host starting again on its port (a restart into an update, network/MCLobbyUpdate.h) takes it
+    // while its last run's links wait out TIME_WAIT, which would refuse the bind for half a minute. (Windows binds
+    // then anyway, and its SO_REUSEADDR would let another program take the port.)
+    const int reuse = 1;
+    setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+
     if (bind(socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) != 0 || listen(socket, 8) != 0 ||
         !SetNonBlocking(socket))
     {

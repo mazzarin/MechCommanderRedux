@@ -71,13 +71,19 @@ namespace MCMatchRule
     /// </summary>
     inline constexpr uint32_t DataHash = 1u << 23;
     /// <summary>
+    /// Not a rule the match plays by: the build takes a host's MCMPMessageType::Updating (network/MCLobbyUpdate.h),
+    /// waits for the host's game to come back and joins it again. The host tells only the guests whose builds say so;
+    /// the others drop as the host leaves.
+    /// </summary>
+    inline constexpr uint32_t RejoinsHost = 1u << 24;
+    /// <summary>
     /// Not a rule, never sent: in the host's chosen rules (MCMatchOptions::Rules, from the command line), braking as the
     /// host's PREFS say (MCWantedRules), with the other rules chosen.
     /// </summary>
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
-    inline constexpr uint32_t Supported =
-        MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors | NoMines | NoProbes | DataHash;
+    inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
+                                          NoMines | NoProbes | DataHash | RejoinsHost;
 } // namespace MCMatchRule
 
 /// <summary>
@@ -222,6 +228,12 @@ public:
 
     /// <summary>Connects the lobby's session; the server creates the groups and sends its setup.</summary>
     int32_t SetupLobbyGame();
+
+    /// <summary>
+    /// Port: SetupLobbyGame once the lobby's session is joined or hosted (also a guest's rejoin, network/MCLobbyUpdate.h):
+    /// this game's part, and the server's groups and setup.
+    /// </summary>
+    void StartLobbyGame();
 
     /// <summary>Adds a mover this machine controls (at most 12); stores its index in the mover.</summary>
     void AddToLocalMovers(std::shared_ptr<MCMover> mover);
@@ -578,6 +590,12 @@ public:
 
 /// <summary>The multiplayer game, or null in a single-player game.</summary>
 std::shared_ptr<MCMultiPlayer> MultiPlayer();
+
+/// <summary>
+/// Player <paramref name="name"/> left the session screen: says so, and (OK, or 15 seconds) back to the main menu, or
+/// out of a lobby's game.
+/// </summary>
+void ShowPlayerLeft(std::string_view name);
 
 /// <summary>Shows the "connecting" dialog of the logistics screen.</summary>
 void ShowConnectStatus();

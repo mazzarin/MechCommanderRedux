@@ -53,6 +53,9 @@ public:
     /// <summary>Name drops, the ping/resource point timer, and (port-only) a click on a tab.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
+    /// <summary>Port-only: while the UPDATE page shows over the screen, a click on it reaches only the page.</summary>
+    std::shared_ptr<MCGuiObject> FindObject(int32_t xPos, int32_t yPos) override;
+
     /// <summary>
     /// Port-only: brings <paramref name="tab"/> in front, its panel in the communications box's place: the chat, or
     /// the MATCH OPTIONS list (logistics/MCMatchOptionsTab.h).
@@ -199,6 +202,12 @@ public:
     std::array<std::shared_ptr<MCLogPort>, 2> MatchTabs;
     /// <summary>Port-only: the chat's lines added when MATCH OPTIONS came in front (more since: MULTIPLAYER CHAT blinks).</summary>
     size_t ChatLinesSeen = 0;
+    /// <summary>
+    /// Port-only (the personal build): in a game a lobby started, which never shows the main menu, the line saying an
+    /// update waits, left of the start button; a click opens the UPDATE page over the screen (logistics/MCUpdatePage.h).
+    /// Null in other games, and in a build that doesn't update itself.
+    /// </summary>
+    MCGuiOwned<MCLogObject> UpdateLine;
 
     /// <summary>Port: draws the map box (<see cref="MapPicture"/>) into <paramref name="target"/>.</summary>
     void DrawMap(const MCPane& target) const;

@@ -70,7 +70,13 @@ enum class MCMPMessageType : uint16_t
     /// Port: the rules each player's build plays by as the host heard them (<c>MCMPPlayersRulesMessage</c>), to everyone
     /// as they come: every player's MATCH OPTIONS names whose game lacks an option. A build without it ignores it.
     /// </summary>
-    PlayersRules = 50
+    PlayersRules = 50,
+    /// <summary>
+    /// Port: the sender's game restarts into an update and joins again (a guest) or hosts the room again (the host):
+    /// the room keeps its place (network/MCLobbyUpdate.h). A header alone. The host sends it to the guests whose rules
+    /// have MCMatchRule::RejoinsHost; a build without it ignores it.
+    /// </summary>
+    Updating = 51
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>

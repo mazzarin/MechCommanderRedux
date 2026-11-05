@@ -16,6 +16,7 @@
 #include "main/MCGameSession.h"
 #include "mission/MCMission.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCRejoinNote.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCFrameLog.h"
 #include "platform/MCInput.h"
@@ -310,6 +311,11 @@ auto ParseCommandLine(std::string_view commandLine) -> void
                     LobbyLaunchArgs.Address += ":" + p;
                 }
             }
+        }
+        else if (MCIEquals(word, MCRejoinNote::RejoinSwitch))
+        {
+            // Port-only (the personal build): a lobby's start again from the rejoin note (network/MCRejoinNote.h).
+            LobbyLaunchArgs.Rejoin = true;
         }
         else if (MCIEquals(word, "-matchmap"))
         {

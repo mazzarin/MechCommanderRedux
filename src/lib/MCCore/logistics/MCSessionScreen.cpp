@@ -20,6 +20,9 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
+#include "logistics/MCGenericScreen.h"
+#include "logistics/MCUpdatePage.h"
+#include "main/MCUpdater.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCLoadSaveMenu.h"
 #include "logistics/MCConnectMenu.h"
@@ -41,6 +44,16 @@ namespace
     /// <summary>The sample a tab plays as it comes in front (the briefing's), and the chat tab's blink's half period.</summary>
     constexpr uint32_t TabSound = 0x36;
     constexpr uint32_t ChatBlinkMs = 500;
+    /// <summary>The screen's art (its palette is the screen's).</summary>
+    constexpr std::string_view BackgroundArt = "ses_bk00.tga";
+    /// <summary>
+    /// Port-only: the update's line, left of the start button: its top and height, from the left edge of team 1's box
+    /// to a gap before the start button's recess.
+    /// </summary>
+    constexpr int32_t UpdateLineLeft = 0xed;
+    constexpr int32_t UpdateLineTop = 0x1b4;
+    constexpr int32_t UpdateLineWidth = 0xd8;
+    constexpr int32_t UpdateLineHeight = 0x13;
 
     MCSessionScreen& Screen()
     {
@@ -369,7 +382,17 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     MatchTabs = {MakeMatchTabs(MCSessionTab::Chat), MakeMatchTabs(MCSessionTab::Options)};
     FrontTab = MCSessionTab::Chat;
 
-    SetBackground("ses_bk00.tga");
+    // Port-only (the personal build): a lobby's game is offered the update here.
+    if (LaunchedFromLobby && MCUpdater::Available())
+    {
+        UpdateLine = MakeUpdateLine(MCGenericScreen::PaletteFromArt(BackgroundArt));
+        UpdateLine->Init(UpdateLineLeft, UpdateLineTop, UpdateLineWidth, UpdateLineHeight);
+        UpdateLine->SetTransparent(true);
+        UpdateLine->ShowGuiWindow(true);
+        AddChild(UpdateLine);
+    }
+
+    SetBackground(BackgroundArt);
     ScreenWindow()->AddChild(weak_from_this());
     ShowGuiWindow(false);
     NumUnassigned = 0;
@@ -401,6 +424,8 @@ auto MCSessionScreen::Destroy() -> void
 
     MatchOptionsList.reset();
     MatchTabs = {};
+    UpdatePageLeaves(*this);
+    UpdateLine.reset();
     DropTargets.clear();
     MissionFile.clear();
     MapName.clear();
@@ -564,6 +589,16 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
     }
 
     MCGuiObject::HandleEvent(event);
+}
+
+auto MCSessionScreen::FindObject(int32_t xPos, int32_t yPos) -> std::shared_ptr<MCGuiObject>
+{
+    if (std::shared_ptr<MCGuiObject> onPage = UpdatePageFind(*this, xPos, yPos); onPage != nullptr)
+    {
+        return onPage;
+    }
+
+    return MCLogObject::FindObject(xPos, yPos);
 }
 
 auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void

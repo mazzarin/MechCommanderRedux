@@ -120,6 +120,7 @@
     <ClCompile Include="tests\InterfaceTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
+    <ClCompile Include="tests\LobbyUpdateTests.cpp" />
     <ClCompile Include="tests\LogisticsControlTests.cpp" />
     <ClCompile Include="tests\LogisticsListTests.cpp" />
     <ClCompile Include="tests\LogisticsTests.cpp" />
@@ -183,6 +184,7 @@
     <ClInclude Include="tests\MCMock.h" />
     <ClInclude Include="tests\MCScratchFolder.h" />
     <ClInclude Include="tests\MCTest.h" />
+    <ClInclude Include="tests\MCTestGuest.h" />
     <ClInclude Include="tests\ScreenInput.h" />
     <ClInclude Include="tests\TestGame.h" />
   </ItemGroup>

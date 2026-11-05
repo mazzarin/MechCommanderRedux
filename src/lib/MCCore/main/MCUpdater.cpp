@@ -125,6 +125,11 @@ namespace
     /// for the program waits for that (MCUpdater::Closed), so the old session's end isn't taken for the new one's.
     /// </summary>
     bool ProgramClosing = false;
+    /// <summary>A match's mission plays: the content's downloads wait (<see cref="MCUpdater::PauseWork"/>).</summary>
+    bool Paused = false;
+    /// <summary>The download the pause stopped (staging or the change of sets), to go on with after it; none, Idle.</summary>
+    MCStep PausedStep = MCStep::Idle;
+
     /// <summary>The input's quit: the game ends as if the player had closed it.</summary>
     void InputQuit()
     {
@@ -178,6 +183,7 @@ namespace
         Hd = {};
         SetsChosenAgain = false;
         ProgramClosing = false;
+        PausedStep = MCStep::Idle;
     }
 
     /// <summary>What the copy has of the HD pack, read from its record and the sets chosen.</summary>
@@ -511,6 +517,24 @@ namespace
         }
     }
 
+    /// <summary>The download a match's mission stopped goes on from where it was (its staged files kept).</summary>
+    void Resume()
+    {
+        const MCStep resume = std::exchange(PausedStep, MCStep::Idle);
+        SDL_Log("Updater: the mission is over: the download goes on");
+
+        if (resume == MCStep::StagingContent)
+        {
+            StartStaging(false);
+        }
+        else
+        {
+            // Its staging lock is still this copy's: taken again for the sets' change.
+            StagingLock.reset();
+            StartSetsChange();
+        }
+    }
+
     /// <summary>The check's end: nothing, an update to show, or one to look for the program of first.</summary>
     void CheckDone(const std::string& error, std::optional<MCOffer> offer)
     {
@@ -782,6 +806,22 @@ auto MCUpdater::Frame() -> void
 
     StopWork();
 
+    // Stopped for a match's mission: it goes on once the mission is over (at once, if it already is). Done just as the
+    // mission began, it ends as it would have.
+    if (PausedStep != MCStep::Idle && !error.empty())
+    {
+        if (!Paused)
+        {
+            Resume();
+            return;
+        }
+
+        SDL_Log("Updater: the download waits for the mission to end (%s)", error.c_str());
+        return;
+    }
+
+    PausedStep = MCStep::Idle;
+
     switch (Step)
     {
         case MCStep::CheckingContent:
@@ -798,6 +838,37 @@ auto MCUpdater::Frame() -> void
             break;
         default:
             break;
+    }
+}
+
+auto MCUpdater::PauseWork(bool paused) -> void
+{
+    if (paused)
+    {
+        // Each frame: a download that began during the mission (the start's check ending in the HD pack's change)
+        // stops too. Only downloads stop: a check or the quiet update's record is done in a moment.
+        Paused = true;
+
+        if (Worker.joinable() && PausedStep == MCStep::Idle &&
+            (Step == MCStep::StagingContent || Step == MCStep::ChangingSets))
+        {
+            SDL_Log("Updater: the download stops while the mission plays");
+            PausedStep = Step;
+            Worker.request_stop();
+        }
+
+        return;
+    }
+
+    if (!std::exchange(Paused, false))
+    {
+        return;
+    }
+
+    // Still stopping, its end goes on with it (Frame).
+    if (PausedStep != MCStep::Idle && Work == nullptr)
+    {
+        Resume();
     }
 }
 
@@ -858,6 +929,28 @@ auto MCUpdater::RunningVersion() -> std::string
     }
 
     return Backend != nullptr ? Backend->RunningVersion() : std::string();
+}
+
+auto MCUpdater::ExpectedBuild() -> std::optional<uint64_t>
+{
+    if (Content)
+    {
+        return Offer && Offer->ProgramBuild ? *Offer->ProgramBuild : Content->RunningBuild;
+    }
+
+    // The backend's version as shown, "0.2.2 (480)": the build in its brackets.
+    const std::string& shown = Current.Version;
+    const size_t open = shown.rfind('(');
+
+    if (open == std::string::npos || !shown.ends_with(')'))
+    {
+        return std::nullopt;
+    }
+
+    const char* const last = shown.data() + shown.size() - 1;
+    uint64_t build = 0;
+    const auto [end, error] = std::from_chars(shown.data() + open + 1, last, build);
+    return error == std::errc() && end == last ? std::optional<uint64_t>(build) : std::nullopt;
 }
 
 auto MCUpdater::CheckAtStart() -> void

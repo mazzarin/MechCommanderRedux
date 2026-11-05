@@ -3,6 +3,7 @@
 #include "logistics/MCLogMenus.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCUpdatePage.h"
 #include "main/MCLogistics.h"
@@ -22,8 +23,19 @@ namespace
         "Send reports of your computer, frame rates, settings and crashes, under a random ID, to help MechCommander "
         "Redux run better?\nNo name or IP address is kept. Change this later under REPORTS in HD OPTIONS.";
 
-    /// <summary>The main menu's logistics state.</summary>
+    /// <summary>The main menu's logistics state, and the session screen's.</summary>
     constexpr int32_t MainMenuState = 1;
+    constexpr int32_t SessionState = 8;
+
+    /// <summary>
+    /// Whether <paramref name="logistics"/> shows the main menu, or the session screen: a game a lobby starts never
+    /// shows the main menu, so its players see the notice there, before the match.
+    /// </summary>
+    bool OnNoticeScreen(MCLogistics& logistics)
+    {
+        return (logistics.LogisticsState == MainMenuState && logistics.CurrentScreen() == logistics.MainScreen) ||
+               (logistics.LogisticsState == SessionState && logistics.CurrentScreen() == logistics.SessionScreen);
+    }
 
     /// <summary>The player's answer, kept in PREFS at once.</summary>
     void Answer(bool send)
@@ -38,9 +50,8 @@ void ShowReportsNotice()
     const MCPrompt prompt = MCTelemetry::Prompt();
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
 
-    if (prompt == MCPrompt::None || logistics == nullptr || logistics->LogisticsState != MainMenuState ||
-        logistics->CurrentScreen() != logistics->MainScreen || logistics->MessageDialog->IsShowing() ||
-        logistics->QuestionDialog->IsShowing() || UpdatePageShown())
+    if (prompt == MCPrompt::None || logistics == nullptr || !OnNoticeScreen(*logistics) ||
+        logistics->MessageDialog->IsShowing() || logistics->QuestionDialog->IsShowing() || UpdatePageShown())
     {
         return;
     }

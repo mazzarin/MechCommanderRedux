@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "network/MCMultiPlayerHandlers.h"
 #include "network/MCMultiPlayer.h"
+#include "network/MCLobbyUpdate.h"
 #include "abl/MCAblDebugger.h"
 #include "ai/MCMoveSystem.h"
 #include "ai/MCRefit.h"
@@ -210,6 +211,9 @@ void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg)
     {
         game.SendPlayerSetup(msg.dpId, game.InnerSphereGroupID, game.ClanGroupID);
     }
+
+    // Port (personal): a guest back from its update (network/MCLobbyUpdate.h).
+    MCLobbyUpdate::PlayerJoined(msg.dpId);
 }
 
 void HandleSysAddPlayerToGroup(const DPMSG_ADDPLAYERTOGROUP& msg)
@@ -1705,6 +1709,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::PlayersRules:
         {
             HandleAppPlayersRules(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::Updating:
+        {
+            // Port (personal): the sender's game restarts into an update and comes back (network/MCLobbyUpdate.h).
+            MCLobbyUpdate::Updating(fromID);
             break;
         }
 

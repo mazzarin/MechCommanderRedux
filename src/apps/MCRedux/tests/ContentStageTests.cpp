@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCFilePatchFixture.h"
+#include "MCHttpGet.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "lib/MCSha256.h"
@@ -9,6 +10,7 @@
 #include "update/MCContentPlan.h"
 #include "update/MCContentStage.h"
 #include "update/MCContentSwap.h"
+#include "update/MCHttpSource.h"
 #include "update/MCInstalled.h"
 #include "update/MCReleaseFile.h"
 #include "update/MCSignedFile.h"
@@ -121,6 +123,21 @@ namespace
             }
 
             return {};
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            _Asked.emplace_back(name);
+            std::ifstream from(_Folder / MCFileSystem::FromUtf8(name), std::ios::binary);
+
+            if (!from)
+            {
+                return std::unexpected("404");
+            }
+
+            std::string text((std::istreambuf_iterator<char>(from)), std::istreambuf_iterator<char>());
+            return text.size() <= most ? std::expected<std::string, std::string>(std::move(text))
+                                       : std::unexpected("too big");
         }
 
     private:
@@ -341,10 +358,11 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
 }
 
 /// <summary>
-/// Tool: <c>--content-install &lt;game folder&gt; --content-host &lt;host folder&gt; --root-key &lt;base64&gt;
-/// [--content-sets game,hd]</c> installs or updates the content of a release the release script made
-/// (tools/release/make_release.py), as the game will: the key list and <c>release.json</c> checked against the root
-/// key, the list against its hash, then planned, staged and swapped in. Prints what it did.
+/// Tool: <c>--content-install &lt;game folder&gt; --content-host &lt;host folder or address&gt; --root-key
+/// &lt;base64&gt; [--content-sets game,hd]</c> installs or updates the content of a release the release script made
+/// (tools/release/make_release.py), as the game will: from a folder, or over https (the downloads Worker) through this
+/// platform's transfer, the key list and <c>release.json</c> checked against the root key, the list against its
+/// hash, then planned, staged and swapped in. Prints what it did.
 /// </summary>
 TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a host folder")
 {
@@ -376,7 +394,41 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
         }
     }
 
-    const auto trusted = MCReleaseFile::Check(Read(host / "keys.json"), Read(host / "release.json"), roots, {});
+    // A small file's most, here: the game's updater has its own for each.
+    constexpr size_t MostBytes = 64 << 20;
+    std::unique_ptr<MCContentStage::MCSource> source;
+
+    if (hostOption->starts_with("http"))
+    {
+        auto made = MCHttpSource::Make(*hostOption, MCMakeHttpGet());
+
+        if (!made)
+        {
+            std::cout << std::format("  {}\n", made.error());
+        }
+
+        REQUIRE(made.has_value());
+        source = std::move(*made);
+    }
+    else
+    {
+        source = std::make_unique<MCFolderSource>(host);
+    }
+
+    const auto readHosted = [&](std::string_view name)
+    {
+        auto text = source->Read(name, MostBytes);
+
+        if (!text)
+        {
+            std::cout << std::format("  {}\n", text.error());
+        }
+
+        REQUIRE(text.has_value());
+        return std::move(*text);
+    };
+
+    const auto trusted = MCReleaseFile::Check(readHosted("keys.json"), readHosted("release.json"), roots, {});
 
     if (!trusted)
     {
@@ -385,7 +437,7 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
 
     REQUIRE(trusted.has_value());
     const MCReleaseFile::MCRelease& release = trusted->Releases.Current;
-    const std::string listText = Read(host / "lists" / (MCSha256::Hex(release.List) + ".json"));
+    const std::string listText = readHosted(std::format("lists/{}.json", MCSha256::Hex(release.List)));
     REQUIRE(MCSha256::Of(listText) == release.List);
     const auto list = MCContentList::Read(listText);
 
@@ -415,9 +467,14 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
                              count(MCAction::Fetch), count(MCAction::Remove), count(MCAction::LeaveTheirs),
                              plan->DownloadBytes, plan->Zips.size());
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
-    MCFolderSource source(host);
+    uint64_t downloaded = 0;
     const auto stageStart = std::chrono::steady_clock::now();
-    const auto staged = MCContentStage::Stage(*disk, source, game, *plan, *list, GoOn);
+    const auto staged = MCContentStage::Stage(*disk, *source, game, *plan, *list,
+                                              [&](uint64_t done, uint64_t)
+                                              {
+                                                  downloaded = done;
+                                                  return true;
+                                              });
     const auto swapStart = std::chrono::steady_clock::now();
 
     if (!staged)
@@ -429,7 +486,7 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
     const MCContentSwap::MCResult swapped = MCContentSwap::Run(*disk, game);
     const auto done = std::chrono::steady_clock::now();
     REQUIRE(swapped.Outcome == MCContentSwap::MCOutcome::Swapped || !plan->Changes());
-    std::cout << std::format("  installed: {} bytes downloaded; staged in {:.2f} s, swapped in {:.3f} s\n",
-                             source.Sent(), std::chrono::duration<double>(swapStart - stageStart).count(),
+    std::cout << std::format("  installed: {} bytes downloaded; staged in {:.2f} s, swapped in {:.3f} s\n", downloaded,
+                             std::chrono::duration<double>(swapStart - stageStart).count(),
                              std::chrono::duration<double>(done - swapStart).count());
 }

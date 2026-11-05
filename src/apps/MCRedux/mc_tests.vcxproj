@@ -63,6 +63,9 @@
     <ClCompile Include="MCGameFolder.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCHttpGetWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -78,6 +81,7 @@
     <ClCompile Include="tests\CameraTests.cpp" />
     <ClCompile Include="tests\ColorTests.cpp" />
     <ClCompile Include="tests\ConsoleTests.cpp" />
+    <ClCompile Include="tests\ContentSourceTests.cpp" />
     <ClCompile Include="tests\ContentStageTests.cpp" />
     <ClCompile Include="tests\ContentSwapTests.cpp" />
     <ClCompile Include="tests\ContentUpdateTests.cpp" />
@@ -158,6 +162,7 @@
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCGameFolder.h" />
+    <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />

@@ -15,6 +15,7 @@
     <ClCompile Include="MCConsole.cpp" />
     <ClCompile Include="MCCrashTrace.cpp" />
     <ClCompile Include="MCGameFolder.cpp" />
+    <ClCompile Include="MCHttpGetWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="tests\AblRuntimeTests.cpp">
@@ -42,6 +43,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\ConsoleTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\ContentSourceTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\ContentStageTests.cpp">
@@ -274,6 +278,7 @@
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCCrashTrace.h" />
     <ClInclude Include="MCGameFolder.h" />
+    <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h">

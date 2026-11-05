@@ -1,0 +1,227 @@
+// Built without the precompiled header: Objective-C++, and Foundation and MCCore's Win32 stand-ins can't meet.
+#include "MCHttpGet.h"
+
+#import <Foundation/Foundation.h>
+
+#include <condition_variable>
+#include <deque>
+#include <format>
+#include <mutex>
+#include <string>
+
+namespace
+{
+    /// <summary>A wait this long for the host's next bytes ends the transfer.</summary>
+    constexpr NSTimeInterval IdleSeconds = 30.0;
+    /// <summary>Our own user agent, as the reports': the system's names the macOS version, which isn't the host's.</summary>
+    NSString* const UserAgent = @"MechCommander Redux";
+    NSString* const ContentRangeHeader = @"Content-Range";
+
+    /// <summary>What the session's delegate passes to the thread that asked, in order.</summary>
+    struct MCEvent
+    {
+        enum class MCKind : uint8_t
+        {
+            Status,
+            Body,
+            Done,
+        };
+
+        MCKind Kind = MCKind::Done;
+        int Status = 0;
+        std::string ContentRange;
+        NSData* Bytes = nil;
+        /// <summary>For Done: what failed (empty: the answer ended).</summary>
+        std::string Error;
+    };
+
+    /// <summary>One transfer's events: the delegate adds them, the thread that asked takes them.</summary>
+    struct MCTransfer
+    {
+        NSUInteger Task = 0;
+        std::mutex Lock;
+        std::condition_variable Arrived;
+        std::deque<MCEvent> Events;
+
+        void Add(MCEvent event)
+        {
+            {
+                const std::scoped_lock lock(Lock);
+                Events.push_back(std::move(event));
+            }
+
+            Arrived.notify_one();
+        }
+
+        MCEvent Take()
+        {
+            std::unique_lock lock(Lock);
+            Arrived.wait(lock, [&] { return !Events.empty(); });
+            MCEvent event = std::move(Events.front());
+            Events.pop_front();
+            return event;
+        }
+    };
+}
+
+/// <summary>The session's delegate: passes the followed task's answer to its transfer; a stopped task's is dropped.</summary>
+@interface MCHttpDelegate : NSObject <NSURLSessionDataDelegate>
+- (void)follow:(std::shared_ptr<MCTransfer>)transfer;
+@end
+
+@implementation MCHttpDelegate
+{
+    std::mutex _Lock;
+    std::shared_ptr<MCTransfer> _Transfer;
+}
+
+- (void)follow:(std::shared_ptr<MCTransfer>)transfer
+{
+    const std::scoped_lock lock(_Lock);
+    _Transfer = std::move(transfer);
+}
+
+- (std::shared_ptr<MCTransfer>)transferFor:(NSURLSessionTask*)task
+{
+    const std::scoped_lock lock(_Lock);
+    return _Transfer != nullptr && _Transfer->Task == task.taskIdentifier ? _Transfer : nullptr;
+}
+
+- (void)URLSession:(NSURLSession*)session
+              dataTask:(NSURLSessionDataTask*)dataTask
+    didReceiveResponse:(NSURLResponse*)response
+     completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler
+{
+    if (const std::shared_ptr<MCTransfer> transfer = [self transferFor:dataTask])
+    {
+        MCEvent event{.Kind = MCEvent::MCKind::Status};
+
+        if ([response isKindOfClass:NSHTTPURLResponse.class])
+        {
+            auto* http = static_cast<NSHTTPURLResponse*>(response);
+            event.Status = static_cast<int>(http.statusCode);
+            NSString* range = [http valueForHTTPHeaderField:ContentRangeHeader];
+            event.ContentRange = range != nil ? std::string(range.UTF8String) : std::string();
+        }
+
+        transfer->Add(std::move(event));
+    }
+
+    completionHandler(NSURLSessionResponseAllow);
+}
+
+- (void)URLSession:(NSURLSession*)session dataTask:(NSURLSessionDataTask*)dataTask didReceiveData:(NSData*)data
+{
+    if (const std::shared_ptr<MCTransfer> transfer = [self transferFor:dataTask])
+    {
+        transfer->Add({.Kind = MCEvent::MCKind::Body, .Bytes = data});
+    }
+}
+
+- (void)URLSession:(NSURLSession*)session task:(NSURLSessionTask*)task didCompleteWithError:(NSError*)error
+{
+    if (const std::shared_ptr<MCTransfer> transfer = [self transferFor:task])
+    {
+        transfer->Add({.Kind = MCEvent::MCKind::Done,
+                       .Error = error != nil ? std::string(error.localizedDescription.UTF8String) : std::string()});
+    }
+}
+@end
+
+namespace
+{
+    class MCMacGet final : public MCHttpSource::MCGet
+    {
+    public:
+        MCMacGet()
+        {
+            // Nothing kept between runs: no cookies, no cache (release.json must be the host's latest).
+            NSURLSessionConfiguration* configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+            configuration.HTTPShouldSetCookies = NO;
+            configuration.URLCache = nil;
+            configuration.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+            configuration.timeoutIntervalForRequest = IdleSeconds;
+            // The bytes as stored: a compressed answer's ranges would count the compressed bytes.
+            configuration.HTTPAdditionalHeaders = @{@"User-Agent" : UserAgent, @"Accept-Encoding" : @"identity"};
+            NSOperationQueue* queue = [NSOperationQueue new];
+            queue.maxConcurrentOperationCount = 1;
+            _Delegate = [MCHttpDelegate new];
+            _Session = [NSURLSession sessionWithConfiguration:configuration delegate:_Delegate delegateQueue:queue];
+        }
+
+        ~MCMacGet() override { [_Session invalidateAndCancel]; }
+
+        MCMacGet(const MCMacGet&) = delete;
+        MCMacGet& operator=(const MCMacGet&) = delete;
+
+        std::expected<void, std::string> Get(const std::string& url, uint64_t from, MCHttpSource::MCReply& reply) override
+        {
+            NSURL* address = [NSURL URLWithString:@(url.c_str())];
+
+            if (address == nil)
+            {
+                return std::unexpected(std::format("\"{}\" isn't an address", url));
+            }
+
+            NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:address];
+
+            if (from != 0)
+            {
+                [request setValue:@(std::format("bytes={}-", from).c_str()) forHTTPHeaderField:@"Range"];
+            }
+
+            const auto transfer = std::make_shared<MCTransfer>();
+            NSURLSessionDataTask* task = [_Session dataTaskWithRequest:request];
+            transfer->Task = task.taskIdentifier;
+            [_Delegate follow:transfer];
+            [task resume];
+
+            for (;;)
+            {
+                MCEvent event = transfer->Take();
+                __block bool goOn = true;
+
+                switch (event.Kind)
+                {
+                    case MCEvent::MCKind::Status:
+                        goOn = reply.Status(event.Status, event.ContentRange);
+                        break;
+                    case MCEvent::MCKind::Body:
+                        [event.Bytes enumerateByteRangesUsingBlock:^(const void* bytes, NSRange range, BOOL* stop) {
+                          if (!reply.Body({static_cast<const char*>(bytes), range.length}))
+                          {
+                              goOn = false;
+                              *stop = YES;
+                          }
+                        }];
+                        break;
+                    case MCEvent::MCKind::Done:
+                        [_Delegate follow:nullptr];
+
+                        if (event.Error.empty())
+                        {
+                            return {};
+                        }
+
+                        return std::unexpected(event.Error);
+                }
+
+                if (!goOn)
+                {
+                    [_Delegate follow:nullptr];
+                    [task cancel];
+                    return {};
+                }
+            }
+        }
+
+    private:
+        MCHttpDelegate* _Delegate;
+        NSURLSession* _Session;
+    };
+}
+
+std::unique_ptr<MCHttpSource::MCGet> MCMakeHttpGet()
+{
+    return std::make_unique<MCMacGet>();
+}

@@ -1325,6 +1325,9 @@
     <ClCompile Include="update\MCContentSwap.cpp">
       <Filter>update</Filter>
     </ClCompile>
+    <ClCompile Include="update\MCHttpSource.cpp">
+      <Filter>update</Filter>
+    </ClCompile>
     <ClCompile Include="update\MCInstalled.cpp">
       <Filter>update</Filter>
     </ClCompile>
@@ -2619,6 +2622,12 @@
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCContentSwap.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCHttpSource.h">
+      <Filter>update</Filter>
+    </ClInclude>
+    <ClInclude Include="update\MCHttpTransfer.h">
       <Filter>update</Filter>
     </ClInclude>
     <ClInclude Include="update\MCInstalled.h">

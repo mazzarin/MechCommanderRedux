@@ -35,6 +35,13 @@ namespace MCContentStage
         virtual std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to,
                                                        uint64_t size,
                                                        const std::function<bool(uint64_t)>& received) = 0;
+
+        /// <summary>
+        /// The hosted file <paramref name="name"/> whole (the key list, <c>release.json</c>, a list), refused past
+        /// <paramref name="most"/> bytes.
+        /// </summary>
+        /// <returns>Its bytes, or what failed.</returns>
+        virtual std::expected<std::string, std::string> Read(std::string_view name, size_t most) = 0;
     };
 
     /// <summary>The moves the swap makes for <paramref name="plan"/>.</summary>

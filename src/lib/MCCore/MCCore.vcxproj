@@ -469,6 +469,7 @@
     <ClCompile Include="update\MCContentPlan.cpp" />
     <ClCompile Include="update\MCContentStage.cpp" />
     <ClCompile Include="update\MCContentSwap.cpp" />
+    <ClCompile Include="update\MCHttpSource.cpp" />
     <ClCompile Include="update\MCInstalled.cpp" />
     <ClCompile Include="update\MCReleaseFile.cpp" />
     <ClCompile Include="update\MCSignedFile.cpp" />
@@ -907,6 +908,8 @@
     <ClInclude Include="update\MCContentPlan.h" />
     <ClInclude Include="update\MCContentStage.h" />
     <ClInclude Include="update\MCContentSwap.h" />
+    <ClInclude Include="update\MCHttpSource.h" />
+    <ClInclude Include="update\MCHttpTransfer.h" />
     <ClInclude Include="update\MCInstalled.h" />
     <ClInclude Include="update\MCReleaseFile.h" />
     <ClInclude Include="update\MCSignedFile.h" />

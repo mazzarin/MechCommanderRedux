@@ -13,17 +13,21 @@ the same as [its own README](https://github.com/RevenantBob/MechCommanderRedux#r
 
 ## Download
 
-**Mac** (Apple silicon, macOS 14 or later): **[⬇ the latest version](https://github.com/mazzarin/MechCommanderRedux/releases/latest)**,
-the app alone (about 7 MB). It plays your own copy of MechCommander Gold (see [Installing](#installing)). Once
-installed, it updates itself: when a new version is out, UPDATE on the main menu turns amber.
+**[⬇ The latest version](https://github.com/mazzarin/MechCommanderRedux/releases/latest)**, with MechCommander Gold
+and the HD pack:
 
-Coming soon: one download with the app, MechCommander Gold and the HD pack (about 6 GB), the game included with the
-permission of Atari, its licence holder. Without the pack the units, ground, menus, movies and sound are the
-original's; the light, weather and effects show all the same.
+- **Mac** (Apple silicon, macOS 14 or later): the installer, the `.pkg`. The app alone, the `-mac.zip` (about 7 MB),
+  plays your own copy of MechCommander Gold (see [Installing](#installing)).
+- **Windows** (Windows 10 or later): the setup, the `-setup.exe`. It installs Redux HD in your own copy of
+  MechCommander Gold, or downloads the game.
 
-**Windows:** not released yet. Redux HD builds and passes its tests on Windows
-([Actions](https://github.com/mazzarin/MechCommanderRedux/actions/workflows/windows.yml)). MechCommander Redux's own
-[Windows download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest) has none of Redux HD's additions.
+The first start downloads the game's files (0.6 GB) and, if you chose it, the HD pack (5.8 GB). Neither installer is
+signed yet: on the Mac, click Open Anyway in System Settings' Privacy & Security; on Windows, More info, then Run
+anyway. Once installed, the game updates itself: when a new version is out, UPDATE on the main menu turns amber.
+
+Without the pack the units, ground, menus, movies and sound are the original's; the light, weather and effects show
+all the same. MechCommander Redux's own [download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest)
+has none of Redux HD's additions.
 
 ## Table of Contents
 
@@ -98,14 +102,17 @@ first time it starts (or, where the law requires it, asks you first); REPORTS, o
 
 ## Legal Notice
 
+MechCommander Gold © 1999 Microsoft Corporation. All rights reserved. BattleTech material © 1998-1999 FASA
+Corporation.
+
 MechCommander Redux and Redux HD are unofficial, non-commercial fan projects. They are not affiliated with, endorsed
-by, or sponsored by Microsoft, Atari, FASA Interactive, MicroProse, Catalyst Game Labs, or any other holder of the
+by, or sponsored by Microsoft, FASA Interactive, MicroProse, Catalyst Game Labs, or any other holder of the
 MechCommander, BattleTech or MechWarrior trademarks and copyrights. MechCommander, BattleTech, MechWarrior and all
 related names, logos and artwork are trademarks or registered trademarks of their respective owners.
 
 This repository contains no game data: no art, audio, video, maps, missions or executables from MechCommander Gold.
-The coming full download includes MechCommander Gold's files free of charge, with the permission of Atari, the game's
-licence holder. The app alone plays your own copy.
+Redux HD's download includes MechCommander Gold's files free of charge, with permission. The app alone plays your own
+copy.
 
 The HD pack is free and for non-commercial use only: it may not be sold (the licence of NVIDIA's model that sharpened
 the sound effects requires this). The download credits the models that made it.
@@ -117,12 +124,15 @@ modifies it.
 
 ### Installing
 
-On a Mac, unzip the [download](#download), drag `MechCommander Redux.app` to your Applications folder and open it. The
-first time, macOS stops it, as it isn't signed by an Apple developer account: open System Settings → Privacy &
-Security and click **Open Anyway** (see `INSTALL-Mac.txt` in the zip).
+**Redux HD:** on a Mac, open the [download](#download)'s `.pkg` and follow its steps; it puts the game in
+Applications, and its first start downloads the game's files. The app alone: unzip the `-mac.zip`, drag
+`MechCommander Redux.app` to your Applications folder and open it. The first time, macOS stops either, as neither is
+signed by an Apple developer account: open System Settings → Privacy & Security and click **Open Anyway**.
 
-On Windows, [build it](#building), then either put `MCRedux.exe` and `SDL3.dll` in your MechCommander Gold folder (the
-one containing `SYSTEM.CFG`), or run it from anywhere with `--data` (see below).
+**Redux HD:** on Windows, run the download's `-setup.exe`. It installs into your MechCommander Gold folder (the one
+containing `SYSTEM.CFG`), or downloads the game into a folder of its own; Windows' SmartScreen asks first (More info,
+then Run anyway). Or [build it](#building), then either put `MCRedux.exe` and `SDL3.dll` in your MechCommander Gold
+folder, or run it from anywhere with `--data` (see below).
 
 **Redux HD:** the HD pack is a folder named `HD` in your game folder. One in your user folder (see
 [Saves and Settings](#saves-and-settings)) is used instead, if there is one.
@@ -227,8 +237,8 @@ runtime, and nothing to register with Windows. Everything it needs is built into
 The editor is optional. You don't need it to play the game.
 
 **Redux HD:** its editor adds [Mission > Time of Day](#a-missions-time-of-day) and
-[Mission > Weather](#a-missions-weather). Like the rest of Redux HD on Windows, it's built from source for now (see
-[Building](#building)); MechCommander Redux's own editor has neither.
+[Mission > Weather](#a-missions-weather). Redux HD's Windows setup installs it beside the game; MechCommander Redux's
+own editor has neither.
 
 ### What You Need
 

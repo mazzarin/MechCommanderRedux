@@ -6,8 +6,12 @@ for modern 64-bit systems.
 
 MechCommander Redux rebuilds MechCommander Gold's game code as 64-bit C++, keeping the
 game's own logic and replacing its old Windows/DirectX layer with SDL3. It is not an
-emulator and not a patch to the original executable: it reads the data files from your
-own copy of MechCommander Gold, and never modifies them.
+emulator and not a patch to the original executable.
+
+Redux HD comes with MechCommander Gold's files and the HD pack (sharper art, movies and
+sound), or plays your own copy of the game. UPDATE on the main menu keeps the game and
+its files up to date. If an update replaces a file you changed, your copy is kept in
+the game folder's Redux backup folder.
 
 - Faithful game logic, rebuilt function by function from the original game.
 - Renders at your window's resolution during missions (640x480 minimum), and scales
@@ -20,10 +24,13 @@ own copy of MechCommander Gold, and never modifies them.
 Running the Game
 ----------------
 
-You need a legitimate installation of MechCommander Gold. See INSTALL.txt.
+Redux HD's setup installs it in your MechCommander Gold folder, or downloads the game
+into a folder of its own. Start it from the Start menu. MCX.EXE in that folder starts
+Redux too, so a launcher that starts the original starts Redux; the uninstall puts the
+original MCX.EXE back.
 
-Run MCRedux.exe from your MechCommander Gold folder (the one containing SYSTEM.CFG).
-To keep Redux somewhere else, point it at the game folder instead:
+MCRedux.exe also runs from any MechCommander Gold folder (the one containing
+SYSTEM.CFG), or kept somewhere else, pointed at the game folder:
 
     MCRedux.exe --data "C:\Games\MechCommander Gold"
 
@@ -184,21 +191,21 @@ Help > Help Topics (or Help on a right-click menu) doesn't open
     longer show. This doesn't affect the rest of the editor.
 
 
-Unofficial Notice
------------------
+Notices
+-------
 
-MechCommander Redux is an unofficial, non-commercial fan project. It is not affiliated
-with, endorsed by, or sponsored by Microsoft, FASA Interactive, MicroProse, Catalyst
-Game Labs, or any other holder of the MechCommander, BattleTech or MechWarrior
-trademarks and copyrights.
+MechCommander Gold (c) 1999 Microsoft Corporation. All rights reserved. BattleTech
+material (c) 1998-1999 FASA Corporation.
 
-I do not own the rights to MechCommander Gold or any of its content. MechCommander,
-BattleTech, MechWarrior and all related names, logos and artwork are trademarks or
-registered trademarks of their respective owners.
+MechCommander Redux and Redux HD are unofficial, non-commercial fan projects. They are
+not affiliated with, endorsed by, or sponsored by Microsoft, FASA Interactive,
+MicroProse, Catalyst Game Labs, or any other holder of the MechCommander, BattleTech or
+MechWarrior trademarks and copyrights. MechCommander, BattleTech, MechWarrior and all
+related names, logos and artwork are trademarks or registered trademarks of their
+respective owners.
 
-This release contains no game data: no art, audio, video, maps, missions or executables
-from MechCommander Gold. You must supply your own legally obtained copy of the game to
-play.
+Redux HD's download includes MechCommander Gold's files free of charge, with permission.
 
-Please do not contact me asking for a copy of the game. I cannot and will not provide
-one.
+The HD pack is free and for non-commercial use only: it may not be sold (the licence of
+NVIDIA's model that sharpened the sound effects requires this). The licences of the
+program's open-source parts are in "MechCommander Redux licences.txt", in this folder.

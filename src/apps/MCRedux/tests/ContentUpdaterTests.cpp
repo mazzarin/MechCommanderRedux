@@ -220,7 +220,7 @@ namespace
         }
 
         std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
-                                               const std::function<bool(uint64_t)>&) override
+                                               const std::function<bool(std::span<const char>)>&) override
         {
             std::unique_lock lock(_Stall->Mutex);
             _Stall->Reached = true;
@@ -1596,7 +1596,7 @@ namespace
         explicit MCCutSource(std::filesystem::path folder) : _Inner(std::move(folder)) {}
 
         std::expected<void, std::string> Fetch(std::string_view, const std::filesystem::path&, uint64_t,
-                                               const std::function<bool(uint64_t)>&) override
+                                               const std::function<bool(std::span<const char>)>&) override
         {
             return std::unexpected("the connection was lost");
         }
@@ -1681,7 +1681,7 @@ TEST_CASE("update work: a piece of work's transfer is cancelled when it's asked 
             return MCUpdateWork::WithSource<void>(
                 [&] { return std::make_unique<MCStalledSource>(host, stall); }, context.Stop,
                 [](MCContentStage::MCSource& source)
-                { return source.Fetch("update-2.zip", {}, 1, [](uint64_t) { return true; }); });
+                { return source.Fetch("update-2.zip", {}, 1, [](std::span<const char>) { return true; }); });
         });
 
     {

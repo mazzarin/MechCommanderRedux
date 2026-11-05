@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "MCFilePatchFixture.h"
+#include "MCScratchFolder.h"
 #include "TestGame.h"
 #include "fakes/MCMemoryFileSource.h"
 #include "lib/MCDice.h"
@@ -19,34 +20,16 @@
 namespace
 {
     /// <summary>A scratch folder of the test's own under the temp folder, deleted with it.</summary>
-    class ScratchFolder
+    class ScratchFolder : public MCScratchFolder
     {
     public:
-        explicit ScratchFolder(std::string_view name)
-            : _Path(std::filesystem::temp_directory_path() / "mc_lib_tests" / name)
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-            std::filesystem::create_directories(_Path);
-        }
-
-        ~ScratchFolder()
-        {
-            std::error_code error;
-            std::filesystem::remove_all(_Path, error);
-        }
+        explicit ScratchFolder(std::string_view name) : MCScratchFolder("mc_lib_tests", name) {}
 
         /// <summary>The path of <paramref name="name"/> in the folder, as a string the file layer takes.</summary>
         std::string operator/(std::string_view name) const
         {
-            return MCFileSystem::ToUtf8(_Path / MCFileSystem::FromUtf8(name));
+            return MCFileSystem::ToUtf8(Path() / MCFileSystem::FromUtf8(name));
         }
-
-        /// <summary>The folder's path, for the standard library's file functions.</summary>
-        const std::filesystem::path& Path() const { return _Path; }
-
-    private:
-        std::filesystem::path _Path;
     };
 
     std::vector<uint8_t> Bytes(std::string_view text)

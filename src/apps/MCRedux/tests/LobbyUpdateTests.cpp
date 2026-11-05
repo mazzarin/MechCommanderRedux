@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCFakeUpdaterBackend.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "MCTestGuest.h"
@@ -173,41 +174,8 @@ namespace
     using MCTestGuest::HostLobbyRoom;
     using MCTestGuest::Settle;
     using MCTestGuest::SettleUntil;
+    using MCTestUpdater::MCFakeUpdater;
     using MCUpdater::MCAnswer;
-
-    /// <summary>What the stand-in for Sparkle was asked.</summary>
-    struct MCBackendLog
-    {
-        std::vector<MCAnswer> Answers;
-    };
-
-    /// <summary>A stand-in for Sparkle: it keeps the answers; the test reports the steps.</summary>
-    class MCFakeBackend final : public MCUpdater::MCBackend
-    {
-    public:
-        explicit MCFakeBackend(std::shared_ptr<MCBackendLog> log) : _Log(std::move(log)) {}
-
-        std::string RunningVersion() override { return "0.2.1 (468)"; }
-
-        void Check(std::optional<uint64_t>) override {}
-
-        void Answer(MCAnswer answer) override { _Log->Answers.push_back(answer); }
-
-    private:
-        std::shared_ptr<MCBackendLog> _Log;
-    };
-
-    /// <summary>Sets a stand-in backend for the test's length, then takes it away.</summary>
-    class MCFakeUpdater
-    {
-    public:
-        MCFakeUpdater() { MCUpdater::SetBackend(std::make_unique<MCFakeBackend>(Log)); }
-        ~MCFakeUpdater() { MCUpdater::SetBackend(nullptr); }
-        MCFakeUpdater(const MCFakeUpdater&) = delete;
-        MCFakeUpdater& operator=(const MCFakeUpdater&) = delete;
-
-        std::shared_ptr<MCBackendLog> Log = std::make_shared<MCBackendLog>();
-    };
 
     /// <summary>The update the tests find, as the feed shows it.</summary>
     constexpr std::string_view NewVersion = "0.2.2 (480)";

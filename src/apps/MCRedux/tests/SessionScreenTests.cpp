@@ -35,6 +35,8 @@
 
 using namespace MCScreenInput;
 using MCTestGuest::Guest;
+using MCTestGuest::Settle;
+using MCTestGuest::SettleUntil;
 
 namespace
 {
@@ -44,21 +46,6 @@ namespace
     constexpr std::string_view OptionsHostAddress = "127.0.0.1:28879";
     /// <summary>The game data check's test's, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view DataHostAddress = "127.0.0.1:28881";
-
-    /// <summary>Runs frames for two seconds of game time, giving the network a moment each; the last frame's hash.</summary>
-    uint32_t Settle()
-    {
-        uint32_t hash = 0;
-
-        for (int32_t frame = 0; frame < 30; frame++)
-        {
-            SDL_Delay(3);
-            MCTestGame::RunFrame(1.0f / 15.0f);
-            hash = ScreenHash();
-        }
-
-        return hash;
-    }
 
     /// <summary>Types <paramref name="text"/> into the text object that has the focus.</summary>
     void Type(std::string_view text)
@@ -418,19 +405,6 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
 namespace
 {
-    /// <summary>Runs <see cref="Settle"/> until <paramref name="done"/> says so, at most a few times; whether it did.</summary>
-    bool SettleUntil(const std::function<bool()>& done)
-    {
-        constexpr int32_t MostSettles = 5;
-
-        for (int32_t settle = 0; settle < MostSettles && !done(); settle++)
-        {
-            Settle();
-        }
-
-        return done();
-    }
-
     /// <summary>
     /// The hash a game's file report gives <paramref name="missionFile"/> when its user folder holds a gamesys.fit of
     /// its own (the install's and a line more), worked out in a context of its own over the game's archives.

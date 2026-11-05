@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "MCFakeUpdaterBackend.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -23,49 +24,9 @@
 
 namespace
 {
+    using MCTestUpdater::MCFakeUpdater;
     using MCUpdater::MCAnswer;
     using MCUpdater::MCStage;
-
-    /// <summary>What the stand-in backend was asked.</summary>
-    struct MCBackendLog
-    {
-        int32_t Checks = 0;
-        /// <summary>The build each check looked for (none: the backend's own newest).</summary>
-        std::vector<std::optional<uint64_t>> Builds;
-        std::vector<MCAnswer> Answers;
-    };
-
-    /// <summary>A stand-in for Sparkle: it counts the checks and keeps the answers; the test reports the steps.</summary>
-    class MCFakeBackend final : public MCUpdater::MCBackend
-    {
-    public:
-        explicit MCFakeBackend(std::shared_ptr<MCBackendLog> log) : _Log(std::move(log)) {}
-
-        std::string RunningVersion() override { return "0.2.1 (468)"; }
-
-        void Check(std::optional<uint64_t> build) override
-        {
-            _Log->Checks++;
-            _Log->Builds.push_back(build);
-        }
-
-        void Answer(MCAnswer answer) override { _Log->Answers.push_back(answer); }
-
-    private:
-        std::shared_ptr<MCBackendLog> _Log;
-    };
-
-    /// <summary>Sets a stand-in backend for the test's length, then takes it away.</summary>
-    class MCFakeUpdater
-    {
-    public:
-        MCFakeUpdater() { MCUpdater::SetBackend(std::make_unique<MCFakeBackend>(Log)); }
-        ~MCFakeUpdater() { MCUpdater::SetBackend(nullptr); }
-        MCFakeUpdater(const MCFakeUpdater&) = delete;
-        MCFakeUpdater& operator=(const MCFakeUpdater&) = delete;
-
-        std::shared_ptr<MCBackendLog> Log = std::make_shared<MCBackendLog>();
-    };
 
     constexpr std::string_view NewVersion = "0.2.2 (480)";
     constexpr std::string_view Notes = "Night missions: dusk and night lighting.\n\nThe main menu updates the game.";
@@ -104,7 +65,7 @@ TEST_CASE("updater: the check is made once a start, and an update waits through 
     CHECK_EQ(MCUpdater::RunningVersion(), std::string("0.2.1 (468)"));
     MCUpdater::CheckAtStart();
     MCUpdater::CheckAtStart();
-    CHECK_EQ(updater.Log->Checks, 1);
+    CHECK_EQ(updater.Log->Checks.size(), size_t{1});
     CHECK(!MCUpdater::Waiting());
 
     int32_t changes = 0;
@@ -205,7 +166,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     MCFakeUpdater updater;
     REQUIRE(MCTestGame::StartLogistics());
     Frames();
-    CHECK_EQ(updater.Log->Checks, 1);
+    CHECK_EQ(updater.Log->Checks.size(), size_t{1});
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
     const std::shared_ptr<MCLogButton> cinema = logistics->MainScreen->CinemaButton;
     REQUIRE(cinema != nullptr);

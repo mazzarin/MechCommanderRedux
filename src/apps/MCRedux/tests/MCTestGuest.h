@@ -50,17 +50,193 @@ namespace MCTestGuest
     }
 
     /// <summary>
+    /// A player on the test's side of a session: its DirectPlay, which a listener thread of its own owns once it is in
+    /// the session (taking in what comes, and sending what the test leaves for it), and the Updating and RestartOff
+    /// messages it was sent, counted. A class made from it stops the listener in its own destructor
+    /// (<see cref="StopListening"/>), as the listener calls its <see cref="Take"/>.
+    /// </summary>
+    class Peer
+    {
+    public:
+        Peer(const Peer&) = delete;
+        Peer& operator=(const Peer&) = delete;
+
+        /// <summary>The player's id.</summary>
+        uint32_t Id() const { return _Id; }
+
+        /// <summary>Says to player <paramref name="to"/> that this player's game restarts into an update.</summary>
+        void SendUpdating(uint32_t to) { SendNotice(to, MCMPMessageType::Updating); }
+
+        /// <summary>Says to player <paramref name="to"/> that this player's restart into an update is off.</summary>
+        void SendRestartOff(uint32_t to) { SendNotice(to, MCMPMessageType::RestartOff); }
+
+        /// <summary>The messages saying another game restarts into an update, so far.</summary>
+        int32_t Updatings() const { return _Updatings; }
+
+        /// <summary>The messages saying another game's restart into an update is off, so far.</summary>
+        int32_t RestartOffs() const { return _RestartOffs; }
+
+    protected:
+        Peer() = default;
+        virtual ~Peer() { StopListening(); }
+
+        /// <summary>Takes in <paramref name="message"/> from player <paramref name="from"/> (on the listener).</summary>
+        virtual void Take(uint32_t from, std::span<const uint8_t> message) = 0;
+
+        /// <summary>Anything else the listener does each pass, after sending what waits.</summary>
+        virtual void EachPass() {}
+
+        /// <summary>Starts the listener, once in the session as player <paramref name="id"/>.</summary>
+        void StartListening(uint32_t id)
+        {
+            _Id = id;
+            _Stop = false;
+            _Listener = std::thread(
+                [this]
+                {
+                    while (!_Stop)
+                    {
+                        std::array<uint8_t, 4096> buffer{};
+                        uint32_t size = 0;
+                        uint32_t from = 0;
+                        uint32_t to = 0;
+
+                        while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
+                        {
+                            Take(from, std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size())));
+                        }
+
+                        SendWaiting();
+                        EachPass();
+                        _DirectPlay.Pump();
+                        SDL_Delay(1);
+                    }
+                });
+        }
+
+        /// <summary>Stops the listener, if it runs.</summary>
+        void StopListening()
+        {
+            _Stop = true;
+
+            if (_Listener.joinable())
+            {
+                _Listener.join();
+            }
+        }
+
+        /// <summary>Leaves the session once what waits to be sent is out, the link flushed before it closes.</summary>
+        void Disconnect()
+        {
+            constexpr int32_t MostWaits = 200;
+            constexpr int32_t Flushes = 20;
+
+            for (int32_t wait = 0; wait < MostWaits && Sending(); wait++)
+            {
+                SDL_Delay(1);
+            }
+
+            StopListening();
+
+            for (int32_t flush = 0; flush < Flushes; flush++)
+            {
+                _DirectPlay.Pump();
+                SDL_Delay(1);
+            }
+
+            _DirectPlay.Close();
+        }
+
+        /// <summary>Leaves <paramref name="message"/> for the listener, which owns the connection, to send to <paramref name="to"/>.</summary>
+        template <typename Message> void Send(uint32_t to, Message message)
+        {
+            const std::span<uint8_t> bytes = LinkupBytes(message);
+            const std::lock_guard lock(_Mutex);
+            _ToSend.emplace_back(to, std::vector<uint8_t>(bytes.begin(), bytes.end()));
+        }
+
+        /// <summary>Counts <paramref name="type"/> if it is an Updating or a RestartOff; whether it was one.</summary>
+        bool Counted(uint16_t type)
+        {
+            if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
+            {
+                _Updatings++;
+                return true;
+            }
+
+            if (type == static_cast<uint16_t>(MCMPMessageType::RestartOff))
+            {
+                _RestartOffs++;
+                return true;
+            }
+
+            return false;
+        }
+
+        MCDirectPlay _DirectPlay;
+        /// <summary>Guards the messages to send, and what the class made from it keeps of the messages taken in.</summary>
+        std::mutex _Mutex;
+
+    private:
+        /// <summary>Sends <paramref name="type"/>, a header alone, to player <paramref name="to"/>.</summary>
+        void SendNotice(uint32_t to, MCMPMessageType type)
+        {
+            MCMPLongMessage message{};
+            message.Header = PlainHeader(type);
+            Send(to, message);
+        }
+
+        /// <summary>Whether messages wait to be sent.</summary>
+        bool Sending()
+        {
+            const std::lock_guard lock(_Mutex);
+            return !_ToSend.empty();
+        }
+
+        /// <summary>Sends the messages <see cref="Send"/> left.</summary>
+        void SendWaiting()
+        {
+            std::vector<std::pair<uint32_t, std::vector<uint8_t>>> messages;
+
+            {
+                const std::lock_guard lock(_Mutex);
+                messages.swap(_ToSend);
+            }
+
+            for (const auto& [to, bytes] : messages)
+            {
+                _DirectPlay.Send(_Id, to, 0, bytes);
+            }
+        }
+
+        uint32_t _Id = 0;
+        std::thread _Listener;
+        std::atomic<bool> _Stop = false;
+        /// <summary>The messages to send and to whom, until the listener sends them.</summary>
+        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
+        std::atomic<int32_t> _Updatings = 0;
+        std::atomic<int32_t> _RestartOffs = 0;
+    };
+
+    /// <summary>
     /// A second player in the game's session, on the test's side: it joins over the loopback and then only takes in
     /// (and drops) what it is sent, on its own thread, so the host keeps it.
     /// </summary>
-    class Guest
+    class Guest final : public Peer
     {
     public:
         /// <summary>A guest who joins as <paramref name="name"/>.</summary>
         explicit Guest(std::string name = "Guest") : _Name(std::move(name)) {}
 
+        ~Guest() override { StopListening(); }
+
+        Guest(const Guest&) = delete;
+        Guest& operator=(const Guest&) = delete;
+
         bool Join(MCDirectPlay& host, std::string_view address)
         {
+            constexpr int32_t MostLooks = 40;
+
             if (Connect(_DirectPlay, address) != DP_OK)
             {
                 return false;
@@ -69,7 +245,7 @@ namespace MCTestGuest
             DPSESSIONDESC2 found{};
             bool foundOne = false;
 
-            for (int attempt = 0; attempt < 40 && !foundOne; attempt++)
+            for (int32_t attempt = 0; attempt < MostLooks && !foundOne; attempt++)
             {
                 DPSESSIONDESC2 desc{};
                 desc.dwSize = sizeof(desc);
@@ -109,30 +285,7 @@ namespace MCTestGuest
                 return false;
             }
 
-            _Id = id;
-            _Listener = std::thread(
-                [this]
-                {
-                    while (!_Stop)
-                    {
-                        std::array<uint8_t, 4096> buffer{};
-                        uint32_t size = 0;
-                        uint32_t from = 0;
-                        uint32_t to = 0;
-
-                        while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
-                        {
-                            const auto message =
-                                std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size()));
-                            Answer(from, message);
-                            Keep(message);
-                        }
-
-                        SendWaiting();
-                        _DirectPlay.Pump();
-                        SDL_Delay(1);
-                    }
-                });
+            StartListening(id);
             return true;
         }
 
@@ -162,62 +315,11 @@ namespace MCTestGuest
             Send(hostId, message);
         }
 
-        /// <summary>Says to the host (player <paramref name="hostId"/>) that this guest's game restarts into an update.</summary>
-        void SendUpdating(uint32_t hostId)
-        {
-            MCMPLongMessage message{};
-            message.Header = PlainHeader(MCMPMessageType::Updating);
-            Send(hostId, message);
-        }
-
-        /// <summary>Says to the host (player <paramref name="hostId"/>) that this guest's restart into an update is off.</summary>
-        void SendRestartOff(uint32_t hostId)
-        {
-            MCMPLongMessage message{};
-            message.Header = PlainHeader(MCMPMessageType::RestartOff);
-            Send(hostId, message);
-        }
-
-        /// <summary>The host's messages saying its game restarts into an update, so far.</summary>
-        int32_t Updatings() const { return _Updatings; }
-
-        /// <summary>The host's messages saying its restart into an update is off, so far.</summary>
-        int32_t RestartOffs() const { return _RestartOffs; }
-
         /// <summary>The host's messages taking every player to the session screen (its GO, or its room shown again).</summary>
         int32_t SessionScreens() const { return _SessionScreens; }
 
         /// <summary>Leaves the session: the listener stops once what waits to be sent is out, and the link closes.</summary>
-        void Leave()
-        {
-            constexpr int32_t MostWaits = 200;
-
-            for (int32_t wait = 0; wait < MostWaits && Sending(); wait++)
-            {
-                SDL_Delay(1);
-            }
-
-            _Stop = true;
-
-            if (_Listener.joinable())
-            {
-                _Listener.join();
-            }
-
-            // What the link holds goes out before it closes.
-            constexpr int32_t Flushes = 20;
-
-            for (int32_t flush = 0; flush < Flushes; flush++)
-            {
-                _DirectPlay.Pump();
-                SDL_Delay(1);
-            }
-
-            _DirectPlay.Close();
-        }
-
-        /// <summary>The guest's player id.</summary>
-        uint32_t Id() const { return _Id; }
+        void Leave() { Disconnect(); }
 
         /// <summary>
         /// Answers the host's file inquiries from now on with <paramref name="value"/>, as a game's file report does
@@ -228,17 +330,13 @@ namespace MCTestGuest
         /// <summary>The host's messages telling this guest to load a mission, so far.</summary>
         int32_t MissionsLoaded() const { return _MissionsLoaded; }
 
-        ~Guest()
+    private:
+        void Take(uint32_t from, std::span<const uint8_t> message) override
         {
-            _Stop = true;
-
-            if (_Listener.joinable())
-            {
-                _Listener.join();
-            }
+            Answer(from, message);
+            Keep(message);
         }
 
-    private:
         /// <summary>
         /// Answers <paramref name="message"/> from player <paramref name="from"/> if it is a file inquiry (the file
         /// report: <see cref="AnswerFiles"/>'s value and the name asked about), and counts a load mission. The host sends
@@ -255,15 +353,8 @@ namespace MCTestGuest
 
             const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
 
-            if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
+            if (Counted(type))
             {
-                _Updatings++;
-                return;
-            }
-
-            if (type == static_cast<uint16_t>(MCMPMessageType::RestartOff))
-            {
-                _RestartOffs++;
                 return;
             }
 
@@ -296,7 +387,7 @@ namespace MCTestGuest
             std::memcpy(bytes.data(), &report, sizeof(report));
             bytes.insert(bytes.end(), name.begin(), name.end());
             bytes.push_back(0);
-            _DirectPlay.Send(_Id, from, 0, bytes);
+            _DirectPlay.Send(Id(), from, 0, bytes);
         }
 
         /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
@@ -328,50 +419,9 @@ namespace MCTestGuest
             }
         }
 
-        /// <summary>Leaves <paramref name="message"/> for the listener, which owns the connection, to send to <paramref name="to"/>.</summary>
-        template <typename Message> void Send(uint32_t to, Message message)
-        {
-            const std::span<uint8_t> bytes = LinkupBytes(message);
-            const std::lock_guard lock(_Mutex);
-            _ToSend.emplace_back(to, std::vector<uint8_t>(bytes.begin(), bytes.end()));
-        }
-
-        /// <summary>Whether messages wait to be sent.</summary>
-        bool Sending()
-        {
-            const std::lock_guard lock(_Mutex);
-            return !_ToSend.empty();
-        }
-
-        /// <summary>Sends the messages <see cref="Send"/> left.</summary>
-        void SendWaiting()
-        {
-            std::vector<std::pair<uint32_t, std::vector<uint8_t>>> messages;
-
-            {
-                const std::lock_guard lock(_Mutex);
-                messages.swap(_ToSend);
-            }
-
-            for (const auto& [to, bytes] : messages)
-            {
-                _DirectPlay.Send(_Id, to, 0, bytes);
-            }
-        }
-
         std::string _Name;
-        MCDirectPlay _DirectPlay;
-        uint32_t _Id = 0;
-        std::thread _Listener;
-        std::atomic<bool> _Stop = false;
-        std::mutex _Mutex;
         std::optional<MCMPMatchOptionsMessage> _MatchOptions;
         std::optional<MCMPPlayersRulesMessage> _PlayersRules;
-        /// <summary>The messages to send and to whom, until the listener sends them.</summary>
-        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
-        /// <summary>The host's messages saying it restarts into an update, and that its restart is off.</summary>
-        std::atomic<int32_t> _Updatings = 0;
-        std::atomic<int32_t> _RestartOffs = 0;
         /// <summary>The host's messages taking every player to the session screen.</summary>
         std::atomic<int32_t> _SessionScreens = 0;
         /// <summary>What the guest's file reports say (<see cref="AnswerFiles"/>).</summary>
@@ -386,11 +436,17 @@ namespace MCTestGuest
     /// A room's host on the test's side, for the game to join as a lobby's guest: it hosts a session on the loopback
     /// and takes in what it is sent on a thread of its own, counting the guests' Updating messages.
     /// </summary>
-    class Host
+    class Host final : public Peer
     {
     public:
         /// <summary>The most players a room holds.</summary>
         static constexpr uint32_t MaxPlayers = 6;
+
+        Host() = default;
+        ~Host() override { StopListening(); }
+
+        Host(const Host&) = delete;
+        Host& operator=(const Host&) = delete;
 
         /// <summary>
         /// Hosts session <paramref name="session"/> on <paramref name="port"/> as player <paramref name="name"/>, with
@@ -410,49 +466,20 @@ namespace MCTestGuest
             desc.guidApplication = MultiPlayerAppGuid;
             desc.dwMaxPlayers = places;
             desc.SessionName = std::move(session);
+            uint32_t id = 0;
 
             if (_DirectPlay.Open(desc, DPOPEN_CREATE | DPOPEN_RETURNSTATUS) != DP_OK ||
-                _DirectPlay.CreatePlayer(_Id, DPNAME{std::move(name), std::nullopt}, {}, 0) != DP_OK)
+                _DirectPlay.CreatePlayer(id, DPNAME{std::move(name), std::nullopt}, {}, 0) != DP_OK)
             {
                 return false;
             }
 
-            _Stop = false;
-            _Listener = std::thread(
-                [this]
-                {
-                    while (!_Stop)
-                    {
-                        std::array<uint8_t, 4096> buffer{};
-                        uint32_t size = 0;
-                        uint32_t from = 0;
-                        uint32_t to = 0;
-
-                        while (_DirectPlay.Receive(from, to, DPRECEIVE_ALL, buffer, size) == DP_OK)
-                        {
-                            Take(from, std::span<const uint8_t>(buffer).first(std::min<size_t>(size, buffer.size())));
-                        }
-
-                        SendWaiting();
-
-                        if (_LockWanted.exchange(false))
-                        {
-                            _Desc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
-                            _DirectPlay.SetSessionDesc(_Desc, 0);
-                        }
-
-                        _DirectPlay.Pump();
-                        SDL_Delay(1);
-                    }
-                });
+            StartListening(id);
             return true;
         }
 
         /// <summary>Closes the room to new players, as a host's GO does (on the listener, which owns the connection).</summary>
         void Lock() { _LockWanted = true; }
-
-        /// <summary>The host's player id.</summary>
-        uint32_t Id() const { return _Id; }
 
         /// <summary>The players who joined, by id, as DirectPlay announced them.</summary>
         std::vector<uint32_t> Joined()
@@ -461,62 +488,12 @@ namespace MCTestGuest
             return _Joined;
         }
 
-        /// <summary>The guests' messages saying their games restart into an update, so far.</summary>
-        int32_t Updatings() const { return _Updatings; }
-
-        /// <summary>The guests' messages saying their restarts into an update are off, so far.</summary>
-        int32_t RestartOffs() const { return _RestartOffs; }
-
-        /// <summary>Says to player <paramref name="to"/> that the host's game restarts into an update.</summary>
-        void SendUpdating(uint32_t to)
-        {
-            MCMPLongMessage message{};
-            message.Header = PlainHeader(MCMPMessageType::Updating);
-            const std::span<uint8_t> bytes = LinkupBytes(message);
-            const std::lock_guard lock(_Mutex);
-            _ToSend.emplace_back(to, std::vector<uint8_t>(bytes.begin(), bytes.end()));
-        }
-
         /// <summary>Ends the session once what waits to be sent is out, as the host's game quitting does.</summary>
-        void Close()
-        {
-            constexpr int32_t MostWaits = 200;
-            constexpr int32_t Flushes = 20;
-
-            for (int32_t wait = 0; wait < MostWaits && Sending(); wait++)
-            {
-                SDL_Delay(1);
-            }
-
-            _Stop = true;
-
-            if (_Listener.joinable())
-            {
-                _Listener.join();
-            }
-
-            for (int32_t flush = 0; flush < Flushes; flush++)
-            {
-                _DirectPlay.Pump();
-                SDL_Delay(1);
-            }
-
-            _DirectPlay.Close();
-        }
-
-        ~Host()
-        {
-            _Stop = true;
-
-            if (_Listener.joinable())
-            {
-                _Listener.join();
-            }
-        }
+        void Close() { Disconnect(); }
 
     private:
         /// <summary>Counts <paramref name="message"/> from <paramref name="from"/> if it is a guest's Updating or a player joining.</summary>
-        void Take(uint32_t from, std::span<const uint8_t> message)
+        void Take(uint32_t from, std::span<const uint8_t> message) override
         {
             if (from == DPID_SYSMSG && message.size() >= sizeof(DPMSG_CREATEPLAYERORGROUP))
             {
@@ -531,55 +508,23 @@ namespace MCTestGuest
                 return;
             }
 
-            if (message.size() < sizeof(MCFIGuaranteedMessageHeader))
+            if (message.size() >= sizeof(MCFIGuaranteedMessageHeader))
             {
-                return;
-            }
-
-            const uint16_t type = ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type();
-
-            if (type == static_cast<uint16_t>(MCMPMessageType::Updating))
-            {
-                _Updatings++;
-            }
-            else if (type == static_cast<uint16_t>(MCMPMessageType::RestartOff))
-            {
-                _RestartOffs++;
+                Counted(ReadLinkupMessage<MCFIGuaranteedMessageHeader>(message).Type());
             }
         }
 
-        /// <summary>Whether messages wait to be sent.</summary>
-        bool Sending()
+        /// <summary>The room closed to new players when the test asked.</summary>
+        void EachPass() override
         {
-            const std::lock_guard lock(_Mutex);
-            return !_ToSend.empty();
-        }
-
-        /// <summary>Sends the messages left for the listener.</summary>
-        void SendWaiting()
-        {
-            std::vector<std::pair<uint32_t, std::vector<uint8_t>>> messages;
-
+            if (_LockWanted.exchange(false))
             {
-                const std::lock_guard lock(_Mutex);
-                messages.swap(_ToSend);
-            }
-
-            for (const auto& [to, bytes] : messages)
-            {
-                _DirectPlay.Send(_Id, to, 0, bytes);
+                _Desc.dwFlags |= DPSESSION_NEWPLAYERSDISABLED;
+                _DirectPlay.SetSessionDesc(_Desc, 0);
             }
         }
 
-        MCDirectPlay _DirectPlay;
-        uint32_t _Id = 0;
-        std::thread _Listener;
-        std::atomic<bool> _Stop = false;
-        std::mutex _Mutex;
-        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> _ToSend;
         std::vector<uint32_t> _Joined;
-        std::atomic<int32_t> _Updatings = 0;
-        std::atomic<int32_t> _RestartOffs = 0;
         /// <summary>The session as hosted, and whether the test wants it closed to new players.</summary>
         DPSESSIONDESC2 _Desc{};
         std::atomic<bool> _LockWanted = false;

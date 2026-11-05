@@ -2,6 +2,7 @@
 #include "update/MCInstalled.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCUpdateDisk.h"
 #include "update/MCUpdateJson.h"
 
 namespace
@@ -134,23 +135,27 @@ std::expected<MCInstalled::MCRecord, std::string> MCInstalled::FromText(std::str
         });
 }
 
-std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(const std::filesystem::path& gameFolder)
+std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(MCUpdateDisk& disk,
+                                                                    const std::filesystem::path& gameFolder)
 {
     const std::filesystem::path path = gameFolder / MCFileSystem::FromUtf8(RecordPath);
-    std::error_code error;
 
-    if (!std::filesystem::exists(path, error))
+    if (!disk.Stat(path).Exists)
     {
         return MCRecord{};
     }
 
-    std::ifstream file(path, std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto text = disk.ReadText(path);
 
-    if (!file && !file.eof())
+    if (!text)
     {
-        return std::unexpected(std::format("{} can't be read", MCFileSystem::ToUtf8(path)));
+        return std::unexpected(text.error());
     }
 
-    return FromText(text);
+    return FromText(*text);
+}
+
+std::expected<MCInstalled::MCRecord, std::string> MCInstalled::Read(const std::filesystem::path& gameFolder)
+{
+    return Read(*MakeDisk(), gameFolder);
 }

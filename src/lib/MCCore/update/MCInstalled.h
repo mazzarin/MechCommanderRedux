@@ -6,6 +6,8 @@
 #include <map>
 #include <set>
 
+class MCUpdateDisk;
+
 /// <summary>
 /// Port-only: what a copy has installed (<c>Redux update/installed.json</c> in the game folder): the content release
 /// and its list, the sets the copy has (the installer's HD answer, then HD OPTIONS'), and each managed file as it was
@@ -57,8 +59,11 @@ namespace MCInstalled
         std::map<std::string, MCFile, std::less<>> Files;
     };
 
-    /// <summary>The record in <paramref name="gameFolder"/>; an empty one when there's none.</summary>
+    /// <summary>The record in <paramref name="gameFolder"/> on <paramref name="disk"/>; an empty one when there's none.</summary>
     /// <returns>The record, or why the one there can't be read.</returns>
+    std::expected<MCRecord, std::string> Read(MCUpdateDisk& disk, const std::filesystem::path& gameFolder);
+
+    /// <summary>The record in <paramref name="gameFolder"/> on the disk (<see cref="Read(MCUpdateDisk&amp;, const std::filesystem::path&amp;)"/>).</summary>
     std::expected<MCRecord, std::string> Read(const std::filesystem::path& gameFolder);
 
     /// <summary>The record as written.</summary>

@@ -5,6 +5,7 @@
 #include "lib/MCSha256.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
+#include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCInstalled.h"
 #include "update/MCUpdateDisk.h"
@@ -290,10 +291,15 @@ namespace
         std::string _LastMovedTo;
     };
 
-    const std::filesystem::path Game = "/game";
-
     /// <summary>The scratch folders' group, for the tests on a real disk.</summary>
     constexpr std::string_view Group = "mc_content_swap_tests";
+
+    /// <summary>
+    /// The game folder. Its files are on the disk in memory, but removal takes the game's lock on the real disk, so it's
+    /// a folder there (a scratch folder of its own: <see cref="GameName"/>).
+    /// </summary>
+    constexpr std::string_view GameName = "crash-game";
+    const std::filesystem::path Game = std::filesystem::temp_directory_path() / Group / GameName;
 
     /// <summary>A program new enough for an update that needs one, and the program before it.</summary>
     constexpr uint64_t NewProgram = 600;
@@ -1046,4 +1052,80 @@ TEST_CASE("content swap at a start: content whose list needs a newer program is 
     REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
     CHECK(MCContentSwap::RunAtStart(*disk, game, lock.get(), NewProgram).Outcome == MCOutcome::Swapped);
     release.CheckIsRelease2();
+}
+
+TEST_CASE("content removal: a committed swap that can't finish its clearing keeps Redux update whole, the folder's own "
+          "files still set aside in it")
+{
+    const MCScratchFolder locks(Group, GameName);
+    const MCUpdate update;
+    MCCrashDisk disk(update.Files);
+    REQUIRE(disk.Rename(Game / MCFileSystem::FromUtf8(MCContentSwap::ReadyFile),
+                        Game / MCFileSystem::FromUtf8(MCContentSwap::JournalFile)));
+    const std::string setAside = GamePath(std::string(MCContentSwap::ReplacedFolder) + "/data/mod.fit");
+    disk.HoldOpen(setAside);
+    const auto held = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    REQUIRE(!held.has_value());
+    CHECK(held.error().find("data/mod.fit") != std::string::npos);
+    CHECK_EQ(disk.Files().at(setAside).Bytes, std::string("the folder's own mod"));
+    CHECK(disk.Files().contains(GamePath(MCContentSwap::JournalFile)));
+    CHECK(disk.Files().contains(GamePath(MCInstalled::RecordPath)));
+    CHECK(disk.Files().contains(GamePath("ART.FST")));
+
+    // Let go, it's finished and removed: the folder's own files are in Redux backup, what the update placed gone.
+    disk.HoldOpen({});
+    const auto removed = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+    REQUIRE(removed.has_value());
+    CHECK(update.BackupKept(disk.Files()));
+    CHECK(!disk.Files().contains(GamePath("ART.FST")));
+    CHECK(!std::ranges::any_of(disk.Files(), [](const auto& entry)
+                               { return entry.first.find("Redux update") != std::string::npos; }));
+}
+
+TEST_CASE("content removal: a repair's giving up stopped at any step is finished first: the folder's own files end in "
+          "Redux backup")
+{
+    const MCScratchFolder locks(Group, GameName);
+    const MCUpdate update;
+    MCCrashDisk whole = update.Stuck();
+    REQUIRE(MCContentSwap::Abandon(whole, Game).has_value());
+    const int steps = whole.Changes();
+    int tried = 0;
+
+    for (int step = 0; step < steps; ++step)
+    {
+        for (const bool keepAll : {false, true})
+        {
+            MCCrashDisk disk = update.Stuck();
+            disk.CutAt(step);
+
+            try
+            {
+                MCContentSwap::Abandon(disk, Game);
+            }
+            catch (const MCPowerCut&)
+            {
+            }
+
+            disk.Cut([&](size_t) { return keepAll; });
+
+            // Begun (the journal is repair.json): removal finishes it.
+            if (disk.Files().contains(GamePath(MCContentSwap::JournalFile)))
+            {
+                continue;
+            }
+
+            ++tried;
+            const auto removed = MCContentRemoval::Remove(disk, Game, std::chrono::milliseconds(0));
+
+            if (!removed || !update.BackupKept(disk.Files()))
+            {
+                FAIL_CHECK(
+                    std::format("step {} keep {}: {}", step, keepAll,
+                                removed ? std::string("Redux backup lacks the folder's own files") : removed.error()));
+            }
+        }
+    }
+
+    CHECK(tried > 0);
 }

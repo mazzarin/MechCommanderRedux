@@ -45,13 +45,17 @@ namespace
     constexpr std::string_view HostRestartText = "DOWNLOADED: ON RESTART, EVERYONE REJOINS.";
 
     /// <summary>
-    /// The session screen's line while the room's start waits for guests away updating (or, after the host's restart
-    /// was called off, waiting for it).
+    /// The session screen's line while the room waits for guests away updating (or, after the host's restart was called
+    /// off, waiting for it).
     /// </summary>
     constexpr std::string_view StartWaitsFormat = "WAITING FOR {} TO REJOIN.";
+    /// <summary>What START asks while several guests are away updating (one: its name, as UpdatingText says it).</summary>
+    constexpr std::string_view StartWithoutThemFormat = "{} ARE UPDATING. START WITHOUT THEM?";
+    /// <summary>What START asks of one guest away updating, after UpdatingText.</summary>
+    constexpr std::string_view StartWithoutOneFormat = "{} START WITHOUT {}?";
     /// <summary>What the room's other games say of player <paramref name="name"/> whose restart into an update is off.</summary>
     constexpr std::string_view UpdateOffFormat = "{}'S UPDATE IS OFF.";
-    /// <summary>What the room's games say of player <paramref name="name"/> whose minute to rejoin is over.</summary>
+    /// <summary>What the room's games say of player <paramref name="name"/> whose time to rejoin is over.</summary>
     constexpr std::string_view NotBackFormat = "{} DIDN'T REJOIN IN TIME.";
 
     /// <summary>A guest restarting into an update, whose place the room keeps until it is back or the wait is over.</summary>
@@ -105,15 +109,6 @@ namespace
     /// was called off and the room's places kept stand; another is the host's new version's, which has kept none.
     /// </summary>
     std::optional<_GUID> RoomLeft;
-    /// <summary>
-    /// How long the room's start has waited on kept places, all of them together, and since when it waits now (while any
-    /// is kept): it waits MCLobbyUpdate::MostStartHold at most in a room, whatever the guests' ids and names, so no guest
-    /// holds it on and on by rejoining as another player.
-    /// </summary>
-    Clock::duration StartHeldFor{};
-    std::optional<Clock::time_point> StartHeldSince;
-    /// <summary>The room's start has waited its most on kept places: START no longer waits for them.</summary>
-    bool StartHoldSpent = false;
     /// <summary>The tests' clock, when one is set (MCLobbyUpdate::SetClock).</summary>
     MCLobbyUpdate::MCClock TestClock;
 
@@ -138,36 +133,11 @@ namespace
         return std::format("{} IS UPDATING.", Upper(name));
     }
 
-    /// <summary>How long the room's start has waited on kept places by <paramref name="now"/>, all of them together.</summary>
-    Clock::duration StartHeldBy(Clock::time_point now)
-    {
-        return StartHeldFor + (StartHeldSince.has_value() ? now - *StartHeldSince : Clock::duration::zero());
-    }
-
-    /// <summary>The places kept changed: the start's wait runs while any is kept, and stops while none is.</summary>
-    void TimeStartHold()
-    {
-        const Clock::time_point now = Now();
-
-        if (!Coming.empty() && !StartHeldSince.has_value())
-        {
-            StartHeldSince = now;
-        }
-        else if (Coming.empty() && StartHeldSince.has_value())
-        {
-            StartHeldFor += now - *StartHeldSince;
-            StartHeldSince.reset();
-        }
-    }
-
     /// <summary>
-    /// The places kept changed: the session screen holds its start while any is kept (MCLobbyUpdate::StartHeld), and
-    /// lets it go after (MCSessionScreen::CheckGoodToGo).
+    /// The places kept changed: the session screen's line names whom the room waits for (MCSessionScreen::CheckGoodToGo).
     /// </summary>
     void PlacesChanged()
     {
-        TimeStartHold();
-
         if (const std::shared_ptr<MCLogistics> logistics = GlobalLog();
             logistics != nullptr && logistics->SessionScreen != nullptr &&
             logistics->SessionScreen->StartButton != nullptr)
@@ -272,7 +242,7 @@ namespace
 
     /// <summary>
     /// The host (<paramref name="hostId"/>) restarts into an update: this guest leaves the room at once, says so, and
-    /// joins the same address again (Frame) for up to a minute.
+    /// joins the same address again (Frame) for MCLobbyUpdate::RejoinWait.
     /// </summary>
     void WaitForHost(uint32_t hostId)
     {
@@ -289,7 +259,6 @@ namespace
         // The places this guest saw kept: the room's guests back (or not) while it is away go unseen. Which places the
         // room has kept stands until this guest knows whether it comes back to the same room (TryHostAgain).
         Coming.clear();
-        TimeStartHold();
         RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
@@ -323,9 +292,6 @@ namespace
             {
                 KeptOnce.clear();
                 OwnPlaceKept = false;
-                StartHeldFor = Clock::duration::zero();
-                StartHeldSince.reset();
-                StartHoldSpent = false;
             }
 
             RoomLeft.reset();
@@ -491,21 +457,31 @@ auto MCLobbyUpdate::CanRestart() -> bool
            std::ranges::all_of(Others(), [](const auto& player) { return Rejoins(*player); });
 }
 
-auto MCLobbyUpdate::StartHeld() -> bool
+namespace
 {
-    return !Coming.empty() && !StartHoldSpent;
+    /// <summary>The guests away updating, named as the menus write names ("ANN, CAL").</summary>
+    std::string ComingNames()
+    {
+        return MCNamedPlayers(
+            Coming, [](const MCComing&) { return true; }, [](const MCComing& coming) { return Upper(coming.Name); });
+    }
 }
 
 auto MCLobbyUpdate::StartWaitsText() -> std::string
+{
+    return Coming.empty() ? std::string() : std::format(StartWaitsFormat, ComingNames());
+}
+
+auto MCLobbyUpdate::StartQuestion() -> std::string
 {
     if (Coming.empty())
     {
         return {};
     }
 
-    return std::format(StartWaitsFormat, MCNamedPlayers(
-                                             Coming, [](const MCComing&) { return true; },
-                                             [](const MCComing& coming) { return Upper(coming.Name); }));
+    const std::string names = ComingNames();
+    return Coming.size() == 1 ? std::format(StartWithoutOneFormat, UpdatingText(Coming.front().Name), names)
+                              : std::format(StartWithoutThemFormat, names);
 }
 
 auto MCLobbyUpdate::Restart() -> bool
@@ -601,16 +577,6 @@ auto MCLobbyUpdate::Frame() -> void
 
     KeepPlaces(now);
 
-    // The room's start has waited its most on kept places: START lights, though places may still be kept (the session
-    // screen's line names them).
-    if (!StartHoldSpent && StartHeldBy(now) >= MostStartHold)
-    {
-        SDL_Log("Lobby updates: the room's start has waited %lld s on kept places, its most: it waits for them no more",
-                static_cast<long long>(MostStartHold.count()));
-        StartHoldSpent = true;
-        PlacesChanged();
-    }
-
     // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
     if (RefreshAt.has_value() && now >= *RefreshAt)
     {
@@ -646,8 +612,8 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
         return;
     }
 
-    // A kept place holds the room's start and opens the room: only for a build that comes back (its rules said so), and
-    // once a room, so no guest holds the start again and again.
+    // A kept place has START ask and opens the room: only for a build that comes back (its rules said so), and once a
+    // room, so no guest keeps the room open again and again.
     if (!Rejoins(*player))
     {
         SDL_Log("Lobby updates: %s's Updating ignored: its game isn't known to rejoin", player->Name.c_str());

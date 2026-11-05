@@ -13,10 +13,10 @@ enum class MCRoomRefusal : uint8_t;
 // - RESTART writes the rejoin note (network/MCRejoinNote.h) and tells the room (MCMPMessageType::Updating), then the
 //   game quits and the update goes in; the new version joins or hosts again as the note says. A guest's room keeps its
 //   place (no "has left the game", which ends a lobby's game), and its host opens the room to it again until it is
-//   back, a minute at most, holding the match's start meanwhile (two minutes at most in all a room, whoever's places it
-//   keeps); a match started anyway lets the places go and closes the room. A room keeps a place only for a build that says it rejoins, and once a guest: a guest whose place it has
+//   back, half a minute at most; START meanwhile asks before it starts without the guest, and a match started lets the
+//   places go and closes the room. A room keeps a place only for a build that says it rejoins, and once a guest: a guest whose place it has
 //   kept (its restart called off, or back from its update) installs its next update after the match. A host's guests
-//   say so and join the same address again for up to a minute: a new room there (the host's new version) has kept no
+//   say so and join the same address again for up to half a minute: a new room there (the host's new version) has kept no
 //   one's place; the same room (the host's restart called off) still has.
 // - RESTART is off when the update fails after it (or the room's match starts before the update goes in): the note
 //   goes, and the room is told (MCMPMessageType::RestartOff), dropping the place it keeps; a host keeps its guests'
@@ -25,13 +25,11 @@ enum class MCRoomRefusal : uint8_t;
 
 namespace MCLobbyUpdate
 {
-    /// <summary>How long a room keeps a guest's place while it updates, and a guest waits for its host.</summary>
-    inline constexpr std::chrono::seconds RejoinWait{60};
     /// <summary>
-    /// The most a room's start waits on kept places, all of them together, whatever the guests' ids and names: past it
-    /// START no longer waits, though places may still be kept, until a new room.
+    /// How long a room keeps a guest's place while it updates, and a guest waits for its host: a restart into a program's
+    /// update, or content swapped within its aim (15 s), is back well within it.
     /// </summary>
-    inline constexpr std::chrono::seconds MostStartHold{120};
+    inline constexpr std::chrono::seconds RejoinWait{30};
     /// <summary>
     /// How long RESTART waits before the update installs, so its messages leave this game first (the game keeps
     /// sending and taking messages each frame meanwhile).
@@ -58,16 +56,16 @@ namespace MCLobbyUpdate
     bool CanRestart();
 
     /// <summary>
-    /// Whom the room's start waits for: the guests away updating, whose places it keeps ("WAITING FOR ANN TO
-    /// REJOIN."); empty when none is. The session screen holds its start meanwhile (<see cref="StartHeld"/>).
+    /// Whom the room waits for: the guests away updating, whose places it keeps ("WAITING FOR ANN TO REJOIN."); empty
+    /// when none is.
     /// </summary>
     std::string StartWaitsText();
 
     /// <summary>
-    /// Whether the room's start waits for the guests away updating: while a place is kept, until the start has waited
-    /// <see cref="MostStartHold"/> in all.
+    /// What START asks while guests are away updating ("ANN IS UPDATING. START WITHOUT ANN?"); empty when none is. The
+    /// start never waits for them: the host's OK starts the match without them (<see cref="MatchStarts"/>).
     /// </summary>
-    bool StartHeld();
+    std::string StartQuestion();
 
     /// <summary>
     /// The UPDATE page's line for an update ready in a room: what RESTART does there, or that the update installs after

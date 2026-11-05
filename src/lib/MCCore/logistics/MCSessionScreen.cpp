@@ -13,6 +13,7 @@
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCLogButton.h"
 #include "logistics/MCLogChatWindow.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCLogToolButton.h"
@@ -155,8 +156,8 @@ namespace
         GlobalLog()->ShowLogScreen(true, false);
     }
 
-    /// <summary>The start button: tells every player to start the loaded mission.</summary>
-    void StartMission()
+    /// <summary>Tells every player to start the loaded mission.</summary>
+    void StartMissionNow()
     {
         std::string missionName = SplitFileName(Screen().MissionFile);
         std::string extension = ".MPK";
@@ -170,6 +171,40 @@ namespace
         GlobalLog()->InitializeMultiplayer();
         GlobalLog()->LoadCampaign(missionName, extension, false, false);
         GlobalLog()->SetUpBriefingScreen(false);
+    }
+
+    /// <summary>
+    /// The start button: starts the loaded mission. Port-only (the personal build): while a guest is away updating, it
+    /// asks first, and OK starts without it if the match can still start (network/MCLobbyUpdate.h).
+    /// </summary>
+    void StartMission()
+    {
+        const std::string question = MCLobbyUpdate::StartQuestion();
+
+        if (question.empty())
+        {
+            StartMissionNow();
+            return;
+        }
+
+        AskMenuQuestion(
+            *GlobalLog()->QuestionDialog, question,
+            []
+            {
+                // Still the room, and the match still able to start (players may have left while it asked).
+                if (GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
+                {
+                    return;
+                }
+
+                Screen().CheckGoodToGo();
+
+                if (!Screen().StartButton->Disabled)
+                {
+                    StartMissionNow();
+                }
+            },
+            nullptr, "bg_cancl.tga", true);
     }
 
     /// <summary>A tech base toggle: sets its team's tech base and tells the others.</summary>
@@ -1438,10 +1473,10 @@ auto MCSessionScreen::CheckGoodToGo() -> void
     const bool goodToGo = NumUnassigned == 0 && !MissionFile.empty() && !MultiPlayer()->PlayersOnHomeTeam()->empty() &&
                           !MultiPlayer()->PlayersOnEnemyTeam()->empty() && filled(Team1Players) && filled(Team2Players);
 
-    // Port-only (the personal build): a guest away updating holds the start until it's back, for a while at most in all
-    // (network/MCLobbyUpdate.h); its line is in the update's line's place while its place is kept.
+    // Port-only (the personal build): while a guest away updating has its place kept, its line is in the update's line's
+    // place, and START asks before it starts without it (network/MCLobbyUpdate.h).
     StartWaits = MCLobbyUpdate::StartWaitsText();
-    StartButton->Disabled = !goodToGo || MCLobbyUpdate::StartHeld();
+    StartButton->Disabled = !goodToGo;
 
     if (UpdateLine != nullptr)
     {

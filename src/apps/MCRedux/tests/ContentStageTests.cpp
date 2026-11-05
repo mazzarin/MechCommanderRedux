@@ -416,7 +416,9 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
                              plan->DownloadBytes, plan->Zips.size());
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     MCFolderSource source(host);
+    const auto stageStart = std::chrono::steady_clock::now();
     const auto staged = MCContentStage::Stage(*disk, source, game, *plan, *list, GoOn);
+    const auto swapStart = std::chrono::steady_clock::now();
 
     if (!staged)
     {
@@ -425,6 +427,9 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
 
     REQUIRE(staged.has_value());
     const MCContentSwap::MCResult swapped = MCContentSwap::Run(*disk, game);
+    const auto done = std::chrono::steady_clock::now();
     REQUIRE(swapped.Outcome == MCContentSwap::MCOutcome::Swapped || !plan->Changes());
-    std::cout << std::format("  installed: {} bytes downloaded\n", source.Sent());
+    std::cout << std::format("  installed: {} bytes downloaded; staged in {:.2f} s, swapped in {:.3f} s\n",
+                             source.Sent(), std::chrono::duration<double>(swapStart - stageStart).count(),
+                             std::chrono::duration<double>(done - swapStart).count());
 }

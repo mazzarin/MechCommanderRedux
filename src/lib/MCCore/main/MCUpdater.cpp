@@ -238,11 +238,16 @@ namespace
         return source;
     }
 
-    /// <summary>A step failed: the page says why, and nothing more happens this run.</summary>
+    /// <summary>
+    /// A step failed: the page says why, and nothing more happens this run. Work still under way (the program's
+    /// backend failing while the content stages) stops before the staging lock goes, so no copy stages beside it.
+    /// </summary>
     void Fail(std::string_view error)
     {
         SDL_Log("Updater: %s failed: %s", Current.Version.c_str(), std::string(error).c_str());
+        StopWork();
         StagingLock.reset();
+        PausedStep = MCStep::Idle;
         Step = MCStep::Finished;
         Current.Stage = MCStage::Failed;
         Current.Error = Printable(error, MaxErrorLength, false);
@@ -332,7 +337,8 @@ namespace
     }
 
     /// <summary>Arms the staged content once the program is in too: READY, or neither half goes in.</summary>
-    void ArmContent()
+    /// <returns>Whether it's armed; if not, the update failed.</returns>
+    bool ArmContent()
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
@@ -345,7 +351,7 @@ namespace
             }
 
             Fail(armed.error());
-            return;
+            return false;
         }
 
         StagingLock.reset();
@@ -354,6 +360,7 @@ namespace
         Current.Stage = MCStage::Ready;
         Current.Received = Current.Expected;
         Changed();
+        return true;
     }
 
     /// <summary>
@@ -651,14 +658,7 @@ namespace
             Current.Received = 0;
             Current.Expected = DownloadBytes();
 
-            if (Offer->Content == nullptr)
-            {
-                Step = MCStep::DownloadingProgram;
-                Changed();
-                Backend->Answer(MCAnswer::Install);
-                return;
-            }
-
+            // The program alone too: the lock keeps another copy from downloading the same setup at once.
             if (!TakeStagingLock())
             {
                 if (Offer->ProgramBuild)
@@ -667,6 +667,14 @@ namespace
                 }
 
                 Fail("another copy of the game is installing it");
+                return;
+            }
+
+            if (Offer->Content == nullptr)
+            {
+                Step = MCStep::DownloadingProgram;
+                Changed();
+                Backend->Answer(MCAnswer::Install);
                 return;
             }
 
@@ -790,7 +798,7 @@ auto MCUpdater::Frame() -> void
     if (!finished)
     {
         // Staging's whole is the plan's until its first bytes say more (a patch that fell back on its zip).
-        if (Step == MCStep::StagingContent)
+        if (Step == MCStep::StagingContent && Offer)
         {
             ShowProgress(received,
                          std::max(expected, Offer->ContentBytes()) + (Offer->ProgramBuild ? Offer->ProgramBytes : 0));
@@ -1174,7 +1182,7 @@ auto MCUpdater::Downloading(uint64_t received, uint64_t expected) -> void
     if (Content)
     {
         // The content is in by now: the program's bytes count after it, out of release.json's whole.
-        if (Step == MCStep::DownloadingProgram)
+        if (Step == MCStep::DownloadingProgram && Offer)
         {
             ShowProgress(Offer->ContentBytes() + received, DownloadBytes());
         }
@@ -1210,10 +1218,13 @@ auto MCUpdater::Installing() -> void
     if (Content)
     {
         // Sparkle can install without its ready step (an update it downloaded in an earlier run): the content goes in
-        // with it.
-        if (Step == MCStep::DownloadingProgram)
+        // with it. Content that can't be armed leaves the update failed: with no step waiting for an answer, Sparkle
+        // installs the program alone, and the new build's start looks for the content again.
+        if (Step == MCStep::DownloadingProgram && !ArmContent())
         {
-            ArmContent();
+            SDL_Log("Updater: %s's program installs without its content (%s)", Current.Version.c_str(),
+                    Current.Error.c_str());
+            return;
         }
 
         Step = MCStep::Finished;
@@ -1241,6 +1252,13 @@ auto MCUpdater::Failed(std::string error) -> void
 
     if (Content)
     {
+        // A late report while the HD pack's change is the work this run (after a failed update) fails nothing.
+        if (Step == MCStep::ChangingSets || Step == MCStep::SetsArmed)
+        {
+            SDL_Log("Updater: the program's update failed after it was given up: %s", error.c_str());
+            return;
+        }
+
         Fail(error);
         return;
     }
@@ -1272,7 +1290,8 @@ auto MCUpdater::Closed() -> void
         // is shown or its program downloads, it can't install: the page says so rather than wait for it.
         if (Step == MCStep::CheckingProgram)
         {
-            SDL_Log("Updater: build %llu isn't out yet", static_cast<unsigned long long>(*Offer->ProgramBuild));
+            SDL_Log("Updater: build %llu isn't out yet",
+                    static_cast<unsigned long long>(Offer ? Offer->ProgramBuild.value_or(0) : 0));
             Offer.reset();
             Settle();
         }

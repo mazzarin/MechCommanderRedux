@@ -687,6 +687,40 @@ TEST_CASE("updater: another copy stages: INSTALL fails, saying so")
     CHECK(!release.Armed());
 }
 
+TEST_CASE("updater: the program alone holds the staging lock from INSTALL until READY; another copy installing it "
+          "fails INSTALL, saying so")
+{
+    MCHostedRelease release("program-alone");
+    const std::filesystem::path& game = release.Game.Path();
+    UpdateToRelease2(release);
+    release.Publish(2, 2, NewerBuild);
+
+    {
+        MCUpdaterScope scope(release, true);
+        CheckUntilFound(scope, NewerBuild);
+        CHECK_EQ(MCUpdater::Status().Expected, ProgramSize);
+        const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(game, MCUpdateLock::StagingLock);
+        REQUIRE(other != nullptr);
+        REQUIRE(other->TryExclusive());
+        MCUpdater::Answer(MCAnswer::Install);
+        CHECK(Stage() == MCStage::Failed);
+        CHECK(MCUpdater::Status().Error.find("another copy") != std::string::npos);
+        REQUIRE(!scope.Program->Answers.empty());
+        CHECK(scope.Program->Answers.back() == MCAnswer::Later);
+    }
+
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(!scope.Program->Answers.empty());
+    CHECK(scope.Program->Answers.back() == MCAnswer::Install);
+    CHECK(!StagingFree(game));
+    MCUpdater::Ready();
+    REQUIRE(FramesUntil([] { return Stage() != MCStage::Downloading; }));
+    CHECK(Stage() == MCStage::Ready);
+    CHECK(StagingFree(game));
+}
+
 TEST_CASE("updater: Sparkle installing without its ready step (an update it downloaded before) arms the content too")
 {
     MCHostedRelease release("installs-at-once");
@@ -700,6 +734,27 @@ TEST_CASE("updater: Sparkle installing without its ready step (an update it down
     CHECK(release.Armed());
     CHECK(StagingFree(release.Game.Path()));
 }
+
+#ifndef _WIN32
+TEST_CASE("updater: Sparkle installing without its ready step with content that can't be armed: the update stays "
+          "failed")
+{
+    MCHostedRelease release("installs-at-once-arm-fails");
+    release.Publish(1, 2, NewerBuild);
+    MCUpdaterScope scope(release, true);
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return !scope.Program->Answers.empty(); }));
+    const std::filesystem::path update = release.Game.Path() / "Redux update";
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    MCUpdater::Installing();
+    std::filesystem::permissions(update, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!MCUpdater::Status().Error.empty());
+    CHECK(!release.Armed());
+    CHECK(StagingFree(release.Game.Path()));
+}
+#endif
 
 TEST_CASE("updater: Sparkle ending its session while the update is shown fails it rather than wait")
 {
@@ -1293,6 +1348,32 @@ namespace
         MCUpdater::PauseWork(false);
         CHECK(MCUpdater::Working());
     }
+}
+
+TEST_CASE("updater: the program's backend failing while the content stages stops the staging before the staging lock "
+          "goes")
+{
+    MCHostedRelease release("fails-while-staging");
+    release.Publish(1, 2, NewerBuild);
+    const auto gate = std::make_shared<MCGate>();
+    MCUpdaterScope scope(release, true,
+                         [host = release.Host.Path(), gate] { return std::make_unique<MCHeldSource>(host, gate); });
+    CheckUntilFound(scope, NewerBuild);
+    MCUpdater::Answer(MCAnswer::Install);
+    REQUIRE(FramesUntil([&] { return gate->Reached.load(); }));
+    CHECK(!StagingFree(release.Game.Path()));
+
+    MCUpdater::Failed("Sparkle's session ended");
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!MCUpdater::Working());
+    CHECK(StagingFree(release.Game.Path()));
+
+    // Nothing stages on after it, nor goes in.
+    gate->Open = true;
+    SomeFrames();
+    CHECK(Stage() == MCStage::Failed);
+    CHECK(!release.Armed());
+    CHECK(scope.Program->Answers.empty());
 }
 
 TEST_CASE("updater: an update's download stops while a match's mission plays, and goes on after it")

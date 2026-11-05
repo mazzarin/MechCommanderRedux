@@ -6,6 +6,7 @@
     <Project Path="apps/MCEditor/MCEditor.vcxproj" Id="e89ccfd8-657c-48b8-ba0c-9c4dfe431dc9" />
     <Project Path="apps/MCRedux/MCRedux.vcxproj" Id="5062c893-6493-4c1c-a17e-ec04a46fd4d4" />
     <Project Path="apps/MCRedux/mc_tests.vcxproj" Id="80e85b7f-fda4-4243-8fa5-094f46480d45" />
+    <Project Path="apps/MCXLauncher/MCXLauncher.vcxproj" Id="76d86b0e-e869-49f1-9544-54e7c4908b54" />
   </Folder>
   <Folder Name="/lib/">
     <Project Path="lib/MCCore/MCCore.vcxproj" Id="1f1c0a80-94c7-442d-b3d8-2f648cf0cf9e" />

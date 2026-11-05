@@ -1475,7 +1475,9 @@ TEST_CASE("content swap: a folder put in as a link since staging stops the swap,
     disk.MakeLink(GamePath("data/missions"));
     const MCContentSwap::MCResult stopped = MCContentSwap::Run(disk, Game);
     CHECK(stopped.Outcome == MCOutcome::PutBack);
-    CHECK(stopped.Error.find("data/missions is a link") != std::string::npos);
+    // Named as the system writes the path: data\missions on Windows.
+    const std::string link = MCFileSystem::ToUtf8(std::filesystem::path("data") / "missions") + " is a link";
+    CHECK(stopped.Error.find(link) != std::string::npos);
     CHECK(update.IsOldAndReady(disk.Files()));
 
     // One on an old file's way aside: the files set aside before it come back, and nothing moved through it.

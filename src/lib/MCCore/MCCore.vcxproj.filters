@@ -387,6 +387,9 @@
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp">
       <Filter>iface</Filter>
     </ClCompile>
+    <ClCompile Include="lib\MCBundlePatch.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
     <ClCompile Include="lib\MCDice.cpp">
       <Filter>lib</Filter>
     </ClCompile>
@@ -1644,6 +1647,9 @@
     </ClInclude>
     <ClInclude Include="iface\MCTacticalInterface.h">
       <Filter>iface</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\MCBundlePatch.h">
+      <Filter>lib</Filter>
     </ClInclude>
     <ClInclude Include="lib\MCDice.h">
       <Filter>lib</Filter>

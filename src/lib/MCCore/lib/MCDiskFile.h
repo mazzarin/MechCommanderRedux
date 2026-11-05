@@ -36,6 +36,10 @@ public:
     /// <summary>The file's length in bytes (the position is kept).</summary>
     uint32_t Length();
 
+    /// <summary>Hands what was written to the system (not to the disk: no sync).</summary>
+    /// <returns>Whether every write so far succeeded.</returns>
+    bool Flush();
+
 private:
     MCDiskFile() = default;
 

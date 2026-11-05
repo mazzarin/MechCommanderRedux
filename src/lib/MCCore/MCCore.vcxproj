@@ -150,6 +150,7 @@
     <ClCompile Include="iface\MCTacticalInterfaceKeys.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceMouseState.cpp" />
     <ClCompile Include="iface\MCTacticalInterfaceSelection.cpp" />
+    <ClCompile Include="lib\MCBundlePatch.cpp" />
     <ClCompile Include="lib\MCDice.cpp" />
     <ClCompile Include="lib\MCDiskFile.cpp" />
     <ClCompile Include="lib\MCFastFile.cpp" />
@@ -576,6 +577,7 @@
     <ClInclude Include="iface\MCMechIcon.h" />
     <ClInclude Include="iface\MCOrderSink.h" />
     <ClInclude Include="iface\MCTacticalInterface.h" />
+    <ClInclude Include="lib\MCBundlePatch.h" />
     <ClInclude Include="lib\MCDice.h" />
     <ClInclude Include="lib\MCDiskFile.h" />
     <ClInclude Include="lib\MCFastFile.h" />

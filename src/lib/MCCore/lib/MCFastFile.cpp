@@ -25,7 +25,8 @@ namespace
 std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::string_view fileName)
 {
     auto fastFile = std::make_unique<MCFastFile>(Key());
-    fastFile->_Handle = MCDiskFile::Open(MCFileSystem::Resolve(fileName), MCDiskFileMode::Read);
+    fastFile->_Path = MCFileSystem::Resolve(fileName);
+    fastFile->_Handle = MCDiskFile::Open(fastFile->_Path, MCDiskFileMode::Read);
 
     if (!fastFile->_Handle.has_value())
     {
@@ -44,6 +45,9 @@ std::expected<std::unique_ptr<MCFastFile>, std::string> MCFastFile::Create(std::
     const int32_t count = std::bit_cast<int32_t>(countBytes);
     // Once: the length is found by seeking, which drops what the stream has read ahead.
     const uint32_t length = file.Length();
+    fastFile->_Length = length;
+    std::error_code timeError;
+    fastFile->_Written = std::filesystem::last_write_time(fastFile->_Path, timeError);
 
     if (count < 0 || static_cast<uint64_t>(count) * sizeof(MCFileEntry) > length - std::min<uint64_t>(length, 4))
     {
@@ -90,29 +94,67 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
+MCDiskFile* MCFastFile::File()
+{
+    if (!_Handle.has_value())
+    {
+        // Released: a file changed since (another written in its place) would be read by the old directory's offsets.
+        std::error_code error;
+        const std::filesystem::file_time_type written = std::filesystem::last_write_time(_Path, error);
+
+        if (error || written != _Written)
+        {
+            return nullptr;
+        }
+
+        _Handle = MCDiskFile::Open(_Path, MCDiskFileMode::Read);
+
+        if (_Handle.has_value() && _Handle->Length() != _Length)
+        {
+            _Handle.reset();
+        }
+    }
+
+    return _Handle.has_value() ? &*_Handle : nullptr;
+}
+
 std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    MCDiskFile* const file = File();
+
+    if (file == nullptr)
+    {
+        return {};
+    }
+
     std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
-    stored.resize(_Handle->ReadAt(static_cast<uint32_t>(entry.Offset), stored));
+    stored.resize(file->ReadAt(static_cast<uint32_t>(entry.Offset), stored));
     return stored;
 }
 
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
+    MCDiskFile* const file = File();
+
+    if (file == nullptr)
+    {
+        return 0;
+    }
+
     data = data.first(std::min(data.size(), static_cast<size_t>(std::max(entry.RealSize, 0))));
     const auto offset = static_cast<uint32_t>(entry.Offset);
 
     if (entry.Size == entry.RealSize)
     {
-        return static_cast<int32_t>(_Handle->ReadAt(offset, data));
+        return static_cast<int32_t>(file->ReadAt(offset, data));
     }
 
     // Packed: read the whole stored entry and unpack it (no more than the archive holds past the entry's start).
-    const uint32_t stored = _Handle->Length() - std::min(_Handle->Length(), offset);
+    const uint32_t stored = file->Length() - std::min(file->Length(), offset);
     std::vector<uint8_t> packed(std::min<size_t>(static_cast<size_t>(std::max(entry.Size, 0)), stored));
-    packed.resize(_Handle->ReadAt(offset, packed));
+    packed.resize(file->ReadAt(offset, packed));
     const int32_t unpacked = LZDecomp(data, packed);
     return unpacked == entry.RealSize ? unpacked : 0;
 }

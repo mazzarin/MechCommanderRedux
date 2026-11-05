@@ -52,6 +52,12 @@ namespace
     /// <summary>An archive's extension: <c>X.hda</c> holds what folder <c>X</c> would (MCHdArt.h).</summary>
     constexpr std::string_view ArchiveExtension = ".hda";
     constexpr char ArchiveSeparator = '\\';
+    /// <summary>
+    /// The most archive files kept open at once, the others keeping their directories and opening again when read: the
+    /// pack has over a thousand archives (one for each appearance it draws) and none closes until the pack changes,
+    /// while the Mac gives an app started from the Finder 256 open files and Windows' C runtime 512.
+    /// </summary>
+    constexpr size_t MaxOpenArchiveFiles = 128;
 
     /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
     struct MCHdArchive
@@ -228,6 +234,12 @@ namespace
         std::string SpriteFiles;
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
+        /// <summary>
+        /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
+        /// place there.
+        /// </summary>
+        std::list<MCFastFile*> OpenFiles;
+        std::unordered_map<MCFastFile*, std::list<MCFastFile*>::iterator> OpenAt;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<const uint8_t*> SmoothTables;
         /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
@@ -381,6 +393,33 @@ namespace
         return bytes;
     }
 
+    /// <summary>
+    /// Notes that <paramref name="file"/> was just opened or read, closing the least recently read of the archives' files
+    /// past MaxOpenArchiveFiles.
+    /// </summary>
+    void KeepOpen(MCFastFile* file)
+    {
+        State& state = TheState();
+
+        if (const auto found = state.OpenAt.find(file); found != state.OpenAt.end())
+        {
+            state.OpenFiles.splice(state.OpenFiles.begin(), state.OpenFiles, found->second);
+        }
+        else
+        {
+            state.OpenFiles.push_front(file);
+            state.OpenAt.emplace(file, state.OpenFiles.begin());
+        }
+
+        while (state.OpenFiles.size() > MaxOpenArchiveFiles)
+        {
+            MCFastFile* const oldest = state.OpenFiles.back();
+            oldest->Release();
+            state.OpenAt.erase(oldest);
+            state.OpenFiles.pop_back();
+        }
+    }
+
     /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
     MCHdArchive* ArchiveFor(const std::filesystem::path& folder)
     {
@@ -409,6 +448,7 @@ namespace
 
         auto archive = std::make_shared<MCHdArchive>();
         archive->File = std::move(*file);
+        KeepOpen(archive->File.get());
 
         for (const MCFileEntry& entry : archive->File->GetEntries())
         {
@@ -485,6 +525,12 @@ namespace
             }
 
             std::vector<uint8_t> stored = archive->File->ReadStored(*index);
+            KeepOpen(archive->File.get());
+
+            if (stored.size() != static_cast<size_t>(entry.Size))
+            {
+                return std::unexpected(std::format("{} can't be read", name));
+            }
 
             if (entry.Size != entry.RealSize)
             {
@@ -1105,6 +1151,8 @@ void MCHdArt::SetPackFolder(const std::filesystem::path& folder)
     state.Logged.clear();
     state.MadeWith.reset();
     state.PaletteLooked = false;
+    state.OpenFiles.clear();
+    state.OpenAt.clear();
     state.Archives.clear();
     ++state.Version;
 }
@@ -1702,6 +1750,12 @@ size_t MCHdArt::ArchivesOpen()
 {
     return static_cast<size_t>(
         std::ranges::count_if(TheState().Archives, [](const auto& archive) { return archive.second != nullptr; }));
+}
+
+size_t MCHdArt::ArchiveFilesOpen()
+{
+    return static_cast<size_t>(
+        std::ranges::count_if(TheState().OpenFiles, [](const MCFastFile* file) { return file->IsOpen(); }));
 }
 
 std::chrono::nanoseconds MCHdArt::ReadTime()

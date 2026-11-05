@@ -44,6 +44,11 @@ class MCShape;
 /// <para>The pack's <c>palette.rgb</c> (<see cref="MadeWith"/>) holds the colours its pictures were made from. The GPU
 /// shows an HD pixel scaled by its original index's colour now over that colour, so another mission's palette, the
 /// water's colour cycle and the brightness setting show through.</para>
+/// <para>A folder's frames may instead be entries of an archive standing for it, <c>X.hda</c> beside folder
+/// <c>X</c> (a FastFile, lib/MCFastFile.h: each entry named by the rest of its path with <c>\</c> between folders,
+/// DEFLATE-packed or stored), the nearest of the folder's own and its parents'. An update writes a changed archive anew
+/// (lib/MCBundlePatch.h), so each is one file. At most 128 archives' files are kept open; the others keep their
+/// directories and open again when read.</para>
 /// <para>Frames are read when first drawn and kept while there is room (<see cref="CacheBudget"/>).</para>
 /// </remarks>
 namespace MCHdArt
@@ -421,6 +426,9 @@ namespace MCHdArt
 
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
     size_t ArchivesOpen();
+
+    /// <summary>How many of the open archives' files are open now (at most 128: the rest open again when read).</summary>
+    size_t ArchiveFilesOpen();
 }
 
 /// <summary>Port-only: draw the HD art pack's frames where it has them (PREFS "HDArt"; off by default).</summary>

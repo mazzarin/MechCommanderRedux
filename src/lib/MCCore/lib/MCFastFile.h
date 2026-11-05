@@ -65,6 +65,16 @@ public:
     /// <summary>The directory records, in the archive's order (for the tools; the game goes by name).</summary>
     std::span<const MCFileEntry> GetEntries() const { return _Entries; }
 
+    /// <summary>
+    /// Port-only: closes the archive's file and keeps its directory, for a reader holding more archives than a process
+    /// may keep open (the HD art pack's); the next read opens the file again, unless it changed since its directory was
+    /// read (its size or time): then reads fail, rather than reading another file by this one's offsets.
+    /// </summary>
+    void Release() { _Handle.reset(); }
+
+    /// <summary>Port-only: whether the archive's file is open (<see cref="Release"/>).</summary>
+    bool IsOpen() const { return _Handle.has_value(); }
+
     /// <summary>Lets only <see cref="Create"/> construct an archive.</summary>
     class Key
     {
@@ -76,6 +86,13 @@ public:
     explicit MCFastFile(Key) {}
 
 private:
+    /// <summary>The open archive, opened again after <see cref="Release"/>; null when it can't be.</summary>
+    MCDiskFile* File();
+
+    /// <summary>The archive's path, as opened, and its length and time then (<see cref="File"/>).</summary>
+    std::filesystem::path _Path;
+    uint32_t _Length = 0;
+    std::filesystem::file_time_type _Written{};
     /// <summary>The directory.</summary>
     std::vector<MCFileEntry> _Entries;
     /// <summary>Entry index by upper-cased name (the first entry of a name wins, as the original's search).</summary>

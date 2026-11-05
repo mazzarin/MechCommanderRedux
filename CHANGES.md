@@ -172,6 +172,8 @@ adds are in the [README](README.md#what-redux-hd-adds).
   switch drives.
 - **Redux HD.** When two of the game's `.fst` archives hold the same file, the one first by name is read, on every
   system, as Windows lists them. A loose file still comes before any archive.
+- **Redux HD.** The HD pack keeps at most 128 of its archives open at once, so a long session can't run out of the
+  files the system lets a game open and lose HD art for what it shows later.
 
 ### Mission Editor
 

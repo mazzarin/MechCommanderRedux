@@ -18,7 +18,6 @@ namespace
     /// <summary>A request's head must arrive within this, or the test host drops it.</summary>
     constexpr auto RequestTime = 5s;
     constexpr auto PollTime = 1ms;
-    constexpr auto CutWait = 300ms;
     /// <summary>A cancel ends a wait to try again (a second, the first) well before it would end.</summary>
     constexpr auto CancelledWithin = 800ms;
     /// <summary>The longest a stalled answer holds its connection, and how soon a cancel ends a transfer stalled.</summary>
@@ -79,8 +78,18 @@ namespace
 
         void IgnoreRanges() { _IgnoreRanges = true; }
 
-        /// <summary>The next answer's body stops after <paramref name="bytes"/> bytes.</summary>
-        void CutAfter(int64_t bytes) { _CutAfter = bytes; }
+        /// <summary>
+        /// The next answer's body stops after <paramref name="bytes"/> bytes; the connection closes once the client
+        /// has passed them on (<see cref="Passed"/>), as a connection lost midway has been passing bytes on all along.
+        /// </summary>
+        void CutAfter(int64_t bytes)
+        {
+            _Passed = 0;
+            _CutAfter = bytes;
+        }
+
+        /// <summary>The client passed on <paramref name="bytes"/> more bytes (its fetch's received).</summary>
+        void Passed(uint64_t bytes) { _Passed += bytes; }
 
         /// <summary>
         /// The next answer sends <paramref name="bytes"/> bytes of its body, then nothing more, the connection held
@@ -244,11 +253,16 @@ namespace
                 Hold(client);
             }
 
-            // A connection lost midway has been passing bytes on all along; NSURLSession drops what it holds unpassed
-            // when the connection goes, so the cut waits for what was sent to be passed on.
+            // NSURLSession drops what it holds unpassed when the connection goes, so the cut waits for what was sent to
+            // be passed on (or a long while).
             if (cut >= 0)
             {
-                std::this_thread::sleep_for(CutWait);
+                const auto deadline = std::chrono::steady_clock::now() + RequestTime;
+
+                while (_Passed < body.size() && !_Stop && std::chrono::steady_clock::now() < deadline)
+                {
+                    std::this_thread::sleep_for(PollTime);
+                }
             }
         }
 
@@ -301,6 +315,7 @@ namespace
         std::atomic<bool> _Stop = false;
         std::atomic<bool> _IgnoreRanges = false;
         std::atomic<int64_t> _CutAfter = -1;
+        std::atomic<uint64_t> _Passed = 0;
         std::atomic<int64_t> _StallAfter = -1;
         std::atomic<size_t> _PaceBytes = 0;
         std::atomic<std::chrono::milliseconds> _PaceWait{};
@@ -346,7 +361,14 @@ TEST_CASE("content source: a hosted file comes whole; one cut off is tried again
     constexpr int64_t CutBytes = 100'000;
     host.CutAfter(CutBytes);
     uint64_t received = 0;
-    CHECK_EQ(Fetch(*source, ZipName, to, zip.size(), received).error_or(""), std::string());
+    const auto passed = source->Fetch(ZipName, to, zip.size(),
+                                      [&](std::span<const char> bytes)
+                                      {
+                                          received += bytes.size();
+                                          host.Passed(bytes.size());
+                                          return true;
+                                      });
+    CHECK_EQ(passed.error_or(""), std::string());
     CHECK(FileText(to) == zip);
     CHECK_EQ(received, uint64_t{ZipBytes});
     const std::vector<std::string> ranges = host.Ranges();

@@ -222,6 +222,50 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
 }
 
+TEST_CASE("content stage: a checked download resumes, hashed as it comes; one not as named goes, a stopped one stays")
+{
+    using MCKind = MCContentStage::MCFetchError::MCKind;
+    MCRelease release(Group, "checked");
+    const MCContentList::MCZip& zip = release.List.Zips[1];
+    const std::string bytes = Read(release.Host.Path() / zip.Name);
+    const std::filesystem::path to = release.Game.Path() / "download" / zip.Name;
+    MCFolderSource source(release.Host.Path());
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    uint64_t received = 0;
+    const auto count = [&](uint64_t count)
+    {
+        received += count;
+        return true;
+    };
+
+    // Cut off, then resumed: the bytes here count, and the whole is the list's.
+    Write(to, bytes.substr(0, SendBytes));
+    REQUIRE(MCContentStage::FetchChecked(*disk, source, zip.Name, to, zip.Size, zip.Sha256, count).has_value());
+    CHECK(Read(to) == bytes);
+    CHECK_EQ(received, zip.Size);
+    CHECK_EQ(source.Sent(), zip.Size - SendBytes);
+
+    // Here whole: nothing is fetched, the bytes are checked.
+    REQUIRE(MCContentStage::FetchChecked(*disk, source, zip.Name, to, zip.Size, zip.Sha256, count).has_value());
+    CHECK_EQ(source.Sent(), zip.Size - SendBytes);
+
+    // A damaged start resumed from: not as named, so it goes.
+    std::string damaged = bytes.substr(0, SendBytes);
+    damaged[0] ^= 1;
+    Write(to, damaged);
+    const auto refused = MCContentStage::FetchChecked(*disk, source, zip.Name, to, zip.Size, zip.Sha256, count);
+    REQUIRE(!refused.has_value());
+    CHECK(refused.error().Kind == MCKind::NotAsNamed);
+    CHECK(!std::filesystem::exists(to));
+
+    // Stopped midway: what came stays.
+    const auto stopped = MCContentStage::FetchChecked(*disk, source, zip.Name, to, zip.Size, zip.Sha256,
+                                                      [](uint64_t count) { return count == 0; });
+    REQUIRE(!stopped.has_value());
+    CHECK(stopped.error().Kind == MCKind::Stopped);
+    CHECK_EQ(std::filesystem::file_size(to), uint64_t{SendBytes});
+}
+
 TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched or applied, no zip fetched")
 {
     MCRelease release(Group, "stop");

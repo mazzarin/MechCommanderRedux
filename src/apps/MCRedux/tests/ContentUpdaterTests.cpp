@@ -171,13 +171,13 @@ namespace
         }
 
         std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
-                                               const std::function<bool(uint64_t)>& received) override
+                                               const std::function<bool(std::span<const char>)>& received) override
         {
             _Gate->Reached = true;
 
             while (!_Gate->Open)
             {
-                if (!received(0))
+                if (!received({}))
                 {
                     return std::unexpected("stopped");
                 }

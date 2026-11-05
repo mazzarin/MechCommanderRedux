@@ -143,7 +143,8 @@ namespace
     class MCFileReply final : public MCCheckedReply
     {
     public:
-        MCFileReply(std::ofstream& out, uint64_t at, uint64_t size, const std::function<bool(uint64_t)>& received)
+        MCFileReply(std::ofstream& out, uint64_t at, uint64_t size,
+                    const std::function<bool(std::span<const char>)>& received)
             : _Out(out), _At(at), _Size(size), _Received(received)
         {
         }
@@ -192,7 +193,7 @@ namespace
             }
 
             _At += bytes.size();
-            return _Received(bytes.size()) || Fail(std::string(StoppedError), MCKind::Stopped);
+            return _Received(bytes) || Fail(std::string(StoppedError), MCKind::Stopped);
         }
 
     private:
@@ -200,7 +201,7 @@ namespace
         uint64_t _At;
         uint64_t _Size;
         uint64_t _Skip = 0;
-        const std::function<bool(uint64_t)>& _Received;
+        const std::function<bool(std::span<const char>)>& _Received;
     };
 
     /// <summary>A small file read whole, up to a most.</summary>
@@ -238,7 +239,7 @@ namespace
         }
 
         std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
-                                               const std::function<bool(uint64_t)>& received) override
+                                               const std::function<bool(std::span<const char>)>& received) override
         {
             return Tried(name, [&](bool& progressed) { return FetchOnce(name, to, size, received, progressed); });
         }
@@ -331,7 +332,8 @@ namespace
 
         /// <summary>One try at a download, from the bytes already in its file on.</summary>
         std::expected<void, MCFailure> FetchOnce(std::string_view name, const std::filesystem::path& to, uint64_t size,
-                                                 const std::function<bool(uint64_t)>& received, bool& progressed)
+                                                 const std::function<bool(std::span<const char>)>& received,
+                                                 bool& progressed)
         {
             std::error_code error;
             const uint64_t at = std::filesystem::exists(to, error) ? std::filesystem::file_size(to, error) : 0;

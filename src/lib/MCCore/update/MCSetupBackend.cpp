@@ -164,41 +164,28 @@ namespace
         }
 
         const std::filesystem::path setup = SetupPath(gameFolder, program.Build);
-        std::error_code error;
-        std::filesystem::create_directories(setup.parent_path(), error);
-        uint64_t had = std::filesystem::exists(setup, error) ? std::filesystem::file_size(setup, error) : 0;
-
-        // Longer than the program, it isn't a cut-off download of it: fetched again.
-        if (had > program.Size)
-        {
-            std::filesystem::remove(setup, error);
-            had = 0;
-        }
-
-        {
-            const std::lock_guard lock(download.Mutex);
-            download.Received = had;
-        }
-
-        const auto fetched = (*source)->Fetch(split->second, setup, program.Size,
-                                              [&](uint64_t bytes)
-                                              {
-                                                  const std::lock_guard lock(download.Mutex);
-                                                  download.Received += bytes;
-                                                  return !stop.stop_requested();
-                                              });
+        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+        const auto fetched =
+            MCContentStage::FetchChecked(*disk, **source, split->second, setup, program.Size, *program.Sha256,
+                                         [&](uint64_t bytes)
+                                         {
+                                             const std::lock_guard lock(download.Mutex);
+                                             download.Received += bytes;
+                                             return !stop.stop_requested();
+                                         });
 
         if (!fetched)
         {
-            return std::unexpected(fetched.error());
+            using MCKind = MCContentStage::MCFetchError::MCKind;
+            return std::unexpected(fetched.error().Kind == MCKind::NotAsNamed
+                                       ? std::string("the program's download isn't the one release.json names")
+                                       : fetched.error().Reason);
         }
 
-        const auto hash = MCSha256::OfFile(setup);
-
-        if (!hash || std::filesystem::file_size(setup, error) != program.Size || *hash != *program.Sha256)
+        // Its bytes on the disk before it's armed; the armed record's durable write flushes their folder.
+        if (!disk->FlushFile(setup))
         {
-            std::filesystem::remove(setup, error);
-            return std::unexpected("the program's download isn't the one release.json names");
+            return std::unexpected(std::format("{} can't be flushed", MCFileSystem::ToUtf8(setup)));
         }
 
         if (const std::string refused = runnable ? runnable(setup) : std::string(); !refused.empty())
@@ -213,7 +200,6 @@ namespace
         }
 
         const MCArmed armed{.Build = program.Build, .Sha256 = *program.Sha256, .Arguments = program.Silent};
-        const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
         if (!WriteDurably(*disk, In(gameFolder, MCSetupBackend::ArmedFile), ArmedText(armed)))
         {

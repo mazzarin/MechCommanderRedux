@@ -84,7 +84,7 @@ namespace MCContentFixture
         const std::vector<std::string>& Asked() const { return _Asked; }
 
         std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
-                                               const std::function<bool(uint64_t)>& received) override
+                                               const std::function<bool(std::span<const char>)>& received) override
         {
             _Asked.emplace_back(name);
             std::ifstream from(_Folder / MCFileSystem::FromUtf8(name), std::ios::binary);
@@ -116,7 +116,7 @@ namespace MCContentFixture
                 sent += count;
                 _Sent += count;
 
-                if (!received(count))
+                if (!received({buffer.data(), static_cast<size_t>(count)}))
                 {
                     return std::unexpected("stopped");
                 }

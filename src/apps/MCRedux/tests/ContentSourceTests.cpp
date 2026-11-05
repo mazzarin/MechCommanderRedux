@@ -264,9 +264,9 @@ namespace
                                            const std::filesystem::path& to, uint64_t size, uint64_t& received)
     {
         return source.Fetch(name, to, size,
-                            [&](uint64_t count)
+                            [&](std::span<const char> bytes)
                             {
-                                received += count;
+                                received += bytes.size();
                                 return true;
                             });
     }
@@ -392,7 +392,7 @@ TEST_CASE("content source: a missing file, or one shorter or longer than the lis
     CHECK(longer.error_or("").find("longer than the list says") != std::string::npos);
 
     const auto stopped =
-        source->Fetch(ZipName, folder.Path() / "stopped.zip", zip.size(), [](uint64_t) { return false; });
+        source->Fetch(ZipName, folder.Path() / "stopped.zip", zip.size(), [](std::span<const char>) { return false; });
     CHECK_EQ(stopped.error_or(""), std::string("stopped"));
 }
 

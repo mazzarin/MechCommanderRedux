@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCSha256.h"
 #include "update/MCContentPlan.h"
 #include "update/MCContentSwap.h"
 
@@ -10,8 +11,8 @@ class MCUpdateDisk;
 /// of its own while the game plays. Each patched file is written anew in <c>Redux update/staged/</c> by applying its
 /// patch to the copy on disk (lib/MCFilePatch.h, HDiffPatch); one whose patch fails, or whose result isn't the list's
 /// hash, is fetched whole instead. Only the zips holding a fetched file are downloaded (into <c>Redux
-/// update/download/</c>, resuming where a cut-off download stopped), each checked against the list, and only those
-/// entries unpacked. Every staged file is hash-checked and flushed. Arming it, once the program's half of the update is
+/// update/download/</c>, resuming where a cut-off download stopped), each checked against the list as it arrives, and
+/// only those entries unpacked, each checked as it's written. Every staged file is flushed. Arming it, once the program's half of the update is
 /// in too, writes the journal-to-be (update/MCContentSwap.h), and the swap happens at the next start. Stopped midway,
 /// or staged and never armed, the next attempt keeps every staged file that's already right.
 /// </summary>
@@ -29,12 +30,13 @@ namespace MCContentStage
         /// <summary>
         /// Appends to <paramref name="to"/> the bytes of the hosted file <paramref name="name"/> from <paramref
         /// name="to"/>'s size on, up to <paramref name="size"/> bytes in all, so a cut-off download resumes.
-        /// <paramref name="received"/> gets each count of bytes that arrives, and returns false to stop.
+        /// <paramref name="received"/> gets each piece once it's written, in order (so it can be hashed as it comes),
+        /// and returns false to stop.
         /// </summary>
         /// <returns>Nothing, or what failed.</returns>
         virtual std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to,
                                                        uint64_t size,
-                                                       const std::function<bool(uint64_t)>& received) = 0;
+                                                       const std::function<bool(std::span<const char>)>& received) = 0;
 
         /// <summary>
         /// The hosted file <paramref name="name"/> whole (the key list, <c>release.json</c>, a list), refused past
@@ -49,6 +51,36 @@ namespace MCContentStage
         /// </summary>
         virtual void Cancel() {}
     };
+
+    /// <summary>Why a checked download (<see cref="FetchChecked"/>) failed.</summary>
+    struct MCFetchError
+    {
+        enum class MCKind : uint8_t
+        {
+            /// <summary>It didn't download (no connection, the host's refusal, a write that failed).</summary>
+            Download,
+            /// <summary>It came, but isn't the size and hash it was to be: it's deleted.</summary>
+            NotAsNamed,
+            /// <summary>Stopped: what's in stays for the next try.</summary>
+            Stopped,
+        };
+
+        MCKind Kind = MCKind::Download;
+        std::string Reason;
+    };
+
+    /// <summary>
+    /// Downloads the hosted file <paramref name="name"/> into <paramref name="to"/> from <paramref name="source"/>,
+    /// resuming a cut-off download (one longer than <paramref name="size"/> starts again), and checks it's <paramref
+    /// name="size"/> bytes of SHA-256 <paramref name="sha256"/>: the bytes are hashed as they arrive, those already
+    /// here once first. One that isn't is deleted. <paramref name="received"/> gets the bytes already here, then each
+    /// count that arrives (0: asked whether to go on), and returns false to stop.
+    /// </summary>
+    /// <returns>Nothing, or what failed.</returns>
+    std::expected<void, MCFetchError> FetchChecked(MCUpdateDisk& disk, MCSource& source, std::string_view name,
+                                                   const std::filesystem::path& to, uint64_t size,
+                                                   const MCSha256::MCDigest& sha256,
+                                                   const std::function<bool(uint64_t)>& received);
 
     /// <summary>The moves the swap makes for <paramref name="plan"/>.</summary>
     std::vector<MCContentSwap::MCMove> Moves(const MCContentPlan::MCPlan& plan);

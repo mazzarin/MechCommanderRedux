@@ -34,14 +34,16 @@ namespace
     }
 
     /// <summary>
-    /// Where an entry is unpacked to, whether writing it failed (the disk's fault, not the zip's), and whether it was
-    /// stopped (asked before each piece).
+    /// Where an entry is unpacked to, its bytes and hash as they're written, whether writing failed (the disk's fault,
+    /// not the zip's), and whether it was stopped (asked before each piece).
     /// </summary>
     struct MCEntrySink
     {
         explicit MCEntrySink(const std::function<bool()>& goOn) : GoOn(goOn) {}
 
         std::ofstream Out;
+        MCSha256::MCHasher Hasher;
+        uint64_t Written = 0;
         const std::function<bool()>& GoOn;
         bool WriteFailed = false;
         bool Stopped = false;
@@ -58,9 +60,18 @@ namespace
             return 0;
         }
 
-        sink.Out.write(static_cast<const char*>(buffer), static_cast<std::streamsize>(count));
+        const std::span<const char> bytes(static_cast<const char*>(buffer), count);
+        sink.Out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         sink.WriteFailed = sink.WriteFailed || !sink.Out;
-        return sink.WriteFailed ? 0 : count;
+
+        if (sink.WriteFailed)
+        {
+            return 0;
+        }
+
+        sink.Hasher.Add(bytes);
+        sink.Written += bytes.size();
+        return count;
     }
 
     class MCStager
@@ -190,7 +201,9 @@ namespace
             return At(MCContentStage::DownloadFolder) / MCFileSystem::FromUtf8(name);
         }
 
-        /// <summary>Whether the step's file is already staged as the list has it (an earlier attempt's).</summary>
+        /// <summary>
+        /// Whether the step's file is staged as the list has it: found staged by an earlier attempt, or just patched.
+        /// </summary>
         bool IsStaged(const MCStep& step)
         {
             const MCUpdateDisk::MCStat stat = _Disk.Stat(StagedPath(step));
@@ -280,58 +293,25 @@ namespace
                                                                        const MCSha256::MCDigest& sha256)
         {
             const std::filesystem::path path = DownloadPath(name);
-            MCUpdateDisk::MCStat stat = _Disk.Stat(path);
+            const auto fetched = MCContentStage::FetchChecked(_Disk, _Source, name, path, size, sha256,
+                                                              [this](uint64_t count) { return Received(count); });
 
-            if (stat.Exists && (stat.Folder || stat.Size > size))
+            if (fetched)
             {
-                _Disk.Remove(path);
-                stat = {};
+                return path;
             }
 
-            if (!_Disk.MakeFolders(path.parent_path()))
+            switch (fetched.error().Kind)
             {
-                return std::unexpected(std::format("{} can't be made", Shown(path.parent_path())));
+                case MCContentStage::MCFetchError::MCKind::Stopped:
+                    return Stop();
+                case MCContentStage::MCFetchError::MCKind::NotAsNamed:
+                    return std::unexpected(std::format("{} isn't as the list has it", name));
+                case MCContentStage::MCFetchError::MCKind::Download:
+                    break;
             }
 
-            if (!Received(stat.Size))
-            {
-                return Stop();
-            }
-
-            if (stat.Size < size)
-            {
-                const auto fetched = _Source.Fetch(name, path, size, [&](uint64_t count) { return Received(count); });
-
-                if (!fetched)
-                {
-                    if (Stopped() || fetched.error() == StoppedError)
-                    {
-                        return Stop();
-                    }
-
-                    return std::unexpected(std::format("{} didn't download: {}", name, fetched.error()));
-                }
-            }
-
-            if (Stopped())
-            {
-                return Stop();
-            }
-
-            const auto hash = MCSha256::OfFile(path, _GoOn);
-
-            if (Stopped())
-            {
-                return Stop();
-            }
-
-            if (_Disk.Stat(path).Size != size || !hash || *hash != sha256)
-            {
-                _Disk.Remove(path);
-                return std::unexpected(std::format("{} isn't as the list has it", name));
-            }
-
-            return path;
+            return std::unexpected(std::format("{} didn't download: {}", name, fetched.error().Reason));
         }
 
         /// <summary>Writes the patched file to staged/; fails (and leaves nothing) when it can't.</summary>
@@ -468,15 +448,8 @@ namespace
                     break;
                 }
 
-                if (!unpacked || !IsStaged(*step))
+                if (!unpacked || sink.Written != step->File->Size || sink.Hasher.Finish() != step->File->Sha256)
                 {
-                    if (Stopped())
-                    {
-                        error = StoppedError;
-                        keepZip = true;
-                        break;
-                    }
-
                     _Disk.Remove(staged);
                     error = std::format("{} from {} isn't the release's", step->File->Path, zip.Name);
                     break;
@@ -575,6 +548,98 @@ namespace
         /// <summary>Asked in the long loops (a hash's reads, a patch's writes, an entry's): false once stopped.</summary>
         const std::function<bool()> _GoOn = [this] { return !Stopped(); };
     };
+}
+
+std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
+    MCUpdateDisk& disk, MCSource& source, std::string_view name, const std::filesystem::path& to, uint64_t size,
+    const MCSha256::MCDigest& sha256, const std::function<bool(uint64_t)>& received)
+{
+    using MCKind = MCFetchError::MCKind;
+    bool stopped = false;
+    const auto goOn = [&](uint64_t count)
+    {
+        stopped = stopped || !received(count);
+        return !stopped;
+    };
+
+    MCUpdateDisk::MCStat stat = disk.Stat(to);
+
+    // A folder, or longer than the file: not a cut-off download of it, fetched again.
+    if (stat.Exists && (stat.Folder || stat.Size > size))
+    {
+        if (!disk.Remove(to))
+        {
+            return std::unexpected(MCFetchError{MCKind::Download, std::format("{} can't be deleted", Shown(to))});
+        }
+
+        stat = {};
+    }
+
+    if (!disk.MakeFolders(to.parent_path()))
+    {
+        return std::unexpected(
+            MCFetchError{MCKind::Download, std::format("{} can't be made", Shown(to.parent_path()))});
+    }
+
+    // The bytes already here hashed once; those that arrive, as they come.
+    MCSha256::MCHasher hasher;
+    uint64_t hashed = 0;
+
+    if (stat.Exists)
+    {
+        const auto added = hasher.AddFile(to, stat.Size, [&] { return goOn(0); });
+
+        if (!added)
+        {
+            return std::unexpected(stopped ? MCFetchError{MCKind::Stopped, std::string(StoppedError)}
+                                           : MCFetchError{MCKind::Download, added.error()});
+        }
+
+        hashed = *added;
+    }
+
+    if (!goOn(hashed))
+    {
+        return std::unexpected(MCFetchError{MCKind::Stopped, std::string(StoppedError)});
+    }
+
+    if (hashed < size)
+    {
+        const auto fetched = source.Fetch(name, to, size,
+                                          [&](std::span<const char> bytes)
+                                          {
+                                              hasher.Add(bytes);
+                                              hashed += bytes.size();
+                                              return goOn(bytes.size());
+                                          });
+
+        if (!fetched)
+        {
+            if (stopped || fetched.error() == StoppedError)
+            {
+                return std::unexpected(MCFetchError{MCKind::Stopped, std::string(StoppedError)});
+            }
+
+            return std::unexpected(MCFetchError{MCKind::Download, fetched.error()});
+        }
+    }
+
+    if (!goOn(0))
+    {
+        return std::unexpected(MCFetchError{MCKind::Stopped, std::string(StoppedError)});
+    }
+
+    if (hashed != size || disk.Stat(to).Size != size || hasher.Finish() != sha256)
+    {
+        if (!disk.Remove(to))
+        {
+            SDL_Log("Updates: %s, not as named, can't be deleted", Shown(to).c_str());
+        }
+
+        return std::unexpected(MCFetchError{MCKind::NotAsNamed, std::format("{} isn't as named", name)});
+    }
+
+    return {};
 }
 
 std::vector<MCContentSwap::MCMove> MCContentStage::Moves(const MCContentPlan::MCPlan& plan)

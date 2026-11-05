@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include <chrono>
+#include <fstream>
+#include <mutex>
 #include "MCConsole.h"
 #include "MCContentAtStart.h"
 #include "MCCrashTrace.h"
@@ -73,7 +76,8 @@ namespace
     /// workspace), laid out as the release script writes it (SPEC-install-and-updates.md's Hosting). The key list and
     /// release.json come from it alone; the content from it and release.json's mirrors (update/MCHttpSource.h).
     /// </summary>
-    constexpr std::string_view ContentHost = "https://mechcommander-redux-downloads.mazzarin.workers.dev";
+    // TRIAL BUILD ONLY (release-trial; never merged): the trial host on this machine.
+    constexpr std::string_view ContentHost = "http://127.0.0.1:8765";
 
     /// <summary>
     /// The root keys' public halves (base64), one of which signs the key list (SPEC-install-and-updates.md's Signing
@@ -308,8 +312,8 @@ namespace
 
         if (options.UserFolder.empty())
         {
-            const std::unique_ptr<char, decltype(&SDL_free)> prefPath(SDL_GetPrefPath(nullptr, "MechCommander Redux"),
-                                                                      &SDL_free);
+            const std::unique_ptr<char, decltype(&SDL_free)> prefPath(
+                SDL_GetPrefPath(nullptr, "MechCommander Redux Trial"), &SDL_free);
 
             if (prefPath == nullptr)
             {
@@ -569,6 +573,30 @@ int main(int argc, char** argv)
         // On a terminal the usage follows the error; a message box only needs the error.
         Report(MCConsole::HasOutput() ? std::format("{}\n\n{}", options.error(), UsageText) : options.error(), true);
         return 1;
+    }
+
+    // TRIAL BUILD ONLY (release-trial; never merged): every log line, timed, in the trial's user folder.
+    {
+        static std::ofstream trialLog;
+        static SDL_LogOutputFunction trialDefault = SDL_GetDefaultLogOutputFunction();
+        std::error_code ignored;
+        std::filesystem::create_directories(options->UserFolder, ignored);
+        trialLog.open(options->UserFolder / "trial.log", std::ios::app);
+        SDL_SetLogOutputFunction(
+            [](void* data, int category, SDL_LogPriority priority, const char* message)
+            {
+                static std::mutex mutex;
+                {
+                    const std::lock_guard lock(mutex);
+                    trialLog << std::format("{:%F %T} [{}] {}\n", std::chrono::system_clock::now(), MC_VERSION_BUILD,
+                                            message)
+                             << std::flush;
+                }
+
+                trialDefault(data, category, priority, message);
+            },
+            nullptr);
+        SDL_Log("Trial: started, user folder %s", MCFileSystem::ToUtf8(options->UserFolder).c_str());
     }
 
     if (options->RemoveContent)

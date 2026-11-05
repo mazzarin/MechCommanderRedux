@@ -44,6 +44,11 @@ namespace MCInstalled
         /// <summary>The content release installed (0: none yet) and its list's hash.</summary>
         uint64_t Release = 0;
         MCSha256::MCDigest List{};
+        /// <summary>
+        /// The epoch of the key list it was taken under (MCReleaseFile::MCKeyList's; 0 recorded by an earlier version): a
+        /// release of a later epoch comes after it whatever its number.
+        /// </summary>
+        uint64_t Epoch = 0;
         /// <summary>The sets the copy has.</summary>
         std::set<std::string, std::less<>> Sets;
         /// <summary>

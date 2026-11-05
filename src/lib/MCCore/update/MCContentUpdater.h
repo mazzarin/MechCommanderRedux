@@ -50,6 +50,8 @@ namespace MCContentUpdater
         std::filesystem::path UserFolder;
         /// <summary>The root keys the build carries: the key list must be signed by one.</summary>
         std::vector<MCSignedFile::MCPublicKey> RootKeys;
+        /// <summary>The lowest key list issue the build takes, even with no issue kept (a fresh install).</summary>
+        uint64_t LowestKeyListIssue = 0;
         /// <summary>This platform's name in <c>release.json</c> ("mac", "windows").</summary>
         std::string Platform;
         /// <summary>The build running, and its version as shown ("0.2.1 (525)").</summary>

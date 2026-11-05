@@ -55,6 +55,14 @@ namespace
     constexpr std::chrono::seconds WorkWait{30};
     constexpr std::chrono::milliseconds LookAgain{5};
 
+    /// <summary>The Mac archive's signature the hosted release.json gives (Sparkle's own checks are the backend's).</summary>
+    constexpr MCReleaseFile::MCEdSignature MacSignature = []
+    {
+        MCReleaseFile::MCEdSignature signature{};
+        signature.fill(9);
+        return signature;
+    }();
+
     /// <summary>
     /// Release 2 hosted as the release script lays it out (keys.json and release.json signed, the list under lists/),
     /// over a copy of release 1 that records it, and the copy's user folder.
@@ -70,15 +78,20 @@ namespace
             Publish(1, 2, RunningBuild);
         }
 
-        /// <summary>release.json at <paramref name="issue"/>: release <paramref name="number"/> with the list, its program at <paramref name="build"/>.</summary>
-        void Publish(uint64_t issue, uint64_t number, uint64_t build) const
+        /// <summary>
+        /// release.json at <paramref name="issue"/>: release <paramref name="number"/> with the list, its program at
+        /// <paramref name="build"/> (the Mac's with its archive's signature unless <paramref name="macSigned"/> is false).
+        /// </summary>
+        void Publish(uint64_t issue, uint64_t number, uint64_t build, bool macSigned = true) const
         {
             MCReleaseFile::MCRelease release{.Number = number,
                                              .Version = std::string(ReleaseVersion),
                                              .Notes = std::string(ReleaseNotes),
                                              .List = MCSha256::Of(ListText),
                                              .ListSize = ListText.size()};
-            release.Programs["mac"] = {.Build = build, .Size = ProgramSize};
+            release.Programs["mac"] = {.Build = build,
+                                       .Size = ProgramSize,
+                                       .EdSignature = macSigned ? std::optional(MacSignature) : std::nullopt};
             release.Programs["windows"] = {.Build = build, .Size = ProgramSize};
             const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = issue, .Current = release};
             Write(Host.Path() / "release.json",
@@ -1124,6 +1137,185 @@ TEST_CASE("content updater: the first start installs the sets chosen into a fold
     const auto newer = MCContentUpdater::CheckInstall(setup, *disk, source);
     REQUIRE(!newer.has_value());
     CHECK(newer.error().find("newer than") != std::string::npos);
+}
+
+TEST_CASE("content updater: update.json that can't be read stops the check and a skip, left as it is; issues kept that "
+          "can't be written stop the check")
+{
+    MCHostedRelease release("kept-closed");
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const std::filesystem::path kept = release.User.Path() / MCFileSystem::FromUtf8(MCReleaseFile::KeptFile);
+    MCFolderSource source(release.Host.Path());
+
+    // Damaged: never taken for none, which would lower the issues kept at the next write.
+    const std::string damaged = R"({"keyListIssue": 1, "releaseIssue": )";
+    Write(kept, damaged);
+    const auto unread = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(!unread.has_value());
+    CHECK(unread.error().find("update.json") != std::string::npos);
+    const MCContentUpdater::MCOffer skipped{.Release = {.Number = 2}};
+    CHECK(!MCContentUpdater::Skip(setup, *disk, skipped).has_value());
+    CHECK_EQ(Read(kept), damaged);
+
+    // Higher issues kept than the host's: refused, and what's kept stays.
+    const std::string higher = MCReleaseFile::KeptText({.KeyListIssue = 1, .ReleaseIssue = 5, .RolloutNumber = 7});
+    Write(kept, higher);
+    const auto older = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(!older.has_value());
+    CHECK(older.error().find("older") != std::string::npos);
+    CHECK_EQ(Read(kept), higher);
+
+#ifndef _WIN32
+    // What's kept can't be written: the check fails before the game acts on the release.
+    std::filesystem::remove(kept);
+    std::filesystem::permissions(release.User.Path(), std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::remove);
+    const auto unwritten = MCContentUpdater::Check(setup, *disk, source);
+    std::filesystem::permissions(release.User.Path(), std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::add);
+    REQUIRE(!unwritten.has_value());
+    CHECK(unwritten.error().find("can't be written") != std::string::npos);
+    CHECK(!std::filesystem::exists(kept));
+#endif
+}
+
+TEST_CASE("content updater: REPAIR and the first start never install a release older than the one installed; after a "
+          "stolen key's release numbered too high, the root's next epoch is taken over it")
+{
+    MCHostedRelease release("never-older");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::filesystem::path record = game / MCFileSystem::FromUtf8(MCInstalled::RecordPath);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    MCFolderSource source(release.Host.Path());
+
+    // The copy has release 3: the hosted release 2 is older.
+    MCInstalled::MCRecord three = release.Installed;
+    three.Release = 3;
+    Write(record, MCInstalled::Text(three));
+    const auto installed = MCContentUpdater::Install(setup, *disk, source, GoOn);
+    REQUIRE(!installed.has_value());
+    CHECK(installed.error().find("older") != std::string::npos);
+    const auto repaired = MCContentUpdater::Repair(setup, *disk, source, GoOn);
+    REQUIRE(!repaired.has_value());
+    CHECK(repaired.error().find("older") != std::string::npos);
+    CHECK(!release.Armed());
+    CHECK_EQ(Read(record), MCInstalled::Text(three));
+    const auto nothing = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(nothing.has_value());
+    CHECK(!nothing->has_value());
+
+    // A copy that took a stolen key's release.json and release, numbered too high to outbid: the epoch's files refused.
+    constexpr uint64_t TooHigh = std::numeric_limits<uint64_t>::max() - 1;
+    MCInstalled::MCRecord poisoned = release.Installed;
+    poisoned.Release = TooHigh;
+    Write(record, MCInstalled::Text(poisoned));
+    const std::filesystem::path kept = release.User.Path() / MCFileSystem::FromUtf8(MCReleaseFile::KeptFile);
+    Write(kept, MCReleaseFile::KeptText({.KeyListIssue = 1, .ReleaseIssue = TooHigh, .RolloutNumber = 7}));
+    CHECK(!MCContentUpdater::Check(setup, *disk, source).has_value());
+
+    // The root's key list of the next epoch: its release.json, issue 1, and its release 2 are taken over them.
+    Write(release.Host.Path() / "keys.json", KeyList(release.Root, 2, {release.ReleaseKey.Public}, 2, 1));
+    const auto offer = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(offer.has_value());
+    REQUIRE(offer->has_value());
+    CHECK_EQ((*offer)->Release.Number, uint64_t{2});
+    CHECK_EQ((*offer)->Release.Epoch, uint64_t{1});
+    REQUIRE((*offer)->Content != nullptr);
+    PutInPlace(release, **offer);
+    const auto now = MCInstalled::Read(game);
+    REQUIRE(now.has_value());
+    CHECK_EQ(now->Release, uint64_t{2});
+    CHECK_EQ(now->Epoch, uint64_t{1});
+    const auto keptNow = MCReleaseFile::ReadKept(Read(kept));
+    REQUIRE(keptNow.has_value());
+    CHECK_EQ(keptNow->Epoch, uint64_t{1});
+    CHECK_EQ(keptNow->ReleaseIssue, uint64_t{1});
+    const auto installedAgain = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(installedAgain.has_value());
+    CHECK(!installedAgain->has_value());
+
+    // The earlier epoch's key list served again is refused.
+    Write(release.Host.Path() / "keys.json", KeyList(release.Root, 3, {release.ReleaseKey.Public}));
+    const auto earlier = MCContentUpdater::Check(setup, *disk, source);
+    REQUIRE(!earlier.has_value());
+    CHECK(earlier.error().find("epoch") != std::string::npos);
+}
+
+TEST_CASE(
+    "content updater: a Mac program release.json gives no archive signature for isn't offered; Windows' needs none")
+{
+    MCHostedRelease release("mac-unsigned");
+    UpdateToRelease2(release);
+    release.Publish(2, 2, NewerBuild, false);
+    MCFolderSource source(release.Host.Path());
+    const auto mac = MCContentUpdater::Check(release.Setup(), *MakeDisk(), source);
+    REQUIRE(mac.has_value());
+    CHECK(!mac->has_value());
+
+    MCContentUpdater::MCSetup windows = release.Setup();
+    windows.Platform = MCReleaseFile::WindowsPlatform;
+    const auto program = MCContentUpdater::Check(windows, *MakeDisk(), source);
+    REQUIRE(program.has_value());
+    REQUIRE(program->has_value());
+    CHECK((*program)->ProgramBuild == NewerBuild);
+}
+
+TEST_CASE("content updater: on Windows the first start leaves the setup's launcher and editor in MCX.EXE's and "
+          "MCEditor.exe's places; on the Mac they're the release's")
+{
+    MCHostedRelease release("program-files");
+    const std::filesystem::path& game = release.Game.Path();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const std::string zip = StoredZip({{"MCX.EXE", "the original game"}, {"MCEditor.exe", "the original editor"}});
+    Write(release.Host.Path() / "program-2.zip", zip);
+    release.List.Zips.push_back({"program-2.zip", zip.size(), MCSha256::Of(zip)});
+
+    for (const std::string_view path : {"MCX.EXE", "MCEditor.exe"})
+    {
+        const std::string_view bytes = path == "MCX.EXE" ? "the original game" : "the original editor";
+        release.List.Files.push_back({.Path = std::string(path),
+                                      .Set = "game",
+                                      .Size = bytes.size(),
+                                      .Sha256 = MCSha256::Of(bytes),
+                                      .Zip = "program-2.zip"});
+    }
+
+    release.ListText = MCContentList::Write(release.List);
+    Write(release.Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(release.ListText)) + ".json"), release.ListText);
+    release.Publish(1, 2, RunningBuild);
+
+    // A folder the setup prepared: the launcher and Redux's editor, and its HD answer.
+    const auto installFor = [&](std::string_view platform)
+    {
+        std::filesystem::remove_all(game);
+        Write(game / "MCX.EXE", "the launcher");
+        Write(game / "MCEditor.exe", "Redux's editor");
+        REQUIRE(MCContentUpdater::Choose(*disk, game, WithoutHd).has_value());
+        MCContentUpdater::MCSetup setup = release.Setup();
+        setup.Platform = platform;
+        MCFolderSource source(release.Host.Path());
+        REQUIRE(MCContentUpdater::Install(setup, *disk, source, GoOn).has_value());
+        REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+        CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+        const auto record = MCInstalled::Read(game);
+        REQUIRE(record.has_value());
+        return *record;
+    };
+
+    const MCInstalled::MCRecord windows = installFor(MCReleaseFile::WindowsPlatform);
+    CHECK_EQ(Read(game / "MCX.EXE"), std::string("the launcher"));
+    CHECK_EQ(Read(game / "MCEditor.exe"), std::string("Redux's editor"));
+    CHECK(!std::filesystem::exists(game / "Redux backup" / "MCX.EXE"));
+    CHECK(!windows.Files.contains("MCX.EXE"));
+    CHECK(!windows.Files.contains("MCEDITOR.EXE"));
+
+    const MCInstalled::MCRecord mac = installFor(MCReleaseFile::MacPlatform);
+    CHECK_EQ(Read(game / "MCX.EXE"), std::string("the original game"));
+    CHECK_EQ(Read(game / "MCEditor.exe"), std::string("the original editor"));
+    CHECK_EQ(Read(game / "Redux backup" / "MCX.EXE"), std::string("the launcher"));
+    CHECK(mac.Files.contains("MCX.EXE"));
 }
 
 namespace

@@ -251,8 +251,8 @@ namespace
     };
 
     /// <summary>
-    /// Draws the window: the heading, the amount, the bar, and under it the speed and time left (not while checking or
-    /// stopping); saved to <paramref name="shot"/> when given.
+    /// Draws the window: the heading, the amount, the bar, and under it the speed and time left while bytes are to come
+    /// (not while checking or stopping); saved to <paramref name="shot"/> when given.
     /// </summary>
     void Draw(SDL_Renderer* renderer, std::string_view heading, const MCShown& shown, const std::filesystem::path& shot)
     {
@@ -264,9 +264,10 @@ namespace
         SDL_RenderDebugText(renderer, Margin, AmountTop,
                             MCFirstStart::AmountLine(shown.Report, shown.Stopping).c_str());
 
-        if (!shown.Stopping && !checking && expected > 0)
+        // Once all is in (the files flushed, the update armed), there's no speed to tell.
+        if (!shown.Stopping && !checking && received < expected)
         {
-            const std::string rate = shown.Rate.Text(expected - std::min(received, expected));
+            const std::string rate = shown.Rate.Text(expected - received);
             SDL_RenderDebugText(renderer, Margin, RateTop, rate.c_str());
         }
 

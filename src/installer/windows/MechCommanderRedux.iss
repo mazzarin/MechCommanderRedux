@@ -246,6 +246,8 @@ const
   // The attribute of a file or folder that is a link to elsewhere (a junction, a symbolic link):
   // FILE_ATTRIBUTE_REPARSE_POINT.
   ReparsePointAttribute = $00000400;
+  // A file Windows won't delete as it is (FILE_ATTRIBUTE_READONLY): a copy of the CD's files can carry it.
+  ReadOnlyAttribute = $00000001;
   // GetFileAttributesW's answer when it can't look (INVALID_FILE_ATTRIBUTES), and the errors that say nothing is there:
   // ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND.
   InvalidFileAttributes = -1;
@@ -287,6 +289,8 @@ function CreateHardLinkW(FileName, ExistingFileName: String; SecurityAttributes:
 // A file's or folder's own attributes (a link's, not what it leads to).
 function GetFileAttributesW(FileName: String): Longint;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+function SetFileAttributesW(FileName: String; Attributes: Longint): Integer;
+  external 'SetFileAttributesW@kernel32.dll stdcall';
 
 // The names of the files the program puts in the game folder: [Files]' and MCX.EXE, the game under its name.
 function ProgramFileNames: TArrayOfString;
@@ -1325,6 +1329,19 @@ begin
     end;
 end;
 
+// Deletes the file at Path, read-only or not (the original's, copied off the CD, may be).
+function DeleteAnyFile(const Path: String): Boolean;
+var
+  Attributes: Longint;
+begin
+  Attributes := GetFileAttributesW(Path);
+
+  if (Attributes <> InvalidFileAttributes) and ((Attributes and ReadOnlyAttribute) <> 0) then
+    SetFileAttributesW(Path, Attributes and not ReadOnlyAttribute);
+
+  Result := DeleteFile(Path);
+end;
+
 // Path (MCX.EXE, or a resolution's copy) becomes the game itself under that name: a hard link to MCRedux.exe, the same
 // file, so whatever starts the original starts Redux HD and Windows and its antivirus see no program but the game; a
 // copy where the drive holds no links (FAT32, exFAT). An update's MCRedux.exe is a new file, which the old link doesn't
@@ -1335,7 +1352,7 @@ var
 begin
   Game := AddBackslash(Folder) + '{#GameExe}';
 
-  if FileExists(Path) and not DeleteFile(Path) then
+  if FileExists(Path) and not DeleteAnyFile(Path) then
   begin
     Log(Format('Couldn''t delete %s to make it the game: left as it is', [Path]));
     Exit;

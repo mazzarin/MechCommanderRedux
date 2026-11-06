@@ -161,9 +161,10 @@ namespace
     /// </summary>
     const std::shared_ptr<std::atomic<bool>> MatchPlays = std::make_shared<std::atomic<bool>>(false);
 
-    // TRIAL BUILD ONLY (release-trial; never merged): the player's part, unattended. An update found is installed
-    // (INSTALL), one ready restarts the game (RESTART), and once the start's check leaves nothing to do the game quits,
-    // so every run ends by itself.
+    // TRIAL BUILD ONLY (release-trial; never merged): the player's part, unattended, in a scripted run (the variable
+    // MC_TRIAL_PILOT set): an update found is installed (INSTALL), one ready restarts the game (RESTART), and once the
+    // start's check leaves nothing to do the game quits, so every run ends by itself. A player at the screen without it
+    // answers as any player does.
     constexpr uint64_t TrialQuietMs = 20000;
     bool TrialInstalled = false;
     bool TrialRestarted = false;
@@ -968,7 +969,9 @@ namespace
 
     void TrialPilot()
     {
-        if (!CheckedAtStart || TrialQuit)
+        static const bool piloted = SDL_getenv("MC_TRIAL_PILOT") != nullptr;
+
+        if (!piloted || !CheckedAtStart || TrialQuit)
         {
             return;
         }

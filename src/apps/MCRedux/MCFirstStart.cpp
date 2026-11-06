@@ -4,9 +4,12 @@
 
 namespace
 {
-    /// <summary>The window's size in points; it's drawn at twice that scale, the built-in text's letters 16 points tall.</summary>
-    constexpr int WindowWidth = 560;
-    constexpr int WindowHeight = 140;
+    /// <summary>
+    /// The window's size in points (36 letters a line); it's drawn at twice that scale, the built-in text's letters 16
+    /// points tall.
+    /// </summary>
+    constexpr int WindowWidth = 640;
+    constexpr int WindowHeight = 176;
     constexpr float DrawingScale = 2.0f;
 
     /// <summary>Where the lines and the bar go, in the drawing's units (the window's points halved).</summary>
@@ -15,6 +18,23 @@ namespace
     constexpr float AmountTop = 30.0f;
     constexpr float BarTop = 48.0f;
     constexpr float BarHeight = 10.0f;
+    /// <summary>The speed and time left, under the bar.</summary>
+    constexpr float RateTop = 66.0f;
+
+    /// <summary>What the line under the heading says before the bytes are known, while what's here is checked, and once closed.</summary>
+    constexpr std::string_view LookingText = "LOOKING AT WHAT'S NEEDED.";
+    constexpr std::string_view CheckingText = "CHECKING WHAT'S ALREADY DOWNLOADED.";
+    constexpr std::string_view StoppingText = "STOPPING.";
+
+    /// <summary>What a failed download's window says, by the failure's kind (MCFirstStart::ProblemText).</summary>
+    constexpr std::string_view UnreachableText =
+        "CAN'T REACH THE DOWNLOAD SERVER. CHECK YOUR INTERNET CONNECTION, THEN TRY AGAIN.";
+    constexpr std::string_view DiskFullText =
+        "NOT ENOUGH DISK SPACE: THE DOWNLOAD NEEDS {} MORE. FREE SOME UP, THEN TRY "
+        "AGAIN.";
+    constexpr std::string_view NewerProgramText =
+        "THIS VERSION OF MECHCOMMANDER REDUX HD IS TOO OLD FOR THE GAME'S FILES. DOWNLOAD THE NEWEST INSTALLER.";
+    constexpr std::string_view OtherText = "SOMETHING WENT WRONG. TRY AGAIN, OR QUIT AND START THE GAME LATER.";
 
     /// <summary>The question's lines and buttons (<see cref="MCFirstStart::Ask"/>), in the drawing's units.</summary>
     constexpr float TextTop = AmountTop;
@@ -59,8 +79,8 @@ namespace
             auto open = std::unique_ptr<MCOpenWindow>(new MCOpenWindow());
             const SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0);
 
-            if (!SDL_CreateWindowAndRenderer("MechCommander Redux", WindowWidth, height, flags, &open->Window,
-                                             &open->Renderer))
+            if (!SDL_CreateWindowAndRenderer(std::string(MCFirstStart::WindowTitle).c_str(), WindowWidth, height, flags,
+                                             &open->Window, &open->Renderer))
             {
                 return std::unexpected(std::format("its window can't open ({})", SDL_GetError()));
             }
@@ -72,6 +92,15 @@ namespace
 
         MCOpenWindow(const MCOpenWindow&) = delete;
         MCOpenWindow& operator=(const MCOpenWindow&) = delete;
+
+        /// <summary>Makes the window <paramref name="height"/> points tall (a question's, or the progress's).</summary>
+        void SetHeight(int height)
+        {
+            if (!SDL_SetWindowSize(Window, WindowWidth, height))
+            {
+                SDL_Log("First start: the window can't be made %d points tall: %s", height, SDL_GetError());
+            }
+        }
 
         ~MCOpenWindow()
         {
@@ -213,32 +242,33 @@ namespace
         Present(renderer, shot);
     }
 
-    /// <summary>The second line: how much is in, or what's happening.</summary>
-    std::string AmountLine(uint64_t received, uint64_t expected, bool stopping)
+    /// <summary>The progress's report and the speed measured, as the window draws them.</summary>
+    struct MCShown
     {
-        if (stopping)
-        {
-            return "STOPPING.";
-        }
+        MCUpdateWork::MCProgressReport Report;
+        const MCUpdateWork::MCRate& Rate;
+        bool Stopping = false;
+    };
 
-        if (expected == 0)
-        {
-            return "LOOKING AT WHAT'S NEEDED.";
-        }
-
-        return MCUpdateWork::ProgressText(received, expected);
-    }
-
-    /// <summary>Draws the window: the heading, the amount and the bar; saved to <paramref name="shot"/> when given.</summary>
-    void Draw(SDL_Renderer* renderer, std::string_view heading, const MCFirstStart::MCProgress& progress, bool stopping,
-              const std::filesystem::path& shot)
+    /// <summary>
+    /// Draws the window: the heading, the amount, the bar, and under it the speed and time left (not while checking or
+    /// stopping); saved to <paramref name="shot"/> when given.
+    /// </summary>
+    void Draw(SDL_Renderer* renderer, std::string_view heading, const MCShown& shown, const std::filesystem::path& shot)
     {
-        const auto [received, expected] = progress.Get();
+        const auto& [received, expected, checking] = shown.Report;
         SetColor(renderer, Background);
         SDL_RenderClear(renderer);
         SetColor(renderer, Amber);
         SDL_RenderDebugText(renderer, Margin, HeadingTop, std::string(heading).c_str());
-        SDL_RenderDebugText(renderer, Margin, AmountTop, AmountLine(received, expected, stopping).c_str());
+        SDL_RenderDebugText(renderer, Margin, AmountTop,
+                            MCFirstStart::AmountLine(shown.Report, shown.Stopping).c_str());
+
+        if (!shown.Stopping && !checking && expected > 0)
+        {
+            const std::string rate = shown.Rate.Text(expected - std::min(received, expected));
+            SDL_RenderDebugText(renderer, Margin, RateTop, rate.c_str());
+        }
 
         const float barWidth = static_cast<float>(WindowWidth) / DrawingScale - 2 * Margin;
         const double share =
@@ -250,67 +280,136 @@ namespace
         SDL_RenderRect(renderer, &edge);
         Present(renderer, shot);
     }
+
+    /// <summary>
+    /// The speed's next sample: only bytes downloaded count, so the samples start again while the work looks at what's
+    /// needed or checks what's here.
+    /// </summary>
+    void Sample(MCUpdateWork::MCRate& rate, const MCUpdateWork::MCProgressReport& report,
+                const MCFirstStart::MCProgress& progress)
+    {
+        if (report.Checking || report.Expected == 0)
+        {
+            rate.Reset();
+            return;
+        }
+
+        rate.Add(std::chrono::steady_clock::now(), progress.Network());
+    }
+
+    /// <summary><see cref="MCFirstStart::Run"/> in a window open already.</summary>
+    std::expected<bool, MCFirstStart::MCFailure> RunIn(MCOpenWindow& window, std::string_view heading,
+                                                       MCFirstStart::MCWork work,
+                                                       const MCFirstStart::MCWindowOptions& options)
+    {
+        SDL_Renderer* const renderer = window.Renderer;
+        MCUpdateWork::MCWork<void, MCFirstStart::MCFailure> running(
+            std::string(heading), [work = std::move(work)](MCUpdateWork::MCContext& context)
+            { return work(context.Progress, context.Stop); });
+        bool closed = false;
+        std::chrono::steady_clock::time_point stopBy;
+        MCUpdateWork::MCRate rate;
+
+        while (!running.Finished())
+        {
+            SDL_Event event;
+
+            while (SDL_PollEvent(&event))
+            {
+                if ((event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) && !closed)
+                {
+                    SDL_Log("First start: the window was closed; the download stops");
+                    closed = true;
+                    stopBy = std::chrono::steady_clock::now() + StopWait;
+                    running.Stop();
+                }
+            }
+
+            if (closed && std::chrono::steady_clock::now() >= stopBy)
+            {
+                break;
+            }
+
+            const MCUpdateWork::MCProgressReport report = running.Progress().Report();
+            Sample(rate, report, running.Progress());
+            Draw(renderer, heading, {.Report = report, .Rate = rate, .Stopping = closed}, {});
+            SDL_WaitEventTimeout(nullptr, FrameMilliseconds);
+        }
+
+        Draw(renderer, heading,
+             {.Report = running.Progress().Report(), .Rate = rate, .Stopping = closed && !running.Finished()},
+             options.Shot);
+
+        if (closed && !running.Finished())
+        {
+            SDL_Log("First start: the download is still stopping; the game waits for it (the next start resumes it)");
+        }
+
+        if (std::expected<void, MCFirstStart::MCFailure> result = running.Join(); !result)
+        {
+            if (closed)
+            {
+                SDL_Log("First start: the work stopped: %s", result.error().Reason.c_str());
+                return false;
+            }
+
+            return std::unexpected(std::move(result.error()));
+        }
+
+        return true;
+    }
 }
 
-std::expected<bool, std::string> MCFirstStart::Run(std::string_view heading, MCWork work,
-                                                   const MCWindowOptions& options)
+std::string MCFirstStart::AmountLine(const MCUpdateWork::MCProgressReport& report, bool stopping)
+{
+    if (stopping)
+    {
+        return std::string(StoppingText);
+    }
+
+    if (report.Expected == 0)
+    {
+        return std::string(LookingText);
+    }
+
+    if (report.Checking)
+    {
+        return std::string(CheckingText);
+    }
+
+    return std::format("{} OF {}", MCUpdateWork::SizeText(report.Received), MCUpdateWork::SizeText(report.Expected));
+}
+
+std::string MCFirstStart::ProblemText(const MCFailure& failure)
+{
+    using MCUpdateWork::MCFailureKind;
+
+    switch (failure.Kind)
+    {
+        case MCFailureKind::Unreachable:
+            return std::string(UnreachableText);
+        case MCFailureKind::DiskFull:
+            return std::format(DiskFullText, MCUpdateWork::SizeText(failure.BytesShort));
+        case MCFailureKind::NewerProgram:
+            return std::string(NewerProgramText);
+        case MCFailureKind::Other:
+            break;
+    }
+
+    return std::string(OtherText);
+}
+
+std::expected<bool, MCFirstStart::MCFailure> MCFirstStart::Run(std::string_view heading, MCWork work,
+                                                               const MCWindowOptions& options)
 {
     const auto open = MCOpenWindow::Open(WindowHeight, options.Hidden);
 
     if (!open)
     {
-        return std::unexpected(open.error());
+        return std::unexpected(MCFailure{.Reason = open.error()});
     }
 
-    SDL_Renderer* const renderer = (*open)->Renderer;
-    MCUpdateWork::MCWork<void> running(std::string(heading), [work = std::move(work)](MCUpdateWork::MCContext& context)
-                                       { return work(context.Progress, context.Stop); });
-    bool closed = false;
-    std::chrono::steady_clock::time_point stopBy;
-
-    while (!running.Finished())
-    {
-        SDL_Event event;
-
-        while (SDL_PollEvent(&event))
-        {
-            if ((event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) && !closed)
-            {
-                SDL_Log("First start: the window was closed; the download stops");
-                closed = true;
-                stopBy = std::chrono::steady_clock::now() + StopWait;
-                running.Stop();
-            }
-        }
-
-        if (closed && std::chrono::steady_clock::now() >= stopBy)
-        {
-            break;
-        }
-
-        Draw(renderer, heading, running.Progress(), closed, {});
-        SDL_WaitEventTimeout(nullptr, FrameMilliseconds);
-    }
-
-    Draw(renderer, heading, running.Progress(), closed && !running.Finished(), options.Shot);
-
-    if (closed && !running.Finished())
-    {
-        SDL_Log("First start: the download is still stopping; the game waits for it (the next start resumes it)");
-    }
-
-    if (const std::expected<void, std::string> result = running.Join(); !result)
-    {
-        if (closed)
-        {
-            SDL_Log("First start: the work stopped: %s", result.error().c_str());
-            return false;
-        }
-
-        return std::unexpected(result.error());
-    }
-
-    return true;
+    return RunIn(**open, heading, std::move(work), options);
 }
 
 std::vector<std::string> MCFirstStart::Wrapped(std::string_view text, size_t width)
@@ -385,6 +484,131 @@ std::vector<std::string> MCFirstStart::Wrapped(std::string_view text, size_t wid
     return lines;
 }
 
+namespace
+{
+    /// <summary>A question laid out: its lines, its buttons, and the window's height for them, in points.</summary>
+    struct MCQuestion
+    {
+        std::vector<std::string> Lines;
+        std::vector<MCButton> Buttons;
+        int Height = 0;
+    };
+
+    MCQuestion LaidOutQuestion(std::string_view text, std::span<const std::string_view> buttons)
+    {
+        MCQuestion question{.Lines = MCFirstStart::Wrapped(text, LineLetters())};
+        const float buttonsTop = TextTop + static_cast<float>(question.Lines.size()) * LineHeight + ButtonsGap;
+        question.Buttons = LaidOut(buttons, buttonsTop);
+        question.Height = static_cast<int>((buttonsTop + ButtonHeight + Margin) * DrawingScale);
+        return question;
+    }
+
+    /// <summary><see cref="MCFirstStart::Ask"/> in a window open already, made the question's height.</summary>
+    std::optional<size_t> AskIn(MCOpenWindow& window, std::string_view heading, std::string_view text,
+                                std::span<const std::string_view> buttons, const MCFirstStart::MCWindowOptions& options)
+    {
+        const MCQuestion question = LaidOutQuestion(text, buttons);
+        const std::vector<std::string>& lines = question.Lines;
+        const std::vector<MCButton>& laidOut = question.Buttons;
+        window.SetHeight(question.Height);
+        SDL_Renderer* const renderer = window.Renderer;
+        SDL_RaiseWindow(window.Window);
+        size_t lit = 0;
+        // The button the mouse went down on: one pressed is one let go on where it went down.
+        std::optional<size_t> pressedOn;
+
+        if (options.Answer)
+        {
+            DrawQuestion(renderer, heading, lines, laidOut, *options.Answer, options.Shot);
+            return *options.Answer < buttons.size() ? options.Answer : std::nullopt;
+        }
+
+        for (;;)
+        {
+            DrawQuestion(renderer, heading, lines, laidOut, lit, {});
+            SDL_Event event;
+
+            if (!SDL_WaitEvent(&event))
+            {
+                SDL_Log("First start: the question's window gets no events: %s", SDL_GetError());
+                return std::nullopt;
+            }
+
+            do
+            {
+                switch (event.type)
+                {
+                    case SDL_EVENT_QUIT:
+                    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                        return std::nullopt;
+                    case SDL_EVENT_MOUSE_MOTION:
+                    {
+                        lit = ButtonAt(laidOut, event.motion.x, event.motion.y).value_or(lit);
+                        break;
+                    }
+                    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    {
+                        if (event.button.button == SDL_BUTTON_LEFT)
+                        {
+                            pressedOn = ButtonAt(laidOut, event.button.x, event.button.y);
+                        }
+
+                        break;
+                    }
+                    case SDL_EVENT_MOUSE_BUTTON_UP:
+                    {
+                        if (event.button.button != SDL_BUTTON_LEFT)
+                        {
+                            break;
+                        }
+
+                        const std::optional<size_t> released = ButtonAt(laidOut, event.button.x, event.button.y);
+
+                        if (released && released == pressedOn)
+                        {
+                            return released;
+                        }
+
+                        pressedOn.reset();
+                        break;
+                    }
+                    case SDL_EVENT_KEY_DOWN:
+                    {
+                        // A key held from before the window opened (Enter, starting the game) repeats: only a press counts.
+                        if (event.key.repeat)
+                        {
+                            break;
+                        }
+
+                        switch (event.key.key)
+                        {
+                            case SDLK_LEFT:
+                                lit = (lit + buttons.size() - 1) % buttons.size();
+                                break;
+                            case SDLK_RIGHT:
+                            case SDLK_TAB:
+                                lit = (lit + 1) % buttons.size();
+                                break;
+                            case SDLK_RETURN:
+                            case SDLK_KP_ENTER:
+                            case SDLK_SPACE:
+                                return lit;
+                            case SDLK_ESCAPE:
+                                return buttons.size() - 1;
+                            default:
+                                break;
+                        }
+
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            } while (SDL_PollEvent(&event));
+        }
+    }
+}
+
 std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_view text,
                                         std::span<const std::string_view> buttons, const MCWindowOptions& options)
 {
@@ -393,11 +617,7 @@ std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_vi
         return std::nullopt;
     }
 
-    const std::vector<std::string> lines = Wrapped(text, LineLetters());
-    const float buttonsTop = TextTop + static_cast<float>(lines.size()) * LineHeight + ButtonsGap;
-    const std::vector<MCButton> laidOut = LaidOut(buttons, buttonsTop);
-    const auto open =
-        MCOpenWindow::Open(static_cast<int>((buttonsTop + ButtonHeight + Margin) * DrawingScale), options.Hidden);
+    const auto open = MCOpenWindow::Open(LaidOutQuestion(text, buttons).Height, options.Hidden);
 
     if (!open)
     {
@@ -406,99 +626,41 @@ std::optional<size_t> MCFirstStart::Ask(std::string_view heading, std::string_vi
         return std::nullopt;
     }
 
-    SDL_Renderer* const renderer = (*open)->Renderer;
-    SDL_RaiseWindow((*open)->Window);
-    size_t lit = 0;
-    // The button the mouse went down on: one pressed is one let go on where it went down.
-    std::optional<size_t> pressedOn;
+    return AskIn(**open, heading, text, buttons, options);
+}
 
-    if (options.Answer)
+std::expected<bool, std::string> MCFirstStart::RunAsking(std::string_view heading, const MCWork& work,
+                                                         const MCWindowOptions& options)
+{
+    const auto open = MCOpenWindow::Open(WindowHeight, options.Hidden);
+
+    if (!open)
     {
-        DrawQuestion(renderer, heading, lines, laidOut, *options.Answer, options.Shot);
-        return *options.Answer < buttons.size() ? options.Answer : std::nullopt;
+        return std::unexpected(open.error());
     }
+
+    constexpr std::array<std::string_view, 2> Buttons = {TryAgainButton, QuitButton};
 
     for (;;)
     {
-        DrawQuestion(renderer, heading, lines, laidOut, lit, {});
-        SDL_Event event;
+        const std::expected<bool, MCFailure> done = RunIn(**open, heading, work, options);
 
-        if (!SDL_WaitEvent(&event))
+        if (done)
         {
-            SDL_Log("First start: the question's window gets no events: %s", SDL_GetError());
-            return std::nullopt;
+            return *done;
         }
 
-        do
+        SDL_Log("First start: %s failed: %s; the window asks whether to try again", std::string(heading).c_str(),
+                done.error().Reason.c_str());
+        const std::optional<size_t> answer = AskIn(**open, ProblemHeading, ProblemText(done.error()), Buttons, options);
+
+        if (!answer || Buttons[*answer] == QuitButton)
         {
-            switch (event.type)
-            {
-                case SDL_EVENT_QUIT:
-                case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-                    return std::nullopt;
-                case SDL_EVENT_MOUSE_MOTION:
-                {
-                    lit = ButtonAt(laidOut, event.motion.x, event.motion.y).value_or(lit);
-                    break;
-                }
-                case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                {
-                    if (event.button.button == SDL_BUTTON_LEFT)
-                    {
-                        pressedOn = ButtonAt(laidOut, event.button.x, event.button.y);
-                    }
+            SDL_Log("First start: the player quit; the next start carries on");
+            return false;
+        }
 
-                    break;
-                }
-                case SDL_EVENT_MOUSE_BUTTON_UP:
-                {
-                    if (event.button.button != SDL_BUTTON_LEFT)
-                    {
-                        break;
-                    }
-
-                    const std::optional<size_t> released = ButtonAt(laidOut, event.button.x, event.button.y);
-
-                    if (released && released == pressedOn)
-                    {
-                        return released;
-                    }
-
-                    pressedOn.reset();
-                    break;
-                }
-                case SDL_EVENT_KEY_DOWN:
-                {
-                    // A key held from before the window opened (Enter, starting the game) repeats: only a press counts.
-                    if (event.key.repeat)
-                    {
-                        break;
-                    }
-
-                    switch (event.key.key)
-                    {
-                        case SDLK_LEFT:
-                            lit = (lit + buttons.size() - 1) % buttons.size();
-                            break;
-                        case SDLK_RIGHT:
-                        case SDLK_TAB:
-                            lit = (lit + 1) % buttons.size();
-                            break;
-                        case SDLK_RETURN:
-                        case SDLK_KP_ENTER:
-                        case SDLK_SPACE:
-                            return lit;
-                        case SDLK_ESCAPE:
-                            return buttons.size() - 1;
-                        default:
-                            break;
-                    }
-
-                    break;
-                }
-                default:
-                    break;
-            }
-        } while (SDL_PollEvent(&event));
+        SDL_Log("First start: the player tries again");
+        (*open)->SetHeight(WindowHeight);
     }
 }

@@ -189,10 +189,10 @@ TEST_CASE("content stage: the patch applied, files fetched from the zips holding
     uint64_t lastReceived = 0;
     uint64_t lastExpected = 0;
     const auto staged = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                              [&](uint64_t received, uint64_t expected)
+                                              [&](const MCUpdateWork::MCProgressReport& report)
                                               {
-                                                  lastReceived = received;
-                                                  lastExpected = expected;
+                                                  lastReceived = report.Received;
+                                                  lastExpected = report.Expected;
                                                   return true;
                                               });
     REQUIRE(staged.has_value());
@@ -235,7 +235,7 @@ TEST_CASE("content stage: the patch applied, files fetched from the zips holding
     // Staging again over a ready update is refused: it swaps in first.
     const auto twice = MCContentStage::Stage(*disk, source, release.Game.Path(), *repair, release.List, GoOn);
     REQUIRE(!twice.has_value());
-    CHECK(twice.error().find("already staged") != std::string::npos);
+    CHECK(twice.error().Reason.find("already staged") != std::string::npos);
     CHECK(MCContentSwap::Run(*disk, release.Game.Path()).Outcome == MCContentSwap::MCOutcome::Swapped);
     release.CheckIsRelease2();
     const auto repaired = MCInstalled::Read(release.Game.Path());
@@ -252,7 +252,7 @@ TEST_CASE("content stage: a cut-off download resumes where it stopped; files alr
     source.CutAfter(SendBytes * 3);
     const auto cut = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!cut.has_value());
-    CHECK(cut.error().find("connection was lost") != std::string::npos);
+    CHECK(cut.error().Reason.find("connection was lost") != std::string::npos);
     CHECK(MCContentSwap::Waiting(*disk, release.Game.Path()) == false);
 
     // The patch had staged before the zip was cut off: the next attempt fetches only the rest of the zip.
@@ -290,7 +290,7 @@ TEST_CASE("content stage: a patch that doesn't apply fetches the file whole; a z
     MCFolderSource otherSource(other.Host.Path());
     const auto refused = MCContentStage::Stage(*disk, otherSource, other.Game.Path(), otherPlan, other.List, GoOn);
     REQUIRE(!refused.has_value());
-    CHECK(refused.error().find("isn't as the list has it") != std::string::npos);
+    CHECK(refused.error().Reason.find("isn't as the list has it") != std::string::npos);
     CHECK(MCContentSwap::Waiting(*disk, other.Game.Path()) == false);
     CHECK_EQ(Read(other.Game.Path() / "data" / "changed.fit"), std::string("changed v1"));
 }
@@ -354,16 +354,18 @@ TEST_CASE("content stage: a stop ends staging at once: no later patch is fetched
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     // STOP from the start: nothing is fetched, and the patch already here isn't applied.
     const auto never = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                             [](uint64_t, uint64_t) { return false; });
-    CHECK_EQ(never.error_or(""), std::string("stopped"));
+                                             [](const MCUpdateWork::MCProgressReport&) { return false; });
+    CHECK_EQ(never.error_or(MCUpdateWork::MCFailure{}).Reason, std::string("stopped"));
     CHECK(source.Asked().empty());
     CHECK(!std::filesystem::exists(StagedAt(release, "HD/b.hda")));
 
-    // STOP as the first patch's bytes arrive.
+    // STOP as the first patch's bytes arrive: b's, downloaded already, count as in from the first report.
+    const uint64_t downloaded = Text(MCFilePatchFixture::CheckedPatch).size();
     const auto stopped = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                               [](uint64_t received, uint64_t) { return received == 0; });
+                                               [&](const MCUpdateWork::MCProgressReport& report)
+                                               { return report.Received == downloaded; });
     REQUIRE(!stopped.has_value());
-    CHECK_EQ(stopped.error(), std::string("stopped"));
+    CHECK_EQ(stopped.error().Reason, std::string("stopped"));
     CHECK((source.Asked() == std::vector<std::string>{"patches/terrain-1-2.hdiff"}));
     CHECK(!std::filesystem::exists(StagedAt(release, "HD/b.hda")));
     CHECK(std::filesystem::exists(release.Game.Path() / "Redux update" / "download" / "patches" / "b-1-2.hdiff"));
@@ -387,8 +389,8 @@ TEST_CASE("content stage: a stop while the staged files are flushed ends staging
     std::atomic<bool> stop = false;
     disk.OnFlush = [&] { stop = true; };
     const auto stopped = MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List,
-                                               [&](uint64_t, uint64_t) { return !stop; });
-    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+                                               [&](const MCUpdateWork::MCProgressReport&) { return !stop; });
+    CHECK_EQ(stopped.error_or(MCUpdateWork::MCFailure{}).Reason, std::string("stopped"));
 
     // The next attempt finishes, with what came kept.
     disk.OnFlush = nullptr;
@@ -419,9 +421,9 @@ TEST_CASE("content stage: a patch shared by identical files changed alike is fet
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
         uint64_t lastReceived = 0;
         REQUIRE(MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                      [&](uint64_t received, uint64_t)
+                                      [&](const MCUpdateWork::MCProgressReport& report)
                                       {
-                                          lastReceived = received;
+                                          lastReceived = report.Received;
                                           return true;
                                       })
                     .has_value());
@@ -552,7 +554,7 @@ TEST_CASE("content stage: a folder below the game folder put in as a link, befor
     std::filesystem::rename(update, updateElsewhere);
     std::filesystem::create_symlink(updateElsewhere, update);
     const auto staging = MCContentStage::Stage(*disk, source, game, plan, release.List, GoOn);
-    CHECK(staging.error_or("").find("Redux update is a link") != std::string::npos);
+    CHECK(staging.error_or(MCUpdateWork::MCFailure{}).Reason.find("Redux update is a link") != std::string::npos);
     CHECK(std::filesystem::is_empty(updateElsewhere));
     std::filesystem::remove(update);
     std::filesystem::rename(updateElsewhere, update);
@@ -599,9 +601,9 @@ TEST_CASE("content stage: patches are fetched several at once, each over a sourc
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     uint64_t lastReceived = 0;
     const auto staged = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                              [&](uint64_t received, uint64_t)
+                                              [&](const MCUpdateWork::MCProgressReport& report)
                                               {
-                                                  lastReceived = received;
+                                                  lastReceived = report.Received;
                                                   return true;
                                               });
     REQUIRE(staged.has_value());
@@ -630,8 +632,8 @@ TEST_CASE("content stage: patches are fetched several at once, each over a sourc
     MCParallelSource stoppingSource(stopping.Host.Path(), stoppingShared, true);
     const auto stopped =
         MCContentStage::Stage(*disk, stoppingSource, stopping.Game.Path(), stopping.Plan(), stopping.List,
-                              [](uint64_t received, uint64_t) { return received == 0; });
-    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+                              [](const MCUpdateWork::MCProgressReport& report) { return report.Received == 0; });
+    CHECK_EQ(stopped.error_or(MCUpdateWork::MCFailure{}).Reason, std::string("stopped"));
     CHECK(std::ranges::count(stoppingShared->Asked, std::string("update-2.zip")) == 0);
     CHECK(stoppingShared->Asked.size() < size_t{Extra + 1});
 }
@@ -652,8 +654,8 @@ TEST_CASE("content stage: what an update dropped midway left in staged/ and down
     MCFolderSource source(release.Host.Path());
     const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
     const auto stopped = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List,
-                                               [](uint64_t, uint64_t) { return false; });
-    CHECK_EQ(stopped.error_or(""), std::string("stopped"));
+                                               [](const MCUpdateWork::MCProgressReport&) { return false; });
+    CHECK_EQ(stopped.error_or(MCUpdateWork::MCFailure{}).Reason, std::string("stopped"));
     CHECK(!std::filesystem::exists(update / "staged" / "data" / "old-release.fit"));
     CHECK(!std::filesystem::exists(update / "download" / "update-1.zip"));
     CHECK(!std::filesystem::exists(update / "download" / "patches" / "terrain-0-1.hdiff"));
@@ -671,7 +673,7 @@ TEST_CASE("content stage: what an update dropped midway left in staged/ and down
     MCRoomDisk failing(std::numeric_limits<uint64_t>::max());
     failing.Unseen = update / "ready.json";
     const auto unseen = MCContentStage::Stage(failing, source, release.Game.Path(), plan, release.List, GoOn);
-    CHECK(unseen.error_or("").find("can't be looked at") != std::string::npos);
+    CHECK(unseen.error_or(MCUpdateWork::MCFailure{}).Reason.find("can't be looked at") != std::string::npos);
     CHECK(std::filesystem::exists(update / "staged" / "data" / "not-planned.fit"));
     CHECK(!MCContentSwap::Waiting(failing, release.Game.Path()).has_value());
 }
@@ -687,7 +689,7 @@ TEST_CASE("content stage: refused without room for what's still to stage; a resu
     MCRoomDisk full(0);
     const auto refused = MCContentStage::Stage(full, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!refused.has_value());
-    CHECK(refused.error().find("GB free") != std::string::npos);
+    CHECK(refused.error().Reason.find("GB free") != std::string::npos);
     CHECK(source.Asked().empty());
 
     // Cut off in the zip, with the patched file staged: what's left is the two small files and the zip's rest, though
@@ -714,13 +716,14 @@ TEST_CASE("content stage: sizes that add up past what a count holds are refused,
     MCRoomDisk disk(uint64_t{1} << 30);
     const auto overflowed =
         MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
-    CHECK(overflowed.error_or("").find("more than any disk holds") != std::string::npos);
+    CHECK(overflowed.error_or(MCUpdateWork::MCFailure{}).Reason.find("more than any disk holds") != std::string::npos);
     CHECK(source.Asked().empty());
 
     // data/changed.fit listed shorter than its entry: the unpacking stops there.
     release.List.Files[1].Size = 5;
     const auto longer = MCContentStage::Stage(disk, source, release.Game.Path(), release.Plan(), release.List, GoOn);
-    CHECK(longer.error_or("").find("data/changed.fit from update-2.zip isn't the release's") != std::string::npos);
+    CHECK(longer.error_or(MCUpdateWork::MCFailure{})
+              .Reason.find("data/changed.fit from update-2.zip isn't the release's") != std::string::npos);
     CHECK(!std::filesystem::exists(StagedAt(release, "data/changed.fit")));
 }
 
@@ -740,7 +743,7 @@ TEST_CASE("content stage: a patch that falls back on a zip not otherwise fetched
     MCRoomDisk disk(plan.StagedBytes + damaged.size());
     const auto refused = MCContentStage::Stage(disk, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!refused.has_value());
-    CHECK(refused.error().find("GB free") != std::string::npos);
+    CHECK(refused.error().Reason.find("GB free") != std::string::npos);
     CHECK((source.Asked() == std::vector<std::string>{"patches/terrain-1-2.hdiff"}));
 }
 
@@ -755,7 +758,7 @@ TEST_CASE("content stage: a zip whose entry can't be written stays for the next 
     std::filesystem::create_directories(blocked);
     const auto failed = MCContentStage::Stage(*disk, source, release.Game.Path(), plan, release.List, GoOn);
     REQUIRE(!failed.has_value());
-    CHECK(failed.error().find("can't be written") != std::string::npos);
+    CHECK(failed.error().Reason.find("can't be written") != std::string::npos);
     CHECK(std::filesystem::exists(release.Game.Path() / "Redux update" / "download" / "update-2.zip"));
 
     // Written once there's room: the zip isn't fetched again.
@@ -912,16 +915,16 @@ TEST_CASE_ISOLATED("tool: --content-install installs a release's content from a 
     uint64_t downloaded = 0;
     const auto stageStart = std::chrono::steady_clock::now();
     const auto staged = MCContentStage::Stage(*disk, *source, game, *plan, *list,
-                                              [&](uint64_t done, uint64_t)
+                                              [&](const MCUpdateWork::MCProgressReport& report)
                                               {
-                                                  downloaded = done;
+                                                  downloaded = report.Received;
                                                   return true;
                                               });
     const auto swapStart = std::chrono::steady_clock::now();
 
     if (!staged)
     {
-        std::cout << std::format("  {}\n", staged.error());
+        std::cout << std::format("  {}\n", staged.error().Reason);
     }
 
     REQUIRE(staged.has_value());

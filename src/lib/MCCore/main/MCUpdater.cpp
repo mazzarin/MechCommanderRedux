@@ -334,7 +334,7 @@ namespace
                                                             MCUpdateWork::Reporter(context.Progress, context.Stop));
                                 !staged)
                             {
-                                return std::unexpected(staged.error());
+                                return std::unexpected(staged.error().Reason);
                             }
 
                             // Stopped since staging ended: not armed.
@@ -507,7 +507,7 @@ namespace
                                                             MCUpdateWork::Reporter(context.Progress, context.Stop));
                                 !staged)
                             {
-                                return std::unexpected(staged.error());
+                                return std::unexpected(staged.error().Reason);
                             }
 
                             if (context.Stop.stop_requested())

@@ -32,7 +32,7 @@ namespace MCContentFixture
     constexpr size_t SendBytes = 4096;
 
     /// <summary>Staging's progress, always going on.</summary>
-    inline const std::function<bool(uint64_t, uint64_t)> GoOn = [](uint64_t, uint64_t) { return true; };
+    inline const MCUpdateWork::MCProgressCallback GoOn = [](const MCUpdateWork::MCProgressReport&) { return true; };
 
     inline std::string Text(std::span<const uint8_t> bytes)
     {

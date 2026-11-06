@@ -132,9 +132,9 @@ namespace MCContentUpdater
     /// <summary>
     /// Stages <paramref name="offer"/>'s content from <paramref name="source"/> (MCContentStage::Stage), not yet armed.
     /// </summary>
-    std::expected<void, std::string> Stage(const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source,
-                                           const MCOffer& offer,
-                                           const std::function<bool(uint64_t, uint64_t)>& progress);
+    std::expected<void, MCUpdateWork::MCFailure> Stage(const MCSetup& setup, MCUpdateDisk& disk,
+                                                       MCContentStage::MCSource& source, const MCOffer& offer,
+                                                       const MCUpdateWork::MCProgressCallback& progress);
 
     /// <summary>
     /// The first start's install whole (<see cref="AwaitsInstall"/>), under the staging lock: checked
@@ -143,11 +143,12 @@ namespace MCContentUpdater
     /// too while the files are hashed and before arming, told the bytes as they were.
     /// </summary>
     /// <returns>
-    /// Nothing, or what failed (another copy downloading it, the host out of reach, a full disk; stopped). Stopped, nothing
-    /// is armed.
+    /// Nothing, or what failed, of its kind: the host out of reach (Unreachable), a full disk (DiskFull), content that
+    /// needs a newer program (NewerProgram), another copy downloading it, stopped (Other). Stopped, nothing is armed.
     /// </returns>
-    std::expected<void, std::string> Install(const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source,
-                                             const std::function<bool(uint64_t, uint64_t)>& progress);
+    std::expected<void, MCUpdateWork::MCFailure> Install(const MCSetup& setup, MCUpdateDisk& disk,
+                                                         MCContentStage::MCSource& source,
+                                                         const MCUpdateWork::MCProgressCallback& progress);
 
     /// <summary>
     /// The recovery screen's REPAIR, under the game's lock held exclusive: the release is installed as at the first
@@ -155,9 +156,10 @@ namespace MCContentUpdater
     /// file the release's. The update stopped partway is given up (MCContentSwap::Abandon) only once the release and its
     /// list are fetched and checked: offline, it stays as it was.
     /// </summary>
-    /// <returns>Nothing, or what failed (the host out of reach, a full disk).</returns>
-    std::expected<void, std::string> Repair(const MCSetup& setup, MCUpdateDisk& disk, MCContentStage::MCSource& source,
-                                            const std::function<bool(uint64_t, uint64_t)>& progress);
+    /// <returns>Nothing, or what failed, of its kind (as <see cref="Install"/>'s).</returns>
+    std::expected<void, MCUpdateWork::MCFailure> Repair(const MCSetup& setup, MCUpdateDisk& disk,
+                                                        MCContentStage::MCSource& source,
+                                                        const MCUpdateWork::MCProgressCallback& progress);
 
     /// <summary>Arms <paramref name="offer"/>'s staged content: the next start swaps it in.</summary>
     std::expected<void, std::string> Arm(const MCSetup& setup, MCUpdateDisk& disk, const MCOffer& offer);

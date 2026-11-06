@@ -3,6 +3,7 @@
 #include "lib/MCSha256.h"
 #include "update/MCContentPlan.h"
 #include "update/MCContentSwap.h"
+#include "update/MCUpdateWork.h"
 
 class MCUpdateDisk;
 
@@ -102,15 +103,21 @@ namespace MCContentStage
     /// <summary>
     /// Stages <paramref name="plan"/> (made against <paramref name="list"/>) in <paramref name="gameFolder"/> from
     /// <paramref name="source"/>, each staged file and its folder flushed (not yet armed: <see cref="Arm"/>).
-    /// <paramref name="progress"/> gets the bytes downloaded so far and expected, on this thread, and returns false to
-    /// stop. The patches are fetched ahead from the source's others (MCSource::Another), on threads of their own; the
-    /// disk is used from those threads too.
+    /// <paramref name="progress"/> gets the bytes in hand so far and expected, on this thread, and returns false to
+    /// stop. What an earlier attempt left (files staged, downloads cut off) counts as in hand from the first report, by
+    /// its size, while it's checked (MCProgressReport::Checking: until the first bytes are fetched, or a resumed
+    /// download's bytes have been hashed). The patches are fetched ahead from the source's others (MCSource::Another), on
+    /// threads of their own; the disk is used from those threads too.
     /// </summary>
-    /// <returns>Nothing, or what failed (not enough space, a download, a file that doesn't check out).</returns>
-    std::expected<void, std::string> Stage(MCUpdateDisk& disk, MCSource& source,
-                                           const std::filesystem::path& gameFolder, const MCContentPlan::MCPlan& plan,
-                                           const MCContentList::MCList& list,
-                                           const std::function<bool(uint64_t, uint64_t)>& progress);
+    /// <returns>
+    /// Nothing, or what failed: not enough space (DiskFull, with the bytes short), a download (Unreachable when the
+    /// source says the host couldn't be reached), a file that doesn't check out.
+    /// </returns>
+    std::expected<void, MCUpdateWork::MCFailure> Stage(MCUpdateDisk& disk, MCSource& source,
+                                                       const std::filesystem::path& gameFolder,
+                                                       const MCContentPlan::MCPlan& plan,
+                                                       const MCContentList::MCList& list,
+                                                       const MCUpdateWork::MCProgressCallback& progress);
 
     /// <summary>Arms the staged <paramref name="plan"/>: the next start swaps it in.</summary>
     /// <returns>Nothing, or what failed.</returns>

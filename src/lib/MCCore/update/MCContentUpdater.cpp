@@ -14,6 +14,21 @@
 namespace
 {
     using namespace MCContentUpdater;
+    using MCUpdateWork::MCFailure;
+    using MCUpdateWork::MCFailureKind;
+
+    /// <summary>A failure of no kind the player is told apart.</summary>
+    MCFailure OtherFailure(std::string reason)
+    {
+        return {.Kind = MCFailureKind::Other, .Reason = std::move(reason)};
+    }
+
+    /// <summary>A fetch or read from <paramref name="source"/> that failed: Unreachable when the source says so.</summary>
+    MCFailure SourceFailure(std::string reason, const MCContentStage::MCSource& source)
+    {
+        return {.Kind = source.HostUnreachable() ? MCFailureKind::Unreachable : MCFailureKind::Other,
+                .Reason = std::move(reason)};
+    }
 
     /// <summary>A file made and deleted in a folder to see whether this account can write there.</summary>
     constexpr std::string_view WriteProbe = ".redux-write-test";
@@ -162,10 +177,13 @@ namespace
     /// <paramref name="source"/> and kept; for a program of build <paramref name="build"/>; its plan still to make
     /// (<see cref="PlanFor"/>).
     /// </summary>
-    /// <returns>The content, its plan empty; none for a list in a format this game can't read; or why there's none.</returns>
-    std::expected<std::shared_ptr<MCContent>, std::string> FetchList(const MCSetup& setup, MCUpdateDisk& disk,
-                                                                     MCContentStage::MCSource& source,
-                                                                     const MCListRef& list, uint64_t build)
+    /// <returns>
+    /// The content, its plan empty; none for a list in a format this game can't read; or why there's none (NewerProgram
+    /// when it needs a newer program than <paramref name="build"/>).
+    /// </returns>
+    std::expected<std::shared_ptr<MCContent>, MCFailure> FetchList(const MCSetup& setup, MCUpdateDisk& disk,
+                                                                   MCContentStage::MCSource& source,
+                                                                   const MCListRef& list, uint64_t build)
     {
         std::optional<std::string> text = KeptList(setup, disk, list);
 
@@ -178,12 +196,13 @@ namespace
 
             if (!fetched)
             {
-                return std::unexpected(fetched.error());
+                return std::unexpected(SourceFailure(fetched.error(), source));
             }
 
             if (!IsList(*fetched, list))
             {
-                return std::unexpected(std::format("{} isn't the list release {} names", name, list.Release));
+                return std::unexpected(
+                    OtherFailure(std::format("{} isn't the list release {} names", name, list.Release)));
             }
 
             KeepList(setup, disk, list, *fetched);
@@ -194,7 +213,7 @@ namespace
 
         if (!read)
         {
-            return std::unexpected(read.error());
+            return std::unexpected(OtherFailure(read.error()));
         }
 
         if (read->Format > MCContentList::KnownFormat)
@@ -206,8 +225,10 @@ namespace
 
         if (read->LowestProgram > build)
         {
-            return std::unexpected(std::format("release {}'s content needs build {} of the program, newer than {}",
-                                               list.Release, read->LowestProgram, build));
+            return std::unexpected(
+                MCFailure{.Kind = MCFailureKind::NewerProgram,
+                          .Reason = std::format("release {}'s content needs build {} of the program, newer than {}",
+                                                list.Release, read->LowestProgram, build)});
         }
 
         // The plan points into the list, so both stay together where they're made.
@@ -288,7 +309,7 @@ namespace
 
         if (!content)
         {
-            return std::unexpected(content.error());
+            return std::unexpected(std::move(content.error().Reason));
         }
 
         if (*content == nullptr)
@@ -316,14 +337,14 @@ namespace
     /// <c>update.json</c>, and the release this copy's rollout number gives it. What's kept is written durably before the
     /// game acts on the release: if it can't be, the check fails.
     /// </summary>
-    std::expected<MCReleaseFor, std::string> ReleaseFor(const MCSetup& setup, MCUpdateDisk& disk,
-                                                        MCContentStage::MCSource& source)
+    std::expected<MCReleaseFor, MCFailure> ReleaseFor(const MCSetup& setup, MCUpdateDisk& disk,
+                                                      MCContentStage::MCSource& source)
     {
         const auto before = ReadKept(setup, disk);
 
         if (!before)
         {
-            return std::unexpected(before.error());
+            return std::unexpected(OtherFailure(before.error()));
         }
 
         MCReleaseFile::MCKept kept = *before;
@@ -338,21 +359,21 @@ namespace
 
         if (!keyList)
         {
-            return std::unexpected(keyList.error());
+            return std::unexpected(SourceFailure(keyList.error(), source));
         }
 
         const auto releases = source.Read(ReleasesName, MostSignedBytes);
 
         if (!releases)
         {
-            return std::unexpected(releases.error());
+            return std::unexpected(SourceFailure(releases.error(), source));
         }
 
         const auto trusted = MCReleaseFile::Check(*keyList, *releases, setup.RootKeys, kept, setup.LowestKeyListIssue);
 
         if (!trusted)
         {
-            return std::unexpected(trusted.error());
+            return std::unexpected(OtherFailure(trusted.error()));
         }
 
         kept = MCReleaseFile::Keep(kept, *trusted);
@@ -361,7 +382,7 @@ namespace
         {
             if (const auto written = WriteKept(setup, disk, kept); !written)
             {
-                return std::unexpected(written.error());
+                return std::unexpected(OtherFailure(written.error()));
             }
         }
 
@@ -419,7 +440,7 @@ std::expected<std::optional<MCOffer>, std::string> MCContentUpdater::Check(const
 
     if (!chosen)
     {
-        return std::unexpected(chosen.error());
+        return std::unexpected(chosen.error().Reason);
     }
 
     const MCReleaseFile::MCRelease& release = chosen->Release;
@@ -588,20 +609,20 @@ namespace
     /// fetched and checked, then <paramref name="beforePlan"/> (none: nothing), then the plan from the files as they are,
     /// <paramref name="goOn"/> asked as it hashes.
     /// </summary>
-    std::expected<MCOffer, std::string> CheckRelease(const MCSetup& setup, MCUpdateDisk& disk,
-                                                     MCContentStage::MCSource& source, const MCBeforePlan& beforePlan,
-                                                     const MCGoOn& goOn)
+    std::expected<MCOffer, MCFailure> CheckRelease(const MCSetup& setup, MCUpdateDisk& disk,
+                                                   MCContentStage::MCSource& source, const MCBeforePlan& beforePlan,
+                                                   const MCGoOn& goOn)
     {
-        const auto chosen = ReleaseFor(setup, disk, source);
+        auto chosen = ReleaseFor(setup, disk, source);
 
         if (!chosen)
         {
-            return std::unexpected(chosen.error());
+            return std::unexpected(std::move(chosen.error()));
         }
 
         if (const auto writable = Writable(setup.GameFolder); !writable)
         {
-            return std::unexpected(writable.error());
+            return std::unexpected(OtherFailure(writable.error()));
         }
 
         const MCReleaseFile::MCRelease& release = chosen->Release;
@@ -611,12 +632,12 @@ namespace
 
         if (!had)
         {
-            return std::unexpected(had.error());
+            return std::unexpected(OtherFailure(had.error()));
         }
 
-        if (const std::string older = OlderProblem(release, *had); !older.empty())
+        if (std::string older = OlderProblem(release, *had); !older.empty())
         {
-            return std::unexpected(older);
+            return std::unexpected(OtherFailure(std::move(older)));
         }
 
         const MCListRef list{release.List, release.ListSize, release.Number, release.Epoch};
@@ -624,20 +645,21 @@ namespace
 
         if (!content)
         {
-            return std::unexpected(content.error());
+            return std::unexpected(std::move(content.error()));
         }
 
         if (*content == nullptr)
         {
-            return std::unexpected("the game's files are in a newer format than this version reads: download the "
-                                   "newest installer");
+            return std::unexpected(MCFailure{.Kind = MCFailureKind::NewerProgram,
+                                             .Reason = "the game's files are in a newer format than this version "
+                                                       "reads: download the newest installer"});
         }
 
         if (beforePlan)
         {
             if (const auto done = beforePlan(); !done)
             {
-                return std::unexpected(done.error());
+                return std::unexpected(OtherFailure(done.error()));
             }
         }
 
@@ -645,14 +667,14 @@ namespace
 
         if (!installed)
         {
-            return std::unexpected(installed.error());
+            return std::unexpected(OtherFailure(installed.error()));
         }
 
         if (const auto planned =
                 PlanFor(setup, disk, **content, list, *installed, Wanted(disk, setup.GameFolder, *installed), goOn);
             !planned)
         {
-            return std::unexpected(planned.error());
+            return std::unexpected(OtherFailure(planned.error()));
         }
 
         MCOffer offer{.Release = release};
@@ -667,54 +689,52 @@ namespace
     class MCToldProgress
     {
     public:
-        explicit MCToldProgress(const std::function<bool(uint64_t, uint64_t)>& progress) : _Progress(progress) {}
+        explicit MCToldProgress(const MCUpdateWork::MCProgressCallback& progress) : _Progress(progress) {}
 
-        bool Tell(uint64_t received, uint64_t expected)
+        bool Tell(const MCUpdateWork::MCProgressReport& report)
         {
-            _Received = received;
-            _Expected = expected;
+            _Report = report;
             return GoOn();
         }
 
-        bool GoOn() const { return !_Progress || _Progress(_Received, _Expected); }
+        bool GoOn() const { return !_Progress || _Progress(_Report); }
 
     private:
-        const std::function<bool(uint64_t, uint64_t)>& _Progress;
-        uint64_t _Received = 0;
-        uint64_t _Expected = 0;
+        const MCUpdateWork::MCProgressCallback& _Progress;
+        MCUpdateWork::MCProgressReport _Report;
     };
 
     /// <summary>
     /// The first start's install or a repair, under the staging lock: checked (<see cref="CheckRelease"/>), staged and
     /// armed; <paramref name="progress"/> asked whether to go on at each step, arming too (stopped, nothing is armed).
     /// </summary>
-    std::expected<void, std::string> InstallRelease(const MCSetup& setup, MCUpdateDisk& disk,
-                                                    MCContentStage::MCSource& source,
-                                                    const std::function<bool(uint64_t, uint64_t)>& progress,
-                                                    const MCBeforePlan& beforePlan)
+    std::expected<void, MCFailure> InstallRelease(const MCSetup& setup, MCUpdateDisk& disk,
+                                                  MCContentStage::MCSource& source,
+                                                  const MCUpdateWork::MCProgressCallback& progress,
+                                                  const MCBeforePlan& beforePlan)
     {
         const std::unique_ptr<MCUpdateLock> staging = MCUpdateLock::Open(setup.GameFolder, MCUpdateLock::StagingLock);
 
         if (staging == nullptr || !staging->TryExclusive())
         {
-            return std::unexpected("another copy of the game is downloading it");
+            return std::unexpected(OtherFailure("another copy of the game is downloading it"));
         }
 
         MCToldProgress told(progress);
-        const auto offer = CheckRelease(setup, disk, source, beforePlan, [&told] { return told.GoOn(); });
+        auto offer = CheckRelease(setup, disk, source, beforePlan, [&told] { return told.GoOn(); });
 
         if (!offer)
         {
-            return std::unexpected(offer.error());
+            return std::unexpected(std::move(offer.error()));
         }
 
         SDL_Log("Updates: installing release %llu (%llu bytes to download)",
                 static_cast<unsigned long long>(offer->Release.Number),
                 static_cast<unsigned long long>(offer->ContentBytes()));
 
-        if (const auto staged =
-                MCContentUpdater::Stage(setup, disk, source, *offer, [&told](uint64_t received, uint64_t expected)
-                                        { return told.Tell(received, expected); });
+        if (auto staged = MCContentUpdater::Stage(setup, disk, source, *offer,
+                                                  [&told](const MCUpdateWork::MCProgressReport& report)
+                                                  { return told.Tell(report); });
             !staged)
         {
             return staged;
@@ -722,46 +742,58 @@ namespace
 
         if (!told.GoOn())
         {
-            return std::unexpected(std::string(MCSha256::StoppedError));
+            return std::unexpected(OtherFailure(std::string(MCSha256::StoppedError)));
         }
 
-        return MCContentUpdater::Arm(setup, disk, *offer);
+        if (auto armed = MCContentUpdater::Arm(setup, disk, *offer); !armed)
+        {
+            return std::unexpected(OtherFailure(std::move(armed.error())));
+        }
+
+        return {};
     }
 }
 
 std::expected<MCOffer, std::string> MCContentUpdater::CheckInstall(const MCSetup& setup, MCUpdateDisk& disk,
                                                                    MCContentStage::MCSource& source, const MCGoOn& goOn)
 {
-    return CheckRelease(setup, disk, source, {}, goOn);
+    auto offer = CheckRelease(setup, disk, source, {}, goOn);
+
+    if (!offer)
+    {
+        return std::unexpected(std::move(offer.error().Reason));
+    }
+
+    return std::move(*offer);
 }
 
-std::expected<void, std::string> MCContentUpdater::Stage(const MCSetup& setup, MCUpdateDisk& disk,
-                                                         MCContentStage::MCSource& source, const MCOffer& offer,
-                                                         const std::function<bool(uint64_t, uint64_t)>& progress)
+std::expected<void, MCFailure> MCContentUpdater::Stage(const MCSetup& setup, MCUpdateDisk& disk,
+                                                       MCContentStage::MCSource& source, const MCOffer& offer,
+                                                       const MCUpdateWork::MCProgressCallback& progress)
 {
     if (offer.Content == nullptr)
     {
         return {};
     }
 
-    if (const auto placed = MCUpdatePlace::Check(setup.GameFolder, offer.Content->Plan); !placed)
+    if (auto placed = MCUpdatePlace::Check(setup.GameFolder, offer.Content->Plan); !placed)
     {
-        return placed;
+        return std::unexpected(OtherFailure(std::move(placed.error())));
     }
 
     return MCContentStage::Stage(disk, source, setup.GameFolder, offer.Content->Plan, offer.Content->List, progress);
 }
 
-std::expected<void, std::string> MCContentUpdater::Install(const MCSetup& setup, MCUpdateDisk& disk,
-                                                           MCContentStage::MCSource& source,
-                                                           const std::function<bool(uint64_t, uint64_t)>& progress)
+std::expected<void, MCFailure> MCContentUpdater::Install(const MCSetup& setup, MCUpdateDisk& disk,
+                                                         MCContentStage::MCSource& source,
+                                                         const MCUpdateWork::MCProgressCallback& progress)
 {
     return InstallRelease(setup, disk, source, progress, {});
 }
 
-std::expected<void, std::string> MCContentUpdater::Repair(const MCSetup& setup, MCUpdateDisk& disk,
-                                                          MCContentStage::MCSource& source,
-                                                          const std::function<bool(uint64_t, uint64_t)>& progress)
+std::expected<void, MCFailure> MCContentUpdater::Repair(const MCSetup& setup, MCUpdateDisk& disk,
+                                                        MCContentStage::MCSource& source,
+                                                        const MCUpdateWork::MCProgressCallback& progress)
 {
     // Given up only once the release and its list are in hand: offline, the update stopped partway stays as it is,
     // and TRY AGAIN can still finish it.

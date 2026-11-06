@@ -32,6 +32,65 @@ namespace
     {
         return static_cast<double>(bytes) / unit.Bytes;
     }
+
+    /// <summary>Speeds in decimal units, as sizes are: from here a speed shows in MB a second (999.95 KB/S is 1.0 MB/S).</summary>
+    constexpr double BytesPerKilobyte = 1e3;
+    constexpr double SpeedInMegabytes = 999.95e3;
+
+    /// <summary>What parts the speed from the time left on the window's line under its bar: a middle dot.</summary>
+    constexpr std::string_view LineSeparator = " \xC2\xB7 ";
+
+    constexpr int64_t MinutesPerHour = 60;
+
+    /// <summary>
+    /// A source whose bytes are counted as network bytes (<see cref="MCUpdateWork::Counted"/>): everything else passes to
+    /// the source it wraps, and the sources made from it are counted too.
+    /// </summary>
+    class MCCountedSource final : public MCContentStage::MCSource
+    {
+    public:
+        MCCountedSource(std::unique_ptr<MCContentStage::MCSource> inner, MCUpdateWork::MCProgress& progress)
+            : _Inner(std::move(inner)), _Progress(progress)
+        {
+        }
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(std::span<const char>)>& received) override
+        {
+            return _Inner->Fetch(name, to, size,
+                                 [&](std::span<const char> bytes)
+                                 {
+                                     _Progress.AddNetwork(bytes.size());
+                                     return received(bytes);
+                                 });
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            auto read = _Inner->Read(name, most);
+
+            if (read)
+            {
+                _Progress.AddNetwork(read->size());
+            }
+
+            return read;
+        }
+
+        void Cancel() override { _Inner->Cancel(); }
+
+        std::unique_ptr<MCContentStage::MCSource> Another() override
+        {
+            std::unique_ptr<MCContentStage::MCSource> another = _Inner->Another();
+            return another != nullptr ? std::make_unique<MCCountedSource>(std::move(another), _Progress) : nullptr;
+        }
+
+        bool HostUnreachable() const override { return _Inner->HostUnreachable(); }
+
+    private:
+        std::unique_ptr<MCContentStage::MCSource> _Inner;
+        MCUpdateWork::MCProgress& _Progress;
+    };
 }
 
 std::string MCUpdateWork::SizeText(uint64_t bytes)
@@ -46,25 +105,126 @@ std::string MCUpdateWork::ProgressText(uint64_t received, uint64_t whole)
     return std::format("{:.1f} OF {:.1f} {}", InUnit(received, unit), InUnit(whole, unit), unit.Name);
 }
 
+std::string MCUpdateWork::SpeedText(double bytesPerSecond)
+{
+    if (bytesPerSecond >= SpeedInMegabytes)
+    {
+        return std::format("{:.1f} MB/S", bytesPerSecond / BytesPerMegabyte);
+    }
+
+    return std::format("{:.0f} KB/S", std::max(0.0, bytesPerSecond) / BytesPerKilobyte);
+}
+
+std::string MCUpdateWork::TimeLeftText(std::chrono::seconds left)
+{
+    if (left < std::chrono::minutes(1))
+    {
+        return "LESS THAN A MINUTE LEFT";
+    }
+
+    const int64_t minutes = std::chrono::round<std::chrono::minutes>(left).count();
+
+    if (minutes < MinutesPerHour)
+    {
+        return std::format("ABOUT {} MIN LEFT", minutes);
+    }
+
+    const int64_t hours = minutes / MinutesPerHour;
+    const int64_t rest = minutes % MinutesPerHour;
+    return rest == 0 ? std::format("ABOUT {} HR LEFT", hours) : std::format("ABOUT {} HR {} MIN LEFT", hours, rest);
+}
+
+void MCUpdateWork::MCRate::Add(MCClock::time_point at, uint64_t networkBytes)
+{
+    _Samples.emplace_back(at, networkBytes);
+
+    // The oldest kept is the last one at or before the window's start, so the speed spans the whole window.
+    while (_Samples.size() > 2 && _Samples[1].first <= at - SpeedWindow)
+    {
+        _Samples.pop_front();
+    }
+}
+
+MCUpdateWork::MCRate::MCClock::duration MCUpdateWork::MCRate::Span() const
+{
+    return _Samples.size() < 2 ? MCClock::duration::zero() : _Samples.back().first - _Samples.front().first;
+}
+
+std::optional<double> MCUpdateWork::MCRate::BytesPerSecond() const
+{
+    if (Span() < SpeedAfter)
+    {
+        return std::nullopt;
+    }
+
+    const double seconds = std::chrono::duration<double>(Span()).count();
+    const uint64_t bytes = _Samples.back().second - std::min(_Samples.back().second, _Samples.front().second);
+    return static_cast<double>(bytes) / seconds;
+}
+
+std::optional<std::chrono::seconds> MCUpdateWork::MCRate::TimeLeft(uint64_t left) const
+{
+    const std::optional<double> speed = BytesPerSecond();
+
+    if (Span() < TimeLeftAfter || !speed || *speed <= 0)
+    {
+        return std::nullopt;
+    }
+
+    return std::chrono::seconds(static_cast<int64_t>(std::ceil(static_cast<double>(left) / *speed)));
+}
+
+std::string MCUpdateWork::MCRate::Text(uint64_t left) const
+{
+    const std::optional<double> speed = BytesPerSecond();
+
+    if (!speed)
+    {
+        return {};
+    }
+
+    const std::optional<std::chrono::seconds> time = TimeLeft(left);
+    return time ? std::format("{}{}{}", SpeedText(*speed), LineSeparator, TimeLeftText(*time)) : SpeedText(*speed);
+}
+
 void MCUpdateWork::MCProgress::Set(uint64_t received, uint64_t expected)
 {
+    Set({.Received = received, .Expected = expected});
+}
+
+void MCUpdateWork::MCProgress::Set(const MCProgressReport& report)
+{
     const std::lock_guard lock(_Mutex);
-    _Received = received;
-    _Expected = expected;
+    _Report = report;
 }
 
 std::pair<uint64_t, uint64_t> MCUpdateWork::MCProgress::Get() const
 {
     const std::lock_guard lock(_Mutex);
-    return {_Received, _Expected};
+    return {_Report.Received, _Report.Expected};
 }
 
-std::function<bool(uint64_t, uint64_t)> MCUpdateWork::Reporter(MCProgress& progress, std::stop_token stop)
+MCUpdateWork::MCProgressReport MCUpdateWork::MCProgress::Report() const
 {
-    return [&progress, stop = std::move(stop)](uint64_t received, uint64_t expected)
+    const std::lock_guard lock(_Mutex);
+    return _Report;
+}
+
+MCUpdateWork::MCProgressCallback MCUpdateWork::Reporter(MCProgress& progress, std::stop_token stop)
+{
+    return [&progress, stop = std::move(stop)](const MCProgressReport& report)
     {
-        progress.Set(received, expected);
+        progress.Set(report);
         return !stop.stop_requested();
+    };
+}
+
+MCUpdateWork::MCSourceMaker MCUpdateWork::Counted(MCSourceMaker maker, MCProgress& progress)
+{
+    return [maker = std::move(maker), &progress]() -> std::unique_ptr<MCContentStage::MCSource>
+    {
+        std::unique_ptr<MCContentStage::MCSource> source = maker ? maker() : nullptr;
+        return source != nullptr ? std::make_unique<MCCountedSource>(std::move(source), progress) : nullptr;
     };
 }
 

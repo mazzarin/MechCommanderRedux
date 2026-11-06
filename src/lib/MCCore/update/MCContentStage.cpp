@@ -124,7 +124,7 @@ namespace
     public:
         MCStager(MCUpdateDisk& disk, MCContentStage::MCSource& source, std::filesystem::path game,
                  const MCContentPlan::MCPlan& plan, const MCContentList::MCList& list,
-                 const std::function<bool(uint64_t, uint64_t)>& progress)
+                 const MCUpdateWork::MCProgressCallback& progress)
             : _Disk(disk)
             , _Source(source)
             , _Game(std::move(game))
@@ -135,6 +135,9 @@ namespace
             , _Expected(plan.DownloadBytes)
         {
         }
+
+        /// <summary>When staging stopped for want of space: how many more bytes the disk must have free.</summary>
+        std::optional<uint64_t> BytesShort() const { return _Short; }
 
         std::expected<void, std::string> Run()
         {
@@ -151,6 +154,10 @@ namespace
             {
                 return cleared;
             }
+
+            // What an earlier attempt left counts as in hand from the first report, while it's checked.
+            _InHand = InHandBySize();
+            _Checking = _InHand > 0;
 
             // What an earlier attempt staged as the list has it stays; the rest is still to do.
             std::vector<MCPatchJob> patches;
@@ -426,6 +433,64 @@ namespace
             return zips;
         }
 
+        /// <summary>Whether the step's file is in staged/ at its size (not yet checked).</summary>
+        bool StagedBySize(const MCStep& step)
+        {
+            const MCUpdateDisk::MCStat stat = _Disk.Stat(StagedPath(step));
+            return stat.Exists && !stat.Folder && stat.Size == step.File->Size;
+        }
+
+        /// <summary>
+        /// The bytes an earlier attempt left, by their sizes alone (they're checked next): each zip and patch whose
+        /// files are all staged at their sizes, and what's downloaded of the rest. What's downloaded counts as in from
+        /// here (<see cref="_Prior"/>); the staged files count once they're checked.
+        /// </summary>
+        uint64_t InHandBySize()
+        {
+            // Each hosted file the plan fetches: its size, and whether every file it brings is staged.
+            std::map<std::string_view, std::pair<uint64_t, bool>> hosted;
+
+            for (const MCContentList::MCZip* zip : _Plan.Zips)
+            {
+                hosted.try_emplace(zip->Name, zip->Size, true);
+            }
+
+            for (const MCStep& step : _Plan.Steps)
+            {
+                const bool fetched = step.Action == MCAction::Fetch;
+
+                if (!fetched && step.Action != MCAction::Patch)
+                {
+                    continue;
+                }
+
+                const std::string_view name = fetched ? std::string_view(step.File->Zip) : step.Patch->Name;
+                const uint64_t size = fetched ? 0 : step.Patch->Size;
+                bool& staged = hosted.try_emplace(name, size, true).first->second.second;
+                staged = staged && StagedBySize(step);
+            }
+
+            uint64_t inHand = 0;
+
+            for (const auto& [name, file] : hosted)
+            {
+                const auto& [size, staged] = file;
+
+                if (staged)
+                {
+                    inHand += size;
+                    continue;
+                }
+
+                const uint64_t downloaded = Downloaded(name, size);
+                _Prior.emplace(name, downloaded);
+                _Received += downloaded;
+                inHand += downloaded;
+            }
+
+            return inHand;
+        }
+
         /// <summary>The bytes of the hosted file <paramref name="name"/> already in download/ (a cut-off download's).</summary>
         uint64_t Downloaded(std::string_view name, uint64_t size)
         {
@@ -492,6 +557,7 @@ namespace
 
             if (*free < needed.Total)
             {
+                _Short = needed.Total - *free;
                 return std::unexpected(
                     std::format("the update needs {:.1f} GB free on the game's disk; it has {:.1f} GB",
                                 static_cast<double>(needed.Total) / BytesPerGigabyte,
@@ -565,7 +631,7 @@ namespace
             {
                 for (const MCPatchJob& job : patches)
                 {
-                    const auto fetched = FetchPatch(_Source, job, [this](uint64_t count) { return Received(count); });
+                    const auto fetched = FetchPatch(_Source, job, CountFor(job.Patch->Name, false));
 
                     if (auto patched = Patched(job, fetched, whole); !patched)
                     {
@@ -719,7 +785,7 @@ namespace
                     index = ahead.Next++;
                 }
 
-                auto fetched = FetchPatch(source, patches[index], [this](uint64_t count) { return Counted(count); });
+                auto fetched = FetchPatch(source, patches[index], CountFor(patches[index].Patch->Name, true));
 
                 {
                     const std::scoped_lock lock(ahead.Lock);
@@ -833,8 +899,7 @@ namespace
         std::expected<void, std::string> FetchAndUnpack(const MCContentList::MCZip& zip,
                                                         const std::vector<const MCStep*>& entries)
         {
-            const auto path = FetchChecked(_Source, zip.Name, zip.Size, zip.Sha256,
-                                           [this](uint64_t count) { return Received(count); });
+            const auto path = FetchChecked(_Source, zip.Name, zip.Size, zip.Sha256, CountFor(zip.Name, false));
 
             if (!path)
             {
@@ -1010,12 +1075,20 @@ namespace
             return {};
         }
 
-        /// <summary>On staging's own thread: counts bytes in, tells the progress, and asks whether to go on.</summary>
+        /// <summary>
+        /// On staging's own thread: counts bytes in, tells the progress, and asks whether to go on. While what an
+        /// earlier attempt left is checked, it's told as in hand already.
+        /// </summary>
         bool Received(uint64_t count)
         {
             _Received += count;
+            const bool checking = _Checking;
+            const MCUpdateWork::MCProgressReport report{.Received = checking ? std::max<uint64_t>(_Received, _InHand)
+                                                                             : _Received.load(),
+                                                        .Expected = _Expected,
+                                                        .Checking = checking};
 
-            if (_Progress && !_Progress(_Received, _Expected))
+            if (_Progress && !_Progress(report))
             {
                 MarkStopped();
             }
@@ -1028,6 +1101,30 @@ namespace
         {
             _Received += count;
             return !_Stopped;
+        }
+
+        /// <summary>
+        /// The count of the download of the hosted file <paramref name="name"/> (MCContentStage::FetchChecked's): its
+        /// first bytes, those already here or the first to arrive, end the check of what an earlier attempt left; the
+        /// bytes already here as staging began, counted then, aren't counted again. On a worker's thread
+        /// (<paramref name="onWorker"/>) it counts as Counted does, else as Received.
+        /// </summary>
+        std::function<bool(uint64_t)> CountFor(std::string_view name, bool onWorker)
+        {
+            const auto prior = _Prior.find(name);
+            uint64_t counted = prior != _Prior.end() ? prior->second : 0;
+
+            return [this, counted, onWorker](uint64_t count) mutable
+            {
+                if (count > 0)
+                {
+                    _Checking = false;
+                }
+
+                const uint64_t again = std::min(count, counted);
+                counted -= again;
+                return onWorker ? Counted(count - again) : Received(count - again);
+            };
         }
 
         /// <summary>Stopped: the workers' fetches are cancelled, so one that's stalled ends at once.</summary>
@@ -1059,11 +1156,24 @@ namespace
         MCNoLinks _NoLinks;
         const MCContentPlan::MCPlan& _Plan;
         const MCContentList::MCList& _List;
-        const std::function<bool(uint64_t, uint64_t)>& _Progress;
+        const MCUpdateWork::MCProgressCallback& _Progress;
         /// <summary>The bytes in, counted by the workers too; those expected; whether staging is to stop.</summary>
         std::atomic<uint64_t> _Received = 0;
         uint64_t _Expected = 0;
         std::atomic<bool> _Stopped = false;
+        /// <summary>
+        /// What an earlier attempt left, by its sizes, and whether it's still being checked (told as in hand
+        /// meanwhile); the workers' first bytes end the check too.
+        /// </summary>
+        uint64_t _InHand = 0;
+        std::atomic<bool> _Checking = false;
+        /// <summary>
+        /// The bytes of each hosted file, not yet staged, already downloaded as staging began: counted in then. Made
+        /// before the workers start, and only read after.
+        /// </summary>
+        std::map<std::string, uint64_t, std::less<>> _Prior;
+        /// <summary>When the space check refused: the bytes short.</summary>
+        std::optional<uint64_t> _Short;
         /// <summary>The workers' sources while they fetch ahead.</summary>
         std::mutex _WorkersLock;
         std::vector<MCContentStage::MCSource*> _Workers;
@@ -1197,13 +1307,31 @@ std::vector<MCContentSwap::MCMove> MCContentStage::Moves(const MCContentPlan::MC
     return moves;
 }
 
-std::expected<void, std::string> MCContentStage::Stage(MCUpdateDisk& disk, MCSource& source,
-                                                       const std::filesystem::path& gameFolder,
-                                                       const MCContentPlan::MCPlan& plan,
-                                                       const MCContentList::MCList& list,
-                                                       const std::function<bool(uint64_t, uint64_t)>& progress)
+std::expected<void, MCUpdateWork::MCFailure> MCContentStage::Stage(MCUpdateDisk& disk, MCSource& source,
+                                                                   const std::filesystem::path& gameFolder,
+                                                                   const MCContentPlan::MCPlan& plan,
+                                                                   const MCContentList::MCList& list,
+                                                                   const MCUpdateWork::MCProgressCallback& progress)
 {
-    return MCStager(disk, source, gameFolder, plan, list, progress).Run();
+    MCStager stager(disk, source, gameFolder, plan, list, progress);
+    auto staged = stager.Run();
+
+    if (staged)
+    {
+        return {};
+    }
+
+    using MCUpdateWork::MCFailureKind;
+
+    if (const std::optional<uint64_t> bytesShort = stager.BytesShort())
+    {
+        return std::unexpected(MCUpdateWork::MCFailure{
+            .Kind = MCFailureKind::DiskFull, .Reason = std::move(staged.error()), .BytesShort = *bytesShort});
+    }
+
+    return std::unexpected(
+        MCUpdateWork::MCFailure{.Kind = source.HostUnreachable() ? MCFailureKind::Unreachable : MCFailureKind::Other,
+                                .Reason = std::move(staged.error())});
 }
 
 std::expected<void, std::string> MCContentStage::Arm(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,

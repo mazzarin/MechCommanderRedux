@@ -307,6 +307,82 @@ TEST_CASE("updater: a size is shown as the setup gives it: decimal GB to a tenth
     CHECK_EQ(MCUpdateWork::ProgressText(1'500'000, 7'000'000), std::string("1.5 OF 7.0 MB"));
 }
 
+TEST_CASE("update work: a download's speed and time left read as the first start's window shows them")
+{
+    CHECK_EQ(MCUpdateWork::SpeedText(10'400'000), std::string("10.4 MB/S"));
+    CHECK_EQ(MCUpdateWork::SpeedText(999'960), std::string("1.0 MB/S"));
+    CHECK_EQ(MCUpdateWork::SpeedText(850'400), std::string("850 KB/S"));
+    CHECK_EQ(MCUpdateWork::SpeedText(0), std::string("0 KB/S"));
+
+    using std::chrono::minutes;
+    using std::chrono::seconds;
+    CHECK_EQ(MCUpdateWork::TimeLeftText(seconds(59)), std::string("LESS THAN A MINUTE LEFT"));
+    CHECK_EQ(MCUpdateWork::TimeLeftText(seconds(60)), std::string("ABOUT 1 MIN LEFT"));
+    CHECK_EQ(MCUpdateWork::TimeLeftText(minutes(8) + seconds(20)), std::string("ABOUT 8 MIN LEFT"));
+    CHECK_EQ(MCUpdateWork::TimeLeftText(minutes(8) + seconds(40)), std::string("ABOUT 9 MIN LEFT"));
+    CHECK_EQ(MCUpdateWork::TimeLeftText(minutes(59) + seconds(40)), std::string("ABOUT 1 HR LEFT"));
+    CHECK_EQ(MCUpdateWork::TimeLeftText(minutes(80)), std::string("ABOUT 1 HR 20 MIN LEFT"));
+}
+
+TEST_CASE(
+    "update work: the speed counts the network bytes of the last 10 seconds; the time left waits for 5 seconds of "
+    "them, and for bytes coming")
+{
+    using MCClock = MCUpdateWork::MCRate::MCClock;
+    using std::chrono::seconds;
+    constexpr uint64_t PerSecond = 10'400'000;
+    constexpr uint64_t Left = 4'992'000'000;
+    constexpr std::string_view Separator = " \xC2\xB7 ";
+    const MCClock::time_point start = MCClock::now();
+    MCUpdateWork::MCRate rate;
+    uint64_t network = 0;
+    int64_t at = 0;
+
+    // A second each, at the speed given.
+    const auto secondsAt = [&](int64_t count, uint64_t speed)
+    {
+        for (int64_t i = 0; i < count; ++i)
+        {
+            ++at;
+            network += speed;
+            rate.Add(start + seconds(at), network);
+        }
+    };
+
+    rate.Add(start, network);
+    CHECK(!rate.BytesPerSecond().has_value());
+    CHECK_EQ(rate.Text(Left), std::string());
+
+    // Under 2 seconds, nothing; then the speed alone; from 5 seconds the time left too.
+    secondsAt(1, PerSecond);
+    CHECK_EQ(rate.Text(Left), std::string());
+    secondsAt(1, PerSecond);
+    CHECK_EQ(rate.Text(Left), std::string("10.4 MB/S"));
+    CHECK(!rate.TimeLeft(Left).has_value());
+    secondsAt(3, PerSecond);
+    REQUIRE(rate.TimeLeft(Left).has_value());
+    CHECK_EQ(rate.TimeLeft(Left)->count(), int64_t{480});
+    CHECK_EQ(rate.Text(Left), std::format("10.4 MB/S{}ABOUT 8 MIN LEFT", Separator));
+
+    // Smoothed over the last 10 seconds: 5 seconds at nothing, after 20 at the speed, halve it.
+    secondsAt(15, PerSecond);
+    secondsAt(5, 0);
+    REQUIRE(rate.BytesPerSecond().has_value());
+    CHECK(*rate.BytesPerSecond() == static_cast<double>(PerSecond) / 2);
+    CHECK_EQ(rate.Text(Left), std::format("5.2 MB/S{}ABOUT 16 MIN LEFT", Separator));
+
+    // Nothing coming for 10 seconds: no time left.
+    secondsAt(5, 0);
+    CHECK_EQ(rate.Text(Left), std::string("0 KB/S"));
+    CHECK(!rate.TimeLeft(Left).has_value());
+
+    // Forgotten (a check of what's here): it starts again.
+    rate.Reset();
+    CHECK(!rate.BytesPerSecond().has_value());
+    rate.Add(start + seconds(at), network);
+    CHECK_EQ(rate.Text(Left), std::string());
+}
+
 /// <summary>
 /// Port-only (personal): one version on every platform, from version.json and the branch's count of commits
 /// (src/mac/version.cmake on the Mac, MechCommander.props on Windows): the four-part version is the release and the

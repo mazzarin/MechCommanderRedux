@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "MCContentFixture.h"
 #include "MCFakeUpdaterBackend.h"
+#include "../MCContentAtStart.h"
 #include "../MCFirstStart.h"
+#include "../MCHttpGet.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
 #include "TestGame.h"
@@ -15,9 +17,11 @@
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCUpdater.h"
+#include "platform/MCSocket.h"
 #include "update/MCContentRemoval.h"
 #include "update/MCContentSwap.h"
 #include "update/MCContentUpdater.h"
+#include "update/MCHttpSource.h"
 #include "update/MCSetupBackend.h"
 #include "update/MCSyncedFolder.h"
 #include "update/MCUpdatePlace.h"
@@ -677,9 +681,9 @@ TEST_CASE("content updater: a stop while a check, a change of sets or an install
     std::filesystem::remove(game / "Redux update" / "installed.json");
     REQUIRE(MCContentUpdater::Choose(*disk, game, WithHd).has_value());
     MCFolderSource installing(release.Host.Path());
-    const auto installed =
-        MCContentUpdater::Install(setup, *disk, installing, [](uint64_t, uint64_t) { return false; });
-    CHECK_EQ(installed.error_or(""), std::string(MCSha256::StoppedError));
+    const auto installed = MCContentUpdater::Install(setup, *disk, installing,
+                                                     [](const MCUpdateWork::MCProgressReport&) { return false; });
+    CHECK_EQ(installed.error_or(MCUpdateWork::MCFailure{}).Reason, std::string(MCSha256::StoppedError));
     CHECK(std::ranges::none_of(installing.Asked(), [](const std::string& name) { return name.ends_with(".zip"); }));
     CHECK(!release.Armed());
 }
@@ -698,8 +702,9 @@ TEST_CASE("content updater: the record is read from the disk it's given: one it 
     CHECK(MCContentUpdater::CheckSets(release.Setup(), disk, source).error_or("").find("the test's disk") !=
           std::string::npos);
     // REPAIR too, before it gives anything up.
-    CHECK(MCContentUpdater::Repair(release.Setup(), disk, source, GoOn).error_or("").find("the test's disk") !=
-          std::string::npos);
+    CHECK(MCContentUpdater::Repair(release.Setup(), disk, source, GoOn)
+              .error_or(MCUpdateWork::MCFailure{})
+              .Reason.find("the test's disk") != std::string::npos);
 
     // An installer's answer with a record of no release that can't be read: not taken for a first start.
     Write(game / MCFileSystem::FromUtf8(MCInstalled::RecordPath), MCInstalled::Text(MCInstalled::MCRecord{}));
@@ -1175,7 +1180,7 @@ TEST_CASE("content updater: the first start installs the sets chosen into a fold
         MCFolderSource source(release.Host.Path());
         const auto held = MCContentUpdater::Install(setup, *disk, source, GoOn);
         REQUIRE(!held.has_value());
-        CHECK(held.error().find("another copy") != std::string::npos);
+        CHECK(held.error().Reason.find("another copy") != std::string::npos);
     }
 
     // Cut off midway, then again: it resumes, and the swap puts release 2 in place.
@@ -1186,9 +1191,9 @@ TEST_CASE("content updater: the first start installs the sets chosen into a fold
     MCFolderSource source(release.Host.Path());
     std::vector<std::pair<uint64_t, uint64_t>> progress;
     REQUIRE(MCContentUpdater::Install(setup, *disk, source,
-                                      [&](uint64_t received, uint64_t expected)
+                                      [&](const MCUpdateWork::MCProgressReport& report)
                                       {
-                                          progress.emplace_back(received, expected);
+                                          progress.emplace_back(report.Received, report.Expected);
                                           return true;
                                       })
                 .has_value());
@@ -1279,10 +1284,10 @@ TEST_CASE("content updater: REPAIR and the first start never install a release o
     Write(record, MCInstalled::Text(three));
     const auto installed = MCContentUpdater::Install(setup, *disk, source, GoOn);
     REQUIRE(!installed.has_value());
-    CHECK(installed.error().find("older") != std::string::npos);
+    CHECK(installed.error().Reason.find("older") != std::string::npos);
     const auto repaired = MCContentUpdater::Repair(setup, *disk, source, GoOn);
     REQUIRE(!repaired.has_value());
-    CHECK(repaired.error().find("older") != std::string::npos);
+    CHECK(repaired.error().Reason.find("older") != std::string::npos);
     CHECK(!release.Armed());
     CHECK_EQ(Read(record), MCInstalled::Text(three));
     const auto nothing = MCContentUpdater::Check(setup, *disk, source);
@@ -2017,10 +2022,11 @@ TEST_CASE("update work: a piece of work's transfer is cancelled when it's asked 
     MCUpdateWork::MCProgress progress;
     std::stop_source reporting;
     const auto report = MCUpdateWork::Reporter(progress, reporting.get_token());
-    CHECK(report(3, 10));
+    CHECK(report({.Received = 3, .Expected = 10, .Checking = true}));
     CHECK((progress.Get() == std::pair<uint64_t, uint64_t>{3, 10}));
+    CHECK(progress.Report().Checking);
     reporting.request_stop();
-    CHECK(!report(4, 10));
+    CHECK(!report({.Received = 4, .Expected = 10}));
 }
 
 TEST_CASE("updater: an update's download stops while a match's mission plays, and goes on after it")
@@ -2198,7 +2204,7 @@ TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends w
     constexpr std::chrono::milliseconds Shown{200};
     const auto done = MCFirstStart::Run(
         "GETTING THE GAME READY",
-        [&](MCFirstStart::MCProgress& progress, std::stop_token) -> std::expected<void, std::string>
+        [&](MCFirstStart::MCProgress& progress, std::stop_token) -> std::expected<void, MCFirstStart::MCFailure>
         {
             progress.Set(Whole / 2, Whole);
             std::this_thread::sleep_for(Shown);
@@ -2206,9 +2212,9 @@ TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends w
         },
         options);
 
-    if (!done && done.error().find("can't open") != std::string::npos)
+    if (!done && done.error().Reason.find("can't open") != std::string::npos)
     {
-        std::cout << "  (skipped: " << done.error() << ")\n";
+        std::cout << "  (skipped: " << done.error().Reason << ")\n";
         SDL_Quit();
         return;
     }
@@ -2217,33 +2223,390 @@ TEST_CASE_ISOLATED("first start: the window shows the work's progress and ends w
     CHECK(*done);
 
     // A failure comes back as it is.
-    const auto failed = MCFirstStart::Run(
-        "GETTING THE GAME READY", [](MCFirstStart::MCProgress&, std::stop_token) -> std::expected<void, std::string>
-        { return std::unexpected("the host is out of reach"); }, {.Hidden = true});
+    const auto failed =
+        MCFirstStart::Run("GETTING THE GAME READY",
+                          [](MCFirstStart::MCProgress&, std::stop_token) -> std::expected<void, MCFirstStart::MCFailure>
+                          {
+                              return std::unexpected(MCFirstStart::MCFailure{
+                                  .Kind = MCUpdateWork::MCFailureKind::Unreachable, .Reason = "no connection"});
+                          },
+                          {.Hidden = true});
     REQUIRE(!failed.has_value());
-    CHECK_EQ(failed.error(), std::string("the host is out of reach"));
+    CHECK(failed.error().Kind == MCUpdateWork::MCFailureKind::Unreachable);
+    CHECK_EQ(failed.error().Reason, std::string("no connection"));
 
     // Closed (the system's quit): the work is asked to stop, and the player wasn't failed.
     SDL_Event quit{};
     quit.type = SDL_EVENT_QUIT;
     REQUIRE(SDL_PushEvent(&quit));
     bool stopped = false;
-    const auto closed =
-        MCFirstStart::Run("GETTING THE GAME READY",
-                          [&](MCFirstStart::MCProgress&, std::stop_token stop) -> std::expected<void, std::string>
-                          {
-                              while (!stop.stop_requested())
-                              {
-                                  std::this_thread::sleep_for(LookAgain);
-                              }
+    const auto closed = MCFirstStart::Run(
+        "GETTING THE GAME READY",
+        [&](MCFirstStart::MCProgress&, std::stop_token stop) -> std::expected<void, MCFirstStart::MCFailure>
+        {
+            while (!stop.stop_requested())
+            {
+                std::this_thread::sleep_for(LookAgain);
+            }
 
-                              stopped = true;
-                              return std::unexpected("stopped");
-                          },
-                          {.Hidden = true});
+            stopped = true;
+            return std::unexpected(MCFirstStart::MCFailure{.Reason = "stopped"});
+        },
+        {.Hidden = true});
     REQUIRE(closed.has_value());
     CHECK(!*closed);
     CHECK(stopped);
+    SDL_Quit();
+}
+
+namespace
+{
+    using namespace std::chrono_literals;
+    using MCUpdateWork::MCFailure;
+    using MCUpdateWork::MCFailureKind;
+
+    /// <summary>A port on this machine that nothing listens on: a connection to it is refused.</summary>
+    uint16_t ClosedPort()
+    {
+        MCSocketTransport net;
+        REQUIRE(net.Startup());
+        const MCSocket::Handle listener = net.ListenTcp(0);
+        REQUIRE(listener != MCSocket::InvalidHandle);
+        const uint16_t port = net.LocalPort(listener);
+        net.Close(listener);
+        return port;
+    }
+
+    /// <summary>The release's host over http at a port nothing listens on, tried again only briefly.</summary>
+    std::unique_ptr<MCContentStage::MCSource> UnreachableSource()
+    {
+        const MCHttpSource::MCRetries quick{.First = 10ms, .Longest = 10ms, .RideOut = 20ms};
+        auto source =
+            MCHttpSource::Make(std::format("http://127.0.0.1:{}/content", ClosedPort()), MCMakeHttpGet, quick);
+        REQUIRE(source.has_value());
+        return std::move(*source);
+    }
+
+    /// <summary>The release's copy emptied for its first start: the installer's answer (HD) and nothing else.</summary>
+    void PrepareFirstStart(const MCHostedRelease& release)
+    {
+        const std::filesystem::path& game = release.Game.Path();
+        std::filesystem::remove_all(game);
+        std::filesystem::create_directories(game);
+        REQUIRE(MCContentUpdater::Choose(*MakeDisk(), game, WithHd).has_value());
+        REQUIRE(MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    }
+
+    /// <summary>A source that passes everything to one the test keeps, so what it was asked stays to look at.</summary>
+    class MCBorrowedSource final : public MCContentStage::MCSource
+    {
+    public:
+        explicit MCBorrowedSource(MCContentStage::MCSource& inner) : _Inner(inner) {}
+
+        std::expected<void, std::string> Fetch(std::string_view name, const std::filesystem::path& to, uint64_t size,
+                                               const std::function<bool(std::span<const char>)>& received) override
+        {
+            return _Inner.Fetch(name, to, size, received);
+        }
+
+        std::expected<std::string, std::string> Read(std::string_view name, size_t most) override
+        {
+            return _Inner.Read(name, most);
+        }
+
+    private:
+        MCContentStage::MCSource& _Inner;
+    };
+
+    /// <summary>What the first start's window says when it can't reach the host.</summary>
+    constexpr std::string_view UnreachableText =
+        "CAN'T REACH THE DOWNLOAD SERVER. CHECK YOUR INTERNET CONNECTION, THEN TRY AGAIN.";
+
+    /// <summary>The first start's windows for the tests: hidden, saved with --shots as <paramref name="shot"/>.</summary>
+    MCFirstStart::MCWindowOptions TestWindow(std::optional<size_t> answer, std::string_view shot = {})
+    {
+        MCFirstStart::MCWindowOptions options{.Hidden = true, .Answer = answer};
+
+        if (const std::optional<std::string_view> shots = MCTest::Option("shots"); shots && !shot.empty())
+        {
+            options.Shot = MCFileSystem::FromUtf8(*shots) / std::format("{}.bmp", shot);
+        }
+
+        return options;
+    }
+
+    /// <summary>Whether a hidden window can open here (logged when it can't, and the test skipped).</summary>
+    bool WindowsOpen()
+    {
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+        {
+            std::cout << "  (skipped: no video: " << SDL_GetError() << ")\n";
+            return false;
+        }
+
+        return true;
+    }
+}
+
+TEST_CASE("first start: the window's line says what's going on: looking at what's needed, checking what's here, how "
+          "much is in")
+{
+    CHECK_EQ(MCFirstStart::AmountLine({}, false), std::string("LOOKING AT WHAT'S NEEDED."));
+    CHECK_EQ(MCFirstStart::AmountLine({.Received = 1'200'000'000, .Expected = 6'500'000'000, .Checking = true}, false),
+             std::string("CHECKING WHAT'S ALREADY DOWNLOADED."));
+    CHECK_EQ(MCFirstStart::AmountLine({.Received = 1'200'000'000, .Expected = 6'500'000'000}, false),
+             std::string("1.2 GB OF 6.5 GB"));
+    CHECK_EQ(MCFirstStart::AmountLine({.Received = 350'200'000, .Expected = 6'500'000'000}, false),
+             std::string("350.2 MB OF 6.5 GB"));
+    CHECK_EQ(MCFirstStart::AmountLine({.Received = 1, .Expected = 2}, true), std::string("STOPPING."));
+}
+
+TEST_CASE("first start: a failed download is told by its kind, in plain words, its detail left to the log: the host "
+          "out of reach, a full disk with the space needed, a newer program needed, anything else")
+{
+    MCHostedRelease release("kinds");
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    PrepareFirstStart(release);
+    const auto failure = [&](MCUpdateDisk& disk, MCContentStage::MCSource& source)
+    {
+        auto installed = MCContentUpdater::Install(setup, disk, source, GoOn);
+        REQUIRE(!installed.has_value());
+        return std::move(installed.error());
+    };
+
+    // Nothing listens where the host is, as long as it's tried.
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const std::unique_ptr<MCContentStage::MCSource> nowhere = UnreachableSource();
+    const MCFailure unreachable = failure(*disk, *nowhere);
+    CHECK(unreachable.Kind == MCFailureKind::Unreachable);
+    CHECK(!unreachable.Reason.empty());
+    CHECK_EQ(MCFirstStart::ProblemText(unreachable), std::string(UnreachableText));
+
+    // The host there, but without the release's files: anything else.
+    MCFolderSource empty(release.Host.Path() / "nowhere");
+    const MCFailure other = failure(*disk, empty);
+    CHECK(other.Kind == MCFailureKind::Other);
+    CHECK_EQ(MCFirstStart::ProblemText(other),
+             std::string("SOMETHING WENT WRONG. TRY AGAIN, OR QUIT AND START THE GAME LATER."));
+
+    // No room: the bytes short, all of them on a full disk, and as many as are missing on one nearly big enough.
+    MCFolderSource source(release.Host.Path());
+    MCTestDisk full(0);
+    const MCFailure noRoom = failure(full, source);
+    REQUIRE(noRoom.Kind == MCFailureKind::DiskFull);
+    REQUIRE(noRoom.BytesShort > 0);
+    constexpr uint64_t Short = 1000;
+    MCTestDisk nearly(noRoom.BytesShort - Short);
+    const MCFailure nearlyRoom = failure(nearly, source);
+    CHECK(nearlyRoom.Kind == MCFailureKind::DiskFull);
+    CHECK_EQ(nearlyRoom.BytesShort, Short);
+    CHECK_EQ(MCFirstStart::ProblemText(noRoom),
+             std::format("NOT ENOUGH DISK SPACE: THE DOWNLOAD NEEDS {} MORE. FREE SOME UP, THEN TRY AGAIN.",
+                         MCUpdateWork::SizeText(noRoom.BytesShort)));
+
+    // Content that needs a newer program: the newest installer brings one.
+    release.List.LowestProgram = NewerBuild;
+    release.ListText = MCContentList::Write(release.List);
+    Write(release.Host.Path() / "lists" / (MCSha256::Hex(MCSha256::Of(release.ListText)) + ".json"), release.ListText);
+    release.Publish(2, 2, NewerBuild);
+    const MCFailure newer = failure(*disk, source);
+    CHECK(newer.Kind == MCFailureKind::NewerProgram);
+    CHECK_EQ(MCFirstStart::ProblemText(newer), std::string("THIS VERSION OF MECHCOMMANDER REDUX HD IS TOO OLD FOR THE "
+                                                           "GAME'S FILES. DOWNLOAD THE NEWEST INSTALLER."));
+
+    // The detail is the log's alone.
+    for (const MCFailure& failed : {unreachable, other, noRoom, newer})
+    {
+        CHECK(MCFirstStart::ProblemText(failed).find(failed.Reason) == std::string::npos);
+    }
+}
+
+TEST_CASE("first start: a start after a cut-off download shows what's in hand from its first report while it checks "
+          "it; the speed counts only what then comes over the network")
+{
+    MCHostedRelease release("in-hand");
+    const std::filesystem::path& game = release.Game.Path();
+    const MCContentUpdater::MCSetup setup = release.Setup();
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    PrepareFirstStart(release);
+
+    // Cut off in the second zip: the first's file staged, part of the second downloaded.
+    MCFolderSource cut(release.Host.Path());
+    cut.CutAfter(SendBytes);
+    REQUIRE(!MCContentUpdater::Install(setup, *disk, cut, GoOn).has_value());
+    const std::filesystem::path partial = game / "Redux update" / "download" / "update-2.zip";
+    REQUIRE_EQ(std::filesystem::file_size(partial), uint64_t{SendBytes});
+    const uint64_t base = std::filesystem::file_size(release.Host.Path() / "base-1.zip");
+    const uint64_t update = std::filesystem::file_size(release.Host.Path() / "update-2.zip");
+    const uint64_t inHand = base + SendBytes;
+
+    MCUpdateWork::MCProgress progress;
+    MCFolderSource hosted(release.Host.Path());
+    const std::unique_ptr<MCContentStage::MCSource> counted =
+        MCUpdateWork::Counted([&] { return std::make_unique<MCBorrowedSource>(hosted); }, progress)();
+    REQUIRE(counted != nullptr);
+    std::vector<MCUpdateWork::MCProgressReport> reports;
+    REQUIRE(MCContentUpdater::Install(setup, *disk, *counted,
+                                      [&](const MCUpdateWork::MCProgressReport& report)
+                                      {
+                                          reports.push_back(report);
+                                          return true;
+                                      })
+                .has_value());
+
+    // The bar starts where the last start stopped, and never goes back; it checks first, then downloads.
+    const auto first = std::ranges::find_if(reports, [](const auto& report) { return report.Expected > 0; });
+    REQUIRE(first != reports.end());
+    CHECK(first->Checking);
+    CHECK_EQ(first->Received, inHand);
+    CHECK_EQ(first->Expected, base + update);
+    CHECK(std::all_of(first, reports.end(), [&](const auto& report) { return report.Received >= inHand; }));
+    const auto downloading = std::find_if(first, reports.end(), [](const auto& report) { return !report.Checking; });
+    REQUIRE(downloading != reports.end());
+    CHECK(std::none_of(downloading, reports.end(), [](const auto& report) { return report.Checking; }));
+    CHECK_EQ(reports.back().Received, reports.back().Expected);
+
+    // Over the network: the signed files read again and the rest of the second zip, resumed by its range.
+    uint64_t read = 0;
+
+    for (const std::string& name : hosted.Asked())
+    {
+        if (!name.ends_with(".zip"))
+        {
+            read += std::filesystem::file_size(release.Host.Path() / MCFileSystem::FromUtf8(name));
+        }
+    }
+
+    CHECK((hosted.Asked() | std::views::filter([](const std::string& name) { return name.ends_with(".zip"); }) |
+           std::ranges::to<std::vector>()) == std::vector<std::string>{"update-2.zip"});
+    CHECK_EQ(hosted.Sent(), update - SendBytes);
+    CHECK_EQ(progress.Network(), hosted.Sent() + read);
+}
+
+TEST_CASE_ISOLATED("first start: a failed download says so in the same window over TRY AGAIN and QUIT; TRY AGAIN runs "
+                   "the work again, QUIT ends it")
+{
+    if (!WindowsOpen())
+    {
+        return;
+    }
+
+    int32_t tries = 0;
+    const MCFirstStart::MCWork failsOnce = [&](MCFirstStart::MCProgress& progress,
+                                               std::stop_token) -> std::expected<void, MCFailure>
+    {
+        constexpr uint64_t Whole = 6'500'000'000;
+        progress.Set(Whole / 4, Whole);
+
+        if (++tries == 1)
+        {
+            return std::unexpected(MCFailure{.Kind = MCFailureKind::Unreachable,
+                                             .Reason = "zips/base-1-12.zip didn't download: WinHTTP error 12029"});
+        }
+
+        return {};
+    };
+
+    const std::expected<bool, std::string> again =
+        MCFirstStart::RunAsking("GETTING THE GAME READY", failsOnce, TestWindow(0));
+
+    if (!again)
+    {
+        std::cout << "  (skipped: " << again.error() << ")\n";
+        SDL_Quit();
+        return;
+    }
+
+    CHECK(*again);
+    CHECK_EQ(tries, 2);
+
+    // QUIT: the work isn't run again. The window's last frame is the question, saved with --shots.
+    tries = 0;
+    const std::expected<bool, std::string> quit =
+        MCFirstStart::RunAsking("GETTING THE GAME READY", failsOnce, TestWindow(1, "first start problem"));
+    REQUIRE(quit.has_value());
+    CHECK(!*quit);
+    CHECK_EQ(tries, 1);
+    SDL_Quit();
+}
+
+TEST_CASE_ISOLATED("first start: --get-content gets what a first start gets and exits 0 once it's in place; 0 at once "
+                   "with nothing to get; 1 when the player quits, or closes the window")
+{
+    if (!WindowsOpen())
+    {
+        return;
+    }
+
+    MCHostedRelease release("get-content");
+    const std::filesystem::path& game = release.Game.Path();
+    std::deque<MCFolderSource> made;
+    bool cutFirst = false;
+    const MCContentAtStart::MCStart start{.GameFolder = game,
+                                          .RunningBuild = RunningBuild,
+                                          .Content = release.Setup(),
+                                          .Source = [&]() -> std::unique_ptr<MCContentStage::MCSource>
+                                          {
+                                              made.emplace_back(release.Host.Path());
+
+                                              if (std::exchange(cutFirst, false))
+                                              {
+                                                  made.back().CutAfter(SendBytes);
+                                              }
+
+                                              return std::make_unique<MCBorrowedSource>(made.back());
+                                          },
+                                          .Window = TestWindow(1)};
+
+    // The copy has its content: nothing is asked of the host, and no window opens.
+    CHECK_EQ(MCContentAtStart::GetContentOnly(start), 0);
+    CHECK(made.empty());
+
+    // A first start's copy: the content comes and goes in place, under the game's lock.
+    PrepareFirstStart(release);
+    {
+        const std::unique_ptr<MCUpdateLock> lock = MCUpdateLock::Open(game, MCUpdateLock::GameLock);
+        REQUIRE(lock != nullptr);
+        CHECK_EQ(MCContentAtStart::GetContentOnly(start, *lock), 0);
+    }
+
+    CHECK(!MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    const auto record = MCInstalled::Read(game);
+    REQUIRE(record.has_value());
+    CHECK_EQ(record->Release, uint64_t{2});
+    CHECK_EQ(Read(game / "data" / "same.fit"), std::string("same in both"));
+    CHECK(Read(game / "HD" / "terrain.hda") == Terrain());
+
+    // Cut off, and QUIT: 1, and the next start carries on.
+    PrepareFirstStart(release);
+    made.clear();
+    cutFirst = true;
+    CHECK_EQ(MCContentAtStart::GetContentOnly(start), 1);
+    CHECK(MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    REQUIRE_EQ(made.size(), size_t{1});
+
+    // TRY AGAIN carries on in the same process: what came stays, the cut-off zip resumed.
+    PrepareFirstStart(release);
+    MCContentAtStart::MCStart again = start;
+    again.Window = TestWindow(0);
+    made.clear();
+    cutFirst = true;
+    CHECK_EQ(MCContentAtStart::GetContentOnly(again), 0);
+    CHECK(!MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
+    REQUIRE_EQ(made.size(), size_t{2});
+    CHECK(std::ranges::count(made.back().Asked(), std::string("base-1.zip")) == 0);
+    CHECK_EQ(made.back().Sent(), std::filesystem::file_size(release.Host.Path() / "update-2.zip") - SendBytes);
+
+    // The window closed while it downloads: 1.
+    PrepareFirstStart(release);
+    const auto gate = std::make_shared<MCGate>();
+    MCContentAtStart::MCStart closing = start;
+    closing.Source = [&] { return std::make_unique<MCHeldSource>(release.Host.Path(), gate); };
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    REQUIRE(SDL_PushEvent(&quit));
+    CHECK_EQ(MCContentAtStart::GetContentOnly(closing), 1);
+    CHECK(MCContentUpdater::AwaitsInstall(*MakeDisk(), game));
     SDL_Quit();
 }
 

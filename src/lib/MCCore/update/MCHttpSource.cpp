@@ -442,8 +442,17 @@ namespace
         bool PassOver(std::string_view name) override
         {
             const std::string key(name);
+            const auto sent = _Sent.find(key);
+
+            // No host here sent its bytes (they were there before, or it has none): no host to pass over for it.
+            if (sent == _Sent.end() || sent->second.empty())
+            {
+                _Sent.erase(key);
+                return false;
+            }
+
             std::set<std::string, std::less<>> passed = _PassedOver[key];
-            passed.merge(_Sent[key]);
+            passed.merge(sent->second);
             _Sent.erase(key);
 
             if (std::ranges::all_of(HostsFor(name), [&](size_t host) { return passed.contains(_Hosts[host]); }))

@@ -1186,11 +1186,13 @@ namespace
 {
     /// <summary>
     /// One try at MCContentStage::FetchChecked: the bytes already here hashed, the rest fetched, the whole checked (one
-    /// that isn't as named deleted). <paramref name="goOn"/> is told the counts and sets <paramref name="stopped"/>.
+    /// that isn't as named deleted). <paramref name="goOn"/> is told the counts and sets <paramref name="stopped"/>;
+    /// <paramref name="gotBytes"/> says whether any bytes came from the source.
     /// </summary>
     std::expected<void, MCContentStage::MCFetchError> FetchCheckedOnce(
         MCUpdateDisk& disk, MCContentStage::MCSource& source, std::string_view name, const std::filesystem::path& to,
-        uint64_t size, const MCSha256::MCDigest& sha256, const std::function<bool(uint64_t)>& goOn, const bool& stopped)
+        uint64_t size, const MCSha256::MCDigest& sha256, const std::function<bool(uint64_t)>& goOn, const bool& stopped,
+        bool& gotBytes)
     {
         using MCKind = MCContentStage::MCFetchError::MCKind;
         using MCFetchError = MCContentStage::MCFetchError;
@@ -1243,6 +1245,7 @@ namespace
                                               {
                                                   hasher.Add(bytes);
                                                   hashed += bytes.size();
+                                                  gotBytes = gotBytes || !bytes.empty();
                                                   return goOn(bytes.size());
                                               });
 
@@ -1296,10 +1299,12 @@ std::expected<void, MCContentStage::MCFetchError> MCContentStage::FetchChecked(
 
     for (;;)
     {
-        auto checked = FetchCheckedOnce(disk, source, name, to, size, sha256, goOn, stopped);
+        bool gotBytes = false;
+        auto checked = FetchCheckedOnce(disk, source, name, to, size, sha256, goOn, stopped, gotBytes);
 
-        // A copy not as named, deleted, comes again whole from another host while the source has one.
-        if (checked || checked.error().Kind != MCFetchError::MCKind::NotAsNamed || disk.Stat(to).Exists ||
+        // A copy not as named, deleted, comes again whole from another host while the source has one; one whose bytes
+        // were all here before (none fetched now) is as it was: not as named.
+        if (checked || checked.error().Kind != MCFetchError::MCKind::NotAsNamed || !gotBytes || disk.Stat(to).Exists ||
             !source.PassOver(name))
         {
             return checked;

@@ -961,6 +961,18 @@ TEST_CASE(
     CHECK_EQ(badMirror.Asked(ZipName), size_t{1});
     CHECK_EQ(badCounted.Received, uint64_t{ZipBytes});
 
+    // Bytes no host sent here (a whole copy left from before, or a file of none) aren't fetched again: not as named.
+    MCContentFixture::Write(badTo, wrong);
+    const auto leftBefore =
+        MCContentStage::FetchChecked(*disk, *source, ZipName, badTo, zip.size(), sha256, counted.Count);
+    REQUIRE(!leftBefore.has_value());
+    CHECK(leftBefore.error().Kind == MCContentStage::MCFetchError::MCKind::NotAsNamed);
+    CHECK_EQ(ours.Asked(ZipName) + mirror.Asked(ZipName), size_t{3});
+    const auto empty = MCContentStage::FetchChecked(*disk, *source, "zips/empty.zip", folder.Path() / "empty.zip", 0,
+                                                    sha256, counted.Count);
+    REQUIRE(!empty.has_value());
+    CHECK(empty.error().Kind == MCContentStage::MCFetchError::MCKind::NotAsNamed);
+
     // A read not as named: passed over, so it's read again from the other host; with none left, nothing's passed over.
     const std::string list = R"({"files": []})";
     std::string wrongList = list;

@@ -77,10 +77,13 @@ namespace MCContentStage
 
         /// <summary>
         /// The hosted file <paramref name="name"/>, as last fetched or read here, isn't as named (its size or hash):
-        /// the hosts that sent its bytes are passed over for it from now on, so it can be fetched again whole from
-        /// another. With none left, none is passed over (the next fetch may try them all again).
+        /// the hosts that sent its bytes here are passed over for it from now on, so it can be fetched again whole
+        /// from another. With none left, none is passed over (the next fetch may try them all again).
         /// </summary>
-        /// <returns>Whether another host is left to fetch it from. Here none.</returns>
+        /// <returns>
+        /// Whether another host is left to fetch it from; never when no host sent its bytes here (they were on disk
+        /// before). Here none.
+        /// </returns>
         virtual bool PassOver(std::string_view /*name*/) { return false; }
     };
 

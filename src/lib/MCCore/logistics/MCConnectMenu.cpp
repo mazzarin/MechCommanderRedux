@@ -17,7 +17,6 @@
 #include "logistics/MCRegistrySettings.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
-#include "network/MCMPGameConfiguration.h"
 #include "logistics/MCSplashScreen.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
@@ -177,11 +176,12 @@ void ConnectScreen()
 void CancelToConnect()
 {
     // Port-only (the personal build): the LAN games stand for the connection screen (ConnectScreen), so their CANCEL
-    // goes back to the main menu, and a LAN game's ready room's to the games. The modem and serial screens (shown only
-    // without a network) go back to the connection screen, as in the original.
+    // goes back to the main menu, and a LAN game's room (the session screen; the ready room's) to the games. The modem
+    // and serial screens (shown only without a network) go back to the connection screen, as in the original.
     const bool fromGames = GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen;
     const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
-    const bool fromLanGame = GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen &&
+    const bool fromRoom = GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+    const bool fromLanGame = (fromRoom || GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen) &&
                              (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
     WhackTimer = true;
     GlobalLog()->LanScreen->ShowBlock(0);
@@ -196,6 +196,13 @@ void CancelToConnect()
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     MultiPlayer()->LeaveSession();
     GlobalLog()->ResetPlayerLights();
+
+    // The room's own: its timer, and its chat (the next room's starts empty, as from the main menu).
+    if (fromRoom)
+    {
+        GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen, 0);
+        GlobalLog()->ClearChat();
+    }
 
     if (fromGames)
     {
@@ -220,6 +227,19 @@ void CancelToConnect()
 void CancelToMPlayer()
 {
     KillTheGame();
+}
+
+void LeaveRoom()
+{
+    const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
+
+    if (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx)
+    {
+        CancelToConnect();
+        return;
+    }
+
+    Cancel();
 }
 
 void CancelToLan()
@@ -416,9 +436,9 @@ void JoinGame()
 
                 if (result == 0)
                 {
-                    EnterReadyRoom(*GlobalLog()->LanScreen, true);
-                    ReadyRoomTicks = 0;
-                    ResetReadyRoom();
+                    // Port-only (the personal build): straight into the room, which its host shows again with this
+                    // player in it (the original's ready room waited for the host's GO).
+                    GlobalLog()->SetUpSessionScreen();
                     return;
                 }
             }
@@ -439,12 +459,9 @@ void CreateSession()
         MultiPlayer()->CreateSession(sessionName.data(), playerName.data(), maxPlayers);
     }
 
-    GlobalLog()->LanScreen->ShowGuiWindow(false);
-    GlobalLog()->ConnectScreen->ShowGuiWindow(true);
-    ReadyRoomTicks = 0;
-    GlobalLog()->SetCurrentScreen(GlobalLog()->ConnectScreen);
-    GlobalLog()->LogisticsState = 0xe;
-    ResetReadyRoom();
+    // Port-only (the personal build): straight into the room, the host alone in it until players join (the original
+    // waited in the ready room).
+    GlobalLog()->SetUpSessionScreen();
 }
 
 void CreateSerialSession()
@@ -814,28 +831,11 @@ void ReadyRoomPlayerListHandleEvent(MCGuiObject& object, MCGuiEvent& event)
         }
     }
 
-    // The host can go once someone else is in.
+    // The host can go once someone else is in. (Port-only, the personal build: only a modem or serial game waits here;
+    // a configured match goes on from the session screen, MCSessionScreen::WatchRoom.)
     if (manager->IsHost != 0)
     {
         GlobalLog()->ConnectScreen->Element<MCLogButton>(2)->Disabled = players.size() < 2;
-
-        // Port: a configured match (MPGameConfiguration) goes on as soon as every player it named has joined, straight
-        // to the mech bay: no ready room, map screen or settings wait. A problem leaves the host here, with Go.
-        if (GameConfiguration.Active)
-        {
-            MPPollConfiguredMatch();
-
-            if (players.size() >= GameConfiguration.Roster.size() &&
-                std::ranges::all_of(GameConfiguration.Roster,
-                                    [&players](const MPGamePlayer& wanted)
-                                    {
-                                        return std::ranges::any_of(players, [&wanted](const auto& player)
-                                                                   { return player->Name == wanted.Name; });
-                                    }))
-            {
-                MPBeginConfiguredMatch();
-            }
-        }
     }
 }
 

@@ -233,7 +233,12 @@ namespace MCTestGuest
         Guest(const Guest&) = delete;
         Guest& operator=(const Guest&) = delete;
 
-        bool Join(MCDirectPlay& host, std::string_view address)
+        /// <summary>
+        /// Joins the session at <paramref name="address"/> (the game's <paramref name="host"/> pumped meanwhile), and
+        /// pings as a game's guest does once its room's screen is up (<see cref="Ping"/>), unless
+        /// <paramref name="pings"/> is false: a game still on its way to the room.
+        /// </summary>
+        bool Join(MCDirectPlay& host, std::string_view address, bool pings = true)
         {
             constexpr int32_t MostLooks = 40;
 
@@ -286,8 +291,21 @@ namespace MCTestGuest
             }
 
             StartListening(id);
+
+            if (pings)
+            {
+                Ping();
+            }
+
             return true;
         }
+
+        /// <summary>
+        /// Pings every player for a while, as a game's guest does from its room's screen as it opens: the host then shows
+        /// it the room. Often, as the game's frames go by faster than the clock here: the first pings may reach the host
+        /// before it has taken in this guest's arrival, and go unheard.
+        /// </summary>
+        void Ping() { _PingUntil = std::chrono::steady_clock::now() + PingTime; }
 
         /// <summary>The last match options message the host sent, if any.</summary>
         std::optional<MCMPMatchOptionsMessage> MatchOptions()
@@ -315,7 +333,7 @@ namespace MCTestGuest
             Send(hostId, message);
         }
 
-        /// <summary>The host's messages taking every player to the session screen (its GO, or its room shown again).</summary>
+        /// <summary>The host's messages taking every player to the session screen (its room shown again).</summary>
         int32_t SessionScreens() const { return _SessionScreens; }
 
         /// <summary>Leaves the session: the listener stops once what waits to be sent is out, and the link closes.</summary>
@@ -331,10 +349,30 @@ namespace MCTestGuest
         int32_t MissionsLoaded() const { return _MissionsLoaded; }
 
     private:
+        /// <summary>How long a guest pings (<see cref="Ping"/>), and how often.</summary>
+        static constexpr std::chrono::seconds PingTime{1};
+        static constexpr std::chrono::milliseconds PingEvery{5};
+
         void Take(uint32_t from, std::span<const uint8_t> message) override
         {
             Answer(from, message);
             Keep(message);
+        }
+
+        /// <summary>A ping, while <see cref="Ping"/>'s time lasts.</summary>
+        void EachPass() override
+        {
+            const auto now = std::chrono::steady_clock::now();
+
+            if (now >= _PingUntil.load() || now < _NextPing)
+            {
+                return;
+            }
+
+            _NextPing = now + PingEvery;
+            MCFIPingMessage ping;
+            ping.Header = LinkupHeader(MCLinkupMessageType::Ping);
+            Send(DPID_ALLPLAYERS, ping);
         }
 
         /// <summary>
@@ -430,6 +468,9 @@ namespace MCTestGuest
         std::atomic<int32_t> _MissionsLoaded = 0;
         /// <summary>The inquiries and load missions taken (the listener's own).</summary>
         std::set<std::vector<uint8_t>> _Taken;
+        /// <summary>Until when the guest pings (<see cref="Ping"/>), and its next ping (the listener's own).</summary>
+        std::atomic<std::chrono::steady_clock::time_point> _PingUntil{};
+        std::chrono::steady_clock::time_point _NextPing{};
     };
 
     /// <summary>
@@ -596,14 +637,22 @@ namespace MCTestGuest
         return true;
     }
 
+    /// <summary>Whether the game's session screen shows player <paramref name="id"/>.</summary>
+    inline bool RoomShows(uint32_t id)
+    {
+        return std::ranges::any_of(GlobalLog()->SessionScreen->PlayerNames, [id](const auto& name)
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+    }
+
     /// <summary>
-    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guests"/> join it, and opens the
-    /// session screen (the host's GO, which closes the room).
+    /// Boots the game as a lobby's host on <paramref name="port"/> (straight into its room, the session screen) and has
+    /// <paramref name="guests"/> join it; whether the room came to show them all (the host shows it again for each).
     /// </summary>
     inline bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
     {
         if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
-            MultiPlayer()->SessionManager->DirectPlay == nullptr)
+            MultiPlayer()->SessionManager->DirectPlay == nullptr ||
+            GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
         {
             return false;
         }
@@ -616,9 +665,13 @@ namespace MCTestGuest
             }
         }
 
+        const bool shown = SettleUntil(
+            [&guests]
+            {
+                return std::ranges::all_of(guests, [](const Guest& guest) { return RoomShows(guest.Id()); }) &&
+                       std::ranges::all_of(guests, [](const Guest& guest) { return guest.SessionScreens() > 0; });
+            });
         Settle();
-        Go();
-        Settle();
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+        return shown && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
     }
 }

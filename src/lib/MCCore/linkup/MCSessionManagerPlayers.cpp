@@ -465,6 +465,12 @@ void MCSessionManager::HandlePingUpdate(const MCFidpMessage& msg)
 {
     if (msg.FromID != ServerID)
     {
+        // Port-only (the personal build): a guest's ping says its room's screen is up (MCFidpPlayer::HeardPing).
+        if (const std::shared_ptr<MCFidpPlayer> player = GetPlayer(msg.FromID); player != nullptr && IsHost)
+        {
+            player->HeardPing = true;
+        }
+
         return;
     }
 

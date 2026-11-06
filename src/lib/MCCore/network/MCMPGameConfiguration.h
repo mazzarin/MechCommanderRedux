@@ -120,13 +120,19 @@ struct MPMatchState
 
 /// <summary>
 /// Host: every player the roster names has joined. Checks the roster against the session and the mission against every
-/// machine, then sends the match to the guests and enters the mech bay. A problem is logged and the host is left on the
-/// "Waiting for Players" screen to carry on by hand.
+/// machine, then sends the match to the guests and enters the mech bay. A problem is logged and the host is left where
+/// it waits (port-only, the personal build: the session screen, with START) to carry on by hand.
 /// </summary>
 void MPBeginConfiguredMatch();
 
 /// <summary>Host: called as the waiting screen refreshes; gives up on guests that never confirm the mission file.</summary>
 void MPPollConfiguredMatch();
+
+/// <summary>
+/// Port-only (the personal build): host: whether a configured match waits for its guests' word on the mission file
+/// (the session screen shows no one the room meanwhile).
+/// </summary>
+bool MPConfiguredMatchWaiting();
 
 /// <summary>
 /// A guest's (or the host's own) report of whether it has the mission file (<paramref name="check"/>, the host's

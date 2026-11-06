@@ -180,6 +180,11 @@ public:
     MCRoomRefusal LobbyRoomRefusal();
     /// <summary>Port-only (the personal build): opens the hosted session to new players again, or closes it (rejoins).</summary>
     void AdmitNewPlayers(bool admit);
+    /// <summary>
+    /// Port-only (the personal build): whether the host has locked this session (<see cref="LockSession"/>, as its first
+    /// match started). Before that its room takes players until START.
+    /// </summary>
+    [[nodiscard]] bool SessionLocked() const { return _SessionLocked; }
     /// <summary>Re-enumerates the sessions of this game on the current connection.</summary>
     /// <returns>The sessions listed, or none without DirectPlay.</returns>
     std::optional<std::vector<std::shared_ptr<MCFidpSession>>> GetSessions();

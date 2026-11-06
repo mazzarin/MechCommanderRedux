@@ -510,6 +510,11 @@ void MPBeginConfiguredMatch()
     game->SendFileInquiry(Pending.Path);
 }
 
+bool MPConfiguredMatchWaiting()
+{
+    return Pending.Current == Step::AwaitingFiles;
+}
+
 void MPPollConfiguredMatch()
 {
     if (Pending.Current == Step::AwaitingFiles && MCPort::Milliseconds() > Pending.Deadline)

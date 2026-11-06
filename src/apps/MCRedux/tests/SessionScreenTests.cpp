@@ -8,6 +8,7 @@
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFile.h"
 #include "linkup/MCFidpPlayer.h"
+#include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
@@ -92,9 +93,13 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     REQUIRE(manager.CurrentSession() != nullptr);
     REQUIRE(manager.DirectPlay != nullptr);
 
+    // The host is in its room; the guest who joins is shown it (the personal build: no ready room, no GO).
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     Guest guest;
     REQUIRE(guest.Join(*manager.DirectPlay, HostAddress));
+    // The same frames as the original's wait before its GO (so the same clock), the room shown within them.
     Settle();
+    REQUIRE(MCTestGuest::RoomShows(guest.Id()));
 
     // Every frame presented from here on is folded into one more hash.
     uint32_t presents = 0x811c9dc5;
@@ -110,23 +115,26 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     // The cursor hasn't moved yet in the first step: at (0, 0) the original's over test (OB-129, fixed) took it as over
     // every tool button, so its frame was 0x3d56c0c0 before the fix. Port-only: every frame has the MATCH OPTIONS tab
     // behind MULTIPLAYER CHAT (3 Nov 2026; only its column differs from the frames before: 0xa6b1053f, 0x7548a837,
-    // 0xf143dbb4, 0x1a793ae4, 0xa6d18671, 0x4adcfb49, 0x74b8c0d0, 0x2d2edef8, 0x983fc7f9).
+    // 0xf143dbb4, 0x1a793ae4, 0xa6d18671, 0x4adcfb49, 0x74b8c0d0, 0x2d2edef8, 0x983fc7f9). Port-only (the personal
+    // build): the room shows from hosting, with no GO (6 Nov 2026): only the clock's seconds differ from the frames
+    // before (the tests' clock moves with each screen wipe's frames, and GO's wipe is gone: 0x0cc42d9a, 0x034cda12,
+    // 0xb3ef257d, 0x3b17d20d, 0xbcc94190, 0xec4846b8, 0x19fd5db9, 0x7342d1b5, 0xdfb618bc).
     const Step steps[] = {
-        {"session", [] { Go(); }, 0x0cc42d9au},
-        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0x034cda12u},
-        {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0xb3ef257du},
-        {"team 1 points up", [] { Click(0x106, 0x186); }, 0x3b17d20du},
-        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0xbcc94190u},
-        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0xec4846b8u},
+        {"session", [] {}, 0x1ec2ad5cu},
+        {"first name to team 1", [] { Drag(0x15, 0x16a, 0x100, 0x13a); }, 0x835f1a11u},
+        {"next name to team 2", [] { Drag(0x15, 0x16a, 0x1c4, 0x13a); }, 0x6a7049b5u},
+        {"team 1 points up", [] { Click(0x106, 0x186); }, 0xa372a3c5u},
+        {"team 2 Inner Sphere", [] { Click(0x225, 0x112); }, 0x051c73ceu},
+        {"hover a light", [] { SendMouse(7, 0xdc, 5, false); }, 0x18b1b165u},
         {"chat typed",
          []
          {
              Click(0x40, 0x130);
              Type("hello there");
          },
-         0x19fd5db9u},
-        {"chat sent", [] { SendKey(0xd); }, 0x7342d1b5u},
-        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0xdfb618bcu},
+         0x0f8826b3u},
+        {"chat sent", [] { SendKey(0xd); }, 0x8ec3c175u},
+        {"name back off the team", [] { Drag(0x105, 0x13a, 0x40, 0x1c0); }, 0x8bc88c88u},
     };
 
     int32_t index = 0;
@@ -144,8 +152,8 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
     MCTestGame::OnPresent = nullptr;
     // 0xa176a052 before the OB-129 fix (the first step's frames), 0x87982e74 before the control audit (2026-10-04: the
     // steps are unchanged; between them presses end at the release, and the ready lights' backing and the clock show
-    // at once; 0x8a6bba0e before the MATCH OPTIONS tab).
-    CHECK_EQ(presents, 0xc78ee09fu);
+    // at once; 0x8a6bba0e before the MATCH OPTIONS tab; 0xc78ee09f before the room showed from hosting, the clock's).
+    CHECK_EQ(presents, 0x5e48015bu);
 }
 
 namespace
@@ -224,14 +232,14 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CreateSession();
     Settle();
     REQUIRE(manager.DirectPlay != nullptr);
-
-    Guest guest;
-    REQUIRE(guest.Join(*manager.DirectPlay, OptionsHostAddress));
-    Settle();
     MCMultiPlayer& game = *MultiPlayer();
     game.MatchOptions = MCMatchOptions{
         .Weather = MCWeatherKind::Rain, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::MechBraking};
-    Go();
+
+    // The guest who joins is shown the room, its options with it.
+    Guest guest;
+    REQUIRE(guest.Join(*manager.DirectPlay, OptionsHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     Settle();
 
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
@@ -486,8 +494,7 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
 
     Guest guest;
     REQUIRE(guest.Join(*manager.DirectPlay, DataHostAddress));
-    Settle();
-    Go();
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     Settle();
     // The guest's game joins the group the inquiries go to as the host's setup arrives; the test's guest doesn't.
     REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, guest.Id()));
@@ -553,9 +560,11 @@ namespace
 {
     /// <summary>The menus' test's loopback address, so it can run beside the others (--jobs).</summary>
     constexpr std::string_view MenuHostAddress = "127.0.0.1:28893";
+    /// <summary>The room's test's.</summary>
+    constexpr std::string_view RoomHostAddress = "127.0.0.1:28923";
 
     /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
-    void ClickButton(MCLogButton& button)
+    void ClickButton(MCGuiObject& button)
     {
         Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
         Settle();
@@ -564,8 +573,9 @@ namespace
 
 /// <summary>
 /// The menus' way into a LAN game (the personal build): MULTIPLAYER opens the LAN games over TCP/IP with no question
-/// (the original's connection screen and its "IPX or TCP?" are gone); their CANCEL goes back to the main menu, and the
-/// ready room's leaves the game for the games again.
+/// (the original's connection screen and its "IPX or TCP?" are gone); their CANCEL goes back to the main menu. Hosting
+/// goes straight into the room (the session screen, no ready room), the host alone in it, and its EXIT leaves the game
+/// for the games again.
 /// </summary>
 TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back a step")
 {
@@ -588,7 +598,7 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
     CHECK(MultiPlayer() == nullptr);
 
-    // Hosting from the games: the ready room, whose CANCEL leaves the game and lists the games again.
+    // Hosting from the games: the room, the host alone in it, whose EXIT leaves the game and lists the games again.
     ConnectScreen();
     Settle();
     REQUIRE(MultiPlayer() != nullptr);
@@ -600,11 +610,17 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CreateSession();
     Settle();
     REQUIRE(manager.CurrentSession() != nullptr);
-    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
-    ClickButton(*GlobalLog()->ConnectScreen->Element<MCLogButton>(1));
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    CHECK(!GlobalLog()->ConnectScreen->IsShowing());
+    CHECK(MCTestGuest::RoomShows(manager.MyPlayer()->Id));
+    CHECK(room.StartButton->Disabled);
+    CHECK(!room.LoadMissionButton->Disabled);
+    SaveShot("menus 0 host alone", ScreenHash());
+    ClickButton(*room.ExitButton);
     CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
     CHECK(lanScreen.IsShowing());
-    CHECK(!GlobalLog()->ConnectScreen->IsShowing());
+    CHECK(!room.IsShowing());
     CHECK(manager.CurrentSession() == nullptr);
     CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
     CHECK_EQ(ElementText(lanScreen, 4), "Commander");
@@ -619,4 +635,130 @@ TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back 
     CHECK(GlobalLog()->MultiplayerScreen->IsShowing());
     CHECK(!serialScreen.IsShowing());
     CHECK(!lanScreen.IsShowing());
+}
+
+/// <summary>
+/// The room (the personal build): a LAN game's host waits in the session screen; a player who joins is shown the room
+/// once its game is up (it pinged) with the host's picks as they stand: the teams, the tech bases, the points and the
+/// mission, every player asked for its file again; one who leaves is taken off every screen and the room goes on; START
+/// closes the room.
+/// </summary>
+TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks kept as they join and leave")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(RoomHostAddress);
+    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
+    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
+    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Room game");
+    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
+    CreateSession();
+    Settle();
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    MCSessionScreen& room = *GlobalLog()->SessionScreen;
+    MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
+    const uint32_t hostId = manager.MyPlayer()->Id;
+    constexpr std::string_view Mission = "ARENA";
+    const uint32_t sameData = MCMissionDataHash(GamePath(SavePath, Mission, ".mpk"));
+    REQUIRE(sameData != 0);
+    const auto openToPlayers = [&manager]
+    { return (manager.CurrentSession()->SessionDesc.dwFlags & DPSESSION_NEWPLAYERSDISABLED) == 0; };
+    CHECK(openToPlayers());
+
+    // ANN joins and is shown the room; the host picks the teams, Inner Sphere for team 2, the mission and the points.
+    Guest ann("ANN");
+    REQUIRE(ann.Join(*manager.DirectPlay, RoomHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(ann.Id()) && ann.SessionScreens() == 1; }));
+    // The guest's game joins the group the inquiries go to as the host's setup arrives; the test's guest doesn't.
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, ann.Id()));
+    ann.SendRules(hostId, MCMatchRule::Supported);
+    ann.AnswerFiles(sameData);
+    room.AssignPlayer(hostId, 1, 0, false);
+    room.AssignPlayer(ann.Id(), 2, 0, false);
+    room.SetTeamTechBase(2, 1);
+    room.LoadMission(Mission);
+    REQUIRE(SettleUntil([&] { return ann.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
+    room.SetTeam1RP(12000);
+    room.SetTeam2RP(9000);
+    Settle();
+    CHECK(!room.StartButton->Disabled);
+
+    // CAL joins: not shown while its game is on its way (and START waits for it), then shown the room as it stands.
+    Guest cal("CAL");
+    REQUIRE(cal.Join(*manager.DirectPlay, RoomHostAddress, false));
+    Settle();
+    CHECK(!MCTestGuest::RoomShows(cal.Id()));
+    CHECK(room.StartButton->Disabled);
+    CHECK_EQ(ann.SessionScreens(), 1);
+    REQUIRE(manager.AddPlayerToGroup(MultiPlayer()->AllPlayerGroupID, cal.Id()));
+    cal.SendRules(hostId, MCMatchRule::Supported);
+    cal.AnswerFiles(sameData);
+    cal.Ping();
+    REQUIRE(SettleUntil(
+        [&]
+        {
+            const std::shared_ptr<MCFidpPlayer> player = manager.GetPlayer(cal.Id());
+            return player != nullptr && player->HeardPing;
+        }));
+    const uint32_t pinged = MCPort::Milliseconds();
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(cal.Id()) && cal.SessionScreens() == 1; }));
+    // Shown as its game is up: on the host's next look (twice a second), not its wait for a game that never says so.
+    CHECK(MCPort::Milliseconds() - pinged < 1000);
+    REQUIRE(SettleUntil([&] { return cal.MissionsLoaded() == 1 && !dialog.IsShowing(); }));
+    CHECK_EQ(ann.SessionScreens(), 2);
+    CHECK_EQ(ann.MissionsLoaded(), 2);
+    CHECK(room.Team1Players[0] == hostId);
+    CHECK(room.Team2Players[0] == ann.Id());
+    CHECK_EQ(room.Team1TechBase, 1);
+    CHECK_EQ(room.Team2TechBase, 1);
+    CHECK_EQ(std::string(room.Team1RPText->Text()), "12000");
+    CHECK_EQ(std::string(room.Team2RPText->Text()), "9000");
+    CHECK(!room.MissionFile.empty());
+    SaveShot("room 0 a player joined", ScreenHash());
+
+    // CAL unpicked holds START; on team 2 it lights.
+    CHECK(room.StartButton->Disabled);
+    room.AssignPlayer(cal.Id(), 2, 1, false);
+    CHECK(!room.StartButton->Disabled);
+
+    // ANN leaves: taken off the screen, the room goes on with CAL on team 2 (no "has left the game").
+    ann.Leave();
+    REQUIRE(SettleUntil([&] { return !MCTestGuest::RoomShows(ann.Id()); }));
+    Settle();
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
+    CHECK(!dialog.IsShowing());
+    CHECK(room.Team2Players[0] == MCSessionScreen::NoPlayer);
+    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(!room.StartButton->Disabled);
+    CHECK(openToPlayers());
+    SaveShot("room 1 a player left", ScreenHash());
+
+    // DAN joins, and leaves before it answers for the mission's file (the test's guest is never asked: it isn't in the
+    // group the inquiries go to): the answers go on without it, and the others get the mission.
+    Guest dan("DAN");
+    REQUIRE(dan.Join(*manager.DirectPlay, RoomHostAddress));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && dialog.IsShowing(); }));
+    Settle();
+    CHECK(dialog.IsShowing());
+    const int32_t calMissions = cal.MissionsLoaded();
+    dan.Leave();
+    REQUIRE(SettleUntil([&] { return !dialog.IsShowing() && cal.MissionsLoaded() == calMissions + 1; }));
+    CHECK(!MCTestGuest::RoomShows(dan.Id()));
+    CHECK(!room.MissionFile.empty());
+    CHECK(room.Team2Players[1] == cal.Id());
+    CHECK(!room.StartButton->Disabled);
+
+    // START closes the room.
+    ClickButton(*room.StartButton);
+    CHECK(GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen);
+    CHECK(manager.SessionLocked());
+    CHECK(!openToPlayers());
 }

@@ -200,7 +200,8 @@ MCRedux.exe -join 192.168.1.10:28800 -player Bob -session "Match42"
 When every player named by a `-slot` has joined, the host checks that they are exactly the roster and that every machine
 has the mission file, then takes everyone **straight from "Waiting for Players" to the mech bay**. The ready room, the map
 selector and the wait for the mission's settings are never loaded: the host fills in an `MPGameConfiguration` (mission,
-points, tech bases, roster) and sends it to the guests in one message. Guests need no extra options.
+points, tech bases, roster) and sends it to the guests in one message. Guests need no extra options. (**Redux HD:**
+there is no ready room: the players wait in the session screen, where the host can still start by hand.)
 
 | Option (host only)                    | Description                                                                          |
 |---------------------------------------|--------------------------------------------------------------------------------------|

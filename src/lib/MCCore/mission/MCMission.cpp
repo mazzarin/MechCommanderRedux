@@ -386,6 +386,12 @@ auto MCMission::Load(std::string_view missionName) -> int32_t
             GlobalLog()->LogisticsState = 1;
             GlobalLog()->ShowLogScreen(false, false);
         }
+        else
+        {
+            // Port-only (the personal build): straight into the room, as a LAN game's hosting and joining go (the
+            // original waited in the ready room for the host's GO).
+            GlobalLog()->SetUpSessionScreen();
+        }
     }
 
     return 0;

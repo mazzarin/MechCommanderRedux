@@ -131,8 +131,12 @@ adds are in the [README](README.md#what-redux-hd-adds).
   DirectPlay dropped them. The players' computers check, not the games, so a slow or loading game never drops out.
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
 - **Redux HD.** MULTIPLAYER opens the local network's games straight away: the connection screen (modem, serial,
-  network, internet) and its IPX or TCP question are gone. CANCEL there goes back to the main menu, and the ready
-  room's back to the games.
+  network, internet) and its IPX or TCP question are gone. CANCEL there goes back to the main menu, and a game's EXIT
+  back to the games.
+- **Redux HD.** No ready room: hosting or joining a game, from the menu or a launcher's `-host` and `-join`, goes
+  straight to the session screen, which takes players until START. A player who joins sees the room as it stands
+  (teams, mission, points, options) and the host's picks stay; one who leaves is taken off the screen and the game
+  goes on.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
 - A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points

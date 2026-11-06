@@ -22,7 +22,6 @@ namespace
 {
     using Clock = std::chrono::steady_clock;
     using MCLobbyUpdate::SendTime;
-    using MCLobbyUpdate::SettleTime;
     using MCLobbyUpdate::TryEvery;
 
     /// <summary>The logistics state of the room's waiting screen (the connect screen), as a lobby's start shows it.</summary>
@@ -101,8 +100,6 @@ namespace
     /// its room, which remembers.
     /// </summary>
     std::optional<bool> OwnPlaceKept;
-    /// <summary>The host shows its room again once a guest back from its update has settled.</summary>
-    std::optional<Clock::time_point> RefreshAt;
     std::optional<MCHostWait> HostWait;
     /// <summary>
     /// The room (its session's instance) this guest left to wait for its restarting host: back in it, the host's restart
@@ -148,6 +145,18 @@ namespace
             logistics->SessionScreen->StartButton != nullptr)
         {
             logistics->SessionScreen->CheckGoodToGo();
+        }
+    }
+
+    /// <summary>
+    /// The room's last kept place went: the room closes again if a match closed it (the session locked at START); before
+    /// START it takes players anyway.
+    /// </summary>
+    void CloseRoomAgain()
+    {
+        if (MCSessionManager& manager = *MultiPlayer()->SessionManager; manager.SessionLocked())
+        {
+            manager.AdmitNewPlayers(false);
         }
     }
 
@@ -264,7 +273,6 @@ namespace
         // The places this guest saw kept: the room's guests back (or not) while it is away go unseen. Which places the
         // room has kept stands until this guest knows whether it comes back to the same room (TryHostAgain).
         Coming.clear();
-        RefreshAt.reset();
         game.SessionManager->ConnectTcp(RoomAddress());
         ShowWaitingScreen();
         ShowWaitingDialog(UpdatingText(name));
@@ -303,6 +311,8 @@ namespace
             HostWait.reset();
             MultiPlayer()->StartLobbyGame();
             DestroyConnectStatusWindow();
+            // Straight into the room, which its host shows again with this guest in it.
+            GlobalLog()->SetUpSessionScreen();
             return;
         }
 
@@ -325,9 +335,9 @@ namespace
     }
 
     /// <summary>
-    /// The places kept for guests away updating: one past its wait goes, the room closing again once none is kept. The
-    /// guest is gone from the room: its name and its place on a team go too, so the room's start waits no more. A host
-    /// left alone ends the game as the original's leaving does.
+    /// The places kept for guests away updating: one past its wait goes. The guest is gone from the room: its name and its
+    /// place on a team go too, so the room's start waits no more; the room says so, and a host left alone waits for
+    /// others.
     /// </summary>
     void KeepPlaces(Clock::time_point now)
     {
@@ -349,7 +359,7 @@ namespace
 
             if (game.IsHost && Coming.empty())
             {
-                game.SessionManager->AdmitNewPlayers(false);
+                CloseRoomAgain();
             }
 
             if (!stayed && GlobalLog()->SessionScreen != nullptr && GlobalLog()->SessionScreen->StartButton != nullptr)
@@ -364,11 +374,7 @@ namespace
                 continue;
             }
 
-            if (game.IsHost && Others().empty() && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen)
-            {
-                ShowPlayerLeft(gone.Name);
-            }
-            else if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
+            if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
             {
                 chat->AddLine(std::format(NotBackFormat, Upper(gone.Name)));
             }
@@ -594,18 +600,6 @@ auto MCLobbyUpdate::Frame() -> void
     }
 
     KeepPlaces(now);
-
-    // A guest back from its update: the host's room shows it to everyone (and it to them) as the host's GO did.
-    if (RefreshAt.has_value() && now >= *RefreshAt)
-    {
-        RefreshAt.reset();
-
-        if (MultiPlayer()->IsHost && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen &&
-            MultiPlayer()->SessionManager->GetPlayers(nullptr).size() > 1)
-        {
-            GlobalLog()->SetUpSessionScreen();
-        }
-    }
 }
 
 auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
@@ -677,7 +671,7 @@ auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
 
     if (MultiPlayer()->IsHost && Coming.empty())
     {
-        MultiPlayer()->SessionManager->AdmitNewPlayers(false);
+        CloseRoomAgain();
     }
 
     PlacesChanged();
@@ -731,14 +725,10 @@ auto MCLobbyUpdate::PlayerJoined(uint32_t playerId) -> void
     SDL_Log("Lobby updates: %s is back from its update", player->Name.c_str());
     Coming.erase(coming);
 
-    if (game->IsHost)
+    // The session screen shows it the room as it shows any player who joins (MCSessionScreen::WatchRoom).
+    if (game->IsHost && Coming.empty())
     {
-        if (Coming.empty())
-        {
-            game->SessionManager->AdmitNewPlayers(false);
-        }
-
-        RefreshAt = Now() + SettleTime;
+        CloseRoomAgain();
     }
 
     PlacesChanged();

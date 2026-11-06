@@ -857,9 +857,10 @@ void MCMultiPlayer::PlayerLeftGame(uint32_t playerID)
              GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen) &&
             !MCLobbyUpdate::LeftToUpdate(playerID))
         {
-            // Port fix: the player is already gone when DirectPlay reports it; the original printed its freed name.
-            const auto player = SessionManager->GetPlayer(playerID);
-            ShowPlayerLeft(player != nullptr ? player->Name : std::string());
+            // Port-only (the personal build): the room goes on without the player, who is taken off every game's
+            // screen (the host's chat said it left); a host left alone waits for others. The original ended the room
+            // for everyone ("... has left the game").
+            GlobalLog()->SessionScreen->RemovePlayer(playerID);
         }
 
         return;

@@ -124,6 +124,11 @@ public:
     uint32_t ReportedLatency = 0;
     /// <summary>Whether the player has a number (guaranteed messages are only resent to such players).</summary>
     bool HasPlayerNumber = true;
+    /// <summary>
+    /// Port-only (the personal build): on the host, whether this guest has pinged it. A guest pings from its room's
+    /// screen (the session screen as it opens; an older build's ready room), so its game is up to be shown the room.
+    /// </summary>
+    bool HeardPing = false;
     /// <summary>Base delay before an unverified message is resent, in ms.</summary>
     uint32_t ResendDelay = 1500;
     /// <summary>The player's physical memory (from its FISystemInfoMessage).</summary>

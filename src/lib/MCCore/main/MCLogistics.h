@@ -198,6 +198,9 @@ public:
     /// <summary>Takes the ready lights and their views down (the original deleted its lights object).</summary>
     void ResetPlayerLights();
 
+    /// <summary>Empties the multiplayer chat and every chat window's history (a room left).</summary>
+    void ClearChat();
+
     /// <summary>The chat window on <paramref name="screen"/>, or null; the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogChatWindow> ChatWindowOn(const MCLogObject& screen) const;
 

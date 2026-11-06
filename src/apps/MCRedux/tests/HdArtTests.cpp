@@ -12508,8 +12508,6 @@ namespace
     void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
     {
         constexpr std::string_view HostAddress = "127.0.0.1:28877";
-        // The session screen's logistics state (as MCConnectMenu sets it).
-        constexpr int32_t SessionState = 8;
         // MULTIPLAYER opens the LAN games (the personal build); the connection screen shows only without a network.
         ConnectScreen();
 
@@ -12517,7 +12515,7 @@ namespace
             GlobalLog()->CurrentScreen() != GlobalLog()->LanScreen)
         {
             shoot("mp_connect");
-            std::cout << "  no network: the LAN, ready room and session screens are left out\n";
+            std::cout << "  no network: the LAN and session screens are left out\n";
             return;
         }
 
@@ -12527,14 +12525,8 @@ namespace
         lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
         lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");
         shoot("mp_lan");
+        // Hosting opens the room (the session screen), the host alone in it (the personal build: no ready room).
         CreateSession();
-        shoot("mp_ready_room");
-        // The session screen as GO shows it (its activation sends a lone host back to the main menu, so its art
-        // shows without the players).
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(*GlobalLog()->SessionScreen);
-        GlobalLog()->ShowLogScreen(true, true);
-        GlobalLog()->LogisticsState = SessionState;
         shoot("mp_session");
         DoExit();
         shoot("main_menu_after_mp");

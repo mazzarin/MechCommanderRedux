@@ -83,7 +83,7 @@ namespace MCTestGame
     /// <summary>
     /// Boots the whole game as a multiplayer lobby starts it, with <paramref name="commandLine"/> (-host or -join and
     /// the lobby's other words): it hosts or joins the room as the game starts, then runs frames until logistics shows
-    /// the room's waiting screen (the connect screen), or the message saying the join failed. Same rules as
+    /// the room (the session screen), or the message saying the join failed. Same rules as
     /// <see cref="StartMission"/>: a TEST_CASE_ISOLATED test only, and one boot per process.
     /// </summary>
     /// <returns>Whether logistics came up.</returns>

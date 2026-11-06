@@ -25,9 +25,9 @@ Running the Game
 ----------------
 
 Redux HD's setup installs it in your MechCommander Gold folder, or downloads the game
-into a folder of its own. Start it from the Start menu. MCX.EXE in that folder starts
-Redux too, so a launcher that starts the original starts Redux; the uninstall puts the
-original MCX.EXE back.
+into a folder of its own. Start it from the Start menu. MCX.EXE in that folder is Redux
+too (the same file as MCRedux.exe), so a launcher that starts the original starts Redux;
+the uninstall puts the original MCX.EXE back.
 
 MCRedux.exe also runs from any MechCommander Gold folder (the one containing
 SYSTEM.CFG), or kept somewhere else, pointed at the game folder:

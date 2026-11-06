@@ -30,7 +30,7 @@ public:
 
     /// <summary>
     /// The text file beside MCX.EXE holding its table, which every release writes from its own MCX.EXE
-    /// (tools/release/game_strings.py): the Windows setup puts its launcher, which holds no text, in MCX.EXE's place.
+    /// (tools/release/game_strings.py): the Windows setup puts the game, which holds no text, in MCX.EXE's place.
     /// </summary>
     static constexpr std::string_view TextFileName = "MCX strings.txt";
 
@@ -47,7 +47,7 @@ public:
 
     /// <summary>
     /// The game's table: the executable's own when it holds any text (a player's copy in another language keeps its
-    /// own), else the text file's (Windows' launcher in MCX.EXE's place).
+    /// own), else the text file's (Windows' game in MCX.EXE's place).
     /// </summary>
     /// <returns>The table, or why neither gave one.</returns>
     static std::expected<MCStringTable, std::string> LoadGame(const std::filesystem::path& exe,

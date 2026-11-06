@@ -65,8 +65,6 @@ out/
 
 # Compiler and linker artifacts
 *.exe
-# The setup's pinned launcher (src/installer/windows/launcher/MCX.exe.pin).
-!/src/installer/windows/launcher/MCX.exe
 *.dll
 *.lib
 *.a

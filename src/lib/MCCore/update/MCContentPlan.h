@@ -24,7 +24,8 @@ class MCContentFolder;
 /// have it at its size and time: a copy with no record yet (one the program reached first) hashes its files once.
 ///
 /// The program's own files in the game folder are left to the program (<see cref="LeftToProgram"/>): on Windows the
-/// launcher and Redux's editor take the paths of the original's MCX.EXE and MCEditor.exe, which the release lists.
+/// game (under MCX.EXE's name too) and Redux's editor take the paths of the original's MCX.EXE and MCEditor.exe, which
+/// the release lists.
 /// </summary>
 namespace MCContentPlan
 {
@@ -33,8 +34,8 @@ namespace MCContentPlan
 
     /// <summary>
     /// The files the Windows program's setup puts in the game folder (src/installer/windows/MechCommanderRedux.iss's
-    /// [Files]), folded (MCContentList::FoldedPath): the game, SDL, the editor, the launcher in MCX.EXE's place, and the
-    /// README and licences.
+    /// [Files] and MCX.EXE), folded (MCContentList::FoldedPath): the game, SDL, the editor, the game under MCX.EXE's
+    /// name, and the README and licences.
     /// </summary>
     constexpr std::array<std::string_view, 6> WindowsProgramFiles = {"MCREDUX.EXE",
                                                                      "SDL3.DLL",

@@ -144,11 +144,34 @@ TEST_CASE("hd settings: each HD setting has its own key and global, off in the o
         CHECK(setting.Personal <= setting.Most);
         CHECK_EQ(setting.Boolean, setting.Most == 1 && setting.Key != "HDFlecks");
         CHECK((setting.Personal != setting.Original) == (setting.Key != "HDFlecks" && !setting.Player));
-        // The tests keep the original's defaults (only the app calls UseHdByDefault).
+        // The tests keep the original's defaults (only the app calls UseHdByDefault and UsePersonalGameplay).
         CHECK_EQ(MCHdSettings::Default(setting), setting.Original);
+        CHECK_EQ(setting.Gameplay, setting.Key == "MechBraking");
     }
 
     CHECK_EQ(keys.size(), size_t{16});
+}
+
+/// <summary>
+/// A copy without HD, its looks the original's: BRAKING, which plays rather than looks and needs nothing of the pack,
+/// still reads as on when PREFS lacks it; the HD answer then turns the looks on too.
+/// </summary>
+TEST_CASE_ISOLATED("hd settings: braking is on by default in a copy without HD, whose looks are the original's")
+{
+    UsePersonalGameplay();
+
+    for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
+    {
+        CHECK_EQ(MCHdSettings::Default(setting), setting.Gameplay ? setting.Personal : setting.Original);
+    }
+
+    CHECK_EQ(MCHdSettings::Default(MCHdSettings::Find("MechBraking")), 1);
+    UseHdByDefault();
+
+    for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
+    {
+        CHECK_EQ(MCHdSettings::Default(setting), setting.Personal);
+    }
 }
 
 /// <summary>

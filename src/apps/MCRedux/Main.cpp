@@ -636,10 +636,12 @@ int main(int argc, char** argv)
     // Personal build: the HD options are on unless PREFS.CFG turns them off, the Mac app updates itself, and a build
     // that names the reports' server sends them once the player has seen what they hold (main/MCTelemetry.h). The snow
     // thins itself on a machine whose frames can't keep up with it (sprite/MCWeatherPace.h). In a build that updates
-    // its content, the HD options' defaults follow the HD answer: Redux HD's looks for a copy with HD (the installer's
-    // answer, or HD OPTIONS'), the original's without.
+    // its content, the HD options' looks follow the HD answer: Redux HD's for a copy with HD (the installer's answer,
+    // or HD OPTIONS'), the original's without; BRAKING, which plays rather than looks, is on in either.
     const MCInstalled::MCRecord noRecord;
     const MCInstalled::MCRecord* const record = installed ? &*installed : &noRecord;
+
+    UsePersonalGameplay();
 
     if (!contentUpdates || MCInstalled::Has(*record, options->DataFolder, MCContentList::HdSet))
     {

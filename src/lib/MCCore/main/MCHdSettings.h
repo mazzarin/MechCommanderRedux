@@ -13,6 +13,13 @@ class MCFitIniFile;
 /// </summary>
 void UseHdByDefault();
 
+/// <summary>
+/// Personal build: PREFS.CFG's gameplay settings (<see cref="MCHdSettings::MCSetting::Gameplay"/>: BRAKING) read as
+/// their personal defaults when it lacks them, whether or not the looks do (<see cref="UseHdByDefault"/>, which follows
+/// the HD answer): they need nothing of the HD pack. The app calls it before the game starts; the tests don't.
+/// </summary>
+void UsePersonalGameplay();
+
 namespace MCHdSettings
 {
     /// <summary>An HD setting: its PREFS key, the global it sets, its choices and its defaults.</summary>
@@ -32,6 +39,10 @@ namespace MCHdSettings
         int32_t Personal = 1;
         /// <summary>The player's own answer, not a look (REPORTS): DEFAULTS and ORIGINAL leave it.</summary>
         bool Player = false;
+        /// <summary>
+        /// Changes play, not the look (BRAKING): its personal default needs no HD (<see cref="UsePersonalGameplay"/>).
+        /// </summary>
+        bool Gameplay = false;
     };
 
     /// <summary>Every HD setting, in PREFS' order.</summary>
@@ -40,7 +51,10 @@ namespace MCHdSettings
     /// <summary>The setting PREFS keeps as <paramref name="key"/>; an unknown key is fatal.</summary>
     const MCSetting& Find(std::string_view key);
 
-    /// <summary>What <paramref name="setting"/> reads as when PREFS lacks it (personal after <see cref="UseHdByDefault"/>).</summary>
+    /// <summary>
+    /// What <paramref name="setting"/> reads as when PREFS lacks it (personal after <see cref="UseHdByDefault"/>, and a
+    /// gameplay setting's after <see cref="UsePersonalGameplay"/> too).
+    /// </summary>
     int32_t Default(const MCSetting& setting);
 
     /// <summary>Reads every HD setting from <paramref name="file"/>'s current block (a missing key: its default).</summary>

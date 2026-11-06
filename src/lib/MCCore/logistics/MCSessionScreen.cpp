@@ -467,7 +467,7 @@ auto MCSessionScreen::Draw() -> void
     // match's options as they are now, the host's sent again when a player's rules change what the match plays.
     if (const std::shared_ptr<MCLogPort>& tabs = MatchTabs[static_cast<size_t>(FrontTab)]; tabs != nullptr)
     {
-        const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat;
+        const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat;
         const bool newChat = FrontTab == MCSessionTab::Options && chat != nullptr && chat->LinesAdded > ChatLinesSeen;
         DrawMatchTabs(frame, *tabs, FrontTab, newChat && (MCPort::Milliseconds() / ChatBlinkMs) % 2 == 0);
     }
@@ -658,7 +658,7 @@ auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void
         chatWindow->ShowGuiWindow(!options);
     }
 
-    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
+    if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
     {
         ChatLinesSeen = chat->LinesAdded;
     }

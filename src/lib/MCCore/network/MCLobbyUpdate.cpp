@@ -368,7 +368,7 @@ namespace
             {
                 ShowPlayerLeft(gone.Name);
             }
-            else if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
+            else if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
             {
                 chat->AddLine(std::format(NotBackFormat, Upper(gone.Name)));
             }
@@ -655,7 +655,7 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
 
     PlacesChanged();
 
-    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
+    if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
     {
         chat->AddLine(UpdatingText(player->Name));
     }
@@ -682,7 +682,7 @@ auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
 
     PlacesChanged();
 
-    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
+    if (const std::shared_ptr<MCLogChat> chat = GlobalLog()->Chat; chat != nullptr)
     {
         chat->AddLine(std::format(UpdateOffFormat, Upper(name)));
     }

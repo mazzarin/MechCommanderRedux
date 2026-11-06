@@ -5,8 +5,8 @@
 #
 # sources: git's tree id of src/apps/MCXLauncher; icon: the blob of src/res/MCRedux.ico; built: the commit and the
 # fork's Windows run that built it (a work build, without whole-program optimization, as the launcher's project sets).
-sha256=4996f824ef7db33fa7a062096407a4c894814fda773c07439ce020ea922514f3
-bytes=610304
-sources=b5a79e9e469b2f2c931bd0c23f1c41f0bbd18bb8
+sha256=397e444bb4888924dd2f0f9f188f708ac2dd64a0d44f8e5b38ca05aab8398780
+bytes=609792
+sources=5446aef9fa9874f1f2130e82ea96b107b75c30ba
 icon=1576bcc4fb6149f30a13b4afa51e8ea6bb34b248
-built=33c1c4b05fef143abffbc0ddcdd31bae624e1296 run 42270588304
+built=d00abe41882635bdeb84fbebadecb4f2433682cb run 42272606224

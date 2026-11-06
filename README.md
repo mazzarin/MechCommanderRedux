@@ -29,10 +29,19 @@ Without the pack the units, ground, menus, movies and sound are the original's; 
 all the same. MechCommander Redux's own [download](https://github.com/RevenantBob/MechCommanderRedux/releases/latest)
 has none of Redux HD's additions.
 
+## Community
+
+Join MechCommander Redux's development Discord server to follow progress or help out:
+**[discord.gg/TZyZ9Vbj37](https://discord.gg/TZyZ9Vbj37)**
+
+Please report bugs in Redux HD on GitHub, in [its issue tracker](https://github.com/mazzarin/MechCommanderRedux/issues),
+not on Discord.
+
 ## Table of Contents
 
 - [MechCommander Redux HD](#mechcommander-redux-hd)
   - [Download](#download)
+  - [Community](#community)
   - [What Redux HD Adds](#what-redux-hd-adds)
   - [Coming](#coming)
   - [Reports](#reports)

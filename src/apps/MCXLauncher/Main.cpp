@@ -227,24 +227,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
 
-    // Suspended until it may bring its window to the front, which this exe may as the program the player started.
-    if (!CreateProcessW(game.c_str(), commandLine.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, nullptr,
-                        &startup, &process))
+    if (!CreateProcessW(game.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup,
+                        &process))
     {
         return Fail(std::format(L"MechCommander Redux couldn't start {}: {}", game, SystemMessage(GetLastError())));
     }
 
+    // The game may bring its window to the front, as this exe may as the program the player started. Long before the
+    // game makes its window, so it isn't started suspended for this (the shape of a program injecting code, which
+    // antivirus' machine learning takes for one).
     AllowSetForegroundWindow(process.dwProcessId);
-
-    if (ResumeThread(process.hThread) == static_cast<DWORD>(-1))
-    {
-        const DWORD resumeError = GetLastError();
-        TerminateProcess(process.hProcess, FailedExitCode);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        return Fail(std::format(L"MechCommander Redux couldn't start {}: {}", game, SystemMessage(resumeError)));
-    }
-
     CloseHandle(process.hThread);
     const int exitCode = WaitForGame(process.hProcess);
     CloseHandle(process.hProcess);

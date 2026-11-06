@@ -111,9 +111,13 @@
 ; its braces are the GUID's, not a constant's.
 #define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppIdGuid + "}_is1"
 #define SizeValue "EstimatedSize"
+; The setup's own mutex, so only one runs at a time.
+#define AppSetupMutex "MechCommanderReduxHDSetup-" + AppIdGuid
 
 [Setup]
 AppId={{{#AppIdGuid}}
+; One setup at a time: a second (a double click twice over) says Setup is already running.
+SetupMutex={#AppSetupMutex}
 AppName={#AppName}
 AppVersion={#AppVersionShown}
 AppVerName={#AppName} {#AppVersionShown}

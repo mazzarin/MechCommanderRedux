@@ -7,6 +7,7 @@
 #include "color/MCWaterCycle.h"
 #include "engine/MCElement.h"
 #include "engine/MCElementBuffer.h"
+#include "lib/MCOptionalRef.h"
 #include "lib/MCVector3D.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
@@ -848,15 +849,14 @@ namespace
                                                       : std::span<const FleckColor>(state.Ramps[ramp - 1]);
     }
 
-    /// <summary>Whether there's room for another particle (MCParticles::MaxParticles).</summary>
-    bool Room(const State& state)
+    /// <summary>A particle at (x, y, z), made when there's room (MCParticles::MaxParticles); none otherwise.</summary>
+    MCOptionalRef<Particle> Make(State& state, MCParticleKind kind, float x, float y, float z)
     {
-        return state.Particles.size() + state.Made.size() < MCParticles::MaxParticles;
-    }
+        if (state.Particles.size() + state.Made.size() >= MCParticles::MaxParticles)
+        {
+            return std::nullopt;
+        }
 
-    /// <summary>A particle at (x, y, z), when there's <see cref="Room"/>.</summary>
-    Particle& Make(State& state, MCParticleKind kind, float x, float y, float z)
-    {
         Particle& made = state.Made.emplace_back();
         made.Kind = kind;
         made.X = x;
@@ -913,14 +913,17 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            if (!Room(state))
+            const MCOptionalRef<Particle> made =
+                Make(state, MCParticleKind::Fleck, at.X + dice.Between(-spread, spread) / perUnit,
+                     at.Y + dice.Between(-spread, spread) / perUnit,
+                     at.Z + dice.Between(offGround ? 0.0f : -spread, spread));
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& fleck = Make(state, MCParticleKind::Fleck, at.X + dice.Between(-spread, spread) / perUnit,
-                                   at.Y + dice.Between(-spread, spread) / perUnit,
-                                   at.Z + dice.Between(offGround ? 0.0f : -spread, spread));
+            Particle& fleck = *made;
 
             const MCVector3D own = Upward(dice, minUp);
             const float wayX = own.X + lean.X * FallingLean;
@@ -1000,13 +1003,15 @@ namespace
             const auto pixelX = static_cast<float>(pixel.X);
             const auto pixelY = static_cast<float>(pixel.Y);
 
-            if (!Room(state))
+            const MCOptionalRef<Particle> made =
+                Make(state, MCParticleKind::Fleck, at.X + pixelX * across, at.Y + pixelX * across, at.Z - pixelY);
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& fleck =
-                Make(state, MCParticleKind::Fleck, at.X + pixelX * across, at.Y + pixelX * across, at.Z - pixelY);
+            Particle& fleck = *made;
 
             fleck.Z = std::max(fleck.Z, fleck.Ground);
             // Out from the fire's middle: across the screen along both axes, up it as height.
@@ -1034,13 +1039,16 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            if (!Room(state))
+            const MCOptionalRef<Particle> made =
+                Make(state, MCParticleKind::Ember, x + dice.Between(-spread, spread) / perUnit,
+                     y + dice.Between(-spread, spread) / perUnit, z + dice.Between(-spread, spread));
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& ember = Make(state, MCParticleKind::Ember, x + dice.Between(-spread, spread) / perUnit,
-                                   y + dice.Between(-spread, spread) / perUnit, z + dice.Between(-spread, spread));
+            Particle& ember = *made;
 
             ember.Life = dice.Between(EmberLifeLow, EmberLifeHigh);
             ember.Size = dice.Between(EmberRadiusLow, EmberRadiusHigh);
@@ -1061,13 +1069,16 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            if (!Room(state))
+            const MCOptionalRef<Particle> made =
+                Make(state, MCParticleKind::Smoke, x + dice.Between(-spread, spread) / perUnit,
+                     y + dice.Between(-spread, spread) / perUnit, z + dice.Between(0.0f, spread));
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& puff = Make(state, MCParticleKind::Smoke, x + dice.Between(-spread, spread) / perUnit,
-                                  y + dice.Between(-spread, spread) / perUnit, z + dice.Between(0.0f, spread));
+            Particle& puff = *made;
 
             const float grey = dice.Around(look.Grey);
             puff.Red = grey * (1.0f + look.Warmth);
@@ -1091,12 +1102,14 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            if (!Room(state))
+            const MCOptionalRef<Particle> made = Make(state, MCParticleKind::Debris, at.X, at.Y, at.Z);
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& chunk = Make(state, MCParticleKind::Debris, at.X, at.Y, at.Z);
+            Particle& chunk = *made;
 
             Launch(chunk, Upward(dice, DebrisMinUp), dice.Between(look.SpeedLow, look.SpeedHigh), 0.0f);
             const float shade = dice.Around(1.0f);
@@ -1119,9 +1132,9 @@ namespace
     /// </summary>
     void Ripple(State& state, float x, float y, float from, float to, float life, float alpha, float delay)
     {
-        if (Room(state))
+        if (const MCOptionalRef<Particle> made = Make(state, MCParticleKind::Ripple, x, y, GroundUnder(x, y)))
         {
-            Particle& ring = Make(state, MCParticleKind::Ripple, x, y, GroundUnder(x, y));
+            Particle& ring = *made;
             ring.Size = from;
             ring.Grow = to;
             ring.Life = life;
@@ -1144,12 +1157,14 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            if (!Room(state))
+            const MCOptionalRef<Particle> made = Make(state, MCParticleKind::Droplet, x, y, z);
+
+            if (!made)
             {
                 return;
             }
 
-            Particle& drop = Make(state, MCParticleKind::Droplet, x, y, z);
+            Particle& drop = *made;
 
             const float around = dice.Between(0.0f, TwoPi);
             const float speed = dice.Between(DropletOutLow, DropletOutHigh) * out;

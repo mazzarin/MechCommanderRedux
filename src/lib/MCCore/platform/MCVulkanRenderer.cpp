@@ -2362,6 +2362,14 @@ void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
     }
 }
 
+void MCVulkanRenderer::Translate(MCWindow& target, const MCRect& rect, MCColorTable table)
+{
+    const AuditScope audit(*this, "Translate", target);
+    const uint16_t surface = SurfaceFor(target);
+    const Quad at = {rect.X0, rect.Y0, rect.X1, rect.Y1};
+    Add(surface, SourceKind::None, 0, at, std::nullopt, KindFill | TableAfter, 0, 0, TableRow(table));
+}
+
 void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 {
     const AuditScope audit(*this, "Copy", target, {}, -1, command.Source.get());

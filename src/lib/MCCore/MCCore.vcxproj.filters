@@ -1255,6 +1255,9 @@
     <ClCompile Include="sprite\MCMechStops.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
+    <ClCompile Include="sprite\MCPaletteNight.cpp">
+      <Filter>sprite</Filter>
+    </ClCompile>
     <ClCompile Include="sprite\MCParticles.cpp">
       <Filter>sprite</Filter>
     </ClCompile>
@@ -2590,6 +2593,9 @@
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCMechStops.h">
+      <Filter>sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="sprite\MCPaletteNight.h">
       <Filter>sprite</Filter>
     </ClInclude>
     <ClInclude Include="sprite\MCParticles.h">

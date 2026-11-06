@@ -157,7 +157,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** At night the mechs' and vehicles' headlights change sight: units see half as far as by day all round, a
   lit unit's headlight shows the ground ahead to 85% of the day's sight, and the enemy sees a lit unit from as far.
   **LIGHTS** (N) turns the selected units' headlights off or on. In a night mission, and in a match at night when every
-  player's game has it (see the [README](README.md#a-missions-time-of-day)).
+  player's game has it (see the [README](README.md#a-missions-time-of-day)). Without HD LIGHTING (or with the SOFTWARE
+  renderer) the night still shows: the world dimmed through the original's own darkening tables, a lit unit's
+  headlight showing the ground it lights as drawn.
 
 ### Files and Saves
 

@@ -5015,8 +5015,8 @@ TEST_CASE("hd weather: the lights sorted into the window's tiles light the air e
 
 /// <summary>
 /// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
-/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
-/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
+/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night is dimmed
+/// through the palette's darkening tables (sprite/MCPaletteNight.h), well under the day's brightness; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
 /// median) and bluer, and HD LIGHTING's DUSK shows a night mission just as a dusk one. At night, and only then, the
 /// units in view shine headlights: a spotlight each, which brighten the world; shut down, they shine none.
 /// </summary>
@@ -5163,7 +5163,7 @@ TEST_CASE_ISOLATED(
                              "{:.1f}, {:.1f}); blue per red {:.2f} by day, {:.2f} at night; {} headlights at night\n",
                              byDay.Luma, atDusk.Luma, atNight.Luma, byDay.MedianLuma, atDusk.MedianLuma,
                              atNight.MedianLuma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red, nightSpots);
-    CHECK_EQ(different(unlitNight, drawn), size_t{0});
+    CHECK(measure(unlitNight).Luma < 0.6 * measure(drawn).Luma);
     CHECK_EQ(different(duskChosen, dusk), size_t{0});
     CHECK(atDusk.Luma < 0.8 * byDay.Luma);
     CHECK(atNight.MedianLuma < 0.75 * atDusk.MedianLuma);

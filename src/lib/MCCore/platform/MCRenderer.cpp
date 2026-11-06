@@ -162,6 +162,11 @@ namespace
             }
         }
 
+        void Translate(MCWindow&, const MCRect& rect, MCColorTable table) override
+        {
+            Target().Translate(Window(), Move(rect), table);
+        }
+
         void Copy(MCWindow&, const MCCopyCommand& command) override
         {
             // A view has no pixels to copy from.
@@ -429,6 +434,12 @@ namespace
         {
             Gpu().Hash(target, rect, color);
             Cpu().Hash(target, rect, color);
+        }
+
+        void Translate(MCWindow& target, const MCRect& rect, MCColorTable table) override
+        {
+            Gpu().Translate(target, rect, table);
+            Cpu().Translate(target, rect, table);
         }
 
         void Copy(MCWindow& target, const MCCopyCommand& command) override

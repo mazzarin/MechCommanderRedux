@@ -396,6 +396,27 @@ int32_t VfxPaneWipe(const MCPane& pane, int32_t color)
     return 0;
 }
 
+int32_t VfxTranslateRect(const MCPane& pane, const MCRect& rect, MCColorTable table)
+{
+    MCVfxClip clip;
+    const int32_t status = MCVfxClipPane(pane, clip);
+
+    if (status != 0)
+    {
+        return status;
+    }
+
+    const MCRect at{std::max(clip.X0, clip.PaneX + rect.X0), std::max(clip.Y0, clip.PaneY + rect.Y0),
+                    std::min(clip.X1, clip.PaneX + rect.X1), std::min(clip.Y1, clip.PaneY + rect.Y1)};
+
+    if (at.X0 <= at.X1 && at.Y0 <= at.Y1)
+    {
+        MCRenderer::For(clip.Target()).Translate(clip.Target(), at, table);
+    }
+
+    return 0;
+}
+
 int32_t VfxPaneCopy(const MCPane& source, int32_t sx, int32_t sy, const MCPane& target, int32_t tx, int32_t ty,
                     int32_t fill)
 {

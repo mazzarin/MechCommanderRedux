@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "ScreenInput.h"
 #include "TestGame.h"
+#include "color/MCPalette.h"
 #include "engine/MCByteFlag.h"
 #include "main/MCGameContext.h"
 #include "mission/MCNightLights.h"
@@ -11,8 +13,13 @@
 #include "object/MCBattleMech.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectTypeManager.h"
+#include "platform/MCRenderer.h"
+#include "sprite/MCMechActor.h"
+#include "sprite/MCPaletteNight.h"
 #include "sprite/MCSceneLights.h"
 #include "terrain/MCTerrain.h"
+#include "camera/MCCameraList.h"
+#include "camera/MCViewWindow.h"
 
 // Port-only (Redux HD): the units' headlights at night change sight (mission/MCNightLights.h).
 
@@ -233,4 +240,182 @@ TEST_CASE_ISOLATED("night lights: a lit mech's beam shows the ground ahead and a
     CHECK(Shown(ours, VertexOf(uller->Position), 0, 0));
 
     MCNightLights::SetSight(std::nullopt);
+}
+
+namespace
+{
+    /// <summary>
+    /// A headlight's beam on the ground of a world: the ground under its lamp at (<paramref name="x"/>,
+    /// <paramref name="y"/>), its middle meeting the ground <paramref name="ahead"/> pixels to the right, its lamp 12
+    /// pixels high, as bright as a headlight's.
+    /// </summary>
+    MCSceneLight BeamAt(float x, float y, float ahead)
+    {
+        MCSceneLight beam;
+        beam.X0 = beam.X1 = x;
+        beam.Y0 = beam.Y1 = y;
+        beam.Height = 12.0f;
+        beam.SpotX = ahead;
+        beam.SpotCos = std::cos(MCSceneLights::HeadlightDegrees * std::numbers::pi_v<float> / 180.0f);
+        beam.Reach = 180.0f;
+        beam.Red = beam.Green = beam.Blue = MCSceneLights::HeadlightLight();
+        return beam;
+    }
+
+    /// <summary>The darkening table each pixel of a world <paramref name="width"/> wide takes from <paramref name="shades"/>, -1 for none; -2 where two cover it.</summary>
+    std::vector<int32_t> DimsOf(std::span<const MCPaletteNight::MCShade> shades, int32_t width, int32_t height)
+    {
+        std::vector<int32_t> dims(static_cast<size_t>(width * height), -1);
+
+        for (const MCPaletteNight::MCShade& shade : shades)
+        {
+            for (int32_t y = shade.Rect.Y0; y <= shade.Rect.Y1; y++)
+            {
+                for (int32_t x = shade.Rect.X0; x <= shade.Rect.X1; x++)
+                {
+                    int32_t& dim = dims[static_cast<size_t>(y * width + x)];
+                    dim = dim == -1 ? shade.Dim : -2;
+                }
+            }
+        }
+
+        return dims;
+    }
+}
+
+/// <summary>
+/// The palette's night dims the whole world through the night's darkening table; a beam lifts it to none from its lamp
+/// to where its middle meets the ground, fading back into the night past there and at its edges, and never behind its
+/// lamp. The rectangles cover every pixel once.
+/// </summary>
+TEST_CASE("palette night: the world is dimmed through the night's table and a beam lifts it to the art as drawn")
+{
+    using MCPaletteNight::NightDim;
+    CHECK_EQ(MCPaletteNight::DimFor(0.0f), NightDim);
+    CHECK_EQ(MCPaletteNight::DimFor(1.0f), 0);
+    CHECK_EQ(MCPaletteNight::DimFor(2.0f), 0);
+    CHECK_EQ(MCPaletteNight::DimFor(0.5f), (NightDim + 1) / 2);
+
+    constexpr int32_t width = 400;
+    constexpr int32_t height = 200;
+    constexpr float aspect = 0.5f;
+    const std::vector<MCPaletteNight::MCShade> dark = MCPaletteNight::Shades(width, height, {}, aspect);
+    REQUIRE_EQ(dark.size(), 1u);
+    CHECK_EQ(dark[0].Dim, NightDim);
+    CHECK_EQ(dark[0].Rect.X0, 0);
+    CHECK_EQ(dark[0].Rect.Y1, height - 1);
+
+    const std::array<MCSceneLight, 1> beams{BeamAt(100.0f, 100.0f, 70.0f)};
+    const std::vector<int32_t> dims = DimsOf(MCPaletteNight::Shades(width, height, beams, aspect), width, height);
+    CHECK(std::ranges::all_of(dims, [](int32_t dim) { return dim >= 0; }));
+    const auto at = [&](int32_t x, int32_t y) { return dims[static_cast<size_t>(y * width + x)]; };
+
+    // Toward where its middle meets the ground: the art as drawn; past there it fades, and it's gone by its reach.
+    CHECK_EQ(at(150, 100), 0);
+    CHECK(at(170, 100) <= 1);
+    CHECK(at(230, 100) > at(170, 100));
+    CHECK(at(230, 100) < NightDim);
+    CHECK_EQ(at(285, 100), NightDim);
+    // Behind its lamp, and well off its middle (45 degrees along the ground): the night.
+    CHECK_EQ(at(60, 100), NightDim);
+    CHECK_EQ(at(170, 135), NightDim);
+}
+
+/// <summary>
+/// The palette draws the night where the mission plays at night (its own time, or the match's host's) and HD lighting
+/// doesn't draw it: HD LIGHTING off, or on with the CPU drawing.
+/// </summary>
+TEST_CASE("palette night: shown at night where HD lighting doesn't draw it")
+{
+    const int32_t lighting = GHdLighting;
+    MCSceneLights::SetMatchTime(std::nullopt);
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Night);
+    GHdLighting = HdLightingOff;
+    CHECK(MCPaletteNight::Shown());
+    GHdLighting = HdLightingOn;
+    CHECK_EQ(MCPaletteNight::Shown(), MCRenderer::GpuDrawing() == MCGpuDrawing::Off);
+    GHdLighting = HdLightingOff;
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Dusk);
+    CHECK(!MCPaletteNight::Shown());
+    MCSceneLights::SetMatchTime(MCTimeOfDay::Night);
+    CHECK(MCPaletteNight::Shown());
+    MCSceneLights::SetMatchTime(std::nullopt);
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Day);
+    CHECK(!MCPaletteNight::Shown());
+    GHdLighting = lighting;
+}
+
+/// <summary>
+/// Mission 1 at night on the CPU, HD lighting off: the world is the day's through the night's darkening table, but for
+/// the ground the lead mech's headlight shows as drawn. With --shots, the day's and the night's pictures.
+/// </summary>
+TEST_CASE_ISOLATED(
+    "palette night: mission 1 at night is dimmed through the palette and a lit mech's beam shows the art")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    MCRenderer::RequestGpuDrawing(MCGpuDrawing::Off);
+    REQUIRE(MCTestGame::StartMission(1));
+    REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::Off);
+    GHdLighting = HdLightingOff;
+    const std::shared_ptr<MCViewWindow> view = Eye()->View();
+    REQUIRE(view != nullptr);
+    const auto lead = std::dynamic_pointer_cast<MCBattleMech>(GetMoverFromPartId(MCMover::FirstPartId));
+    REQUIRE(lead != nullptr);
+    MCTestGame::FaceMech(*lead, 0.0f);
+    Eye()->ChangeTarget(lead, true);
+    const float frame = 1.0f / 15.0f;
+
+    for (int32_t settle = 0; settle < 4; settle++)
+    {
+        MCTestGame::RunFrame(frame);
+    }
+
+    const std::vector<uint8_t> day(view->WorldWindow->Bytes().begin(), view->WorldWindow->Bytes().end());
+    MCScreenInput::SaveShot("palette_night_day", MCScreenInput::ScreenHash());
+    MCSceneLights::SetMissionTime(MCTimeOfDay::Night);
+    MCTestGame::RunFrame(frame);
+    const std::span<const uint8_t> night = view->WorldWindow->Bytes();
+    MCScreenInput::SaveShot("palette_night", MCScreenInput::ScreenHash());
+    REQUIRE_EQ(night.size(), day.size());
+
+    // Most of the world (all but the beams and what moved): the day's through the night's table.
+    const MCColorTable table = *GamePalette().GetHazePalette(-MCPaletteNight::NightDim);
+    size_t dimmed = 0;
+
+    for (size_t p = 0; p < day.size(); p++)
+    {
+        dimmed += night[p] == table[day[p]] ? 1 : 0;
+    }
+
+    CHECK(static_cast<double>(dimmed) > 0.9 * static_cast<double>(day.size()));
+
+    // The ground just short of where the lead's beam's middle meets the ground (its pool's brightest): as drawn.
+    const auto actor = std::static_pointer_cast<MCMechActor>(lead->Appearance);
+    const std::optional<MCSceneLights::MCHeadlight> headlight = MCSceneLights::HeadlightOf(
+        *actor, lead->Position, lead->GetFrame(), lead->TorsoRotation, lead->CockpitPosition());
+    REQUIRE(headlight.has_value());
+    const MCSceneLight& beam = headlight->Beam;
+    const int32_t width = view->WorldWidth();
+    size_t asDrawn = 0;
+    size_t looked = 0;
+
+    for (int32_t step = 16; step <= 18; step++)
+    {
+        const float share = static_cast<float>(step) / 20.0f;
+        const auto x = static_cast<int32_t>(beam.X0 + beam.SpotX * share);
+        const auto y = static_cast<int32_t>(beam.Y0 + beam.SpotY * share);
+        REQUIRE(x >= 0);
+        REQUIRE(x < width);
+        REQUIRE(y >= 0);
+        REQUIRE(y < view->WorldHeight());
+        const size_t p = static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
+        asDrawn += night[p] == day[p] ? 1 : 0;
+        looked++;
+    }
+
+    CHECK_EQ(asDrawn, looked);
 }

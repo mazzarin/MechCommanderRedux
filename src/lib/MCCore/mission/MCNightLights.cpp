@@ -20,20 +20,6 @@ namespace
         return sight;
     }
 
-    /// <summary>
-    /// <paramref name="unit"/>'s facing on the ground, turned <paramref name="turn"/> degrees counterclockwise: its
-    /// frame turned an eighth of a turn, the facing its art is drawn at (as MCSceneLights::AddHeadlight's).
-    /// </summary>
-    std::pair<float, float> Facing(const MCMover& unit, float turn)
-    {
-        const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
-        const float bodyX = (unit.Frame.I.X - unit.Frame.J.X) * eighth;
-        const float bodyY = (unit.Frame.I.Y - unit.Frame.J.Y) * eighth;
-        const float radians = turn * std::numbers::pi_v<float> / 180.0f;
-        return {bodyX * std::cos(radians) - bodyY * std::sin(radians),
-                bodyX * std::sin(radians) + bodyY * std::cos(radians)};
-    }
-
     /// <summary>The side bits <paramref name="alignment"/>'s units mark (MCTerrain::MarkSeen's who), 0 for neither.</summary>
     uint8_t SideOf(int32_t alignment)
     {
@@ -119,7 +105,8 @@ namespace MCNightLights
             return;
         }
 
-        const auto [facingX, facingY] = Facing(unit, turn);
+        // The way its headlight shines (as the drawn one's).
+        const auto [facingX, facingY] = MCSceneLights::FacingOnGround(unit.Frame, turn);
         Terrain()->MarkBeamSeen(unit.Position, facingX, facingY, BeamHalfDegrees, sight->Beam, who);
         GiveAway(unit, *sight);
         unit.LitMarkedAt = ActualTime;

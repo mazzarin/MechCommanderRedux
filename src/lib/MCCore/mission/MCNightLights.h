@@ -7,13 +7,13 @@
 // player's LIGHTS) is seen only by what the enemy sees round itself or lights up. Sensors are untouched.
 
 #include "mission/MCScenario.h"
+#include "sprite/MCSceneLights.h"
 
 #include <array>
 #include <optional>
 #include <span>
 
 class MCMover;
-enum class MCTimeOfDay : uint8_t;
 
 namespace MCNightLights
 {
@@ -21,8 +21,8 @@ namespace MCNightLights
     inline constexpr double NightRoundSight = 0.5;
     /// <summary>The share of the day's sight a lit unit's beam shows ahead, and the enemy sees a lit unit from.</summary>
     inline constexpr double BeamSight = 0.85;
-    /// <summary>The beam's half-width, in degrees to each side: as the drawn one (MCSceneLights' headlight).</summary>
-    inline constexpr float BeamHalfDegrees = 22.0f;
+    /// <summary>The beam's half-width, in degrees to each side: as the drawn one.</summary>
+    inline constexpr float BeamHalfDegrees = MCSceneLights::HeadlightDegrees;
     /// <summary>How often a lit unit that hasn't moved marks what its light shows again (its torso turns, foes come).</summary>
     inline constexpr float RemarkSeconds = 1.0f;
 

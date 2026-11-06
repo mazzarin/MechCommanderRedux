@@ -336,6 +336,13 @@ void VfxDitheredGouraudPolygon(const MCPane& pane, MCFixed16 ditherAmount, std::
 void VfxTranslatePolygon(const MCPane& pane, std::span<const MCScreenVertex> vertices, MCColorTable lookaside);
 
 /// <summary>
+/// Port-only: maps every pixel of <paramref name="rect"/> (inclusive, in the pane's coordinates, clipped to it) through
+/// the 256-byte table <paramref name="table"/>, as <see cref="VfxTranslatePolygon"/> does a polygon's.
+/// </summary>
+/// <returns>0, or the pane's error (MCVfxClipPane's); nothing is drawn for a rectangle wholly outside the pane.</returns>
+int32_t VfxTranslateRect(const MCPane& pane, const MCRect& rect, MCColorTable table);
+
+/// <summary>
 /// Adds the interpolated, dithered vertex colours (as <c>VFX_dithered_Gouraud_polygon</c> computes them) to the pixels
 /// under the polygon, as byte offsets into a shading palette.
 /// </summary>

@@ -317,7 +317,9 @@ until you change it, as every mission of the original is.
   plays the night with its lights (below).
 - **Look.** With **HD LIGHTING** set to **ON** (on the HD OPTIONS page), Redux HD shows a dusk mission darker, and a
   night one dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their
-  own time whatever the mission's. The original game shows every mission by day.
+  own time whatever the mission's. With HD LIGHTING off, or the CPU drawing (**SOFTWARE**), a night is dark too: the
+  world is dimmed through the original's own darkening tables (the pause screen's), and a lit unit's headlight shows
+  the ground it lights as drawn, with a fainter beam from its lamp. The original game shows every mission by day.
 - **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
   tab (or with `-matchtime`) when every player's game has it, and units then see as far as in a mission set at that
   time (by day as far as by day, even in a night mission).
@@ -326,7 +328,7 @@ until you change it, as every mission of the original is.
   the enemy sees a lit unit from as far, as it sees a unit that fires. **LIGHTS** (N, on the CONTROLS screen)
   turns the selected units' headlights off, or on again: a dark unit is seen only where the enemy sees round itself or
   lights up. Sensors find dark units as ever, and the computer's units keep their lights on. Units see this way
-  whatever the player sees: the beams show with **HD LIGHTING** on.
+  whatever the player's HD options.
 
 For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
 

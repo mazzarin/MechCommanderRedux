@@ -14,6 +14,7 @@
 #include "object/MCObjectDrawing.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCHdArt.h"
+#include "sprite/MCPaletteNight.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCShape.h"
 #include "sprite/MCVfxAppearance.h"
@@ -83,14 +84,13 @@ namespace
     /// A unit's headlight at night, a spotlight from its lamp (the window's pixels, along the ground): its beam's middle
     /// meets the ground this far ahead of the ground under the lamp, whatever the lamp's height (a higher lamp tips its
     /// beam down more), and it has faded out this far from there; a unit with no lamp in its art (a vehicle) has one this
-    /// low at its feet, and a lamp at least this high; its beam fades out this many degrees off its middle, full within
+    /// low at its feet, and a lamp at least this high; its beam fades out HeadlightDegrees off its middle, full within
     /// SpotFull of that; its colour (a lamp's warm white) and its light where its beam's middle meets the ground.
     /// </summary>
     constexpr float HeadlightAhead = 70.0f;
     constexpr float HeadlightReach = 180.0f;
     constexpr float HeadlightLowLamp = 12.0f;
     constexpr float HeadlightLowest = 6.0f;
-    constexpr float HeadlightDegrees = 22.0f;
     constexpr std::array<float, 3> HeadlightColor{1.0f, 0.93f, 0.8f};
     constexpr float HeadlightGain = 0.8f;
     /// <summary>
@@ -788,6 +788,16 @@ auto MCSceneLights::TimeOfDay() -> MCTimeOfDay
     }
 }
 
+auto MCSceneLights::PlayedTime() -> MCTimeOfDay
+{
+    return TheState().MatchTime.value_or(TheState().MissionTime);
+}
+
+auto MCSceneLights::LightingDrawn() -> bool
+{
+    return GHdLighting != HdLightingOff && MCRenderer::GpuDrawing() != MCGpuDrawing::Off;
+}
+
 auto MCSceneLights::TimeOfDayNamed(std::string_view name) -> std::optional<MCTimeOfDay>
 {
     const auto found =
@@ -1057,26 +1067,18 @@ auto MCSceneLights::FeetRow(const MCAppearance& appearance, const MCVector3D& po
     return GHdLighting == HdLightingOff ? std::nullopt : std::optional(appearance.ScreenPos.Y + AltitudeOf(position));
 }
 
-auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
-                                 float turn, const std::optional<MCVector3D>& lamp, int32_t depthFixup) -> void
+auto MCSceneLights::HeadlightOf(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
+                                float turn, const std::optional<MCVector3D>& lamp) -> std::optional<MCHeadlight>
 {
-    State& state = TheState();
     const std::shared_ptr<MCCamera> camera = ActiveMainCamera();
 
-    if (TimeOfDay() != MCTimeOfDay::Night || state.Drawing.expired() || camera == nullptr)
+    if (camera == nullptr)
     {
-        return;
+        return std::nullopt;
     }
 
-    // Its facing on the ground (the frame turned an eighth of a turn, the facing its art is drawn at, as MCMover's),
-    // turned as far again (counterclockwise, a mech's torso's), and that way on the screen along the ground (a screen
-    // height GroundAspect of one).
-    const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
-    const float bodyX = (frame.I.X - frame.J.X) * eighth;
-    const float bodyY = (frame.I.Y - frame.J.Y) * eighth;
-    const float radians = turn * std::numbers::pi_v<float> / 180.0f;
-    const float facingX = bodyX * std::cos(radians) - bodyY * std::sin(radians);
-    const float facingY = bodyX * std::sin(radians) + bodyY * std::cos(radians);
+    // Its facing on the ground, and that way on the screen along the ground (a screen height GroundAspect of one).
+    const auto [facingX, facingY] = FacingOnGround(frame, turn);
     const MCVector2D at = ProjectToScreen(position, *camera);
     const MCVector2D ahead = ProjectToScreen(
         MCVector3D(position.X + facingX * FacingStep, position.Y + facingY * FacingStep, position.Z), *camera);
@@ -1089,15 +1091,16 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
 
     if (way <= 0.0f)
     {
-        return;
+        return std::nullopt;
     }
 
     // The lamp, and the ground under it (its altitude lower on the screen); with none, a low one at the unit's feet (a
     // jumping unit's are its altitude lower on the screen).
-    const std::optional<MCVector2D> lampAt =
+    MCHeadlight headlight;
+    const std::optional<MCVector2D>& lampAt = headlight.Lamp =
         lamp.has_value() ? std::optional(ProjectToScreen(*lamp, *camera)) : std::nullopt;
     const float height = lamp.has_value() ? std::max(AltitudeOf(*lamp), HeadlightLowest) : HeadlightLowLamp;
-    MCSceneLight light;
+    MCSceneLight& light = headlight.Beam;
     light.X0 = light.X1 = lampAt.has_value() ? lampAt->X : appearance.ScreenPos.X;
     light.Y0 = light.Y1 =
         lampAt.has_value() ? lampAt->Y + AltitudeOf(*lamp) : appearance.ScreenPos.Y + AltitudeOf(position);
@@ -1109,11 +1112,62 @@ auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3
     light.Red = HeadlightColor[0] * HeadlightGain;
     light.Green = HeadlightColor[1] * HeadlightGain;
     light.Blue = HeadlightColor[2] * HeadlightGain;
-    Add(light);
+    headlight.Up = -screenY / std::hypot(screenX, screenY);
+    return headlight;
+}
+
+auto MCSceneLights::FacingOnGround(const MCFrameOfRef& frame, float turn) -> std::array<float, 2>
+{
+    const float eighth = std::numbers::sqrt2_v<float> * 0.5f;
+    const float bodyX = (frame.I.X - frame.J.X) * eighth;
+    const float bodyY = (frame.I.Y - frame.J.Y) * eighth;
+    const float radians = turn * std::numbers::pi_v<float> / 180.0f;
+    return {bodyX * std::cos(radians) - bodyY * std::sin(radians),
+            bodyX * std::sin(radians) + bodyY * std::cos(radians)};
+}
+
+auto MCSceneLights::HeadlightLight() -> float
+{
+    return (HeadlightColor[0] + HeadlightColor[1] + HeadlightColor[2]) / 3.0f * HeadlightGain;
+}
+
+auto MCSceneLights::GroundLight(const MCSceneLight& light, float x, float y, float aspect) -> float
+{
+    return LightReaching(light, x, y, aspect).Light;
+}
+
+auto MCSceneLights::AddHeadlight(const MCAppearance& appearance, const MCVector3D& position, const MCFrameOfRef& frame,
+                                 float turn, const std::optional<MCVector3D>& lamp, int32_t depthFixup) -> void
+{
+    // Where the palette draws the night, the beam lifts its dimming.
+    if (MCPaletteNight::Shown())
+    {
+        if (const std::optional<MCHeadlight> headlight = HeadlightOf(appearance, position, frame, turn, lamp);
+            headlight.has_value())
+        {
+            MCPaletteNight::AddBeam(headlight->Beam);
+        }
+
+        return;
+    }
+
+    if (TimeOfDay() != MCTimeOfDay::Night || TheState().Drawing.expired())
+    {
+        return;
+    }
+
+    const std::optional<MCHeadlight> headlight = HeadlightOf(appearance, position, frame, turn, lamp);
+
+    if (!headlight.has_value())
+    {
+        return;
+    }
+
+    Add(headlight->Beam);
 
     // The lamp: hidden by the unit as it faces away (up the screen).
-    const float up = -screenY / std::hypot(screenX, screenY);
-    const float shows = 1.0f - std::clamp((up - LampHideFrom) / (LampHidden - LampHideFrom), 0.0f, 1.0f);
+    const float shows = 1.0f - std::clamp((headlight->Up - LampHideFrom) / (LampHidden - LampHideFrom), 0.0f, 1.0f);
+    const std::optional<MCVector2D>& lampAt = headlight->Lamp;
 
     if (!lampAt.has_value() || shows <= 0.0f)
     {

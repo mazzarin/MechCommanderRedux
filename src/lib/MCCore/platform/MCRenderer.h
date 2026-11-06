@@ -947,6 +947,13 @@ public:
     /// </summary>
     virtual void Hash(MCWindow& target, const MCRect& rect, uint8_t color) = 0;
 
+    /// <summary>
+    /// Port-only: maps every pixel of <paramref name="rect"/> through the 256-byte <paramref name="table"/>, as a
+    /// translated polygon (MCPolygonKind::Translate) maps the pixels under it (the palette's night,
+    /// sprite/MCPaletteNight.h).
+    /// </summary>
+    virtual void Translate(MCWindow& target, const MCRect& rect, MCColorTable table) = 0;
+
     /// <summary>Copies a rectangle of one window into another (or the same).</summary>
     virtual void Copy(MCWindow& target, const MCCopyCommand& command) = 0;
 

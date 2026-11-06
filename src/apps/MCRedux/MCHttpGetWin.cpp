@@ -8,6 +8,7 @@
 #pragma comment(lib, "winhttp.lib")
 
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <format>
 #include <mutex>
@@ -24,10 +25,24 @@ namespace
     /// <summary>The notices a request's callback gets: each step's end, and its handle's closing (its last).</summary>
     constexpr DWORD CallbackNotices = WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES;
 
-    /// <summary>What failed, with WinHTTP's error (12002 a timeout, 12007 no such host, 12029 no connection).</summary>
-    std::string Failed(std::string_view what, DWORD error)
+    /// <summary>
+    /// WinHTTP's errors for a host out of reach: a timeout (12002), its name not found (12007), no connection (12029), a
+    /// connection reset or ended (12030).
+    /// </summary>
+    constexpr std::array<DWORD, 4> UnreachableErrors = {ERROR_WINHTTP_TIMEOUT, ERROR_WINHTTP_NAME_NOT_RESOLVED,
+                                                        ERROR_WINHTTP_CANNOT_CONNECT, ERROR_WINHTTP_CONNECTION_ERROR};
+
+    /// <summary>What failed, with WinHTTP's error, and whether that's the host out of reach.</summary>
+    MCHttpSource::MCGetError Failed(std::string_view what, DWORD error)
     {
-        return std::format("{} failed (WinHTTP error {})", what, error);
+        return {.Unreachable = std::ranges::find(UnreachableErrors, error) != UnreachableErrors.end(),
+                .Reason = std::format("{} failed (WinHTTP error {})", what, error)};
+    }
+
+    /// <summary>A failure that isn't WinHTTP's: never the host out of reach.</summary>
+    MCHttpSource::MCGetError Failed(std::string reason)
+    {
+        return {.Unreachable = false, .Reason = std::move(reason)};
     }
 
     /// <summary>The answer's Content-Range header, or empty (it's ASCII, so each wide character narrows as is).</summary>
@@ -132,8 +147,8 @@ namespace
             }
         }
 
-        std::expected<void, std::string> Get(const std::string& url, uint64_t from,
-                                             MCHttpSource::MCReply& reply) override
+        std::expected<void, MCHttpSource::MCGetError> Get(const std::string& url, uint64_t from,
+                                                          MCHttpSource::MCReply& reply) override
         {
             if (_Session == nullptr)
             {
@@ -148,7 +163,7 @@ namespace
 
             if (!WinHttpCrackUrl(address.c_str(), 0, 0, &parts))
             {
-                return std::unexpected(std::format("\"{}\" isn't an address", url));
+                return std::unexpected(Failed(std::format("\"{}\" isn't an address", url)));
             }
 
             const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
@@ -193,7 +208,7 @@ namespace
                 _Request = cancelledBefore ? nullptr : request;
             }
 
-            std::expected<void, std::string> done = std::unexpected(std::string(StoppedError));
+            std::expected<void, MCHttpSource::MCGetError> done = std::unexpected(Failed(std::string(StoppedError)));
 
             if (!cancelledBefore)
             {
@@ -223,7 +238,7 @@ namespace
 
             if (cancelled)
             {
-                return std::unexpected(std::string(StoppedError));
+                return std::unexpected(Failed(std::string(StoppedError)));
             }
 
             return done;
@@ -251,7 +266,8 @@ namespace
         /// waits for its end: what it brought, or what failed.
         /// </summary>
         template <typename MCStep>
-        std::expected<DWORD, std::string> Step(MCRequestState& state, std::string_view what, const MCStep& step)
+        std::expected<DWORD, MCHttpSource::MCGetError> Step(MCRequestState& state, std::string_view what,
+                                                            const MCStep& step)
         {
             {
                 const std::scoped_lock stateLock(state.Lock);
@@ -265,7 +281,7 @@ namespace
 
                 if (_Request == nullptr)
                 {
-                    return std::unexpected(std::string(StoppedError));
+                    return std::unexpected(Failed(std::string(StoppedError)));
                 }
 
                 if (!step(_Request))
@@ -279,7 +295,7 @@ namespace
 
             if (!state.Done)
             {
-                return std::unexpected(std::string(StoppedError));
+                return std::unexpected(Failed(std::string(StoppedError)));
             }
 
             if (state.Error != 0)
@@ -291,8 +307,8 @@ namespace
         }
 
         /// <summary>Sends the request and passes the answer to the reply, until it ends or the reply stops it.</summary>
-        std::expected<void, std::string> Follow(MCRequestState& state, uint64_t from, DWORD_PTR context,
-                                                MCHttpSource::MCReply& reply)
+        std::expected<void, MCHttpSource::MCGetError> Follow(MCRequestState& state, uint64_t from, DWORD_PTR context,
+                                                             MCHttpSource::MCReply& reply)
         {
             const std::wstring range = from != 0 ? std::format(L"Range: bytes={}-", from) : std::wstring();
             const auto sent = Step(
@@ -325,7 +341,7 @@ namespace
 
                 if (_Request == nullptr)
                 {
-                    return std::unexpected(std::string(StoppedError));
+                    return std::unexpected(Failed(std::string(StoppedError)));
                 }
 
                 DWORD statusSize = sizeof(status);

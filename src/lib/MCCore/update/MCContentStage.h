@@ -57,6 +57,13 @@ namespace MCContentStage
         /// patches, from other threads); this one's Cancel reaches it too. Here none: files are fetched one at a time.
         /// </summary>
         virtual std::unique_ptr<MCSource> Another() { return nullptr; }
+
+        /// <summary>
+        /// Whether the last fetch or read that failed here failed because the host couldn't be reached (a connection
+        /// refused, lost or timed out, its name not found) for as long as it was tried, with none succeeding since. Here
+        /// never.
+        /// </summary>
+        virtual bool HostUnreachable() const { return false; }
     };
 
     /// <summary>Why a checked download (<see cref="FetchChecked"/>) failed.</summary>

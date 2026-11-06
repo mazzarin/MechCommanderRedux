@@ -7,8 +7,6 @@
 
 namespace
 {
-    using namespace std::chrono_literals;
-
     constexpr std::string_view SecureScheme = "https";
     constexpr std::string_view PlainScheme = "http";
     constexpr std::string_view SchemeEnd = "://";
@@ -22,11 +20,6 @@ namespace
     constexpr int LastServerError = 599;
     constexpr int TimedOutStatus = 408;
     constexpr int TooManyStatus = 429;
-    /// <summary>
-    /// The waits before each try again after a failure that may pass (a lost connection, a busy host), resuming where
-    /// the bytes stopped; a try that brought bytes starts them over, so a long download survives many cuts.
-    /// </summary>
-    constexpr std::array<std::chrono::milliseconds, 4> RetryWaits = {1s, 2s, 4s, 8s};
     constexpr std::string_view StoppedError = "stopped";
     constexpr std::string_view ContentRangeUnit = "bytes ";
 
@@ -53,7 +46,7 @@ namespace
         return escaped;
     }
 
-    /// <summary>A try's failure, and whether trying again may get past it.</summary>
+    /// <summary>A try's failure, whether trying again may get past it, and whether the host was out of reach.</summary>
     struct MCFailure
     {
         enum class MCKind : uint8_t
@@ -67,7 +60,15 @@ namespace
 
         MCKind Kind = MCKind::Lasting;
         std::string Reason;
+        /// <summary>The host couldn't be reached, or the connection to it was lost (MCHttpSource::MCGetError's).</summary>
+        bool Unreachable = false;
     };
+
+    /// <summary>A transfer that failed: a failure that may pass, and the host out of reach when the transfer says.</summary>
+    MCFailure TransferFailure(const MCHttpSource::MCGetError& error)
+    {
+        return {.Kind = MCFailure::MCKind::Passing, .Reason = error.Reason, .Unreachable = error.Unreachable};
+    }
 
     using MCKind = MCFailure::MCKind;
 
@@ -265,12 +266,13 @@ namespace
     {
     public:
         MCSource(std::string address, MCHttpSource::MCGetMaker makeGet, std::unique_ptr<MCHttpSource::MCGet> get,
-                 std::shared_ptr<MCStopper> parent)
+                 std::shared_ptr<MCStopper> parent, std::vector<std::chrono::milliseconds> waits)
             : _Address(std::move(address))
             , _MakeGet(std::move(makeGet))
             , _Get(std::move(get))
             , _Stopper(std::make_shared<MCStopper>(*_Get))
             , _Parent(std::move(parent))
+            , _Waits(std::move(waits))
         {
             if (_Parent != nullptr)
             {
@@ -311,7 +313,7 @@ namespace
 
                                         if (!got)
                                         {
-                                            return std::unexpected(MCFailure{MCKind::Passing, got.error()});
+                                            return std::unexpected(TransferFailure(got.error()));
                                         }
 
                                         text = std::move(reply.Text());
@@ -337,15 +339,18 @@ namespace
                 return nullptr;
             }
 
-            return std::make_unique<MCSource>(_Address, _MakeGet, std::move(get), _Stopper);
+            return std::make_unique<MCSource>(_Address, _MakeGet, std::move(get), _Stopper, _Waits);
         }
+
+        bool HostUnreachable() const override { return _Unreachable; }
 
     private:
         std::string Url(std::string_view name) const { return std::format("{}/{}", _Address, Escaped(name)); }
 
         /// <summary>
         /// Runs <paramref name="attempt"/> (given whether it brought bytes) until it succeeds, tries again after a
-        /// failure that may pass, waiting longer each time, and gives up on any other, or once the waits run out.
+        /// failure that may pass, waiting longer each time, and gives up on any other, or once the waits run out. Giving
+        /// up, it keeps whether the host was out of reach (HostUnreachable); succeeding, it clears it.
         /// </summary>
         template <typename MCAttempt>
         std::expected<void, std::string> Tried(std::string_view name, const MCAttempt& attempt)
@@ -364,6 +369,7 @@ namespace
 
                 if (done)
                 {
+                    _Unreachable = false;
                     return {};
                 }
 
@@ -377,12 +383,21 @@ namespace
                     failed = 0;
                 }
 
-                if (done.error().Kind == MCKind::Lasting || failed == RetryWaits.size())
+                if (done.error().Kind == MCKind::Lasting)
                 {
+                    _Unreachable = false;
                     return std::unexpected(done.error().Reason);
                 }
 
-                const std::chrono::milliseconds wait = RetryWaits[failed++];
+                if (failed == _Waits.size())
+                {
+                    _Unreachable = done.error().Unreachable;
+                    SDL_Log("Updates: %.*s: %s; given up, %zu tries since its last bytes",
+                            static_cast<int>(name.size()), name.data(), done.error().Reason.c_str(), failed + 1);
+                    return std::unexpected(done.error().Reason);
+                }
+
+                const std::chrono::milliseconds wait = _Waits[failed++];
                 SDL_Log("Updates: %.*s: %s; tried again in %lld ms", static_cast<int>(name.size()), name.data(),
                         done.error().Reason.c_str(), static_cast<long long>(wait.count()));
 
@@ -432,7 +447,7 @@ namespace
 
             if (!got)
             {
-                return std::unexpected(MCFailure{MCKind::Passing, got.error()});
+                return std::unexpected(TransferFailure(got.error()));
             }
 
             if (!out)
@@ -444,7 +459,8 @@ namespace
             // The answer ended early without the transfer saying so: as a lost connection, the rest is asked for.
             if (reply.At() < size)
             {
-                return std::unexpected(MCFailure{MCKind::Passing, "the download stopped short"});
+                return std::unexpected(
+                    MCFailure{.Kind = MCKind::Passing, .Reason = "the download stopped short", .Unreachable = true});
             }
 
             return {};
@@ -456,7 +472,31 @@ namespace
         std::shared_ptr<MCStopper> _Stopper;
         /// <summary>The source this one was made from (none: made by Make), whose Cancel reaches this one.</summary>
         std::shared_ptr<MCStopper> _Parent;
+        /// <summary>The waits before each try again (MCHttpSource::RetryWaits).</summary>
+        std::vector<std::chrono::milliseconds> _Waits;
+        /// <summary>Whether the last fetch or read given up on failed with the host out of reach.</summary>
+        std::atomic<bool> _Unreachable = false;
     };
+}
+
+std::vector<std::chrono::milliseconds> MCHttpSource::RetryWaits(const MCRetries& retries)
+{
+    std::vector<std::chrono::milliseconds> waits;
+    std::chrono::milliseconds waited{0};
+    // Each wait at least a millisecond, so the waits always come to an end.
+    constexpr std::chrono::milliseconds Shortest{1};
+    const std::chrono::milliseconds longest = std::max(retries.Longest, Shortest);
+    std::chrono::milliseconds next = std::max(retries.First, Shortest);
+
+    while (waited < retries.RideOut)
+    {
+        const std::chrono::milliseconds wait = std::min(next, longest);
+        waits.push_back(wait);
+        waited += wait;
+        next = wait * 2;
+    }
+
+    return waits;
 }
 
 std::optional<uint64_t> MCHttpSource::RangeFirst(std::string_view contentRange)
@@ -511,7 +551,8 @@ std::optional<std::pair<std::string, std::string>> MCHttpSource::SchemeAndHost(s
 }
 
 std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSource::Make(std::string_view address,
-                                                                                         MCGetMaker makeGet)
+                                                                                         MCGetMaker makeGet,
+                                                                                         const MCRetries& retries)
 {
     const auto parts = SchemeAndHost(address);
 
@@ -539,5 +580,6 @@ std::expected<std::unique_ptr<MCContentStage::MCSource>, std::string> MCHttpSour
         return std::unexpected("this build has no transfer");
     }
 
-    return std::make_unique<MCSource>(std::string(address), std::move(makeGet), std::move(get), nullptr);
+    return std::make_unique<MCSource>(std::string(address), std::move(makeGet), std::move(get), nullptr,
+                                      RetryWaits(retries));
 }

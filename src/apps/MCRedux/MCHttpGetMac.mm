@@ -3,6 +3,8 @@
 
 #import <Foundation/Foundation.h>
 
+#include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <deque>
 #include <format>
@@ -25,6 +27,32 @@ namespace
     constexpr size_t QueuedResume = QueuedMost / 2;
     constexpr std::string_view StoppedError = "stopped";
 
+    /// <summary>
+    /// NSURLSession's errors (NSURLErrorDomain) for a host out of reach: timed out, its name not found, a connection
+    /// refused, a connection lost, no name lookup, no connection to the internet, roaming off, a call on, no data allowed.
+    /// </summary>
+    constexpr std::array<NSInteger, 9> UnreachableErrors = {NSURLErrorTimedOut,
+                                                            NSURLErrorCannotFindHost,
+                                                            NSURLErrorCannotConnectToHost,
+                                                            NSURLErrorNetworkConnectionLost,
+                                                            NSURLErrorDNSLookupFailed,
+                                                            NSURLErrorNotConnectedToInternet,
+                                                            NSURLErrorInternationalRoamingOff,
+                                                            NSURLErrorCallIsActive,
+                                                            NSURLErrorDataNotAllowed};
+
+    /// <summary>Whether <paramref name="error"/> says the host couldn't be reached.</summary>
+    bool IsUnreachable(NSError* error)
+    {
+        return [error.domain isEqualToString:NSURLErrorDomain] && std::ranges::contains(UnreachableErrors, error.code);
+    }
+
+    /// <summary>A transfer's failure that isn't the host out of reach.</summary>
+    MCHttpSource::MCGetError Failed(std::string reason)
+    {
+        return {.Unreachable = false, .Reason = std::move(reason)};
+    }
+
     /// <summary>What the session's delegate passes to the thread that asked, in order.</summary>
     struct MCEvent
     {
@@ -39,8 +67,9 @@ namespace
         int Status = 0;
         std::string ContentRange;
         NSData* Bytes = nil;
-        /// <summary>For Done: what failed (empty: the answer ended).</summary>
+        /// <summary>For Done: what failed (empty: the answer ended), and whether the host was out of reach.</summary>
         std::string Error;
+        bool Unreachable = false;
     };
 
     /// <summary>
@@ -174,8 +203,12 @@ namespace
 {
     if (const std::shared_ptr<MCTransfer> transfer = [self transferFor:task])
     {
-        transfer->Add({.Kind = MCEvent::MCKind::Done,
-                       .Error = error != nil ? std::string(error.localizedDescription.UTF8String) : std::string()});
+        transfer->Add(
+            {.Kind = MCEvent::MCKind::Done,
+             .Error = error != nil ? std::format("{} ({} {})", error.localizedDescription.UTF8String,
+                                                 error.domain.UTF8String, static_cast<long>(error.code))
+                                   : std::string(),
+             .Unreachable = error != nil && IsUnreachable(error)});
     }
 }
 @end
@@ -206,13 +239,14 @@ namespace
         MCMacGet(const MCMacGet&) = delete;
         MCMacGet& operator=(const MCMacGet&) = delete;
 
-        std::expected<void, std::string> Get(const std::string& url, uint64_t from, MCHttpSource::MCReply& reply) override
+        std::expected<void, MCHttpSource::MCGetError> Get(const std::string& url, uint64_t from,
+                                                          MCHttpSource::MCReply& reply) override
         {
             NSURL* address = [NSURL URLWithString:@(url.c_str())];
 
             if (address == nil)
             {
-                return std::unexpected(std::format("\"{}\" isn't an address", url));
+                return std::unexpected(Failed(std::format("\"{}\" isn't an address", url)));
             }
 
             NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:address];
@@ -231,7 +265,7 @@ namespace
 
                 if (_Cancelled)
                 {
-                    return std::unexpected(std::string(StoppedError));
+                    return std::unexpected(Failed(std::string(StoppedError)));
                 }
 
                 _Current = transfer;
@@ -247,7 +281,7 @@ namespace
 
             if (_Cancelled)
             {
-                return std::unexpected(std::string(StoppedError));
+                return std::unexpected(Failed(std::string(StoppedError)));
             }
 
             return done;
@@ -266,7 +300,7 @@ namespace
 
     private:
         /// <summary>Passes the transfer's events to the reply until the answer ends, the reply stops it or it's cancelled.</summary>
-        std::expected<void, std::string> Follow(MCTransfer& transfer, MCHttpSource::MCReply& reply)
+        std::expected<void, MCHttpSource::MCGetError> Follow(MCTransfer& transfer, MCHttpSource::MCReply& reply)
         {
             for (;;)
             {
@@ -274,7 +308,7 @@ namespace
 
                 if (!event)
                 {
-                    return std::unexpected(std::string(StoppedError));
+                    return std::unexpected(Failed(std::string(StoppedError)));
                 }
 
                 __block bool goOn = true;
@@ -299,7 +333,8 @@ namespace
                             return {};
                         }
 
-                        return std::unexpected(event->Error);
+                        return std::unexpected(
+                            MCHttpSource::MCGetError{.Unreachable = event->Unreachable, .Reason = event->Error});
                 }
 
                 if (!goOn)

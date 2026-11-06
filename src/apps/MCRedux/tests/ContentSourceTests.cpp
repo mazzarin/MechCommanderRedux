@@ -452,6 +452,128 @@ TEST_CASE("content source: a busy host is tried again, a missing file isn't; a c
     CHECK_EQ(host.Ranges().size(), size_t{7});
 }
 
+TEST_CASE("content source: the waits to try again grow to a cap and ride out two minutes of outage; a cancel ends a "
+          "long wait at once")
+{
+    // The game's own: doubling from a second, never over half a minute, adding up to two minutes.
+    const std::vector<std::chrono::milliseconds> waits = MCHttpSource::RetryWaits();
+    REQUIRE(!waits.empty());
+    CHECK(waits.front() == MCHttpSource::FirstRetryWait);
+    std::chrono::milliseconds waited{0};
+
+    for (size_t i = 0; i < waits.size(); ++i)
+    {
+        CHECK(waits[i] <= MCHttpSource::LongestRetryWait);
+        CHECK((i == 0 || waits[i] == std::min(waits[i - 1] * 2, MCHttpSource::LongestRetryWait)));
+        waited += waits[i];
+    }
+
+    CHECK(waited >= std::chrono::minutes(2));
+    CHECK(waited - waits.back() < std::chrono::minutes(2));
+    CHECK(waits.back() == MCHttpSource::LongestRetryWait);
+
+    // A source follows its schedule: busy through every wait, it gets the file; busy past them, it gives up.
+    const std::string zip = Bytes(ZipBytes);
+    MCTestHost host({{std::string(ZipName), zip}});
+    const MCHttpSource::MCRetries quick{.First = 10ms, .Longest = 40ms, .RideOut = 300ms};
+    const size_t tries = MCHttpSource::RetryWaits(quick).size() + 1;
+    auto source = MCHttpSource::Make(host.Address(), MCMakeHttpGet, quick);
+    REQUIRE(source.has_value());
+    const MCScratchFolder folder(TestGroup, "schedule");
+    constexpr int Unavailable = 503;
+    uint64_t received = 0;
+    host.FailNext(Unavailable, static_cast<int>(tries) - 1);
+    CHECK_EQ(Fetch(**source, ZipName, folder.Path() / "rode-out.zip", zip.size(), received).error_or(""),
+             std::string());
+    CHECK_EQ(host.Ranges().size(), tries);
+    host.FailNext(Unavailable, static_cast<int>(tries));
+    CHECK(Fetch(**source, ZipName, folder.Path() / "gave-up.zip", zip.size(), received).error_or("").find("503") !=
+          std::string::npos);
+    CHECK_EQ(host.Ranges().size(), 2 * tries);
+
+    // Waiting half a minute to try again, a cancel ends the wait at once.
+    const MCHttpSource::MCRetries slow{.First = MCHttpSource::LongestRetryWait};
+    auto waiting = MCHttpSource::Make(host.Address(), MCMakeHttpGet, slow);
+    REQUIRE(waiting.has_value());
+    constexpr int Always = 1000;
+    host.FailNext(Unavailable, Always);
+    const size_t before = host.Ranges().size();
+    std::thread canceller(
+        [&]
+        {
+            while (host.Ranges().size() == before)
+            {
+                std::this_thread::sleep_for(PollTime);
+            }
+
+            (*waiting)->Cancel();
+        });
+    const auto start = std::chrono::steady_clock::now();
+    const auto cancelled = Fetch(**waiting, ZipName, folder.Path() / "cancelled.zip", zip.size(), received);
+    const auto took = std::chrono::steady_clock::now() - start;
+    canceller.join();
+    CHECK_EQ(cancelled.error_or(""), std::string("stopped"));
+    CHECK(took < CancelledWithin);
+}
+
+TEST_CASE("content source: a host that can't be reached is told apart once the tries run out; a lost connection "
+          "tried again past, a busy host and a missing file aren't")
+{
+    const MCHttpSource::MCRetries quick{.First = 10ms, .Longest = 20ms, .RideOut = 50ms};
+    const MCScratchFolder folder(TestGroup, "unreachable");
+    uint64_t received = 0;
+
+    // Nothing listens on the port: the connection is refused.
+    uint16_t closedPort = 0;
+
+    {
+        MCSocketTransport net;
+        REQUIRE(net.Startup());
+        const MCSocket::Handle listener = net.ListenTcp(0);
+        REQUIRE(listener != MCSocket::InvalidHandle);
+        closedPort = net.LocalPort(listener);
+        net.Close(listener);
+    }
+
+    auto nowhere =
+        MCHttpSource::Make(std::format("http://127.0.0.1:{}{}", closedPort, HostFolder), MCMakeHttpGet, quick);
+    REQUIRE(nowhere.has_value());
+    CHECK(!(*nowhere)->HostUnreachable());
+    CHECK(!(*nowhere)->Read("release.json", ZipBytes).has_value());
+    CHECK((*nowhere)->HostUnreachable());
+
+    // A lost connection tried again and got past clears it; a busy host or a missing file isn't the host out of reach.
+    const std::string zip = Bytes(ZipBytes);
+    MCTestHost host({{std::string(ZipName), zip}});
+    auto source = MCHttpSource::Make(host.Address(), MCMakeHttpGet, quick);
+    REQUIRE(source.has_value());
+    constexpr int64_t CutBytes = 100'000;
+    host.CutAfter(CutBytes);
+    const auto resumed = (*source)->Fetch(ZipName, folder.Path() / "resumed.zip", zip.size(),
+                                          [&](std::span<const char> bytes)
+                                          {
+                                              host.Passed(bytes.size());
+                                              return true;
+                                          });
+    CHECK_EQ(resumed.error_or(""), std::string());
+    CHECK(!(*source)->HostUnreachable());
+    constexpr int Unavailable = 503;
+    constexpr int Always = 1000;
+    host.FailNext(Unavailable, Always);
+    CHECK(!Fetch(**source, ZipName, folder.Path() / "busy.zip", zip.size(), received).has_value());
+    CHECK(!(*source)->HostUnreachable());
+    host.FailNext(Unavailable, 0);
+    CHECK(!Fetch(**source, "zips/none.zip", folder.Path() / "none.zip", zip.size(), received).has_value());
+    CHECK(!(*source)->HostUnreachable());
+
+    // Made from one that can't reach the host, a source is told apart on its own.
+    const auto another = (*nowhere)->Another();
+    REQUIRE(another != nullptr);
+    CHECK(!another->HostUnreachable());
+    CHECK(!Fetch(*another, ZipName, folder.Path() / "another.zip", zip.size(), received).has_value());
+    CHECK(another->HostUnreachable());
+}
+
 TEST_CASE("content source: sources made from one fetch files at the same time, each over a transfer of its own")
 {
     constexpr int Files = 4;

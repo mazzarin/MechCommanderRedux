@@ -11,7 +11,9 @@
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
+#include "logistics/MCLogButton.h"
 #include "logistics/MCLogComboBox.h"
+#include "logistics/MCLogMenus.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCMatchOptionsTab.h"
@@ -73,18 +75,15 @@ TEST_CASE_ISOLATED("game: the multiplayer session screen matches the pre-rendere
 
     REQUIRE(MCTestGame::StartLogistics());
 
-    // The LAN screen as the TCP/IP button leaves it, hosting on the loopback.
+    // The LAN games as MULTIPLAYER opens them, hosting on the loopback.
     ConnectScreen();
     Settle();
     REQUIRE(MultiPlayer() != nullptr);
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(HostAddress);
     MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(0);
-    lanScreen.ShowGuiWindow(1);
-    lanScreen.ShowBlock(0);
-    GlobalLog()->SetCurrentScreen(lanScreen);
-    GlobalLog()->LogisticsState = 0xb;
+    // MULTIPLAYER opens the LAN games (the personal build).
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
     lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
     lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Test game");
     lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
@@ -217,11 +216,8 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(OptionsHostAddress);
     MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(0);
-    lanScreen.ShowGuiWindow(1);
-    lanScreen.ShowBlock(0);
-    GlobalLog()->SetCurrentScreen(lanScreen);
-    GlobalLog()->LogisticsState = 0xb;
+    // MULTIPLAYER opens the LAN games (the personal build).
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
     lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
     lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Options game");
     lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
@@ -479,11 +475,8 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     MCSessionManager& manager = *MultiPlayer()->SessionManager;
     manager.ConnectTcp(DataHostAddress);
     MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(0);
-    lanScreen.ShowGuiWindow(1);
-    lanScreen.ShowBlock(0);
-    GlobalLog()->SetCurrentScreen(lanScreen);
-    GlobalLog()->LogisticsState = 0xb;
+    // MULTIPLAYER opens the LAN games (the personal build).
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
     lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
     lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Data game");
     lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("6");
@@ -554,4 +547,76 @@ TEST_CASE_ISOLATED("game: the session screen names a guest whose game data diffe
     ClickOk(dialog);
     Settle();
     CHECK_EQ(guest.MissionsLoaded(), 2);
+}
+
+namespace
+{
+    /// <summary>The menus' test's loopback address, so it can run beside the others (--jobs).</summary>
+    constexpr std::string_view MenuHostAddress = "127.0.0.1:28893";
+
+    /// <summary>Clicks the middle of <paramref name="button"/>, as a player does, and lets the game settle.</summary>
+    void ClickButton(MCLogButton& button)
+    {
+        Click(button.GlobalX() + button.Width() / 2, button.GlobalY() + button.Height() / 2);
+        Settle();
+    }
+}
+
+/// <summary>
+/// The menus' way into a LAN game (the personal build): MULTIPLAYER opens the LAN games over TCP/IP with no question
+/// (the original's connection screen and its "IPX or TCP?" are gone); their CANCEL goes back to the main menu, and the
+/// ready room's leaves the game for the games again.
+/// </summary>
+TEST_CASE_ISOLATED("game: MULTIPLAYER opens the LAN games, and CANCEL goes back a step")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartLogistics());
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
+    CHECK(!GlobalLog()->MessageDialog->IsShowing());
+    CHECK(MultiPlayer()->SessionManager->CurrentConnection == MCNetProtocol::TcpIp);
+
+    // The games' CANCEL: the main menu, the multiplayer object gone.
+    MCSplashScreen& lanScreen = *GlobalLog()->LanScreen;
+    ClickButton(*lanScreen.Element<MCLogButton>(1));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MainScreen);
+    CHECK(MultiPlayer() == nullptr);
+
+    // Hosting from the games: the ready room, whose CANCEL leaves the game and lists the games again.
+    ConnectScreen();
+    Settle();
+    REQUIRE(MultiPlayer() != nullptr);
+    MCSessionManager& manager = *MultiPlayer()->SessionManager;
+    manager.ConnectTcp(MenuHostAddress);
+    lanScreen.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
+    lanScreen.Element<MCLogTextObject>(10)->SetStringBuffer("Menu game");
+    lanScreen.Element<MCLogTextObject>(11)->SetStringBuffer("2");
+    CreateSession();
+    Settle();
+    REQUIRE(manager.CurrentSession() != nullptr);
+    REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
+    ClickButton(*GlobalLog()->ConnectScreen->Element<MCLogButton>(1));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen);
+    CHECK(lanScreen.IsShowing());
+    CHECK(!GlobalLog()->ConnectScreen->IsShowing());
+    CHECK(manager.CurrentSession() == nullptr);
+    CHECK(manager.CurrentConnection == MCNetProtocol::TcpIp);
+    CHECK_EQ(ElementText(lanScreen, 4), "Commander");
+
+    // Without a network the connection screen shows instead, and its SERIAL screen's CANCEL goes back to it.
+    lanScreen.ShowGuiWindow(false);
+    ShowSerialScreen();
+    Settle();
+    auto& serialScreen = *GlobalLog()->SerialScreen;
+    ClickButton(*serialScreen.Element<MCLogButton>(1));
+    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->MultiplayerScreen);
+    CHECK(GlobalLog()->MultiplayerScreen->IsShowing());
+    CHECK(!serialScreen.IsShowing());
+    CHECK(!lanScreen.IsShowing());
 }

@@ -134,6 +134,16 @@ void ConnectScreen()
     }
 
     GlobalLog()->MainScreen->ShowGuiWindow(false);
+
+    // Port-only (the personal build): MULTIPLAYER opens the local network's games. The original's connection screen
+    // also offered a modem, a serial cable and the internet lobbies of 1999 (Mplayer.com, the MSN Gaming Zone), none
+    // of which exists now; it shows only when this machine can't use the network at all.
+    if (MultiPlayer()->SessionManager != nullptr && MultiPlayer()->SessionManager->IsTcpAvailable())
+    {
+        ShowLanScreen();
+        return;
+    }
+
     GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
     GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
     GlobalLog()->LogisticsState = 10;
@@ -166,11 +176,14 @@ void ConnectScreen()
 
 void CancelToConnect()
 {
+    // Port-only (the personal build): the LAN games stand for the connection screen (ConnectScreen), so their CANCEL
+    // goes back to the main menu, and a LAN game's ready room's to the games. The modem and serial screens (shown only
+    // without a network) go back to the connection screen, as in the original.
+    const bool fromGames = GlobalLog()->CurrentScreen() == GlobalLog()->LanScreen;
+    const MCNetProtocol connection = MultiPlayer()->SessionManager->CurrentConnection;
+    const bool fromLanGame = GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen &&
+                             (connection == MCNetProtocol::TcpIp || connection == MCNetProtocol::Ipx);
     WhackTimer = true;
-    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-    GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
-    GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
-    GlobalLog()->LogisticsState = 10;
     GlobalLog()->LanScreen->ShowBlock(0);
     GlobalLog()->ModemScreen->ShowBlock(0);
     auto games = GlobalLog()->LanScreen->Element<MCGameList>(2);
@@ -183,6 +196,25 @@ void CancelToConnect()
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     MultiPlayer()->LeaveSession();
     GlobalLog()->ResetPlayerLights();
+
+    if (fromGames)
+    {
+        Cancel();
+        return;
+    }
+
+    GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+
+    if (fromLanGame)
+    {
+        // The games found again, the names as typed.
+        DoTheTcpThang();
+        return;
+    }
+
+    GlobalLog()->MultiplayerScreen->ShowGuiWindow(true);
+    GlobalLog()->SetCurrentScreen(GlobalLog()->MultiplayerScreen);
+    GlobalLog()->LogisticsState = 10;
 }
 
 void CancelToMPlayer()
@@ -308,37 +340,9 @@ void ShowLanScreen()
         gameEntry->SetStringBuffer("Game");
     }
 
-    // Both protocols: ask which; else say which one is used.
-    MCSessionManager& manager = *MultiPlayer()->SessionManager;
-
-    if (manager.IsIpxAvailable() != 0 && manager.IsTcpAvailable() != 0)
-    {
-        MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-        dialog.SetText(LoadGameString(0xa6, 0xfe));
-        dialog.SetTwoButton(true);
-        dialog.Callback = TcpipxDialogCallback;
-        dialog.OkButton->SetUpPicture("bh_ipx.tga");
-        dialog.OkButton->SetDownPicture("bg_ipx.tga");
-        dialog.OkButton->Disabled = false;
-        dialog.OkButton->Result = 1;
-        dialog.CancelButton->SetUpPicture("bh_tcp.tga");
-        dialog.CancelButton->SetDownPicture("bg_tcp.tga");
-        dialog.CancelButton->Disabled = false;
-        dialog.CancelButton->Result = 2;
-        dialog.Activate();
-        return;
-    }
-
-    if (manager.IsIpxAvailable() != 0)
-    {
-        ShowMenuMessage(0x36f, [](int32_t) { DoTheIpxThang(); });
-        return;
-    }
-
-    if (manager.IsTcpAvailable() != 0)
-    {
-        ShowMenuMessage(0x36e, [](int32_t) { DoTheTcpThang(); });
-    }
+    // Port-only (the personal build): straight to the games, over TCP/IP. The original asked "IPX or TCP?" when the
+    // machine had both, or said which it used; the port's IPX is the same search under its old name (MCDirectPlay).
+    DoTheTcpThang();
 }
 
 void DoExitToZone1()

@@ -12508,34 +12508,21 @@ namespace
     void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
     {
         constexpr std::string_view HostAddress = "127.0.0.1:28877";
-        // The logistics states of the LAN and session screens (as MCConnectMenu sets them).
-        constexpr int32_t LanState = 0xb;
+        // The session screen's logistics state (as MCConnectMenu sets it).
         constexpr int32_t SessionState = 8;
+        // MULTIPLAYER opens the LAN games (the personal build); the connection screen shows only without a network.
         ConnectScreen();
-        shoot("mp_connect");
-        ShowSerialScreen();
-        shoot("mp_serial");
-        CancelToConnect();
-        ShowModemScreen();
-        shoot("mp_modem");
-        CancelToConnect();
-        ShowLanScreen();
-        shoot("mp_protocol_question");
-        DismissMessage();
 
-        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
+        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr ||
+            GlobalLog()->CurrentScreen() != GlobalLog()->LanScreen)
         {
-            std::cout << "  no multiplayer: the LAN, ready room and session screens are left out\n";
+            shoot("mp_connect");
+            std::cout << "  no network: the LAN, ready room and session screens are left out\n";
             return;
         }
 
         MultiPlayer()->SessionManager->ConnectTcp(HostAddress);
         MCSplashScreen& lan = *GlobalLog()->LanScreen;
-        GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
-        lan.ShowGuiWindow(true);
-        lan.ShowBlock(0);
-        GlobalLog()->SetCurrentScreen(lan);
-        GlobalLog()->LogisticsState = LanState;
         lan.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
         lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
         lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");

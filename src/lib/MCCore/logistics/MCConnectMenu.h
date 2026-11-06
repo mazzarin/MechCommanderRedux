@@ -16,10 +16,13 @@ extern int32_t ReadyRoomTicks;
 /// <summary>Set to stop a modem or serial wait: the screens' one-second retry timers then do nothing.</summary>
 extern bool WhackTimer;
 
-/// <summary>Opens the multiplayer connection screen, making the multiplayer object; each connection button is enabled when the machine has it.</summary>
+/// <summary>
+/// MULTIPLAYER: makes the multiplayer object and opens the LAN games (the personal build), or, when this machine can't
+/// use the network, the original's connection screen, each of its buttons enabled when the machine has it.
+/// </summary>
 void ConnectScreen();
 
-/// <summary>Back to the connection screen, leaving the session.</summary>
+/// <summary>Leaves the session: from the LAN games back to the main menu, from the ready room back to the games.</summary>
 void CancelToConnect();
 
 /// <summary>Leaves the game for the multiplayer lobby that launched it.</summary>
@@ -46,7 +49,7 @@ void DoTheTcpThang();
 /// <summary>The TCP/IP-or-IPX question's answer (1 IPX, 2 TCP/IP).</summary>
 void TcpipxDialogCallback(int32_t result);
 
-/// <summary>Shows the LAN session list: asks for the protocol when there are two.</summary>
+/// <summary>Shows the LAN session list over TCP/IP, the player's name and game's name filled in.</summary>
 void ShowLanScreen();
 
 /// <summary>Leaves the game for the Zone's internet lobby.</summary>

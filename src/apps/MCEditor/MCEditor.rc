@@ -749,11 +749,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "Comments", "Unofficial recreation of the MechCommander Gold Mission Editor. Commit " MC_VERSION_COMMIT
-            VALUE "FileDescription", "MechCommander Redux Mission Editor"
+            VALUE "FileDescription", "MechCommander Redux HD Mission Editor"
             VALUE "FileVersion", MC_VERSION
             VALUE "InternalName", "MCEditor"
             VALUE "OriginalFilename", "MCEditor.exe"
-            VALUE "ProductName", "MechCommander Redux"
+            VALUE "ProductName", "MechCommander Redux HD"
             VALUE "ProductVersion", MC_VERSION_SHOWN
         END
     END

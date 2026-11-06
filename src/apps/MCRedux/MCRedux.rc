@@ -26,11 +26,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "Comments", "Unofficial recreation of MechCommander Gold. Commit " MC_VERSION_COMMIT
-            VALUE "FileDescription", "MechCommander Redux"
+            VALUE "FileDescription", "MechCommander Redux HD"
             VALUE "FileVersion", MC_VERSION
             VALUE "InternalName", "MCRedux"
             VALUE "OriginalFilename", "MCRedux.exe"
-            VALUE "ProductName", "MechCommander Redux"
+            VALUE "ProductName", "MechCommander Redux HD"
             VALUE "ProductVersion", MC_VERSION_SHOWN
         END
     END

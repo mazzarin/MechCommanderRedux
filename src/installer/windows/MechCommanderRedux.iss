@@ -2,12 +2,16 @@
 ; Uninstalling). For the player alone (no admin, unless Windows protects the folder: then Windows asks once, and the
 ; player's account is let change it; so the folder must be the game's own, never a drive, Windows', the programs' or
 ; another account's, or one holding them), it asks two things beside the folder: the game, downloaded into a folder of
-; its own (by default %LOCALAPPDATA%\Programs\MechCommander Redux) or the player's copy, which Redux installs into and
-; takes over (the folder the game was last pointed at, else the one the original's installer recorded); and HD, ticked.
-; It puts the program in, leaves the answers for the game (Redux update\sets.json), and starts the game, whose first
-; start downloads what the folder lacks: the setup itself downloads and copies no content. In a copy taken over, MCX.EXE
-; becomes a launcher that starts Redux, so whatever starts the original gets Redux; what the program replaces there (the
-; original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup".
+; its own (by default C:\Games\MechCommander Redux HD, else %LOCALAPPDATA%\Programs\MechCommander Redux HD) or the
+; player's copy, which Redux HD installs into and takes over (the folder the game was last pointed at, else the one the
+; original's installer recorded); and HD, ticked. It puts the program in, leaves the answers for the game (Redux
+; update\sets.json), and, shown, has the game download what the folder lacks before its Finish page (MCRedux
+; --get-content, the game's own download in its own window; closed or cut off, the first start carries on): the setup
+; itself downloads and copies no content. Windows' Apps list then gets the folder's size. In a copy taken over, MCX.EXE
+; becomes a launcher that starts Redux HD, so whatever starts the original gets Redux HD; what the program replaces there
+; (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup". MechCommander Online's
+; copy holds the original at other resolutions too (MCX1920x1080.EXE): each goes into the backup, and comes back as the
+; launcher only where a shortcut, or the lobby's DirectPlay entry, starts it.
 ;
 ; The uninstaller has the game remove its content first (MCRedux --remove-content: the files updates put there),
 ; then removes the program and puts back what's in the backup, so a copy taken over is as it was. When the game can't
@@ -49,17 +53,26 @@
   #define HdBytes "0"
 #endif
 
-#define AppName "MechCommander Redux"
+#define AppName "MechCommander Redux HD"
 #define ProjectUrl "https://github.com/mazzarin/MechCommanderRedux"
+; Where a downloaded game goes by default, on the system drive: games' own place, visible and short, made without an
+; administrator's rights on a standard Windows (an account may make folders at the drive's root). Where the account
+; can't, the player's own programs folder ({autopf}, %LOCALAPPDATA%\Programs).
+#define GamesFolderName "Games"
 ; The files the setup puts in the game folder.
 #define GameExe "MCRedux.exe"
 #define SdlDll "SDL3.dll"
 #define EditorExe "MCEditor.exe"
 ; The launcher (src/apps/MCXLauncher), in the original's place.
 #define LauncherExe "MCX.EXE"
+; The original under another name: MechCommander Online's copy has its MCX.EXE patched for wider screens as
+; MCX<width>x<height>.EXE (MCX1920x1080.EXE). Each becomes the launcher too, its original kept in the backup.
+#define LauncherPrefix "MCX"
+#define LauncherSizeSign "x"
+#define LauncherExtension ".EXE"
 ; Not README.txt: the original's Readme.txt is in the same folder, and Windows doesn't tell the two names apart.
-#define ReadmeName "MechCommander Redux README.txt"
-#define LicencesName "MechCommander Redux licences.txt"
+#define ReadmeName AppName + " README.txt"
+#define LicencesName AppName + " licences.txt"
 ; The files the first setups put in the game folder, before each install recorded its own (RegisterPreviousData).
 #define FirstProgramFiles "|MCRedux.exe|SDL3.dll|MCEditor.exe|MechCommander Redux README.txt|"
 #define ProgramFilesData "ProgramFiles"
@@ -74,6 +87,8 @@
 #define OriginalKey "Software\FASA Interactive\MechCommander Expansion"
 #define LobbyKey "Software\Microsoft\DirectPlay\Applications\MechCommander Expansion 1.0"
 #define FolderValue "Path"
+; The program DirectPlay's lobby entry starts, in that folder.
+#define ProgramValue "File"
 ; The player's compatibility settings for a program, by its path (the Compatibility tab's, for the player alone).
 #define LayersKey "Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
 ; Where the setup keeps the settings it took off the original's MCX.EXE, by its path, until the uninstall.
@@ -88,10 +103,17 @@
 #define UpdateRestartVariable "MCREDUX_UPDATE_RESTART"
 ; How long an update waits for the game that started it to end, in milliseconds.
 #define GameEndWait "60000"
+; The game's download, run as the install's last step (MCRedux --get-content): it exits 0 once the content is in.
+#define GetContentOption "--get-content"
+; Never change the AppId: Windows' Apps list, updates and the uninstaller find the install by it.
+#define AppIdGuid "603FB38F-BA9C-4011-9D9E-1B9A52D73050"
+; Windows' entry for the install in its Apps list, where its size is (EstimatedSize, in KB). Never ExpandConstant'ed:
+; its braces are the GUID's, not a constant's.
+#define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppIdGuid + "}_is1"
+#define SizeValue "EstimatedSize"
 
 [Setup]
-; Never change the AppId: Windows' Apps list, updates and the uninstaller find the install by it.
-AppId={{603FB38F-BA9C-4011-9D9E-1B9A52D73050}
+AppId={{{#AppIdGuid}}
 AppName={#AppName}
 AppVersion={#AppVersionShown}
 AppVerName={#AppName} {#AppVersionShown}
@@ -102,8 +124,9 @@ VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} Setup
 ; For the player alone: the uninstall entry in HKCU, the shortcuts in the player's Start menu.
 PrivilegesRequired=lowest
-; For the player alone, {autopf} is %LOCALAPPDATA%\Programs: the download's folder. The player's copy is its own.
-DefaultDirName={autopf}\{#AppName}
+; The download's folder (DownloadFolderDefault: {sd}\Games\..., else {autopf}, for the player alone
+; %LOCALAPPDATA%\Programs). The player's copy is its own.
+DefaultDirName={sd}\{#GamesFolderName}\{#AppName}
 AppendDefaultDirName=no
 DirExistsWarning=no
 EnableDirDoesntExistWarning=no
@@ -132,11 +155,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Messages]
 WizardSelectDir=The game
 SelectDirDesc=Where should {#AppName} play MechCommander Gold from?
-SelectDirLabel3={#AppName} downloads the game into a folder of its own, or installs into your copy and plays it.
+SelectDirLabel3=Setup downloads the game into a folder of its own, or installs {#AppName} into your copy and plays it.
 
 [CustomMessages]
 DownloadGame=&Download it
-UseMyCopy=&Use my copy (its folder holds {#GameDataFile})
+UseMyCopy=&Use my copy of MechCommander Gold
 HdChoice=Redux &HD art, sound and movies
 GameSize=%1 (%2 GB)
 HdSize=%1 (%2 GB more)
@@ -157,6 +180,12 @@ RemovalFailed=The game couldn't remove its downloaded files from %1, so the unin
 GameMissing=%2 is missing from %1, so the game's downloaded files can't be removed: they'll stay there.%n%nUninstall anyway?
 PlayGame=Play {#AppName}
 EditorShortcut={#AppName} Mission Editor
+ReadyDownload=Then downloaded, before Setup finishes:
+ReadyGame=The game (%1 GB)
+ReadyCopy=What your copy lacks of the game
+ReadyHd=Redux HD art, sound and movies (%1 GB)
+GettingGame=Downloading the game...
+DownloadLeft=Setup has installed {#AppName}, but the game's download isn't finished yet. It carries on when you start {#AppName}.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -218,6 +247,13 @@ const
   InvalidFileAttributes = -1;
   ErrorFileNotFound = 2;
   ErrorPathNotFound = 3;
+  // The game's exit code once its content is in place (MCRedux --get-content).
+  ContentInCode = 0;
+  // A file's size from its two halves (TFindRec's SizeHigh, SizeLow), and the KB Windows' Apps list counts in.
+  HalfSize = 65536;
+  BytesPerKB = 1024;
+  // The shortcuts in a folder of them.
+  ShortcutExtension = '.lnk';
 
 var
   // The folder whose files were copied into its backup this run, which ones, and whether the install finished: a setup
@@ -230,6 +266,8 @@ var
   HdBox: TNewCheckBox;
   DownloadFolder, CopyFolder: String;
   CopyShown: Boolean;
+  // Whether the install ran the game's download, and whether that ended with the content in place.
+  DownloadRan, DownloadDone: Boolean;
 
 function OpenProcess(Access: Cardinal; Inherit: Integer; ProcessId: Cardinal): THandle;
   external 'OpenProcess@kernel32.dll stdcall';
@@ -429,13 +467,15 @@ begin
   HdBox.Top := WizardForm.DirEdit.Top + WizardForm.DirEdit.Height + ScaleY(16);
 end;
 
+function DownloadFolderDefault: String; forward;
+
 procedure InitializeWizard;
 var
   Given, Answer: String;
 begin
   AddQuestions;
   HdBox.Checked := Uppercase(ExpandConstant('{param:HD|}')) <> NoAnswer;
-  DownloadFolder := ExpandConstant('{autopf}\{#AppName}');
+  DownloadFolder := DownloadFolderDefault;
   // The player's copy: the folder the game was last pointed at, else the one the original's installer recorded.
   CopyFolder := RememberedGameFolder;
 
@@ -491,7 +531,10 @@ end;
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = wpSelectDir then
-    ShowTotals;
+    ShowTotals
+  // The game's download stopped short (closed, or it couldn't finish): the player learns the first start carries on.
+  else if (CurPageID = wpFinished) and DownloadRan and not DownloadDone then
+    WizardForm.FinishedLabel.Caption := CustomMessage('DownloadLeft');
 end;
 
 function CanChange(const Folder: String): Boolean;
@@ -615,6 +658,54 @@ begin
 
   while (Result <> '') and not DirExists(Result) and (ExtractFileDir(Result) <> Result) do
     Result := ExtractFileDir(Result);
+end;
+
+// Whether the player can make the game's folder in Folder (ExistingFolder's): at a drive's root an account may make
+// folders but not files (Windows' own rights there), so a folder is made and removed there; elsewhere a file
+// (CanChange), as the game's own updates write files.
+function CanMakeIn(const Folder: String): Boolean;
+var
+  TestFolder: String;
+  Attempt: Integer;
+begin
+  if CompareText(RemoveBackslashUnlessRoot(Folder), AddBackslash(ExtractFileDrive(Folder))) <> 0 then
+  begin
+    Result := CanChange(Folder);
+    Exit;
+  end;
+
+  Result := False;
+
+  for Attempt := 1 to WriteTestTries do
+  begin
+    TestFolder := AddBackslash(Folder) +
+                  Format(WriteTestName, [GetDateTimeString(WriteTestTime, '-', '-'), Random(WriteTestRange)]);
+
+    if not DirExists(TestFolder) and not FileExists(TestFolder) then
+    begin
+      Result := CreateDir(TestFolder);
+
+      if Result and not RemoveDir(TestFolder) then
+        Log(Format('Couldn''t remove the write test %s', [TestFolder]));
+
+      Exit;
+    end;
+  end;
+
+  Log(Format('No free name for the write test in %s', [Folder]));
+end;
+
+// The download's folder by default: the system drive's Games folder, where the player can make the game's folder
+// there; else the player's own programs folder.
+function DownloadFolderDefault: String;
+begin
+  Result := ExpandConstant('{sd}\{#GamesFolderName}\{#AppName}');
+
+  if not CanMakeIn(ExistingFolder(Result)) then
+  begin
+    Log(Format('Can''t make %s: the download''s folder is the programs folder', [Result]));
+    Result := ExpandConstant('{autopf}\{#AppName}');
+  end;
 end;
 
 // Whether Folder is in the folder OneDrive syncs (the player's own, or a work or school one).
@@ -863,7 +954,7 @@ begin
         Result := GrantOrSay(Folder);
     end;
   end
-  else if not CanChange(ExistingFolder(Folder)) then
+  else if not CanMakeIn(ExistingFolder(Folder)) then
   begin
     Result := MayGrant(Folder);
 
@@ -1043,15 +1134,14 @@ begin
   Result := AddBackslash(RemoveBackslashUnlessRoot(Folder)) + '{#LauncherExe}';
 end;
 
-// Takes the player's compatibility settings for the original's MCX.EXE (Windows 98, 256 colours, 640x480, run as
-// administrator) off its path, now the launcher's, and keeps them for the uninstall: Windows would apply them to the
-// launcher. Settings put on the launcher after an earlier install go too; the kept ones stay the original's.
-procedure LiftCompatibility(const Folder: String);
+// Takes the player's compatibility settings for the original at Path (MCX.EXE, or a resolution's copy: Windows 98,
+// 256 colours, 640x480, run as administrator) off its path, now a launcher's or nothing's, and keeps them for the
+// uninstall: Windows would apply them to the launcher. Settings put on the launcher after an earlier install go too; the
+// kept ones stay the original's.
+procedure LiftCompatibility(const Path: String);
 var
-  Path, Layers, Kept: String;
+  Layers, Kept: String;
 begin
-  Path := LauncherPath(Folder);
-
   if not RegQueryStringValue(HKCU, '{#LayersKey}', Path, Layers) then
     Exit;
 
@@ -1071,13 +1161,11 @@ begin
     Log(Format('Couldn''t take %s''s compatibility settings (%s) off it', [Path, Layers]));
 end;
 
-// Gives the original's MCX.EXE back the compatibility settings LiftCompatibility kept.
-procedure RestoreCompatibility(const Folder: String);
+// Gives the original at Path back the compatibility settings LiftCompatibility kept.
+procedure RestoreCompatibility(const Path: String);
 var
-  Path, Kept: String;
+  Kept: String;
 begin
-  Path := LauncherPath(Folder);
-
   if not RegQueryStringValue(HKCU, '{#KeptLayersKey}', Path, Kept) then
     Exit;
 
@@ -1091,6 +1179,308 @@ begin
   RegDeleteValue(HKCU, '{#KeptLayersKey}', Path);
   RegDeleteKeyIfEmpty(HKCU, '{#KeptLayersKey}');
   RegDeleteKeyIfEmpty(HKCU, '{#ProductKey}');
+end;
+
+// Whether Name is the original under a resolution's name, as MechCommander Online's copy has it: MCX<width>x<height>.EXE.
+function IsResolutionCopy(const Name: String): Boolean;
+var
+  Middle: String;
+  Sign, I: Integer;
+begin
+  Result := False;
+
+  if (Length(Name) <= Length('{#LauncherPrefix}') + Length('{#LauncherExtension}')) or
+     (CompareText(Copy(Name, 1, Length('{#LauncherPrefix}')), '{#LauncherPrefix}') <> 0) or
+     (CompareText(Copy(Name, Length(Name) - Length('{#LauncherExtension}') + 1, Length('{#LauncherExtension}')),
+                  '{#LauncherExtension}') <> 0) then
+    Exit;
+
+  Middle := Copy(Name, Length('{#LauncherPrefix}') + 1,
+                 Length(Name) - Length('{#LauncherPrefix}') - Length('{#LauncherExtension}'));
+  Sign := Pos(Lowercase('{#LauncherSizeSign}'), Lowercase(Middle));
+
+  // Digits on both sides of the sign, and nothing else.
+  if (Sign < 2) or (Sign = Length(Middle)) then
+    Exit;
+
+  for I := 1 to Length(Middle) do
+    if (I <> Sign) and ((Middle[I] < '0') or (Middle[I] > '9')) then
+      Exit;
+
+  Result := True;
+end;
+
+// The resolutions' copies of the original in Folder (IsResolutionCopy), by name.
+function ResolutionCopies(const Folder: String): TArrayOfString;
+var
+  FindRec: TFindRec;
+begin
+  SetArrayLength(Result, 0);
+
+  if FindFirst(AddBackslash(Folder) + '{#LauncherPrefix}*{#LauncherExtension}', FindRec) then
+  begin
+    try
+      repeat
+        if ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0) and IsResolutionCopy(FindRec.Name) then
+          Append(Result, FindRec.Name);
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+// Adds the targets of the shortcuts in Folder and the folders in it (ComparablePath's) to Targets.
+procedure AddShortcutTargets(const Folder: String; Shell: Variant; var Targets: TArrayOfString);
+var
+  FindRec: TFindRec;
+  Folders: TArrayOfString;
+  Shortcut: String;
+  Link: Variant;
+  I: Integer;
+begin
+  if FindFirst(AddBackslash(Folder) + '*', FindRec) then
+  begin
+    try
+      repeat
+        // A link to elsewhere isn't followed: it could lead anywhere, around in a circle even.
+        if (FindRec.Attributes and ReparsePointAttribute) = 0 then
+        begin
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+          begin
+            if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+              Append(Folders, AddBackslash(Folder) + FindRec.Name);
+          end
+          else if CompareText(ExtractFileExt(FindRec.Name), ShortcutExtension) = 0 then
+          begin
+            Shortcut := AddBackslash(Folder) + FindRec.Name;
+
+            try
+              Link := Shell.CreateShortcut(Shortcut);
+              Append(Targets, ComparablePath(Link.TargetPath));
+            except
+              Log(Format('Couldn''t read the shortcut %s: %s', [Shortcut, GetExceptionMessage]));
+            end;
+          end;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+
+  for I := 0 to GetArrayLength(Folders) - 1 do
+    AddShortcutTargets(Folders[I], Shell, Targets);
+end;
+
+// What starts a program here, by its path (ComparablePath's): the player's and every account's shortcuts on the Desktop,
+// in the Start menu and pinned to the taskbar, and the program DirectPlay's lobby entry names.
+function StartedPaths: TArrayOfString;
+var
+  Shell: Variant;
+  Folders: TArrayOfString;
+  Path, ProgramName: String;
+  I: Integer;
+begin
+  SetArrayLength(Result, 0);
+  SetArrayLength(Folders, 5);
+  Folders[0] := ExpandConstant('{userdesktop}');
+  Folders[1] := ExpandConstant('{commondesktop}');
+  Folders[2] := ExpandConstant('{userprograms}');
+  Folders[3] := ExpandConstant('{commonprograms}');
+  Folders[4] := ExpandConstant('{userappdata}\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar');
+
+  try
+    Shell := CreateOleObject('WScript.Shell');
+
+    for I := 0 to GetArrayLength(Folders) - 1 do
+      AddShortcutTargets(Folders[I], Shell, Result);
+  except
+    Log(Format('Couldn''t read the shortcuts: %s', [GetExceptionMessage]));
+  end;
+
+  if RegQueryStringValue(HKLM32, '{#LobbyKey}', '{#FolderValue}', Path) and
+     RegQueryStringValue(HKLM32, '{#LobbyKey}', '{#ProgramValue}', ProgramName) then
+    Append(Result, ComparablePath(AddBackslash(Path) + ProgramName));
+end;
+
+function IsStarted(const Started: TArrayOfString; const Path: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+
+  for I := 0 to GetArrayLength(Started) - 1 do
+    if Started[I] = ComparablePath(Path) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// MechCommander Online's copy holds the original at other resolutions too (IsResolutionCopy), which Redux supersedes:
+// each goes into the backup, and comes back as the launcher only where a shortcut or the lobby's entry starts it
+// (StartedPaths), so those still start the game, now Redux. The uninstall puts them all back (DropResolutionCopies).
+// Run again (an update), the backup holds the originals already, and the launchers are made again from the new one.
+procedure TakeOverResolutionCopies(const Folder: String);
+var
+  Names, Started: TArrayOfString;
+  Path, Kept: String;
+  I: Integer;
+begin
+  Names := ResolutionCopies(Folder);
+
+  if GetArrayLength(Names) = 0 then
+    Exit;
+
+  Started := StartedPaths;
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+  begin
+    Path := AddBackslash(Folder) + Names[I];
+    Kept := AddBackslash(BackupFolder(Folder)) + Names[I];
+
+    if FileExists(Kept) then
+    begin
+      if not DeleteFile(Path) then
+      begin
+        Log(Format('Couldn''t delete %s, an earlier launcher: left as it is', [Path]));
+        Continue;
+      end;
+    end
+    else if not (ForceDirectories(BackupFolder(Folder)) and RenameFile(Path, Kept)) then
+    begin
+      Log(Format('Couldn''t move %s to %s: left as it is', [Path, Kept]));
+      Continue;
+    end
+    else
+      Log(Format('Moved %s to %s', [Path, Kept]));
+
+    LiftCompatibility(Path);
+
+    if IsStarted(Started, Path) then
+    begin
+      if FileCopy(LauncherPath(Folder), Path, False) then
+        Log(Format('A shortcut starts %s: made it the launcher', [Path]))
+      else
+        Log(Format('Couldn''t make %s the launcher', [Path]));
+    end;
+  end;
+end;
+
+// Before the uninstall puts the backup back: the launchers made in the resolutions' places go (an original the backup
+// doesn't hold is left, never the setup's).
+procedure DropResolutionCopies(const Folder: String);
+var
+  Names: TArrayOfString;
+  Path: String;
+  I: Integer;
+begin
+  Names := ResolutionCopies(Folder);
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+  begin
+    Path := AddBackslash(Folder) + Names[I];
+
+    if FileExists(AddBackslash(BackupFolder(Folder)) + Names[I]) and not DeleteFile(Path) then
+      Log(Format('Couldn''t delete the launcher %s', [Path]));
+  end;
+end;
+
+// Gives every resolution's original put back its compatibility settings.
+procedure RestoreResolutionCompatibility(const Folder: String);
+var
+  Names: TArrayOfString;
+  I: Integer;
+begin
+  Names := ResolutionCopies(Folder);
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+    RestoreCompatibility(AddBackslash(Folder) + Names[I]);
+end;
+
+// The bytes of the files in Folder and the folders in it, links to elsewhere not followed.
+function FolderBytes(const Folder: String): Int64;
+var
+  FindRec: TFindRec;
+begin
+  Result := 0;
+
+  if FindFirst(AddBackslash(Folder) + '*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and ReparsePointAttribute) = 0 then
+        begin
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+            Result := Result + Int64(FindRec.SizeHigh) * HalfSize * HalfSize + FindRec.SizeLow
+          else if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+            Result := Result + FolderBytes(AddBackslash(Folder) + FindRec.Name);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+// Windows' Apps list shows the install's size from its entry, written with the program alone: once the game's files
+// are in, it's the folder's.
+procedure NoteSize(const Folder: String);
+var
+  KB: Int64;
+  Size: Cardinal;
+begin
+  KB := FolderBytes(Folder) div BytesPerKB;
+  Size := KB;
+
+  if RegWriteDWordValue(HKA, '{#UninstallKey}', '{#SizeValue}', Size) then
+    Log(Format('The Apps list''s size: %d KB', [KB]))
+  else
+    Log(Format('Couldn''t write the Apps list''s size (%d KB)', [KB]));
+end;
+
+// The install's last step: the game downloads what the folder lacks (MCRedux --get-content), in its own window over the
+// setup's, before the Finish page; the player can close it, and the first start carries on.
+procedure GetContent(const Folder: String);
+var
+  ResultCode: Integer;
+begin
+  DownloadRan := True;
+  WizardForm.StatusLabel.Caption := CustomMessage('GettingGame');
+  WizardForm.FilenameLabel.Caption := '';
+
+  if not Exec(AddBackslash(Folder) + '{#GameExe}', '{#GetContentOption} --data ' + QuotedFolder(Folder), Folder,
+              SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+    Log(Format('Couldn''t start the game''s download: %s', [SysErrorMessage(ResultCode)]))
+  else
+  begin
+    DownloadDone := ResultCode = ContentInCode;
+    Log(Format('The game''s download ended with code %d', [ResultCode]));
+  end;
+end;
+
+// The ready page says what comes after the program: the download.
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo,
+                         MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := MemoDirInfo;
+
+  if AsksDownloads and SizesKnown and (WizardForm.PrevAppDir = '') then
+  begin
+    Result := Result + NewLine + NewLine + CustomMessage('ReadyDownload') + NewLine + Space;
+
+    if GameCopy.Checked then
+      Result := Result + CustomMessage('ReadyCopy')
+    else
+      Result := Result + FmtMessage(CustomMessage('ReadyGame'), [ShownGB('{#GameBytes}')]);
+
+    if HdBox.Checked then
+      Result := Result + NewLine + Space + FmtMessage(CustomMessage('ReadyHd'), [ShownGB('{#HdBytes}')]);
+  end;
+
+  if MemoTasksInfo <> '' then
+    Result := Result + NewLine + NewLine + MemoTasksInfo;
 end;
 
 // A new install leaves the player's answers for the game (update/MCContentUpdater.h's ChosenFile): the game's data
@@ -1111,15 +1501,27 @@ begin
     Log(Format('Couldn''t write the answers for the game, %s', [Path]));
 end;
 
+// Once the program is in: the original's MCX.EXE, now the launcher, and its resolutions' copies taken over; a new
+// install's answers left; then, shown, the game's download; and the Apps list's size, the folder's with all that.
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Folder: String;
 begin
   if CurStep = ssPostInstall then
   begin
     Installed := True;
-    LiftCompatibility(ExpandConstant('{app}'));
+    Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+    LiftCompatibility(LauncherPath(Folder));
+    TakeOverResolutionCopies(Folder);
 
     if WizardForm.PrevAppDir = '' then
-      LeaveAnswers(ExpandConstant('{app}'));
+      LeaveAnswers(Folder);
+
+    // Silently, the setup is an update the game ran, or a script's: the game gets its own content.
+    if not WizardSilent then
+      GetContent(Folder);
+
+    NoteSize(Folder);
   end;
 end;
 
@@ -1279,6 +1681,7 @@ begin
     if not RemoveContent(Folder) then
       Abort;
 
+    DropResolutionCopies(Folder);
     Exit;
   end;
 
@@ -1288,7 +1691,8 @@ begin
   Left := '';
   PutBackAll(Folder, '', Left);
   RemoveDir(BackupFolder(Folder));
-  RestoreCompatibility(Folder);
+  RestoreCompatibility(LauncherPath(Folder));
+  RestoreResolutionCompatibility(Folder);
 
   if Left <> '' then
     SuppressibleMsgBox(FmtMessage(CustomMessage('RestoreFailed'), [BackupFolder(Folder), Left]), mbInformation,

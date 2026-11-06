@@ -35,14 +35,14 @@ auto MCGuiButton::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height
     return 0;
 }
 
-auto MCGuiButton::Destroy() -> void
+auto MCGuiButton::OnDestroy() -> void
 {
     UpPicture.reset();
     DownPicture.reset();
     GrayPicture.reset();
     LeftCallback.reset();
     RightButtonCallback.reset();
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 template <typename Source>

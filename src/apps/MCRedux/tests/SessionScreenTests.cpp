@@ -262,7 +262,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(screen.FrontTab == MCSessionTab::Options);
     MCLogOptionList& list = *screen.MatchOptionsList;
     CHECK(list.ShowWindow);
-    CHECK(!GlobalLog()->ChatWindow->ShowWindow);
+    CHECK(!GlobalLog()->ChatWindowOn(screen)->ShowWindow);
     CHECK(list.ChoiceName(WeatherRow) == "MISSION'S");
     CHECK(list.ChoiceName(TimeRow) == "MISSION'S");
     CHECK(list.ChoiceName(BrakingRow) == "OFF");
@@ -383,9 +383,9 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
 
     // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.
     const size_t linesSeen = screen.ChatLinesSeen;
-    GlobalLog()->ChatWindow->AddLine("%fc4Guest: %fc6ready");
+    GlobalLog()->Chat->AddLine("%fc4Guest: %fc6ready");
     Settle();
-    CHECK(GlobalLog()->ChatWindow->LinesAdded > linesSeen);
+    CHECK(GlobalLog()->Chat->LinesAdded > linesSeen);
 
     // A guest's list: locked, saying so.
     game.IsHost = false;
@@ -400,7 +400,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     Settle();
     CHECK(screen.FrontTab == MCSessionTab::Chat);
     CHECK(!list.ShowWindow);
-    CHECK(GlobalLog()->ChatWindow->ShowWindow);
+    CHECK(GlobalLog()->ChatWindowOn(screen)->ShowWindow);
 }
 
 namespace

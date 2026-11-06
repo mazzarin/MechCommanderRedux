@@ -124,7 +124,7 @@ std::shared_ptr<MCTerrain> Terrain()
 std::shared_ptr<MCTacticalMap> TacticalMap()
 {
     const std::shared_ptr<MCTerrain> terrain = Terrain();
-    return terrain != nullptr ? terrain->TacticalMap : nullptr;
+    return terrain != nullptr ? terrain->TacticalMap.Lock() : nullptr;
 }
 
 auto RevealAll() -> void
@@ -155,7 +155,7 @@ auto MCTerrain::Unload() -> void
     ObjectBlocks.reset();
     ISVisibleBits.reset();
     ClanVisibleBits.reset();
-    TacticalMap.reset();
+    CloseGuiObject(TacticalMap);
 }
 
 auto MCTerrain::SetGeometry(int32_t verticesBlockSide, int32_t blocksMapSide, float metersPerVertex,
@@ -302,14 +302,20 @@ auto MCTerrain::Load(std::string_view fileName) -> std::expected<void, std::stri
 
     ObjectBlocks = std::move(*objectBlocks);
 
-    TacticalMap = MCMakeGui<MCTacticalMap>();
+    const std::expected<MCGuiHandle<MCTacticalMap>, int32_t> map = ScreenWindow()->TryCreateChild<MCTacticalMap>(
+        [this](MCTacticalMap& made)
+        {
+            // Stored first: the map's Init reaches itself through TacticalMap().
+            TacticalMap = made.WeakAs<MCTacticalMap>();
+            return made.Init(0, 0);
+        });
 
-    if (TacticalMap->Init(0, 0) != 0)
+    if (!map.has_value())
     {
         return std::unexpected("could not build the tactical map");
     }
 
-    ScreenWindow()->AddChild(TacticalMap);
+    TacticalMap = *map;
     TacticalMap->RefreshPage();
     terrainFile.Close();
     SetTopLeftElevation(MapTopLeft3d100.Z);

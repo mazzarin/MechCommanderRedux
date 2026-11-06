@@ -68,21 +68,15 @@ namespace
     constexpr std::array<VariantButton, 3> VariantButtons = {{{0x9a, 4, 1, 7}, {0xac, 5, 2, 8}, {0xbe, 6, 3, 9}}};
 }
 
-MCMechPurchaseBlock::~MCMechPurchaseBlock()
-{
-    MCMechPurchaseBlock::Destroy();
-}
-
 auto MCMechPurchaseBlock::Init(std::shared_ptr<MCPurMech> newPurMech) -> void
 {
     PictureIndex.reset();
     DiagramPort.reset();
     _PurMech = newPurMech;
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
-    NameIndex = PurMech()->Variants[static_cast<size_t>(CurVariant)]->NameIndex;
 }
 
-auto MCMechPurchaseBlock::Destroy() -> void
+auto MCMechPurchaseBlock::OnDestroy() -> void
 {
     _PurMech.reset();
     PictureIndex.reset();
@@ -90,17 +84,17 @@ auto MCMechPurchaseBlock::Destroy() -> void
     WeightClassText.clear();
     ArmorText.clear();
     InternalText.clear();
-    MCLogObject::Destroy();
+    MCListRow::OnDestroy();
 }
 
-auto MCMechPurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) -> void
+auto MCMechPurchaseBlock::OnBuyConfirmed(MCPurMech& purMech, int32_t result, int32_t quantity) -> void
 {
     if (result == 0 || quantity == 0)
     {
         return;
     }
 
-    MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(CurVariant)];
+    MCPurMechData& data = *purMech.Variants[static_cast<size_t>(purMech.CurVariant)];
 
     for (int32_t count = quantity; count > 0; --count)
     {
@@ -111,7 +105,7 @@ auto MCMechPurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) -> vo
     MCPurchaseScreen::CreateMechInvBlock();
     GlobalLog()->PurchaseScreen->SetUpMechInv(true, true);
     data.NumAvailable -= quantity;
-    DrawBackground(Row);
+    MCLogInvScreen::RefreshStoreRow(purMech);
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
     CheckNumUnits();
 }
@@ -197,13 +191,14 @@ auto MCMechPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             if (localX > 0x9a && localX < 0xd0 && localY > 5 && localY < 0x16)
             {
                 // A variant button.
-                CurVariant = localX < 0xac ? 0 : localX < 0xbe ? 1 : 2;
-                DrawBackground(Row);
+                PurMech()->CurVariant = localX < 0xac ? 0 : localX < 0xbe ? 1 : 2;
+                OnRefresh();
                 PlayLogSound(0xf);
                 return;
             }
 
-            if (OnRow(*this, event) && PurMech()->Variants[static_cast<size_t>(CurVariant)]->NumAvailable != 0)
+            if (OnRow(*this, event) &&
+                PurMech()->Variants[static_cast<size_t>(PurMech()->CurVariant)]->NumAvailable != 0)
             {
                 // Pick the mech up (left button drags, right button carries).
                 (type == 1 ? MechDrag.Dragging : MechDrag.Carrying) = true;
@@ -255,7 +250,7 @@ auto MCMechPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             }
 
             // Buy it.
-            MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(CurVariant)];
+            MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(PurMech()->CurVariant)];
 
             if (ResourcePoints < data.Cost)
             {
@@ -269,7 +264,13 @@ auto MCMechPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
                                             LoadGameString(WeightClassString(data.CurTonnage), 0xfe));
             OpenPurchaseDialog(0, data.Cost, MaxPurchase(data.NumAvailable), data.Name, title,
                                MCOptionalOf(DiagramPort),
-                               [this](int32_t result, int32_t quantity) { OnBuyConfirmed(result, quantity); });
+                               [weak = _PurMech](int32_t result, int32_t quantity)
+                               {
+                                   if (const std::shared_ptr<MCPurMech> bought = weak.lock(); bought != nullptr)
+                                   {
+                                       OnBuyConfirmed(*bought, result, quantity);
+                                   }
+                               });
             break;
         }
 
@@ -293,9 +294,9 @@ auto MCMechPurchaseBlock::Draw() -> void
 {
 }
 
-auto MCMechPurchaseBlock::DrawBackground(int32_t) -> void
+auto MCMechPurchaseBlock::OnRefresh() -> void
 {
-    MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(CurVariant)];
+    MCPurMechData& data = *PurMech()->Variants[static_cast<size_t>(PurMech()->CurVariant)];
 
     // The mech the picture and the diagram show (the row draws them; the original made them here and kept them).
     if (!PictureIndex.has_value())
@@ -336,12 +337,12 @@ auto MCMechPurchaseBlock::DrawBackground(int32_t) -> void
     PrepareInfoDescription(data.Description);
 }
 
-auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
+auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
 {
     const std::shared_ptr<MCPurMech> purMech = PurMech();
     MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;
     std::shared_ptr<MCLogBlockPort> row = RowPicture(*screen.MechTabPort, port, top, false);
-    MCPurMechData& data = *purMech->Variants[static_cast<size_t>(CurVariant)];
+    MCPurMechData& data = *purMech->Variants[static_cast<size_t>(purMech->CurVariant)];
     CopyArt(*row, 5, 4, std::format("lspflma{:02}.tga", data.NameIndex));
     CopyArt(*row, 0x13a, 6, std::format("lscdsm{:02}.tga", data.NameIndex));
 
@@ -443,7 +444,7 @@ auto MCMechPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
     row.reset();
 
     // The variant buttons (A, W, J, drawn A, J, W), and the shown variant's name art over the row.
-    const size_t shownVariant = static_cast<size_t>(CurVariant);
+    const size_t shownVariant = static_cast<size_t>(PurMech()->CurVariant);
 
     for (size_t variant : {size_t{0}, size_t{2}, size_t{1}})
     {

@@ -4,7 +4,7 @@
 #include "linkup/MCFidpSession.h"
 #include "linkup/MCSessionManager.h"
 #include "logistics/MCConnectMenu.h"
-#include "logistics/MCLogChatWindow.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCLogDialogButton.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -368,7 +368,7 @@ namespace
             {
                 ShowPlayerLeft(gone.Name);
             }
-            else if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+            else if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
             {
                 chat->AddLine(std::format(NotBackFormat, Upper(gone.Name)));
             }
@@ -655,7 +655,7 @@ auto MCLobbyUpdate::Updating(uint32_t fromId) -> void
 
     PlacesChanged();
 
-    if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
     {
         chat->AddLine(UpdatingText(player->Name));
     }
@@ -682,7 +682,7 @@ auto MCLobbyUpdate::RestartOff(uint32_t fromId) -> void
 
     PlacesChanged();
 
-    if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
     {
         chat->AddLine(std::format(UpdateOffFormat, Upper(name)));
     }

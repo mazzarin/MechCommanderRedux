@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "logistics/MCLogObject.h"
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogScrollTextObject.h"
@@ -27,12 +27,11 @@ public:
     /// <summary>A player id that stands for no player (an empty slot).</summary>
     static constexpr uint32_t NoPlayer = 0xffffffff;
 
-    ~MCSessionScreen() override;
-
     /// <summary>Makes the buttons, the RP spinners and texts, the tech base toggles and the six name slots.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
-    void Destroy() override;
+    /// <summary>Forgets the drop targets, the mission and the map.</summary>
+    void OnDestroy() override;
 
     /// <summary>
     /// Draws the background, the unassigned list, the mission and map names, the file name and each team's resource
@@ -61,6 +60,12 @@ public:
     /// the MATCH OPTIONS list (logistics/MCMatchOptionsTab.h).
     /// </summary>
     void ShowTab(MCSessionTab tab);
+
+    /// <summary>
+    /// Port-only: the screen hidden with MATCH OPTIONS in front puts the chat back in front first, so the next screen's
+    /// chat shows (each screen's chat window takes the shown state of the one before, MCLogistics::ShowChatOn).
+    /// </summary>
+    void ShowGuiWindow(bool show) override;
 
     /// <summary>
     /// Fills the screen from the session: the players, the teams and the controls for host or guest;
@@ -142,38 +147,43 @@ public:
     void SetTeam2RP(int32_t resourcePoints) const;
 
     /// <summary>The tab back to the session list.</summary>
-    MCGuiOwned<MCLogToolButton> SessionButton;
-    MCGuiOwned<MCLogToolButton> ExitButton;
+    MCGuiHandle<MCLogToolButton> SessionButton;
+    /// <summary>The tab that leaves the session.</summary>
+    MCGuiHandle<MCLogToolButton> ExitButton;
     /// <summary>Opens the load dialog (host).</summary>
-    MCGuiOwned<MCLogButton> LoadMissionButton;
+    MCGuiHandle<MCLogButton> LoadMissionButton;
     /// <summary>Starts the mission (host, when <see cref="CheckGoodToGo"/> allows).</summary>
-    MCGuiOwned<MCLogButton> StartButton;
+    MCGuiHandle<MCLogButton> StartButton;
     /// <summary>Team 1's resource points (a number in text).</summary>
-    MCGuiOwned<MCLogTextObject> Team1RPText;
+    MCGuiHandle<MCLogTextObject> Team1RPText;
     /// <summary>Team 2's resource points (a number in text).</summary>
-    MCGuiOwned<MCLogTextObject> Team2RPText;
+    MCGuiHandle<MCLogTextObject> Team2RPText;
     /// <summary>The mission description.</summary>
-    MCGuiOwned<MCLogScrollTextObject> MissionText;
-    MCGuiOwned<MCLogSpinnerButton> Team1RPUp;
-    MCGuiOwned<MCLogSpinnerButton> Team1RPDown;
-    MCGuiOwned<MCLogSpinnerButton> Team2RPUp;
-    MCGuiOwned<MCLogSpinnerButton> Team2RPDown;
+    MCGuiHandle<MCLogScrollTextObject> MissionText;
+    /// <summary>Raises team 1's resource points.</summary>
+    MCGuiHandle<MCLogSpinnerButton> Team1RPUp;
+    /// <summary>Lowers team 1's resource points.</summary>
+    MCGuiHandle<MCLogSpinnerButton> Team1RPDown;
+    /// <summary>Raises team 2's resource points.</summary>
+    MCGuiHandle<MCLogSpinnerButton> Team2RPUp;
+    /// <summary>Lowers team 2's resource points.</summary>
+    MCGuiHandle<MCLogSpinnerButton> Team2RPDown;
     /// <summary>The loaded mission's time ("m:ss"), drawn beside the mission name; empty without one.</summary>
     std::string MissionLabel;
     /// <summary>Team 1's Inner Sphere tech base toggle.</summary>
-    MCGuiOwned<MCLogToolButton> Team1ISButton;
+    MCGuiHandle<MCLogToolButton> Team1ISButton;
     /// <summary>Team 1's Clan tech base toggle.</summary>
-    MCGuiOwned<MCLogToolButton> Team1ClanButton;
+    MCGuiHandle<MCLogToolButton> Team1ClanButton;
     /// <summary>Team 2's Inner Sphere tech base toggle.</summary>
-    MCGuiOwned<MCLogToolButton> Team2ISButton;
+    MCGuiHandle<MCLogToolButton> Team2ISButton;
     /// <summary>Team 2's Clan tech base toggle.</summary>
-    MCGuiOwned<MCLogToolButton> Team2ClanButton;
+    MCGuiHandle<MCLogToolButton> Team2ClanButton;
     /// <summary>Team 1's tech base: 1 Inner Sphere, -1 Clan.</summary>
     int8_t Team1TechBase = 1;
     /// <summary>Team 2's tech base.</summary>
     int8_t Team2TechBase = -1;
     /// <summary>The name slots, one per player (top to bottom in the unassigned list).</summary>
-    std::array<MCGuiOwned<MCPlayerNameObject>, MaxPlayers> PlayerNames;
+    std::array<MCGuiHandle<MCPlayerNameObject>, MaxPlayers> PlayerNames;
     /// <summary>The number of players in the session.</summary>
     int32_t NumPlayers = 0;
     /// <summary>The number of players on no team.</summary>
@@ -202,7 +212,7 @@ public:
     bool MapBoxWiped = false;
 
     /// <summary>Port-only: the MATCH OPTIONS list, in the chat window's place while its tab is in front.</summary>
-    MCGuiOwned<MCLogOptionList> MatchOptionsList;
+    MCGuiHandle<MCLogOptionList> MatchOptionsList;
     /// <summary>Port-only: the tab in front.</summary>
     MCSessionTab FrontTab = MCSessionTab::Chat;
     /// <summary>
@@ -217,7 +227,7 @@ public:
     /// update waits, left of the start button; a click opens the UPDATE page over the screen (logistics/MCUpdatePage.h).
     /// Null in other games, and in a build that doesn't update itself.
     /// </summary>
-    MCGuiOwned<MCLogObject> UpdateLine;
+    MCGuiHandle<MCLogObject> UpdateLine;
     /// <summary>
     /// Port-only (the personal build): whom the room waits for, guests away updating ("WAITING FOR ANN TO REJOIN."), as
     /// <see cref="CheckGoodToGo"/> last found; empty when it waits for no one.

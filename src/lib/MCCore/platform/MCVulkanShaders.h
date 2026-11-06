@@ -53,16 +53,16 @@ namespace MCVulkanShaders
     /// The GPU driver and the built-in shaders' format. macOS has no Vulkan driver, so the GPU renderer runs on SDL
     /// GPU's Metal one, with the same shaders compiled to MSL (src/mac/tools/mc_msl.cpp).
     /// </summary>
-    inline constexpr const char* Driver = "metal";
+    inline constexpr char Driver[] = "metal";
     inline constexpr SDL_GPUShaderFormat Format = SDL_GPU_SHADERFORMAT_MSL;
     /// <summary>The entry point: SPIRV-Cross renames the source's <c>main</c>, a reserved name in MSL.</summary>
-    inline constexpr const char* EntryPoint = "main0";
+    inline constexpr char EntryPoint[] = "main0";
 #else
     /// <summary>The GPU driver and the built-in shaders' format.</summary>
-    inline constexpr const char* Driver = "vulkan";
+    inline constexpr char Driver[] = "vulkan";
     inline constexpr SDL_GPUShaderFormat Format = SDL_GPU_SHADERFORMAT_SPIRV;
     /// <summary>The entry point.</summary>
-    inline constexpr const char* EntryPoint = "main";
+    inline constexpr char EntryPoint[] = "main";
 #endif
 
     /// <summary>The composite shader's textures (composite.pshader's t0 to t8), in each of its builds.</summary>

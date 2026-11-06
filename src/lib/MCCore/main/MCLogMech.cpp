@@ -1,7 +1,5 @@
 #include "stdafx.h"
 #include "main/MCLogMech.h"
-#include "logistics/MCBriefingBox.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCPurProfile.h"
@@ -21,10 +19,6 @@ MCLogMech::MCLogMech()
 MCLogMech::~MCLogMech()
 {
     Inventory.reset();
-    BriefingBox.reset();
-    RepairBlock.reset();
-    InventoryBlock.reset();
-    BriefBlock.reset();
 }
 
 auto MCLogMech::CalcPilotModifier() -> int32_t
@@ -105,6 +99,35 @@ auto MCLogMech::CalcBR() -> int32_t
 
     BattleRating = static_cast<int32_t>(static_cast<double>(ChassisBR) + rating);
     return BattleRating;
+}
+
+auto MCLogMech::TakeArrivalState() -> void
+{
+    for (size_t i = 0; i < Armor.size(); ++i)
+    {
+        Arrived.Armor[i] = Armor[i].CurArmor;
+    }
+
+    for (size_t i = 0; i < Internals.size(); ++i)
+    {
+        Arrived.Internals[i] = Internals[i].CurArmor;
+    }
+
+    Arrived.EngineHits = 0;
+
+    if (Inventory == nullptr)
+    {
+        return;
+    }
+
+    const auto engine =
+        std::ranges::find_if(Inventory->Items, [](const std::shared_ptr<MCLogInventoryItem>& item)
+                             { return MasterComponentList[item->MasterID].Form == MCComponentForm::Engine; });
+
+    if (engine != Inventory->Items.end() && !(*engine)->Stats.empty())
+    {
+        Arrived.EngineHits = (*engine)->Stats.front()->Hits;
+    }
 }
 
 auto MCLogMech::PlaceItem(uint8_t masterID, int32_t itemNum, int32_t hits) -> void

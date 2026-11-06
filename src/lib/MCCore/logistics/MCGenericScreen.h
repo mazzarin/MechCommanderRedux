@@ -14,8 +14,6 @@ class MCLogTextObject;
 class MCGenericScreen : public MCLogObject
 {
 public:
-    ~MCGenericScreen() override;
-
     /// <summary>
     /// The palette of the TGA <paramref name="fileName"/> (under <c>ArtPath</c>, else as it is) as 6-bit RGB, 0x300
     /// bytes. A file that can't be read is fatal.
@@ -25,8 +23,8 @@ public:
     /// <summary>Makes the elements the ini file describes (background, buttons, text fields, a file pane).</summary>
     int32_t Init(MCFitIniFile& screenFile);
 
-    /// <summary>Removes and frees the elements (element 0 is the screen itself), the palette and the art.</summary>
-    void Destroy() override;
+    /// <summary>Forgets the elements (its children, destroyed with it), and frees the palette and the art.</summary>
+    void OnDestroy() override;
 
     /// <summary>Escape cancels; then the event routine runs.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -52,38 +50,33 @@ public:
     /// <summary>The number of elements.</summary>
     int32_t NumElements() const { return static_cast<int32_t>(Elements.size()); }
 
-    /// <summary>Port: adds <paramref name="child"/> to the screen, which owns it (the preferences' drop-downs and boxes).</summary>
-    template <typename T> T& AdoptChild(MCGuiOwned<T> child) { return AdoptChildOf(*this, std::move(child)); }
+    /// <summary>
+    /// Port: takes element <paramref name="index"/> down and makes it again from <paramref name="file"/> (the screen's
+    /// own ini) on <paramref name="parent"/>, one of the screen's objects (the preferences panel's boxes): nothing moves
+    /// between parents.
+    /// </summary>
+    void RemakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index);
 
     /// <summary>
-    /// Port: adds <paramref name="child"/> to <paramref name="parent"/> (the screen or one of its objects); the screen
-    /// owns it (the preferences' panel and what is on it).
+    /// The elements, by number; element 0 is the screen itself, an element of a type not made is empty. The others are
+    /// children of the screen (or of one of its objects, see <see cref="RemakeElementOn"/>).
     /// </summary>
-    template <typename T> T& AdoptChildOf(MCGuiObject& parent, MCGuiOwned<T> child)
-    {
-        T& adopted = *child;
-        parent.AddChild(child);
-        _Adopted.push_back(std::move(child));
-        return adopted;
-    }
-
-    /// <summary>The elements, by number; element 0 is the screen itself, an element of a type not made is empty.</summary>
     std::vector<std::weak_ptr<MCGuiObject>> Elements;
     /// <summary>The background art's palette (0x300 bytes) when the background has UseBackPalette, else empty.</summary>
     std::vector<uint8_t> Palette;
     /// <summary>The file pane element, if any.</summary>
-    MCGuiOwned<MCFileScrollPane> FilePane;
+    MCGuiHandle<MCFileScrollPane> FilePane;
     /// <summary>The load or save button (callbacks 8 and 9).</summary>
-    MCGuiOwned<MCLogButton> LoadSaveButton;
+    MCGuiHandle<MCLogButton> LoadSaveButton;
     /// <summary>The delete button (callback 10).</summary>
-    MCGuiOwned<MCLogButton> DeleteButton;
+    MCGuiHandle<MCLogButton> DeleteButton;
     /// <summary>The cancel button (callback 11).</summary>
-    MCGuiOwned<MCLogButton> CancelButton;
+    MCGuiHandle<MCLogButton> CancelButton;
     /// <summary>
     /// Port: the main menu's ORIGINAL CINEMA (callback 5), which becomes UPDATE in a build that updates itself
     /// (logistics/MCUpdatePage.h).
     /// </summary>
-    MCGuiOwned<MCLogButton> CinemaButton;
+    MCGuiHandle<MCLogButton> CinemaButton;
     /// <summary>
     /// Port: the background art, which the original loaded into the screen's own port (a splash screen's is the art
     /// all splash screens share).
@@ -124,32 +117,40 @@ protected:
     /// <returns>Whether the number was one of these.</returns>
     bool SetScreenCallback(MCLogButton& button, int32_t callback);
 
-    /// <summary>Makes element <paramref name="index"/>'s object, owned by the screen.</summary>
-    template <typename T> MCGuiOwned<T> MakeElement(int32_t index)
+    /// <summary>
+    /// Makes element <paramref name="index"/> (described by <paramref name="header"/>, its block the file's current
+    /// one) on <paramref name="parent"/>: a button, text field or file pane.
+    /// </summary>
+    /// <returns>Whether the screen makes elements of that type.</returns>
+    virtual bool MakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index, const ElementHeader& header);
+
+    /// <summary>
+    /// Makes element <paramref name="index"/>'s object as a child of <paramref name="parent"/>, set up by
+    /// <paramref name="setup"/> before it is added (as the original set an element up, then added it).
+    /// </summary>
+    template <typename T, typename Setup> MCGuiHandle<T> MakeElement(MCGuiObject& parent, int32_t index, Setup&& setup)
     {
-        MCGuiOwned<T> element = MCMakeGui<T>();
-        Elements[static_cast<size_t>(index)] = element;
-        _Made[static_cast<size_t>(index)] = element;
-        return element;
+        return parent.CreateChild<T>(
+            [&](T& element)
+            {
+                Elements[static_cast<size_t>(index)] = element.weak_from_this();
+                setup(element);
+            });
     }
 
-    /// <summary>A text entry field element (type 4): black text on colour 0x1f.</summary>
-    MCGuiOwned<MCLogTextObject> MakeTextEntry(int32_t index, const ElementHeader& header);
+    /// <summary>A text entry field element (type 4): black text on colour 0x1f, shown first when <paramref name="show"/>.</summary>
+    MCGuiHandle<MCLogTextObject> MakeTextEntry(MCGuiObject& parent, int32_t index, const ElementHeader& header,
+                                               bool show);
 
     /// <summary>A file pane element (type 5), with its SavePane flag.</summary>
-    MCGuiOwned<MCFileScrollPane> MakeFilePane(MCFitIniFile& file, int32_t index, const ElementHeader& header);
+    MCGuiHandle<MCFileScrollPane> MakeFilePane(MCGuiObject& parent, MCFitIniFile& file, int32_t index,
+                                               const ElementHeader& header);
 
     /// <summary>
     /// Loads the background (element 0): its palette when UseBackPalette, and places the screen. The art itself is
     /// the caller's.
     /// </summary>
     void InitBackground(MCFitIniFile& file, const ElementHeader& header);
-
-private:
-    /// <summary>The element objects the screen made (by element number; null for the screen and types not made).</summary>
-    std::vector<MCGuiOwned<MCGuiObject>> _Made;
-    /// <summary>Port: the children added with <see cref="AdoptChild"/>.</summary>
-    std::vector<MCGuiOwned<MCGuiObject>> _Adopted;
 };
 
 /// <summary>
@@ -160,7 +161,7 @@ class MCLogImage : public MCLogObject
 {
 public:
     /// <summary>Frees the art.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Copies the art (opaque, as the picture was copied).</summary>
     void Draw() override;

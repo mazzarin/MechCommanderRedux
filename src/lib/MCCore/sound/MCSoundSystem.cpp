@@ -729,14 +729,15 @@ void MCSoundSystem::UpdateRadio()
 
     _Renderer.Play(PILOT_SPEECH_CHANNEL, _ChannelResource[PILOT_SPEECH_CHANNEL].lock());
     WholeMsgDone = false;
-    const std::shared_ptr<MCGuiSmackerWindow> window = CurrentMessage->MovieWindow;
+    const std::shared_ptr<MCGuiSmackerWindow> window = CurrentMessage->MovieWindow.Lock();
 
     if (window != nullptr && CurrentMessage->Movie != nullptr && tacMap->IsHidden() == 0 &&
         tacMap->DisplayType == MCTacmapPage::Map &&
         window->StartSmackerMovie(std::move(CurrentMessage->Movie), false) == 0)
     {
+        // Shown in front of its depth (the original added it to the screen here).
+        window->ShowGuiWindow(true);
         window->SetDepth(0x5a);
-        ScreenWindow()->AddChild(window);
         window->Draw();
     }
 }

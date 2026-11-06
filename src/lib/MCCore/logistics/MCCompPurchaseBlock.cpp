@@ -23,11 +23,6 @@ namespace
 
 }
 
-MCCompPurchaseBlock::~MCCompPurchaseBlock()
-{
-    MCCompPurchaseBlock::Destroy();
-}
-
 auto MCCompPurchaseBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> void
 {
     _Item = newItem;
@@ -84,31 +79,26 @@ auto MCCompPurchaseBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> v
     RecycleText = std::format("{:.2f} s ({})", recycle, LoadGameString(recycleId, 0xfe));
 }
 
-auto MCCompPurchaseBlock::Destroy() -> void
-{
-    MCLogObject::Destroy();
-}
-
-auto MCCompPurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) const -> void
+auto MCCompPurchaseBlock::OnBuyConfirmed(MCLogInventoryItem& bought, int32_t result, int32_t quantity) -> void
 {
     if (result == 0)
     {
         return;
     }
 
-    std::shared_ptr<MCLogInventoryItem> bought = Item();
-    bought->Count -= quantity;
-    DrawBackground(Row, bought->MasterID);
+    bought.Count -= quantity;
+    MCLogInvScreen::RefreshStoreRow(bought);
     MCInventoryList& spares = *GlobalLog()->ComponentInventory;
-    std::shared_ptr<MCLogInventoryItem> stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought->MasterID));
+    std::shared_ptr<MCLogInventoryItem> stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought.MasterID));
 
     if (stockItem == nullptr)
     {
         // A new spare component: its first copy and its inventory row.
-        spares.AddItem(bought->MasterID, spares.CreateStat(spares.NextStatID, 0, 0, 1, 0xff), false);
-        stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought->MasterID));
+        spares.AddItem(bought.MasterID, spares.CreateStat(spares.NextStatID, 0, 0, 1, 0xff), false);
+        stockItem = spares.GetItemInfo(spares.GetIndexFromMasterID(bought.MasterID));
         stockItem->Count = quantity;
-        MCInventoryList::MakeInventoryBlock(*stockItem).InventoryIndex = spares.NumItems() - 1;
+        MCInventoryList::ListAsSpare(*stockItem);
+        stockItem->InventoryIndex = spares.NumItems() - 1;
         MCPurchaseScreen::CreateCompInvBlock();
         GlobalLog()->PurchaseScreen->SetUpCompInv(false, true);
     }
@@ -121,7 +111,7 @@ auto MCCompPurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) const
     else
     {
         stockItem->Count += quantity;
-        stockItem->InventoryBlock->DrawBackground();
+        MCLogInvScreen::RefreshComponentRows(*stockItem);
     }
 
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
@@ -209,7 +199,14 @@ auto MCCompPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
                 MCLogPort picture;
                 picture.Load(std::format("{}logart\\lscicc{:02}.tga", ArtPath, item->RangeIndex));
                 OpenPurchaseDialog(4, component.ResourcePoints, item->Count, component.Name, {}, picture,
-                                   [this](int32_t result, int32_t quantity) { OnBuyConfirmed(result, quantity); });
+                                   [weak = _Item](int32_t result, int32_t quantity)
+                                   {
+                                       if (const std::shared_ptr<MCLogInventoryItem> bought = weak.lock();
+                                           bought != nullptr)
+                                       {
+                                           OnBuyConfirmed(*bought, result, quantity);
+                                       }
+                                   });
                 return;
             }
 
@@ -242,12 +239,12 @@ auto MCCompPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
     PlayLogSound(0x33);
 }
 
-auto MCCompPurchaseBlock::DrawBackground(int32_t, int32_t) const -> void
+auto MCCompPurchaseBlock::OnRefresh() -> void
 {
     PrepareInfoDescription(Item()->Description);
 }
 
-auto MCCompPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
+auto MCCompPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
 {
     const std::shared_ptr<MCLogInventoryItem> item = Item();
     MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;

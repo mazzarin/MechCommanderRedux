@@ -34,11 +34,11 @@ auto MCGuiMenu::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, 
     return 0;
 }
 
-auto MCGuiMenu::Destroy() -> void
+auto MCGuiMenu::OnDestroy() -> void
 {
     Items.clear();
     SelectedItem = -1;
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiMenu::HandleEvent(MCGuiEvent& event) -> void

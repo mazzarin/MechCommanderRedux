@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiPort.h"
 
@@ -11,12 +11,10 @@ class MCMoverGroup;
 class MCLanceIcon : public MCGuiObject
 {
 public:
-    ~MCLanceIcon() override { Destroy(); }
-
     /// <summary>Makes the badge for lance <paramref name="lanceNumber"/> and loads its five images.</summary>
     int32_t Init(int16_t lanceNumber);
-    /// <summary>Frees the five images.</summary>
-    void Destroy() override;
+    /// <summary>Frees the five images (OB-184: the original skipped the base's cleanup).</summary>
+    void OnDestroy() override;
     /// <summary>Nothing: everything is drawn in <see cref="Display"/>.</summary>
     void Draw() override {}
     /// <summary>The number, then one link per active mover, then a bar in the lance colour.</summary>
@@ -40,15 +38,15 @@ public:
     /// <summary>The active movers counted when the mech bar last shuffled.</summary>
     int32_t NumActiveMovers = 0;
     /// <summary>The lance number (<c>guiubf%i.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> NumberImage;
+    std::unique_ptr<MCGuiPort> NumberImage;
     /// <summary>The first link (<c>guiub01.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> FirstLinkImage;
+    std::unique_ptr<MCGuiPort> FirstLinkImage;
     /// <summary>The short link (<c>guiub02.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> ShortLinkImage;
+    std::unique_ptr<MCGuiPort> ShortLinkImage;
     /// <summary>The long link, once per further mover (<c>guiub03.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> LongLinkImage;
+    std::unique_ptr<MCGuiPort> LongLinkImage;
     /// <summary>The end link (<c>guiub04.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> LastLinkImage;
+    std::unique_ptr<MCGuiPort> LastLinkImage;
     /// <summary>
     /// Set when <see cref="MCTacticalInterface::SetUnit"/> linked the lance, cleared when its point died
     /// (<see cref="MCTacticalInterface::RemoveMech"/>). <see cref="MCTacticalInterface::SelectLance"/> selects a linked

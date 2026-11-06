@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <source_location>
 #include <span>
 #include <string>
 #include <thread>
@@ -29,6 +30,8 @@ namespace
     struct RunState
     {
         std::vector<std::string> Scopes;
+        /// <summary>The open expected-assert scopes, innermost last.</summary>
+        std::vector<std::reference_wrapper<MCTest::ExpectAssert>> ExpectedAsserts;
         std::string_view Current;
         size_t Passes = 0;
         size_t Failures = 0;
@@ -108,6 +111,45 @@ namespace MCTest
     void ReportPass()
     {
         ++State().Passes;
+    }
+
+    ExpectAssert::ExpectAssert(std::string_view text, int32_t count, const std::source_location& where)
+        : _Text(Lower(text)), _Count(count), _Where(where)
+    {
+        State().ExpectedAsserts.emplace_back(*this);
+    }
+
+    ExpectAssert::~ExpectAssert()
+    {
+        std::vector<std::reference_wrapper<ExpectAssert>>& open = State().ExpectedAsserts;
+        std::erase_if(open, [this](const ExpectAssert& expected) { return &expected == this; });
+
+        if (_Seen == _Count)
+        {
+            ReportPass();
+        }
+        else
+        {
+            ReportFailure(_Where.file_name(), static_cast<int>(_Where.line()),
+                          std::format("expected {} assert(s) holding \"{}\", saw {}", _Count, _Text, _Seen));
+        }
+    }
+
+    void ReportAssert(std::string_view report, std::string_view file, int line)
+    {
+        const std::string lower = Lower(report);
+        std::vector<std::reference_wrapper<ExpectAssert>>& open = State().ExpectedAsserts;
+
+        for (auto expected = open.rbegin(); expected != open.rend(); ++expected)
+        {
+            if (lower.find(expected->get()._Text) != std::string::npos)
+            {
+                expected->get()._Seen++;
+                return;
+            }
+        }
+
+        ReportFailure(file, line, std::format("Assert failed: {}", report));
     }
 }
 
@@ -379,6 +421,9 @@ int main(int argc, char** argv)
     // assertion) prints its stack and writes mc_tests.dmp instead of showing a dialog.
     MCNoMessageBoxes = true;
     MCCrashTrace::Install();
+    // A failed Assert fails the test it happens in (the game only logs it), unless the test expects it.
+    MCAssertHook = [](std::string_view report, const std::source_location& where)
+    { MCTest::ReportAssert(report, where.file_name(), static_cast<int>(where.line())); };
     // The CONTROLS screen names keys as a US keyboard does, whatever this machine's layout, so its pictures are the
     // same on every machine.
     MCKeyBindings::SetLayout(nullptr);

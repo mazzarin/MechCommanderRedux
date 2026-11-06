@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "iface/MCFriendlyMechIcon.h"
 #include "iface/MCLanceIcon.h"
@@ -25,22 +25,68 @@ public:
 
     /// <summary>A bar with no bitmap of its own (it draws on its parent).</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view bitmapName) override;
-    void Destroy() override;
+    /// <summary>Removes the buttons and lance icons (<see cref="CleanUp"/>), in the original's order.</summary>
+    void OnDestroy() override;
     /// <summary>Draws the children, the lance separators and each button's frame colour.</summary>
     void Display() override;
     /// <summary>Keeps the bar at the bottom of the screen and passes events to the interface.</summary>
     void HandleEvent(MCGuiEvent& event) override;
     void Resize(int32_t width, int32_t height) override;
 
-    /// <summary>Removes every button and lance icon.</summary>
+    /// <summary>Removes (destroys) every button, reserve icon and lance icon.</summary>
     void CleanUp();
-    /// <summary>Appends <paramref name="button"/> as a child of the bar.</summary>
-    /// <returns>False (and the button goes) when the bar is full.</returns>
-    bool AddButton(MCGuiOwned<MCFriendlyMechIcon> button);
+
+    /// <summary>
+    /// Makes a button on the bar, set up by <paramref name="setup"/> (its <c>Init</c>), and appends it after the
+    /// others.
+    /// </summary>
+    /// <returns>The button, or an empty handle (nothing made) when the bar is full.</returns>
+    template <typename Setup>
+        requires std::invocable<Setup&, MCFriendlyMechIcon&>
+    MCGuiHandle<MCFriendlyMechIcon> AddButton(Setup&& setup)
+    {
+        if (_Buttons.size() >= MaxButtons)
+        {
+            return {};
+        }
+
+        const int32_t xPos = (SpacingX + 1) * static_cast<int32_t>(_Buttons.size()) + 2;
+        MCGuiHandle<MCFriendlyMechIcon> button = CreateChild<MCFriendlyMechIcon>(
+            [&](MCFriendlyMechIcon& made)
+            {
+                setup(made);
+                made.MoveTo(xPos, 0xf, false);
+            });
+        _Buttons.push_back(button);
+        return button;
+    }
+
+    /// <summary>
+    /// Makes the icon of a mover kept off the bar, set up by <paramref name="setup"/>: a hidden child, never shown or
+    /// placed, that the mission results draw the mover's picture from (<see cref="GetReserveIcon"/>).
+    /// </summary>
+    template <typename Setup>
+        requires std::invocable<Setup&, MCFriendlyMechIcon&>
+    void AddReserveIcon(Setup&& setup)
+    {
+        _ReserveIcons.push_back(CreateChild<MCFriendlyMechIcon>(
+            [&](MCFriendlyMechIcon& made)
+            {
+                setup(made);
+                made.ShowGuiWindow(false);
+            }));
+    }
+
+    /// <summary>The buttons, in the order they were added, pinned for a walk.</summary>
+    std::vector<std::shared_ptr<MCFriendlyMechIcon>> Buttons() const;
+    /// <summary>The lance icons (null before <see cref="InitLances"/>), pinned for a walk.</summary>
+    std::array<std::shared_ptr<MCLanceIcon>, NumLances> LanceIcons() const;
     /// <summary>Button <paramref name="index"/>, or null out of range.</summary>
     std::shared_ptr<MCFriendlyMechIcon> GetButton(size_t index) const;
     /// <summary>The button of the mover with part id <paramref name="partId"/>, or null.</summary>
     std::shared_ptr<MCFriendlyMechIcon> GetButtonFromID(int32_t partId) const;
+    /// <summary>The reserve icon of the mover with part id <paramref name="partId"/>, or null.</summary>
+    std::shared_ptr<MCFriendlyMechIcon> GetReserveIcon(int32_t partId) const;
     /// <summary>
     /// Sorts the buttons by lance and places them behind their lance icons; with <paramref name="animate"/> they move
     /// there over several frames (<see cref="Dance"/>).
@@ -56,9 +102,6 @@ public:
 
     /// <summary>Whether the buttons are dancing into place.</summary>
     bool Dancing = false;
-    /// <summary>The buttons, in the order they were added.</summary>
-    std::vector<std::shared_ptr<MCFriendlyMechIcon>> Buttons;
-    std::array<std::shared_ptr<MCLanceIcon>, NumLances> LanceIcons;
     /// <summary>The part id of the mover whose icon the mouse is over (-1 = none).</summary>
     int32_t HighlightId = -1;
     /// <summary>The part id of the mover whose pilot is on the video window (-1 = none).</summary>
@@ -68,6 +111,12 @@ public:
     int32_t SpacingY = 4;
 
 private:
+    /// <summary>The buttons, in the order they were added (children of the bar).</summary>
+    std::vector<MCGuiHandle<MCFriendlyMechIcon>> _Buttons;
+    /// <summary>The icons of movers kept off the bar (hidden children, <see cref="AddReserveIcon"/>).</summary>
+    std::vector<MCGuiHandle<MCFriendlyMechIcon>> _ReserveIcons;
+    /// <summary>The lance icons (children of the bar, made by <see cref="InitLances"/>).</summary>
+    std::array<MCGuiHandle<MCLanceIcon>, NumLances> _LanceIcons;
     /// <summary>The current phase (0-2) of the dance.</summary>
     uint8_t _DanceStep = 0;
     /// <summary>Frames since the dance started.</summary>

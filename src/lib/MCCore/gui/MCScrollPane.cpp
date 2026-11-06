@@ -12,11 +12,6 @@ namespace
     constexpr int32_t ArrowTimer = 6;
 }
 
-MCScrollPane::~MCScrollPane()
-{
-    MCScrollPane::Destroy();
-}
-
 auto MCScrollPane::Init(int32_t width, int32_t height, int32_t xPos, int32_t yPos, std::string_view name) -> int32_t
 {
     if (name.empty())
@@ -69,15 +64,14 @@ auto MCScrollPane::Init(int32_t width, int32_t height, int32_t xPos, int32_t yPo
     SetDepth(100);
 }
 
-auto MCScrollPane::Destroy() -> void
+auto MCScrollPane::OnDestroy() -> void
 {
-    _Port.reset();
-    MCLogObject::Destroy();
     ContentPort.reset();
     ColumnArts.clear();
     FreeSlider();
     BackgroundCopy.reset();
     PanePort.reset();
+    MCLogObject::OnDestroy();
 }
 
 auto MCScrollPane::SetScrollPos(float position) -> void

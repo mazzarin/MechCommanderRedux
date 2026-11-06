@@ -20,10 +20,10 @@ auto MCGuiHolderObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t 
     return 0;
 }
 
-auto MCGuiHolderObject::Destroy() -> void
+auto MCGuiHolderObject::OnDestroy() -> void
 {
-    MCGuiObject::Destroy();
     Panes = {};
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiHolderObject::RemoveChild(MCGuiObject& oldChild) -> void
@@ -153,17 +153,15 @@ auto MCGuiHolderObject::Retile() -> void
     }
 }
 
-auto MCGuiHolderObject::AddPane(std::weak_ptr<MCGuiObject> pane) -> void
+auto MCGuiHolderObject::TakePaneSlot(std::weak_ptr<MCGuiObject> pane) -> void
 {
     if (Panes[0].expired())
     {
-        AddChild(pane);
         Panes[0] = std::move(pane);
         ActivePane = 0;
     }
     else if (Panes[1].expired())
     {
-        AddChild(pane);
         Panes[1] = std::move(pane);
     }
 

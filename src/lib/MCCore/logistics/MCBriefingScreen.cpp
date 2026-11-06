@@ -2,6 +2,7 @@
 #include "logistics/MCBriefingScreen.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "gui/MCGuiSystem.h"
 #include "gui/MCScrollPane.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFatal.h"
@@ -146,7 +147,6 @@ auto MCBriefingScreen::Init() -> void
 {
     CurrentTab = OperationTab;
     CurDeployTonnage = 0;
-    BriefingBox.reset();
     PlayMovie = false;
     ButtonsLocked = false;
     ChatBlinking = false;
@@ -155,11 +155,13 @@ auto MCBriefingScreen::Init() -> void
     const int32_t result = MCLogObject::Init(0, 0, 0x280, 0x1e0);
     Assert(result == 0, result, "Unable to init briefing screen");
     // The original loaded the background (lsbbk00) as the screen's picture; the screen draws it each frame.
-    MissionPane = MCMakeGui<MCScrollPane>();
-    MissionPane->Init(0xb9, 0xdb, 7, 0x6b, std::format("{}logart\\lsbbk01.tga", ArtPath).c_str());
-    MissionPane->ClearDisplayPort();
-    DeployPane = MCMakeGui<MCScrollPane>();
-    DeployPane->Init(0xc4, 0x7a, 7, 0x15e, std::string_view());
+    MissionPane = CreateChild<MCScrollPane>(
+        [](MCScrollPane& pane)
+        {
+            pane.Init(0xb9, 0xdb, 7, 0x6b, std::format("{}logart\\lsbbk01.tga", ArtPath).c_str());
+            pane.ClearDisplayPort();
+        });
+    DeployPane = CreateChild<MCListView>([](MCListView& pane) { pane.Init(0xc4, 0x7a, 7, 0x15e, std::string_view()); });
     MissionPort = std::make_shared<MCLogPort>();
     MissionPort->Init(0xad, 0xdd);
     VfxPaneWipe(MissionPort->Frame(), 0x10);
@@ -169,10 +171,7 @@ auto MCBriefingScreen::Init() -> void
     ChatRegularPort->Load(std::format("{}logart\\lsbdw03.tga", ArtPath));
     OperationPicture.reset();
     UndeployedMechs.clear();
-    AddChild(MissionPane);
-    AddChild(DeployPane);
     ShowGuiWindow(false);
-    ScreenWindow()->AddChild(weak_from_this());
 
     // Two columns of six slots; each lance is two rows.
     for (size_t i = 0; i < NumDropSlots; i++)
@@ -234,76 +233,136 @@ auto MCBriefingScreen::ClearLook() -> void
     LaunchPressed = false;
     OperationShown = false;
     OperationPictureShown = false;
-    SlotBlocks.fill({});
-    BoxShown.reset();
-}
 
-auto MCBriefingScreen::SlotAt(int32_t xPos, int32_t yPos) const -> int32_t
-{
-    for (size_t i = 0; i < NumDropSlots; i++)
+    // The slots' blocks and the box go (the original left them on the screen, drawn over by the new art, until the
+    // deploy pane's next filling put the blocks back and a click showed a box).
+    for (MCGuiHandle<MCMechBriefBlock>& handle : SlotBlocks)
     {
-        if (SlotRects[i].left == xPos && SlotRects[i].top == yPos)
+        if (const std::shared_ptr<MCMechBriefBlock> block = handle.Lock())
         {
-            return static_cast<int32_t>(i);
+            RemoveChild(*block);
         }
+
+        handle.reset();
     }
 
-    return -1;
-}
-
-auto MCBriefingScreen::PlaceInSlot(MCMechBriefBlock& block) -> void
-{
-    const int32_t slot = SlotAt(block.X(), block.Y());
-
-    if (slot < 0)
-    {
-        return;
-    }
-
-    // A block left in any other slot has moved here.
-    LiftFromSlot(block);
-    SlotBlocks[static_cast<size_t>(slot)] = std::static_pointer_cast<MCMechBriefBlock>(block.shared_from_this());
+    HideBriefing();
 }
 
 auto MCBriefingScreen::LiftFromSlot(const MCMechBriefBlock& block) -> void
 {
-    for (std::weak_ptr<MCMechBriefBlock>& slot : SlotBlocks)
+    for (MCGuiHandle<MCMechBriefBlock>& slot : SlotBlocks)
     {
-        if (MCRefersTo(slot, block))
+        if (MCRefersTo(slot.Weak(), block))
         {
+            _LiftedBlock = slot;
             slot.reset();
         }
     }
 }
 
-auto MCBriefingScreen::ShowBox(std::weak_ptr<MCBriefingBox> box) -> void
+auto MCBriefingScreen::SlotUnit(size_t slot) -> std::shared_ptr<MCLogPart>
 {
-    BoxShown = std::move(box);
-}
+    const MCLogistics& logistics = *GlobalLog();
+    const MCLogistics::DeploySlot& deploy =
+        logistics.DeploySlots[slot / MCLogistics::LanceSlots][slot % MCLogistics::LanceSlots];
 
-auto MCBriefingScreen::BlankBox() -> void
-{
-    BoxShown.reset();
-}
-
-auto MCBriefingScreen::RemoveChild(MCGuiObject& child) -> void
-{
-    // OB-133 (fixed): the original left a removed block's or box's picture where it was, until something painted over
-    // it; the slot shows empty again, the box area blank.
-    for (std::weak_ptr<MCMechBriefBlock>& slot : SlotBlocks)
+    if (deploy.Unit >= 0)
     {
-        if (MCRefersTo(slot, child))
+        std::shared_ptr<MCLogMech> mech;
+        logistics.ForceMechList->GetMechInfo(deploy.Unit, mech);
+        return mech;
+    }
+
+    if (deploy.Vehicle >= 0)
+    {
+        std::shared_ptr<MCLogVehicle> vehicle;
+        logistics.ForceVehicleList->GetVehicleInfo(deploy.Vehicle, vehicle);
+        return vehicle;
+    }
+
+    if (MultiPlayer() != nullptr)
+    {
+        return logistics.DropSlots[slot / MCLogistics::LanceSlots][slot % MCLogistics::LanceSlots].Part.lock();
+    }
+
+    return nullptr;
+}
+
+auto MCBriefingScreen::ShowSlots() -> void
+{
+    // OB-133 (fixed): the original left a removed block's picture where it was, until something painted over it; a
+    // slot without a unit shows empty.
+    for (size_t i = 0; i < NumDropSlots; i++)
+    {
+        const std::shared_ptr<MCLogPart> unit = SlotUnit(i);
+        const std::shared_ptr<MCMechBriefBlock> block = SlotBlocks[i].Lock();
+
+        if (block != nullptr && block->Part() == unit)
         {
-            slot.reset();
+            continue;
+        }
+
+        if (block != nullptr)
+        {
+            RemoveChild(*block);
+        }
+
+        SlotBlocks[i].reset();
+
+        if (unit != nullptr)
+        {
+            const RECT& area = SlotRects[i];
+            SlotBlocks[i] =
+                CreateChild<MCMechBriefBlock>([&](MCMechBriefBlock& made) { made.Init(unit, area.left, area.top); });
         }
     }
 
-    if (MCRefersTo(BoxShown, child))
+    // The block lifted out of a slot lives while it is dragged (the original's block moved back into a slot or the
+    // pane once dropped).
+    if (const std::shared_ptr<MCMechBriefBlock> lifted = _LiftedBlock.Lock();
+        lifted != nullptr && lifted != GuiSystem().GrabbedObject())
     {
-        BoxShown.reset();
+        RemoveChild(*lifted);
+        _LiftedBlock.reset();
+    }
+}
+
+auto MCBriefingScreen::BlockOf(const MCLogPart& part) const -> std::shared_ptr<MCMechBriefBlock>
+{
+    for (const MCGuiHandle<MCMechBriefBlock>& handle : SlotBlocks)
+    {
+        if (std::shared_ptr<MCMechBriefBlock> block = handle.Lock(); block != nullptr && block->Part().get() == &part)
+        {
+            return block;
+        }
     }
 
-    MCLogObject::RemoveChild(child);
+    const std::shared_ptr<MCListView> pane = DeployPane.Lock();
+    return pane != nullptr ? pane->RowOf<MCMechBriefBlock>(part) : nullptr;
+}
+
+auto MCBriefingScreen::ShowBriefing(const std::shared_ptr<MCLogPart>& part) -> void
+{
+    if (const std::shared_ptr<MCBriefingBox> shown = BriefingBox.Lock(); shown != nullptr && shown->Part() == part)
+    {
+        shown->DrawBackground();
+        return;
+    }
+
+    HideBriefing();
+    BriefingBox = CreateChild<MCBriefingBox>([&](MCBriefingBox& box) { box.Init(part); });
+    BriefingBox->DrawBackground();
+}
+
+auto MCBriefingScreen::HideBriefing() -> void
+{
+    if (const std::shared_ptr<MCBriefingBox> shown = BriefingBox.Lock())
+    {
+        RemoveChild(*shown);
+    }
+
+    BriefingBox.reset();
 }
 
 auto MCBriefingScreen::LanceTons(int32_t lance) -> int32_t
@@ -482,14 +541,14 @@ auto MCBriefingScreen::PaintLook(const MCPane& target) -> void
             FillArea(target, area.left, area.top, 0x32, 0x2c, 0x10);
         }
 
-        if (const std::shared_ptr<MCMechBriefBlock> block = SlotBlocks[i].lock())
+        if (const std::shared_ptr<MCMechBriefBlock> block = SlotBlocks[i].Lock())
         {
             block->PaintBlock(target, area.left, area.top, true);
         }
     }
 
     // The briefing box area: the box shown, or blank.
-    if (const std::shared_ptr<MCBriefingBox> box = BoxShown.lock())
+    if (const std::shared_ptr<MCBriefingBox> box = BriefingBox.Lock())
     {
         box->PaintBox(target, 0xd3, 0x16f);
     }
@@ -534,11 +593,7 @@ auto MCBriefingScreen::Display() -> void
     {
         // The movie is over: its window goes, and the closing art shows (PaintLook).
         PlayMovie = false;
-
-        if (SmackerWindow != nullptr)
-        {
-            RemoveChild(*SmackerWindow);
-        }
+        CloseGuiObject(SmackerWindow);
     }
 }
 
@@ -552,28 +607,26 @@ auto MCBriefingScreen::Draw() -> void
     }
 }
 
-auto MCBriefingScreen::Destroy() -> void
+auto MCBriefingScreen::OnDestroy() -> void
 {
     StopSmackerMovies();
-    ScreenWindow()->RemoveChild(*this);
     ClearLook();
     MapPicture.reset();
     ChatBlinkPort.reset();
     ChatRegularPort.reset();
     EmptySlot.reset();
     UndeployedMechs.clear();
+    DeployUnits.clear();
     MissionPort.reset();
-    SmackerWindow.reset();
-    DeployPane.reset();
 
-    if (MissionPane != nullptr)
+    // The pane shows the logistics screens' mission picture: it lets go of it before it goes with the screen.
+    if (const std::shared_ptr<MCScrollPane> pane = MissionPane.Lock(); pane != nullptr)
     {
-        MissionPane->ClearDisplayPort();
-        MissionPane.reset();
+        pane->ClearDisplayPort();
     }
 
     OperationPicture.reset();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCBriefingScreen::MpCalcTonnages() -> void
@@ -981,7 +1034,7 @@ auto MCBriefingScreen::SetUpOperation() -> void
         }
 
         ChatBlinkOn = false;
-        GlobalLog()->ChatWindow->ShowGuiWindow(true);
+        GlobalLog()->ShowChat(true);
     }
 
     MissionPane->ShowGuiWindow(false);
@@ -1020,10 +1073,8 @@ auto MCBriefingScreen::SetUpOperation() -> void
             return;
         }
 
-        SmackerWindow = MCMakeGui<MCGuiSmackerWindow>();
         const RECT area{0xc, 0x6f, movie->Player->Width(), movie->Player->Height()};
-        SmackerWindow->Init(area, {});
-        AddChild(SmackerWindow);
+        SmackerWindow = CreateChild<MCGuiSmackerWindow>([&](MCGuiSmackerWindow& window) { window.Init(area, {}); });
         SmackerWindow->StartSmackerMovie(std::move(movie), false);
         SmackerWindow->Draw();
     }
@@ -1040,7 +1091,7 @@ auto MCBriefingScreen::SetUpMission() -> void
     }
     else
     {
-        GlobalLog()->ChatWindow->ShowGuiWindow(false);
+        GlobalLog()->ShowChat(false);
     }
 
     MissionPane->SetDisplayPort(MissionPort, false);
@@ -1049,47 +1100,37 @@ auto MCBriefingScreen::SetUpMission() -> void
 
 auto MCBriefingScreen::StopSmackerMovies() -> void
 {
-    if (SmackerWindow == nullptr)
+    const std::shared_ptr<MCGuiSmackerWindow> window = SmackerWindow.Lock();
+
+    if (window == nullptr)
     {
         return;
     }
 
-    RemoveChild(*SmackerWindow);
-    SmackerWindow->EndSmackerMovie();
+    // Ending the movie destroys the window, which takes it off the screen.
+    window->EndSmackerMovie();
     SmackerWindow.reset();
     PlayMovie = false;
 }
 
 auto MCBriefingScreen::SetUpDeploy() -> void
 {
-    MCScrollPane& pane = *DeployPane;
+    MCListView& pane = *DeployPane;
 
-    for (int32_t count = pane.NumberOfChildren(); count > 0; count--)
-    {
-        pane.RemoveChild(*pane.Child(0));
-    }
-
-    // Blocks of units still waiting are rebuilt; placed units keep theirs (redrawn).
+    // The units still waiting get blocks in the pane (the mechs with a pilot, then the vehicles); placed units keep
+    // theirs in the slots (shown again).
     UndeployedMechs.clear();
+    DeployUnits.clear();
     int32_t index = 0;
 
     for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
     {
         const int32_t mechIndex = index++;
 
-        if (mech->PilotIndex < 0)
+        if (mech->PilotIndex >= 0 && !mech->Deployed)
         {
-            continue;
-        }
-
-        if (!mech->Deployed)
-        {
-            MCMechBriefBlock::Discard(mech->BriefBlock);
             UndeployedMechs.push_back(mechIndex);
-        }
-        else
-        {
-            mech->BriefBlock->DrawBackground();
+            DeployUnits.push_back(mech);
         }
     }
 
@@ -1097,17 +1138,15 @@ auto MCBriefingScreen::SetUpDeploy() -> void
     {
         if (vehicle->Deployed == 0)
         {
-            MCMechBriefBlock::Discard(vehicle->BriefBlock);
-        }
-        else
-        {
-            vehicle->BriefBlock->DrawBackground();
+            DeployUnits.push_back(vehicle);
         }
     }
 
-    // Three blocks a row.
-    const auto mechCount = static_cast<int32_t>(UndeployedMechs.size());
-    const int32_t blocks = GlobalLog()->ForceVehicleList->GetVehicleCount() + mechCount;
+    ShowSlots();
+
+    // Three blocks a row. Original behaviour: the content's height counts every vehicle, placed or not (at least the
+    // pane's height; from seven blocks, their lines).
+    const auto blocks = static_cast<int32_t>(UndeployedMechs.size()) + GlobalLog()->ForceVehicleList->GetVehicleCount();
     int32_t height = pane.Height();
 
     if (blocks >= 7)
@@ -1120,53 +1159,18 @@ auto MCBriefingScreen::SetUpDeploy() -> void
         }
     }
 
-    // Port: the pane's blocks are drawn into it each frame (the original painted each into this picture).
-    auto port = std::make_shared<MCLogPort>();
-    port->InitView(0xc5, height);
-    port->DrawContent = [weakPane = std::weak_ptr<MCScrollPane>(DeployPane)](MCGuiPort& view)
-    {
-        VfxPaneWipe(view.Frame(), 0x10);
-        const std::shared_ptr<MCScrollPane> pane = weakPane.lock();
+    MCListSource<MCLogPart> source;
+    source.Items = [this]() -> const std::vector<std::shared_ptr<MCLogPart>>& { return DeployUnits; };
+    source.MakeRow = [](MCListView& list, std::shared_ptr<MCLogPart> part)
+    { return list.CreateRow<MCMechBriefBlock>([&](MCMechBriefBlock& block) { block.Init(part, 0, 0); }); };
+    MCListLayout layout{0x34, 0xc5, height, 0x10};
+    layout.Columns = 3;
+    layout.ColumnWidth = 0x38;
+    layout.Left = 4;
+    layout.Top = 3;
 
-        if (pane == nullptr)
-        {
-            return;
-        }
-
-        const int32_t scroll = pane->GetScrollOffset();
-
-        for (int32_t i = 0; i < pane->NumberOfChildren(); i++)
-        {
-            const auto brief = std::static_pointer_cast<MCMechBriefBlock>(pane->Child(i));
-            brief->PaintBlock(view.Frame(), brief->X(), brief->Y() + scroll, false);
-        }
-    };
-
+    // The pane is shown from the top, then scrolled back to where its slider was.
     const int32_t sliderPos = pane.SliderPos;
-    pane.SetDisplayPort(std::move(port), true);
-    int32_t block = 0;
-
-    // The blocks' places: three a row.
-    auto blockX = [&block]() { return (block % 3) * 0x38 + 4; };
-    auto blockY = [&block]() { return (block / 3) * 0x34 + 3; };
-
-    for (; block < mechCount; block++)
-    {
-        std::shared_ptr<MCLogMech> mech;
-        GlobalLog()->ForceMechList->GetMechInfo(UndeployedMechs[static_cast<size_t>(block)], mech);
-        MCMechBriefBlock::Create(mech, pane, blockX(), blockY());
-    }
-
-    for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->ForceVehicleList->Vehicles)
-    {
-        if (vehicle->Deployed != 0)
-        {
-            continue;
-        }
-
-        MCMechBriefBlock::Create(vehicle, pane, blockX(), blockY());
-        ++block;
-    }
-
+    pane.Show(std::move(source), layout, true);
     pane.SetSliderPos(sliderPos);
 }

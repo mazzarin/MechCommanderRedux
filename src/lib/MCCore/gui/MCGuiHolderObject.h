@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 /// <summary>A window holding up to two panes, tiled side by side (or stacked) or one at a time.</summary>
 /// <remarks>
@@ -13,7 +13,8 @@ class MCGuiHolderObject : public MCGuiObject
 public:
     /// <summary>Places the holder (no port), and clears the panes; no pane is active.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
+    /// <summary>Forgets the panes.</summary>
+    void OnDestroy() override;
     /// <summary>Resizes the holder (snapped as the base does) and lays its panes out again.</summary>
     void Resize(int32_t newWidth, int32_t newHeight) override;
     /// <summary>Forgets <paramref name="oldChild"/> if it is a pane, then removes it.</summary>
@@ -38,8 +39,34 @@ public:
     }
 
     virtual bool GetVertical() { return Vertical; }
-    /// <summary>Adds <paramref name="pane"/> in the first free pane slot, as a child.</summary>
-    virtual void AddPane(std::weak_ptr<MCGuiObject> pane);
+    /// <summary>Whether a pane slot is free (the holder lays out two panes at most).</summary>
+    bool HasFreePane() const { return Panes[0].expired() || Panes[1].expired(); }
+
+    /// <summary>
+    /// Makes a <typeparamref name="T"/> on the holder, set up by <paramref name="setup"/> (its <c>Init</c>, which
+    /// returns 0 or an error), puts it in the first free pane slot and re-tiles. Nothing is made when no slot is free
+    /// (<see cref="HasFreePane"/>).
+    /// </summary>
+    /// <returns>The pane (empty when no slot was free), or <paramref name="setup"/>'s error.</returns>
+    template <typename T, typename Setup>
+        requires std::derived_from<T, MCGuiObject> && std::is_invocable_r_v<int32_t, Setup&, T&>
+    std::expected<MCGuiHandle<T>, int32_t> TryCreatePane(Setup&& setup)
+    {
+        if (!HasFreePane())
+        {
+            return MCGuiHandle<T>();
+        }
+
+        std::expected<MCGuiHandle<T>, int32_t> pane = TryCreateChild<T>(std::forward<Setup>(setup));
+
+        if (pane.has_value())
+        {
+            TakePaneSlot(pane->Weak());
+        }
+
+        return pane;
+    }
+
     /// <summary>Takes <paramref name="pane"/> out of its slot and off the children.</summary>
     virtual void RemovePane(MCGuiObject& pane);
 
@@ -77,4 +104,8 @@ public:
     int32_t ActivePane = -1;
     /// <summary>Whether the tiled panes sit side by side (else they are stacked).</summary>
     bool Vertical = false;
+
+private:
+    /// <summary>Puts <paramref name="pane"/>, a child just made, in the first free slot and re-tiles.</summary>
+    void TakePaneSlot(std::weak_ptr<MCGuiObject> pane);
 };

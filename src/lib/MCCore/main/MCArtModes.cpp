@@ -124,7 +124,7 @@ auto AttachHdArtToLoaded() -> void
     if (const std::shared_ptr<MCTacticalInterface> iface = TacticalInterface();
         iface != nullptr && iface->MechBar != nullptr)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons())
         {
             button->AttachHdArt();
         }

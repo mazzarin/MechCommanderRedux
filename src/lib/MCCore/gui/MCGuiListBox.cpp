@@ -43,12 +43,11 @@ auto MCGuiListBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     return 0;
 }
 
-auto MCGuiListBox::Destroy() -> void
+auto MCGuiListBox::OnDestroy() -> void
 {
     Items.clear();
-    ScrollBar.reset();
     SelectedItem = -1;
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiListBox::VisibleItems() const -> int32_t
@@ -322,15 +321,14 @@ auto MCGuiListBox::ActivateScrollbar() -> int32_t
         return 0;
     }
 
-    auto bar = MCMakeGui<MCGuiScrollBar>();
+    auto bar = TryCreateChild<MCGuiScrollBar>([&](MCGuiScrollBar& made) { return made.Init(10, 10, 0, Height(), {}); });
 
-    if (const int32_t result = bar->Init(10, 10, 0, Height(), {}); result != 0)
+    if (!bar)
     {
-        return result;
+        return bar.error();
     }
 
-    ScrollBar = std::move(bar);
-    AddChild(ScrollBar);
+    ScrollBar = *bar;
     ScrollBar->MoveTo(Width() + 1, 0);
 
     if (VisibleItems() < NumItems())

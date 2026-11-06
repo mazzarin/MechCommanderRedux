@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiPort.h"
 #include "platform/MCRegisteredBlock.h"
@@ -23,7 +23,7 @@ public:
     /// <summary>Makes the window and its "destroyed" image; every part starts uncoloured.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view bitmapName) override;
     /// <summary>Frees the "destroyed" image and the damage shapes.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
     /// <summary>Draws the icon into its own port (<see cref="DrawIcon"/>).</summary>
     void Draw() override;
     /// <summary>Marks this mover as the one the mech bar highlights.</summary>
@@ -66,7 +66,7 @@ public:
     int32_t DiagramX = 0;
     int32_t DiagramY = 0;
     /// <summary>The "destroyed" image, copied over the diagram once the mover is dead.</summary>
-    MCGuiOwned<MCGuiPort> DeadImage;
+    std::unique_ptr<MCGuiPort> DeadImage;
     /// <summary>The damage shapes (one per body part), loaded from <c>artPath</c>.</summary>
     MCRegisteredBlock DamageShapes;
     /// <summary>Port: their file's name, lower case, without its extension (the HD art pack's folder for them).</summary>

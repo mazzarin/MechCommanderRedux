@@ -2,7 +2,6 @@
 #include "logistics/MCPurMechList.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
-#include "logistics/MCMechPurchaseBlock.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCLogistics.h"
@@ -152,8 +151,7 @@ auto MCPurMechList::AddMech(std::string_view fileA, int32_t countA, std::string_
                             std::string_view fileW, int32_t countW) -> void
 {
     auto purMech = std::make_shared<MCPurMech>();
-    purMech->Block = MCMakeGui<MCMechPurchaseBlock>();
-    purMech->Block->CurVariant = -1;
+    purMech->CurVariant = -1;
     purMech->Variants[0] = ReadVariant(fileA);
     purMech->Variants[0]->NumAvailable = countA;
     purMech->Variants[1] = ReadVariant(fileW);
@@ -164,18 +162,17 @@ auto MCPurMechList::AddMech(std::string_view fileA, int32_t countA, std::string_
     // Show the first variant in stock.
     if (countA == 0 && countW != 0)
     {
-        purMech->Block->CurVariant = 1;
+        purMech->CurVariant = 1;
     }
     else if (countA == 0 && countJ != 0)
     {
-        purMech->Block->CurVariant = 2;
+        purMech->CurVariant = 2;
     }
     else
     {
-        purMech->Block->CurVariant = 0;
+        purMech->CurVariant = 0;
     }
 
-    purMech->Block->Init(purMech);
     Mechs.insert(Mechs.begin(), std::move(purMech));
 }
 

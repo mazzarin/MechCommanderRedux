@@ -13,14 +13,12 @@ class MCSplashScreen : public MCGenericScreen
 public:
     /// <summary>Takes a share of the background all splash screens use (the first screen makes it).</summary>
     MCSplashScreen();
-    /// <summary>Frees the blocks; the last screen frees the shared background.</summary>
-    ~MCSplashScreen() override;
 
     /// <summary>Reads the blocks and makes the elements.</summary>
     int32_t Init(MCFitIniFile& screenFile);
 
     /// <summary>Frees the blocks.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Shows or hides the screen, starting or stopping the connection screens' polling timer.</summary>
     void ShowGuiWindow(bool show) override;
@@ -33,6 +31,13 @@ public:
 
     /// <summary>Each block: an element number per element (from the second; 0 = none) to show.</summary>
     std::vector<std::vector<uint8_t>> Blocks;
+
+protected:
+    /// <summary>
+    /// Makes element <paramref name="index"/> on <paramref name="parent"/>: a button, text field, file pane, picture,
+    /// scrolling text, game list, slider or difficulty toggle.
+    /// </summary>
+    bool MakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index, const ElementHeader& header) override;
 
 private:
     /// <summary>The background all splash screens share, and the art file loaded into it.</summary>

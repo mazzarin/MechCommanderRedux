@@ -370,7 +370,7 @@ void HandleAppRPUpdate(uint32_t, std::span<const uint8_t> msg)
         return;
     }
 
-    const std::shared_ptr<MCSessionScreen> sessionScreen = GlobalLog()->SessionScreen;
+    const std::shared_ptr<MCSessionScreen> sessionScreen = GlobalLog()->SessionScreen.Lock();
 
     if (update.Value2 == 1)
     {

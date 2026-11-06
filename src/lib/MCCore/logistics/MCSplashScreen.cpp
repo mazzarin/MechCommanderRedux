@@ -124,11 +124,6 @@ MCSplashScreen::MCSplashScreen() : _Art(SharedBackground.lock())
     }
 }
 
-MCSplashScreen::~MCSplashScreen()
-{
-    MCSplashScreen::Destroy();
-}
-
 auto MCSplashScreen::Init(MCFitIniFile& screenFile) -> int32_t
 {
     ReadElementCount(screenFile);
@@ -150,175 +145,190 @@ auto MCSplashScreen::Init(MCFitIniFile& screenFile) -> int32_t
     for (int32_t i = 0; i < NumElements(); i++)
     {
         const ElementHeader header = ReadElement(screenFile, i);
-        std::shared_ptr<MCGuiObject> element;
 
-        switch (header.Type)
+        if (header.Type == 0)
         {
-            case 0:
+            // The background: the shared picture, loaded again only when the art changes.
+            Assert(i == 0, static_cast<uint32_t>(i), " If there's a background it MUST be the first element ");
+
+            if (!MCIEquals(_Art->FileName, header.Art))
             {
-                // The background: the shared picture, loaded again only when the art changes.
-                Assert(i == 0, static_cast<uint32_t>(i), " If there's a background it MUST be the first element ");
-
-                if (!MCIEquals(_Art->FileName, header.Art))
-                {
-                    _Art->FileName = header.Art;
-                    _Art->Port.Load(header.Art);
-                }
-
-                // The screen draws the shared art each frame (the original made the shared port its own).
-                InitBackground(screenFile, header);
-                ArtPort = std::shared_ptr<MCLogPort>(_Art, &_Art->Port);
-                continue;
+                _Art->FileName = header.Art;
+                _Art->Port.Load(header.Art);
             }
 
-            case 1:
-            {
-                const MCGuiOwned<MCLogButton> button = MakeElement<MCLogButton>(i);
-                const int32_t result = button->Init(header.Left, header.Top, header.Width, header.Height, {});
-                button->SetTransparent(true);
-                Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init new button ");
-
-                if (const std::optional<int32_t> callback = ReadButton(screenFile, *button, header.Art, true))
-                {
-                    if (std::function<void()> exec = SplashCallback(*callback))
-                    {
-                        button->Callback().SetExec(std::move(exec));
-                    }
-                    else if (!SetScreenCallback(*button, *callback))
-                    {
-                        Fatal(*callback, " Illegal callback value");
-                    }
-                }
-
-                AddChild(button->weak_from_this());
-                continue;
-            }
-
-            case 4:
-            {
-                std::shared_ptr<MCLogTextObject> entry = MakeTextEntry(i, header);
-                entry->ShowGuiWindow(true);
-                AddChild(entry->weak_from_this());
-                continue;
-            }
-
-            case 5:
-            {
-                std::shared_ptr<MCFileScrollPane> pane = MakeFilePane(screenFile, i, header);
-                pane->ShowGuiWindow(true);
-                AddChild(pane->weak_from_this());
-                continue;
-            }
-
-            case 6:
-            {
-                // A picture; elements 6 and the others go just behind the rest.
-                const MCGuiOwned<MCLogImage> image = MakeElement<MCLogImage>(i);
-                image->Init(header.Left, header.Top, header.Width, header.Height);
-                image->Art = std::make_shared<MCLogPort>();
-                image->Art->Load(header.Art);
-                AddChild(image->weak_from_this());
-                image->SetDepth(i == 6 ? -0xb : -0xa);
-                image->SetEventRoutine(ImageHandleEvent);
-                continue;
-            }
-
-            case 7:
-            {
-                const MCGuiOwned<MCLogScrollTextObject> text = MakeElement<MCLogScrollTextObject>(i);
-                text->Init(header.Left, header.Top, header.Width, header.Height, {});
-                const bool scrolling =
-                    RequireEntry<bool>(screenFile, "Scrolling", " Couldn't locate Scrolling in textscrollpane ");
-                text->ScrollTab->ShowGuiWindow(scrolling);
-                text->Scrolling = scrolling;
-                text->ShowGuiWindow(true);
-                AddChild(text->weak_from_this());
-                continue;
-            }
-
-            case 8:
-            {
-                const MCGuiOwned<MCGameList> list = MakeElement<MCGameList>(i);
-                list->Init(header.Left, header.Top, header.Width, header.Height, {});
-                element = list;
-                break;
-            }
-
-            case 9:
-            {
-                const MCGuiOwned<MCLogSlider> slider = MakeElement<MCLogSlider>(i);
-                slider->Init(header.Left, header.Top, header.Width, header.Height, {});
-                slider->MinValue = RequireEntry<int32_t>(screenFile, "MinValue", " Couldn't locate min slider value");
-                slider->MaxValue = RequireEntry<int32_t>(screenFile, "MaxValue", " Couldn't locate max slider value");
-                const int32_t callback =
-                    RequireEntry<int32_t>(screenFile, "Callback", " Couldn't locate callback value");
-
-                if (auto routine = SliderRoutine(callback))
-                {
-                    slider->SetEventRoutine(std::move(routine));
-                }
-
-                element = slider;
-                break;
-            }
-
-            case 10:
-            {
-                // A difficulty toggle.
-                const MCGuiOwned<MCLogToolButton> toggle = MakeElement<MCLogToolButton>(i);
-                toggle->Init(header.Left, header.Top, header.Width, header.Height, {});
-                toggle->SetTransparent(true);
-
-                if (MCIEquals(header.Art, "NONE"))
-                {
-                    toggle->SetBackColor(0xff);
-                }
-                else
-                {
-                    toggle->SetUpPicture(header.Art);
-                }
-
-                if (const std::optional<int32_t> callback = ReadButton(screenFile, *toggle, header.Art, false))
-                {
-                    std::function<void()> exec = ToggleCallback(*callback);
-
-                    if (!exec)
-                    {
-                        Fatal(*callback, " Illegal callback value");
-                    }
-
-                    toggle->Callback().SetExec(std::move(exec));
-                }
-
-                element = toggle;
-                break;
-            }
-
-            default:
-                continue;
+            // The screen draws the shared art each frame (the original made the shared port its own).
+            InitBackground(screenFile, header);
+            ArtPort = std::shared_ptr<MCLogPort>(_Art, &_Art->Port);
+            continue;
         }
 
-        element->ShowGuiWindow(true);
-        AddChild(element);
+        MakeElementOn(*this, screenFile, i, header);
     }
 
-    ScreenWindow()->AddChild(weak_from_this());
     ShowGuiWindow(false);
     return 0;
 }
 
-auto MCSplashScreen::Destroy() -> void
+auto MCSplashScreen::MakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index, const ElementHeader& header)
+    -> bool
+{
+    switch (header.Type)
+    {
+        case 1:
+        {
+            MakeElement<MCLogButton>(
+                parent, index,
+                [&](MCLogButton& button)
+                {
+                    const int32_t result = button.Init(header.Left, header.Top, header.Width, header.Height, {});
+                    button.SetTransparent(true);
+                    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init new button ");
+
+                    if (const std::optional<int32_t> callback = ReadButton(file, button, header.Art, true))
+                    {
+                        if (std::function<void()> exec = SplashCallback(*callback))
+                        {
+                            button.Callback().SetExec(std::move(exec));
+                        }
+                        else if (!SetScreenCallback(button, *callback))
+                        {
+                            Fatal(*callback, " Illegal callback value");
+                        }
+                    }
+                });
+            return true;
+        }
+
+        case 4:
+        {
+            MakeTextEntry(parent, index, header, true);
+            return true;
+        }
+
+        case 5:
+        {
+            MakeFilePane(parent, file, index, header);
+            return true;
+        }
+
+        case 6:
+        {
+            // A picture; elements 6 and the others go just behind the rest.
+            const MCGuiHandle<MCLogImage> image =
+                MakeElement<MCLogImage>(parent, index,
+                                        [&](MCLogImage& made)
+                                        {
+                                            made.Init(header.Left, header.Top, header.Width, header.Height);
+                                            made.Art = std::make_shared<MCLogPort>();
+                                            made.Art->Load(header.Art);
+                                        });
+            image->SetDepth(index == 6 ? -0xb : -0xa);
+            image->SetEventRoutine(ImageHandleEvent);
+            return true;
+        }
+
+        case 7:
+        {
+            MakeElement<MCLogScrollTextObject>(
+                parent, index,
+                [&](MCLogScrollTextObject& text)
+                {
+                    text.Init(header.Left, header.Top, header.Width, header.Height, {});
+                    const bool scrolling =
+                        RequireEntry<bool>(file, "Scrolling", " Couldn't locate Scrolling in textscrollpane ");
+                    text.ScrollTab->ShowGuiWindow(scrolling);
+                    text.Scrolling = scrolling;
+                    text.ShowGuiWindow(true);
+                });
+            return true;
+        }
+
+        case 8:
+        {
+            MakeElement<MCGameList>(parent, index,
+                                    [&](MCGameList& list)
+                                    {
+                                        list.Init(header.Left, header.Top, header.Width, header.Height, {});
+                                        list.ShowGuiWindow(true);
+                                    });
+            return true;
+        }
+
+        case 9:
+        {
+            MakeElement<MCLogSlider>(
+                parent, index,
+                [&](MCLogSlider& slider)
+                {
+                    slider.Init(header.Left, header.Top, header.Width, header.Height, {});
+                    slider.MinValue = RequireEntry<int32_t>(file, "MinValue", " Couldn't locate min slider value");
+                    slider.MaxValue = RequireEntry<int32_t>(file, "MaxValue", " Couldn't locate max slider value");
+                    const int32_t callback = RequireEntry<int32_t>(file, "Callback", " Couldn't locate callback value");
+
+                    if (auto routine = SliderRoutine(callback))
+                    {
+                        slider.SetEventRoutine(std::move(routine));
+                    }
+
+                    slider.ShowGuiWindow(true);
+                });
+            return true;
+        }
+
+        case 10:
+        {
+            // A difficulty toggle.
+            MakeElement<MCLogToolButton>(parent, index,
+                                         [&](MCLogToolButton& toggle)
+                                         {
+                                             toggle.Init(header.Left, header.Top, header.Width, header.Height, {});
+                                             toggle.SetTransparent(true);
+
+                                             if (MCIEquals(header.Art, "NONE"))
+                                             {
+                                                 toggle.SetBackColor(0xff);
+                                             }
+                                             else
+                                             {
+                                                 toggle.SetUpPicture(header.Art);
+                                             }
+
+                                             if (const std::optional<int32_t> callback =
+                                                     ReadButton(file, toggle, header.Art, false))
+                                             {
+                                                 std::function<void()> exec = ToggleCallback(*callback);
+
+                                                 if (!exec)
+                                                 {
+                                                     Fatal(*callback, " Illegal callback value");
+                                                 }
+
+                                                 toggle.Callback().SetExec(std::move(exec));
+                                             }
+
+                                             toggle.ShowGuiWindow(true);
+                                         });
+            return true;
+        }
+
+        default:
+            return false;
+    }
+}
+
+auto MCSplashScreen::OnDestroy() -> void
 {
     Blocks.clear();
     // The shared art stays with the other splash screens.
     ArtPort.reset();
-    MCGenericScreen::Destroy();
+    MCGenericScreen::OnDestroy();
 }
 
 auto MCSplashScreen::ShowGuiWindow(bool show) -> void
 {
     // The connection screens poll while shown: the connect screen through its element 3.
-    if (this == GlobalLog()->ConnectScreen.get())
+    if (GlobalLog()->ConnectScreen.Is(*this))
     {
         if (show)
         {
@@ -329,7 +339,7 @@ auto MCSplashScreen::ShowGuiWindow(bool show) -> void
 
         GuiSystem().RemoveTimer(*Element<MCGuiObject>(3), PollTimer);
     }
-    else if (this == GlobalLog()->LanScreen.get())
+    else if (GlobalLog()->LanScreen.Is(*this))
     {
         if (show)
         {
@@ -353,7 +363,7 @@ auto MCSplashScreen::ShowBlock(int32_t block) -> void
 
     const std::vector<uint8_t>& shown = Blocks[static_cast<size_t>(block)];
 
-    for (size_t i = 1; i < Elements.size(); i++)
+    for (int32_t i = 1; i < static_cast<int32_t>(Elements.size()); i++)
     {
         Element<MCGuiObject>(i)->ShowGuiWindow(false);
     }

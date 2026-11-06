@@ -1,9 +1,10 @@
 #pragma once
 
+#include "gui/MCListView.h"
 #include "logistics/MCLogObject.h"
 
-class MCCompInventoryBlock;
 class MCScrollPane;
+struct MCLogInventoryItem;
 
 /// <summary>
 /// Port: what an inventory screen shows in its info box under the inventory pane (at (2, 0x18a)) and in the column
@@ -38,6 +39,11 @@ struct MCInvInfoBox
     /// <summary>The block whose details are shown (not a component's); it takes itself out when it goes.</summary>
     std::weak_ptr<MCGuiObject> Source;
     /// <summary>
+    /// Draws the details of an item (a pilot) instead of <see cref="Source"/>: they keep showing while the box shows
+    /// them, whatever happens to the row they were shown from (the original's painted pixels stayed).
+    /// </summary>
+    std::function<void(MCLogPort& port)> Details;
+    /// <summary>
     /// A component's details, as they were when shown (the item can go while they are, as when it is dragged off a
     /// mech): its picture (<c>lscicc&lt;n&gt;</c>), its block's texts and its description.
     /// </summary>
@@ -58,6 +64,7 @@ struct MCInvInfoBox
         Art = tab;
         InfoKind = Kind::None;
         Source.reset();
+        Details = nullptr;
     }
 };
 
@@ -86,57 +93,97 @@ public:
 
     /// <summary>
     /// Sets up the store's tabs (mechs, vehicles, components) unless <paramref name="pilotsOnly"/>, and the pilots
-    /// for hire (always rebuilt).
+    /// for hire (always): their layouts (<see cref="MCPurchaseScreen::StoreLayouts"/>), and readies their
+    /// descriptions, as the original's rows did when it painted each tab's picture.
     /// </summary>
     static void CreatePurVehiclePane(bool pilotsOnly);
 
-    /// <summary>Makes the mech tab's view and numbers its blocks.</summary>
+    /// <summary>The purchase screen's store: its unit pane's list (null before the screen is made).</summary>
+    static std::shared_ptr<MCListView> StoreList();
+
+    /// <summary>
+    /// The store's row of <paramref name="item"/>, if shown, takes its state again (the original's
+    /// <c>drawBackground</c> of the item's one block).
+    /// </summary>
+    template <typename Item> static void RefreshStoreRow(const Item& item)
+    {
+        if (const std::shared_ptr<MCListView> store = StoreList(); store != nullptr)
+        {
+            if (const std::shared_ptr<MCListRow> row = store->RowOf<MCListRow>(item); row != nullptr)
+            {
+                row->OnRefresh();
+            }
+        }
+    }
+
+    /// <summary>Every row the store shows takes its state again.</summary>
+    static void RefreshStoreRows();
+
+    /// <summary>Numbers the mechs' inventory rows (their <c>ListIndex</c>, the order of the mech list).</summary>
     static void CreateMechInvBlock();
 
-    /// <summary>Makes the vehicle tab's view and numbers its blocks.</summary>
+    /// <summary>Numbers the vehicles' inventory rows (their <c>ListIndex</c>, the order of the vehicle list).</summary>
     static void CreateVhclInvBlock();
 
-    /// <summary>Makes the pilot tab's view and numbers its blocks.</summary>
+    /// <summary>Numbers the pilots' inventory rows (their <c>ListIndex</c>, the order of the pilot list).</summary>
     void CreatePilotInvBlock() const;
 
-    /// <summary>Makes the component tab's view (after re-indexing the inventory).</summary>
+    /// <summary>
+    /// Re-indexes the spare components (their rows) and refreshes the component rows shown (see
+    /// <see cref="RefreshComponentRows"/>).
+    /// </summary>
     static void CreateCompInvBlock();
+
+    /// <summary>
+    /// The rows of <paramref name="item"/> in both screens' lists, if shown, take their state again (shown or hidden,
+    /// and whether the item fits the selected mech): the original's <c>drawBackground</c> of the item's one block.
+    /// </summary>
+    static void RefreshComponentRows(const MCLogInventoryItem& item);
 
     /// <summary>Clears the info box under the inventory for tab <paramref name="tab"/> (negative = the current one).</summary>
     static void DrawBlankInvInfoBlock(int32_t tab);
 
     /// <summary>
-    /// Shows the mech tab: puts the mech blocks in the inventory panes (<paramref name="resetScroll"/> scrolls them
-    /// to the top); <paramref name="redrawTabs"/> blanks the info box.
+    /// Shows the mech tab in both screens' inventory lists: a row per mech of the mech list
+    /// (<paramref name="resetScroll"/> scrolls them to the top); <paramref name="redrawTabs"/> blanks the info box.
     /// </summary>
     void SetUpMechInv(bool resetScroll, bool redrawTabs);
 
-    /// <summary>Shows the mechs for sale in the store (on the purchase screen only).</summary>
+    /// <summary>
+    /// Shows the mechs for sale in the store (on the purchase screen only), each showing its first variant still on
+    /// sale.
+    /// </summary>
     void SetUpMechPurchase() const;
 
-    /// <summary>Shows the pilot tab (the assigned pilots, last in the list, aren't shown).</summary>
+    /// <summary>
+    /// Shows the pilot tab in both screens' inventory lists: a row per pilot of the pilot list (an assigned pilot is in
+    /// the assigned list).
+    /// </summary>
     void SetUpPilotInv(bool resetScroll, bool redrawTabs);
 
-    /// <summary>Shows the component tab.</summary>
+    /// <summary>Shows the component tab in both screens' inventory lists: a row per spare component that has a row.</summary>
     void SetUpCompInv(bool resetScroll, bool redrawTabs);
 
-    /// <summary>Shows the vehicle tab.</summary>
+    /// <summary>Shows the vehicle tab in both screens' inventory lists: a row per vehicle of the vehicle list.</summary>
     void SetUpVhclInv(bool resetScroll, bool redrawTabs);
 
-    /// <summary>Shows the vehicles for sale in the store.</summary>
+    /// <summary>Shows the vehicles for sale in the store (on the purchase screen only).</summary>
     void SetUpVehiclePurchase() const;
 
-    /// <summary>Shows the pilots for hire in the store.</summary>
+    /// <summary>Shows the pilots for hire in the store (on the purchase screen only).</summary>
     void SetUpPilotPurchase() const;
 
-    /// <summary>Numbers the store's component blocks by their sort order.</summary>
-    static void ReIndexComponents();
-
-    /// <summary>Shows the components for sale in the store.</summary>
+    /// <summary>
+    /// Shows the components for sale in the store (on the purchase screen only), in their sort order (a row each
+    /// for sort orders 0..49).
+    /// </summary>
     void SetUpCompPurchase() const;
 
-    /// <summary>Takes the pilot of row <paramref name="pilotIndex"/> out of the store: the rows below move up.</summary>
-    static void RemovePilot(int32_t pilotIndex);
+    /// <summary>
+    /// A pilot was hired (no longer for hire): the store shows the pilots for hire again, the rows below the hired
+    /// one moved up.
+    /// </summary>
+    static void RemovePilot();
 
     /// <summary>
     /// Port: draws the screen: its background art, the info box and column header (<see cref="Info"/>), then the
@@ -164,10 +211,16 @@ public:
     void ShowInfo(MCInvInfoBox::Kind kind, std::weak_ptr<MCGuiObject> source);
 
     /// <summary>
-    /// Port: shows the details of <paramref name="block"/>'s component in the info box (as <see cref="ShowInfo"/>),
+    /// Port: shows an item's details in the info box, drawn by <paramref name="details"/> (see
+    /// <see cref="MCInvInfoBox::Details"/>), over the blank box last shown.
+    /// </summary>
+    void ShowDetails(MCInvInfoBox::Kind kind, std::function<void(MCLogPort& port)> details);
+
+    /// <summary>
+    /// Port: shows the details of <paramref name="item"/>'s component in the info box (as <see cref="ShowInfo"/>),
     /// from a mech's weapon list when <paramref name="repairItem"/>.
     /// </summary>
-    void ShowComponentInfo(const MCCompInventoryBlock& block, bool repairItem);
+    void ShowComponentInfo(const MCLogInventoryItem& item, bool repairItem);
 
     /// <summary>Port: draws <see cref="Info"/> into <paramref name="port"/> (the screen's view).</summary>
     void DrawInfo(MCLogPort& port);
@@ -186,10 +239,13 @@ public:
     /// screen); <c>BriefingScreen::SetUpOperation</c> stops it.
     /// </summary>
     bool ChatBlinking = false;
-    /// <summary>The inventory pane (left).</summary>
-    MCGuiOwned<MCScrollPane> InventoryPane;
-    /// <summary>The unit pane: the store on the purchase screen, the force on the repair screen.</summary>
-    MCGuiOwned<MCScrollPane> UnitPane;
+    /// <summary>The inventory pane (left; a child): a list of the shown tab's rows.</summary>
+    MCGuiHandle<MCListView> InventoryPane;
+    /// <summary>
+    /// The unit pane (a child): the store on the purchase screen (a list of the shown tab's rows), the force on the
+    /// repair screen (still filled by hand).
+    /// </summary>
+    MCGuiHandle<MCListView> UnitPane;
 
     /// <summary>Port: what the screen shows of the shared places.</summary>
     MCLogScreenChrome ScreenChrome;
@@ -199,11 +255,11 @@ public:
 protected:
     /// <summary>
     /// Makes the inventory pane (empty) and the unit pane (backed by <c>lsrbk01</c>; emptied when
-    /// <paramref name="emptyUnitPane"/>), owned by the screen and added as its children.
+    /// <paramref name="emptyUnitPane"/>), as the screen's children.
     /// </summary>
     void MakePanes(bool emptyUnitPane);
 
-    /// <summary>Frees the panes (their content is the logistics screen's, not theirs).</summary>
+    /// <summary>Takes the panes off their content (the logistics screen's, not theirs) before they go.</summary>
     void FreePanes();
 
 private:

@@ -4,7 +4,6 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCPilotPurchaseBlock.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCLogistics.h"
 
@@ -19,8 +18,6 @@ auto MCPurPilotList::AddPilot(std::string_view fileName, int32_t status) -> void
     OpenProfile(file, WarriorPath, fileName, true, " could not open scenario file ");
 
     auto data = std::make_shared<MCPurPilotData>();
-    data->Block = MCMakeGui<MCPilotPurchaseBlock>();
-    data->Block->Init(data);
     data->FileName = fileName;
     int32_t result = file.SeekBlock("General");
     Assert(result == 0, result, " could not find general block in pilot file ");

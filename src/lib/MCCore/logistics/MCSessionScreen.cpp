@@ -263,11 +263,6 @@ namespace
     }
 }
 
-MCSessionScreen::~MCSessionScreen()
-{
-    MCSessionScreen::Destroy();
-}
-
 auto MCSessionScreen::SortedPlayerIds(std::span<const uint32_t> ids) -> std::array<uint32_t, MaxPlayers>
 {
     std::array<uint32_t, MaxPlayers> sorted;
@@ -287,15 +282,17 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     // The screen tabs.
     auto makeTab = [this](int32_t tabY, std::string_view art)
     {
-        auto tab = MCMakeGui<MCLogToolButton>();
-        const int32_t tabResult = tab->Init(2, tabY, 0xcf, 0x12, {});
-        Assert(tabResult == 0, static_cast<uint32_t>(tabResult), " Error initing session button on session screen ");
-        tab->SetUpPicture(std::format("bn_{}.tga", art));
-        tab->SetDownPicture(std::format("bg_{}.tga", art));
-        tab->SetOverPicture(std::format("bh_{}.tga", art));
-        tab->SetEventRoutine(LScreenSwitchEventHandler);
-        AddChild(tab);
-        return tab;
+        return CreateChild<MCLogToolButton>(
+            [&](MCLogToolButton& tab)
+            {
+                const int32_t tabResult = tab.Init(2, tabY, 0xcf, 0x12, {});
+                Assert(tabResult == 0, static_cast<uint32_t>(tabResult),
+                       " Error initing session button on session screen ");
+                tab.SetUpPicture(std::format("bn_{}.tga", art));
+                tab.SetDownPicture(std::format("bg_{}.tga", art));
+                tab.SetOverPicture(std::format("bh_{}.tga", art));
+                tab.SetEventRoutine(LScreenSwitchEventHandler);
+            });
     };
 
     SessionButton = makeTab(0x10, "session");
@@ -306,17 +303,19 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     // The host's load and start buttons.
     auto makeButton = [this](int32_t buttonX, int32_t buttonY, std::string_view art, std::function<void()> exec)
     {
-        auto button = MCMakeGui<MCLogButton>();
-        const int32_t buttonResult = button->Init(buttonX, buttonY, 0x5e, 0x13, {});
-        Assert(buttonResult == 0, static_cast<uint32_t>(buttonResult), " Error initing load button on session screen ");
-        button->SetUpPicture(std::format("ses_bh_{}.tga", art));
-        button->SetOverPicture(std::format("ses_bh_{}.tga", art));
-        button->SetDownPicture(std::format("ses_bg_{}.tga", art));
-        button->Callback().SetExec(std::move(exec));
-        button->SetGrayPicture(std::format("ses_bn_{}.tga", art));
-        button->SetTransparent(true);
-        AddChild(button);
-        return button;
+        return CreateChild<MCLogButton>(
+            [&](MCLogButton& button)
+            {
+                const int32_t buttonResult = button.Init(buttonX, buttonY, 0x5e, 0x13, {});
+                Assert(buttonResult == 0, static_cast<uint32_t>(buttonResult),
+                       " Error initing load button on session screen ");
+                button.SetUpPicture(std::format("ses_bh_{}.tga", art));
+                button.SetOverPicture(std::format("ses_bh_{}.tga", art));
+                button.SetDownPicture(std::format("ses_bg_{}.tga", art));
+                button.Callback().SetExec(std::move(exec));
+                button.SetGrayPicture(std::format("ses_bn_{}.tga", art));
+                button.SetTransparent(true);
+            });
     };
 
     LoadMissionButton = makeButton(0x107, 0xd1, "map", OpenMissionLoad);
@@ -324,29 +323,33 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     StartButton->Disabled = true;
 
     // The mission description.
-    MissionText = MCMakeGui<MCLogScrollTextObject>();
-    result = MissionText->Init(0x17f, 0x35, 0xdc, 0x82, {});
-    Assert(result == 0, static_cast<uint32_t>(result), " Error initing mission description on session screen ");
-    MissionText->ScrollTab->ShowGuiWindow(false);
-    MissionText->Scrolling = false;
-    AddChild(MissionText);
+    MissionText = CreateChild<MCLogScrollTextObject>(
+        [](MCLogScrollTextObject& text)
+        {
+            const int32_t textResult = text.Init(0x17f, 0x35, 0xdc, 0x82, {});
+            Assert(textResult == 0, static_cast<uint32_t>(textResult),
+                   " Error initing mission description on session screen ");
+            text.ScrollTab->ShowGuiWindow(false);
+            text.Scrolling = false;
+        });
 
     // Each team's resource points, a number the host can type.
     auto makeRPText = [this](int32_t textX)
     {
-        auto text = MCMakeGui<MCLogTextObject>();
-        text->MCLogObject::Init(textX, 0x184, 0x42, 0xe);
-        text->Font = LgBlackFont;
-        text->BackgroundColor = 0x1f;
-        text->CursorPos = 0;
-        text->CursorPixel = 0;
-        VfxPaneWipe(text->Lport()->Frame(), 0x1f);
-        text->InitBuffer(8, MCLogInputType::None);
-        text->SetStringBuffer("0");
-        text->SetBackColor(0x10);
-        text->Font = LgWhiteFont;
-        AddChild(text);
-        return text;
+        return CreateChild<MCLogTextObject>(
+            [&](MCLogTextObject& text)
+            {
+                text.MCLogObject::Init(textX, 0x184, 0x42, 0xe);
+                text.Font = LgBlackFont;
+                text.BackgroundColor = 0x1f;
+                text.CursorPos = 0;
+                text.CursorPixel = 0;
+                VfxPaneWipe(text.Lport()->Frame(), 0x1f);
+                text.InitBuffer(8, MCLogInputType::None);
+                text.SetStringBuffer("0");
+                text.SetBackColor(0x10);
+                text.Font = LgWhiteFont;
+            });
     };
 
     Team1RPText = makeRPText(0x10f);
@@ -354,15 +357,16 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
 
     auto makeSpinner = [this](int32_t spinX, int32_t spinY, std::string_view art)
     {
-        auto spinner = MCMakeGui<MCLogSpinnerButton>();
-        spinner->Init(spinX, spinY, 9, 7, {});
-        spinner->SetUpPicture(std::format("Ses_bh_{}.tga", art));
-        spinner->SetDownPicture(std::format("Ses_bg_{}.tga", art));
-        spinner->SetGrayPicture(std::format("Ses_bn_{}.tga", art));
-        spinner->SetEventRoutine(nullptr);
-        spinner->PressSound = 0xf;
-        AddChild(spinner);
-        return spinner;
+        return CreateChild<MCLogSpinnerButton>(
+            [&](MCLogSpinnerButton& spinner)
+            {
+                spinner.Init(spinX, spinY, 9, 7, {});
+                spinner.SetUpPicture(std::format("Ses_bh_{}.tga", art));
+                spinner.SetDownPicture(std::format("Ses_bg_{}.tga", art));
+                spinner.SetGrayPicture(std::format("Ses_bn_{}.tga", art));
+                spinner.SetEventRoutine(nullptr);
+                spinner.PressSound = 0xf;
+            });
     };
 
     Team1RPUp = makeSpinner(0x102, 0x183, "rpup");
@@ -373,24 +377,25 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     // The tech base toggles (team 1: Inner Sphere, team 2: Clan).
     auto makeTechButton = [this](int32_t techX, int32_t team, int32_t techBase, bool toggledOn)
     {
-        auto techButton = MCMakeGui<MCLogToolButton>();
-        techButton->Init(techX, 0x10c, 0x27, 0xe, {});
-        const std::string_view art = techBase == -1 ? "clan" : "is";
-        techButton->SetUpPicture(std::format("ses_bh_{}.tga", art));
-        techButton->SetOverPicture(std::format("ses_bh_{}.tga", art));
-        techButton->SetDownPicture(std::format("ses_bg_{}.tga", art));
-        techButton->Group = team;
-        techButton->Value = techBase;
+        return CreateChild<MCLogToolButton>(
+            [&](MCLogToolButton& techButton)
+            {
+                techButton.Init(techX, 0x10c, 0x27, 0xe, {});
+                const std::string_view art = techBase == -1 ? "clan" : "is";
+                techButton.SetUpPicture(std::format("ses_bh_{}.tga", art));
+                techButton.SetOverPicture(std::format("ses_bh_{}.tga", art));
+                techButton.SetDownPicture(std::format("ses_bg_{}.tga", art));
+                techButton.Group = team;
+                techButton.Value = techBase;
 
-        if (toggledOn)
-        {
-            techButton->Toggled = true;
-        }
+                if (toggledOn)
+                {
+                    techButton.Toggled = true;
+                }
 
-        techButton->SetTransparent(true);
-        techButton->PressSound = 0xf;
-        AddChild(techButton);
-        return techButton;
+                techButton.SetTransparent(true);
+                techButton.PressSound = 0xf;
+            });
     };
 
     Team1TechBase = 1;
@@ -407,74 +412,44 @@ auto MCSessionScreen::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     // The six name slots, each with its player number picture.
     for (size_t slot = 0; slot < PlayerNames.size(); ++slot)
     {
-        auto& nameObject = PlayerNames[slot];
-        nameObject = MCMakeGui<MCPlayerNameObject>();
-        nameObject->Init(0xb, UnassignedTop, 0xa0, 0x10, {});
-        AddChild(nameObject);
-        nameObject->MoveTo(0xb, UnassignedTop + static_cast<int32_t>(slot) * UnassignedRow, false);
-        nameObject->ShowGuiWindow(false);
-        nameObject->SetTransparent(true);
+        PlayerNames[slot] = CreateChild<MCPlayerNameObject>([](MCPlayerNameObject& made)
+                                                            { made.Init(0xb, UnassignedTop, 0xa0, 0x10, {}); });
+        MCPlayerNameObject& nameObject = *PlayerNames[slot];
+        nameObject.MoveTo(0xb, UnassignedTop + static_cast<int32_t>(slot) * UnassignedRow, false);
+        nameObject.ShowGuiWindow(false);
+        nameObject.SetTransparent(true);
         // The original wiped the name's picture to the screen's background colour and pasted the number there; the
         // name draws them each frame.
-        nameObject->NumberBack = BackgroundColor;
-        nameObject->NumberArt = LogArt(std::format("ses_p{}.tga", slot + 1));
+        nameObject.NumberBack = BackgroundColor;
+        nameObject.NumberArt = LogArt(std::format("ses_p{}.tga", slot + 1));
     }
 
     // Port-only: MATCH OPTIONS, the second tab, its list in the chat window's place.
-    MatchOptionsList = MakeMatchOptionsList();
-    AddChild(MatchOptionsList);
+    MatchOptionsList = AddMatchOptionsList(*this);
     MatchTabs = {MakeMatchTabs(MCSessionTab::Chat), MakeMatchTabs(MCSessionTab::Options)};
     FrontTab = MCSessionTab::Chat;
 
     // Port-only (the personal build): a lobby's game is offered the update here.
     if (LaunchedFromLobby && MCUpdater::Available())
     {
-        UpdateLine = MakeUpdateLine(MCGenericScreen::PaletteFromArt(BackgroundArt));
-        UpdateLine->Init(UpdateLineLeft, UpdateLineTop, UpdateLineWidth, UpdateLineHeight);
-        UpdateLine->SetTransparent(true);
-        UpdateLine->ShowGuiWindow(true);
-        AddChild(UpdateLine);
+        UpdateLine = AddUpdateLine(*this, MCGenericScreen::PaletteFromArt(BackgroundArt), UpdateLineLeft, UpdateLineTop,
+                                   UpdateLineWidth, UpdateLineHeight);
     }
 
     SetBackground(BackgroundArt);
-    ScreenWindow()->AddChild(weak_from_this());
     ShowGuiWindow(false);
     NumUnassigned = 0;
     return 0;
 }
 
-auto MCSessionScreen::Destroy() -> void
+auto MCSessionScreen::OnDestroy() -> void
 {
-    SessionButton.reset();
-    ExitButton.reset();
-    LoadMissionButton.reset();
-    StartButton.reset();
-    MissionText.reset();
-    Team1RPText.reset();
-    Team2RPText.reset();
-    Team1RPUp.reset();
-    Team1RPDown.reset();
-    Team2RPUp.reset();
-    Team2RPDown.reset();
-    Team1ISButton.reset();
-    Team1ClanButton.reset();
-    Team2ISButton.reset();
-    Team2ClanButton.reset();
-
-    for (auto& nameObject : PlayerNames)
-    {
-        nameObject.reset();
-    }
-
-    MatchOptionsList.reset();
     MatchTabs = {};
-    UpdatePageLeaves(*this);
-    UpdateLine.reset();
     DropTargets.clear();
     MissionFile.clear();
     MapName.clear();
     ClearMap();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCSessionScreen::Draw() -> void
@@ -492,7 +467,7 @@ auto MCSessionScreen::Draw() -> void
     // match's options as they are now, the host's sent again when a player's rules change what the match plays.
     if (const std::shared_ptr<MCLogPort>& tabs = MatchTabs[static_cast<size_t>(FrontTab)]; tabs != nullptr)
     {
-        const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow;
+        const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat;
         const bool newChat = FrontTab == MCSessionTab::Options && chat != nullptr && chat->LinesAdded > ChatLinesSeen;
         DrawMatchTabs(frame, *tabs, FrontTab, newChat && (MCPort::Milliseconds() / ChatBlinkMs) % 2 == 0);
     }
@@ -678,11 +653,31 @@ auto MCSessionScreen::ShowTab(MCSessionTab tab) -> void
     const bool options = tab == MCSessionTab::Options;
     MatchOptionsList->ShowGuiWindow(options);
 
-    if (const std::shared_ptr<MCLogChatWindow> chat = GlobalLog()->ChatWindow; chat != nullptr)
+    if (const std::shared_ptr<MCLogChatWindow> chatWindow = GlobalLog()->ChatWindowOn(*this); chatWindow != nullptr)
     {
-        chat->ShowGuiWindow(!options);
+        chatWindow->ShowGuiWindow(!options);
+    }
+
+    if (const std::shared_ptr<MCLogChat>& chat = GlobalLog()->Chat; chat != nullptr)
+    {
         ChatLinesSeen = chat->LinesAdded;
     }
+}
+
+auto MCSessionScreen::ShowGuiWindow(bool show) -> void
+{
+    if (!show && FrontTab == MCSessionTab::Options)
+    {
+        FrontTab = MCSessionTab::Chat;
+        MatchOptionsList->ShowGuiWindow(false);
+
+        if (const std::shared_ptr<MCLogChatWindow> chatWindow = GlobalLog()->ChatWindowOn(*this); chatWindow != nullptr)
+        {
+            chatWindow->ShowGuiWindow(true);
+        }
+    }
+
+    MCLogObject::ShowGuiWindow(show);
 }
 
 auto MCSessionScreen::Activate(bool refresh) -> void
@@ -760,20 +755,13 @@ auto MCSessionScreen::Activate(bool refresh) -> void
 
     const std::array<uint32_t, MaxPlayers> ids = SortedPlayerIds(sessionIds);
 
-    if (GlobalLog()->PlayerLights.get() == nullptr)
+    if (GlobalLog()->PlayerLights == nullptr)
     {
-        GlobalLog()->PlayerLights = MCMakeGui<MCMPPlayerLights>();
-        GlobalLog()->PlayerLights->Init();
+        GlobalLog()->MakePlayerLights();
     }
 
     MCMPPlayerLights& lights = *GlobalLog()->PlayerLights;
-
-    if (!lights.Parent.expired())
-    {
-        lights.ParentObject()->RemoveChild(lights);
-    }
-
-    AddChild(lights.weak_from_this());
+    GlobalLog()->ShowLightsOn(*this, std::nullopt);
     lights.SetNumPlayers(NumPlayers);
     size_t index = 0;
 
@@ -815,32 +803,16 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     MapName.clear();
     MissionLabel.clear();
 
-    if (const std::shared_ptr<MCLogChatWindow> chatWindow = GlobalLog()->ChatWindow; chatWindow != nullptr)
+    if (const std::shared_ptr<MCLogChatWindow> chatWindow = GlobalLog()->ChatWindowOn(*this); chatWindow != nullptr)
     {
         chatWindow->MoveTo(2, 0x42, false);
         chatWindow->Resize(0x10a);
-
-        if (!chatWindow->Parent.expired())
-        {
-            chatWindow->ParentObject()->RemoveChild(*chatWindow);
-        }
-
-        AddChild(chatWindow->weak_from_this());
-        chatWindow->ShowGuiWindow(true);
+        GlobalLog()->ShowChatOn(*this);
+        GlobalLog()->ShowChat(true);
     }
 
-    if (const std::shared_ptr<MCTicker> ticker = GlobalLog()->Ticker; ticker != nullptr)
-    {
-        if (!ticker->Parent.expired())
-        {
-            ticker->ParentObject()->RemoveChild(*ticker);
-        }
-
-        AddChild(ticker->weak_from_this());
-        // The ticker paints into this screen now (what it shows is kept in the screen's chrome).
-        ticker->SetScreen(weak_from_this());
-        ticker->SetPos(3, 3);
-    }
+    // The ticker shows on this screen now.
+    GlobalLog()->ShowTickerOn(*this);
 
     GuiSystem().AddTimer(weak_from_this(), ScreenTimer, 500, 0, 0, false);
     MultiPlayer()->ChatCallback = LogisticsChatCallback;
@@ -852,7 +824,7 @@ auto MCSessionScreen::NameOf(uint32_t playerId) -> std::shared_ptr<MCPlayerNameO
     {
         if (candidate->PlayerId == playerId)
         {
-            return candidate;
+            return candidate.Lock();
         }
     }
 
@@ -1510,14 +1482,14 @@ auto MCSessionScreen::SetTeamTechBase(int8_t team, int8_t techBase) -> void
     if (team == 1)
     {
         Team1TechBase = techBase;
-        isButton = Team1ISButton;
-        clanButton = Team1ClanButton;
+        isButton = Team1ISButton.Lock();
+        clanButton = Team1ClanButton.Lock();
     }
     else if (team == 2)
     {
         Team2TechBase = techBase;
-        isButton = Team2ISButton;
-        clanButton = Team2ClanButton;
+        isButton = Team2ISButton.Lock();
+        clanButton = Team2ClanButton.Lock();
     }
     else
     {
@@ -1539,12 +1511,12 @@ auto MCSessionScreen::SetTeamControls(bool live) const -> void
     Team2RPUp->Callback().SetExec(live ? IncrementTeam2RP : nullptr);
     Team2RPDown->Callback().SetExec(live ? DecrementTeam2RP : nullptr);
 
-    for (const std::shared_ptr<MCLogSpinnerButton>& spinner : {Team1RPUp, Team1RPDown, Team2RPUp, Team2RPDown})
+    for (const MCGuiHandle<MCLogSpinnerButton>& spinner : {Team1RPUp, Team1RPDown, Team2RPUp, Team2RPDown})
     {
         spinner->Disabled = !live;
     }
 
-    for (const std::shared_ptr<MCLogToolButton>& techButton :
+    for (const MCGuiHandle<MCLogToolButton>& techButton :
          {Team1ISButton, Team1ClanButton, Team2ISButton, Team2ClanButton})
     {
         techButton->SetEventRoutine(live ? std::function<void(MCGuiObject&, MCGuiEvent&)>(TechTabRoutine) : nullptr);

@@ -16,9 +16,17 @@
 
 /// <summary>
 /// When <paramref name="expression"/> is false: reports "<paramref name="errCode"/> : message" (the original's crash
-/// reporter could then break into the debugger); the game goes on.
+/// reporter could then break into the debugger), and tells <see cref="MCAssertHook"/> when one is set; the game goes on.
 /// </summary>
-void Assert(bool expression, uint32_t errCode, std::string_view message = {}, std::string_view message2 = {});
+/// <param name="where">The call site, for <see cref="MCAssertHook"/>; callers leave it out.</param>
+void Assert(bool expression, uint32_t errCode, std::string_view message = {}, std::string_view message2 = {},
+            const std::source_location& where = std::source_location::current());
+
+/// <summary>
+/// Port-only: when set (by mc_tests), called with the report and the call site of every <see cref="Assert"/> that fails,
+/// after it is logged. It must return: an assert can fail in a destructor or halfway through a frame.
+/// </summary>
+extern std::function<void(std::string_view report, const std::source_location& where)> MCAssertHook;
 
 /// <summary>
 /// Port-only: when set (by mc_tests), <see cref="Fatal"/> only logs, with no message box to block an unattended run.

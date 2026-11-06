@@ -9,12 +9,11 @@ class MCLogSlider : public MCLogObject
 public:
     /// <summary>Loads the thumb picture (<c>prefs_02.tga</c>).</summary>
     MCLogSlider();
-    ~MCLogSlider() override;
 
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
     /// <summary>Frees the thumb picture.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Draws the track, when it has one, and the thumb at the current value.</summary>
     void Draw() override;

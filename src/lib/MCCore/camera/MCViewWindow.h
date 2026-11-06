@@ -25,7 +25,7 @@ public:
     /// <summary>aObject::init, clears the fields; depth 5.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
     /// <summary>Lets go of the world surface, then aObject::destroy.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
     /// <summary>
     /// Keeps a copy of the event; handles close (deactivates the camera), resize (the global pane), zoom (toggles
     /// the zoom) and follow-off; hands the rest to the interface when <see cref="InterfaceWindow"/> is set; a click

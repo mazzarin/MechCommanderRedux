@@ -4,9 +4,9 @@
 // (the main menu's art and the preferences' art, as the preferences panel covers its art), shown in the preferences
 // panel's place: its title at the top left, a list under it, buttons along its bottom (DONE at the right goes back).
 
+#include "gui/MCGuiRef.h"
 #include "lib/MCOptionalRef.h"
 
-class MCGenericScreen;
 class MCGuiObject;
 class MCLogGroupBox;
 class MCLogTextButton;
@@ -29,14 +29,13 @@ struct MCPageButton
 /// its bottom left and DONE, running <paramref name="done"/>, at its bottom right; <paramref name="made"/>, when given,
 /// gets the buttons made from <paramref name="buttons"/>, in their order.
 /// </summary>
-/// <returns>The page.</returns>
-MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std::span<const MCPageButton> buttons,
-                            void (*done)(),
-                            MCOptionalRef<std::vector<std::weak_ptr<MCLogTextButton>>> made = std::nullopt);
+/// <returns>The page (the screen's child).</returns>
+MCGuiHandle<MCLogGroupBox> AddPrefsPage(MCGuiObject& screen, std::string_view title,
+                                        std::span<const MCPageButton> buttons, void (*done)(),
+                                        MCOptionalRef<std::vector<MCGuiHandle<MCLogTextButton>>> made = std::nullopt);
 
 /// <summary>Adds a button showing <paramref name="label"/> to <paramref name="parent"/> at (<paramref name="left"/>, <paramref name="top"/>); a click runs <paramref name="clicked"/>.</summary>
-void AddPageButton(MCGenericScreen& screen, MCGuiObject& parent, std::string_view label, int32_t left, int32_t top,
-                   void (*clicked)());
+void AddPageButton(MCGuiObject& parent, std::string_view label, int32_t left, int32_t top, void (*clicked)());
 
 /// <summary>Shows <paramref name="page"/> in <paramref name="prefsPanel"/>'s place, or (not <paramref name="shown"/>) the preferences panel again.</summary>
 void ShowPrefsPage(const std::weak_ptr<MCGuiObject>& prefsPanel, const std::weak_ptr<MCGuiObject>& page, bool shown);

@@ -22,12 +22,11 @@ auto MCGuiStartupWindow::FreeImages() -> void
     }
 }
 
-auto MCGuiStartupWindow::Destroy() -> void
+auto MCGuiStartupWindow::OnDestroy() -> void
 {
     FreeImages();
     StaticPort.reset();
-    MCGuiObject::Destroy();
-    ScreenWindow()->RemoveChild(*this);
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiStartupWindow::DoStatic() -> void

@@ -20,12 +20,11 @@ public:
         Down,
     };
 
-    ~MCLogDialogBox() override { MCLogDialogBox::Destroy(); }
-
     /// <summary>Places the box (the <c>lspcb00</c> frame is drawn into it) and hides it.</summary>
     void Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height);
 
-    void Destroy() override;
+    /// <summary>Frees the picture and forgets the callback.</summary>
+    void OnDestroy() override;
 
     /// <summary>
     /// The first time after <see cref="Activate"/>, shows a frame with the cursor hidden (the original also made a

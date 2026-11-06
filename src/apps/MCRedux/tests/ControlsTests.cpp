@@ -236,7 +236,7 @@ TEST_CASE("controls: the CONTROLS screen names keys by what they type in the key
 
     // A font without the character (one without letters draws none) leaves the key its own name.
     const MCGuiFont blank;
-    CHECK_EQ(MCKeyBindings::KeyLabel(0x0c, &blank), "-");
+    CHECK_EQ(MCKeyBindings::KeyLabel(0x0c, blank), "-");
 
     // Keys that type no character type none in any layout.
     for (const uint16_t code : {0x0e, 0x1c, 0x1d, 0x4e, 0x4a, 0x148})

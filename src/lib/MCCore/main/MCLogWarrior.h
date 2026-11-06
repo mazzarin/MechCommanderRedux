@@ -1,9 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
 // Original source: mcx\logistics.cpp (LogWarrior).
-
-class MCPilotInventoryBlock;
 
 /// <summary>A MechWarrior in logistics: names, portrait, skills, wounds and status.</summary>
 /// <remarks>Original source: <c>logistics.cpp</c>, 300 (0x12c) bytes.</remarks>
@@ -78,6 +75,9 @@ public:
     bool Sold = false;
     bool NotMineYet = false;
     bool Ejected = false;
-    /// <summary>The row on the inventory screens.</summary>
-    MCGuiOwned<MCPilotInventoryBlock> InventoryBlock;
+    /// <summary>
+    /// The row of the pilot list the pilot is shown at (what <see cref="MCLogistics::SetPilot"/> and
+    /// <see cref="MCLogistics::ShiftPilots"/> take).
+    /// </summary>
+    int32_t ListIndex = 0;
 };

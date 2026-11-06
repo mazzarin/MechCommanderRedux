@@ -16,7 +16,7 @@ public:
     /// <summary>Like the base's <see cref="MCGuiObject::Init"/>; makes the two callbacks and wipes the port to colour 0.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
     /// <summary>Frees the pictures and the callbacks.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
     /// <summary>
     /// Draws the gray, down (while grabbed) or up picture, or wipes to the back colour; the frame first when
     /// <see cref="Framed"/>.

@@ -3,7 +3,7 @@
 #include "gui/MCGuiCallback.h"
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiTimerManager.h"
 #include "logistics/MCSmuti.h"
 #include "platform/MCBlockStore.h"
@@ -168,15 +168,21 @@ public:
                            int32_t eventData, bool useScenarioTime) const;
     void RemoveTimer(const MCGuiObject& target, int16_t id) const;
     void RemoveTimers(const MCGuiObject& target) const;
+    /// <summary>
+    /// Port: hands what refers to <paramref name="from"/> over to <paramref name="to"/>, which stands for the same thing
+    /// on another screen (a view of shared state: the chat's input line): its timers as they run, and the text focus,
+    /// without a focus event (the original had one object, which kept both as it moved).
+    /// </summary>
+    void HandOver(const MCGuiObject& from, const std::weak_ptr<MCGuiObject>& to);
     /// <summary>Sets the mouse cursor (ignored while the cursor is hidden).</summary>
     void SetCurrentCursor(MCCursorType cursor);
     void SetCursorVisible(bool show);
 
     /// <summary>
-    /// Takes <paramref name="object"/> off the screen now and deletes it when the next frame starts: for an object
-    /// whose own event handling ends it (the version box's OK button, OB-158).
+    /// Hides <paramref name="object"/> now and takes it off its parent (which destroys it) when the next frame starts:
+    /// for an object whose own event handling ends it (the version box's OK button, OB-158).
     /// </summary>
-    void Retire(MCGuiOwned<MCGuiObject> object);
+    void Retire(MCGuiHandle<MCGuiObject> object);
 
     /// <summary>
     /// PREFS "PaletteCycle" (read as an int): the water palette animates when nonzero (-1 until the prefs are read;
@@ -226,20 +232,23 @@ public:
     std::unique_ptr<MCGuiTimerManager> TimerManager;
     /// <summary>The game's systems from the end of <see cref="Start"/> to <see cref="Stop"/>.</summary>
     std::unique_ptr<MCGameSession> Session;
-    /// <summary>The movie window while a movie plays (the game waits for it).</summary>
-    MCGuiOwned<MCGuiSmackerWindow> SmackerWindow;
-    /// <summary>The window every screen is a child of (<see cref="ScreenWindow"/>).</summary>
-    MCGuiOwned<MCGuiObject> Screen;
+    /// <summary>The movie window, a child of the screen, while a movie plays (the game waits for it).</summary>
+    MCGuiHandle<MCGuiSmackerWindow> SmackerWindow;
+    /// <summary>
+    /// The window every screen is a child of (<see cref="ScreenWindow"/>): the root of the tree, the one GUI object
+    /// owned from outside it. Letting it go destroys it and every window made on it.
+    /// </summary>
+    MCGuiRef<MCGuiObject> Screen;
     /// <summary>The port of the whole screen (<see cref="ScreenPort"/>).</summary>
     std::shared_ptr<MCGuiPort> ScreenPixels;
     /// <summary>The art packet file (<c>art\art.pak</c>) the ports load numbered pictures from.</summary>
     std::unique_ptr<MCPacketFile> ArtFile;
     /// <summary>The engine font used for lines of text drawn in the world (<see cref="LineFont"/>).</summary>
     std::shared_ptr<MCFont> EngineFont;
-    /// <summary>The version box (Ctrl+Alt+V with cheats on).</summary>
-    MCGuiOwned<MCGuiMessageBox> VersionDialog;
-    /// <summary>Port: the debug console while it is open (<see cref="OpenConsole"/>).</summary>
-    MCGuiOwned<MCGuiConsole> Console;
+    /// <summary>The version box (Ctrl+Alt+V with cheats on), a child of the screen.</summary>
+    MCGuiHandle<MCGuiMessageBox> VersionDialog;
+    /// <summary>Port: the debug console, a child of the screen, while it is open (<see cref="OpenConsole"/>).</summary>
+    MCGuiHandle<MCGuiConsole> Console;
     /// <summary>The frame callback that sends the mouse's moves and clicks (<see cref="CheckMouse"/>).</summary>
     std::shared_ptr<MCGuiCallback> MouseTrackerCallback = std::make_shared<MCGuiCallback>();
 
@@ -269,8 +278,11 @@ private:
     std::array<MCRegisteredBlock, 128> _CursorShapes;
     /// <summary>The fonts the font globals share.</summary>
     std::vector<std::shared_ptr<MCGuiFont>> _Fonts;
-    /// <summary>Objects <see cref="Retire"/> took off the screen, deleted when the next frame starts.</summary>
-    std::vector<MCGuiOwned<MCGuiObject>> _Retired;
+    /// <summary>Objects <see cref="Retire"/> hid, taken off their parents when the next frame starts.</summary>
+    std::vector<MCGuiHandle<MCGuiObject>> _Retired;
+
+    /// <summary>Takes the objects <see cref="Retire"/> hid off their parents, which destroys them.</summary>
+    void CloseRetired();
 };
 
 /// <summary>

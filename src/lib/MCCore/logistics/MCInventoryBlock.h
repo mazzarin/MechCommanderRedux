@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/MCListView.h"
 #include "logistics/MCDragIcon.h"
 
 class MCGuiEvent;
@@ -10,14 +11,9 @@ class MCLogInvScreen;
 /// owns): a 0xad x 0x2b <see cref="MCLogObject"/> drawn into the inventory tab's view at row <see cref="ListIndex"/>.
 /// </summary>
 /// <remarks>Original source: <c>logistics\invblock.cpp</c> (<c>InventoryBlock</c>).</remarks>
-class MCInventoryBlock : public MCLogObject
+class MCInventoryBlock : public MCListRow
 {
 public:
-    ~MCInventoryBlock() override;
-
-    /// <summary>Takes the row out of any info box showing it; the base <see cref="MCLogObject::Destroy"/> does the rest.</summary>
-    void Destroy() override;
-
     /// <summary>Copies the blank row art (<c>Logistics::InvBlockPort</c>) into <paramref name="port"/> at this row.</summary>
     void DrawBackground(MCLogPort& port);
 
@@ -32,13 +28,7 @@ public:
     /// <c>drawBackground</c> painted into the inventory tab's picture (the tab is now drawn from its rows each frame,
     /// and <c>drawBackground</c> keeps only what it did besides painting). The base draws the blank row art.
     /// </summary>
-    virtual void DrawRow(MCLogPort& port, int32_t top);
-
-    /// <summary>
-    /// Port: draws the row's details into the info box under the inventory pane (see <see cref="MCInvInfoBox"/>); a
-    /// component's are kept in the box itself.
-    /// </summary>
-    virtual void DrawInfo(MCLogPort& port) {}
+    void DrawRow(MCLogPort& port, int32_t top) override;
 
     /// <summary>
     /// Port: draws the drag icon's picture into <paramref name="surface"/> (0x20 square): the row's square at (2, 1)
@@ -48,8 +38,11 @@ public:
 
     /// <summary>The row is usable; otherwise <c>Draw</c> calls <see cref="DrawDisabled"/>.</summary>
     bool Enabled = false;
-    /// <summary>The row of the list this block is drawn in (its y is <c>ListIndex * height</c>).</summary>
-    int32_t ListIndex = 0;
+    /// <summary>
+    /// The row of the list this block is drawn in (its y is <c>ListIndex * height</c>): its unit's, pilot's or item's
+    /// <c>ListIndex</c> (-1 once that is gone).
+    /// </summary>
+    virtual int32_t ListIndex() const = 0;
 
     /// <summary>A sale's price: half the value, except in a multiplayer or solo game.</summary>
     static int32_t SalePrice(int32_t value);

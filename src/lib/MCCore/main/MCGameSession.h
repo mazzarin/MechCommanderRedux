@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiCallback.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCAblDebuggerWindow;
 class MCScrollingTextWindow;
@@ -30,15 +30,15 @@ public:
     MCGameSession& operator=(const MCGameSession&) = delete;
 
     /// <summary>The ABL debugger's window, when SYSTEM.CFG enables the debugger.</summary>
-    std::shared_ptr<MCAblDebuggerWindow> DebuggerWindow() const { return _DebuggerWindow; }
+    std::shared_ptr<MCAblDebuggerWindow> DebuggerWindow() const;
 
     /// <summary>The palette cycling callback (runs every frame).</summary>
     const MCGuiCallback& ColorCallback() const { return *_ColorCallback; }
 
 private:
     /// <summary>The game system's text window (also <c>GameSystemWindow</c>), when SYSTEM.CFG asks for it.</summary>
-    MCGuiOwned<MCScrollingTextWindow> _GameSystemWindow;
-    MCGuiOwned<MCAblDebuggerWindow> _DebuggerWindow;
+    MCGuiHandle<MCScrollingTextWindow> _GameSystemWindow;
+    MCGuiHandle<MCAblDebuggerWindow> _DebuggerWindow;
     std::shared_ptr<MCGuiCallback> _ColorCallback = std::make_shared<MCGuiCallback>();
 };
 

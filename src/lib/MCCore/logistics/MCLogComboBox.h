@@ -35,7 +35,7 @@ public:
     /// <summary>The rows the list shows at most; longer lists scroll.</summary>
     static constexpr int32_t MaxRows = 8;
 
-    /// <summary>Calls <see cref="Destroy"/>.</summary>
+    /// <summary>Destroys the object if nothing did (its cleanup lets go of the GUI system's grab).</summary>
     ~MCLogComboBox() override;
 
     /// <summary>
@@ -47,7 +47,7 @@ public:
               std::function<void(int32_t value)> changed);
 
     /// <summary>Closes the list (letting go of the grab) before the object goes.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Draws the field and, while open, the list, from the state.</summary>
     void Draw() override;

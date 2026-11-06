@@ -19,33 +19,35 @@ namespace
     constexpr int32_t TextX = 0x14;
 }
 
-MCLogChatInput::~MCLogChatInput()
-{
-    MCLogChatInput::Destroy();
-}
-
 auto MCLogChatInput::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view newText)
     -> int32_t
 {
     int32_t result = MCLogObject::Init(xPos, yPos, width, height);
     Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init chatsend window");
-    TeamButton = MCMakeGui<MCLogToolButton>();
-    result = TeamButton->Init(1, 1, 0xc, 0x1a, {});
-    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init team button for chatsend window");
-    // A picture that can't be loaded is fatal.
-    TeamButton->SetOverPicture("lsbdw06.tga");
-    TeamButton->SetDownPicture("lsbdw07.tga");
-    TeamButton->SetUpPicture("lsbdw05.tga");
-    TeamButton->Toggled = false;
-    TeamButton->SetEventRoutine(ChatTeamButtonEventHandler);
-    AddChild(TeamButton);
-    CursorX = 0x15;
+    TeamButton = CreateChild<MCLogToolButton>(
+        [](MCLogToolButton& button)
+        {
+            const int32_t buttonResult = button.Init(1, 1, 0xc, 0x1a, {});
+            Assert(buttonResult == 0, static_cast<uint32_t>(buttonResult),
+                   " Couldn't init team button for chatsend window");
+            // A picture that can't be loaded is fatal.
+            button.SetOverPicture("lsbdw06.tga");
+            button.SetDownPicture("lsbdw07.tga");
+            button.SetUpPicture("lsbdw05.tga");
+            button.Toggled = false;
+            button.SetEventRoutine(ChatTeamButtonEventHandler);
+        });
 
-    if (!newText.empty())
+    if (const std::shared_ptr<MCLogChat> chat = Chat(); chat != nullptr)
     {
-        // Original behaviour: the starting text isn't counted in TextLength (nothing passes one).
-        std::string_view start = newText.substr(0, MaxLength);
-        std::ranges::copy(start, Text.begin());
+        chat->CursorX = 0x15;
+
+        if (!newText.empty())
+        {
+            // Original behaviour: the starting text isn't counted in TextLength (nothing passes one).
+            std::string_view start = newText.substr(0, MCLogChat::MaxLength);
+            std::ranges::copy(start, chat->Text.begin());
+        }
     }
 
     Font = WhiteFont;
@@ -54,26 +56,18 @@ auto MCLogChatInput::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t hei
     return 0;
 }
 
-auto MCLogChatInput::Destroy() -> void
-{
-    TeamButton.reset();
-    MCLogObject::Destroy();
-}
-
-auto MCLogChatInput::ShownText() const -> std::string_view
-{
-    return std::string_view(Text.c_str());
-}
-
-auto MCLogChatInput::HideText() -> void
-{
-    Text[0] = 0;
-}
-
 auto MCLogChatInput::Draw() -> void
 {
     VfxPaneWipe(_Port->Frame(), BackgroundColor);
-    std::string_view line = ShownText();
+    const std::shared_ptr<MCLogChat> chat = Chat();
+
+    if (chat == nullptr)
+    {
+        MCLogObject::Draw();
+        return;
+    }
+
+    std::string_view line = chat->ShownText();
     int32_t lineY = 1;
 
     if (!line.empty())
@@ -93,14 +87,17 @@ auto MCLogChatInput::Draw() -> void
     }
 
     // The caret, which the original's display drew into the picture each frame: a vertical line a text line high.
-    const int32_t bottom = Font->Height() + 3 + CursorY;
-    VfxLineDraw(_Port->Frame(), CursorX, CursorY, CursorX, bottom, CursorOn ? 0x10 : 0x1f);
+    const int32_t bottom = Font->Height() + 3 + chat->CursorY;
+    VfxLineDraw(_Port->Frame(), chat->CursorX, chat->CursorY, chat->CursorX, bottom, chat->CursorOn ? 0x10 : 0x1f);
     MCLogObject::Draw();
 }
 
 auto MCLogChatInput::RestartBlink() -> void
 {
-    CursorOn = true;
+    if (const std::shared_ptr<MCLogChat> chat = Chat(); chat != nullptr)
+    {
+        chat->CursorOn = true;
+    }
 }
 
 auto MCLogChatInput::Display() -> void
@@ -110,6 +107,19 @@ auto MCLogChatInput::Display() -> void
 
 auto MCLogChatInput::HandleEvent(MCGuiEvent& event) -> void
 {
+    const std::shared_ptr<MCLogChat> chat = Chat();
+
+    if (chat == nullptr)
+    {
+        MCGuiObject::HandleEvent(event);
+        return;
+    }
+
+    // The team button's events come here after it toggled.
+    chat->TeamOnly = TeamButton->Toggled;
+    std::string& text = chat->Text;
+    int32_t& textLength = chat->TextLength;
+
     switch (event.Type)
     {
         case 1:
@@ -126,44 +136,44 @@ auto MCLogChatInput::HandleEvent(MCGuiEvent& event) -> void
 
             if (key == '\b')
             {
-                if (TextLength != 0)
+                if (textLength != 0)
                 {
-                    Text[--TextLength] = 0;
-                    SetCursorPos(TextLength);
+                    text[--textLength] = 0;
+                    SetCursorPos(textLength);
                     RestartBlink();
                 }
             }
             else if (key == '\r')
             {
-                if (MultiPlayer() != nullptr && TextLength != 0)
+                if (MultiPlayer() != nullptr && textLength != 0)
                 {
-                    const auto chatWindow = std::static_pointer_cast<MCLogChatWindow>(ParentObject());
                     int32_t color;
 
-                    if (!TeamButton->Toggled)
+                    if (!chat->TeamOnly)
                     {
-                        MultiPlayer()->SendChat(0, Text.data());
+                        MultiPlayer()->SendChat(0, text.data());
                         color = 6;
                     }
                     else
                     {
-                        MultiPlayer()->SendChat(MultiPlayer()->HomeTeamGroupID, Text.data());
+                        MultiPlayer()->SendChat(MultiPlayer()->HomeTeamGroupID, text.data());
                         color = 4;
                     }
 
-                    chatWindow->ProcessChatString(MultiPlayer()->SessionManager->MyPlayer()->Id, Text.data(), color);
+                    chat->ProcessChatString(MultiPlayer()->SessionManager->MyPlayer()->Id, text.data(), color);
                 }
 
-                std::ranges::fill(Text, '\0');
-                TextLength = 0;
+                std::ranges::fill(text, '\0');
+                textLength = 0;
                 SetCursorPos(0);
                 RestartBlink();
             }
-            else if (TextLength < MaxLength && ((key > 0x1f && key < 0x7f) || (key > 0xbe && key < 0xfe)) && key != '%')
+            else if (textLength < MCLogChat::MaxLength && ((key > 0x1f && key < 0x7f) || (key > 0xbe && key < 0xfe)) &&
+                     key != '%')
             {
                 // '%' is the chat formatter's code character.
-                Text[TextLength++] = static_cast<char>(key);
-                SetCursorPos(TextLength);
+                text[textLength++] = static_cast<char>(key);
+                SetCursorPos(textLength);
                 RestartBlink();
             }
             break;
@@ -173,7 +183,7 @@ auto MCLogChatInput::HandleEvent(MCGuiEvent& event) -> void
         {
             if (event.Data == BlinkTimer)
             {
-                CursorOn = !CursorOn;
+                chat->CursorOn = !chat->CursorOn;
             }
             break;
         }
@@ -198,10 +208,17 @@ auto MCLogChatInput::HandleEvent(MCGuiEvent& event) -> void
 
 auto MCLogChatInput::SetCursorPos(int32_t position) -> void
 {
+    const std::shared_ptr<MCLogChat> chat = Chat();
+
+    if (chat == nullptr)
+    {
+        return;
+    }
+
     // The text up to position, as far as it is shown.
-    std::string_view line = ShownText().substr(0, static_cast<size_t>(position));
-    CursorX = TextX;
-    CursorY = 0;
+    std::string_view line = chat->ShownText().substr(0, static_cast<size_t>(position));
+    chat->CursorX = TextX;
+    chat->CursorY = 0;
 
     if (!line.empty())
     {
@@ -211,9 +228,9 @@ auto MCLogChatInput::SetCursorPos(int32_t position) -> void
         {
             line.remove_prefix(static_cast<size_t>(fits));
             fits = Font->CharactersToWidth(line, Width() - TextX, false);
-            CursorY += Font->Height() + 3;
+            chat->CursorY += Font->Height() + 3;
         }
 
-        CursorX = Font->Width(line) + TextX + 1;
+        chat->CursorX = Font->Width(line) + TextX + 1;
     }
 }

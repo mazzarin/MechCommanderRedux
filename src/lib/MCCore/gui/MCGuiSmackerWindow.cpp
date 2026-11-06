@@ -151,7 +151,7 @@ auto MCGuiSmackerWindow::DropHdMovie(MCTexture& texture, std::string_view why) -
     MCRenderer::ShowHdPicture(texture, nullptr, 0, 0);
 }
 
-auto MCGuiSmackerWindow::Destroy() -> void
+auto MCGuiSmackerWindow::OnDestroy() -> void
 {
     Movie.reset();
     HdMovie.reset();
@@ -164,15 +164,14 @@ auto MCGuiSmackerWindow::Destroy() -> void
 
     MoviePane.reset();
     MovieWindow.reset();
-    MCGuiObject::Destroy();
-    ScreenWindow()->RemoveChild(*this);
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiSmackerWindow::EndSmackerMovie() -> void
 {
     Movie.reset();
     MovieOver = 1;
-    Destroy();
+    Close();
 }
 
 auto MCGuiSmackerWindow::CheckSmackerPalette() -> void

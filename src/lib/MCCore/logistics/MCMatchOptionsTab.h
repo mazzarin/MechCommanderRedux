@@ -8,6 +8,9 @@
 #include <string_view>
 #include <vector>
 
+#include "gui/MCGuiRef.h"
+
+class MCGuiObject;
 class MCLogOptionList;
 class MCLogPort;
 struct MCPane;
@@ -47,10 +50,10 @@ void DrawMatchTabs(const MCPane& target, const MCLogPort& tabs, MCSessionTab fro
 std::optional<MCSessionTab> MatchTabAt(int32_t xPos, int32_t yPos);
 
 /// <summary>
-/// Makes the MATCH OPTIONS list where the session screen's chat window is (hidden), under PLAY: WEATHER (its play
-/// too, mission/MCWeatherPlay.h), TIME OF DAY (its sight too) and BRAKING.
+/// Adds the MATCH OPTIONS list to <paramref name="screen"/> where the session screen's chat window is (hidden), under
+/// PLAY: WEATHER (its play too, mission/MCWeatherPlay.h), TIME OF DAY (its sight too) and BRAKING.
 /// </summary>
-std::shared_ptr<MCLogOptionList> MakeMatchOptionsList();
+MCGuiHandle<MCLogOptionList> AddMatchOptionsList(MCGuiObject& screen);
 
 /// <summary>
 /// Shows the match's options in <paramref name="list"/>: what the match plays now (MultiPlayer()->Played), the list

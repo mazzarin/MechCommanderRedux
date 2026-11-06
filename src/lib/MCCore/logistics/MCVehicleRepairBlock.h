@@ -1,21 +1,21 @@
 #pragma once
 
+#include "gui/MCListView.h"
 #include "logistics/MCLogObject.h"
 
 class MCGuiEvent;
 class MCLogVehicle;
 
 /// <summary>A vehicle's panel on the repair screen (vehicles can't be refitted: mostly a status bar).</summary>
-/// <remarks>Original source: <c>logistics\mrblock.cpp</c> (<c>VehicleRepairBlock</c>).</remarks>
-class MCVehicleRepairBlock : public MCLogObject
+/// <remarks>
+/// Original source: <c>logistics\mrblock.cpp</c> (<c>VehicleRepairBlock</c>). A row of the repair screen's force list
+/// (<see cref="MCRepairScreen::ShowForce"/>), or a panel of the briefing box (outside any list).
+/// </remarks>
+class MCVehicleRepairBlock : public MCListRow
 {
 public:
-    ~MCVehicleRepairBlock() override;
-
+    /// <summary>Shows <paramref name="logVehicle"/>.</summary>
     void Init(std::shared_ptr<MCLogVehicle> logVehicle);
-
-    /// <summary>Nothing of its own (the inlined <see cref="MCLogObject::Destroy"/>).</summary>
-    void Destroy() override;
 
     /// <summary>Selecting the vehicle and dragging it back to the inventory.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -27,7 +27,7 @@ public:
     void DrawBackground(int32_t row, MCOptionalRef<MCLogPort> port);
 
     /// <summary>Port: as <see cref="MCMechRepairBlock::DrawRow"/>.</summary>
-    void DrawRow(MCLogPort& port, int32_t top);
+    void DrawRow(MCLogPort& port, int32_t top) override;
 
     /// <summary>
     /// Port: draws the picked-up vehicle's drag icon into <paramref name="surface"/> (0x1e square): its body diagram
@@ -38,8 +38,8 @@ public:
     /// <summary>Draws the status bar into <paramref name="port"/> at <paramref name="xPos"/>.</summary>
     void SetBar(MCLogPort& port, int32_t xPos) const;
 
-    /// <summary>The force row the block stands for (after the mechs).</summary>
-    int32_t SlotIndex = 0;
+    /// <summary>The vehicle's force row, after the mechs (<see cref="MCLogPart::SlotIndex"/>; 0 once it is gone).</summary>
+    int32_t SlotIndex() const;
     /// <summary>The vehicle (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogVehicle> Vehicle() const { return _Vehicle.lock(); }
 

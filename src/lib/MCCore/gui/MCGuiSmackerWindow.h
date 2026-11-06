@@ -25,9 +25,11 @@ public:
     /// </summary>
     /// <returns>0, or <see cref="NoPane"/> when the window has no area.</returns>
     int32_t StartSmackerMovie(std::unique_ptr<MCSmackTag> movie, bool fullScreen);
-    /// <summary>Closes the movie, frees the pane and takes the window off the screen.</summary>
-    void Destroy() override;
-    /// <summary>Closes the movie, sets <see cref="MovieOver"/> and destroys the window.</summary>
+    /// <summary>Closes the movie and frees the pane.</summary>
+    void OnDestroy() override;
+    /// <summary>
+    /// Closes the movie, sets <see cref="MovieOver"/> and takes the window off its parent, which destroys it.
+    /// </summary>
     virtual void EndSmackerMovie();
     void CheckSmackerPalette() override;
     /// <summary>Decodes the next frame into <see cref="MoviePane"/> and shows it; the movie's end ends it.</summary>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "camera/MCViewWindow.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "lib/MCOptionalRef.h"
 #include "lib/MCVector2D.h"
 #include "lib/MCVector3D.h"
@@ -103,7 +103,7 @@ public:
     void SetViewSize(float width, float height);
 
     /// <summary>The pane the camera renders into (null for a camera with no window).</summary>
-    std::shared_ptr<MCViewWindow> View() const { return _View; }
+    std::shared_ptr<MCViewWindow> View() const { return _View.Lock(); }
 
     /// <summary>"ProjectionAngle" in degrees (30 by default).</summary>
     float ProjectionAngle = 30.0f;
@@ -180,10 +180,17 @@ public:
     float DistanceThreshold = 10.0f;
 
 private:
-    /// <summary>The pane it renders into (destroyed by <see cref="MCGuiDestroy"/>).</summary>
-    std::shared_ptr<MCViewWindow> _View;
-    /// <summary>The titled window holding the view, for a camera not in the main holder.</summary>
-    MCGuiOwned<MCGuiEmptyTitleWindow> _TitleWindow;
+    /// <summary>The pane it renders into: a child of its title window or of the main window, closed with the camera.</summary>
+    MCGuiHandle<MCViewWindow> _View;
+    /// <summary>
+    /// The titled window holding the view, for a camera not in the main window: a child of the screen, closed with the
+    /// camera.
+    /// </summary>
+    MCGuiHandle<MCGuiEmptyTitleWindow> _TitleWindow;
+    /// <summary>Whether the view is a pane of a window (the original's view had a parent then).</summary>
+    bool _ViewOnWindow = false;
+    /// <summary>Whether this camera's activation has shown its window (the original added it to the screen then).</summary>
+    bool _WindowShown = false;
 };
 
 /// <summary>

@@ -112,18 +112,28 @@ auto MCGuiScrollTextObject::Init(int32_t xPos, int32_t yPos, int32_t width, int3
         return result;
     }
 
-    ScrollTab = MCMakeGui<MCGuiObject>();
-    ScrollTab->SetDrawsLive();
+    auto tab = TryCreateChild<MCGuiObject>(
+        [&](MCGuiObject& made)
+        {
+            made.SetDrawsLive();
 
-    if (const int32_t result = ScrollTab->Init(0, 0, 9, height - 2 * TrackInset, {}); result != 0)
+            if (const int32_t result = made.Init(0, 0, 9, height - 2 * TrackInset, {}); result != 0)
+            {
+                return result;
+            }
+
+            made.MoveTo(Width() + 2, TrackInset);
+            made.SetDepth(100);
+            return 0;
+        });
+
+    if (!tab)
     {
         InitFailed = true;
-        return result;
+        return tab.error();
     }
 
-    ScrollTab->MoveTo(Width() + 2, TrackInset);
-    ScrollTab->SetDepth(100);
-    AddChild(ScrollTab);
+    ScrollTab = *tab;
     ScrollTab->ShowGuiWindow(true);
     ScrollTab->SetEventRoutine(ScrollTabEventHandler);
     ScrollTab->SetPaintRoutine(PaintScrollTab);
@@ -144,11 +154,10 @@ auto MCGuiScrollTextObject::Init(int32_t xPos, int32_t yPos, int32_t width, int3
     return 0;
 }
 
-auto MCGuiScrollTextObject::Destroy() -> void
+auto MCGuiScrollTextObject::OnDestroy() -> void
 {
-    ScrollTab.reset();
     TextBuffer = {};
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCGuiScrollTextObject::LineHeight() const -> int32_t
@@ -277,6 +286,19 @@ auto MCGuiScrollTextObject::Resize(int32_t newWidth, int32_t newHeight) -> void
     PositionScrollTab();
 }
 
+auto MCGuiScrollTextObject::CopyTextFrom(const MCGuiScrollTextObject& other) -> void
+{
+    FontIndex = other.FontIndex;
+    TabStop = other.TabStop;
+    TextBuffer = other.TextBuffer;
+    NumLines = other.NumLines;
+    SectionColors = other.SectionColors;
+    SectionStarts = other.SectionStarts;
+    FirstPixel = other.FirstPixel;
+    Port().Resize(Port().Width(), std::max(LineHeight() * NumLines, other.DisplayPort->Height()));
+    PositionScrollTab();
+}
+
 auto MCGuiScrollTextObject::ResetPortSize() -> void
 {
     // The port only grows.
@@ -364,7 +386,7 @@ auto MCGuiScrollTextObject::CalcFirstPixel(int32_t thumbY) -> void
 
 auto MCGuiScrollTextObject::PositionScrollTab() -> void
 {
-    if (GuiSystem().GrabbedObject().get() == ScrollTab.get())
+    if (GuiSystem().GrabbedObject().get() == ScrollTab.Lock().get())
     {
         return;
     }

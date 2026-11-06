@@ -21,7 +21,6 @@
 #include "logistics/MCLogScrollTextObject.h"
 #include "logistics/MCLogTextObject.h"
 #include "logistics/MCMainMenu.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCPreferencesMenu.h"
 #include "logistics/MCLogChatInput.h"
 #include "logistics/MCMechPurchaseBlock.h"
@@ -39,6 +38,8 @@
 #include "logistics/MCSplashScreen.h"
 #include "logistics/MCTicker.h"
 #include "logistics/MCUpdatePage.h"
+#include "logistics/MCTickerLine.h"
+#include "main/MCMPPlayerLightsView.h"
 #include "logistics/MCUnitLimits.h"
 #include "linkup/MCSessionManager.h"
 #include "main/MCLogisticsShared.h"
@@ -142,15 +143,29 @@ namespace
         return ReadShapeFile(file, sizeError);
     }
 
-    /// <summary>Makes <paramref name="screen"/>'s elements from screen ini <paramref name="name"/><c>.fit</c> under <c>ArtPath</c>.</summary>
-    void InitScreen(MCSplashScreen& screen, std::string_view name, std::string_view missingError,
-                    std::string_view startError)
+    /// <summary>
+    /// Makes <paramref name="screen"/> on the screen window, with its elements from screen ini
+    /// <paramref name="name"/><c>.fit</c> under <c>ArtPath</c>; <paramref name="then"/> runs after, the file still
+    /// open.
+    /// </summary>
+    void MakeScreen(MCGuiHandle<MCSplashScreen>& screen, std::string_view name, std::string_view missingError,
+                    std::string_view startError, const std::function<void(MCFitIniFile& file)>& then = nullptr)
     {
         MCFitIniFile file;
-        int32_t result = file.Open(GamePath(ArtPath, name, ".fit"));
-        Assert(result == 0, static_cast<uint32_t>(result), missingError);
-        result = screen.Init(file);
-        Assert(result == 0, static_cast<uint32_t>(result), startError);
+        const int32_t opened = file.Open(GamePath(ArtPath, name, ".fit"));
+        Assert(opened == 0, static_cast<uint32_t>(opened), missingError);
+        screen = ScreenWindow()->CreateChild<MCSplashScreen>(
+            [&](MCSplashScreen& made)
+            {
+                screen = made.WeakAs<MCSplashScreen>();
+                const int32_t result = made.Init(file);
+                Assert(result == 0, static_cast<uint32_t>(result), startError);
+            });
+
+        if (then)
+        {
+            then(file);
+        }
     }
 
     /// <summary>Sets up a multiplayer screen's text field: the white font and the background.</summary>
@@ -209,33 +224,38 @@ auto MCLogistics::Start() -> void
     InventoryIconPorts[1] = NewArtPort("logart\\lsciip.tga");
     InventoryIconPorts[2] = NewArtPort("logart\\lsciic.tga");
     InventoryIconPorts[3] = NewArtPort("logart\\lsciiv.tga");
-    LoadScreen = MCMakeGui<MCSplashScreen>();
-    SaveScreen = MCMakeGui<MCSplashScreen>();
 
     if (InDemo == 0)
     {
-        ChatWindow = MCMakeGui<MCLogChatWindow>();
-        ChatWindow->Init(7, 0x44, 0xbf, 0x101, 100000);
-        ChatWindow->ShowGuiWindow(false);
-        MultiplayerScreen = MCMakeGui<MCSplashScreen>();
-        SerialScreen = MCMakeGui<MCSplashScreen>();
-        LanScreen = MCMakeGui<MCSplashScreen>();
-        ModemScreen = MCMakeGui<MCSplashScreen>();
-        SessionScreen = MCMakeGui<MCSessionScreen>();
-        ConnectScreen = MCMakeGui<MCSplashScreen>();
-        PrefScreen = MCMakeGui<MCSplashScreen>();
+        // The chat; its windows are made with the screens that show it.
+        Chat = std::make_shared<MCLogChat>(100000);
+        ChatShown = false;
     }
 
-    MainScreen = MCMakeGui<MCSplashScreen>();
-    RepairScreen = MCMakeGui<MCRepairScreen>();
-    RepairScreen->Init();
-    BriefingScreen = MCMakeGui<MCBriefingScreen>();
-    BriefingScreen->Init();
-    PurchaseScreen = MCMakeGui<MCPurchaseScreen>();
-    PurchaseScreen->Init();
-    SetCurrentScreen(MainScreen);
+    // The screens are the screen window's children for good, hidden until shown; each is made where the original
+    // initialised it (and so added it to the screen), so they keep the original's order there.
+    // (Each handle is stored before the screen's Init, as the original stored the pointer first.)
+    ScreenWindow()->CreateChild<MCRepairScreen>(
+        [this](MCRepairScreen& screen)
+        {
+            RepairScreen = screen.WeakAs<MCRepairScreen>();
+            screen.Init();
+        });
+    ScreenWindow()->CreateChild<MCBriefingScreen>(
+        [this](MCBriefingScreen& screen)
+        {
+            BriefingScreen = screen.WeakAs<MCBriefingScreen>();
+            screen.Init();
+        });
+    ScreenWindow()->CreateChild<MCPurchaseScreen>(
+        [this](MCPurchaseScreen& screen)
+        {
+            PurchaseScreen = screen.WeakAs<MCPurchaseScreen>();
+            screen.Init();
+        });
     LogisticsState = 1;
-    InitScreen(*MainScreen, "mainScreen", " No Splash Screen FIT File ", " Unable to start splash screen ");
+    MakeScreen(MainScreen, "mainScreen", " No Splash Screen FIT File ", " Unable to start splash screen ");
+    SetCurrentScreen(MainScreen);
 
     // Port (personal): a build that updates itself has UPDATE in ORIGINAL CINEMA's place, and looks for a newer
     // version once a run (main/MCUpdater.h).
@@ -252,12 +272,12 @@ auto MCLogistics::Start() -> void
     if (InDemo == 0)
     {
         const std::optional<std::string> userName = MyGetUserName();
-        InitScreen(*MultiplayerScreen, "mpscreen", " No Connection Screen FIT File ",
+        MakeScreen(MultiplayerScreen, "mpscreen", " No Connection Screen FIT File ",
                    " Unable to start connect screen ");
 
         {
+            MakeScreen(LanScreen, "lanscreen", " No LAN Screen FIT File ", " Unable to start lanScreen screen ");
             MCSplashScreen& screen = *LanScreen;
-            InitScreen(screen, "lanscreen", " No LAN Screen FIT File ", " Unable to start lanScreen screen ");
             screen.SetEventRoutine(LanScreenHandleEvent);
             auto players = ScreenElement<MCLogScrollTextObject>(screen, 3);
             players->SetEventRoutine(PlayerListHandleEvent);
@@ -288,8 +308,8 @@ auto MCLogistics::Start() -> void
         }
 
         {
+            MakeScreen(ModemScreen, "modem", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
             MCSplashScreen& screen = *ModemScreen;
-            InitScreen(screen, "modem", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
             screen.SetEventRoutine(ModemScreenHandleEvent);
             const std::shared_ptr<MCLogTextObject> nameField = SetUpTextField(screen, 4);
             const std::shared_ptr<MCLogTextObject> phoneField = SetUpTextField(screen, 5);
@@ -306,8 +326,8 @@ auto MCLogistics::Start() -> void
 
         {
             // The serial screen reuses the modem screen's messages.
+            MakeScreen(SerialScreen, "serial", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
             MCSplashScreen& screen = *SerialScreen;
-            InitScreen(screen, "serial", " No modem Screen FIT File ", " Unable to start modemScreen screen ");
             const std::shared_ptr<MCLogTextObject> nameField = SetUpTextField(screen, 4);
             nameField->InitBuffer(0x10, MCLogInputType::Text);
             nameField->SetStringBuffer(userName.value_or("Player"));
@@ -319,9 +339,9 @@ auto MCLogistics::Start() -> void
         }
 
         {
-            MCSplashScreen& screen = *ConnectScreen;
-            InitScreen(screen, "readyroom", " No Ready Room Screen FIT File ",
+            MakeScreen(ConnectScreen, "readyroom", " No Ready Room Screen FIT File ",
                        " Unable to start readyRoomScreen screen ");
+            MCSplashScreen& screen = *ConnectScreen;
             auto players = ScreenElement<MCLogScrollTextObject>(screen, 3);
             players->SetEventRoutine(ReadyRoomPlayerListHandleEvent);
             players->FontIndex = 1;
@@ -329,19 +349,27 @@ auto MCLogistics::Start() -> void
         }
     }
 
-    InitScreen(*LoadScreen, "loadScreen", " No Load Screen FIT File ", " Unable to start load screen ");
+    MakeScreen(LoadScreen, "loadScreen", " No Load Screen FIT File ", " Unable to start load screen ");
     LoadScreen->SetEventRoutine(LoadSaveScreenHandleEvent);
-    InitScreen(*SaveScreen, "saveScreen", " No Save Screen FIT File ", " Unable to start save screen ");
+    MakeScreen(SaveScreen, "saveScreen", " No Save Screen FIT File ", " Unable to start save screen ");
     SaveScreen->SetEventRoutine(LoadSaveScreenHandleEvent);
 
     if (InDemo == 0)
     {
         // The preferences screen reuses the save screen's messages.
-        InitScreen(*PrefScreen, "prefScreen", " No Save Screen FIT File ", " Unable to start save screen ");
-        PrefScreen->SetEventRoutine(PrefScreenHandleEvent);
-        // Port: the difficulty and renderer choices as drop-downs.
-        AddPreferencesPanel(*PrefScreen);
-        SessionScreen->Init(0, 0, 0x280, 0x1e0, {});
+        MakeScreen(PrefScreen, "prefScreen", " No Save Screen FIT File ", " Unable to start save screen ",
+                   [this](MCFitIniFile& file)
+                   {
+                       PrefScreen->SetEventRoutine(PrefScreenHandleEvent);
+                       // Port: the difficulty and renderer choices as drop-downs.
+                       AddPreferencesPanel(*PrefScreen, file);
+                   });
+        ScreenWindow()->CreateChild<MCSessionScreen>(
+            [this](MCSessionScreen& screen)
+            {
+                SessionScreen = screen.WeakAs<MCSessionScreen>();
+                screen.Init(0, 0, 0x280, 0x1e0, {});
+            });
     }
 
     ShowLogScreen(false, false);
@@ -393,36 +421,75 @@ auto MCLogistics::Start() -> void
     file.Close();
     InvBlockPort = NewArtPort("logart\\invblock.tga");
 
-    for (std::shared_ptr<MCLogPort>& port : InvTabPorts)
-    {
-        port.reset();
-    }
-
-    Ticker = MCMakeGui<MCTicker>();
-    Ticker->Init(3, 3, 0xcd, 1);
-    Ticker->SetScreen(CurrentScreen()->weak_from_this());
-    CurrentScreen()->AddChild(Ticker);
-    Ticker->SetFont(MedWhiteFont);
-    Ticker->BringToFront(false);
-    Ticker->ShowGuiWindow(true);
+    // The ticker, and a line for it on each screen that shows it; it starts on the screen shown now.
+    Ticker = std::make_shared<MCTicker>(0xcd, MedWhiteFont);
     {
         const std::shared_ptr<MCLogPort> tickerBack = NewPort(0xcd, MedWhiteFont->Height());
         VfxPaneWipe(tickerBack->Frame(), 0xed);
-        Ticker->SetBackPane(*tickerBack);
+        TickerLines.clear();
+
+        const std::array<std::shared_ptr<MCLogObject>, 5> screens = {
+            CurrentScreen(), PurchaseScreen.Lock(), BriefingScreen.Lock(), RepairScreen.Lock(), SessionScreen.Lock()};
+
+        for (const std::shared_ptr<MCLogObject>& screen : screens)
+        {
+            if (screen == nullptr)
+            {
+                continue;
+            }
+
+            TickerLines.push_back(screen->CreateChild<MCTickerLine>(
+                [&](MCTickerLine& line)
+                {
+                    line.Init(3, 3, 0xcd, 1, Ticker);
+                    line.SetBackPane(*tickerBack);
+                }));
+        }
     }
 
-    PurchaseDialog = MCMakeGui<MCPurchaseDlg>();
-    PurchaseDialog->MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
-    ScreenWindow()->AddChild(PurchaseDialog);
-    MessageDialog = MCMakeGui<MCReusableDialog>();
-    MessageDialog->Init(0, 0, 4, 4, {});
-    ScreenWindow()->AddChild(MessageDialog);
-    QuestionDialog = MCMakeGui<MCReusableDialog>();
-    QuestionDialog->Init(0, 0, 4, 4, {});
-    ScreenWindow()->AddChild(QuestionDialog);
-    RefitDialog = MCMakeGui<MCRefitDialog>();
-    RefitDialog->Init(0, 0, 4, 4, {});
-    ScreenWindow()->AddChild(RefitDialog);
+    // The first line is the screen's shown now; it runs the scroll timer from the start, as the original's ticker did.
+    TickerLines.front()->StartScrolling();
+    ShowTickerOn(*CurrentScreen(), true);
+
+    // The chat's windows, hidden until the chat is put on their screen.
+    ChatWindows.clear();
+    ChatWindow.reset();
+
+    if (Chat != nullptr)
+    {
+        const std::array<std::shared_ptr<MCLogObject>, 2> chatScreens = {SessionScreen.Lock(), BriefingScreen.Lock()};
+
+        for (const std::shared_ptr<MCLogObject>& screen : chatScreens)
+        {
+            ChatWindows.push_back(screen->CreateChild<MCLogChatWindow>(
+                [&](MCLogChatWindow& window)
+                {
+                    window.Init(7, 0x44, 0xbf, 0x101, Chat);
+                    window.ShowGuiWindow(false);
+                }));
+        }
+    }
+
+    ScreenWindow()->CreateChild<MCPurchaseDlg>(
+        [this](MCPurchaseDlg& dialog)
+        {
+            PurchaseDialog = dialog.WeakAs<MCPurchaseDlg>();
+            dialog.MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
+        });
+    const auto makeDialog = [](auto& handle)
+    {
+        using Dialog = std::remove_cvref_t<decltype(*handle.Lock())>;
+        ScreenWindow()->CreateChild<Dialog>(
+            [&handle](Dialog& dialog)
+            {
+                handle = dialog.template WeakAs<Dialog>();
+                dialog.Init(0, 0, 4, 4, {});
+            });
+    };
+
+    makeDialog(MessageDialog);
+    makeDialog(QuestionDialog);
+    makeDialog(RefitDialog);
 
     ResourceBackPort = NewPort(0x3d, 0xc);
     VfxPaneWipe(ResourceBackPort->Frame(), 0x10);
@@ -576,9 +643,11 @@ MCLogistics::~MCLogistics()
     HdArtOwner.reset();
 
     MCRenderer::UnregisterData(std::span(ShapeLookaside[0].data(), sizeof(ShapeLookaside)));
-    PlayerLights.reset();
+    ResetPlayerLights();
     Ticker.reset();
     ChatWindow.reset();
+    ChatWindows.clear();
+    Chat.reset();
 
     if (MultiplayerInitialized)
     {
@@ -627,14 +696,13 @@ MCLogistics::~MCLogistics()
     ResourceBackPort.reset();
     ClockBackPort.reset();
 
-    if (PurchaseDialog != nullptr)
-    {
-        ScreenWindow()->RemoveChild(*PurchaseDialog);
-        PurchaseDialog.reset();
-    }
-
+    CloseGuiObject(PurchaseDialog);
+    PurchaseDialog.reset();
+    CloseGuiObject(MessageDialog);
     MessageDialog.reset();
+    CloseGuiObject(QuestionDialog);
     QuestionDialog.reset();
+    CloseGuiObject(RefitDialog);
     RefitDialog.reset();
     InvBlockPort.reset();
     SetCurrentScreen({});
@@ -651,22 +719,31 @@ MCLogistics::~MCLogistics()
     MechList.reset();
     AssignedWarriorList.reset();
     ForceMechList->Clear();
-    InvTabPorts[2].reset();
-    InvTabPorts[0].reset();
-    InvTabPorts[1].reset();
-    InvTabPorts[3].reset();
+    CloseGuiObject(BriefingScreen);
     BriefingScreen.reset();
+    CloseGuiObject(PurchaseScreen);
     PurchaseScreen.reset();
+    CloseGuiObject(RepairScreen);
     RepairScreen.reset();
+    CloseGuiObject(MainScreen);
     MainScreen.reset();
+    CloseGuiObject(MultiplayerScreen);
     MultiplayerScreen.reset();
+    CloseGuiObject(LanScreen);
     LanScreen.reset();
+    CloseGuiObject(ModemScreen);
     ModemScreen.reset();
+    CloseGuiObject(SerialScreen);
     SerialScreen.reset();
+    CloseGuiObject(ConnectScreen);
     ConnectScreen.reset();
+    CloseGuiObject(SessionScreen);
     SessionScreen.reset();
+    CloseGuiObject(PrefScreen);
     PrefScreen.reset();
+    CloseGuiObject(LoadScreen);
     LoadScreen.reset();
+    CloseGuiObject(SaveScreen);
     SaveScreen.reset();
     GuiSystem().SetCurrentObject({});
     ClearLogArt();
@@ -726,7 +803,7 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
             GuiSystem().RemoveTimer(*RepairScreen, 8);
         }
 
-        briefing.BriefingBox.reset();
+        // (The original forgot the box shown here, which still showed; the box stays until the screen shows another.)
 
         if (PurchaseDialog != nullptr)
         {
@@ -734,9 +811,17 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
         }
     }
 
-    if (ChatWindow != nullptr)
+    if (Chat != nullptr)
     {
-        ChatWindow->Reset();
+        Chat->Clear();
+
+        for (const MCGuiHandle<MCLogChatWindow>& handle : ChatWindows)
+        {
+            if (const std::shared_ptr<MCLogChatWindow> window = handle.Lock(); window != nullptr)
+            {
+                window->ResetHistoryPane();
+            }
+        }
     }
 
     return 0;
@@ -744,32 +829,6 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
 
 namespace
 {
-    /// <summary>Moves the name ticker onto <paramref name="screen"/>, at its top left.</summary>
-    void MoveTicker(MCTicker& ticker, MCLogObject& screen)
-    {
-        if (!ticker.Parent.expired())
-        {
-            ticker.ParentObject()->RemoveChild(ticker);
-        }
-
-        screen.AddChild(ticker.weak_from_this());
-        ticker.SetScreen(screen.weak_from_this());
-        ticker.SetPos(3, 3);
-    }
-
-    /// <summary>Moves the multiplayer ready lights onto <paramref name="screen"/>, in front.</summary>
-    void MoveLights(MCMPPlayerLights& lights, MCLogObject& screen)
-    {
-        // Port: a match that skipped the session screen makes the lights with no parent.
-        if (!lights.Parent.expired())
-        {
-            lights.ParentObject()->RemoveChild(lights);
-        }
-
-        screen.AddChild(lights.weak_from_this());
-        lights.SetDepth(100);
-    }
-
     /// <summary>The colour the original wiped its work pictures to before it drew a pane into one.</summary>
     constexpr int32_t SlideBack = 0x10;
     /// <summary>How far in from a slide picture's right edge a pane's slider column goes.</summary>
@@ -852,7 +911,7 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
     }
 
     MCPurchaseScreen& screen = *PurchaseScreen;
-    MoveTicker(*Ticker, screen);
+    ShowTickerOn(screen);
     SetCurrentScreen(PurchaseScreen);
     LogisticsState = 2;
     screen.DrawBackground();
@@ -888,15 +947,15 @@ auto MCLogistics::SetUpPurchaseScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        MoveLights(*PlayerLights, screen);
+        ShowLightsOn(screen, 100);
     }
 
     ShowLogScreen(true, previous != RepairScreen && previous != BriefingScreen);
 
     if (animate)
     {
-        std::shared_ptr<MCScrollPane> pane = screen.UnitPane;
-        const std::shared_ptr<MCScrollPane> previousPane = RepairScreen->UnitPane;
+        std::shared_ptr<MCScrollPane> pane = screen.UnitPane.Lock();
+        const std::shared_ptr<MCScrollPane> previousPane = RepairScreen->UnitPane.Lock();
         const bool fromRepair = previous == RepairScreen;
         pane->ShowGuiWindow(false);
         Transition(fromRepair ? PaneSlide(*previousPane, 0) : BriefingSlide(*BriefingScreen), PaneSlide(*pane, 0),
@@ -936,7 +995,9 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
     const MCOptionalRef<MCLogScreenChrome> chrome = screen.Chrome();
 
     // The ready lights' backing, under the screen's lights (the original's lights painted it into their parent).
-    if (PlayerLights != nullptr && PlayerLights->ParentObject().get() == &screen)
+    if (const std::shared_ptr<MCMPPlayerLightsView> lights =
+            PlayerLights != nullptr ? PlayerLights->ShownView() : nullptr;
+        lights != nullptr && lights->ParentObject().get() == &screen)
     {
         if (const std::shared_ptr<MCLogPort> back = LogScreenArt("lsc_p0.tga"))
         {
@@ -944,12 +1005,12 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
         }
     }
 
-    if (&screen == BriefingScreen.get() || &screen == PurchaseScreen.get() || &screen == RepairScreen.get())
+    if (BriefingScreen.Is(screen) || PurchaseScreen.Is(screen) || RepairScreen.Is(screen))
     {
         // Button 0 is the main menu in single player, exit in multiplayer; the screen's own button is grayed, the one
         // under the mouse lit, and the briefing button blinks while the chat is unread.
         const std::array<size_t, 4> ports = {MultiPlayer() == nullptr ? size_t{0} : size_t{1}, 2, 3, 4};
-        const int32_t own = &screen == BriefingScreen.get() ? 1 : (&screen == PurchaseScreen.get() ? 2 : 3);
+        const int32_t own = BriefingScreen.Is(screen) ? 1 : (PurchaseScreen.Is(screen) ? 2 : 3);
 
         for (int32_t button = 0; button < 4; button++)
         {
@@ -975,13 +1036,19 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
         }
     }
 
-    if (Ticker != nullptr && MCRefersTo(Ticker->PaintScreen, screen))
+    // The ticker, when this screen shows it.
+    for (const MCGuiHandle<MCTickerLine>& handle : TickerLines)
     {
-        Ticker->DrawLine(target);
+        const std::shared_ptr<MCTickerLine> line = handle.Lock();
+
+        if (line != nullptr && line->IsShowing() && line->ParentObject().get() == &screen)
+        {
+            line->DrawLine(target);
+        }
     }
 
     // The resource points (not on the session screen) and the clock.
-    if (&screen != SessionScreen.get())
+    if (!SessionScreen.Is(screen))
     {
         const std::string text = ResourceFigureText();
         VfxPaneCopy(ResourceBackPort->Frame(), 0, 0, target, 0x209, 2, -1);
@@ -991,6 +1058,151 @@ auto MCLogistics::DrawScreenChrome(MCLogObject& screen, const MCPane& target) ->
     const std::string time = MCPort::StrTime();
     VfxPaneCopy(ClockBackPort->Frame(), 0, 0, target, 0x24c, 2, -1);
     MedWhiteFont->WriteString(target, 0x254, 4, time, -1);
+}
+
+auto MCLogistics::MakePlayerLights() -> void
+{
+    PlayerLights = std::make_shared<MCMPPlayerLights>();
+    const std::array<std::shared_ptr<MCLogObject>, 4> screens = {SessionScreen.Lock(), PurchaseScreen.Lock(),
+                                                                 BriefingScreen.Lock(), RepairScreen.Lock()};
+
+    for (const std::shared_ptr<MCLogObject>& screen : screens)
+    {
+        if (screen != nullptr)
+        {
+            PlayerLights->Views.push_back(screen->CreateChild<MCMPPlayerLightsView>([&](MCMPPlayerLightsView& view)
+                                                                                    { view.Init(PlayerLights); }));
+        }
+    }
+}
+
+auto MCLogistics::ShowLightsOn(MCLogObject& screen, std::optional<int32_t> depth) -> void
+{
+    if (PlayerLights == nullptr)
+    {
+        return;
+    }
+
+    for (const bool showing : {false, true})
+    {
+        for (const MCGuiHandle<MCMPPlayerLightsView>& handle : PlayerLights->Views)
+        {
+            const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock();
+
+            if (view != nullptr && (view->ParentObject().get() == &screen) == showing)
+            {
+                view->Show(showing, depth);
+            }
+        }
+    }
+}
+
+auto MCLogistics::ResetPlayerLights() -> void
+{
+    if (PlayerLights == nullptr)
+    {
+        return;
+    }
+
+    for (const MCGuiHandle<MCMPPlayerLightsView>& view : PlayerLights->Views)
+    {
+        CloseGuiObject(view);
+    }
+
+    PlayerLights.reset();
+}
+
+auto MCLogistics::ChatWindowOn(const MCLogObject& screen) const -> std::shared_ptr<MCLogChatWindow>
+{
+    for (const MCGuiHandle<MCLogChatWindow>& handle : ChatWindows)
+    {
+        if (const std::shared_ptr<MCLogChatWindow> window = handle.Lock();
+            window != nullptr && window->ParentObject().get() == &screen)
+        {
+            return window;
+        }
+    }
+
+    return nullptr;
+}
+
+auto MCLogistics::ShowChatOn(MCLogObject& screen) -> void
+{
+    const std::shared_ptr<MCLogChatWindow> next = ChatWindowOn(screen);
+
+    if (next == nullptr)
+    {
+        return;
+    }
+
+    const std::shared_ptr<MCLogChatWindow> shown = ChatWindow.Lock();
+    bool show = ChatShown;
+
+    if (shown != nullptr && shown != next)
+    {
+        // The window showing hands its input line's caret blink and text focus on as they are (the original's one
+        // window kept them as it moved).
+        show = shown->IsShowing();
+        shown->ShowGuiWindow(false);
+        GuiSystem().HandOver(*shown->ChatInput, next->ChatInput.Weak());
+        next->ChatInput->TeamButton->Toggled = Chat->TeamOnly;
+    }
+
+    if (shown != next)
+    {
+        next->ShowGuiWindow(show);
+        ChatWindow = next;
+    }
+
+    // In front, as the original's window was when added to the screen.
+    next->BringToFront(true);
+}
+
+auto MCLogistics::ShowChat(bool show) -> void
+{
+    if (const std::shared_ptr<MCLogChatWindow> window = ChatWindow.Lock(); window != nullptr)
+    {
+        window->ShowGuiWindow(show);
+        return;
+    }
+
+    ChatShown = show;
+}
+
+auto MCLogistics::ShowTickerOn(MCLogObject& screen, bool shuffle) -> void
+{
+    std::shared_ptr<MCTickerLine> shown;
+    std::shared_ptr<MCTickerLine> next;
+
+    for (const MCGuiHandle<MCTickerLine>& handle : TickerLines)
+    {
+        if (const std::shared_ptr<MCTickerLine> line = handle.Lock(); line != nullptr)
+        {
+            if (line->IsShowing())
+            {
+                shown = line;
+            }
+
+            if (line->ParentObject().get() == &screen)
+            {
+                next = line;
+            }
+        }
+    }
+
+    if (next == nullptr)
+    {
+        return;
+    }
+
+    // The line showing hands its scroll timer on as it runs (the original's one ticker kept it as it moved).
+    if (shown != nullptr && shown != next)
+    {
+        shown->Show(false, false);
+        GuiSystem().HandOver(*shown, next->weak_from_this());
+    }
+
+    next->Show(true, shuffle);
 }
 
 auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
@@ -1004,13 +1216,11 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
     }
 
     MCBriefingScreen& briefing = *BriefingScreen;
-    MoveTicker(*Ticker, briefing);
+    ShowTickerOn(briefing);
     briefing.SetUpDeploy();
 
     // The original blanked the local player's empty drop slots here (the screen draws them each frame), then the box
-    // area under them.
-    briefing.BlankBox();
-
+    // area under them (the box is shown again below).
     SetCurrentScreen(BriefingScreen);
     LogisticsState = 3;
     ShowLogScreen(true, previous != RepairScreen && previous != PurchaseScreen);
@@ -1023,26 +1233,20 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
 
     if (MultiPlayer() == nullptr)
     {
-        ChatWindow->ShowGuiWindow(false);
+        ShowChat(false);
     }
     else
     {
-        MCLogChatWindow& chat = *ChatWindow;
+        const std::shared_ptr<MCLogChatWindow> chat = ChatWindowOn(briefing);
 
-        if (chat.ParentObject().get() != &briefing)
+        if (chat != ChatWindow.Lock())
         {
-            chat.Resize(0xe7);
-
-            if (!chat.Parent.expired())
-            {
-                chat.ParentObject()->RemoveChild(chat);
-            }
-
-            briefing.AddChild(chat.weak_from_this());
-            chat.MoveTo(2, 0x65, false);
+            chat->Resize(0xe7);
+            ShowChatOn(briefing);
+            chat->MoveTo(2, 0x65, false);
         }
 
-        MoveLights(*PlayerLights, briefing);
+        ShowLightsOn(briefing, 100);
 
         if (briefing.ChatBlinking != 0 && briefing.ChatTimerOn == 0)
         {
@@ -1053,29 +1257,20 @@ auto MCLogistics::SetUpBriefingScreen(bool animate) -> int32_t
         briefing.SetUpOperation();
     }
 
-    // Show the briefing box of the first unit in the deploy pane.
-    if (const std::shared_ptr<MCBriefingBox> shown = briefing.BriefingBox.lock())
+    // Show the briefing box of the first unit in the deploy pane (none: the box area is blank).
+    if (!briefing.DeployUnits.empty())
     {
-        briefing.RemoveChild(*shown);
-        briefing.BriefingBox.reset();
+        briefing.ShowBriefing(briefing.DeployUnits.front());
     }
-
-    MCScrollPane& deployPane = *briefing.DeployPane;
-
-    if (deployPane.NumberOfChildren() != 0)
+    else
     {
-        const auto block = std::static_pointer_cast<MCMechBriefBlock>(deployPane.Child(0));
-        const MCGuiOwned<MCBriefingBox> box =
-            block->Mech() != nullptr ? block->Mech()->BriefingBox : block->Vehicle()->BriefingBox;
-        briefing.AddChild(box);
-        briefing.BriefingBox = box;
-        box->DrawBackground();
+        briefing.HideBriefing();
     }
 
     if (animate)
     {
         const std::shared_ptr<MCScrollPane> pane =
-            previous == RepairScreen ? RepairScreen->UnitPane : PurchaseScreen->UnitPane;
+            (previous == RepairScreen ? RepairScreen->UnitPane : PurchaseScreen->UnitPane).Lock();
         Transition(PaneSlide(*pane, 1), BriefingSlide(briefing), 1);
     }
 
@@ -1128,7 +1323,7 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
         ShowLogScreen(false, false);
     }
 
-    MoveTicker(*Ticker, repair);
+    ShowTickerOn(repair);
     SetCurrentScreen(RepairScreen);
     LogisticsState = 4;
     repair.DrawBackground();
@@ -1158,14 +1353,14 @@ auto MCLogistics::SetUpRepairScreen(bool animate) -> int32_t
 
     if (MultiPlayer() != nullptr)
     {
-        MoveLights(*PlayerLights, repair);
+        ShowLightsOn(repair, 100);
     }
 
     ShowLogScreen(true, previous != PurchaseScreen && previous != BriefingScreen);
 
     if (animate)
     {
-        const std::shared_ptr<MCScrollPane> previousPane = PurchaseScreen->UnitPane;
+        const std::shared_ptr<MCScrollPane> previousPane = PurchaseScreen->UnitPane.Lock();
         repair.UnitPane->ShowGuiWindow(false);
         Transition(previous == PurchaseScreen ? PaneSlide(*previousPane, 0) : BriefingSlide(*BriefingScreen),
                    PaneSlide(*repair.UnitPane, 1), 0);
@@ -1271,26 +1466,28 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
 {
     // A pane over the screen's right part, redrawn each frame for a quarter of a second: direction 0 slides the new
     // picture in from the right over the old one, any other slides the old one out to the left off the new one.
-    const MCGuiOwned<MCTransitionWipe> wipe = MCMakeGui<MCTransitionWipe>();
-    wipe->Init(SlideX, SlideY, SlideWidth, SlideHeight);
-    wipe->From = from;
-    wipe->To = to;
-
-    if (!MCInput::Display()->SharpScreen())
-    {
-        const auto picture = [](const MCSlidePicture& paint)
+    const MCGuiHandle<MCTransitionWipe> wipe = CurrentScreen()->CreateChild<MCTransitionWipe>(
+        [&](MCTransitionWipe& made)
         {
-            std::shared_ptr<MCLogPort> made = NewPort(SlideWidth, SlideHeight);
-            paint(*made);
-            return made;
-        };
+            made.Init(SlideX, SlideY, SlideWidth, SlideHeight);
+            made.From = from;
+            made.To = to;
 
-        wipe->FromPicture = picture(from);
-        wipe->ToPicture = picture(to);
-    }
+            if (!MCInput::Display()->SharpScreen())
+            {
+                const auto picture = [](const MCSlidePicture& paint)
+                {
+                    std::shared_ptr<MCLogPort> painted = NewPort(SlideWidth, SlideHeight);
+                    paint(*painted);
+                    return painted;
+                };
 
-    wipe->Direction = direction;
-    CurrentScreen()->AddChild(wipe);
+                made.FromPicture = picture(from);
+                made.ToPicture = picture(to);
+            }
+
+            made.Direction = direction;
+        });
     wipe->ShowGuiWindow(true);
     wipe->SetDepth(100);
     SoundSystem()->PlayInterfaceSample(0x36);
@@ -1307,6 +1504,8 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
         const auto ticks = static_cast<uint32_t>(end - start);
         elapsed = static_cast<float>(static_cast<double>(ticks) / static_cast<int32_t>(frequency) + elapsed);
     } while (elapsed < SlideSeconds);
+
+    CloseGuiObject(wipe);
 }
 
 auto MCLogistics::Darken(int32_t amount, MCColorTable fadeTable, MCLogPort& port) -> void
@@ -1343,7 +1542,7 @@ auto MCLogistics::ReIndexInventory() const -> int32_t
     {
         const auto found =
             std::ranges::find_if(ComponentInventory->Items, [&](const std::shared_ptr<MCLogInventoryItem>& item)
-                                 { return item->InventoryBlock->InventoryIndex == index; });
+                                 { return item->InventoryIndex == index; });
         Assert(found != ComponentInventory->Items.end(), 0,
                "Could not reindex player inventory. Probably an old savegame");
 
@@ -1353,7 +1552,7 @@ auto MCLogistics::ReIndexInventory() const -> int32_t
         }
 
         MCLogInventoryItem& item = **found;
-        item.InventoryBlock->ListIndex = item.Count == 0 ? -1 : row++;
+        item.ListIndex = item.Count == 0 ? -1 : row++;
     }
 
     return row;

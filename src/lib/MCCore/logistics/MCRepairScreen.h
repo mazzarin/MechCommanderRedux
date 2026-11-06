@@ -4,7 +4,10 @@
 
 class MCGuiEvent;
 class MCLogMech;
+class MCLogPart;
 class MCLogVehicle;
+class MCMechRepairBlock;
+class MCVehicleRepairBlock;
 
 /// <summary>
 /// The logistics repair (mech lab) screen: the inventory on the left, the force's mechs and vehicles in the unit pane;
@@ -14,12 +17,11 @@ class MCLogVehicle;
 class MCRepairScreen : public MCLogInvScreen
 {
 public:
-    ~MCRepairScreen() override { MCRepairScreen::Destroy(); }
-
     /// <summary>Makes the full-screen object and its two panes.</summary>
     void Init();
 
-    void Destroy() override;
+    /// <summary>Frees the panes.</summary>
+    void OnDestroy() override;
 
     /// <summary>Selects <paramref name="mech"/> (deselecting any vehicle) and redraws the affected blocks.</summary>
     void SelectMech(std::shared_ptr<MCLogMech> mech);
@@ -39,15 +41,30 @@ public:
     /// <summary>A vehicle left the force: the rows below its row move up one.</summary>
     void RemoveVehicleFromList(MCLogVehicle& vehicle);
 
-    /// <summary>Redraws the screen's art (the shared places and the info box go back to the art's).</summary>
-    void DrawBackground();
+    /// <summary>
+    /// Lists the force in the unit pane, a row per unit (the mechs, then the vehicles), from the top when
+    /// <paramref name="resetScroll"/>, and numbers the units' <see cref="MCLogPart::SlotIndex"/> by their row.
+    /// </summary>
+    /// <remarks>
+    /// The pane shows the force as it was at the last call (the original painted its rows' picture only then): a unit
+    /// picked up from the inventory joins the force list under the drag, but its row comes with the drop's call.
+    /// </remarks>
+    void ShowForce(bool resetScroll);
 
     /// <summary>
-    /// Port: the unit pane's content for the force (as tall as its rows, at least the pane): a view its rows are drawn
-    /// into each frame (the original painted each block into a picture, and copied rows about in new ones as the
-    /// force changed).
+    /// A unit left the force list without a new listing (the lists cleared): its row stays drawn until the next
+    /// <see cref="ShowForce"/>, as the original's picture kept it, but takes no clicks, as its block left the pane.
     /// </summary>
-    static std::shared_ptr<MCLogPort> NewUnitRowsView(MCScrollPane& pane);
+    void HideUnitRow(const MCLogPart& unit);
+
+    /// <summary>The unit pane's row of <paramref name="mech"/>, or null; the caller keeps it as its pin.</summary>
+    std::shared_ptr<MCMechRepairBlock> RowOf(const MCLogMech& mech) const;
+
+    /// <summary>The unit pane's row of <paramref name="vehicle"/>, or null; the caller keeps it as its pin.</summary>
+    std::shared_ptr<MCVehicleRepairBlock> RowOf(const MCLogVehicle& vehicle) const;
+
+    /// <summary>Redraws the screen's art (the shared places and the info box go back to the art's).</summary>
+    void DrawBackground();
 
     /// <summary>The tabs, the screen buttons, the resource cheat and the help text for what the mouse is over.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -77,6 +94,11 @@ public:
     }
 
 private:
+    /// <summary>
+    /// The units the unit pane lists, in row order (the force's mechs, then its vehicles), as <see cref="ShowForce"/>
+    /// last took them.
+    /// </summary>
+    std::vector<std::shared_ptr<MCLogPart>> _ShownUnits;
     /// <summary>The selected mech, if any.</summary>
     std::weak_ptr<MCLogMech> _SelectedMech;
     /// <summary>The selected vehicle, if any.</summary>

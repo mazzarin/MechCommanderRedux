@@ -101,7 +101,7 @@ namespace
         int32_t y = 0;
         int32_t width = display.Width();
         int32_t height = display.Height();
-        const std::shared_ptr<MCGuiObject> movie = HasGuiSystem() ? GuiSystem().SmackerWindow : nullptr;
+        const std::shared_ptr<MCGuiObject> movie = HasGuiSystem() ? GuiSystem().SmackerWindow.Lock() : nullptr;
 
         if (movie != nullptr)
         {

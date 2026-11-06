@@ -1,12 +1,10 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 // Original source: mcx\logistics.cpp (LogMech).
 
 #include "main/MCLogPart.h"
 
-class MCMechBriefBlock;
-class MCMechInventoryBlock;
 class MCMechRepairBlock;
 class MCLogWarrior;
 
@@ -47,6 +45,32 @@ public:
         uint8_t MasterID = 0;
     };
 
+    /// <summary>
+    /// The mech's damage when it entered the lists (<see cref="TakeArrivalState"/>): the repair sliders can't go
+    /// below it, so a repair made during the visit can be taken back, but no further.
+    /// </summary>
+    struct ArrivalState
+    {
+        /// <summary>The armor of the eleven armor locations.</summary>
+        std::array<int32_t, NumArmorLocations> Armor{};
+        /// <summary>The internal structure of the eight body locations.</summary>
+        std::array<int32_t, NumBodyLocations> Internals{};
+        /// <summary>The engine's damage level (its copy's hits; 0 when the mech has no engine).</summary>
+        uint8_t EngineHits = 0;
+    };
+
+    /// <summary>
+    /// The repair sliders' knobs (pixels on the repair panel): where they were put (<see
+    /// cref="MCMechRepairBlock::PlaceSliders"/>) or last dragged, which the repair screen and the briefing box show.
+    /// </summary>
+    struct RepairSliderKnobs
+    {
+        int32_t Armor = 0;
+        int32_t Internal = 0;
+        /// <summary>0x127, 0x113, 0xff or 0xeb for engine damage 0..3.</summary>
+        int32_t Engine = 0;
+    };
+
     MCLogMech();
     /// <summary>Frees the inventory and the widgets in the original's order.</summary>
     ~MCLogMech() override;
@@ -84,6 +108,12 @@ public:
     /// <summary>The mech's condition (0..1) from armor, internals and pilot.</summary>
     float CalcStatus();
 
+    /// <summary>
+    /// Records the mech's armor, internal structure and engine damage as <see cref="Arrived"/>: when it joins the
+    /// lists (<see cref="MCLogMechList::AddMech"/>), the moment the original's repair block took them.
+    /// </summary>
+    void TakeArrivalState();
+
     /// <summary>The internal structure's class name (string table).</summary>
     std::string ExtraName1;
     /// <summary>The jump jets' class name (string table).</summary>
@@ -119,12 +149,10 @@ public:
     int32_t PilotModifier = 0;
     /// <summary>The condition from <see cref="CalcStatus"/>.</summary>
     float StatusValue = 0;
-    /// <summary>The row on the repair screen (null when read without widgets).</summary>
-    MCGuiOwned<MCMechRepairBlock> RepairBlock;
-    /// <summary>The row on the inventory screens (null when read without widgets).</summary>
-    MCGuiOwned<MCMechInventoryBlock> InventoryBlock;
-    /// <summary>The block in the briefing screen's deploy pane or a drop slot (<see cref="MCMechBriefBlock::Create"/>).</summary>
-    MCGuiOwned<MCMechBriefBlock> BriefBlock;
+    /// <summary>The damage the mech arrived with (<see cref="TakeArrivalState"/>).</summary>
+    ArrivalState Arrived;
+    /// <summary>The repair sliders' knobs.</summary>
+    RepairSliderKnobs RepairSliders;
     /// <summary>The pilot of a multiplayer mech received over the network (in <see cref="MCLogistics::MpWarriorList"/>).</summary>
     std::weak_ptr<MCLogWarrior> NetworkPilot;
 };

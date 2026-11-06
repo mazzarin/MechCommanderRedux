@@ -182,7 +182,7 @@ void CancelToConnect()
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     GuiSystem().RemoveTimer(*GlobalLog()->SessionScreen->Team1RPText, 0);
     MultiPlayer()->LeaveSession();
-    GlobalLog()->PlayerLights.reset();
+    GlobalLog()->ResetPlayerLights();
 }
 
 void CancelToMPlayer()

@@ -23,12 +23,6 @@ namespace
     /// <summary>The pilot rows' drag.</summary>
     MCDragState PilotDrag;
 
-    /// <summary>
-    /// The row the next <see cref="MCPilotInventoryBlock::Init"/> takes. Never reset: the inventory screen renumbers the
-    /// rows itself.
-    /// </summary>
-    int32_t NextPilotRow = 0;
-
     /// <summary>The rank name (string table 0x70..0x73); empty for a rank out of range.</summary>
     /// <remarks>Port fix: an out-of-range rank leaves the text empty (the original kept whatever was in the buffer).</remarks>
     std::string RankName(int32_t rank)
@@ -42,28 +36,24 @@ namespace
     }
 }
 
-MCPilotInventoryBlock::~MCPilotInventoryBlock()
-{
-    MCPilotInventoryBlock::Destroy();
-}
-
 auto MCPilotInventoryBlock::Init(std::shared_ptr<MCLogWarrior> logWarrior) -> void
 {
-    _Mech.reset();
-    _Vehicle.reset();
     _Warrior = logWarrior;
     InitRow();
-    ListIndex = NextPilotRow;
-    ++NextPilotRow;
     PortraitPort = std::make_shared<MCLogPort>();
     PortraitPort->Load(std::format("{}logart\\{}", ArtPath, Warrior()->Picture));
 }
 
-auto MCPilotInventoryBlock::Destroy() -> void
+auto MCPilotInventoryBlock::ListIndex() const -> int32_t
 {
-    _Warrior.reset();
+    const std::shared_ptr<MCLogWarrior> warrior = Warrior();
+    return warrior != nullptr ? warrior->ListIndex : -1;
+}
+
+auto MCPilotInventoryBlock::OnDestroy() -> void
+{
     PortraitPort.reset();
-    MCInventoryBlock::Destroy();
+    MCInventoryBlock::OnDestroy();
 }
 
 auto MCPilotInventoryBlock::Draw() -> void
@@ -74,7 +64,7 @@ auto MCPilotInventoryBlock::Draw() -> void
     }
 }
 
-auto MCPilotInventoryBlock::DrawBackground() -> void
+auto MCPilotInventoryBlock::OnRefresh() -> void
 {
     // On the repair screen a pilot can only go to the selected mech, and only when it has none.
     GreyedOut = false;
@@ -84,8 +74,6 @@ auto MCPilotInventoryBlock::DrawBackground() -> void
         std::shared_ptr<MCLogMech> selected = GlobalLog()->RepairScreen->SelectedMech();
         GreyedOut = selected == nullptr || selected->PilotIndex >= 0;
     }
-
-    MoveTo(0, WinHeight * ListIndex, false);
 }
 
 auto MCPilotInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
@@ -102,19 +90,19 @@ auto MCPilotInventoryBlock::DrawRow(MCLogPort& port, int32_t top) -> void
     }
 }
 
-auto MCPilotInventoryBlock::DrawInfo(MCLogPort& port) -> void
+auto MCPilotInventoryBlock::DrawPilotInfo(const MCLogWarrior& warrior, const MCLogPort& portrait, MCLogPort& port)
+    -> void
 {
-    const std::shared_ptr<MCLogWarrior> warrior = Warrior();
-    MCLogistics::DrawPilotSkillBar(*warrior, 3, 0x56, 0x192, 0, 0x36, WinHeight, port);
-    MCLogistics::DrawPilotSkillBar(*warrior, 0, 0x56, 0x19b, 0, 0x36, WinHeight, port);
-    MCLogistics::DrawPilotSkillBar(*warrior, 1, 0x56, 0x1a4, 0, 0x36, WinHeight, port);
-    MCLogistics::DrawPilotSkillBar(*warrior, 2, 0x56, 0x1ad, 0, 0x36, WinHeight, port);
-    PortraitPort->CopyTo(port.Frame(), 9, 0x196, true);
-    WriteText(*YellowDropFont, port, 0x9c, 0x19a, RankName(warrior->Rank));
+    MCLogistics::DrawPilotSkillBar(warrior, 3, 0x56, 0x192, 0, 0x36, MCLogInvScreen::InvBlockHeight, port);
+    MCLogistics::DrawPilotSkillBar(warrior, 0, 0x56, 0x19b, 0, 0x36, MCLogInvScreen::InvBlockHeight, port);
+    MCLogistics::DrawPilotSkillBar(warrior, 1, 0x56, 0x1a4, 0, 0x36, MCLogInvScreen::InvBlockHeight, port);
+    MCLogistics::DrawPilotSkillBar(warrior, 2, 0x56, 0x1ad, 0, 0x36, MCLogInvScreen::InvBlockHeight, port);
+    portrait.CopyTo(port.Frame(), 9, 0x196, true);
+    WriteText(*YellowDropFont, port, 0x9c, 0x19a, RankName(warrior.Rank));
     // One pip per point of health left.
     int32_t x = 0xf;
 
-    for (int32_t pip = 0; static_cast<float>(pip) < warrior->Health; ++pip, x += 3)
+    for (int32_t pip = 0; static_cast<float>(pip) < warrior.Health; ++pip, x += 3)
     {
         AGPixelWrite(port.Frame(), x, 0x192, 0xcf);
         AGPixelWrite(port.Frame(), x + 1, 0x192, 0xcf);
@@ -122,7 +110,7 @@ auto MCPilotInventoryBlock::DrawInfo(MCLogPort& port) -> void
         AGPixelWrite(port.Frame(), x, 0x193, 0xcf);
     }
 
-    DrawInfoDescription(port, 0xc3, 0x22, warrior->Description, 7, 0x1b8);
+    DrawInfoDescription(port, 0xc3, 0x22, warrior.Description, 7, 0x1b8);
 }
 
 auto MCPilotInventoryBlock::OfferSale() -> void
@@ -131,52 +119,50 @@ auto MCPilotInventoryBlock::OfferSale() -> void
     MCLogPort picture;
     picture.Load(std::format("{}logart\\{}", ArtPath, warrior->Picture));
     int32_t price = SalePrice(GlobalLog()->PilotCosts[warrior->Rank]);
+    // The answer goes to the pilot, not this row: the list can drop the row while the dialog is open.
     OpenPurchaseDialog(3, -price, 1, warrior->Callsign, LoadGameString(0x5f, 0xfe), picture,
-                       [this](int32_t result, int32_t) { OnSellConfirmed(result); });
+                       [warrior](int32_t result, int32_t) { OnSellConfirmed(*warrior, result); });
 }
 
-auto MCPilotInventoryBlock::OnSellConfirmed(int32_t result) const -> void
+auto MCPilotInventoryBlock::OnSellConfirmed(MCLogWarrior& warrior, int32_t result) -> void
 {
-    std::shared_ptr<MCLogWarrior> warrior = Warrior();
-
     if (result == 0)
     {
-        warrior->Assigned = false;
-        GlobalLog()->ShiftPilots(warrior->InventoryBlock->ListIndex, -1);
+        warrior.Assigned = false;
+        GlobalLog()->ShiftPilots(warrior.ListIndex, -1);
         GlobalLog()->ReorderWarriors();
         GlobalLog()->PurchaseScreen->CreatePilotInvBlock();
         GlobalLog()->PurchaseScreen->SetUpPilotInv(false, true);
         return;
     }
 
-    int32_t row = warrior->InventoryBlock->ListIndex;
-    SoundSystem()->PlayPilotSpeech(warrior->PilotAudio, 2);
-    warrior->Sold = true;
-    GlobalLog()->PurPilotList->SetPilotStatus(warrior->DescIndex, MCPurPilotData::SoldBack);
-    GlobalLog()->AssignedWarriorList->RemoveWarrior(static_cast<uint8_t>(warrior->Id));
+    int32_t row = warrior.ListIndex;
+    SoundSystem()->PlayPilotSpeech(warrior.PilotAudio, 2);
+    warrior.Sold = true;
+    GlobalLog()->PurPilotList->SetPilotStatus(warrior.DescIndex, MCPurPilotData::SoldBack);
+    GlobalLog()->AssignedWarriorList->RemoveWarrior(static_cast<uint8_t>(warrior.Id));
     GlobalLog()->ShiftPilots(row, -1);
     GlobalLog()->ReorderWarriors();
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
 }
 
-auto MCPilotInventoryBlock::BoardMech(MCLogMech& mech, int32_t row) const -> void
+auto MCPilotInventoryBlock::BoardMech(MCLogWarrior& warrior, MCLogMech& mech, int32_t row) -> void
 {
-    MCPilotInventoryBlock& block = *Warrior()->InventoryBlock;
-    block._Mech = mech.SharedAs<MCLogMech>();
-    int32_t pilotRow = block.ListIndex;
+    int32_t pilotRow = warrior.ListIndex;
     GlobalLog()->SetPilot(row, pilotRow);
-    mech.RepairBlock->DrawBR(std::nullopt);
+    // The repair block's battle rating paint worked it out (the row draws it each frame).
+    mech.CalcBR();
     GlobalLog()->SetPilot(row, pilotRow);
     Screen()->CreatePilotInvBlock();
     Screen()->SetUpPilotInv(false, true);
-    SoundSystem()->PlayPilotSpeech(Warrior()->PilotAudio, 2);
+    SoundSystem()->PlayPilotSpeech(warrior.PilotAudio, 2);
 }
 
-auto MCPilotInventoryBlock::BackToInventory(MCGuiEvent& event) const -> void
+auto MCPilotInventoryBlock::BackToInventory(MCLogWarrior& warrior, MCGuiEvent& event) -> void
 {
     std::shared_ptr<MCLogInvScreen> screen = Screen();
-    Warrior()->Assigned = false;
-    GlobalLog()->ShiftPilots(Warrior()->InventoryBlock->ListIndex, -1);
+    warrior.Assigned = false;
+    GlobalLog()->ShiftPilots(warrior.ListIndex, -1);
     GlobalLog()->ReorderWarriors();
     screen->CreatePilotInvBlock();
     screen->SetUpPilotInv(false, true);
@@ -199,7 +185,8 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
         // The info block: skills, portrait, rank, wounds and description.
         MCLogInvScreen::DrawBlankInvInfoBlock(-1);
         PrepareInfoDescription(warrior->Description);
-        screen->ShowInfo(MCInvInfoBox::Kind::Pilot, weak_from_this());
+        screen->ShowDetails(MCInvInfoBox::Kind::Pilot, [warrior, portrait = PortraitPort](MCLogPort& port)
+                            { DrawPilotInfo(*warrior, *portrait, port); });
     }
 
     switch (event.Type)
@@ -219,7 +206,7 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             MakeDragIcon(PilotDrag, event);
             warrior->Assigned = true;
             GlobalLog()->ReorderWarriors();
-            GlobalLog()->ShiftPilots(warrior->InventoryBlock->ListIndex, 1);
+            GlobalLog()->ShiftPilots(warrior->ListIndex, 1);
             screen->CreatePilotInvBlock();
             screen->SetUpPilotInv(false, false);
             MCDragIcon::Current()->Raise();
@@ -267,7 +254,7 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
                 }
 
                 // Dropped on a mech: it must be the selected one.
-                std::shared_ptr<MCScrollPane> pane = screen->UnitPane;
+                std::shared_ptr<MCScrollPane> pane = screen->UnitPane.Lock();
                 int32_t index = (event.Y - pane->GlobalY() + pane->GetScrollOffset()) / 0x70;
 
                 if (index < pane->NumberOfChildren() && index < GlobalLog()->ForceMechList->GetMechCount())
@@ -277,13 +264,13 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
 
                     if (target != nullptr && target == GlobalLog()->RepairScreen->SelectedMech())
                     {
-                        BoardMech(*target, index);
+                        BoardMech(*warrior, *target, index);
                         break;
                     }
                 }
             }
 
-            BackToInventory(event);
+            BackToInventory(*warrior, event);
             break;
         }
 
@@ -307,7 +294,7 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             MCDragIcon::Remove();
             warrior->Assigned = true;
             GlobalLog()->ReorderWarriors();
-            GlobalLog()->ShiftPilots(warrior->InventoryBlock->ListIndex, 1);
+            GlobalLog()->ShiftPilots(warrior->ListIndex, 1);
             screen->CreatePilotInvBlock();
             screen->SetUpPilotInv(false, true);
             DrawDropArt(*screen, 1);
@@ -318,15 +305,15 @@ auto MCPilotInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
                 break;
             }
 
-            // Onto the selected mech; with none, back to the inventory (the block is this one still: the lists were
-            // only renumbered).
+            // Onto the selected mech; with none, back to the inventory (the list kept this row through its refill: the
+            // pilot is still in the pilot list, assigned).
             if (std::shared_ptr<MCLogMech> selected = GlobalLog()->RepairScreen->SelectedMech(); selected != nullptr)
             {
-                BoardMech(*selected, selected->RepairBlock->SlotIndex);
+                BoardMech(*warrior, *selected, selected->SlotIndex);
                 break;
             }
 
-            BackToInventory(event);
+            BackToInventory(*warrior, event);
             break;
         }
 

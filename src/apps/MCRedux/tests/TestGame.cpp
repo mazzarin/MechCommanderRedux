@@ -4,12 +4,14 @@
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "camera/MCCamera.h"
+#include "gui/MCGuiSmackerWindow.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCUpdateDisplay.h"
 #include "lib/MCFastFileSet.h"
 #include "logistics/MCFileScrollPane.h"
 #include "logistics/MCGameList.h"
 #include "logistics/MCLogComboBox.h"
+#include "logistics/MCLogInvScreen.h"
 #include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCLogSlider.h"
 #include "logistics/MCMainMenu.h"
@@ -108,8 +110,8 @@ namespace MCTestGame
                 return;
             }
 
-            for (const MCSplashScreen* screen :
-                 {logistics->LoadScreen.get(), logistics->SaveScreen.get(), logistics->MultiplayerScreen.get()})
+            for (const std::shared_ptr<MCSplashScreen>& screen :
+                 {logistics->LoadScreen.Lock(), logistics->SaveScreen.Lock(), logistics->MultiplayerScreen.Lock()})
             {
                 if (screen != nullptr && screen->FilePane != nullptr)
                 {
@@ -773,19 +775,17 @@ void MCTestGame::StockStore(int32_t count)
                 variant->NumAvailable = count;
             }
         }
-
-        mech->Block->DrawBackground(mech->Block->Row);
     }
 
     for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->PurchaseComponents->Items)
     {
         item->Count = count;
-        item->PurchaseBlock->DrawBackground(item->PurchaseBlock->Row, item->MasterID);
     }
 
     for (const auto& vehicle : GlobalLog()->PurVehicleList->Vehicles)
     {
         vehicle->Data->NumAvailable = count;
-        vehicle->Block->DrawBackground(vehicle->Block->Row);
     }
+
+    MCLogInvScreen::RefreshStoreRows();
 }

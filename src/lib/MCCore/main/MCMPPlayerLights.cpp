@@ -1,55 +1,18 @@
 #include "stdafx.h"
 #include "main/MCMPPlayerLights.h"
-#include "gui/MCGuiSystem.h"
-#include "linkup/MCFidpPlayer.h"
-#include "linkup/MCSessionManager.h"
-#include "logistics/MCTicker.h"
-#include "main/MCGamePaths.h"
-#include "main/MCLogistics.h"
-#include "network/MCMultiPlayer.h"
-
-MCMPPlayerLights::~MCMPPlayerLights()
-{
-    Destroy();
-}
-
-auto MCMPPlayerLights::Init() -> void
-{
-    MCLogObject::Init(0xd8, 0, 1, 0x10);
-    NumPlayers = 0;
-    PlayerIDs.fill(0);
-    PlayerStatus.fill(0);
-    TimerRunning = false;
-    BlinkOn = false;
-    // One light's width comes from the first player's light.
-    LightsPort = std::make_shared<MCLogPort>();
-    LightsPort->Load(ArtPath + "logart\\lsc_p1.tga");
-    LightWidth = LightsPort->Width();
-    LightsPort->Destroy();
-    LightsPort->Load(ArtPath + "logart\\lsc_pn.tga");
-    ReadyPort = std::make_shared<MCLogPort>();
-    ReadyPort->Load(ArtPath + "logart\\lsc_pg.tga");
-    BlinkPort = std::make_shared<MCLogPort>();
-    BlinkPort->Load(ArtPath + "logart\\lsc_pg1.tga");
-}
-
-auto MCMPPlayerLights::Destroy() -> void
-{
-    if (TimerRunning)
-    {
-        GuiSystem().RemoveTimer(*this, 3);
-    }
-
-    LightsPort.reset();
-    ReadyPort.reset();
-    BlinkPort.reset();
-    MCLogObject::Destroy();
-}
+#include "main/MCMPPlayerLightsView.h"
 
 auto MCMPPlayerLights::SetNumPlayers(int32_t count) -> void
 {
     NumPlayers = count;
-    Resize(LightWidth * count, Height());
+
+    for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
+    {
+        if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr)
+        {
+            view->FitLights();
+        }
+    }
 }
 
 auto MCMPPlayerLights::SetPlayerID(int32_t light, uint32_t playerID) -> void
@@ -76,66 +39,30 @@ auto MCMPPlayerLights::SetPlayerStatus(uint32_t playerID, int32_t status) -> voi
         PlayerStatus[static_cast<size_t>(light)] = status;
     }
 
+    // Every view's timer starts now, so the one showing the lights blinks in the original's step whichever it is.
     if (!TimerRunning && status == 2)
     {
-        GuiSystem().AddTimer(weak_from_this(), 3, 500, 0, 0, false);
+        for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
+        {
+            if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr)
+            {
+                view->StartBlinkTimer();
+            }
+        }
+
         TimerRunning = true;
     }
 }
 
-auto MCMPPlayerLights::Draw() -> void
+auto MCMPPlayerLights::ShownView() const -> std::shared_ptr<MCMPPlayerLightsView>
 {
-    MCPane& target = Lport()->Frame();
-
-    for (int32_t light = 0; light < std::min(NumPlayers, MaxPlayers); light++)
+    for (const MCGuiHandle<MCMPPlayerLightsView>& handle : Views)
     {
-        // The numbered light, then the status over it: 1 lit, 2 blinking (while the timer runs).
-        const std::shared_ptr<MCLogPort> lightPort = LogScreenArt(std::format("lsc_p{}.tga", light + 1));
-
-        if (lightPort == nullptr)
+        if (const std::shared_ptr<MCMPPlayerLightsView> view = handle.Lock(); view != nullptr && view->IsShowing())
         {
-            continue;
-        }
-
-        lightPort->CopyTo(target, lightPort->Width() * light, 0, false);
-        const int32_t status = PlayerStatus[static_cast<size_t>(light)];
-
-        if (status == 1)
-        {
-            if (const std::shared_ptr<MCLogPort> statusPort = LogScreenArt("lsc_ph.tga"))
-            {
-                statusPort->CopyTo(target, lightPort->Width() * light, 2, true);
-            }
-        }
-        else if (status == 2 && TimerRunning)
-        {
-            MCLogPort& blink = BlinkOn ? *ReadyPort : *BlinkPort;
-            blink.CopyTo(target, LightWidth * light, 2, true);
+            return view;
         }
     }
-}
 
-auto MCMPPlayerLights::HandleEvent(MCGuiEvent& event) -> void
-{
-    if (Parent.expired())
-    {
-        return;
-    }
-
-    if (event.Type == 0x13)
-    {
-        BlinkOn = !BlinkOn;
-    }
-
-    // Pointing at a light shows its player's name on the ticker.
-    const int32_t light = (event.X - 0xd8) / LightWidth;
-
-    if (light >= 0 && light < NumPlayers && light < MaxPlayers && GlobalLog()->Ticker != nullptr &&
-        MultiPlayer() != nullptr)
-    {
-        if (const auto player = MultiPlayer()->SessionManager->GetPlayer(PlayerIDs[static_cast<size_t>(light)]))
-        {
-            GlobalLog()->Ticker->SetString(player->Name);
-        }
-    }
+    return nullptr;
 }

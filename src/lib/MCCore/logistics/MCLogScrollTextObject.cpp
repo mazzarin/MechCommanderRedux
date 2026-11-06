@@ -102,11 +102,6 @@ auto LogScrollTabHandleEvent(MCGuiObject& tab, MCGuiEvent& event) -> void
 
 // MCLogScrollTextObject
 
-MCLogScrollTextObject::~MCLogScrollTextObject()
-{
-    MCLogScrollTextObject::Destroy();
-}
-
 auto MCLogScrollTextObject::LineHeight() const -> int32_t
 {
     return Fonts[0][FontIndex]->Height() + 4;
@@ -122,18 +117,26 @@ auto MCLogScrollTextObject::Init(int32_t xPos, int32_t yPos, int32_t width, int3
         return result;
     }
 
-    ScrollTab = MCMakeGui<MCLogObject>();
-    MCLogObject& tab = *ScrollTab;
-    result = tab.Init(0, 0, 9, height - 0x1e);
+    auto made = TryCreateChild<MCLogObject>(
+        [&](MCLogObject& tab)
+        {
+            if (const int32_t tabResult = tab.Init(0, 0, 9, height - 0x1e); tabResult != 0)
+            {
+                return tabResult;
+            }
 
-    if (result != 0)
+            tab.MoveTo(Width() + 2, TrackEnd, false);
+            tab.SetDepth(100);
+            return 0;
+        });
+
+    if (!made)
     {
-        return result;
+        return made.error();
     }
 
-    tab.MoveTo(Width() + 2, TrackEnd, false);
-    tab.SetDepth(100);
-    AddChild(tab.weak_from_this());
+    ScrollTab = *made;
+    MCLogObject& tab = *ScrollTab;
     tab.ShowGuiWindow(true);
     tab.SetEventRoutine(LogScrollTabHandleEvent);
     tab.SetPaintRoutine(LogPaintScrollTab);
@@ -163,11 +166,10 @@ auto MCLogScrollTextObject::Init(int32_t xPos, int32_t yPos, int32_t width, int3
     return 0;
 }
 
-auto MCLogScrollTextObject::Destroy() -> void
+auto MCLogScrollTextObject::OnDestroy() -> void
 {
-    ScrollTab.reset();
     Text.clear();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogScrollTextObject::Draw() -> void
@@ -252,7 +254,7 @@ auto MCLogScrollTextObject::Draw() -> void
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             DrawChild(*child);
         }
@@ -416,7 +418,7 @@ auto MCLogScrollTextObject::CalcFirstPixel(int32_t tabPos) -> void
 
 auto MCLogScrollTextObject::PositionScrollTab() -> void
 {
-    if (GuiSystem().GrabbedObject().get() == ScrollTab.get())
+    if (GuiSystem().GrabbedObject().get() == ScrollTab.Lock().get())
     {
         return;
     }

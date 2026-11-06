@@ -104,7 +104,7 @@ namespace
         iface->ClearMechSelection();
         std::vector<int32_t> selected;
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons())
         {
             if (button->Active)
             {
@@ -553,7 +553,7 @@ TEST_CASE_ISOLATED("game: F picks the lay-mines mode for one selected mine layer
 
     std::shared_ptr<MCMover> mech;
 
-    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons())
     {
         if (const auto mover = std::static_pointer_cast<MCMover>(LockObject(button->Mover));
             button->Active && mover != nullptr && mover->ObjectClass == MCObjectClass::BattleMech)
@@ -652,7 +652,7 @@ TEST_CASE_ISOLATED("game: clicks and lance keys select movers; shift adds and re
     const auto [x, y] = ViewCentre();
     std::vector<std::shared_ptr<MCMover>> movers;
 
-    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+    for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons())
     {
         if (const auto mover = std::static_pointer_cast<MCMover>(LockObject(button->Mover));
             button->Active && mover != nullptr)

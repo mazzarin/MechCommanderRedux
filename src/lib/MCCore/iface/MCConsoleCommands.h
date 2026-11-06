@@ -10,5 +10,5 @@
 /// HD ART and HD LIGHTING set so would, without saving them.</item>
 /// </list>
 /// </summary>
-/// <returns>Nothing, or why the line did nothing (an unknown command, a wrong argument, nothing to act on).</returns>
+/// <returns>Nothing, or why the line did nothing (no such command, a wrong argument, nothing to act on).</returns>
 std::expected<void, std::string> RunConsoleCommand(std::string_view line);

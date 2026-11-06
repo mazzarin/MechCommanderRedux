@@ -3,7 +3,6 @@
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCScrollPane.h"
-#include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
@@ -114,43 +113,40 @@ namespace
     }
 }
 
-auto MCMechBriefBlock::Create(std::shared_ptr<MCLogMech> mech, MCLogObject& parent, int32_t xPos, int32_t yPos)
-    -> MCMechBriefBlock&
+auto MCMechBriefBlock::Init(const std::shared_ptr<MCLogPart>& part, int32_t xPos, int32_t yPos) -> void
 {
-    mech->BriefBlock = MCMakeGui<MCMechBriefBlock>();
-    MCMechBriefBlock& block = *mech->BriefBlock;
-    block._Mech = mech;
-    block.Attach(parent, xPos, yPos);
-    return block;
-}
+    if (part->PartType == 1)
+    {
+        _Mech = std::static_pointer_cast<MCLogMech>(part);
+    }
+    else
+    {
+        _Vehicle = std::static_pointer_cast<MCLogVehicle>(part);
+    }
 
-auto MCMechBriefBlock::Create(std::shared_ptr<MCLogVehicle> vehicle, MCLogObject& parent, int32_t xPos, int32_t yPos)
-    -> MCMechBriefBlock&
-{
-    vehicle->BriefBlock = MCMakeGui<MCMechBriefBlock>();
-    MCMechBriefBlock& block = *vehicle->BriefBlock;
-    block._Vehicle = vehicle;
-    block.Attach(parent, xPos, yPos);
-    return block;
-}
-
-auto MCMechBriefBlock::Discard(MCGuiOwned<MCMechBriefBlock>& block) -> void
-{
-    block.reset();
-}
-
-auto MCMechBriefBlock::Attach(MCLogObject& parent, int32_t xPos, int32_t yPos) -> void
-{
     MCLogObject::InitWithoutPort(xPos, yPos, BlockWidth, BlockHeight);
-    parent.AddChild(weak_from_this());
-    DrawBackground();
 }
 
-auto MCMechBriefBlock::Destroy() -> void
+auto MCMechBriefBlock::Part() const -> std::shared_ptr<MCLogPart>
+{
+    if (const std::shared_ptr<MCLogMech> mech = Mech())
+    {
+        return mech;
+    }
+
+    return Vehicle();
+}
+
+auto MCMechBriefBlock::DrawRow(MCLogPort& port, int32_t top) -> void
+{
+    PaintBlock(port.Frame(), X(), top, false);
+}
+
+auto MCMechBriefBlock::OnDestroy() -> void
 {
     _Mech.reset();
     _Vehicle.reset();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCMechBriefBlock::HandleEvent(MCGuiEvent& event) -> void
@@ -274,19 +270,12 @@ auto MCMechBriefBlock::PlaceInEmptySlot(int32_t lance, int32_t slot) const -> bo
     return true;
 }
 
-auto MCMechBriefBlock::Settle(int32_t lance, int32_t slot) -> void
+auto MCMechBriefBlock::Settle() -> void
 {
+    // The original moved the block onto the screen at the slot's corner; the screen makes the slot's block. The block
+    // lifted out of a slot goes (the drop pinned it).
     MCBriefingScreen& screen = *GlobalLog()->BriefingScreen;
-
-    if (!Parent.expired())
-    {
-        ParentObject()->RemoveChild(*this);
-    }
-
-    screen.AddChild(weak_from_this());
-    const RECT& area = SlotRect(lance, slot);
-    MoveTo(area.left, area.top, false);
-    DrawBackground();
+    screen.ShowSlots();
     screen.CalcTonnages();
 }
 
@@ -338,7 +327,7 @@ auto MCMechBriefBlock::DropInFreeSlot() -> bool
                 return false;
             }
 
-            Settle(l, s);
+            Settle();
             return true;
         }
     }
@@ -364,13 +353,12 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
 
             if (deploy.Unit > -1)
             {
-                // A mech was there: it leaves the force's drop. (Original behaviour (OB-166): its pilot stays marked deployed,
-                // and a mech put in its place isn't marked.)
+                // A mech was there: it leaves the force's drop (its block goes with the slot's next showing). (Original
+                // behaviour (OB-166): its pilot stays marked deployed, and a mech put in its place isn't marked.)
                 std::shared_ptr<MCLogMech> occupant;
                 GlobalLog()->ForceMechList->GetMechInfo(deploy.Unit, occupant);
                 CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
                 occupant->Deployed = false;
-                Discard(occupant->BriefBlock);
                 deploy.Unit = -1;
 
                 if (Mech() != nullptr)
@@ -408,7 +396,6 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                 GlobalLog()->ForceVehicleList->GetVehicleInfo(deploy.Vehicle, occupant);
                 CurDeployTonnage = DeployTonnageWith(*occupant, -1.0f);
                 occupant->Deployed = false;
-                Discard(occupant->BriefBlock);
                 deploy.Vehicle = -1;
 
                 if (Mech() != nullptr)
@@ -452,7 +439,7 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
                 return false;
             }
 
-            Settle(lance, slot);
+            Settle();
             return true;
         }
     }
@@ -462,7 +449,11 @@ auto MCMechBriefBlock::DropInSlotAt(POINT point, int32_t firstLance) -> bool
 
 auto MCMechBriefBlock::Drop(MCGuiEvent& event) -> void
 {
+    // The slots' and the pane's new showing destroys this block (it was lifted out of a slot, or its unit left the
+    // pane): pinned to the end, and its unit kept from here.
+    const std::shared_ptr<MCGuiObject> pin = shared_from_this();
     const std::shared_ptr<MCLogMech> mech = Mech();
+    const std::shared_ptr<MCLogVehicle> vehicle = Vehicle();
     MCBriefingScreen& screen = *GlobalLog()->BriefingScreen;
     const bool rightButton = event.Type == 6;
     GuiSystem().Release();
@@ -513,37 +504,23 @@ auto MCMechBriefBlock::Drop(MCGuiEvent& event) -> void
     }
     else
     {
-        Vehicle()->Deployed = false;
+        vehicle->Deployed = false;
     }
 
-    if (!Parent.expired())
-    {
-        ParentObject()->RemoveChild(*this);
-    }
-
-    screen.DeployPane->AddChild(weak_from_this());
+    // Back in the pane (the original moved the block there): the pane's list shows the unit again.
     screen.SetUpDeploy();
 }
 
 auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
 {
+    const std::shared_ptr<MCGuiObject> pin = shared_from_this();
     const std::shared_ptr<MCLogVehicle> vehicle = Vehicle();
     MCBriefingScreen& screen = *GlobalLog()->BriefingScreen;
     const auto owner = std::static_pointer_cast<MCLogObject>(ParentObject());
 
     // Its briefing shows.
-    if (const std::shared_ptr<MCBriefingBox> shown = screen.BriefingBox.lock();
-        shown != nullptr && !shown->Parent.expired())
-    {
-        shown->ParentObject()->RemoveChild(*shown);
-    }
-
-    const std::shared_ptr<MCLogPart> part =
-        Mech() != nullptr ? std::static_pointer_cast<MCLogPart>(Mech()) : std::static_pointer_cast<MCLogPart>(vehicle);
-    const MCGuiOwned<MCBriefingBox> box = part->BriefingBox;
-    screen.AddChild(box);
-    screen.BriefingBox = box;
-    box->DrawBackground();
+    const std::shared_ptr<MCLogPart> part = Part();
+    screen.ShowBriefing(part);
 
     if (part->LocalPart == 0 || screen.ButtonsLocked)
     {
@@ -562,8 +539,9 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
 
     Drag.X = GlobalX();
     Drag.Y = GlobalY();
-    std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-    icon->Begin(Drag.X, Drag.Y, BlockWidth, BlockHeight, [this](MCLogPort& surface) { OnBeginDrag(surface); });
+    // Made on the screen, but kept off it until it is raised below (the original added it there).
+    MCDragIcon::Create(
+        screen, Drag.X, Drag.Y, BlockWidth, BlockHeight, [this](MCLogPort& surface) { OnBeginDrag(surface); }, true);
 
     if (fromSlot)
     {
@@ -633,17 +611,8 @@ auto MCMechBriefBlock::PickUp(MCGuiEvent& event) -> void
         screen.SetUpDeploy();
     }
 
-    screen.AddChild(MCDragIcon::Current()->weak_from_this());
+    MCDragIcon::Current()->BringToFront(true);
     MCDragIcon::Current()->Raise();
-}
-
-auto MCMechBriefBlock::DrawBackground() -> void
-{
-    // Port: the block is drawn each frame by its parent (PaintBlock): the screen into its slot, or the deploy pane.
-    if (!Parent.expired() && ParentObject().get() == GlobalLog()->BriefingScreen.get())
-    {
-        GlobalLog()->BriefingScreen->PlaceInSlot(*this);
-    }
 }
 
 auto MCMechBriefBlock::OnBeginDrag(MCLogPort& surface) -> void

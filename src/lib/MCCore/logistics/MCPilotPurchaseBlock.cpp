@@ -23,24 +23,19 @@ namespace
     MCDragState PilotDrag;
 }
 
-MCPilotPurchaseBlock::~MCPilotPurchaseBlock()
-{
-    MCPilotPurchaseBlock::Destroy();
-}
-
 auto MCPilotPurchaseBlock::Init(std::shared_ptr<MCPurPilotData> newPilot) -> void
 {
     _Pilot = newPilot;
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
 }
 
-auto MCPilotPurchaseBlock::Destroy() -> void
+auto MCPilotPurchaseBlock::OnDestroy() -> void
 {
     _Pilot.reset();
-    MCLogObject::Destroy();
+    MCListRow::OnDestroy();
 }
 
-auto MCPilotPurchaseBlock::OnHireConfirmed(int32_t result) const -> void
+auto MCPilotPurchaseBlock::OnHireConfirmed(MCPurPilotData& pilot, int32_t result) -> void
 {
     if (result == 0)
     {
@@ -48,18 +43,17 @@ auto MCPilotPurchaseBlock::OnHireConfirmed(int32_t result) const -> void
     }
 
     MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;
-    std::shared_ptr<MCPurPilotData> pilot = Pilot();
     float scrollPos = screen.UnitPane->ScrollPos;
-    GlobalLog()->WarriorList->AddWarrior(pilot->FileName.data(), true);
+    GlobalLog()->WarriorList->AddWarrior(pilot.FileName.data(), true);
     GlobalLog()->ReorderWarriors();
     screen.CreatePilotInvBlock();
     screen.SetUpPilotInv(true, true);
-    pilot->Health = 0;
-    GlobalLog()->PurPilotList->SetPilotStatus(pilot->DescIndex, MCPurPilotData::Hired);
-    MCPurchaseScreen::RemovePilot(Row);
+    pilot.Health = 0;
+    GlobalLog()->PurPilotList->SetPilotStatus(pilot.DescIndex, MCPurPilotData::Hired);
+    MCPurchaseScreen::RemovePilot();
     screen.SetUpPilotPurchase();
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost;
-    SoundSystem()->PlayPilotSpeech(pilot->PilotAudio.data(), 2);
+    SoundSystem()->PlayPilotSpeech(pilot.PilotAudio.data(), 2);
     screen.UnitPane->SetScrollPos(scrollPos);
 }
 
@@ -143,7 +137,13 @@ auto MCPilotPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
             MCLogPort picture;
             picture.Load(std::format("{}logart\\pilot{:02}.tga", ArtPath, Pilot()->NameIndex));
             OpenPurchaseDialog(2, Pilot()->Cost, 1, Pilot()->Callsign, {}, picture,
-                               [this](int32_t result, int32_t) { OnHireConfirmed(result); });
+                               [weak = _Pilot](int32_t result, int32_t)
+                               {
+                                   if (const std::shared_ptr<MCPurPilotData> hired = weak.lock(); hired != nullptr)
+                                   {
+                                       OnHireConfirmed(*hired, result);
+                                   }
+                               });
             break;
         }
 
@@ -170,12 +170,12 @@ auto MCPilotPurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
     }
 }
 
-auto MCPilotPurchaseBlock::DrawBackground(int32_t) const -> void
+auto MCPilotPurchaseBlock::OnRefresh() -> void
 {
     PrepareInfoDescription(Pilot()->Description);
 }
 
-auto MCPilotPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
+auto MCPilotPurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
 {
     // A hired pilot (health cleared by OnHireConfirmed) is not drawn.
     if (Pilot()->Health == 0)

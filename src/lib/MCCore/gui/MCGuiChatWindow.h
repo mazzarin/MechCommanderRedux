@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCFidpMessage;
 class MCGuiFont;
@@ -22,7 +22,6 @@ public:
 
     /// <summary>Like the base's init; makes the team button; the white font; back colour 0x10.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view text) override;
-    void Destroy() override;
     /// <summary>The text wrapped over its lines, and the caret.</summary>
     void Draw() override;
     /// <summary>Port: draws itself each frame from its text, caret and blink state.</summary>
@@ -40,7 +39,7 @@ public:
     void SetCursorPos(int32_t pos);
 
     /// <summary>The "to team only" toggle.</summary>
-    MCGuiOwned<MCGuiToolButton> TeamButton;
+    MCGuiHandle<MCGuiToolButton> TeamButton;
     /// <summary>The text typed (the caret is at its end).</summary>
     std::string Text;
     /// <summary>The caret's x (0x15 by init), set by <see cref="SetCursorPos"/>.</summary>
@@ -59,7 +58,6 @@ class MCGuiChatWindow : public MCGuiObject
 {
 public:
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
 
     /// <summary>
     /// A network chat message arrived from player <paramref name="fromID"/>: byte 8 is the "to all" flag, the text
@@ -78,7 +76,7 @@ public:
     bool DrawsLive() override { return true; }
 
     /// <summary>The entry line under the incoming lines.</summary>
-    MCGuiOwned<MCGuiChatInput> ChatInput;
+    MCGuiHandle<MCGuiChatInput> ChatInput;
 
     /// <summary>Port: a line as the chat formatter takes it (with its colour codes), and its height.</summary>
     struct ChatLine

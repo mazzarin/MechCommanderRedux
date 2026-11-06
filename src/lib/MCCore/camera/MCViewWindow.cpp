@@ -98,13 +98,13 @@ auto MCViewWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     return 0;
 }
 
-auto MCViewWindow::Destroy() -> void
+auto MCViewWindow::OnDestroy() -> void
 {
     MCRenderer::RemoveUnderlay(MCAddressKey::Of(*this));
     MCRenderer::RemoveFrameSurface(*WorldWindow);
     *WorldWindow = {};
     *WorldPane = {};
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCViewWindow::HandleEvent(MCGuiEvent& event) -> void

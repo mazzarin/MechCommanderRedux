@@ -71,8 +71,3 @@ auto MCLogPort::Load(std::string_view fileName) -> void
                 static_cast<size_t>(tgaHeight * tgaWidth));
     MCRenderer::UnlockTexture(*texture);
 }
-
-auto MCLogPort::Destroy() -> void
-{
-    FreeBitmap();
-}

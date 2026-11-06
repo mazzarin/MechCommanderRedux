@@ -11,27 +11,49 @@ struct MCLogInventoryItem;
 /// </summary>
 inline constexpr std::array<uint8_t, 5> RestrictedComps = {15, 37, 38, 42, 43};
 
-/// <summary>A stack of an owned component (weapon, ammo, equipment) in the inventory list.</summary>
+/// <summary>The texts a component's row and info box show, worked out from the master component.</summary>
+struct MCComponentTexts
+{
+    /// <summary>The range: "%.1f m", a short/medium/long word for weapons, "N/A" for probes.</summary>
+    std::string Range;
+    /// <summary>The weight ("%.1f tons").</summary>
+    std::string Weight;
+    /// <summary>The recycle time ("%.2f s"), or "N/A".</summary>
+    std::string Recycle;
+    /// <summary>The damage ("%.2f", tripled for one weapon kind), or "N/A".</summary>
+    std::string Damage;
+};
+
+/// <summary>
+/// A stack of an owned component (weapon, ammo, equipment): its row in the inventory list (a row of
+/// <see cref="MCListView"/>).
+/// </summary>
 /// <remarks>Original source: <c>logistics\invblock.cpp</c> (<c>CompInventoryBlock</c>).</remarks>
 class MCCompInventoryBlock : public MCInventoryBlock
 {
 public:
-    ~MCCompInventoryBlock() override;
-
-    /// <summary>Shows <paramref name="item"/>; builds its stat texts and icon.</summary>
+    /// <summary>Shows <paramref name="item"/>; builds its icon.</summary>
     void Init(std::shared_ptr<MCLogInventoryItem> item);
 
+    /// <summary>
+    /// The texts of master component <paramref name="masterID"/> (the original's block worked them out in its init).
+    /// </summary>
+    static MCComponentTexts Texts(uint8_t masterID);
+
+    /// <summary>Tonnage of master component <paramref name="masterID"/>, plus its ammo's for a weapon that uses ammo.</summary>
+    static float MountTonnage(uint8_t masterID);
+
     /// <summary>Frees the icon (and the row's own port).</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Selection, drag onto a mech or the store (a sale), and the info display.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
     /// <summary>
-    /// Shows or hides the block and sets <see cref="CantMount"/>. Port: the row is drawn by <see cref="DrawRow"/> (the
-    /// original painted it here, darkened when the item can't go on the selected mech).
+    /// Shows or hides the row and sets <see cref="CantMount"/> (the original's <c>drawBackground</c>, which also painted
+    /// the row, darkened when the item can't go on the selected mech).
     /// </summary>
-    void DrawBackground();
+    void OnRefresh() override;
 
     /// <summary>Port: the icon and the count, darkened when <see cref="CantMount"/>.</summary>
     void DrawRow(MCLogPort& port, int32_t top) override;
@@ -51,18 +73,11 @@ public:
     static std::shared_ptr<MCLogInventoryItem> AddSpare(uint8_t masterID);
 
     /// <summary>
-    /// The sale dialog's answer: a confirmed sale takes <paramref name="quantity"/> off the stack and pays for them.
+    /// The sale dialog's answer for <paramref name="sold"/>: a confirmed sale takes <paramref name="quantity"/> off
+    /// the stack and pays for them.
     /// </summary>
-    void OnSellConfirmed(int32_t result, int32_t quantity) const;
+    static void OnSellConfirmed(MCLogInventoryItem& sold, int32_t result, int32_t quantity);
 
-    /// <summary>The range: "%.1f m", a short/medium/long word for weapons, "N/A" for probes.</summary>
-    std::string RangeText;
-    /// <summary>The weight ("%.1f tons").</summary>
-    std::string WeightText;
-    /// <summary>The recycle time ("%.2f s"), or "N/A".</summary>
-    std::string RecycleText;
-    /// <summary>The damage ("%.2f", tripled for one weapon kind), or "N/A".</summary>
-    std::string DamageText;
     /// <summary>
     /// The item can't go on the mech selected on the repair screen (see <see cref="CanMount"/>); the row is drawn
     /// darkened.
@@ -70,6 +85,8 @@ public:
     bool CantMount = false;
     /// <summary>The component (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogInventoryItem> Item() const { return _Item.lock(); }
+    /// <summary>The item's <see cref="MCLogInventoryItem::ListIndex"/>.</summary>
+    int32_t ListIndex() const override;
     /// <summary>
     /// Port: the component's icon, drawn in place with its row (<see cref="DrawIcon"/>; the original painted it into a
     /// picture once): its range colour's block background and picture (logistics art), its name and caption, and the
@@ -90,8 +107,6 @@ public:
     void DrawIcon(MCLogPort& port) const;
     /// <summary>Tonnage (plus its ammo's for ballistic and missile weapons).</summary>
     float Tonnage = 0.0f;
-    /// <summary>The item's index in the owner's inventory list (set by whoever makes the block).</summary>
-    int32_t InventoryIndex = 0;
 
 private:
     /// <summary>The component the block refers to (<see cref="Item"/>).</summary>

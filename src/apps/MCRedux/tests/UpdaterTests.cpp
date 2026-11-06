@@ -173,7 +173,7 @@ TEST_CASE_ISOLATED("game: without an updater the main menu keeps ORIGINAL CINEMA
 
     REQUIRE(MCTestGame::StartLogistics());
     Frames();
-    const std::shared_ptr<MCLogButton> cinema = GlobalLog()->MainScreen->CinemaButton;
+    const std::shared_ptr<MCLogButton> cinema = GlobalLog()->MainScreen->CinemaButton.Lock();
     REQUIRE(cinema != nullptr);
     CHECK(SamePixels(*cinema->GetUpPicture(), *LogArt("mm_xbh08.tga")));
     CHECK(!cinema->Disabled);
@@ -192,7 +192,7 @@ TEST_CASE_ISOLATED("game: UPDATE takes ORIGINAL CINEMA's place, amber while an u
     Frames();
     CHECK_EQ(updater.Log->Checks.size(), size_t{1});
     const std::shared_ptr<MCLogistics> logistics = GlobalLog();
-    const std::shared_ptr<MCLogButton> cinema = logistics->MainScreen->CinemaButton;
+    const std::shared_ptr<MCLogButton> cinema = logistics->MainScreen->CinemaButton.Lock();
     REQUIRE(cinema != nullptr);
 
     // Nothing new: UPDATE, grayed, in the menu's own lettering.

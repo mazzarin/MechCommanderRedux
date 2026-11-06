@@ -109,7 +109,7 @@ auto MCTacticalInterface::UpdateMouseState(MCOptionalRef<MCGuiEvent> mouseEvent)
         cursorEvent.Y = cursor.y;
         cursorEvent.Target = ScreenWindow()->FindObject(cursor.x, cursor.y);
 
-        if (cursorEvent.TargetObject() == MechBar)
+        if (cursorEvent.TargetObject() == MechBar.Lock())
         {
             cursorEvent.Target = MainHolder()->GetActivePane();
         }
@@ -130,7 +130,7 @@ auto MCTacticalInterface::UpdateMouseState(MCOptionalRef<MCGuiEvent> mouseEvent)
         return;
     }
 
-    if (window->ParentObject().get() != MechBar.get())
+    if (window->ParentObject() != MechBar.Lock())
     {
         HideTags();
         MechBar->HighlightId = -1;

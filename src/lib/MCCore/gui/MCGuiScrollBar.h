@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 /// <summary>The messages of a scroll bar: its parts post them to it, and it posts <see cref="Changed"/> to its parent.</summary>
 namespace MCGuiScrollMessage
@@ -73,7 +73,6 @@ public:
     /// <summary>Makes the arrows (art packets 0x27/0x28), the areas and the thumb; 18 pixels wide whatever <paramref name="width"/>.</summary>
     /// <returns>0, or a part's error.</returns>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     void Draw() override;
     /// <summary>Moves the position for its parts' messages, and tells the parent.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -91,14 +90,14 @@ public:
     int32_t ScrollMax = 0;
     /// <summary>The position, 0..<see cref="ScrollMax"/>.</summary>
     int32_t ScrollPos = 0;
-    /// <summary>The arrows at the ends.</summary>
-    MCGuiOwned<MCGuiScrollButton> UpButton;
-    MCGuiOwned<MCGuiScrollButton> DownButton;
-    /// <summary>The track above and below the thumb.</summary>
-    MCGuiOwned<MCGuiScrollArea> UpArea;
-    MCGuiOwned<MCGuiScrollArea> DownArea;
-    /// <summary>The thumb (a plain object painted by <see cref="ScrollTabPaint"/>).</summary>
-    MCGuiOwned<MCGuiObject> ScrollTab;
+    /// <summary>The arrows at the ends (the bar's children).</summary>
+    MCGuiHandle<MCGuiScrollButton> UpButton;
+    MCGuiHandle<MCGuiScrollButton> DownButton;
+    /// <summary>The track above and below the thumb (the bar's children).</summary>
+    MCGuiHandle<MCGuiScrollArea> UpArea;
+    MCGuiHandle<MCGuiScrollArea> DownArea;
+    /// <summary>The thumb, a child painted by <see cref="ScrollTabPaint"/>.</summary>
+    MCGuiHandle<MCGuiObject> ScrollTab;
 };
 
 /// <summary>The arrows' and areas' event routine: posts their message to the bar, repeating while held.</summary>

@@ -12,11 +12,11 @@
 class MCLogScrollList : public MCLogObject
 {
 public:
-    /// <summary>Calls <see cref="Destroy"/>.</summary>
+    /// <summary>Destroys the object if nothing did (its cleanup lets go of the mouse).</summary>
     ~MCLogScrollList() override;
 
     /// <summary>Lets go of the mouse if the thumb is being dragged.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>The wheel scrolls the rows.</summary>
     bool MouseWheel(int32_t steps, int32_t xPos, int32_t yPos) override;

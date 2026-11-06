@@ -4,7 +4,7 @@
 // (mission\mission.cpp). It reads the campaign's mission FIT (movies, scenarios, game segments), starts and ends each
 // scenario, and shows the mission results screen afterwards.
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCFitIniFile;
 class MCGuiCallback;
@@ -115,7 +115,7 @@ public:
     /// <summary>The state to go to after the current one (<c>NextGameState</c> in the mission FIT).</summary>
     MCMissionState NextState = MCMissionState::Start;
     /// <summary>The results screen shown after a scenario (created in <see cref="StartScenario"/>).</summary>
-    MCGuiOwned<MCMissionResultsScreen> ResultsScreen;
+    MCGuiHandle<MCMissionResultsScreen> ResultsScreen;
     /// <summary>Index into <see cref="Movies"/> of the movie to play next (<c>SmackerMovieId</c>); -1 = none.</summary>
     int32_t CurrentMovie = 0;
     /// <summary>The Smacker movie names (<c>Movie%d</c>).</summary>

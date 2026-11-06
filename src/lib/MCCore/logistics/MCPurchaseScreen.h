@@ -12,12 +12,11 @@ class MCGuiEvent;
 class MCPurchaseScreen : public MCLogInvScreen
 {
 public:
-    ~MCPurchaseScreen() override { Destroy(); }
-
     /// <summary>Makes the full-screen object, the two panes and the store tab headers.</summary>
     void Init();
 
-    void Destroy() override;
+    /// <summary>Frees the tab pictures and the panes.</summary>
+    void OnDestroy() override;
 
     /// <summary>Redraws the screen's background art (<c>lspbk00</c>).</summary>
     void DrawBackground();
@@ -28,14 +27,12 @@ public:
     /// <summary>Shows or hides the screen and its panes.</summary>
     void ShowGuiWindow(bool show) override;
 
-    /// <summary>The store's mech rows, shown in the unit pane (made by <c>MCLogInvScreen::CreatePurVehiclePane</c>).</summary>
-    std::shared_ptr<MCLogPort> PurMechPort;
-    /// <summary>The store's pilot rows.</summary>
-    std::shared_ptr<MCLogPort> PurPilotPort;
-    /// <summary>The store's component rows.</summary>
-    std::shared_ptr<MCLogPort> PurCompPort;
-    /// <summary>The store's vehicle rows.</summary>
-    std::shared_ptr<MCLogPort> PurVehiclePort;
+    /// <summary>
+    /// How the store (the unit pane's list) lays out each tab, by inventory tab (mechs, pilots, components,
+    /// vehicles); set by <c>MCLogInvScreen::CreatePurVehiclePane</c> and <c>RemovePilot</c>, where the original made
+    /// each tab's picture.
+    /// </summary>
+    std::array<MCListLayout, 4> StoreLayouts{};
     /// <summary>The store's mech tab header (<c>lspbim00</c>).</summary>
     std::shared_ptr<MCLogPort> MechTabPort;
     /// <summary>The store's pilot tab header (<c>lspbip00</c>).</summary>

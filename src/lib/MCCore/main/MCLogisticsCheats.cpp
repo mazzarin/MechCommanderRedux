@@ -109,9 +109,8 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
 
             for (const std::shared_ptr<MCLogMech>& mech : ForceMechList->Mechs)
             {
-                MCMechRepairBlock& block = *mech->RepairBlock;
-                block.RepairArmor(-1);
-                block.RepairInternal(-1);
+                MCMechRepairBlock::RepairArmor(*mech, -1);
+                MCMechRepairBlock::RepairInternal(*mech, -1);
 
                 for (const std::shared_ptr<MCLogInventoryItem>& item : mech->Inventory->Items)
                 {
@@ -121,10 +120,14 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
                     }
                 }
 
-                block.SetArmorSlider(-1);
-                block.SetInternalSlider(-1);
-                block.SetEngineSlider(-1);
-                block.DrawBackground(block.SlotIndex, std::nullopt);
+                // The three knobs at the mech's state (the block's Set*Slider(-1)), then the row works out what it
+                // shows.
+                MCMechRepairBlock::PlaceSliders(*mech);
+
+                if (const std::shared_ptr<MCMechRepairBlock> row = RepairScreen->RowOf(*mech); row != nullptr)
+                {
+                    row->DrawBackground(mech->SlotIndex, std::nullopt);
+                }
             }
 
             break;
@@ -139,9 +142,9 @@ auto MCLogistics::ProcessCheatCode(int16_t key) -> void
                 item->Count++;
             }
 
-            const std::shared_ptr<MCLogInvScreen> screen = CurrentScreen() == RepairScreen
-                                                               ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen)
-                                                               : PurchaseScreen;
+            const std::shared_ptr<MCLogInvScreen> screen =
+                CurrentScreen() == RepairScreen ? std::static_pointer_cast<MCLogInvScreen>(RepairScreen.Lock())
+                                                : PurchaseScreen.Lock();
             MCLogInvScreen::CreateCompInvBlock();
             screen->SetUpCompInv(true, true);
             break;

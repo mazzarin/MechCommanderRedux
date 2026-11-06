@@ -12,13 +12,12 @@
 #include "logistics/MCMainMenu.h"
 #include "logistics/MCLogChatWindow.h"
 #include "logistics/MCLogMenus.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
 #include "logistics/MCPurchaseScreen.h"
 #include "logistics/MCRepairScreen.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "main/MCMPPlayerLights.h"
 #include "main/MCForceMessages.h"
 #include "main/MCGamePaths.h"
@@ -250,10 +249,9 @@ auto MCLogistics::InitializeMultiplayer() -> void
 
 auto MCLogistics::SetUpPlayerLights(std::span<const uint32_t> sortedIds) -> void
 {
-    if (PlayerLights.get() == nullptr)
+    if (PlayerLights == nullptr)
     {
-        PlayerLights = MCMakeGui<MCMPPlayerLights>();
-        PlayerLights->Init();
+        MakePlayerLights();
     }
 
     PlayerLights->SetNumPlayers(static_cast<int32_t>(sortedIds.size()));
@@ -353,7 +351,6 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
     const bool teammate = homeGroup == SideGroupID(force);
     Assert(homeGroup == MultiPlayer()->InnerSphereGroupID || homeGroup == MultiPlayer()->ClanGroupID, 0,
            "Local player is not on a team!");
-    const size_t slotIndex = static_cast<size_t>(force.Lance) * LanceSlots + force.Slot;
     MCBriefingScreen& briefing = *BriefingScreen;
     std::shared_ptr<MCLogPart> part;
     const int32_t commander = sender->PlayerNumber;
@@ -376,12 +373,6 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
         const std::shared_ptr<MCLogVehicle> vehicle = AddVehicleFromNetworkMessage(*vehicleList, force);
         vehicle->LocalPart = false;
         part = vehicle;
-
-        if (teammate)
-        {
-            const RECT& rect = briefing.SlotRects[slotIndex];
-            MCMechBriefBlock::Create(vehicle, briefing, rect.left, rect.top);
-        }
     }
     else
     {
@@ -392,8 +383,6 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
         if (teammate)
         {
             mech->CalcStatus();
-            const RECT& rect = briefing.SlotRects[slotIndex];
-            MCMechBriefBlock::Create(mech, briefing, rect.left, rect.top);
         }
     }
 
@@ -405,6 +394,8 @@ auto MCLogistics::HandleDeployForceMessage(uint32_t playerID, std::span<const ui
 
     if (teammate)
     {
+        // A teammate's unit shows in its slot (the original made the unit's block there).
+        briefing.ShowSlots();
         briefing.MpCalcTonnages();
     }
 }
@@ -466,7 +457,7 @@ auto MCLogistics::HandleChatMessage(uint32_t playerID, std::span<const uint8_t> 
         SoundSystem()->PlayInterfaceSample(0x14);
     }
 
-    ChatWindow->HandleNetworkMessage(playerID, message);
+    Chat->HandleNetworkMessage(playerID, message);
 }
 
 auto MCLogistics::SendRemoveForceMessage(int lance, int slot) const -> void
@@ -986,13 +977,10 @@ auto MCLogistics::RemoveForceAtDropSlot(int32_t slotIndex, uint32_t playerID, bo
     if (teamTable)
     {
         MCBriefingScreen& briefing = *BriefingScreen;
+        // Its slot shows empty (the original's block went with the unit).
+        briefing.ShowSlots();
         briefing.MpCalcTonnages();
-
-        if (const std::shared_ptr<MCBriefingBox> shown = briefing.BriefingBox.lock())
-        {
-            briefing.RemoveChild(*shown);
-            briefing.BriefingBox.reset();
-        }
+        briefing.HideBriefing();
     }
 
     if (part->PartType != 1)

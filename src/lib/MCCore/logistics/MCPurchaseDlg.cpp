@@ -57,11 +57,11 @@ auto MCPurchaseDlg::Init(int32_t newPurchaseType, int32_t newUnitCost, int32_t n
     Spinner = newMaxQuantity != 1;
 }
 
-auto MCPurchaseDlg::Destroy() -> void
+auto MCPurchaseDlg::OnDestroy() -> void
 {
     Subtitle.clear();
     Title.clear();
-    MCLogDialogBox::Destroy();
+    MCLogDialogBox::OnDestroy();
 }
 
 auto MCPurchaseDlg::CanAddOne() const -> bool

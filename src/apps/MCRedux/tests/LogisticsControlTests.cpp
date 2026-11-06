@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "GuiTree.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "fakes/MCMemoryFileSource.h"
@@ -22,6 +23,7 @@
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSmuti.h"
 #include "logistics/MCTicker.h"
+#include "logistics/MCTickerLine.h"
 #include "main/MCGamePaths.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCPurMechList.h"
@@ -165,13 +167,19 @@ namespace
         }
     }
 
-    /// <summary>A text field at (10, 10) taking <paramref name="size"/> - 1 characters of <paramref name="type"/>.</summary>
-    MCGuiOwned<MCLogTextObject> MakeField(int32_t size, MCLogInputType type)
+    /// <summary>Sets <paramref name="field"/> up at (10, 10), taking <paramref name="size"/> - 1 characters of <paramref name="type"/>.</summary>
+    void SetUpField(MCLogTextObject& field, int32_t size, MCLogInputType type)
     {
-        MCGuiOwned<MCLogTextObject> field = MCMakeGui<MCLogTextObject>();
-        field->MCLogObject::Init(10, 10, 100, 12);
-        field->Font = WhiteFont;
-        field->InitBuffer(size, type);
+        field.MCLogObject::Init(10, 10, 100, 12);
+        field.Font = WhiteFont;
+        field.InitBuffer(size, type);
+    }
+
+    /// <summary>A text field at (10, 10) taking <paramref name="size"/> - 1 characters of <paramref name="type"/>.</summary>
+    MCGuiRef<MCLogTextObject> MakeField(int32_t size, MCLogInputType type)
+    {
+        MCGuiRef<MCLogTextObject> field = MCGuiTree::NewRoot<MCLogTextObject>();
+        SetUpField(*field, size, type);
         return field;
     }
 
@@ -199,7 +207,7 @@ namespace
 
 // Ports and the base object
 
-TEST_CASE("logistics: a port makes a new zeroed bitmap on every Init and keeps its size when destroyed")
+TEST_CASE("logistics: a port makes a new zeroed bitmap on every Init")
 {
     LogisticsScreen screen;
     MCLogPort port;
@@ -212,76 +220,63 @@ TEST_CASE("logistics: a port makes a new zeroed bitmap on every Init and keeps i
     CHECK(std::all_of(port.Pixels().data(), port.Pixels().data() + 12, [](uint8_t pixel) { return pixel == 0; }));
     CHECK_EQ(port.Frame().X1, 3);
     CHECK_EQ(port.Frame().Y1, 2);
-
-    port.Destroy();
-    CHECK(port.SharedBitmap() == nullptr);
-    CHECK(port.SharedFrame() == nullptr);
-    CHECK_EQ(port.Width(), 4);
-    CHECK_EQ(port.Height(), 3);
 }
 
 TEST_CASE("logistics: an object made without a port has none; with one, a picture, or a view when it draws itself")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogObject> bare = MCMakeGui<MCLogObject>();
+    MCGuiRef<MCLogObject> bare = MCGuiTree::NewRoot<MCLogObject>();
     bare->InitWithoutPort(1, 2, 30, 40);
     CHECK(bare->Lport() == nullptr);
     CHECK_EQ(bare->Width(), 30);
     CHECK_EQ(bare->Height(), 40);
 
-    MCGuiOwned<MCLogObject> plain = MCMakeGui<MCLogObject>();
+    MCGuiRef<MCLogObject> plain = MCGuiTree::NewRoot<MCLogObject>();
     REQUIRE_EQ(plain->Init(0, 0, 8, 6), 0);
     REQUIRE(plain->Lport() != nullptr);
     CHECK(!plain->Lport()->IsView());
     CHECK_EQ(plain->Lport()->Width(), 8);
 
     // A button draws itself each frame: its port is a view of its size.
-    MCGuiOwned<MCLogButton> button = MCMakeGui<MCLogButton>();
+    MCGuiRef<MCLogButton> button = MCGuiTree::NewRoot<MCLogButton>();
     REQUIRE_EQ(button->Init(0, 0, 20, 10, {}), 0);
     REQUIRE(button->Lport() != nullptr);
     CHECK(button->Lport()->IsView());
 
-    plain->Destroy();
-    CHECK(plain->Lport() == nullptr);
+    // Destroyed, it frees its port (the pin keeps its memory to look).
+    const std::shared_ptr<MCLogObject> destroyed = plain.Pin();
+    plain.reset();
+    CHECK(destroyed->Lport() == nullptr);
 }
 
-TEST_CASE("logistics: destroying an object unlinks the children left on it; their owners delete them (OB-071 gone)")
+TEST_CASE("logistics: destroying an object destroys and deletes the children made on it (OB-071 gone)")
 {
     LogisticsScreen screen;
     MCCountedObject::Deleted = 0;
-    MCGuiOwned<MCLogObject> parent = MCMakeGui<MCLogObject>();
+    MCGuiRef<MCLogObject> parent = MCGuiTree::NewRoot<MCLogObject>();
     parent->Init(0, 0, 50, 50);
-    std::vector<MCGuiOwned<MCCountedObject>> children;
+    std::vector<MCGuiHandle<MCCountedObject>> children;
 
     for (int32_t i = 0; i < 3; i++)
     {
-        MCGuiOwned<MCCountedObject> child = MCMakeGui<MCCountedObject>();
-        child->InitWithoutPort(i * 10, 0, 5, 5);
-        parent->AddChild(child);
-        children.push_back(std::move(child));
+        children.push_back(parent->CreateChild<MCCountedObject>([&](MCCountedObject& made)
+                                                                { made.InitWithoutPort(i * 10, 0, 5, 5); }));
     }
 
-    parent->Destroy();
-    CHECK_EQ(MCCountedObject::Deleted, 0);
-    CHECK(parent->ChildList.empty());
+    // A child closed leaves its parent and is deleted: its parent was its only owner.
+    children[0]->Close();
+    CHECK(!children[0]);
+    CHECK_EQ(MCCountedObject::Deleted, 1);
+    CHECK_EQ(parent->NumberOfChildren(), 2);
 
-    for (const MCGuiOwned<MCCountedObject>& child : children)
-    {
-        CHECK(child->Parent.expired());
-    }
-
-    children.clear();
+    // The parent's destroy takes the rest with it.
+    parent.reset();
     CHECK_EQ(MCCountedObject::Deleted, 3);
 
-    // A child whose owner lets go leaves its parent.
-    parent->Init(0, 0, 50, 50);
-    MCGuiOwned<MCCountedObject> lone = MCMakeGui<MCCountedObject>();
-    lone->InitWithoutPort(0, 0, 5, 5);
-    parent->AddChild(lone);
-    CHECK_EQ(parent->NumberOfChildren(), 1);
-    lone.reset();
-    CHECK_EQ(MCCountedObject::Deleted, 4);
-    CHECK_EQ(parent->NumberOfChildren(), 0);
+    for (const MCGuiHandle<MCCountedObject>& child : children)
+    {
+        CHECK(!child);
+    }
 }
 
 // The text formatter
@@ -360,9 +355,10 @@ TEST_CASE("game: the ticker keeps a wide text whole and scrolls it two pixels a 
         return;
     }
 
-    MCGuiOwned<MCTicker> ticker = MCMakeGui<MCTicker>();
-    ticker->Init(3, 3, 0x40, 1);
-    ticker->SetFont(MedWhiteFont);
+    // The ticker, and a screen's line of it, which passes its events on.
+    const auto ticker = std::make_shared<MCTicker>(0x40, MedWhiteFont);
+    const MCGuiRef<MCTickerLine> line = MCGuiRef<MCTickerLine>::Make();
+    line->Init(3, 3, 0x40, 1, ticker);
     const std::string text(300, 'W');
     ticker->SetString(text);
     CHECK_EQ(ticker->Text.size(), 300u);
@@ -371,17 +367,17 @@ TEST_CASE("game: the ticker keeps a wide text whole and scrolls it two pixels a 
     // A wide text gets half a line of gap before it repeats.
     CHECK_EQ(ticker->TextWidth, 0x20 + textWidth);
 
-    Send(*ticker, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollTimer);
+    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollTimer);
     CHECK(!ticker->ScrollShown);
     CHECK_EQ(ticker->ScrollPos, 0);
 
-    Send(*ticker, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
+    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
     CHECK(ticker->ScrollShown);
     CHECK_EQ(ticker->ScrollPos, 2);
 
     // Past the end it comes round again.
     ticker->ScrollPos = ticker->TextWidth + 1;
-    Send(*ticker, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
+    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
     CHECK_EQ(ticker->ScrollPos, 1);
 
     // The same text again changes nothing; an empty one clears the line.
@@ -394,7 +390,7 @@ TEST_CASE("game: the ticker keeps a wide text whole and scrolls it two pixels a 
     // A text that fits doesn't scroll.
     ticker->SetString("W");
     CHECK_EQ(ticker->TextWidth, MedWhiteFont->Width(std::string_view("W")));
-    Send(*ticker, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
+    Send(*line, MCGuiEventType::Timer, 0, 0, 0, MCTicker::ScrollStepTimer);
     CHECK_EQ(ticker->ScrollPos, 0);
 }
 
@@ -403,20 +399,20 @@ TEST_CASE("game: the ticker keeps a wide text whole and scrolls it two pixels a 
 TEST_CASE("logistics: a text field takes the characters its type allows, one less than its buffer holds")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogTextObject> digits = MakeField(5, MCLogInputType::Digits);
+    MCGuiRef<MCLogTextObject> digits = MakeField(5, MCLogInputType::Digits);
     Type(*digits, "1a2b34567");
     CHECK_EQ(digits->Text(), std::string_view("1234"));
     CHECK_EQ(digits->TextLength, 4);
 
-    MCGuiOwned<MCLogTextObject> port = MakeField(8, MCLogInputType::Port);
+    MCGuiRef<MCLogTextObject> port = MakeField(8, MCLogInputType::Port);
     Type(*port, "1234567");
     CHECK_EQ(port->Text(), std::string_view("23456"));
 
-    MCGuiOwned<MCLogTextObject> text = MakeField(8, MCLogInputType::Text);
+    MCGuiRef<MCLogTextObject> text = MakeField(8, MCLogInputType::Text);
     Type(*text, std::string_view("a\tb~\x7f", 5));
     CHECK_EQ(text->Text(), std::string_view("ab~"));
 
-    MCGuiOwned<MCLogTextObject> none = MakeField(8, MCLogInputType::None);
+    MCGuiRef<MCLogTextObject> none = MakeField(8, MCLogInputType::None);
     Type(*none, "abc");
     CHECK(none->Text().empty());
 }
@@ -424,7 +420,7 @@ TEST_CASE("logistics: a text field takes the characters its type allows, one les
 TEST_CASE("logistics: backspace on a text field's untouched text clears it all, after an edit it takes one character")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
+    MCGuiRef<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
     CHECK_EQ(field->SetStringBuffer("abc"), 0);
     CHECK_EQ(field->CursorPos, 3);
     Send(*field, MCGuiEventType::Character, 0, 0, 8);
@@ -448,7 +444,7 @@ TEST_CASE("logistics: backspace on a text field's untouched text clears it all, 
 TEST_CASE("logistics: typing after a shorter text was set brings back the end of the longer one (OB-161)")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
+    MCGuiRef<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
     field->SetStringBuffer("abcdef");
     field->SetStringBuffer("xy");
     CHECK_EQ(field->Text(), std::string_view("xy"));
@@ -461,10 +457,10 @@ TEST_CASE("logistics: Enter in a text field tells its parent, and the focus clea
     LogisticsScreen screen;
     const std::string savedEmpty = EmptyFile;
     EmptyFile = "<empty>";
-    MCGuiOwned<MCNoticeRecorder> parent = MCMakeGui<MCNoticeRecorder>();
+    MCGuiRef<MCNoticeRecorder> parent = MCGuiTree::NewRoot<MCNoticeRecorder>();
     parent->Init(0, 0, 200, 200);
-    MCGuiOwned<MCLogTextObject> field = MakeField(16, MCLogInputType::Any);
-    parent->AddChild(field);
+    const MCGuiHandle<MCLogTextObject> field =
+        parent->CreateChild<MCLogTextObject>([](MCLogTextObject& made) { SetUpField(made, 16, MCLogInputType::Any); });
     field->SetStringBuffer("<empty>");
 
     // Without ClearEmptyOnFocus the name stays.
@@ -484,7 +480,6 @@ TEST_CASE("logistics: Enter in a text field tells its parent, and the focus clea
     Send(*field, MCGuiEventType::Character, 0, 0, 0x0d);
     REQUIRE_EQ(parent->Notices.size(), 1u);
     CHECK_EQ(parent->Notices[0], MCLogNotice::EntryDone);
-    parent->RemoveChild(*field);
     EmptyFile = savedEmpty;
 }
 
@@ -493,7 +488,7 @@ TEST_CASE("logistics: Enter in a text field tells its parent, and the focus clea
 TEST_CASE("logistics: scrolling text keeps every line (no 4 KB limit); lines 0 and 1 are both the first")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogScrollTextObject> text = MCMakeGui<MCLogScrollTextObject>();
+    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
     REQUIRE_EQ(text->Init(0, 0, 100, 60, {}), 0);
     CHECK(!text->Scrolling);
 
@@ -520,7 +515,7 @@ TEST_CASE("logistics: scrolling text keeps every line (no 4 KB limit); lines 0 a
 TEST_CASE("logistics: a scrolling text line in colour 0 ends the text, and a blank line is just its colour")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogScrollTextObject> text = MCMakeGui<MCLogScrollTextObject>();
+    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
     REQUIRE_EQ(text->Init(0, 0, 100, 60, "first"), 0);
     CHECK(text->Scrolling);
     text->PrintBlank(0x1f);
@@ -542,7 +537,7 @@ TEST_CASE("game: wrapped logistics text breaks at the last space that fits; a fi
         return;
     }
 
-    MCGuiOwned<MCLogScrollTextObject> text = MCMakeGui<MCLogScrollTextObject>();
+    MCGuiRef<MCLogScrollTextObject> text = MCGuiTree::NewRoot<MCLogScrollTextObject>();
     REQUIRE_EQ(text->Init(0, 0, 100, 60, {}), 0);
     const int32_t width = Fonts[0][0]->Width(std::string_view("aaa aaa")) + 6;
     text->PrintWrapped("aaa aaa aaa aaa", 0x1f, width);
@@ -561,7 +556,7 @@ TEST_CASE("game: wrapped logistics text breaks at the last space that fits; a fi
 TEST_CASE("logistics: the game list is unlisted until refreshed, and a selection past it asks for a refresh")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCGameList> games = MCMakeGui<MCGameList>();
+    MCGuiRef<MCGameList> games = MCGuiTree::NewRoot<MCGameList>();
     REQUIRE_EQ(games->Init(0, 0, 200, 100, {}), 0);
     CHECK_EQ(games->NumSessions(), -1);
     CHECK_EQ(games->TabColumn, 0x73);
@@ -590,7 +585,7 @@ TEST_CASE("game: a slider's value is the mouse's share of the thumb's travel, cl
         return;
     }
 
-    MCGuiOwned<MCLogSlider> slider = MCMakeGui<MCLogSlider>();
+    MCGuiRef<MCLogSlider> slider = MCGuiTree::NewRoot<MCLogSlider>();
     REQUIRE_EQ(slider->Init(20, 0, 120, 10, {}), 0);
     slider->MinValue = 0;
     slider->MaxValue = 100;
@@ -657,7 +652,7 @@ TEST_CASE("logistics: a generic screen makes the elements its ini lists, leaving
     MCFitIniFile file;
     REQUIRE_EQ(file.Open("data\\screen.fit"), 0);
     // Without a background element the screen isn't placed by its ini: the test places it.
-    MCGuiOwned<MCGenericScreen> generic = MCMakeGui<MCGenericScreen>();
+    MCGuiRef<MCGenericScreen> generic = MCGuiTree::NewRoot<MCGenericScreen>();
     generic->InitWithoutPort(0, 0, 640, 480);
     CHECK_EQ(generic->Init(file), 0);
     REQUIRE_EQ(generic->NumElements(), 3);
@@ -668,12 +663,15 @@ TEST_CASE("logistics: a generic screen makes the elements its ini lists, leaving
     REQUIRE(last != nullptr);
     CHECK_EQ(last->Width(), 40);
     CHECK_EQ(last->BackgroundColor, 0x1f);
-    CHECK(last->ParentObject().get() == generic.get());
+    CHECK(last->ParentObject() == generic.Pin());
     CHECK(!generic->ShowWindow);
 
-    generic->Destroy();
-    CHECK_EQ(generic->NumElements(), 0);
-    CHECK(generic->ChildList.empty());
+    // Destroyed (its owner lets go), it lets go of its elements and children; the pin keeps its memory to look.
+    const std::shared_ptr<MCGenericScreen> destroyed = generic.Pin();
+    generic.reset();
+    CHECK_EQ(destroyed->NumElements(), 0);
+    CHECK(destroyed->ChildList.empty());
+    CHECK(first->WasDestroyed());
 }
 
 // The purchase dialog
@@ -683,7 +681,7 @@ TEST_CASE("logistics: the purchase spinner counts up to what the resource points
     LogisticsScreen screen;
     const int32_t savedPoints = ResourcePoints;
     ResourcePoints = 350;
-    MCGuiOwned<MCPurchaseDlg> dialog = MCMakeGui<MCPurchaseDlg>();
+    MCGuiRef<MCPurchaseDlg> dialog = MCGuiTree::NewRoot<MCPurchaseDlg>();
     dialog->MCLogDialogBox::Init(0xe5, 0xa2, 0xb5, 0x9c);
     std::vector<std::pair<int32_t, int32_t>> answers;
     dialog->SetCallback([&](int32_t result, int32_t quantity) { answers.emplace_back(result, quantity); });
@@ -732,7 +730,7 @@ TEST_CASE("logistics: a sale's spinner is locked (but a component sale's), one i
     LogisticsScreen screen;
     const int32_t savedPoints = ResourcePoints;
     ResourcePoints = 100000;
-    MCGuiOwned<MCPurchaseDlg> dialog = MCMakeGui<MCPurchaseDlg>();
+    MCGuiRef<MCPurchaseDlg> dialog = MCGuiTree::NewRoot<MCPurchaseDlg>();
     dialog->MCLogDialogBox::Init(0, 0, 0xb5, 0x9c);
     const int32_t upX = dialog->GlobalX() + 0x95;
     const int32_t upY = dialog->GlobalY() + 0x55;
@@ -772,7 +770,7 @@ TEST_CASE("game: the message dialog grows a middle piece for every two lines, an
         return;
     }
 
-    MCGuiOwned<MCReusableDialog> dialog = MCMakeGui<MCReusableDialog>();
+    MCGuiRef<MCReusableDialog> dialog = MCGuiTree::NewRoot<MCReusableDialog>();
     REQUIRE_EQ(dialog->Init(0, 0, 4, 4, {}), 0);
     dialog->SetText("Short.");
     CHECK_EQ(dialog->NumMiddlePieces, 1);
@@ -837,7 +835,7 @@ TEST_CASE("game: the refit dialog has a line per listed item between its six lin
         return;
     }
 
-    MCGuiOwned<MCRefitDialog> dialog = MCMakeGui<MCRefitDialog>();
+    MCGuiRef<MCRefitDialog> dialog = MCGuiTree::NewRoot<MCRefitDialog>();
     REQUIRE_EQ(dialog->Init(0, 0, 4, 4, {}), 0);
     dialog->SetText("Laser,Missile,Armor");
     CHECK_EQ(dialog->NumItems, 3);
@@ -852,8 +850,8 @@ TEST_CASE("game: the refit dialog has a line per listed item between its six lin
 TEST_CASE("logistics: one button shows pressed at a time, and the mouse leaving lets the press go")
 {
     LogisticsScreen screen;
-    MCGuiOwned<MCLogButton> first = MCMakeGui<MCLogButton>();
-    MCGuiOwned<MCLogButton> second = MCMakeGui<MCLogButton>();
+    MCGuiRef<MCLogButton> first = MCGuiTree::NewRoot<MCLogButton>();
+    MCGuiRef<MCLogButton> second = MCGuiTree::NewRoot<MCLogButton>();
     first->Init(0, 0, 10, 10, {});
     second->Init(20, 0, 10, 10, {});
     first->Press();
@@ -861,7 +859,7 @@ TEST_CASE("logistics: one button shows pressed at a time, and the mouse leaving 
     second->Press();
     CHECK(!first->Pressed);
     CHECK(second->Pressed);
-    CHECK(MCLogButton::HeldButton.lock() == second);
+    CHECK(MCLogButton::HeldButton.lock() == second.Pin());
 
     second->Enter();
     CHECK(second->OverState);
@@ -884,7 +882,7 @@ TEST_CASE("logistics: one button shows pressed at a time, and the mouse leaving 
     // A destroyed button lets go of the press.
     first->Disabled = false;
     first->Press();
-    first->Destroy();
+    first.reset();
     CHECK(MCLogButton::HeldButton.expired());
 }
 

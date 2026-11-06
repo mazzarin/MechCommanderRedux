@@ -64,7 +64,7 @@ auto MCMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
     }
 
     ObjectType = 8;
-    DeadImage = MCMakeGui<MCGuiPort>();
+    DeadImage = std::make_unique<MCGuiPort>();
     result = DeadImage->Init(10);
 
     if (result != 0)
@@ -83,12 +83,12 @@ auto MCMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
     return 0;
 }
 
-auto MCMechIcon::Destroy() -> void
+auto MCMechIcon::OnDestroy() -> void
 {
     DeadImage.reset();
     DamageShapes = {};
     _HdArtOwner.reset();
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCMechIcon::AttachHdArt() -> void

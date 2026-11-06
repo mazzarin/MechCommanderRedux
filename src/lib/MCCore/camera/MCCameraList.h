@@ -1,7 +1,7 @@
 #pragma once
 
 #include "camera/MCCamera.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCGuiObject;
 class MCMainWindow;
@@ -38,7 +38,7 @@ public:
     std::expected<void, std::string> EnsureMainHolder();
 
     /// <summary>The main holder (null until a main-window camera makes it).</summary>
-    std::shared_ptr<MCMainWindow> MainHolder() const { return _MainHolder; }
+    std::shared_ptr<MCMainWindow> MainHolder() const;
 
     /// <summary>Activates every ready camera; the first becomes current (null when none).</summary>
     std::shared_ptr<MCCamera> ActivateAllReady();
@@ -65,8 +65,8 @@ public:
 private:
     /// <summary>The cameras, in the file's order.</summary>
     std::vector<std::shared_ptr<MCCamera>> _Cameras;
-    /// <summary>The main window holding the main cameras' panes (destroyed by <see cref="MCGuiDestroy"/>).</summary>
-    std::shared_ptr<MCMainWindow> _MainHolder;
+    /// <summary>The main window holding the main cameras' panes: a child of the screen, closed with the list.</summary>
+    MCGuiHandle<MCMainWindow> _MainHolder;
     /// <summary>The camera the scene is seen through.</summary>
     std::weak_ptr<MCCamera> _Eye;
 };

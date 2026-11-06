@@ -34,8 +34,8 @@ public:
         StartupState = newState;
     }
 
-    /// <summary>Frees the art and the picture, and takes the window off the screen.</summary>
-    void Destroy() override;
+    /// <summary>Frees the art and the picture.</summary>
+    void OnDestroy() override;
     /// <summary>Fills the picture with noise: random rows copied from others, others random colours 0..31.</summary>
     void DoStatic();
     /// <summary>Wipes the picture to black.</summary>

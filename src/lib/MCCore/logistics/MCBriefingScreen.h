@@ -1,7 +1,8 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSmackerWindow.h"
+#include "gui/MCListView.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogObject.h"
 
@@ -33,6 +34,7 @@ public:
     static constexpr int32_t OperationTab = 1;
     static constexpr int32_t MissionTab = 2;
 
+    /// <summary>Destroys the screen if nothing did (its cleanup stops the movie).</summary>
     ~MCBriefingScreen() override { Destroy(); }
 
     /// <summary>Makes the full-screen object, its scroll panes and ports, and the drop-slot rectangles.</summary>
@@ -57,7 +59,8 @@ public:
     /// <summary>Port: see <see cref="MCLogScreenChrome"/>.</summary>
     MCOptionalRef<MCLogScreenChrome> Chrome() override { return ScreenChrome; }
 
-    void Destroy() override;
+    /// <summary>Stops the movie, lets the mission pane go of its picture, and frees the pictures and the look.</summary>
+    void OnDestroy() override;
 
     /// <summary>The multiplayer version of <see cref="CalcTonnages"/>: every lance counts.</summary>
     void MpCalcTonnages();
@@ -82,11 +85,37 @@ public:
     /// <summary>Stops and frees the operation movie.</summary>
     void StopSmackerMovies();
 
-    /// <summary>Refills the deploy scroll pane with a block for every undeployed mech and vehicle.</summary>
+    /// <summary>
+    /// Refills the deploy scroll pane with a block for every undeployed mech and vehicle, and shows the drop slots again
+    /// (<see cref="ShowSlots"/>).
+    /// </summary>
     void SetUpDeploy();
 
-    /// <summary>Port: takes <paramref name="child"/> off the screen: a unit block leaves its drop slot, a box the box area.</summary>
-    void RemoveChild(MCGuiObject& child) override;
+    /// <summary>
+    /// Port: matches the drop slots' blocks to the deploy data (<see cref="SlotUnit"/>): a slot whose unit changed gets
+    /// a block of the new one (or none); the block lifted out of a slot goes once its drag is over. The original moved
+    /// each unit's own block onto the screen and off it.
+    /// </summary>
+    void ShowSlots();
+
+    /// <summary>
+    /// Port: the unit in drop slot <paramref name="slot"/>: the local player's from the deploy slots, else (multiplayer)
+    /// a teammate's from the side's drop slots; null for none.
+    /// </summary>
+    static std::shared_ptr<MCLogPart> SlotUnit(size_t slot);
+
+    /// <summary>Port: the block showing <paramref name="part"/> (in a drop slot or the deploy pane), or null; the caller keeps it as its pin.</summary>
+    std::shared_ptr<MCMechBriefBlock> BlockOf(const MCLogPart& part) const;
+
+    /// <summary>
+    /// Shows <paramref name="part"/>'s briefing in the box area: the box shown already if it is that unit's (its weapon
+    /// list refilled at the same scroll), else a new box (the old one goes).
+    /// </summary>
+    /// <remarks>The original kept a box per unit (made with it) and moved the one shown onto the screen.</remarks>
+    void ShowBriefing(const std::shared_ptr<MCLogPart>& part);
+
+    /// <summary>The box area shows blank: the box shown goes.</summary>
+    void HideBriefing();
 
     /// <summary>
     /// Port: draws the screen from its state into <paramref name="target"/> (screen coordinates): the art, the map, the
@@ -98,20 +127,11 @@ public:
     /// <summary>Port: a new screen-sized picture holding <see cref="PaintLook"/> (for transitions).</summary>
     std::shared_ptr<MCLogPort> NewLookPicture();
 
-    /// <summary>Port: the drop slot whose top left corner is (<paramref name="xPos"/>, <paramref name="yPos"/>), or -1.</summary>
-    int32_t SlotAt(int32_t xPos, int32_t yPos) const;
-
-    /// <summary>Port: <paramref name="block"/> is in the drop slot at its corner: drawn there from now on.</summary>
-    void PlaceInSlot(MCMechBriefBlock& block);
-
-    /// <summary>Port: <paramref name="block"/> was picked up out of its slot (which shows empty again).</summary>
+    /// <summary>
+    /// Port: <paramref name="block"/> was picked up out of its slot (which shows empty again): it lives on, off the
+    /// slots, while it is dragged.
+    /// </summary>
     void LiftFromSlot(const MCMechBriefBlock& block);
-
-    /// <summary>Port: <paramref name="box"/> shows in the briefing box area.</summary>
-    void ShowBox(std::weak_ptr<MCBriefingBox> box);
-
-    /// <summary>Port: the briefing box area shows blank (colour 0x10).</summary>
-    void BlankBox();
 
     /// <summary>Lance <paramref name="lance"/>'s tonnage as its label shows it (what <see cref="CalcTonnages"/> counts).</summary>
     static int32_t LanceTons(int32_t lance);
@@ -131,8 +151,8 @@ public:
     bool ChatBlinkOn = false;
     /// <summary>Set while the chat blink timer (id 5) runs (started by <c>Logistics::setUpBriefingScreen</c>).</summary>
     bool ChatTimerOn = false;
-    /// <summary>The mission briefing text pane.</summary>
-    MCGuiOwned<MCScrollPane> MissionPane;
+    /// <summary>The mission briefing text pane (a child).</summary>
+    MCGuiHandle<MCScrollPane> MissionPane;
     /// <summary>The picture the mission text is formatted into (the logistics screens make it per mission).</summary>
     std::shared_ptr<MCLogPort> MissionPort;
     /// <summary>The operation picture (shown when the movie is over; the logistics screens load it per operation).</summary>
@@ -143,17 +163,19 @@ public:
     std::shared_ptr<MCLogPort> ChatBlinkPort;
     /// <summary>The chat button's normal picture (<c>lsbdw03</c>).</summary>
     std::shared_ptr<MCLogPort> ChatRegularPort;
-    /// <summary>The window the operation movie plays in (it closes the movie).</summary>
-    MCGuiOwned<MCGuiSmackerWindow> SmackerWindow;
-    /// <summary>
-    /// The briefing box being shown (cleared by <see cref="Init"/>); <c>MechRepairBlock::setInventory</c> in
-    /// multiplayer only fills the weapon list of a mech outside the force when it is this one's.
-    /// </summary>
-    std::weak_ptr<MCBriefingBox> BriefingBox;
+    /// <summary>The window the operation movie plays in while it plays (a child; it closes the movie).</summary>
+    MCGuiHandle<MCGuiSmackerWindow> SmackerWindow;
+    /// <summary>The briefing box shown (a child; none: the box area is blank).</summary>
+    MCGuiHandle<MCBriefingBox> BriefingBox;
     /// <summary>The drop slots on the screen (left, top, right, bottom), lance by lance.</summary>
     std::array<RECT, NumDropSlots> SlotRects = {};
-    /// <summary>The pane of undeployed mech and vehicle blocks.</summary>
-    MCGuiOwned<MCScrollPane> DeployPane;
+    /// <summary>The pane of undeployed mech and vehicle blocks (a child; a list of <see cref="DeployUnits"/>).</summary>
+    MCGuiHandle<MCListView> DeployPane;
+    /// <summary>
+    /// Port: the units the deploy pane lists, taken by <see cref="SetUpDeploy"/> (the undeployed mechs with a pilot,
+    /// then the undeployed vehicles): what the original's pane held blocks of.
+    /// </summary>
+    std::vector<std::shared_ptr<MCLogPart>> DeployUnits;
     /// <summary>The tab shown (<see cref="OperationTab"/>, <see cref="MissionTab"/>).</summary>
     int32_t CurrentTab = 0;
     /// <summary>Set once the operation movie has been started by <see cref="Display"/>.</summary>
@@ -179,12 +201,13 @@ public:
     /// </summary>
     bool OperationShown = false;
     bool OperationPictureShown = false;
-    /// <summary>Port: the block in each drop slot, if any.</summary>
-    std::array<std::weak_ptr<MCMechBriefBlock>, NumDropSlots> SlotBlocks;
-    /// <summary>Port: the box shown in the briefing box area (none: the area is blank).</summary>
-    std::weak_ptr<MCBriefingBox> BoxShown;
+    /// <summary>Port: the block in each drop slot, if any (children, made by <see cref="ShowSlots"/>).</summary>
+    std::array<MCGuiHandle<MCMechBriefBlock>, NumDropSlots> SlotBlocks;
 
 private:
+    /// <summary>Port: the block lifted out of a slot, dragged (a child, drawn in no slot) until <see cref="ShowSlots"/>.</summary>
+    MCGuiHandle<MCMechBriefBlock> _LiftedBlock;
+
     /// <summary>Port: back to the screen's art alone: no units in the slots, no box, no operation art.</summary>
     void ClearLook();
 

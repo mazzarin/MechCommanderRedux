@@ -5,7 +5,6 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCUpdateDisplay.h"
 #include "main/MCGamePaths.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCCompInventoryBlock.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
@@ -74,30 +73,14 @@ namespace
 
     /// <summary>
     /// Shows a component's info under the inventory: its picture (<c>lscicc</c>), the range, damage and recycle texts
-    /// of its inventory row (made when missing) and its description.
+    /// and its description (loaded when missing; the original loaded it when it made the item an inventory block for
+    /// the texts, the first time).
     /// </summary>
     void DrawItemInfo(MCLogInventoryItem& item, MCInventoryList& inventory)
     {
-        if (item.InventoryBlock == nullptr)
-        {
-            MCInventoryList::MakeInventoryBlock(item);
-            inventory.LoadDescription(0, item);
-        }
-
+        inventory.LoadDescription(0, item);
         PrepareInfoDescription(item.Description);
-        RepairScreen().ShowComponentInfo(*item.InventoryBlock, true);
-    }
-
-    /// <summary>Takes a mech's brief block off the briefing screen.</summary>
-    void HideBriefBlock(MCGuiObject& block)
-    {
-        // Port fix: a block without a parent is skipped (the original called through the null parent).
-        if (!block.Parent.expired())
-        {
-            block.ParentObject()->RemoveChild(block);
-        }
-
-        block.ShowGuiWindow(false);
+        RepairScreen().ShowComponentInfo(item, true);
     }
 
     /// <summary>Sums the current (or maximum) points of <paramref name="points"/>.</summary>
@@ -113,6 +96,52 @@ namespace
         return sum;
     }
 
+    /// <summary>
+    /// The armor or internal structure slider's knob for <paramref name="current"/> points of
+    /// <paramref name="maximum"/>: 61 pixels right of <see cref="MCMechRepairBlock::SliderLeft"/> when full.
+    /// </summary>
+    int32_t PointsSliderPosition(int32_t current, int32_t maximum)
+    {
+        return MCMechRepairBlock::SliderLeft -
+               static_cast<int32_t>(static_cast<double>(current) / maximum * static_cast<double>(-61.0f));
+    }
+
+    /// <summary>The engine slider's knob for engine damage <paramref name="hits"/> (0..3).</summary>
+    int32_t EngineSliderPosition(uint8_t hits)
+    {
+        static constexpr std::array<int32_t, 4> positions = {MCMechRepairBlock::SliderRight, 0x113, 0xff, 0xeb};
+        return positions[std::min<size_t>(hits, positions.size() - 1)];
+    }
+
+    /// <summary>Puts <paramref name="mech"/>'s engine knob at its engine's damage level (past 3 the damage is set to 3).</summary>
+    void PlaceEngineKnob(MCLogMech& mech)
+    {
+        const auto engineItem =
+            std::ranges::find_if(mech.Inventory->Items, [](const std::shared_ptr<MCLogInventoryItem>& item)
+                                 { return ComponentForm(item->MasterID) == MCComponentForm::Engine; });
+        MCLogInventoryStat& engine = *(*engineItem)->Stats.front();
+
+        if (engine.Hits > 3)
+        {
+            engine.Hits = 3;
+        }
+
+        mech.RepairSliders.Engine = EngineSliderPosition(engine.Hits);
+    }
+
+    /// <summary>Puts <paramref name="mech"/>'s internal structure knob at its current total.</summary>
+    void PlaceInternalKnob(MCLogMech& mech)
+    {
+        mech.RepairSliders.Internal =
+            PointsSliderPosition(SumPoints(mech.Internals, false), SumPoints(mech.Internals, true));
+    }
+
+    /// <summary>Puts <paramref name="mech"/>'s armor knob at its current total.</summary>
+    void PlaceArmorKnob(MCLogMech& mech)
+    {
+        mech.RepairSliders.Armor = PointsSliderPosition(SumPoints(mech.Armor, false), SumPoints(mech.Armor, true));
+    }
+
     /// <summary>A ratio of the repair order: less than the ratio when not full, by <paramref name="factor"/>.</summary>
     float Discount(float ratio, double factor)
     {
@@ -122,7 +151,7 @@ namespace
 
 MCMechRepairBlock::~MCMechRepairBlock()
 {
-    MCMechRepairBlock::Destroy();
+    Destroy();
 }
 
 auto MCMechRepairBlock::StripUnrepaired() -> void
@@ -211,14 +240,15 @@ auto MCMechRepairBlock::StripUnrepaired() -> void
         }
     }
 
-    DrawBackground(SlotIndex, std::nullopt);
+    DrawBackground(SlotIndex(), std::nullopt);
     MCRepairScreen::CreateCompInvBlock();
     RepairScreen().SetUpCompInv(false, true);
 }
 
-auto MCMechRepairBlock::Init(std::shared_ptr<MCLogMech> logMech) -> void
+auto MCMechRepairBlock::Init(std::shared_ptr<MCLogMech> logMech, bool briefingLayout) -> void
 {
     _Mech = logMech;
+    _BriefingLayout = briefingLayout;
     ShortRangeWeapons.clear();
     MediumRangeWeapons.clear();
     LongRangeWeapons.clear();
@@ -228,91 +258,45 @@ auto MCMechRepairBlock::Init(std::shared_ptr<MCLogMech> logMech) -> void
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
     ListPosition = Mech()->NameIndex;
 
-    InventoryPane = MCMakeGui<MCScrollPane>();
-    InventoryPane->Init(0x62, 0x58, 0x135, 0x11, std::string_view());
-    AddChild(InventoryPane);
+    InventoryPane =
+        CreateChild<MCScrollPane>([](MCScrollPane& pane) { pane.Init(0x62, 0x58, 0x135, 0x11, std::string_view()); });
 
     SliderArtPort = std::make_shared<MCLogPort>();
     SliderArtPort->Load(std::format("{}logart\\lsrupm05.tga", ArtPath));
 
-    // The sliders' scales: 61 pixels over the total maximum; the starting points are the current values.
-    int32_t totalArmor = 0;
-
-    for (size_t i = 0; i < StartArmor.size(); ++i)
-    {
-        totalArmor += Mech()->Armor[i].MaxArmor;
-        StartArmor[i] = Mech()->Armor[i].CurArmor;
-    }
-
+    // The sliders' scales: 61 pixels over the total maximum; the starting points are where the mech arrived.
+    const int32_t totalArmor = SumPoints(Mech()->Armor, true);
     ArmorPixelScale = static_cast<float>(61.0 / static_cast<double>(totalArmor));
-    int32_t totalInternal = 0;
-
-    for (size_t i = 0; i < StartInternal.size(); ++i)
-    {
-        totalInternal += Mech()->Internals[i].MaxArmor;
-        StartInternal[i] = Mech()->Internals[i].CurArmor;
-    }
-
+    const int32_t totalInternal = SumPoints(Mech()->Internals, true);
     InternalPixelScale = static_cast<float>(61.0 / static_cast<double>(totalInternal));
-    SetEngineSlider(-1);
-    SetArmorSlider(-1);
-    SetInternalSlider(-1);
 
     const auto engine =
         std::ranges::find_if(Mech()->Inventory->Items, [](const std::shared_ptr<MCLogInventoryItem>& item)
                              { return ComponentForm(item->MasterID) == MCComponentForm::Engine; });
     _EngineStat = (*engine)->Stats.front();
-    ArmorSliderStart = ArmorSliderPos;
-    InternalSliderStart = InternalSliderPos;
-    EngineSliderStart = EngineSliderPos;
+    const MCLogMech::ArrivalState& arrived = Mech()->Arrived;
+    ArmorSliderStart = PointsSliderPosition(std::ranges::fold_left(arrived.Armor, 0, std::plus<>()), totalArmor);
+    InternalSliderStart =
+        PointsSliderPosition(std::ranges::fold_left(arrived.Internals, 0, std::plus<>()), totalInternal);
+    EngineSliderStart = EngineSliderPosition(arrived.EngineHits);
 }
 
-auto MCMechRepairBlock::Destroy() -> void
+auto MCMechRepairBlock::SlotIndex() const -> int32_t
+{
+    const std::shared_ptr<MCLogMech> mech = Mech();
+    return mech != nullptr ? mech->SlotIndex : 0;
+}
+
+auto MCMechRepairBlock::OnDestroy() -> void
 {
     MCLogInvScreen::ForgetInfoSource(*this);
-    InventoryPane.reset();
     SliderArtPort.reset();
     ShortRangeWeapons.clear();
     MediumRangeWeapons.clear();
     LongRangeWeapons.clear();
     Equipment.clear();
     ItemHits.clear();
-    MCLogObject::Destroy();
-}
-
-auto MCMechRepairBlock::UndeployMech() const -> void
-{
-    std::shared_ptr<MCLogMech> logMech = Mech();
-
-    if (logMech->Deployed == 0)
-    {
-        return;
-    }
-
-    for (int32_t lance = 0; lance < 3; ++lance)
-    {
-        for (int32_t slot = 0; slot < 4; ++slot)
-        {
-            int32_t& unit = GlobalLog()->DeploySlots[lance][slot].Unit;
-
-            if (unit < 0 || unit != SlotIndex)
-            {
-                continue;
-            }
-
-            if (MultiPlayer() != nullptr)
-            {
-                GlobalLog()->SendRemoveForceMessage(lance, slot);
-            }
-
-            HideBriefBlock(*logMech->BriefBlock);
-            unit = -1;
-            logMech->Deployed = false;
-            return;
-        }
-    }
-
-    logMech->Deployed = false;
+    MCLogObject::OnDestroy();
 }
 
 auto MCMechRepairBlock::HandleEvent(MCGuiEvent& event) -> void
@@ -547,12 +531,15 @@ auto MCMechRepairBlock::HandleEvent(MCGuiEvent& event) -> void
             Drag.LeftDrag = true;
         }
 
-        std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-        icon->Begin(eventX - 0xf, eventY - 0xf, 0x20, 0x20, [this](MCLogPort& surface) { OnBeginDragPilot(surface); });
+        // Made on the screen, but kept off it until it is shown below (the original added it there).
+        const std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create(
+            RepairScreen(), eventX - 0xf, eventY - 0xf, 0x20, 0x20,
+            [this](MCLogPort& surface) { OnBeginDragPilot(surface); }, true);
         ClearPilot();
         Drag.X = GlobalX() + 5;
         Drag.Y = GlobalY() + 0x26;
-        icon->ShowOn(RepairScreen(), eventX - 0xf, eventY - 0xf);
+        icon->BringToFront(true);
+        icon->ShowAt(eventX - 0xf, eventY - 0xf);
         return;
     }
 
@@ -574,9 +561,9 @@ auto MCMechRepairBlock::HandleEvent(MCGuiEvent& event) -> void
 
             Drag.Y = eventY - 0x10;
             Drag.X = eventX - 0x10;
-            std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-            icon->Begin(Drag.X, Drag.Y, 0x20, 0x20, [this](MCLogPort& surface) { OnBeginDragMech(surface); });
-            icon->ShowOn(RepairScreen(), Drag.X, Drag.Y);
+            const std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create(
+                RepairScreen(), Drag.X, Drag.Y, 0x20, 0x20, [this](MCLogPort& surface) { OnBeginDragMech(surface); });
+            icon->ShowAt(Drag.X, Drag.Y);
         }
 
         return;
@@ -590,21 +577,22 @@ auto MCMechRepairBlock::HandleEvent(MCGuiEvent& event) -> void
     // The sliders.
     int32_t slider;
     int32_t sliderPos;
+    const MCLogMech::RepairSliderKnobs knobs = Mech()->RepairSliders;
 
-    if (ArmorSliderPos - 2 <= localX && localX <= ArmorSliderPos + 6 && 0x36 <= localY && localY <= 0x3d)
+    if (knobs.Armor - 2 <= localX && localX <= knobs.Armor + 6 && 0x36 <= localY && localY <= 0x3d)
     {
         slider = 0;
-        sliderPos = ArmorSliderPos;
+        sliderPos = knobs.Armor;
     }
-    else if (InternalSliderPos - 2 <= localX && localX <= InternalSliderPos + 6 && 0x4b <= localY && localY <= 0x52)
+    else if (knobs.Internal - 2 <= localX && localX <= knobs.Internal + 6 && 0x4b <= localY && localY <= 0x52)
     {
         slider = 1;
-        sliderPos = InternalSliderPos;
+        sliderPos = knobs.Internal;
     }
-    else if (EngineSliderPos - 2 <= localX && localX <= EngineSliderPos + 6 && 0x60 <= localY && localY <= 0x67)
+    else if (knobs.Engine - 2 <= localX && localX <= knobs.Engine + 6 && 0x60 <= localY && localY <= 0x67)
     {
         slider = 2;
-        sliderPos = EngineSliderPos;
+        sliderPos = knobs.Engine;
     }
     else
     {
@@ -637,6 +625,9 @@ auto MCMechRepairBlock::HandleEvent(MCGuiEvent& event) -> void
 
 auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
 {
+    // The mech dropped on the inventory leaves the force, and the force's new listing destroys this row: it lives
+    // until the drop is done.
+    const std::shared_ptr<MCGuiObject> self = shared_from_this();
     Drag.RightHeld = false;
 
     if (Drag.RepairButtonDown && Mech() == RepairScreen().SelectedMech())
@@ -685,18 +676,18 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
             {
                 if (pilotsMech->Deployed != 0)
                 {
-                    UndeployMech();
+                    GlobalLog()->UndeployMech(*Mech());
                 }
 
                 std::shared_ptr<MCLogMech> current = Mech();
                 GlobalLog()->ShiftPilots(current->PilotIndex, -1);
-                int32_t row = SlotIndex;
+                int32_t row = SlotIndex();
                 pilot->Assigned = false;
                 GlobalLog()->SetPilot(row, -1);
                 GlobalLog()->ReorderWarriors();
                 current->CalcBR();
                 current->CalcPilotModifier();
-                current->RepairBlock->DrawBackground(current->RepairBlock->SlotIndex, std::nullopt);
+                DrawBackground(current->SlotIndex, std::nullopt);
                 DrawBackground(row, std::nullopt);
                 RepairScreen().CreatePilotInvBlock();
                 RepairScreen().SetUpPilotInv(true, true);
@@ -705,7 +696,7 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
             }
 
             PlayLogSound(0x33);
-            pilotsMech->RepairBlock->DrawBackground(pilotsMech->RepairBlock->SlotIndex, std::nullopt);
+            DrawBackground(pilotsMech->SlotIndex, std::nullopt);
             return;
         }
 
@@ -720,7 +711,7 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
 
         if (Mech()->Deployed != 0)
         {
-            UndeployMech();
+            GlobalLog()->UndeployMech(*Mech());
         }
 
         RepairScreen().SelectMech(nullptr);
@@ -734,20 +725,14 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
             GlobalLog()->AssignedWarriorList->GetWarriorInfo(pilotIndex, pilot);
             pilot->Assigned = false;
             GlobalLog()->ShiftPilots(pilotIndex, -1);
-            GlobalLog()->SetPilot(SlotIndex, -1);
+            GlobalLog()->SetPilot(SlotIndex(), -1);
             GlobalLog()->ReorderWarriors();
             RepairScreen().CreatePilotInvBlock();
             RepairScreen().SetUpPilotInv(true, true);
         }
 
-        const std::shared_ptr<MCMechBriefBlock> brief = leaving->BriefBlock;
-
-        if (brief != nullptr && !brief->Parent.expired())
-        {
-            brief->ParentObject()->RemoveChild(*brief);
-            brief->ShowGuiWindow(false);
-        }
-
+        // Off the drop slots (the original took the mech's briefing block off the screen or the deploy pane; the pane is
+        // listed again when the briefing screen shows).
         for (auto& lance : GlobalLog()->DeploySlots)
         {
             for (auto& slot : lance)
@@ -757,11 +742,11 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
                     continue;
                 }
 
-                if (slot.Unit == SlotIndex)
+                if (slot.Unit == SlotIndex())
                 {
                     slot.Unit = -1;
                 }
-                else if (SlotIndex < slot.Unit)
+                else if (SlotIndex() < slot.Unit)
                 {
                     slot.Unit = slot.Unit - 1;
                 }
@@ -777,15 +762,8 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
         }
 
         GlobalLog()->ReorderMechs();
-        const std::shared_ptr<MCMechRepairBlock> block = leaving->RepairBlock;
-
-        if (block != nullptr && !block->Parent.expired())
-        {
-            block->ParentObject()->RemoveChild(*block);
-        }
-
+        // The new listing destroys this row (the original took the block out of the pane).
         RepairScreen().RemoveMechFromList(*leaving);
-        leaving->InventoryBlock->DeleteDiagram();
         MCRepairScreen::CreateMechInvBlock();
         RepairScreen().SetUpMechInv(true, true);
         return;
@@ -800,7 +778,7 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
         // Into the component inventory (a damaged item is thrown away).
         if (Mech()->Deployed != 0)
         {
-            UndeployMech();
+            GlobalLog()->UndeployMech(*Mech());
         }
 
         PlayLogSound(0x34);
@@ -819,7 +797,7 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
             if (item->Count != 0)
             {
                 ++item->Count;
-                item->InventoryBlock->DrawBackground();
+                MCLogInvScreen::RefreshComponentRows(*item);
             }
             else
             {
@@ -850,7 +828,12 @@ auto MCMechRepairBlock::HandleDrop(MCGuiEvent& event, int32_t eventType) -> void
         target->UsedTonnage = tonnage + target->UsedTonnage;
         target->WeaponTonnage = tonnage + target->WeaponTonnage;
         target->CalcBR();
-        target->RepairBlock->DrawBackground(target->RepairBlock->SlotIndex, std::nullopt);
+
+        if (const std::shared_ptr<MCMechRepairBlock> targetRow = RepairScreen().RowOf(*target); targetRow != nullptr)
+        {
+            targetRow->DrawBackground(target->SlotIndex, std::nullopt);
+        }
+
         DrawStatusBar();
         RepairScreen().SetUpCompInv(false, true);
     }
@@ -865,7 +848,7 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
     // go.
     if (Mech()->Deployed != 0)
     {
-        UndeployMech();
+        GlobalLog()->UndeployMech(*Mech());
     }
 
     DragPort.reset();
@@ -885,9 +868,9 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
         std::shared_ptr<MCLogMech> repaired = Mech();
         int32_t before = SumPoints(repaired->Armor, false);
 
-        for (size_t i = 0; i < StartArmor.size(); ++i)
+        for (size_t i = 0; i < repaired->Arrived.Armor.size(); ++i)
         {
-            repaired->Armor[i].CurArmor = static_cast<uint8_t>(StartArmor[i]);
+            repaired->Armor[i].CurArmor = static_cast<uint8_t>(repaired->Arrived.Armor[i]);
         }
 
         int32_t restored = SumPoints(repaired->Armor, false);
@@ -909,14 +892,14 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
 
         if (points < affordable)
         {
-            RepairArmor(points);
-            ArmorSliderPos = position;
+            RepairArmor(*Mech(), points);
+            Mech()->RepairSliders.Armor = position;
             ResourcePoints = ResourcePoints - GlobalLog()->ArmorCost * points;
         }
         else
         {
-            RepairArmor(affordable);
-            ArmorSliderPos = static_cast<int32_t>(
+            RepairArmor(*Mech(), affordable);
+            Mech()->RepairSliders.Armor = static_cast<int32_t>(
                 static_cast<double>(affordable) * static_cast<double>(ArmorPixelScale) + ArmorSliderStart);
             ResourcePoints = ResourcePoints - GlobalLog()->ArmorCost * affordable;
         }
@@ -940,9 +923,9 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
         std::shared_ptr<MCLogMech> repaired = Mech();
         int32_t before = SumPoints(repaired->Internals, false);
 
-        for (size_t i = 0; i < StartInternal.size(); ++i)
+        for (size_t i = 0; i < repaired->Arrived.Internals.size(); ++i)
         {
-            repaired->Internals[i].CurArmor = static_cast<uint8_t>(StartInternal[i]);
+            repaired->Internals[i].CurArmor = static_cast<uint8_t>(repaired->Arrived.Internals[i]);
         }
 
         int32_t restored = SumPoints(repaired->Internals, false);
@@ -964,14 +947,14 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
 
         if (points < affordable)
         {
-            RepairInternal(points);
-            InternalSliderPos = position;
+            RepairInternal(*Mech(), points);
+            Mech()->RepairSliders.Internal = position;
             ResourcePoints = ResourcePoints - GlobalLog()->InternalCost * points;
         }
         else
         {
-            RepairInternal(affordable);
-            InternalSliderPos = static_cast<int32_t>(
+            RepairInternal(*Mech(), affordable);
+            Mech()->RepairSliders.Internal = static_cast<int32_t>(
                 static_cast<double>(affordable) * static_cast<double>(InternalPixelScale) + InternalSliderStart);
             ResourcePoints = ResourcePoints - GlobalLog()->InternalCost * affordable;
         }
@@ -992,12 +975,11 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
                 {
                     int32_t& unit = GlobalLog()->DeploySlots[lance][slot].Unit;
 
-                    if (unit < 0 || unit != SlotIndex)
+                    if (unit < 0 || unit != SlotIndex())
                     {
                         continue;
                     }
 
-                    HideBriefBlock(*Mech()->BriefBlock);
                     slot = 5;
                     lance = 5;
                     unit = -1;
@@ -1070,7 +1052,7 @@ auto MCMechRepairBlock::DragSlider(int32_t localX) -> void
             hits = 0;
         }
 
-        EngineSliderPos = newPosition;
+        Mech()->RepairSliders.Engine = newPosition;
         DrawEngineSlider(std::nullopt);
         DrawStatusBar();
         newLastX = newPosition;
@@ -1086,7 +1068,7 @@ auto MCMechRepairBlock::RepairItems() -> void
     // Replace every damaged copy from the component inventory; list the ones missing.
     if (Mech()->Deployed != 0)
     {
-        UndeployMech();
+        GlobalLog()->UndeployMech(*Mech());
     }
 
     std::string missing;
@@ -1130,7 +1112,7 @@ auto MCMechRepairBlock::RepairItems() -> void
             }
 
             --stockItem->Count;
-            stockItem->InventoryBlock->DrawBackground();
+            MCLogInvScreen::RefreshComponentRows(*stockItem);
             stat->Hits = 0;
         }
     }
@@ -1153,13 +1135,13 @@ auto MCMechRepairBlock::RepairItems() -> void
         dialog.CancelButton->SetDownPicture("bg_cancl.tga");
         dialog.Activate();
         PlayLogSound(0x33);
-        DrawBackground(SlotIndex, std::nullopt);
+        DrawBackground(SlotIndex(), std::nullopt);
         return;
     }
 
     MCRepairScreen::CreateCompInvBlock();
     RepairScreen().SetUpCompInv(false, true);
-    DrawBackground(SlotIndex, std::nullopt);
+    DrawBackground(SlotIndex(), std::nullopt);
 }
 
 auto MCMechRepairBlock::RepairStructure() -> void
@@ -1169,7 +1151,7 @@ auto MCMechRepairBlock::RepairStructure() -> void
     // The engine level by level, then internal structure, then armor, as far as the resource points go.
     if (mech->Deployed != 0)
     {
-        UndeployMech();
+        GlobalLog()->UndeployMech(*Mech());
     }
 
     DragPort.reset();
@@ -1200,12 +1182,12 @@ auto MCMechRepairBlock::RepairStructure() -> void
         if (ResourcePoints < points * GlobalLog()->InternalCost)
         {
             points = ResourcePoints / GlobalLog()->InternalCost;
-            RepairInternal(points);
+            RepairInternal(*Mech(), points);
             shortOfPoints = true;
         }
         else
         {
-            RepairInternal(-1);
+            RepairInternal(*Mech(), -1);
         }
 
         ResourcePoints = ResourcePoints - GlobalLog()->InternalCost * points;
@@ -1218,12 +1200,12 @@ auto MCMechRepairBlock::RepairStructure() -> void
         if (ResourcePoints < GlobalLog()->ArmorCost * points)
         {
             points = ResourcePoints / GlobalLog()->ArmorCost;
-            RepairArmor(points);
+            RepairArmor(*Mech(), points);
             shortOfPoints = true;
         }
         else
         {
-            RepairArmor(-1);
+            RepairArmor(*Mech(), -1);
         }
 
         ResourcePoints = ResourcePoints - GlobalLog()->ArmorCost * points;
@@ -1232,7 +1214,7 @@ auto MCMechRepairBlock::RepairStructure() -> void
     SetArmorSlider(-1);
     SetInternalSlider(-1);
     SetEngineSlider(-1);
-    DrawBackground(SlotIndex, std::nullopt);
+    DrawBackground(SlotIndex(), std::nullopt);
 
     if (shortOfPoints)
     {
@@ -1242,14 +1224,14 @@ auto MCMechRepairBlock::RepairStructure() -> void
         PlayLogSound(0x33);
     }
 
-    DrawBackground(SlotIndex, std::nullopt);
+    DrawBackground(SlotIndex(), std::nullopt);
 }
 
 auto MCMechRepairBlock::DrawBackground(int32_t row, MCOptionalRef<MCLogPort> port) -> void
 {
     const std::shared_ptr<MCLogMech> mech = Mech();
-    const bool framed =
-        GlobalLog()->CurrentScreen() == GlobalLog()->RepairScreen && RepairScreen().SelectedMech() == mech;
+    const bool framed = !_BriefingLayout && GlobalLog()->CurrentScreen() == GlobalLog()->RepairScreen &&
+                        RepairScreen().SelectedMech() == mech;
     const bool hasPilot = mech->PilotIndex >= 0 || !mech->NetworkPilot.expired();
 
     if (!port)
@@ -1396,9 +1378,9 @@ auto MCMechRepairBlock::StructureDamaged() const -> bool
 
 auto MCMechRepairBlock::ShowsInventory() const -> bool
 {
-    // In multiplayer, only the player's own mechs (and the one in the briefing box) list their weapons.
-    return MultiPlayer() == nullptr || GlobalLog()->ForceMechList->GetMechIndex(Mech()) >= 0 ||
-           Mech()->BriefingBox == GlobalLog()->BriefingScreen->BriefingBox.lock();
+    // In multiplayer, only the player's own mechs (and the one in the briefing box: this panel, when it is the box's)
+    // list their weapons.
+    return MultiPlayer() == nullptr || GlobalLog()->ForceMechList->GetMechIndex(Mech()) >= 0 || _BriefingLayout;
 }
 
 auto MCMechRepairBlock::PaintButtons(MCLogPort& port, int32_t top, bool onRows, bool items, bool structure) -> void
@@ -1599,19 +1581,19 @@ auto MCMechRepairBlock::PaintSlider(MCLogPort& port, int32_t top, int32_t slider
     if (slider == 0)
     {
         start = ArmorSliderStart;
-        position = ArmorSliderPos;
+        position = Mech()->RepairSliders.Armor;
         yPos = 0x37;
     }
     else if (slider == 1)
     {
         start = InternalSliderStart;
-        position = InternalSliderPos;
+        position = Mech()->RepairSliders.Internal;
         yPos = 0x4c;
     }
     else if (slider == 2)
     {
         start = EngineSliderStart;
-        position = EngineSliderPos;
+        position = Mech()->RepairSliders.Engine;
         yPos = 0x61;
     }
 
@@ -1798,7 +1780,7 @@ auto MCMechRepairBlock::MouseWheel(int32_t steps, int32_t xPos, int32_t yPos) ->
 auto MCMechRepairBlock::DrawStatusBar(MCOptionalRef<MCLogPort> port) -> void
 {
     float status = Mech()->CalcStatus();
-    bool repairLayout = GlobalLog()->CurrentScreen() != GlobalLog()->BriefingScreen;
+    const bool repairLayout = !_BriefingLayout;
 
     // The rows draw their status bar each frame (DrawRow).
     if (port.has_value())
@@ -1848,18 +1830,7 @@ auto MCMechRepairBlock::SetEngineSlider(int32_t value) -> void
         return;
     }
 
-    const auto engineItem =
-        std::ranges::find_if(Mech()->Inventory->Items, [](const std::shared_ptr<MCLogInventoryItem>& item)
-                             { return ComponentForm(item->MasterID) == MCComponentForm::Engine; });
-    MCLogInventoryStat& engine = *(*engineItem)->Stats.front();
-
-    if (engine.Hits > 3)
-    {
-        engine.Hits = 3;
-    }
-
-    static constexpr std::array<int32_t, 4> positions = {SliderRight, 0x113, 0xff, 0xeb};
-    EngineSliderPos = positions[engine.Hits];
+    PlaceEngineKnob(*Mech());
 }
 
 auto MCMechRepairBlock::SetInternalSlider(int32_t value) -> void
@@ -1869,10 +1840,7 @@ auto MCMechRepairBlock::SetInternalSlider(int32_t value) -> void
         return;
     }
 
-    int32_t current = SumPoints(Mech()->Internals, false);
-    int32_t maximum = SumPoints(Mech()->Internals, true);
-    InternalSliderPos =
-        SliderLeft - static_cast<int32_t>(static_cast<double>(current) / maximum * static_cast<double>(-61.0f));
+    PlaceInternalKnob(*Mech());
 }
 
 auto MCMechRepairBlock::SetArmorSlider(int32_t value) -> void
@@ -1882,10 +1850,14 @@ auto MCMechRepairBlock::SetArmorSlider(int32_t value) -> void
         return;
     }
 
-    int32_t current = SumPoints(Mech()->Armor, false);
-    int32_t maximum = SumPoints(Mech()->Armor, true);
-    ArmorSliderPos =
-        SliderLeft - static_cast<int32_t>(static_cast<double>(current) / maximum * static_cast<double>(-61.0f));
+    PlaceArmorKnob(*Mech());
+}
+
+auto MCMechRepairBlock::PlaceSliders(MCLogMech& mech) -> void
+{
+    PlaceEngineKnob(mech);
+    PlaceArmorKnob(mech);
+    PlaceInternalKnob(mech);
 }
 
 auto MCMechRepairBlock::ClearPilot() -> void
@@ -1903,7 +1875,7 @@ auto MCMechRepairBlock::SetPilotStats(MCOptionalRef<MCLogPort> port) -> void
     }
 
     float status = mech->CalcStatus();
-    bool repairLayout = GlobalLog()->CurrentScreen() != GlobalLog()->BriefingScreen;
+    const bool repairLayout = !_BriefingLayout;
 
     // The rows draw their pilot each frame (DrawRow).
     if (port.has_value())
@@ -2071,13 +2043,11 @@ auto MCMechRepairBlock::GetInvItem(const std::vector<int32_t>& list, int32_t ind
     return item;
 }
 
-auto MCMechRepairBlock::RepairArmor(int32_t points) const -> void
+auto MCMechRepairBlock::RepairArmor(MCLogMech& mech, int32_t points) -> void
 {
-    std::shared_ptr<MCLogMech> logMech = Mech();
-
     if (points < 0)
     {
-        for (auto& location : logMech->Armor)
+        for (auto& location : mech.Armor)
         {
             location.CurArmor = location.MaxArmor;
         }
@@ -2087,11 +2057,11 @@ auto MCMechRepairBlock::RepairArmor(int32_t points) const -> void
 
     // The head first, then point by point to the most damaged location (the cockpit, center torso and rear locations
     // count as more damaged than they are).
-    int32_t headMissing = logMech->Armor[0].MaxArmor - logMech->Armor[0].CurArmor;
+    int32_t headMissing = mech.Armor[0].MaxArmor - mech.Armor[0].CurArmor;
 
     if (headMissing != 0)
     {
-        logMech->Armor[0].CurArmor += static_cast<uint8_t>(points < headMissing ? points : headMissing);
+        mech.Armor[0].CurArmor += static_cast<uint8_t>(points < headMissing ? points : headMissing);
         points -= headMissing;
     }
 
@@ -2106,8 +2076,8 @@ auto MCMechRepairBlock::RepairArmor(int32_t points) const -> void
 
     for (size_t location = 1; location < ratios.size(); ++location)
     {
-        float ratio = static_cast<float>(static_cast<double>(logMech->Armor[location].CurArmor) /
-                                         logMech->Armor[location].MaxArmor);
+        float ratio =
+            static_cast<float>(static_cast<double>(mech.Armor[location].CurArmor) / mech.Armor[location].MaxArmor);
         ratios[location] = discount[location] != 0.0 && ratio < 1.0f ? Discount(ratio, discount[location]) : ratio;
     }
 
@@ -2123,8 +2093,8 @@ auto MCMechRepairBlock::RepairArmor(int32_t points) const -> void
             }
         }
 
-        uint8_t current = ++logMech->Armor[chosen].CurArmor;
-        uint8_t maximum = logMech->Armor[chosen].MaxArmor;
+        uint8_t current = ++mech.Armor[chosen].CurArmor;
+        uint8_t maximum = mech.Armor[chosen].MaxArmor;
 
         if (current < maximum)
         {
@@ -2138,13 +2108,11 @@ auto MCMechRepairBlock::RepairArmor(int32_t points) const -> void
     }
 }
 
-auto MCMechRepairBlock::RepairInternal(int32_t points) const -> void
+auto MCMechRepairBlock::RepairInternal(MCLogMech& mech, int32_t points) -> void
 {
-    std::shared_ptr<MCLogMech> logMech = Mech();
-
     if (points < 0)
     {
-        for (auto& location : logMech->Internals)
+        for (auto& location : mech.Internals)
         {
             location.CurArmor = location.MaxArmor;
         }
@@ -2158,8 +2126,8 @@ auto MCMechRepairBlock::RepairInternal(int32_t points) const -> void
 
     for (size_t location = 0; location < ratios.size(); ++location)
     {
-        ratios[location] = static_cast<float>(static_cast<double>(logMech->Internals[location].CurArmor) /
-                                              logMech->Internals[location].MaxArmor);
+        ratios[location] = static_cast<float>(static_cast<double>(mech.Internals[location].CurArmor) /
+                                              mech.Internals[location].MaxArmor);
 
         if (discount[location] != 0.0 && ratios[location] < 1.0f)
         {
@@ -2179,8 +2147,8 @@ auto MCMechRepairBlock::RepairInternal(int32_t points) const -> void
             }
         }
 
-        uint8_t current = ++logMech->Internals[chosen].CurArmor;
-        uint8_t maximum = logMech->Internals[chosen].MaxArmor;
+        uint8_t current = ++mech.Internals[chosen].CurArmor;
+        uint8_t maximum = mech.Internals[chosen].MaxArmor;
 
         if (current < maximum)
         {
@@ -2198,8 +2166,9 @@ auto MCMechRepairBlock::SetInventory(MCOptionalRef<MCScrollPane> target) -> void
 {
     const std::shared_ptr<MCLogMech> mech = Mech();
 
-    if (MultiPlayer() != nullptr && GlobalLog()->ForceMechList->GetMechIndex(mech) < 0 &&
-        mech->BriefingBox != GlobalLog()->BriefingScreen->BriefingBox.lock())
+    // In multiplayer, a mech outside the force gets its weapon list only in the briefing box shown (the briefing
+    // screen makes a box only to show it).
+    if (MultiPlayer() != nullptr && GlobalLog()->ForceMechList->GetMechIndex(mech) < 0 && !_BriefingLayout)
     {
         return;
     }
@@ -2368,10 +2337,11 @@ auto MCMechRepairBlock::SetUpItemDragIcon(MCLogInventoryItem& item, uint8_t item
     int32_t eventX = event.X;
     int32_t eventY = event.Y;
     uint8_t masterID = item.MasterID;
-    std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
     MCRepairScreen::DrawBlankInvInfoBlock(2);
-    icon->Begin(eventX - 0x10, eventY - 0x10, 0x20, 0x20,
-                [&item](MCLogPort& surface) { OnBeginDragItem(surface, item); });
+    // Made on the screen, but kept off it until it is raised below (the original added it there).
+    const std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create(
+        RepairScreen(), eventX - 0x10, eventY - 0x10, 0x20, 0x20,
+        [&item](MCLogPort& surface) { OnBeginDragItem(surface, item); }, true);
 
     float tonnage = MasterComponentList[masterID].Tonnage;
 
@@ -2411,7 +2381,7 @@ auto MCMechRepairBlock::SetUpItemDragIcon(MCLogInventoryItem& item, uint8_t item
         DrawBR(std::nullopt);
         DrawStatusBar();
         DrawButtons(std::nullopt);
-        RepairScreen().AddChild(icon->weak_from_this());
+        icon->BringToFront(true);
         icon->Raise();
         return;
     }

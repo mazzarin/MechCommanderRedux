@@ -14,11 +14,6 @@ auto PlayLogSound(uint32_t sampleId) -> void
     }
 }
 
-MCLogObject::~MCLogObject()
-{
-    MCLogObject::Destroy();
-}
-
 auto MCLogObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height) -> int32_t
 {
     // The base's init, inlined with a logistics port for the port.
@@ -44,27 +39,13 @@ auto MCLogObject::SetOwnPort(std::shared_ptr<MCLogPort> port) -> void
     _Port = std::move(port);
 }
 
-auto MCLogObject::Destroy() -> void
+auto MCLogObject::OnDestroy() -> void
 {
-    GuiSystem().RemoveTimers(*this);
+    // The base's destroy does the rest: the children (MCX.EXE's own loop here deleted all but the first of several,
+    // OB-071; the base destroys each child made on the object once), the timers, the pane and the parent.
     _Port.reset();
-    FramePane.reset();
-    MCGuiObject::BackgroundPort.reset();
     _BackgroundPort.reset();
-    IconAnimation.reset();
-    WindowAnimation.reset();
-
-    // A parent refers to its children; their owners delete them. The ones still here are only unlinked. (MCX.EXE
-    // deleted them, all but the first of several, OB-071; the port's owners delete each child once.)
-    for (const std::shared_ptr<MCGuiObject>& child : Children())
-    {
-        RemoveChild(*child);
-    }
-
-    ChildList.clear();
-    LeaveParent();
-    Animating = false;
-    GuiSystem().LetGo(*this);
+    MCGuiObject::OnDestroy();
 }
 
 auto MCLogObject::Draw() -> void
@@ -94,7 +75,7 @@ auto MCLogObject::Draw() -> void
 
         for (size_t i = 0; i < ChildList.size(); i++)
         {
-            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
             {
                 DrawChild(*child);
             }
@@ -187,7 +168,7 @@ auto MCLogObject::Display() -> void
     {
         for (size_t i = 0; i < ChildList.size(); i++)
         {
-            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
             {
                 child->Display();
             }

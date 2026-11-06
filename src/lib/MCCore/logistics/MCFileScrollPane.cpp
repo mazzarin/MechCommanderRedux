@@ -91,11 +91,6 @@ auto MCFileColumnHeader::Draw() -> void
 
 // MCFileScrollPane
 
-MCFileScrollPane::~MCFileScrollPane()
-{
-    MCFileScrollPane::Destroy();
-}
-
 auto MCFileScrollPane::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height) -> void
 {
     if (LgWhiteFont != nullptr)
@@ -110,33 +105,32 @@ auto MCFileScrollPane::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t h
     // The splash screens' own slider art over the scroll pane's.
     ColumnArts.push_back(ColumnArt{"splashscroll.tga", "splashsupbup.tga", "splashsdnbup.tga"});
 
-    // The column headers (operation, mission, resource points). Each is added and removed again straight away:
-    // they are displayed by the pane itself, not as children.
+    // The column headers (operation, mission, resource points): the pane owns them and displays them itself, not as
+    // children, placed over it where it is now (the original added each and removed it again straight away). They
+    // stay there when the pane moves.
     for (int32_t i = 0; i < 3; i++)
     {
         const std::array<int32_t, 4>& rect = HeaderRects[static_cast<size_t>(i)];
-        ColumnHeaders[static_cast<size_t>(i)] = MCMakeGui<MCFileColumnHeader>();
+        ColumnHeaders[static_cast<size_t>(i)] = MCGuiRef<MCFileColumnHeader>::Make();
         MCFileColumnHeader& header = *ColumnHeaders[static_cast<size_t>(i)];
         header.Init(rect[0], rect[1], rect[2], rect[3]);
         header.Pane = WeakAs<MCFileScrollPane>();
         header.Column = i;
-        AddChild(header.weak_from_this());
-        RemoveChild(header);
+        header.PlaceOver(*this);
     }
 }
 
-auto MCFileScrollPane::Destroy() -> void
+auto MCFileScrollPane::OnDestroy() -> void
 {
     StartDirectory.clear();
     Files.clear();
-    NameEntry.reset();
 
-    for (MCGuiOwned<MCFileColumnHeader>& header : ColumnHeaders)
+    for (MCGuiRef<MCFileColumnHeader>& header : ColumnHeaders)
     {
         header.reset();
     }
 
-    MCScrollPane::Destroy();
+    MCScrollPane::OnDestroy();
 }
 
 auto MCFileScrollPane::PressedArrowArt([[maybe_unused]] bool down) -> std::shared_ptr<MCLogPort>
@@ -156,14 +150,14 @@ auto MCFileScrollPane::Display() -> void
         DrawInFramePass(*PanePort, 0, false, false);
     }
 
-    for (MCGuiOwned<MCFileColumnHeader>& header : ColumnHeaders)
+    for (const MCGuiRef<MCFileColumnHeader>& header : ColumnHeaders)
     {
         header->Display();
     }
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             child->Display();
         }
@@ -178,10 +172,7 @@ auto MCFileScrollPane::HandleEvent(MCGuiEvent& event) -> void
     {
         case MCGuiEventType::LeftButtonDown:
         {
-            if (NameEntry != nullptr && NameEntry->ParentObject().get() == this)
-            {
-                NameEntry->Destroy();
-            }
+            CloseGuiObject(NameEntry);
 
             const int32_t file = GetFileAtPosition(event.X - GlobalX(), event.Y - GlobalY());
 
@@ -200,21 +191,8 @@ auto MCFileScrollPane::HandleEvent(MCGuiEvent& event) -> void
                 return;
             }
 
-            // Saving: an entry field over the clicked name.
-            if (NameEntry == nullptr)
-            {
-                NameEntry = MCMakeGui<MCLogTextObject>();
-            }
-            else
-            {
-                if (!NameEntry->Parent.expired())
-                {
-                    return;
-                }
-
-                NameEntry->Destroy();
-            }
-
+            // Saving: an entry field over the clicked name, made afresh for each edit (the original kept one field and
+            // set it up again; the one shown before was taken down above).
             int32_t entryY = LineHeight * file - GetScrollOffset() - 1;
             int32_t entryHeight = LineHeight;
 
@@ -224,17 +202,20 @@ auto MCFileScrollPane::HandleEvent(MCGuiEvent& event) -> void
                 entryHeight--;
             }
 
-            MCLogTextObject& entry = *NameEntry;
-            entry.MCLogObject::Init(1, entryY, Width() - 0x12, entryHeight);
-            entry.CursorPos = 0;
-            entry.CursorPixel = 0;
-            entry.BackgroundColor = 0x1f;
-            entry.Font = LgBlackFont;
-            entry.ClearEmptyOnFocus = true;
-            entry.InitBuffer(NameBufferSize, MCLogInputType::Any);
-            entry.SetStringBuffer(Files[static_cast<size_t>(SelectedFile)].Name);
-            GuiSystem().SetText(entry.weak_from_this());
-            AddChild(entry.weak_from_this());
+            NameEntry = CreateChild<MCLogTextObject>(
+                [&](MCLogTextObject& entry)
+                {
+                    entry.MCLogObject::Init(1, entryY, Width() - 0x12, entryHeight);
+                    entry.CursorPos = 0;
+                    entry.CursorPixel = 0;
+                    entry.BackgroundColor = 0x1f;
+                    entry.Font = LgBlackFont;
+                    entry.ClearEmptyOnFocus = true;
+                    entry.InitBuffer(NameBufferSize, MCLogInputType::Any);
+                    entry.SetStringBuffer(Files[static_cast<size_t>(SelectedFile)].Name);
+                    // The focus first, as the original took it before adding the field.
+                    GuiSystem().SetText(entry.weak_from_this());
+                });
             break;
         }
 
@@ -245,7 +226,8 @@ auto MCFileScrollPane::HandleEvent(MCGuiEvent& event) -> void
 
             if (file > -1 && file == SelectedFile)
             {
-                std::shared_ptr<MCLogButton> button = static_cast<MCGenericScreen&>(*ParentObject()).LoadSaveButton;
+                const std::shared_ptr<MCLogButton> button =
+                    static_cast<MCGenericScreen&>(*ParentObject()).LoadSaveButton.Lock();
                 PlayLogSound(button->PressSound);
                 button->RunCallback();
                 return;
@@ -475,11 +457,7 @@ auto MCFileScrollPane::SortByName(std::vector<File>& files, int32_t& selected) -
 
 auto MCFileScrollPane::SetSelectedFile(int32_t file) -> void
 {
-    if (NameEntry != nullptr)
-    {
-        NameEntry->Destroy();
-    }
-
+    CloseGuiObject(NameEntry);
     MCGuiEvent event;
     event.Clear();
 

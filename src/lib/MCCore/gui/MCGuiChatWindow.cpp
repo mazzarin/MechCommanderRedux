@@ -55,15 +55,18 @@ auto MCGuiChatInput::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t hei
     int32_t result = MCGuiObject::Init(xPos, yPos, width, height, {});
     Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init chatsend window");
 
-    TeamButton = MCMakeGui<MCGuiToolButton>();
-    result = TeamButton->Init(1, 1, 0xc, 0x1a, {});
-    TeamButton->Framed = false;
-    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init team button for chatsend window");
-    TeamButton->SetDownPicture("mfdsbg00.tga");
-    TeamButton->SetUpPicture("mfdsbh00.tga");
-    TeamButton->SetGrayPicture("mfdsbn00.tga");
-    TeamButton->Pushed = false;
-    AddChild(TeamButton);
+    TeamButton = CreateChild<MCGuiToolButton>(
+        [](MCGuiToolButton& made)
+        {
+            const int32_t buttonResult = made.Init(1, 1, 0xc, 0x1a, {});
+            made.Framed = false;
+            Assert(buttonResult == 0, static_cast<uint32_t>(buttonResult),
+                   " Couldn't init team button for chatsend window");
+            made.SetDownPicture("mfdsbg00.tga");
+            made.SetUpPicture("mfdsbh00.tga");
+            made.SetGrayPicture("mfdsbn00.tga");
+            made.Pushed = false;
+        });
 
     CursorX = 0x15;
 
@@ -77,12 +80,6 @@ auto MCGuiChatInput::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t hei
     // Port: the original drew the line here, which also restarted the caret's blink (see Draw).
     CursorVisible = true;
     return 0;
-}
-
-auto MCGuiChatInput::Destroy() -> void
-{
-    TeamButton.reset();
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiChatInput::Draw() -> void
@@ -292,24 +289,19 @@ auto MCGuiChatWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t he
     }
 
     VfxPaneWipe(Port().Frame(), 0x10);
-    ChatInput = MCMakeGui<MCGuiChatInput>();
-    result = ChatInput->Init(0, height + 4, Width(), 0x1c, {});
+    auto input = TryCreateChild<MCGuiChatInput>([&](MCGuiChatInput& made)
+                                                { return made.Init(0, height + 4, Width(), 0x1c, {}); });
 
-    if (result == 0)
+    if (!input)
     {
-        AddChild(ChatInput);
-        ChatInput->ShowGuiWindow(true);
-        // The original drew the input line here, restarting its caret's blink.
-        ChatInput->CursorVisible = true;
+        return input.error();
     }
 
-    return result;
-}
-
-auto MCGuiChatWindow::Destroy() -> void
-{
-    ChatInput.reset();
-    MCGuiObject::Destroy();
+    ChatInput = *input;
+    ChatInput->ShowGuiWindow(true);
+    // The original drew the input line here, restarting its caret's blink.
+    ChatInput->CursorVisible = true;
+    return 0;
 }
 
 auto MCGuiChatWindow::HandleNetworkMessage(uint32_t fromID, std::span<const uint8_t> data) -> void

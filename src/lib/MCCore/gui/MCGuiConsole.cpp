@@ -48,15 +48,16 @@ auto OpenConsole() -> void
     }
 
     const int32_t height = WhiteFont->Height() + 2 * TextMargin;
-    gui.Console = MCMakeGui<MCGuiConsole>();
+    const int32_t width = ScreenWindow()->Width() - 2 * ScreenMargin;
+    auto console = ScreenWindow()->TryCreateChild<MCGuiConsole>(
+        [&](MCGuiConsole& made) { return made.Init(ScreenMargin, ScreenMargin, width, height, {}); });
 
-    if (gui.Console->Init(ScreenMargin, ScreenMargin, ScreenWindow()->Width() - 2 * ScreenMargin, height, {}) != 0)
+    if (!console)
     {
-        gui.Console.reset();
         return;
     }
 
-    ScreenWindow()->AddChild(gui.Console);
+    gui.Console = *console;
     gui.SetText(gui.Console);
 }
 
@@ -68,14 +69,14 @@ auto CloseConsole() -> void
     }
 
     // Taken out first: the lost focus below comes back here.
-    MCGuiOwned<MCGuiConsole> console = std::move(GuiSystem().Console);
+    const MCGuiHandle<MCGuiConsole> console = std::exchange(GuiSystem().Console, {});
 
     if (GuiSystem().HasText(*console))
     {
         GuiSystem().ReleaseText();
     }
 
-    GuiSystem().Retire(std::move(console));
+    GuiSystem().Retire(console);
 }
 
 auto MCGuiConsole::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) -> int32_t

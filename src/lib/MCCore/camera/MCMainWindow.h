@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiHolderObject.h"
 
@@ -14,7 +14,7 @@ public:
     /// <summary>aHolderObject::init, then makes the clock pane (40 wide, one line of lineFont).</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
     /// <summary>Frees the clock pane, then aHolderObject::destroy.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
     /// <summary>Follows the application window's size on resize events.</summary>
     void HandleEvent(MCGuiEvent& event) override;
     /// <summary>Draws the panes, and the mission clock once per time step when the scenario has a time limit.</summary>
@@ -30,7 +30,7 @@ public:
     using MCGuiHolderObject::Init;
 
     /// <summary>The pane the mission clock is drawn in.</summary>
-    MCGuiOwned<MCGuiObject> ClockPane;
+    MCGuiRef<MCGuiObject> ClockPane;
     /// <summary>The time the clock was last drawn (-1 by init).</summary>
     float LastClockTime = -1.0f;
 };

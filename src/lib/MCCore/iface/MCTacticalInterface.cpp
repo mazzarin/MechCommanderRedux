@@ -61,7 +61,7 @@ namespace
     /// <summary>Each live mech bar mover, in the bar's order.</summary>
     template <typename Visit> void ForEachLiveBarMover(const MCMechBar& bar, Visit visit)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : bar.Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : bar.Buttons())
         {
             const auto mover = std::static_pointer_cast<MCMover>(LockObject(button->Mover));
 
@@ -92,15 +92,13 @@ MCTacticalInterface::MCTacticalInterface() = default;
 MCTacticalInterface::~MCTacticalInterface()
 {
     // As the original's destroy: the bar, the parser, then the tags.
-    MechBar.reset();
+    CloseGuiObject(MechBar);
     CommandParser.reset();
 
-    for (MCGuiOwned<MCFloatHelp>& tag : FloatingTags)
+    for (const MCGuiHandle<MCFloatHelp>& tag : FloatingTags)
     {
-        tag.reset();
+        CloseGuiObject(tag);
     }
-
-    ReserveIcons.clear();
 
     if (_ScrollCallback != nullptr && HasGuiSystem())
     {
@@ -113,11 +111,14 @@ auto MCTacticalInterface::Init() -> int32_t
     ReleaseScrollKeys();
 
     // The mech bar, along the bottom of the screen.
-    MechBar = MCMakeGui<MCMechBar>();
-    MechBar->Init(0, 0, 1, 1, {});
-    MechBar->Resize(0x280, 0x3d);
-    MechBar->ShowGuiWindow(false);
-    ScreenWindow()->AddChild(MechBar);
+    MechBar = ScreenWindow()->CreateChild<MCMechBar>(
+        [this](MCMechBar& bar)
+        {
+            MechBar = bar.WeakAs<MCMechBar>();
+            bar.Init(0, 0, 1, 1, {});
+            bar.Resize(0x280, 0x3d);
+            bar.ShowGuiWindow(false);
+        });
     MechBar->MoveTo(0, GuiSystem().Height() - MechBar->Height() - 1, false);
     MechBar->SetDepth(0x4b);
 
@@ -142,12 +143,15 @@ auto MCTacticalInterface::Init() -> int32_t
     ifaceFile.Close();
 
     // The floating tags.
-    for (MCGuiOwned<MCFloatHelp>& tag : FloatingTags)
+    for (MCGuiHandle<MCFloatHelp>& tag : FloatingTags)
     {
-        tag = MCMakeGui<MCFloatHelp>();
-        Assert(tag->Init(0, 0, 10, 10, {}) == 0, 0, "Error initializing floating tags");
-        tag->SetBackColor(0xf4);
-        ScreenWindow()->AddChild(tag);
+        tag = ScreenWindow()->CreateChild<MCFloatHelp>(
+            [&tag](MCFloatHelp& made)
+            {
+                tag = made.WeakAs<MCFloatHelp>();
+                Assert(made.Init(0, 0, 10, 10, {}) == 0, 0, "Error initializing floating tags");
+                made.SetBackColor(0xf4);
+            });
         tag->SetDepth(0x28);
         tag->ShowGuiWindow(false);
     }
@@ -323,31 +327,30 @@ auto MCTacticalInterface::EndScenario() -> void
 
     GuiSystem().RemoveCallback(*_ScrollCallback);
     _ScrollCallback.reset();
-    ReserveIcons.clear();
 }
 
 auto MCTacticalInterface::AddMech(int32_t partId, int32_t lance, bool active, bool onBar) -> void
 {
-    auto icon = MCMakeGui<MCFriendlyMechIcon>();
-    icon->Init(0, 0, 0x34, 0x2e, {});
-    icon->SetID(partId);
-    icon->Active = active;
-    icon->ShowGuiWindow(active);
+    const auto setUp = [&](MCFriendlyMechIcon& icon)
+    {
+        icon.Init(0, 0, 0x34, 0x2e, {});
+        icon.SetID(partId);
+        icon.Active = active;
+        icon.ShowGuiWindow(active);
+        icon.Lance = onBar ? lance : NoLance;
+    };
 
     if (!onBar)
     {
-        icon->Lance = NoLance;
-        ReserveIcons.push_back(std::move(icon));
+        MechBar->AddReserveIcon(setUp);
         return;
     }
 
-    icon->Lance = lance;
-    MCFriendlyMechIcon& button = *icon;
-
-    if (MechBar->AddButton(std::move(icon)))
+    // Port: a full bar makes no icon (the original made one and deleted it).
+    if (const MCGuiHandle<MCFriendlyMechIcon> button = MechBar->AddButton(setUp); button != nullptr)
     {
         MechBar->Draw();
-        button.SetEventRoutine(MechIconHandleEvent);
+        button->SetEventRoutine(MechIconHandleEvent);
     }
 }
 
@@ -493,7 +496,7 @@ auto MCTacticalInterface::CallStrike(int32_t strikeType, std::optional<MCVector3
 
 auto MCTacticalInterface::HideTags() -> void
 {
-    for (const MCGuiOwned<MCFloatHelp>& tag : FloatingTags)
+    for (const MCGuiHandle<MCFloatHelp>& tag : FloatingTags)
     {
         tag->ShowGuiWindow(false);
     }
@@ -510,7 +513,7 @@ auto MCTacticalInterface::SetUnit(int32_t groupId, std::span<const std::shared_p
     }
 
     // Relink every icon to its lance and mark the points.
-    for (const std::shared_ptr<MCFriendlyMechIcon>& button : MechBar->Buttons)
+    for (const std::shared_ptr<MCFriendlyMechIcon>& button : MechBar->Buttons())
     {
         button->Lance = NoLance;
     }
@@ -552,9 +555,7 @@ auto MCTacticalInterface::GetMechIconFromID(int32_t partId) const -> std::shared
         return icon;
     }
 
-    const auto found = std::ranges::find_if(ReserveIcons, [partId](const std::shared_ptr<MCFriendlyMechIcon>& icon)
-                                            { return icon->PartId == partId; });
-    return found != ReserveIcons.end() ? *found : nullptr;
+    return MechBar->GetReserveIcon(partId);
 }
 
 auto MCTacticalInterface::Orders() const -> MCOrderSink&

@@ -148,7 +148,7 @@ auto MCArtilleryButton::HandleEvent(MCGuiEvent& event) -> void
             // Outside the tactical map: the click must land in the active view.
             std::shared_ptr<MCGuiObject> target = ScreenWindow()->FindObject(screenX, screenY);
 
-            if (target != MainHolder()->GetActivePane() && target != TacticalInterface()->MechBar)
+            if (target != MainHolder()->GetActivePane() && target != TacticalInterface()->MechBar.Lock())
             {
                 Armed = false;
                 GuiSystem().Release();

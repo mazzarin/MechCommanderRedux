@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCGuiListBox;
 class MCGuiTextObject;
@@ -19,7 +19,6 @@ public:
 
     /// <summary>Makes the list (hidden, closed by <see cref="CloseListOnMousedown"/>), the drop button and the text field.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     void Draw() override;
     /// <summary>Port: draws itself each frame (its frame; the list, button and text field draw themselves).</summary>
     bool DrawsLive() override { return true; }
@@ -34,11 +33,11 @@ public:
     bool SelectItem(int32_t item) const;
 
     /// <summary>The field showing the selection (read-only).</summary>
-    MCGuiOwned<MCGuiTextObject> TextField;
+    MCGuiHandle<MCGuiTextObject> TextField;
     /// <summary>The list shown below while open.</summary>
-    MCGuiOwned<MCGuiListBox> ListBox;
+    MCGuiHandle<MCGuiListBox> ListBox;
     /// <summary>The drop button (a tool button, art packets 0xe/0xf).</summary>
-    MCGuiOwned<MCGuiToolButton> DropButton;
+    MCGuiHandle<MCGuiToolButton> DropButton;
 };
 
 /// <summary>A combo box list's event routine: closes the list when the mouse is pressed on it.</summary>

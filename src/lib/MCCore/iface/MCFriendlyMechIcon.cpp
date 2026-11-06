@@ -84,7 +84,7 @@ auto MCFriendlyMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t
         return result;
     }
 
-    PilotImage = MCMakeGui<MCGuiPort>();
+    PilotImage = std::make_unique<MCGuiPort>();
     DiagramX = 6;
     DiagramY = 0x10;
     Lance = NoLance;
@@ -92,11 +92,11 @@ auto MCFriendlyMechIcon::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t
     return 0;
 }
 
-auto MCFriendlyMechIcon::Destroy() -> void
+auto MCFriendlyMechIcon::OnDestroy() -> void
 {
     PilotImage.reset();
     IconBackground.reset();
-    MCMechIcon::Destroy();
+    MCMechIcon::OnDestroy();
 }
 
 auto MCFriendlyMechIcon::Enter() -> void
@@ -426,7 +426,7 @@ auto MCFriendlyMechIcon::SetID(int32_t newPartId) -> void
     // takes its size.
     if (IconBackground == nullptr)
     {
-        IconBackground = MCMakeGui<MCGuiPort>();
+        IconBackground = std::make_unique<MCGuiPort>();
     }
 
     IconBackground->Init(const_cast<char*>("guiub00.tga"));

@@ -15,11 +15,11 @@ auto MCLogDialogBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t hei
     ShowGuiWindow(false);
 }
 
-auto MCLogDialogBox::Destroy() -> void
+auto MCLogDialogBox::OnDestroy() -> void
 {
     PicturePort.reset();
     Callback = nullptr;
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogDialogBox::DrawBackground() -> void

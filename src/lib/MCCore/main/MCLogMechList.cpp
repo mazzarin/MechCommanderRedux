@@ -2,7 +2,6 @@
 #include "main/MCLogMechList.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCBriefingBox.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechRepairBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
@@ -28,9 +27,10 @@ auto MCLogMechList::Delete(size_t position) -> void
 {
     const std::shared_ptr<MCLogMech> mech = Mechs[position];
 
+    // Its repair row takes no more clicks (the original took the block out of the pane).
     if (GlobalLog() != nullptr && GlobalLog()->RepairScreen != nullptr)
     {
-        GlobalLog()->RepairScreen->UnitPane->RemoveChild(*mech->RepairBlock);
+        GlobalLog()->RepairScreen->HideUnitRow(*mech);
     }
 
     Mechs.erase(Mechs.begin() + static_cast<ptrdiff_t>(position));
@@ -461,15 +461,16 @@ auto MCLogMechList::AddMech(MCFitIniFile& file, bool required, bool sorted, bool
     }
 
     const std::shared_ptr<MCLogMech> added = *Mechs.insert(position, std::move(mech));
+    added->TakeArrivalState();
 
     if (widgets)
     {
-        added->RepairBlock = MCMakeGui<MCMechRepairBlock>();
-        added->RepairBlock->Init(added);
-        added->InventoryBlock = MCMakeGui<MCMechInventoryBlock>();
-        added->InventoryBlock->Init(added);
-        added->BriefingBox = MCMakeGui<MCBriefingBox>();
-        added->BriefingBox->Init(added, {});
+        // The repair sliders' knobs (the repair block's init placed them; the repair screen makes the rows now).
+        MCMechRepairBlock::PlaceSliders(*added);
+        added->ReadWithWidgets = true;
+        // The inventory row (the inventory block's init set it; the list makes the rows now).
+        added->ListIndex = added->NameIndex;
+        // (The original also made the mech's briefing box here; the briefing screen makes the box it shows.)
     }
 
     added->CalcBR();

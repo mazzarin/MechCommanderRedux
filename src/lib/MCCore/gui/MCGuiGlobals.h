@@ -3,13 +3,13 @@
 // The GUI's shared settings and state (gui\asystem.cpp's globals): the display settings PREFS and the command line
 // set, the fonts, the pause and cheat flags, the frame's timing, and the mouse thread's lock.
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCGuiFont;
 class MCGuiObject;
 
 /// <summary>The feature screen (the mission's start-up picture) while it shows; the mission makes and ends it.</summary>
-extern MCGuiOwned<MCGuiObject> FeatureScreen;
+extern MCGuiHandle<MCGuiObject> FeatureScreen;
 /// <summary>Set (-1) by a key press while the feature screen shows: the player is done with it.</summary>
 extern int FeatureScreenDone;
 /// <summary>Set (-1) when Escape ended the movie playing.</summary>

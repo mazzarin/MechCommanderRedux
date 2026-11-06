@@ -419,15 +419,17 @@ auto MatchTabAt(int32_t xPos, int32_t yPos) -> std::optional<MCSessionTab>
     return std::nullopt;
 }
 
-auto MakeMatchOptionsList() -> std::shared_ptr<MCLogOptionList>
+auto AddMatchOptionsList(MCGuiObject& screen) -> MCGuiHandle<MCLogOptionList>
 {
-    auto list = MCMakeGui<MCLogOptionList>();
-    list->Init(ListLeft, ListTop, ListWidth, ListHeight, Rows);
-    list->SetNarrow(SettingWidth);
-    list->SetRendererHints(false);
-    list->SetHeadingColor(HeadingColor);
-    list->ShowGuiWindow(false);
-    return list;
+    return screen.CreateChild<MCLogOptionList>(
+        [](MCLogOptionList& list)
+        {
+            list.Init(ListLeft, ListTop, ListWidth, ListHeight, Rows);
+            list.SetNarrow(SettingWidth);
+            list.SetRendererHints(false);
+            list.SetHeadingColor(HeadingColor);
+            list.ShowGuiWindow(false);
+        });
 }
 
 auto ShowMatchOptions(MCLogOptionList& list) -> void

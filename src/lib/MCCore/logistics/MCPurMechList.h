@@ -1,9 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
-
 class MCInventoryList;
-class MCMechPurchaseBlock;
 
 /// <summary>The maximum and current armor of one body location of a mech for sale.</summary>
 struct MCPurArmorLocation
@@ -67,7 +64,7 @@ public:
     int32_t DescIndex = -1;
 };
 
-/// <summary>A mech type for sale: its three variants (A, W, J) and the store row that shows them.</summary>
+/// <summary>A mech type for sale: its three variants (A, W, J) and the one the store shows.</summary>
 /// <remarks>Original source: <c>logistics\purchase.cpp</c> (<c>PurMech</c>).</remarks>
 class MCPurMech
 {
@@ -76,7 +73,11 @@ public:
     static constexpr size_t NumVariants = 3;
 
     std::array<std::unique_ptr<MCPurMechData>, NumVariants> Variants;
-    MCGuiOwned<MCMechPurchaseBlock> Block;
+    /// <summary>
+    /// The variant the store shows and sells (0..2; -1 before the list picks one): the first in stock when the
+    /// list is made or the pane filled, or the one the player clicked.
+    /// </summary>
+    int32_t CurVariant = -1;
 };
 
 /// <summary>The mechs of the shop, newest first.</summary>
@@ -84,12 +85,12 @@ public:
 class MCPurMechList
 {
 public:
-    /// <summary>Frees every mech, its variants and its row.</summary>
+    /// <summary>Frees every mech and its variants.</summary>
     void Clear();
 
     /// <summary>
-    /// Adds a mech type with its three variants (files and how many of each are for sale), makes its row and shows
-    /// the first variant with stock.
+    /// Adds a mech type with its three variants (files and how many of each are for sale) and shows the first
+    /// variant with stock.
     /// </summary>
     void AddMech(std::string_view fileA, int32_t countA, std::string_view fileJ, int32_t countJ, std::string_view fileW,
                  int32_t countW);

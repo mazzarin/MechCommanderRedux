@@ -1,10 +1,6 @@
 #include "stdafx.h"
 #include "main/MCLogVehicle.h"
-#include "logistics/MCBriefingBox.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCPurProfile.h"
-#include "logistics/MCVehicleInventoryBlock.h"
-#include "logistics/MCVehicleRepairBlock.h"
 #include "object/MCMasterComponent.h"
 
 MCLogVehicle::MCLogVehicle()
@@ -15,10 +11,6 @@ MCLogVehicle::MCLogVehicle()
 MCLogVehicle::~MCLogVehicle()
 {
     Inventory.reset();
-    BriefingBox.reset();
-    RepairBlock.reset();
-    InventoryBlock.reset();
-    BriefBlock.reset();
 }
 
 auto MCLogVehicle::CalcVehicleCost() -> void

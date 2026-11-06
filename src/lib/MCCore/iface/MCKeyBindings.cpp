@@ -490,7 +490,7 @@ namespace
     /// <summary>How far a Windows-1252 letter's capital is below it.</summary>
     constexpr int CapitalOffset = 0x20;
 
-    /// <summary>The layout the CONTROLS screen names keys by (null: the US keyboard's names).</summary>
+    /// <summary>The layout the CONTROLS screen names keys by (empty: the US keyboard's names).</summary>
     MCKeyBindings::MCKeyLayout& Layout()
     {
         static MCKeyBindings::MCKeyLayout layout = MCInput::LayoutCharacter;
@@ -507,20 +507,21 @@ namespace
 
     /// <summary>
     /// The name of the key with scan code <paramref name="code"/> by what it types in the layout, upper-case, if it
-    /// types a character other than space that <paramref name="font"/> draws (null: any).
+    /// types a character other than space that <paramref name="font"/> draws (absent: any).
     /// </summary>
-    std::optional<std::string> TypedName(uint32_t code, const MCGuiFont* font)
+    std::optional<std::string> TypedName(uint32_t code, MCOptionalRef<const MCGuiFont> font)
     {
-        const MCKeyBindings::MCKeyLayout layout = Layout();
+        const MCKeyBindings::MCKeyLayout& layout = Layout();
 
-        if (layout == nullptr || code > CodeBits)
+        if (!layout || code > CodeBits)
         {
             return std::nullopt;
         }
 
         const int character = Capital(layout(static_cast<uint16_t>(code)));
 
-        if (character < FirstNamingCharacter || (font != nullptr && !font->Draws(static_cast<uint8_t>(character))))
+        if (character < FirstNamingCharacter ||
+            (font.has_value() && !font->get().Draws(static_cast<uint8_t>(character))))
         {
             return std::nullopt;
         }
@@ -571,7 +572,8 @@ namespace
     /// The binding's name with or without the Mac keyboard's labels, and with <paramref name="typed"/> the key by what
     /// it types in the layout when <paramref name="font"/> draws that.
     /// </summary>
-    std::string BindingName(uint32_t key, bool macNames, bool typed = false, const MCGuiFont* font = nullptr)
+    std::string BindingName(uint32_t key, bool macNames, bool typed = false,
+                            MCOptionalRef<const MCGuiFont> font = std::nullopt)
     {
         if (key == NoKey)
         {
@@ -689,14 +691,14 @@ std::string MCKeyBindings::KeyName(uint32_t key)
     return BindingName(key, false);
 }
 
-std::string MCKeyBindings::KeyLabel(uint32_t key, const MCGuiFont* font)
+std::string MCKeyBindings::KeyLabel(uint32_t key, MCOptionalRef<const MCGuiFont> font)
 {
     return key == NoKey ? std::string() : BindingName(key, MacNames, true, font);
 }
 
 void MCKeyBindings::SetLayout(MCKeyLayout layout)
 {
-    Layout() = layout;
+    Layout() = std::move(layout);
 }
 
 auto MCKeyBindings::ParseKey(std::string_view name) -> std::optional<uint32_t>

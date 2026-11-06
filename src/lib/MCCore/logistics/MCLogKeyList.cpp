@@ -51,7 +51,7 @@ namespace
 
 MCLogKeyList::~MCLogKeyList()
 {
-    MCLogKeyList::Destroy();
+    Destroy();
 }
 
 auto MCLogKeyList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, MCKeyBindings::MCKeyTable& keys)
@@ -62,7 +62,7 @@ auto MCLogKeyList::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     Reset();
 }
 
-auto MCLogKeyList::Destroy() -> void
+auto MCLogKeyList::OnDestroy() -> void
 {
     if (GuiSystem().HasText(*this))
     {
@@ -70,7 +70,7 @@ auto MCLogKeyList::Destroy() -> void
     }
 
     _Listening.reset();
-    MCLogScrollList::Destroy();
+    MCLogScrollList::OnDestroy();
 }
 
 auto MCLogKeyList::Keys() const -> MCKeyBindings::MCKeyTable&
@@ -241,7 +241,7 @@ auto MCLogKeyList::Assign(uint32_t key) -> void
     }
 
     _Lost = CellOf(lost);
-    _Status = std::format("{} MOVED FROM {}.", MCKeyBindings::KeyLabel(key, WhiteFont.get()),
+    _Status = std::format("{} MOVED FROM {}.", MCKeyBindings::KeyLabel(key, MCOptionalOf(WhiteFont)),
                           MCKeyBindings::CommandLabel(lost));
 }
 
@@ -401,7 +401,7 @@ auto MCLogKeyList::DrawCell(Cell cell, int32_t top) -> void
     }
 
     const uint8_t color = key == MCKeyBindings::Defaults()[index] ? BoxTextColor : ChangedKeyColor;
-    Write(left + BoxTextLeft, top + 1, MCKeyBindings::KeyLabel(key, WhiteFont.get()), color, textWidth);
+    Write(left + BoxTextLeft, top + 1, MCKeyBindings::KeyLabel(key, MCOptionalOf(WhiteFont)), color, textWidth);
 }
 
 auto MCLogKeyList::Draw() -> void

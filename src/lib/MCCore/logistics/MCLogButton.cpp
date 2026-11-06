@@ -16,7 +16,7 @@ namespace
 
 MCLogButton::~MCLogButton()
 {
-    MCLogButton::Destroy();
+    Destroy();
 }
 
 auto MCLogButton::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
@@ -43,7 +43,7 @@ auto MCLogButton::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height
     return 0;
 }
 
-auto MCLogButton::Destroy() -> void
+auto MCLogButton::OnDestroy() -> void
 {
     UpPicture.reset();
     DownPicture.reset();
@@ -56,7 +56,7 @@ auto MCLogButton::Destroy() -> void
         HeldButton.reset();
     }
 
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogButton::Press() -> void

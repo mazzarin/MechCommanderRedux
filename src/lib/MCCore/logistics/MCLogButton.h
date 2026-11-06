@@ -14,13 +14,14 @@ public:
     /// <summary>The sample played on a click of a disabled button.</summary>
     static constexpr uint32_t DisabledSound = 0x33;
 
+    /// <summary>Destroys the button if nothing did (its cleanup lets go of the held button).</summary>
     ~MCLogButton() override;
 
     /// <summary>Places the button, clears its callback and pictures, and makes its port.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
     /// <summary>Frees the four pictures and clears the callback.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>
     /// Shows the picture for the button's state: gray while disabled, down while <see cref="Pressed"/> or held (grabbed

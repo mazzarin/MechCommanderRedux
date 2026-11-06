@@ -44,7 +44,10 @@ void GeneralMsg(std::string_view message)
     FatalMsg(message);
 }
 
-void Assert(bool expression, uint32_t errCode, std::string_view message, std::string_view message2)
+std::function<void(std::string_view report, const std::source_location& where)> MCAssertHook;
+
+void Assert(bool expression, uint32_t errCode, std::string_view message, std::string_view message2,
+            const std::source_location& where)
 {
     if (expression)
     {
@@ -53,5 +56,11 @@ void Assert(bool expression, uint32_t errCode, std::string_view message, std::st
 
     // The original asked the crash reporter (AssertTest) whether to break into the debugger; the port logs and
     // carries on.
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Assert failed: %s", ErrorText(errCode, message, message2).c_str());
+    const std::string report = ErrorText(errCode, message, message2);
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Assert failed: %s", report.c_str());
+
+    if (MCAssertHook)
+    {
+        MCAssertHook(report, where);
+    }
 }

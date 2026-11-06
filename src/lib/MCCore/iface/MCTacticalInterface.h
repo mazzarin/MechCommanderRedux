@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "iface/MCInterfaceTypes.h"
 #include "lib/MCVector2D.h"
 #include "lib/MCOptionalRef.h"
@@ -90,7 +90,7 @@ public:
 
     /// <summary>
     /// Makes an icon for the mover with part id <paramref name="partId"/>: on the mech bar in lance
-    /// <paramref name="lance"/> when <paramref name="onBar"/>, else kept aside in <see cref="ReserveIcons"/>.
+    /// <paramref name="lance"/> when <paramref name="onBar"/>, else kept aside as a reserve icon (<see cref="MCMechBar::AddReserveIcon"/>).
     /// </summary>
     void AddMech(int32_t partId, int32_t lance, bool active, bool onBar);
     /// <summary>Brings a mover's icon into play and re-places the buttons.</summary>
@@ -220,9 +220,8 @@ public:
     /// <summary>The cursor's direction variant, from <see cref="SetCursorOffset"/>.</summary>
     int32_t CursorOffset = 0;
     std::unique_ptr<MCCommandParser> CommandParser;
-    MCGuiOwned<MCMechBar> MechBar;
-    /// <summary>Icons of movers not on the mech bar (<see cref="AddMech"/> off the bar).</summary>
-    std::vector<std::shared_ptr<MCFriendlyMechIcon>> ReserveIcons;
+    /// <summary>The mech bar (a child of the screen window, made by <see cref="Init"/>).</summary>
+    MCGuiHandle<MCMechBar> MechBar;
     /// <summary>How far the mouse must move with a button down to start a drag (<c>Drag Distance</c>).</summary>
     int16_t DragDistance = 10;
     /// <summary><c>Scroll Speed</c>.</summary>
@@ -251,7 +250,7 @@ public:
     /// <summary>Whether the tactical map's large view is held up (<see cref="MCKeyCommand::HoldTacticalMap"/>).</summary>
     bool TacMapShown = false;
     /// <summary>The floating tags shown over movers (kept: one per mover of a full force).</summary>
-    std::array<MCGuiOwned<MCFloatHelp>, MaxSelectedMovers> FloatingTags;
+    std::array<MCGuiHandle<MCFloatHelp>, MaxSelectedMovers> FloatingTags;
     /// <summary>Whether a forced-order key is held: the next click's order is queued.</summary>
     bool ForcingOrder = false;
     /// <summary>The forced order a click gives where the mouse is now.</summary>

@@ -43,19 +43,20 @@ namespace
 
     /// <summary>Makes one of the bar's buttons: a 4x4 button with up and down art packets, added to the bar.</summary>
     template <typename TButton>
-    std::expected<MCGuiOwned<TButton>, int32_t> MakeBarButton(MCGuiTitleBar& bar, int32_t upArt, int32_t downArt)
+    std::expected<MCGuiHandle<TButton>, int32_t> MakeBarButton(MCGuiTitleBar& bar, int32_t upArt, int32_t downArt)
     {
-        auto button = MCMakeGui<TButton>();
+        return bar.TryCreateChild<TButton>(
+            [&](TButton& made)
+            {
+                if (const int32_t result = made.Init(0, 0, 4, 4, {}); result != 0)
+                {
+                    return result;
+                }
 
-        if (const int32_t result = button->Init(0, 0, 4, 4, {}); result != 0)
-        {
-            return std::unexpected(result);
-        }
-
-        button->SetUpPicture(upArt);
-        button->SetDownPicture(downArt);
-        bar.AddChild(button);
-        return button;
+                made.SetUpPicture(upArt);
+                made.SetDownPicture(downArt);
+                return 0;
+            });
     }
 }
 
@@ -149,15 +150,6 @@ auto MCGuiTitleBar::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heig
     SwoopyButton->SetEventRoutine(HandleSwoopyButtonEvent);
     ShowSwoopyButton(false);
     return 0;
-}
-
-auto MCGuiTitleBar::Destroy() -> void
-{
-    CloseButton.reset();
-    ZoomButton.reset();
-    ZoomOutButton.reset();
-    SwoopyButton.reset();
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiTitleBar::SetZoomCallbacks() -> void

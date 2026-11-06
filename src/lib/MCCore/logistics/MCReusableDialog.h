@@ -16,12 +16,11 @@ public:
     /// <summary>The timeout's timer id.</summary>
     static constexpr int32_t TimeoutTimer = 0;
 
-    ~MCReusableDialog() override { MCReusableDialog::Destroy(); }
-
     /// <summary>Loads the frame pieces (<c>dbox_top/middle/bottom</c>), centres the dialog and makes the two buttons.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
-    void Destroy() override;
+    /// <summary>Frees the frame pieces and the text.</summary>
+    void OnDestroy() override;
 
     /// <summary>Draws the frame and the text wrapped to the width.</summary>
     void Draw() override;
@@ -64,8 +63,10 @@ public:
     int32_t TimeoutResult = 0;
     /// <summary>When set, the next <see cref="Deactivate"/> keeps the callbacks (and clears this flag).</summary>
     bool KeepCallbacks = false;
-    MCGuiOwned<MCLogDialogButton> OkButton;
-    MCGuiOwned<MCLogDialogButton> CancelButton;
+    /// <summary>The OK button (a child).</summary>
+    MCGuiHandle<MCLogDialogButton> OkButton;
+    /// <summary>The Cancel button (a child).</summary>
+    MCGuiHandle<MCLogDialogButton> CancelButton;
     std::shared_ptr<MCLogPort> TopPiece;
     std::shared_ptr<MCLogPort> MiddlePiece;
     std::shared_ptr<MCLogPort> BottomPiece;

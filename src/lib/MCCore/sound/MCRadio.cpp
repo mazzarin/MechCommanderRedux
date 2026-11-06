@@ -239,9 +239,14 @@ int32_t MCRadio::PlayMessage(MCRadioMessageType msgType)
         tacMap->IsShowing() != 0 && tacMap->IsHidden() == 0 && tacMap->DisplayType == MCTacmapPage::Map &&
         tacMap->VideoWindow != nullptr)
     {
-        message->MovieWindow = MCMakeGui<MCGuiSmackerWindow>();
-        tagRECT area = tacMap->GetVideoRect();
-        message->MovieWindow->Init(area, {});
+        // On the screen, hidden until the message plays (the original added it to the screen then).
+        message->MovieWindow = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
+            [&message, area = tacMap->GetVideoRect()](MCGuiSmackerWindow& window)
+            {
+                message->MovieWindow = window.WeakAs<MCGuiSmackerWindow>();
+                window.Init(area, {});
+                window.ShowGuiWindow(false);
+            });
         const std::string videoName = std::format("{}{}", MovieName, info.MovieCode);
         message->Movie = SmackOpen(GamePath(MoviePath, videoName, ".smk").c_str(), 0xfe000, -1);
     }

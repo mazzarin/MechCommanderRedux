@@ -169,7 +169,7 @@ void CallArtillery(int32_t commanderId, int32_t strikeType, MCVector3D location,
 
     if (CommanderById(commanderId) == HomeCommander())
     {
-        for (const MCGuiOwned<MCArtilleryButton>& button : TacticalMap()->ArtilleryButtons)
+        for (const MCGuiHandle<MCArtilleryButton>& button : TacticalMap()->ArtilleryButtons)
         {
             button->Draw();
         }

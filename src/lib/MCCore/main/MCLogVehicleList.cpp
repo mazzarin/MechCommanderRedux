@@ -1,12 +1,12 @@
 #include "stdafx.h"
 #include "main/MCLogVehicleList.h"
 #include "lib/MCPacketFile.h"
-#include "logistics/MCBriefingBox.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCVehicleInventoryBlock.h"
-#include "logistics/MCVehicleRepairBlock.h"
+#include "logistics/MCLogRows.h"
+#include "main/MCGameStrings.h"
+#include "logistics/MCRepairScreen.h"
 #include "main/MCGamePaths.h"
+#include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
 #include "object/MCObjectTypeManager.h"
 
@@ -181,12 +181,12 @@ auto MCLogVehicleList::AddVehicle(MCFitIniFile& file, bool required, bool sorted
     // The widgets are made before the vehicle is in the list, as the original did.
     if (widgets)
     {
-        vehicle->InventoryBlock = MCMakeGui<MCVehicleInventoryBlock>();
-        vehicle->InventoryBlock->Init(vehicle);
-        vehicle->RepairBlock = MCMakeGui<MCVehicleRepairBlock>();
-        vehicle->RepairBlock->Init(vehicle);
-        vehicle->BriefingBox = MCMakeGui<MCBriefingBox>();
-        vehicle->BriefingBox->Init(nullptr, vehicle);
+        // The inventory row and texts (the inventory block's init took them; the list makes the rows now).
+        vehicle->ListIndex = vehicle->NameIndex;
+        vehicle->WeightClassName = LoadGameString(WeightClassString(vehicle->CurTonnage), 0xfe);
+        vehicle->ArmorClassName = LoadGameString(ArmorClassString(vehicle->ArmorTonnage), 0xf);
+        vehicle->ReadWithWidgets = true;
+        // (The original also made the vehicle's briefing box here; the briefing screen makes the box it shows.)
     }
 
     // In by tonnage when sorted, else at the front.
@@ -208,6 +208,12 @@ auto MCLogVehicleList::RemoveVehicle(int32_t index) -> int32_t
     if (index >= GetVehicleCount() || position >= Vehicles.size())
     {
         return -1;
+    }
+
+    // Its repair row takes no more clicks (the original's block went with the vehicle).
+    if (GlobalLog() != nullptr && GlobalLog()->RepairScreen != nullptr)
+    {
+        GlobalLog()->RepairScreen->HideUnitRow(*Vehicles[position]);
     }
 
     Vehicles.erase(Vehicles.begin() + static_cast<ptrdiff_t>(position));

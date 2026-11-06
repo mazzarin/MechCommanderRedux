@@ -254,9 +254,8 @@ namespace
                 {
                     const std::string release = LoadGameString(0x282, 0xfe);
                     DestroyVersion();
-                    gui.VersionDialog = MCMakeGui<MCGuiMessageBox>();
-                    gui.VersionDialog->Init(std::format("Release Version: {}", release));
-                    ScreenWindow()->AddChild(gui.VersionDialog);
+                    gui.VersionDialog = ScreenWindow()->CreateChild<MCGuiMessageBox>(
+                        [&](MCGuiMessageBox& made) { made.Init(std::format("Release Version: {}", release)); });
                     gui.Grab(gui.VersionDialog);
                 }
                 break;
@@ -489,7 +488,7 @@ auto DispatchGuiEvent(MCGuiEvent& event) -> void
     }
     else if (EventsToMissionResultsScreen != 0 && Mission()->ResultsScreen != nullptr)
     {
-        const std::shared_ptr<MCGuiObject> results = Mission()->ResultsScreen;
+        const std::shared_ptr<MCGuiObject> results = Mission()->ResultsScreen.Lock();
         target = type == MCGuiEventType::Character && event.Key == VK_ESCAPE ? results
                                                                              : results->FindObject(event.X, event.Y);
     }

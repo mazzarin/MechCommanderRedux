@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "ScreenInput.h"
+#include "GuiTree.h"
 #include "TestGame.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
@@ -64,7 +65,6 @@ namespace
         const std::span<const uint8_t> pixels =
             picture.Bitmap().Bytes().first(static_cast<size_t>(view->Width()) * view->Height());
         std::vector<uint8_t> result(pixels.begin(), pixels.end());
-        picture.Destroy();
         return result;
     }
 }
@@ -82,8 +82,12 @@ TEST_CASE_ISOLATED("game: the logistics chat history draws as the original's pic
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    REQUIRE(GlobalLog()->ChatWindow != nullptr);
-    MCLogChatWindow& chat = *GlobalLog()->ChatWindow;
+    // The session screen's window of the chat.
+    REQUIRE(GlobalLog()->Chat != nullptr);
+    const std::shared_ptr<MCLogChatWindow> window = GlobalLog()->ChatWindowOn(*GlobalLog()->SessionScreen);
+    REQUIRE(window != nullptr);
+    MCLogChatWindow& chat = *window;
+    MCLogChat& history = *GlobalLog()->Chat;
     std::shared_ptr<MCLogPort> view = chat.HistoryPane->ContentPort;
     REQUIRE(view->IsView());
 
@@ -116,7 +120,7 @@ TEST_CASE_ISOLATED("game: the logistics chat history draws as the original's pic
     {
         MCTest::Scope scope(std::format("line {}", i));
         AddLineAsOriginal(original, lines[i]);
-        chat.AddLine(lines[i].c_str());
+        history.AddLine(lines[i].c_str());
         CHECK(same());
     }
 
@@ -126,13 +130,13 @@ TEST_CASE_ISOLATED("game: the logistics chat history draws as the original's pic
     CHECK(same());
 
     // A reset clears it.
-    chat.Reset();
+    history.Clear();
+    chat.ResetHistoryPane();
     VfxPaneWipe(original.Frame(), 0x10);
     CHECK(same());
     AddLineAsOriginal(original, lines[1]);
-    chat.AddLine(lines[1].c_str());
+    history.AddLine(lines[1].c_str());
     CHECK(same());
-    original.Destroy();
 }
 
 namespace
@@ -746,14 +750,14 @@ TEST_CASE_ISOLATED("game: a scroll pane's arrow lets go wherever the mouse butto
     REQUIRE(MCTestGame::StartLogistics());
 
     // A pane 0x80 x 0x60 at (100, 100) showing content four times its height: the slider is a quarter of the track.
-    const MCGuiOwned<MCScrollPane> pane = MCMakeGui<MCScrollPane>();
+    const MCGuiRef<MCScrollPane> pane = MCGuiTree::NewRoot<MCScrollPane>();
     pane->Init(0x80, 0x60, 100, 100, std::string_view());
     auto content = std::make_shared<MCLogPort>();
     content->Init(0x80 - 13, 0x180);
     pane->SetDisplayPort(std::move(content), true);
     REQUIRE(pane->SliderHeight > 0);
 
-    const auto send = [pane](int32_t type, int32_t xPos, int32_t yPos)
+    const auto send = [&pane](int32_t type, int32_t xPos, int32_t yPos)
     {
         MCGuiEvent event;
         event.Clear();
@@ -791,7 +795,7 @@ TEST_CASE_ISOLATED("game: a save list longer than its pane draws its slider")
     }
 
     REQUIRE(MCTestGame::StartLogistics());
-    const MCGuiOwned<MCFileScrollPane> pane = MCMakeGui<MCFileScrollPane>();
+    const MCGuiRef<MCFileScrollPane> pane = MCGuiTree::NewRoot<MCFileScrollPane>();
     pane->Init(10, 10, 0xc0, 0x80);
 
     // Four panes' worth of files.
@@ -809,5 +813,4 @@ TEST_CASE_ISOLATED("game: a save list longer than its pane draws its slider")
     pane->DrawSliderColumn(picture.Frame(), 0, 0, false);
     const std::span<const uint8_t> pixels = picture.Bitmap().Bytes();
     CHECK_EQ(pixels[static_cast<size_t>((pane->SliderPos + 1) * 13 + 5)], uint8_t{0x1a});
-    picture.Destroy();
 }

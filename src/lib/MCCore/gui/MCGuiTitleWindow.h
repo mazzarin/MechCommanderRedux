@@ -20,18 +20,19 @@ void RightBarPaint(MCGuiObject& object);
 void HandleResizeButtonEvent(MCGuiObject& object, MCGuiEvent& event);
 
 /// <summary>
-/// The frame of a window: the title bar, the three frame bars and the resize handle. The window owns its frame.
+/// The frame of a window: the title bar, the three frame bars and the resize handle, all the window's children
+/// (the handle is the right bar's in a title window).
 /// </summary>
 struct MCGuiWindowFrame
 {
     /// <summary>The frame bars left, below and right of the client area.</summary>
-    MCGuiOwned<MCGuiObject> LeftBar;
-    MCGuiOwned<MCGuiObject> BottomBar;
-    MCGuiOwned<MCGuiObject> RightBar;
+    MCGuiHandle<MCGuiObject> LeftBar;
+    MCGuiHandle<MCGuiObject> BottomBar;
+    MCGuiHandle<MCGuiObject> RightBar;
     /// <summary>The resize handle.</summary>
-    MCGuiOwned<MCGuiObject> ResizeButton;
+    MCGuiHandle<MCGuiObject> ResizeButton;
     /// <summary>The title bar above the client area.</summary>
-    MCGuiOwned<MCGuiTitleBar> TitleBar;
+    MCGuiHandle<MCGuiTitleBar> TitleBar;
 };
 
 /// <summary>
@@ -53,7 +54,6 @@ public:
     /// </summary>
     /// <returns>0, or the first frame part's error.</returns>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     void Draw() override;
     /// <summary>
     /// Port: draws itself each frame (and so do its frame parts and title bar). Derived windows that still paint
@@ -78,7 +78,6 @@ public:
     ~MCGuiEmptyTitleWindow() override;
 
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     void Resize(int32_t newWidth, int32_t newHeight) override;
     /// <summary>Close takes the window off the screen (the camera goes off); zoom toggles the view's zoom.</summary>
     void HandleEvent(MCGuiEvent& event) override;

@@ -23,24 +23,24 @@ namespace
 
 TEST_CASE("gui: a port's bitmap starts zeroed, and pixels it shares outlive it")
 {
-    MCGuiPort port;
-    REQUIRE_EQ(port.Init(8, 4), 0);
-    const std::span<uint8_t> pixels = port.Pixels();
+    auto port = std::make_unique<MCGuiPort>();
+    REQUIRE_EQ(port->Init(8, 4), 0);
+    const std::span<uint8_t> pixels = port->Pixels();
     REQUIRE_EQ(pixels.size(), 32u);
     CHECK(std::ranges::all_of(pixels, [](uint8_t value) { return value == 0; }));
-    CHECK_EQ(port.Frame().X1, 7);
-    CHECK_EQ(port.Frame().Y1, 3);
+    CHECK_EQ(port->Frame().X1, 7);
+    CHECK_EQ(port->Frame().Y1, 3);
 
     // Pixels another holder shares (the fog port shares the fog flags, the screen port the screen) stay with that
     // holder when the port goes.
     const auto foreign = std::make_shared<uint8_t[]>(32);
     std::fill_n(foreign.get(), 32, uint8_t{0x5a});
-    MCRenderer::DestroyTexture(port.Bitmap());
-    port.Bitmap().Pixels = foreign;
+    MCRenderer::DestroyTexture(port->Bitmap());
+    port->Bitmap().Pixels = foreign;
     CHECK_EQ(foreign.use_count(), 2);
-    port.Destroy();
-    CHECK(port.SharedBitmap() == nullptr);
-    CHECK(port.SharedFrame() == nullptr);
+    const std::weak_ptr<MCWindow> bitmap = port->SharedBitmap();
+    port.reset();
+    CHECK(bitmap.expired());
     CHECK_EQ(foreign.use_count(), 1);
     CHECK_EQ(foreign[0], 0x5a);
 }
@@ -56,7 +56,6 @@ TEST_CASE("gui: a resized port gets a fresh zeroed bitmap")
     CHECK(std::ranges::all_of(pixels, [](uint8_t value) { return value == 0; }));
     CHECK_EQ(port.Bitmap().XMax, 5);
     CHECK_EQ(port.Bitmap().YMax, 4);
-    port.Destroy();
 }
 
 TEST_CASE("gui: an animation's shapes are registered while loaded and freed with it")

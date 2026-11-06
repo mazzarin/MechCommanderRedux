@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiButton.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 /// <summary>One arrow of an <see cref="MCGuiSpinner"/>: auto-repeats (after 1 s, then every 250 ms) while held.</summary>
 /// <remarks>Original source: <c>gui\abutton.cpp</c> (<c>aSpinnerButton</c>).</remarks>
@@ -28,10 +28,9 @@ public:
     /// <summary>Makes the two arrows (art packets 0xc/0xd and 0x25/0x26), sized to fit them.</summary>
     /// <returns>-1 on success (the original's), or an arrow's error.</returns>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     /// <summary>Port: draws itself each frame (nothing of its own; the arrows draw themselves).</summary>
     bool DrawsLive() override { return true; }
 
-    MCGuiOwned<MCGuiSpinnerButton> UpButton;
-    MCGuiOwned<MCGuiSpinnerButton> DownButton;
+    MCGuiHandle<MCGuiSpinnerButton> UpButton;
+    MCGuiHandle<MCGuiSpinnerButton> DownButton;
 };

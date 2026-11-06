@@ -318,6 +318,36 @@ TEST_CASE("logistics: a pilot's index shifts with the pilots before it, and requ
     logistics.MultiplayerInitialized = false;
 }
 
+TEST_CASE("logistics: a vehicle leaving the force keeps the earlier vehicles' drop slots (OB-183)")
+{
+    LogisticsScope scope;
+    MCLogistics& logistics = scope.Logistics;
+
+    // Force vehicles 0..3; vehicles 0, 1 and 3 are deployed, a mech holds another slot.
+    for (auto& lance : logistics.DeploySlots)
+    {
+        lance.fill({-1, -1});
+    }
+
+    logistics.DeploySlots[0][0].Vehicle = 0;
+    logistics.DeploySlots[0][1].Vehicle = 1;
+    logistics.DeploySlots[1][2].Vehicle = 3;
+    logistics.DeploySlots[2][3].Unit = 0;
+
+    // Vehicle 1 leaves: its slot empties, vehicle 0 keeps its slot, vehicle 3 is now the force's third (2).
+    logistics.RemoveVehicleFromSlots(1);
+    CHECK_EQ(logistics.DeploySlots[0][0].Vehicle, 0);
+    CHECK_EQ(logistics.DeploySlots[0][1].Vehicle, -1);
+    CHECK_EQ(logistics.DeploySlots[1][2].Vehicle, 2);
+    CHECK_EQ(logistics.DeploySlots[2][3].Unit, 0);
+    CHECK_EQ(logistics.DeploySlots[2][3].Vehicle, -1);
+
+    // An undeployed vehicle leaving moves only the later ones.
+    logistics.RemoveVehicleFromSlots(1);
+    CHECK_EQ(logistics.DeploySlots[0][0].Vehicle, 0);
+    CHECK_EQ(logistics.DeploySlots[1][2].Vehicle, 1);
+}
+
 TEST_CASE("logistics: an inventory's lookups stop at the copies it holds (OB-091)")
 {
     MCInventoryList list;

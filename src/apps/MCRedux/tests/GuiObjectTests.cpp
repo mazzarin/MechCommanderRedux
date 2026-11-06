@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "GuiTree.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "color/MCPalette.h"
@@ -80,21 +81,29 @@ namespace
         ::Events Events;
     };
 
-    /// <summary>A new object of type <typeparamref name="T"/> placed at (x, y) with the given size, on
-    /// <paramref name="parent"/> when there is one.</summary>
+    /// <summary>
+    /// A new object of type <typeparamref name="T"/> made on <paramref name="parent"/> at (x, y) with the given size
+    /// (the parent owns it).
+    /// </summary>
     template <typename T = MCGuiObject>
-    MCGuiOwned<T> Make(int32_t x, int32_t y, int32_t width, int32_t height,
-                       std::shared_ptr<MCGuiObject> parent = nullptr)
+    MCGuiHandle<T> Make(int32_t x, int32_t y, int32_t width, int32_t height, MCGuiObject& parent)
     {
-        MCGuiOwned<T> object = MCMakeGui<T>();
-        object->Init(x, y, width, height, {});
+        return MCGuiTree::MakeChild<T>(parent, x, y, width, height);
+    }
 
-        if (parent != nullptr)
-        {
-            parent->AddChild(object);
-        }
-
-        return object;
+    /// <summary>
+    /// A new object made on <paramref name="parent"/> at (x, y) with the given size and <paramref name="depth"/>, set
+    /// before it is added.
+    /// </summary>
+    MCGuiHandle<MCGuiObject> MakeAtDepth(int32_t x, int32_t y, int32_t width, int32_t height, int32_t depth,
+                                         MCGuiObject& parent)
+    {
+        return parent.CreateChild<MCGuiObject>(
+            [&](MCGuiObject& made)
+            {
+                made.Init(x, y, width, height, {});
+                made.SetDepth(depth);
+            });
     }
 
     /// <summary>A mouse event of <paramref name="type"/> at screen point (x, y).</summary>
@@ -124,11 +133,11 @@ namespace
 TEST_CASE("gui: a child sits on its parent, in front of the children of its depth and behind deeper ones")
 {
     GuiScreen screen;
-    auto window = Make(100, 50, 200, 100, ScreenWindow());
-    auto first = Make(10, 20, 30, 30, window);
-    auto second = Make(40, 20, 30, 30, window);
+    auto window = Make(100, 50, 200, 100, *ScreenWindow());
+    auto first = Make(10, 20, 30, 30, *window);
+    auto second = Make(40, 20, 30, 30, *window);
 
-    CHECK(first->ParentObject().get() == window.get());
+    CHECK(window == first->ParentObject());
     CHECK(Children(*window) == Objects({*first, *second}));
     CHECK_EQ(second->GlobalX(), 140);
     CHECK_EQ(second->GlobalY(), 70);
@@ -137,13 +146,9 @@ TEST_CASE("gui: a child sits on its parent, in front of the children of its dept
     CHECK_EQ(second->Frame().Y1, 99);
 
     // Children are kept in depth order: a lower depth is behind, a higher one in front.
-    auto back = Make(0, 0, 10, 10);
-    back->SetDepth(-1);
-    window->AddChild(back);
-    auto front = Make(0, 0, 10, 10);
-    front->SetDepth(5);
-    window->AddChild(front);
-    auto third = Make(70, 20, 30, 30, window);
+    auto back = MakeAtDepth(0, 0, 10, 10, -1, *window);
+    auto front = MakeAtDepth(0, 0, 10, 10, 5, *window);
+    auto third = Make(70, 20, 30, 30, *window);
     CHECK(Children(*window) == Objects({*back, *first, *second, *third, *front}));
     CHECK(window->ForemostChild(0) == third);
     CHECK(window->ForemostChild(5) == front);
@@ -153,24 +158,26 @@ TEST_CASE("gui: a child sits on its parent, in front of the children of its dept
     first->BringToFront(true);
     CHECK(Children(*window) == Objects({*back, *second, *third, *first, *front}));
 
+    // Taking a child off destroys it: its parent was its owner.
     window->RemoveChild(*second);
-    CHECK(second->Parent.expired());
+    CHECK(!second);
     CHECK_EQ(window->NumberOfChildren(), 4);
 
-    // Destroying a child takes it off its parent.
-    third.reset();
+    // Closing a child takes it off its parent, and destroys it.
+    third->Close();
+    CHECK(!third);
     CHECK(Children(*window) == Objects({*back, *first, *front}));
 }
 
 TEST_CASE("gui: no limit on a window's children")
 {
     GuiScreen screen;
-    auto window = Make(0, 0, 640, 480, ScreenWindow());
-    std::vector<MCGuiOwned<MCGuiObject>> children;
+    auto window = Make(0, 0, 640, 480, *ScreenWindow());
+    std::vector<MCGuiHandle<MCGuiObject>> children;
 
     for (int32_t i = 0; i < 300; i++)
     {
-        children.push_back(Make(i, 0, 1, 1, window));
+        children.push_back(Make(i, 0, 1, 1, *window));
     }
 
     CHECK_EQ(window->NumberOfChildren(), 300);
@@ -181,9 +188,9 @@ TEST_CASE("gui: no limit on a window's children")
 TEST_CASE("gui: a point finds the front-most shown object under it")
 {
     GuiScreen screen;
-    auto window = Make(100, 100, 200, 200, ScreenWindow());
-    auto under = Make(10, 10, 50, 50, window);
-    auto over = Make(30, 30, 50, 50, window);
+    auto window = Make(100, 100, 200, 200, *ScreenWindow());
+    auto under = Make(10, 10, 50, 50, *window);
+    auto over = Make(30, 30, 50, 50, *window);
 
     CHECK(ScreenWindow()->FindObject(145, 145) == over);
     CHECK(ScreenWindow()->FindObject(115, 115) == under);
@@ -207,9 +214,9 @@ TEST_CASE("gui: a point finds the front-most shown object under it")
 TEST_CASE("gui: moving a window moves its children, and a temporary move keeps its home")
 {
     GuiScreen screen;
-    auto window = Make(100, 50, 200, 100, ScreenWindow());
-    auto child = Make(10, 20, 30, 30, window);
-    auto grandchild = Make(1, 2, 5, 5, child);
+    auto window = Make(100, 50, 200, 100, *ScreenWindow());
+    auto child = Make(10, 20, 30, 30, *window);
+    auto grandchild = Make(1, 2, 5, 5, *child);
 
     window->MoveTo(300, 200);
     CHECK_EQ(child->Frame().X0, 310);
@@ -241,9 +248,9 @@ TEST_CASE("gui: moving a window moves its children, and a temporary move keeps i
 TEST_CASE("gui: the screen-resized event reaches every child")
 {
     GuiScreen screen;
-    auto window = Make<MCEventRecorder>(0, 0, 200, 100, ScreenWindow());
-    auto child = Make<MCEventRecorder>(10, 10, 30, 30, window);
-    auto grandchild = Make<MCEventRecorder>(1, 1, 5, 5, child);
+    auto window = Make<MCEventRecorder>(0, 0, 200, 100, *ScreenWindow());
+    auto child = Make<MCEventRecorder>(10, 10, 30, 30, *window);
+    auto grandchild = Make<MCEventRecorder>(1, 1, 5, 5, *child);
 
     MCGuiEvent event;
     event.Type = MCGuiEventType::ScreenResized;
@@ -256,9 +263,9 @@ TEST_CASE("gui: the screen-resized event reaches every child")
 TEST_CASE("gui: a click raises a window among its siblings")
 {
     GuiScreen screen;
-    auto window = Make(0, 0, 400, 400, ScreenWindow());
-    auto left = Make(0, 0, 100, 100, window);
-    auto right = Make(50, 0, 100, 100, window);
+    auto window = Make(0, 0, 400, 400, *ScreenWindow());
+    auto left = Make(0, 0, 100, 100, *window);
+    auto right = Make(50, 0, 100, 100, *window);
 
     MCGuiEvent click = Mouse(MCGuiEventType::LeftButtonDown, 60, 10);
     left->HandleEvent(click);
@@ -269,32 +276,32 @@ TEST_CASE("gui: a click raises a window among its siblings")
 TEST_CASE("gui: the text focus tells the old and new owners, and a destroyed object lets go of the focus")
 {
     GuiScreen screen;
-    auto first = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
-    auto second = Make<MCEventRecorder>(20, 0, 10, 10, ScreenWindow());
+    auto first = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
+    auto second = Make<MCEventRecorder>(20, 0, 10, 10, *ScreenWindow());
 
     screen.Gui->SetText(first);
     CHECK(first->Events == Events({Event(MCGuiEventType::Focus, 7)}));
     screen.Gui->SetText(second);
     CHECK(first->Events.back() == Event(MCGuiEventType::Focus, 8));
     CHECK(second->Events.back() == Event(MCGuiEventType::Focus, 7));
-    CHECK(screen.Gui->TextObject().get() == second.get());
+    CHECK(second == screen.Gui->TextObject());
 
     screen.Gui->Grab(second);
     screen.Gui->SetModalObject(*second);
     screen.Gui->SetCurrentObject(second);
-    second.reset();
+    second->Close();
     CHECK(screen.Gui->TextObject() == nullptr);
     CHECK(screen.Gui->GrabbedObject() == nullptr);
     CHECK(screen.Gui->ModalObject() == nullptr);
     CHECK(screen.Gui->CurrentObject() != nullptr);
-    CHECK(screen.Gui->CurrentObject().get() != first.get() || first->PointInside(0, 0));
+    CHECK(!(first == screen.Gui->CurrentObject()) || first->PointInside(0, 0));
 }
 
 TEST_CASE("gui: a button runs its callback when released over it after being pressed on it")
 {
     GuiScreen screen;
-    auto window = Make(100, 100, 200, 200, ScreenWindow());
-    auto button = Make<MCGuiButton>(10, 10, 40, 20, window);
+    auto window = Make(100, 100, 200, 200, *ScreenWindow());
+    auto button = Make<MCGuiButton>(10, 10, 40, 20, *window);
     int32_t left = 0;
     int32_t right = 0;
     button->Callback().SetExec([&] { left++; });
@@ -307,7 +314,7 @@ TEST_CASE("gui: a button runs its callback when released over it after being pre
     };
 
     send(MCGuiEventType::LeftButtonDown, 115, 115);
-    CHECK(screen.Gui->GrabbedObject().get() == button.get());
+    CHECK(button == screen.Gui->GrabbedObject());
     send(MCGuiEventType::LeftButtonUp, 149, 129);
     CHECK_EQ(left, 1);
     CHECK(screen.Gui->GrabbedObject() == nullptr);
@@ -338,8 +345,8 @@ TEST_CASE("gui: a button runs its callback when released over it after being pre
 TEST_CASE("gui: a tool button flips and runs its callback on each press")
 {
     GuiScreen screen;
-    auto window = Make(0, 0, 200, 200, ScreenWindow());
-    auto button = Make<MCGuiToolButton>(10, 10, 40, 20, window);
+    auto window = Make(0, 0, 200, 200, *ScreenWindow());
+    auto button = Make<MCGuiToolButton>(10, 10, 40, 20, *window);
     int32_t runs = 0;
     button->Callback().SetExec([&] { runs++; });
 
@@ -360,7 +367,7 @@ TEST_CASE("gui: a tool button flips and runs its callback on each press")
 TEST_CASE("gui: a callback posts its message after its function, unless the function deleted it (OB-109)")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     constexpr int32_t message = MCGuiEventType::FirstPosted + 3;
 
     auto callback = std::make_shared<MCGuiCallback>();
@@ -388,14 +395,14 @@ TEST_CASE("gui: a callback posts its message after its function, unless the func
     CHECK_EQ(runs, 1);
     CHECK_EQ(target->Count(message), 1);
     callback->SetMessage(target, message);
-    target.reset();
+    target->Close();
     MCGuiCallback::Run(callback);
 }
 
 TEST_CASE("gui: a repeating timer fires once its interval has passed, then an interval after that")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     REQUIRE_EQ(screen.Gui->AddTimer(target, 7, 100, 0, 0, false), 0);
     CHECK_EQ(screen.Gui->Callbacks().size(), 1u);
 
@@ -412,7 +419,7 @@ TEST_CASE("gui: a repeating timer fires once its interval has passed, then an in
     CHECK_EQ(screen.Gui->TimerManager->NumTimers(), 1);
 
     // Destroying the target takes its timers, and the last timer takes the timers' callback.
-    target.reset();
+    target->Close();
     CHECK_EQ(screen.Gui->TimerManager->NumTimers(), 0);
     CHECK(screen.Gui->Callbacks().empty());
 }
@@ -420,7 +427,7 @@ TEST_CASE("gui: a repeating timer fires once its interval has passed, then an in
 TEST_CASE("gui: a one-shot timer sends its own event once and goes")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     constexpr int32_t type = MCGuiEventType::FirstPosted + 5;
     REQUIRE_EQ(screen.Gui->AddTimer(target, 1, 50, type, 42, false), 0);
 
@@ -437,7 +444,7 @@ TEST_CASE("gui: a one-shot timer sends its own event once and goes")
 TEST_CASE("gui: a timer on scenario time waits for the scenario's clock, not the real one")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     const float savedTime = ScenarioTime;
     ScenarioTime = 10.0f;
     REQUIRE_EQ(screen.Gui->AddTimer(target, 3, 500, 0, 0, true), 0);
@@ -453,8 +460,8 @@ TEST_CASE("gui: a timer on scenario time waits for the scenario's clock, not the
 TEST_CASE("gui: a timer's handler removes its own timer at once, the next timer waiting a frame")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
-    auto other = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
+    auto other = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     REQUIRE_EQ(screen.Gui->AddTimer(target, 1, 10, 0, 0, false), 0);
     REQUIRE_EQ(screen.Gui->AddTimer(other, 2, 10, 0, 0, false), 0);
     int32_t timersInHandler = -1;
@@ -483,8 +490,8 @@ TEST_CASE("gui: a timer's handler removes its own timer at once, the next timer 
 TEST_CASE("gui: a timer's handler removing another timer takes effect once the handler returns")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
-    auto other = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
+    auto other = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     REQUIRE_EQ(screen.Gui->AddTimer(target, 1, 10, 0, 0, false), 0);
     REQUIRE_EQ(screen.Gui->AddTimer(other, 2, 10, 0, 0, false), 0);
     int32_t timersInHandler = -1;
@@ -508,7 +515,7 @@ TEST_CASE("gui: a timer's handler removing another timer takes effect once the h
 TEST_CASE("gui: a timer can't be added twice as a unique timer, and there is no limit on timers")
 {
     GuiScreen screen;
-    auto target = Make<MCEventRecorder>(0, 0, 10, 10, ScreenWindow());
+    auto target = Make<MCEventRecorder>(0, 0, 10, 10, *ScreenWindow());
     CHECK_EQ(screen.Gui->AddUniqueTimer(target, 1, 10, 0, 0, false), 0);
     CHECK_EQ(screen.Gui->AddUniqueTimer(target, 1, 10, 0, 0, false), -1);
     CHECK_EQ(screen.Gui->AddUniqueTimer(target, 1, 20, 0, 0, false), 0);

@@ -51,13 +51,11 @@ public:
     /// <summary>The characters a save's name takes (the name entry's buffer, a game rule).</summary>
     static constexpr int32_t NameBufferSize = 0x20;
 
-    ~MCFileScrollPane() override;
-
     /// <summary>Places the pane, tiles its slider column with the splash art and makes the three column headers.</summary>
     void Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height);
 
-    /// <summary>Frees the file list, the entry field and the headers.</summary>
-    void Destroy() override;
+    /// <summary>Frees the file list and the column headers.</summary>
+    void OnDestroy() override;
 
     /// <summary>
     /// Port: the splash arrows have no pressed art. (The original's draw put them back over the pressed art straight
@@ -119,15 +117,15 @@ public:
 
     int32_t SelectedFile = -1;
     bool Multiplayer = false;
-    /// <summary>The three column headers.</summary>
-    std::array<MCGuiOwned<MCFileColumnHeader>, 3> ColumnHeaders;
+    /// <summary>The three column headers (the pane's, displayed by it; not children).</summary>
+    std::array<MCGuiRef<MCFileColumnHeader>, 3> ColumnHeaders;
     std::string StartDirectory;
     /// <summary>The files listed, in order.</summary>
     std::vector<File> Files;
     /// <summary>The save screen's pane (the ini's SavePane): it has the name entry field.</summary>
     bool SavePane = false;
-    /// <summary>The save name entry field (made by the first click on a save pane).</summary>
-    MCGuiOwned<MCLogTextObject> NameEntry;
+    /// <summary>The save name entry field while one shows (a child, made by each click on a save pane's file).</summary>
+    MCGuiHandle<MCLogTextObject> NameEntry;
     /// <summary>The height of a file line (the large white font's height + 1).</summary>
     int32_t LineHeight = 0;
 };

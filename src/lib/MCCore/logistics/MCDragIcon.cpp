@@ -42,9 +42,8 @@ auto MCDragIcon::Raise() -> void
     SetDepth(100);
 }
 
-auto MCDragIcon::ShowOn(MCGuiObject& screen, int32_t xPos, int32_t yPos) -> void
+auto MCDragIcon::ShowAt(int32_t xPos, int32_t yPos) -> void
 {
-    screen.AddChild(weak_from_this());
     Raise();
     MoveTo(xPos, yPos, false);
 }
@@ -60,18 +59,32 @@ auto MCDragIcon::DrawFrom(MCLogPort& surface, int32_t xPos, int32_t yPos,
     pane = whole;
 }
 
-auto MCDragIcon::Create() -> std::shared_ptr<MCDragIcon>
+auto MCDragIcon::Create(MCGuiObject& screen, int32_t xPos, int32_t yPos, int32_t width, int32_t height,
+                        const std::function<void(MCLogPort& surface)>& render, bool hidden)
+    -> std::shared_ptr<MCDragIcon>
 {
-    GlobalLog()->DragIcon = MCMakeGui<MCDragIcon>();
-    return GlobalLog()->DragIcon;
+    Remove();
+    GlobalLog()->DragIcon = screen.CreateChild<MCDragIcon>(
+        [&](MCDragIcon& icon)
+        {
+            icon.Begin(xPos, yPos, width, height, render);
+
+            // Not on the screen yet: the original added it later, or not at all.
+            if (hidden)
+            {
+                icon.ShowGuiWindow(false);
+            }
+        });
+    return GlobalLog()->DragIcon.Lock();
 }
 
 auto MCDragIcon::Current() -> std::shared_ptr<MCDragIcon>
 {
-    return GlobalLog()->DragIcon;
+    return GlobalLog()->DragIcon.Lock();
 }
 
 auto MCDragIcon::Remove() -> void
 {
+    CloseGuiObject(GlobalLog()->DragIcon);
     GlobalLog()->DragIcon.reset();
 }

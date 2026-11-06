@@ -81,7 +81,7 @@ namespace
             return;
         }
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface.MechBar->Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface.MechBar->Buttons())
         {
             mark(button);
         }
@@ -286,7 +286,7 @@ auto MCTacticalInterface::HandleKeyDown(MCGuiEvent& event) -> void
             if (tacMap != nullptr && Scenario() != nullptr && EventsToMissionResultsScreen == 0 && GameAsked == 0)
             {
                 ShowTacticalMapPage(MCTacmapPage::Salvage);
-                const std::shared_ptr<MCGuiObject> chatInput = tacMap->ChatWindow->ChatInput;
+                const std::shared_ptr<MCGuiObject> chatInput = tacMap->ChatWindow->ChatInput.Lock();
 
                 if (GuiSystem().TextObject() != chatInput)
                 {
@@ -400,7 +400,7 @@ auto MCTacticalInterface::HandleKeyDown(MCGuiEvent& event) -> void
 
                     if (button->IsPoint)
                     {
-                        for (const std::shared_ptr<MCFriendlyMechIcon>& other : MechBar->Buttons)
+                        for (const std::shared_ptr<MCFriendlyMechIcon>& other : MechBar->Buttons())
                         {
                             if (other != button && other->Lance == button->Lance)
                             {

@@ -704,14 +704,25 @@ TEST_CASE("network: a client skips update entries that name movers, turrets or e
     CHECK(turret->WeaponFireChunks[1].empty());
     std::vector<uint8_t> critical = Message(MCMPMessageType::MoverCriticalHitUpdate, {0, 0, 0, 0, 0, 0, 100, 1, 1});
     critical.resize(0x3b, 0x11);
-    HandleAppMoverCriticalHitUpdate(1, critical);
+    {
+        // The original's assert on the radio count (0x11 here) still reports.
+        MCTest::ExpectAssert badRadio("bad numRDO", 1);
+        HandleAppMoverCriticalHitUpdate(1, critical);
+    }
+
     CHECK_EQ(mover->NumCriticalHitChunks[1], 0);
 
     // Weapon hits on roster mover 31 and of target type 3 hit nothing.
     std::vector<uint8_t> hits = Message(MCMPMessageType::WeaponHitUpdate, {0, 0, 0, 0, 0, 0, 2});
     PutWord(hits, 31u << 12 | 4u << 2);
     PutWord(hits, 3u | 4u << 2);
-    HandleAppWeaponHitUpdate(1, hits);
+    {
+        // The original's asserts on the unpacked hits still report.
+        MCTest::ExpectAssert badTarget("bad targetId", 1);
+        MCTest::ExpectAssert badLocation("bad hitLocation", 1);
+        HandleAppWeaponHitUpdate(1, hits);
+    }
+
     CHECK_EQ(mover->TotalDamageTaken, 0.0f);
 
     // A world event of a type the game doesn't have, and a kill of kind 7 (the pilot counts six kinds and the

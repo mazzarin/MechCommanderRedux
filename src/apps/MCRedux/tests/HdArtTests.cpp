@@ -10550,7 +10550,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     shoot("purchase_vehicles");
     MCTestGame::StockStore(StockShown);
     // One of the first vehicle bought (the inventory list shows it, with its diagram).
-    GlobalLog()->PurVehicleList->Vehicles.front()->Block->OnBuyConfirmed(1, 1);
+    MCVehiclePurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurVehicleList->Vehicles.front(), 1, 1);
     shoot("purchase_vehicles_stocked");
     GlobalLog()->CurrentInvTab = PilotTab;
     GlobalLog()->SetUpPurchaseScreen(false);
@@ -10560,7 +10560,7 @@ TEST_CASE_ISOLATED("tool: --sharp-menus pictures the menus with HD art on or off
     shoot("purchase_components");
     GlobalLog()->CurrentInvTab = MechTab;
     GlobalLog()->SetUpPurchaseScreen(false);
-    GlobalLog()->PurMechList->Mechs.front()->Block->OnBuyConfirmed(1, 1);
+    MCMechPurchaseBlock::OnBuyConfirmed(*GlobalLog()->PurMechList->Mechs.front(), 1, 1);
     shoot("purchase_stocked");
     slide("repair", [] { GlobalLog()->SetUpRepairScreen(true); });
     shoot("repair");
@@ -11677,7 +11677,7 @@ namespace
         REQUIRE(iface != nullptr);
         iface->ClearMechSelection();
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : iface->MechBar->Buttons())
         {
             if (button->Active)
             {
@@ -12566,18 +12566,18 @@ namespace
         NewCampaign();
         RunFrames(SettleFrames);
         MCBriefingScreen& briefing = *GlobalLog()->BriefingScreen;
-        MCScrollPane& pane = *briefing.DeployPane;
 
-        if (pane.NumberOfChildren() == 0)
+        // The deploy pane's first unit, a mech.
+        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != 1)
         {
             std::cout << "  the briefing has no mech to deploy\n";
             return false;
         }
 
-        const std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+        const auto mech = std::static_pointer_cast<MCLogMech>(briefing.DeployUnits.front());
         MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
         const RECT& slot = briefing.SlotRects[0];
-        MCMechBriefBlock& block = *mech->BriefBlock;
+        MCMechBriefBlock& block = *briefing.BlockOf(*mech);
         MCScreenInput::Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2,
                             (slot.left + slot.right) / 2, (slot.top + slot.bottom) / 2);
         RunFrames(SettleFrames);
@@ -17515,9 +17515,9 @@ TEST_CASE_ISOLATED("tool: --hd-movie-pack plays a pilot movie from the pack's HD
         const MCPane& screen = ScreenPort()->Frame();
         const RECT area{(screen.X1 - screen.X0) / 2, (screen.Y1 - screen.Y0) / 2, movie->Player->Width(),
                         movie->Player->Height()};
-        const std::shared_ptr<MCGuiSmackerWindow> window = MCMakeGui<MCGuiSmackerWindow>();
-        window->Init(area, {});
-        ScreenWindow()->AddChild(window);
+        const MCGuiHandle<MCGuiSmackerWindow> made = ScreenWindow()->CreateChild<MCGuiSmackerWindow>(
+            [&area](MCGuiSmackerWindow& smacker) { smacker.Init(area, {}); });
+        const std::shared_ptr<MCGuiSmackerWindow> window = made.Lock();
         REQUIRE_EQ(window->StartSmackerMovie(std::move(movie), false), 0);
         Played played;
 
@@ -17554,6 +17554,7 @@ TEST_CASE_ISOLATED("tool: --hd-movie-pack plays a pilot movie from the pack's HD
         }
 
         window->EndSmackerMovie();
+        CloseGuiObject(made);
         return played;
     };
 
@@ -18235,9 +18236,15 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
         GlobalLog()->SetUpPurchaseScreen(false);
         std::set<std::string> componentPictures;
 
+        const MCListView& inventory = *GlobalLog()->PurchaseScreen->InventoryPane;
+
         for (const std::shared_ptr<MCLogInventoryItem>& item : GlobalLog()->ComponentInventory->Items)
         {
-            componentPictures.insert(item->InventoryBlock->IconArt.Picture);
+            if (const std::shared_ptr<MCCompInventoryBlock> row = inventory.RowOf<MCCompInventoryBlock>(*item);
+                row != nullptr)
+            {
+                componentPictures.insert(row->IconArt.Picture);
+            }
         }
 
         REQUIRE(!componentPictures.empty());

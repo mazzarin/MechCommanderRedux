@@ -2,6 +2,7 @@
 
 // The preferences screen's callbacks and the settings it edits (prefs.cfg). Original source: logistics\logmain.cpp.
 
+class MCFitIniFile;
 class MCGenericScreen;
 class MCGuiEvent;
 class MCGuiObject;
@@ -60,9 +61,10 @@ bool StepInterfaceSize(int steps);
 /// <see cref="GScrollSpeed"/>); an HD box whose OPTIONS button shows the HD OPTIONS page (every HD setting:
 /// MCHdOptionsPanel.h); CONTROLS at the bottom left (MCControlsPanel.h); and ACCEPT and CANCEL side by side at the
 /// bottom right. The renderer takes effect at the next start, which the message dialog says when the drop-down picks
-/// another renderer than the running one; the UI resolution at the next scenario.
+/// another renderer than the running one; the UI resolution at the next scenario. The screen's sliders and buttons are
+/// made again from its ini <paramref name="file"/> on the panel's boxes.
 /// </summary>
-void AddPreferencesPanel(MCGenericScreen& screen);
+void AddPreferencesPanel(MCGenericScreen& screen, MCFitIniFile& file);
 
 /// <summary>Port-only: the preferences' RENDERER drop-down, or null before the panel is made.</summary>
 std::shared_ptr<MCLogComboBox> PrefsRendererDropDown();

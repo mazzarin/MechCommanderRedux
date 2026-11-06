@@ -30,11 +30,20 @@ namespace
 
 MCGuiObject::~MCGuiObject()
 {
-    DestroyObject();
+    // An object nothing destroyed (no owner ran Destroy) still leaves its parent, its timers and the GUI system.
+    if (!_Destroyed)
+    {
+        _Destroyed = true;
+        ReleaseChildren();
+        DestroyObject();
+    }
 }
 
 auto MCGuiObject::Place(int32_t xPos, int32_t yPos, int32_t width, int32_t height) -> void
 {
+    // A destroyed object is never set up again: a window used again is a new one, or kept and reset by a method of its
+    // own.
+    Assert(!_Destroyed, 0, " Placing a destroyed object ");
     WinWidth = width;
     WinHeight = height;
     WinX = xPos;
@@ -70,8 +79,8 @@ auto MCGuiObject::Place(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     HideDirection = MCDirection::Down;
     PaintRoutine = nullptr;
     EventRoutine = nullptr;
-    // The original forgot its children without telling them.
-    ChildList.clear();
+    // The original forgot its children here; the ones made on this object are destroyed.
+    ReleaseChildren();
     Parent.reset();
     WinDepth = 0;
     WindowAnimation.reset();
@@ -94,7 +103,41 @@ auto MCGuiObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height
 
 auto MCGuiObject::Destroy() -> void
 {
+    if (_Destroyed)
+    {
+        return;
+    }
+
+    _Destroyed = true;
+    // Taking it off its parent may release its owner: the memory stays to the end.
+    const std::shared_ptr<MCGuiObject> self = weak_from_this().lock();
+    OnDestroy();
+    ReleaseChildren();
     DestroyObject();
+}
+
+auto MCGuiObject::ReleaseChildren() -> void
+{
+    // The list is taken first: nothing can edit it while the children are destroyed, and none of them comes back to
+    // remove itself (its parent is cleared first).
+    std::vector<MCGuiChild> children = std::move(ChildList);
+    ChildList.clear();
+
+    for (const MCGuiChild& entry : children)
+    {
+        const std::shared_ptr<MCGuiObject> child = entry.Lock();
+
+        if (child == nullptr)
+        {
+            continue;
+        }
+
+        child->SetParent({});
+        child->Destroy();
+    }
+
+    // The ownership of the children destroyed above lets go: their memory goes unless something pins it.
+    children.clear();
 }
 
 auto MCGuiObject::DestroyObject() -> void
@@ -110,8 +153,6 @@ auto MCGuiObject::DestroyObject() -> void
     IconAnimation.reset();
     WindowAnimation.reset();
     DropTargets.clear();
-    // A child destroyed with this object (its member) can't reach it to leave its list, so its entry stays, expired.
-    Assert(std::ranges::all_of(ChildList, &std::weak_ptr<MCGuiObject>::expired), 0, " Number of Children NOT Zero ");
     LeaveParent();
     Animating = false;
 
@@ -131,13 +172,21 @@ auto MCGuiObject::LeaveParent() -> void
     Parent.reset();
 }
 
+auto MCGuiObject::Close() -> void
+{
+    if (const std::shared_ptr<MCGuiObject> parent = Parent.lock(); parent != nullptr)
+    {
+        parent->RemoveChild(*this);
+    }
+}
+
 auto MCGuiObject::SetDisplayPort(MCGuiPort& newPort) -> void
 {
     FramePane->Window = newPort.SharedBitmap();
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             child->SetDisplayPort(newPort);
         }
@@ -188,7 +237,7 @@ auto MCGuiObject::FindObject(int32_t xPos, int32_t yPos) -> std::shared_ptr<MCGu
 
         for (size_t i = ChildList.size(); i > 0; i--)
         {
-            const std::shared_ptr<MCGuiObject> child = ChildList[i - 1].lock();
+            const std::shared_ptr<MCGuiObject> child = ChildList[i - 1].Lock();
 
             if (child == nullptr)
             {
@@ -219,16 +268,19 @@ auto MCGuiObject::SetDepth(int32_t newDepth) -> void
 {
     const std::shared_ptr<MCGuiObject> owner = Parent.lock();
 
-    if (owner != nullptr)
+    if (owner == nullptr)
     {
-        owner->RemoveChild(*this);
+        WinDepth = newDepth;
+        return;
     }
 
+    // Moved within its parent with the parent's ownership: taking it off would destroy it.
+    std::optional<MCGuiChild> entry = owner->TakeEntry(*this);
     WinDepth = newDepth;
 
-    if (owner != nullptr)
+    if (entry.has_value())
     {
-        owner->AddChild(weak_from_this());
+        owner->InsertEntry(std::move(*entry));
     }
 }
 
@@ -349,46 +401,68 @@ auto MCGuiObject::BringToFront(bool noShuffle) -> void
     }
 
     parent->BringToFront(noShuffle);
-    std::vector<std::weak_ptr<MCGuiObject>>& siblings = parent->ChildList;
+    std::vector<MCGuiChild>& siblings = parent->ChildList;
 
     if (siblings.size() <= 1)
     {
         return;
     }
 
+    const auto self =
+        std::ranges::find_if(siblings, [&](const MCGuiChild& sibling) { return MCRefersTo(sibling.Object, *this); });
+
+    if (self == siblings.end())
+    {
+        return;
+    }
+
     // The children are kept sorted by depth: the ones behind this object's depth stay, then this depth's others, with
     // this object last (in front), then the rest.
-    const auto depthOf = [](const std::weak_ptr<MCGuiObject>& sibling)
+    const auto depthOf = [&](size_t index)
     {
-        const std::shared_ptr<MCGuiObject> object = sibling.lock();
+        const std::shared_ptr<MCGuiObject> object = siblings[index].Lock();
         return object != nullptr ? object->Depth() : std::numeric_limits<int32_t>::min();
     };
 
-    const std::vector<std::weak_ptr<MCGuiObject>> sorted = siblings;
+    const auto selfIndex = static_cast<size_t>(self - siblings.begin());
+    std::vector<size_t> order;
+    order.reserve(siblings.size());
     size_t next = 0;
-    size_t placed = 0;
 
-    while (next < sorted.size() && depthOf(sorted[next]) < WinDepth)
+    while (next < siblings.size() && next != selfIndex && depthOf(next) < WinDepth)
     {
-        siblings[placed++] = sorted[next++];
+        order.push_back(next++);
     }
 
-    while (next < sorted.size() && depthOf(sorted[next]) == WinDepth)
+    while (next < siblings.size() && (next == selfIndex || depthOf(next) == WinDepth))
     {
-        if (!MCRefersTo(sorted[next], *this))
+        if (next != selfIndex)
         {
-            siblings[placed++] = sorted[next];
+            order.push_back(next);
         }
 
         next++;
     }
 
-    siblings[placed] = weak_from_this();
+    order.push_back(selfIndex);
 
-    for (size_t slot = placed + 1; slot < siblings.size(); slot++)
+    for (; next < siblings.size(); next++)
     {
-        siblings[slot] = sorted[next++];
+        if (next != selfIndex)
+        {
+            order.push_back(next);
+        }
     }
+
+    std::vector<MCGuiChild> reordered;
+    reordered.reserve(siblings.size());
+
+    for (const size_t index : order)
+    {
+        reordered.push_back(std::move(siblings[index]));
+    }
+
+    siblings = std::move(reordered);
 
     if (GridAligned && !noShuffle)
     {
@@ -419,9 +493,9 @@ auto MCGuiObject::Children() const -> std::vector<std::shared_ptr<MCGuiObject>>
     std::vector<std::shared_ptr<MCGuiObject>> children;
     children.reserve(ChildList.size());
 
-    for (const std::weak_ptr<MCGuiObject>& listed : ChildList)
+    for (const MCGuiChild& listed : ChildList)
     {
-        if (std::shared_ptr<MCGuiObject> child = listed.lock(); child != nullptr)
+        if (std::shared_ptr<MCGuiObject> child = listed.Lock(); child != nullptr)
         {
             children.push_back(std::move(child));
         }
@@ -430,35 +504,59 @@ auto MCGuiObject::Children() const -> std::vector<std::shared_ptr<MCGuiObject>>
     return children;
 }
 
-auto MCGuiObject::AddChild(std::weak_ptr<MCGuiObject> child) -> void
+auto MCGuiObject::AddOwnedChild(MCGuiRef<MCGuiObject> child) -> void
 {
-    const std::shared_ptr<MCGuiObject> added = child.lock();
+    MCGuiChild entry;
+    entry.Object = child.Pin();
+    entry.Owner = std::move(child);
+    InsertEntry(std::move(entry));
+}
 
-    if (added == nullptr)
-    {
-        return;
-    }
-
-    Assert(added->Parent.expired() || MCRefersTo(added->Parent, *this), 0, " Adding child that's someone else's ");
-    RemoveChild(*added);
+auto MCGuiObject::InsertEntry(MCGuiChild entry) -> void
+{
+    const std::shared_ptr<MCGuiObject> added = entry.Lock();
     added->SetParent(weak_from_this());
-    ChildList.push_back(std::move(child));
+    ChildList.push_back(std::move(entry));
     added->BringToFront(true);
     added->MoveTo(added->X(), added->Y());
 }
 
-auto MCGuiObject::RemoveChild(MCGuiObject& child) -> void
+auto MCGuiObject::Owns(const MCGuiObject& child) const -> bool
 {
-    const auto found = std::ranges::find_if(ChildList, [&](const std::weak_ptr<MCGuiObject>& listed)
-                                            { return MCRefersTo(listed, child); });
+    return std::ranges::any_of(ChildList, [&](const MCGuiChild& listed) { return MCRefersTo(listed.Object, child); });
+}
+
+auto MCGuiObject::TakeEntry(const MCGuiObject& child) -> std::optional<MCGuiChild>
+{
+    const auto found =
+        std::ranges::find_if(ChildList, [&](const MCGuiChild& listed) { return MCRefersTo(listed.Object, child); });
 
     if (found == ChildList.end())
     {
-        return;
+        return std::nullopt;
     }
 
+    std::optional<MCGuiChild> entry(std::move(*found));
     ChildList.erase(found);
-    child.SetParent({});
+    return entry;
+}
+
+auto MCGuiObject::RemoveChild(MCGuiObject& child) -> void
+{
+    // The child may go with its entry: its memory stays to the end of the call.
+    const std::shared_ptr<MCGuiObject> pin = child.weak_from_this().lock();
+
+    if (Owns(child) && !child.WasDestroyed())
+    {
+        // Destroyed on its own, still on this object; its Destroy comes back here (LeaveParent) to take the entry.
+        child.Destroy();
+    }
+
+    // The entry goes at the end, after the list and the child are put right: this object's ownership lets go then.
+    if (const std::optional<MCGuiChild> entry = TakeEntry(child); entry.has_value())
+    {
+        child.SetParent({});
+    }
 }
 
 auto MCGuiObject::Dragging() -> bool
@@ -492,7 +590,7 @@ auto MCGuiObject::ForemostChild(int32_t atDepth) -> std::shared_ptr<MCGuiObject>
 {
     for (size_t i = ChildList.size(); i > 0; i--)
     {
-        if (std::shared_ptr<MCGuiObject> child = ChildList[i - 1].lock();
+        if (std::shared_ptr<MCGuiObject> child = ChildList[i - 1].Lock();
             child != nullptr && child->WinDepth == atDepth)
         {
             return child;
@@ -509,7 +607,7 @@ auto MCGuiObject::Child(int32_t index) -> std::shared_ptr<MCGuiObject>
         return nullptr;
     }
 
-    return ChildList[static_cast<size_t>(index)].lock();
+    return ChildList[static_cast<size_t>(index)].Lock();
 }
 
 auto MCGuiObject::Width() -> int32_t
@@ -588,11 +686,22 @@ auto MCGuiObject::MoveTo(int32_t xPos, int32_t yPos, bool temporary) -> void
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             child->MoveTo(child->X(), child->Y());
         }
     }
+}
+
+auto MCGuiObject::PlaceOver(MCGuiObject& base) -> void
+{
+    // As MoveTo places a child on its parent.
+    FramePane->X0 = base.GlobalX() + WinX;
+    FramePane->Y0 = base.GlobalY() + WinY;
+    FramePane->X1 = WinWidth - 1 + FramePane->X0;
+    FramePane->Y1 = WinHeight - 1 + FramePane->Y0;
+    HomeX = WinX;
+    HomeY = WinY;
 }
 
 auto MCGuiObject::Resize(int32_t newWidth, int32_t newHeight) -> void
@@ -647,7 +756,7 @@ auto MCGuiObject::Draw() -> void
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             DrawChild(*child);
         }
@@ -658,7 +767,7 @@ auto MCGuiObject::DisplayChildren() -> void
 {
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             child->Display();
         }
@@ -860,7 +969,7 @@ auto MCGuiObject::HandleEvent(MCGuiEvent& event) -> void
     {
         for (size_t i = 0; i < ChildList.size(); i++)
         {
-            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+            if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
             {
                 child->HandleEvent(event);
             }

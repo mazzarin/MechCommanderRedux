@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCOptionalRef.h"
 #include "logistics/MCLogPort.h"
@@ -55,12 +55,6 @@ class MCLogObject : public MCGuiObject
 {
 public:
     /// <summary>
-    /// Calls <see cref="Destroy"/>. Every logistics widget's destructor likewise calls its own class's
-    /// <c>Destroy</c>, then each base's down to this one.
-    /// </summary>
-    ~MCLogObject() override;
-
-    /// <summary>
     /// Places the object at (<paramref name="xPos"/>, <paramref name="yPos"/>) with the given size and makes its own
     /// port of that size (a view when it <see cref="MCGuiObject::DrawsLive"/>).
     /// </summary>
@@ -73,11 +67,8 @@ public:
     /// </summary>
     void InitWithoutPort(int32_t xPos, int32_t yPos, int32_t width, int32_t height);
 
-    /// <summary>
-    /// Frees the ports and animations, deletes the children left on the object, and lets go of any system grab on
-    /// it.
-    /// </summary>
-    void Destroy() override;
+    /// <summary>Frees the object's own port and its background (the base's destroy does the rest).</summary>
+    void OnDestroy() override;
 
     /// <summary>The port the object draws into, or null.</summary>
     std::shared_ptr<MCLogPort> Lport() const { return _Port; }

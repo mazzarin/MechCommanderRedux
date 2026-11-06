@@ -12,8 +12,6 @@ class MCFidpSession;
 class MCGameList : public MCLogScrollTextObject
 {
 public:
-    ~MCGameList() override;
-
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view text) override;
 
     /// <summary>

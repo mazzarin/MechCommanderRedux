@@ -51,21 +51,21 @@ namespace
 void AddControlsPanel(MCGenericScreen& screen, MCGuiObject& prefsPanel, int32_t buttonLeft, int32_t buttonTop)
 {
     PrefsPanel = prefsPanel.weak_from_this();
-    AddPageButton(screen, prefsPanel, Title, buttonLeft, buttonTop, ShowControls);
+    AddPageButton(prefsPanel, Title, buttonLeft, buttonTop, ShowControls);
 
     constexpr std::array<MCPageButton, 2> buttons = {
         MCPageButton{"DEFAULTS", RestoreDefaultKeys},
         MCPageButton{"LAPTOP", UseLaptopKeys},
     };
 
-    MCLogGroupBox& panel = AddPrefsPage(screen, Title, buttons, HideControls);
-    Panel = panel.weak_from_this();
-
-    auto newList = MCMakeGui<MCLogKeyList>();
-    newList->Init(PageListLeft, PageListTop, PageListWidth, PageListHeight, Edited);
-    newList->ShowGuiWindow(true);
-    List = newList;
-    screen.AdoptChildOf(panel, std::move(newList));
+    const MCGuiHandle<MCLogGroupBox> panel = AddPrefsPage(screen, Title, buttons, HideControls);
+    Panel = panel;
+    List = panel->CreateChild<MCLogKeyList>(
+        [](MCLogKeyList& list)
+        {
+            list.Init(PageListLeft, PageListTop, PageListWidth, PageListHeight, Edited);
+            list.ShowGuiWindow(true);
+        });
 }
 
 void ResetControls()

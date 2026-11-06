@@ -37,7 +37,7 @@ namespace
     {
         if (mech.Deployed != 0)
         {
-            mech.RepairBlock->UndeployMech();
+            GlobalLog()->UndeployMech(mech);
         }
 
         uint8_t masterID = item.MasterID;
@@ -68,39 +68,42 @@ namespace
         float added = static_cast<float>(tons);
         mech.UsedTonnage += added;
         mech.WeaponTonnage += added;
-        mech.RepairBlock->SetInventory(std::nullopt);
+
+        if (const std::shared_ptr<MCMechRepairBlock> row = GlobalLog()->RepairScreen->RowOf(mech); row != nullptr)
+        {
+            row->SetInventory(std::nullopt);
+        }
+
         mech.CalcBR();
         GlobalLog()->RepairScreen->SelectMech(mech.SharedAs<MCLogMech>());
         return true;
     }
 }
 
-MCCompInventoryBlock::~MCCompInventoryBlock()
+auto MCCompInventoryBlock::MountTonnage(uint8_t masterID) -> float
 {
-    MCCompInventoryBlock::Destroy();
-}
+    const MCMasterComponent& component = MasterComponentList[masterID];
+    float tonnage = component.Tonnage;
 
-auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> void
-{
-    _Item = newItem;
-    InitRow();
-    const MCMasterComponent& component = MasterComponentList[Item()->MasterID];
-    MCComponentForm form = component.Form;
-    Tonnage = component.Tonnage;
-
-    if (UsesAmmo(Item()->MasterID))
+    if (UsesAmmo(masterID))
     {
-        Tonnage = MasterComponentList[component.AmmoMasterId].Tonnage + Tonnage;
+        tonnage = MasterComponentList[component.AmmoMasterId].Tonnage + tonnage;
     }
 
-    WeightText = std::format("{:.1f} {}", Tonnage, LoadGameString(0x6e, 0xfe));
-    float range = 0.0f;
+    return tonnage;
+}
+
+auto MCCompInventoryBlock::Texts(uint8_t masterID) -> MCComponentTexts
+{
+    const MCMasterComponent& component = MasterComponentList[masterID];
+    const MCComponentForm form = component.Form;
+    MCComponentTexts texts;
+    texts.Weight = std::format("{:.1f} {}", MountTonnage(masterID), LoadGameString(0x6e, 0xfe));
 
     if (IsWeapon(form))
     {
         // Weapons: the long range as a word, damage and recycle time.
-        range = component.WeaponRange[3];
-        RangeText = LoadGameString(RangeWord(range), 0xfe);
+        texts.Range = LoadGameString(RangeWord(component.WeaponRange[3]), 0xfe);
         double damage = component.Damage;
 
         if (component.WeaponFlags == 4)
@@ -108,29 +111,39 @@ auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> 
             damage *= 3.0;
         }
 
-        DamageText = std::format("{:.2f}", damage);
-        RecycleText = std::format("{:.2f} s", component.RecycleTime);
+        texts.Damage = std::format("{:.2f}", damage);
+        texts.Recycle = std::format("{:.2f} s", component.RecycleTime);
+        return texts;
+    }
+
+    std::string notApplicable = LoadGameString(0x6c, 0xfe);
+
+    if (form == MCComponentForm::Probe)
+    {
+        texts.Range = notApplicable;
     }
     else
     {
-        std::string notApplicable = LoadGameString(0x6c, 0xfe);
-
-        if (form == MCComponentForm::Probe)
-        {
-            RangeText = notApplicable;
-        }
-        else
-        {
-            // Original behaviour (OB-078): other equipment than ECM and sensors formats the item pointer's bits as the
-            // range; for a heap address that is a denormal, so it read "0.0 m".
-            const float shown =
-                form == MCComponentForm::Ecm || form == MCComponentForm::Sensor ? component.RangeOrHeat : 0.0f;
-            RangeText = std::format("{:.1f} m", shown);
-        }
-
-        DamageText = notApplicable;
-        RecycleText = notApplicable;
+        // Original behaviour (OB-078): other equipment than ECM and sensors formats the item pointer's bits as the
+        // range; for a heap address that is a denormal, so it read "0.0 m".
+        const float shown =
+            form == MCComponentForm::Ecm || form == MCComponentForm::Sensor ? component.RangeOrHeat : 0.0f;
+        texts.Range = std::format("{:.1f} m", shown);
     }
+
+    texts.Damage = notApplicable;
+    texts.Recycle = std::move(notApplicable);
+    return texts;
+}
+
+auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> void
+{
+    _Item = newItem;
+    InitRow();
+    const MCMasterComponent& component = MasterComponentList[Item()->MasterID];
+    Tonnage = MountTonnage(Item()->MasterID);
+    // The range colour: a weapon's long range, 0 for anything else.
+    const float range = IsWeapon(component.Form) ? component.WeaponRange[3] : 0.0f;
 
     // The icon: the range colour's block background, name, a caption and the component picture.
     const std::string_view background = range < 76.0f ? "greeninv.tga" : range < 151.0f ? "blueinv.tga" : "redinv.tga";
@@ -148,11 +161,11 @@ auto MCCompInventoryBlock::Init(std::shared_ptr<MCLogInventoryItem> newItem) -> 
     }
 }
 
-auto MCCompInventoryBlock::Destroy() -> void
+auto MCCompInventoryBlock::OnDestroy() -> void
 {
     _Item.reset();
     IconArt = {};
-    MCInventoryBlock::Destroy();
+    MCInventoryBlock::OnDestroy();
 }
 
 auto MCCompInventoryBlock::CanMount(uint8_t masterID, float tonnage, MCOptionalRef<const MCLogMech> selected) -> bool
@@ -193,7 +206,8 @@ auto MCCompInventoryBlock::AddSpare(uint8_t masterID) -> std::shared_ptr<MCLogIn
     MCInventoryList& spares = *GlobalLog()->ComponentInventory;
     spares.AddItem(masterID, spares.CreateStat(masterID, 0, 1, 0, 0xff), false);
     std::shared_ptr<MCLogInventoryItem> item = spares.GetItemInfo(spares.GetIndexFromMasterID(masterID));
-    MCInventoryList::MakeInventoryBlock(*item).InventoryIndex = spares.NumItems() - 1;
+    MCInventoryList::ListAsSpare(*item);
+    item->InventoryIndex = spares.NumItems() - 1;
     return item;
 }
 
@@ -205,28 +219,35 @@ auto MCCompInventoryBlock::OfferSale() -> void
     picture.Load(std::format("{}logart\\lscicc{:02}.tga", ArtPath, item->RangeIndex));
     const MCMasterComponent& component = MasterComponentList[item->MasterID];
     int32_t price = SalePrice(component.ResourcePoints);
+    // The answer goes to the item, not this row (the list can drop the row while the dialog is open); the dialog keeps
+    // its callback, so it refers to the item without keeping it.
     OpenPurchaseDialog(5, -price, item->Count, component.Name, {}, picture,
-                       [this](int32_t result, int32_t quantity) { OnSellConfirmed(result, quantity); });
+                       [weak = std::weak_ptr<MCLogInventoryItem>(item)](int32_t result, int32_t quantity)
+                       {
+                           if (const std::shared_ptr<MCLogInventoryItem> sold = weak.lock(); sold != nullptr)
+                           {
+                               OnSellConfirmed(*sold, result, quantity);
+                           }
+                       });
 }
 
-auto MCCompInventoryBlock::OnSellConfirmed(int32_t result, int32_t quantity) const -> void
+auto MCCompInventoryBlock::OnSellConfirmed(MCLogInventoryItem& sold, int32_t result, int32_t quantity) -> void
 {
     if (result == 0)
     {
         return;
     }
 
-    std::shared_ptr<MCLogInventoryItem> sold = Item();
-    sold->Count -= quantity;
+    sold.Count -= quantity;
 
-    if (sold->Count == 0)
+    if (sold.Count == 0)
     {
         MCPurchaseScreen::CreateCompInvBlock();
         GlobalLog()->PurchaseScreen->SetUpCompInv(false, true);
     }
     else
     {
-        sold->InventoryBlock->DrawBackground();
+        MCLogInvScreen::RefreshComponentRows(sold);
     }
 
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
@@ -248,7 +269,7 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
         // The info block: picture, range, damage, recycle time and description.
         MCLogInvScreen::DrawBlankInvInfoBlock(-1);
         PrepareInfoDescription(item->Description);
-        screen->ShowComponentInfo(*this, false);
+        screen->ShowComponentInfo(*item, false);
     }
 
     // Where a drop that didn't mount or sell ends: the sound, then the copy goes back to the row.
@@ -263,7 +284,7 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
 
         if (item->Count > 1)
         {
-            DrawBackground();
+            MCLogInvScreen::RefreshComponentRows(*item);
         }
         else
         {
@@ -290,11 +311,11 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             CompDrag.Dragging = true;
             MakeDragIcon(CompDrag, event);
 
-            if (screen.get() != GlobalLog()->PurchaseScreen.get())
+            if (screen != GlobalLog()->PurchaseScreen)
             {
                 if (--item->Count != 0)
                 {
-                    DrawBackground();
+                    MCLogInvScreen::RefreshComponentRows(*item);
                 }
                 else
                 {
@@ -321,9 +342,9 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             GuiSystem().Grab(weak_from_this());
             MakeDragIcon(CompDrag, event);
 
-            if (screen.get() != GlobalLog()->PurchaseScreen.get() && --item->Count != 0)
+            if (screen != GlobalLog()->PurchaseScreen && --item->Count != 0)
             {
-                DrawBackground();
+                MCLogInvScreen::RefreshComponentRows(*item);
             }
 
             MCDragIcon::Current()->Raise();
@@ -346,7 +367,7 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
             if (OnRepairScreen())
             {
                 DrawDropArt(*screen, 2);
-                std::shared_ptr<MCScrollPane> unitPane = screen->UnitPane;
+                std::shared_ptr<MCScrollPane> unitPane = screen->UnitPane.Lock();
 
                 if (OverPaneInside(*unitPane, event))
                 {
@@ -449,9 +470,15 @@ auto MCCompInventoryBlock::HandleEvent(MCGuiEvent& event) -> void
     }
 }
 
-auto MCCompInventoryBlock::DrawBackground() -> void
+auto MCCompInventoryBlock::ListIndex() const -> int32_t
 {
-    if (ListIndex < 0)
+    const std::shared_ptr<MCLogInventoryItem> item = Item();
+    return item != nullptr ? item->ListIndex : -1;
+}
+
+auto MCCompInventoryBlock::OnRefresh() -> void
+{
+    if (ListIndex() < 0)
     {
         ShowGuiWindow(false);
         return;

@@ -1,89 +1,47 @@
 #pragma once
 
-#include "logistics/MCLogObject.h"
-
-class MCGuiEvent;
 class MCGuiFont;
 
 /// <summary>
-/// The scrolling message line along the bottom of the logistics screens (help text for whatever the mouse is over).
-/// A text wider than the line scrolls through it on a timer, after half a line of gap.
+/// The scrolling message line along the top of the logistics screens (help text for whatever the mouse is over): what
+/// it shows and how far it has scrolled. A text wider than the line scrolls through it after half a line of gap. Each
+/// screen that shows the line has its own view of it (<see cref="MCTickerLine"/>); the text and the scroll position
+/// are shared, so they stay the same from one screen to the next.
 /// </summary>
 /// <remarks>
-/// Original source: <c>logistics\ticker.cpp</c> (<c>Ticker</c>). The logistics screen keeps one
-/// (<c>Logistics::Ticker</c>). The original rendered the text into a picture of its own and copied a window of it
-/// into the screen's picture; the screen it paints into draws the line from the ticker's state each frame
-/// (<see cref="DrawLine"/>).
+/// Original source: <c>logistics\ticker.cpp</c> (<c>Ticker</c>). The original's ticker was one GUI object that the
+/// logistics screens moved from screen to screen; its state is this model, owned by the logistics screen
+/// (<c>MCLogistics::Ticker</c>).
 /// </remarks>
-class MCTicker : public MCLogObject
+class MCTicker
 {
 public:
-    /// <summary>The scroll timer's id, and the id <see cref="HandleEvent"/> scrolls on (OB-072).</summary>
+    /// <summary>The scroll timer's id, and the id the line scrolls on (OB-072).</summary>
     static constexpr int32_t ScrollTimer = 4;
     static constexpr int32_t ScrollStepTimer = 7;
 
-    MCTicker() = default;
-    /// <summary>Calls <see cref="Destroy"/> and lets the logistics screen know the ticker went.</summary>
-    ~MCTicker() override;
-
-    /// <summary>
-    /// Starts the scroll timer (every 75 ms; the original started it in its init, before the placement) and places the
-    /// ticker at (<paramref name="xPos"/>, <paramref name="yPos"/>), <paramref name="width"/> wide.
-    /// </summary>
-    void Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height);
-
-    /// <summary>Frees the back pane.</summary>
-    void Destroy() override;
-
-    /// <summary>Nothing: the screen draws the line (<see cref="DrawLine"/>).</summary>
-    void Draw() override {}
-
-    /// <summary>
-    /// On the scroll step timer, advances a wide text two pixels (wrapping round) and shows it; any other event hides
-    /// it again (the original painted the back pane alone).
-    /// </summary>
-    void HandleEvent(MCGuiEvent& event) override;
-
-    /// <summary>Nothing: the screen draws the line (<see cref="DrawLine"/>).</summary>
-    void Display() override {}
-
-    /// <summary>The font that measures the text (it is written with <c>MedWhiteFont</c>).</summary>
-    void SetFont(std::shared_ptr<MCGuiFont> newFont) { Font = std::move(newFont); }
+    /// <summary>A line <paramref name="width"/> pixels wide, measuring its text with <paramref name="font"/>.</summary>
+    MCTicker(int32_t width, std::shared_ptr<MCGuiFont> font);
 
     /// <summary>Shows <paramref name="text"/> (an empty one clears the line); unchanged text is ignored.</summary>
     void SetString(std::string_view text);
 
-    /// <summary>Where in the screen the line goes.</summary>
-    void SetPos(int32_t xPos, int32_t yPos);
-
-    /// <summary>Keeps a copy of <paramref name="port"/> to draw under the text.</summary>
-    void SetBackPane(MCGuiPort& port);
-
-    /// <summary>The screen that draws the line (<see cref="DrawLine"/>).</summary>
-    void SetScreen(std::weak_ptr<MCGuiObject> screen) { PaintScreen = std::move(screen); }
-
     /// <summary>
-    /// Port: draws the line from its state into <paramref name="target"/>: the back pane, then the text (a wide one
-    /// scrolled, and only while it scrolls).
+    /// An event to the line showing it: a scroll step (<paramref name="scrollStep"/>) advances a wide text two pixels
+    /// (wrapping round) and shows it; any other event hides it again (the original painted the back pane alone).
     /// </summary>
-    void DrawLine(const MCPane& target) const;
+    void Advance(bool scrollStep);
 
     /// <summary>The text shown.</summary>
     std::string Text;
     /// <summary>How far the text has scrolled, in pixels.</summary>
     int32_t ScrollPos = 0;
-    /// <summary>The font measuring the text.</summary>
+    /// <summary>The font measuring the text (it is written with <c>MedWhiteFont</c>).</summary>
     std::shared_ptr<MCGuiFont> Font;
-    /// <summary>A copy of the background under the line (<see cref="SetBackPane"/>).</summary>
-    std::shared_ptr<MCLogPort> BackPane;
-    int32_t XPos = 0;
-    int32_t YPos = 0;
     /// <summary>The width of the text, plus half a line of gap when it scrolls; 0 = empty.</summary>
     int32_t TextWidth = 0;
     /// <summary>The line's width.</summary>
     int32_t MaxWidth = 0;
-    /// <summary>The screen that draws the line (see <see cref="SetScreen"/>).</summary>
-    std::weak_ptr<MCGuiObject> PaintScreen;
     /// <summary>A text wider than the line shows (the last event was a scroll step).</summary>
     bool ScrollShown = false;
 };

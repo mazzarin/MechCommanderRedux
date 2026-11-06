@@ -1,15 +1,13 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 // Original source: mcx\logistics.cpp (LogPart, the part LogMech and LogVehicle share).
 
 #include "main/MCInventoryList.h"
 
-class MCBriefingBox;
-
 /// <summary>
-/// What mechs and vehicles have in common in logistics: identity, tonnage, cost, status flags, inventory and the
-/// briefing box. <see cref="PartType"/> tells which one a part is.
+/// What mechs and vehicles have in common in logistics: identity, tonnage, cost, status flags and inventory.
+/// <see cref="PartType"/> tells which one a part is.
 /// </summary>
 /// <remarks>Original source: <c>logistics.cpp</c> (no methods of its own).</remarks>
 class MCLogPart : public std::enable_shared_from_this<MCLogPart>
@@ -84,10 +82,20 @@ public:
     int32_t CommanderID = 0;
     /// <summary>The components.</summary>
     std::unique_ptr<MCInventoryList> Inventory;
-    /// <summary>The box the briefing screen shows for the part (null when it was read without widgets).</summary>
-    MCGuiOwned<MCBriefingBox> BriefingBox;
+    /// <summary>
+    /// The part was read with widgets: the inventory lists and the repair screen's force show it (a part read without
+    /// them, as a multiplayer opponent's, is never listed).
+    /// </summary>
+    bool ReadWithWidgets = false;
     /// <summary>The multiplayer drop slot's lance.</summary>
     uint32_t DropLance = 0;
     /// <summary>The multiplayer drop slot within its lance.</summary>
     uint32_t DropSlot = 0;
+    /// <summary>The row of the inventory list the part is shown at.</summary>
+    int32_t ListIndex = 0;
+    /// <summary>
+    /// The part's row in the force (mechs first, then vehicles): its row on the repair screen, and what the drop
+    /// zone slots' <c>Unit</c> and pilot boarding refer to it by.
+    /// </summary>
+    int32_t SlotIndex = 0;
 };

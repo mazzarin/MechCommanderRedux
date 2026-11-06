@@ -2,7 +2,7 @@
 #include "gui/MCGuiButtonBar.h"
 
 template <typename TButton>
-auto MCGuiButtonLayout::LayOut(MCGuiObject& bar, const std::vector<MCGuiOwned<TButton>>& buttons) const -> void
+auto MCGuiButtonLayout::LayOut(MCGuiObject& bar, const std::vector<MCGuiHandle<TButton>>& buttons) const -> void
 {
     const auto numButtons = static_cast<int32_t>(buttons.size());
     const int32_t across = std::min(numButtons, MaxLength);
@@ -37,19 +37,6 @@ auto MCGuiToolBar::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     return result;
 }
 
-auto MCGuiToolBar::Destroy() -> void
-{
-    Buttons.clear();
-    MCGuiTitleWindow::Destroy();
-}
-
-auto MCGuiToolBar::AddButton(MCGuiOwned<MCGuiToolButton> button) -> void
-{
-    AddChild(button);
-    Buttons.push_back(std::move(button));
-    PlaceButtons();
-}
-
 auto MCGuiToolBar::RemoveButton(int32_t index) -> bool
 {
     if (index < 0 || index >= NumButtons())
@@ -57,14 +44,22 @@ auto MCGuiToolBar::RemoveButton(int32_t index) -> bool
         return false;
     }
 
+    // Taken off the bar, which destroys it.
+    const MCGuiHandle<MCGuiToolButton> button = Buttons[static_cast<size_t>(index)];
     Buttons.erase(Buttons.begin() + index);
+
+    if (const std::shared_ptr<MCGuiToolButton> removed = button.Lock(); removed != nullptr)
+    {
+        RemoveChild(*removed);
+    }
+
     PlaceButtons();
     return true;
 }
 
 auto MCGuiToolBar::GetButton(int32_t index) -> std::shared_ptr<MCGuiToolButton>
 {
-    return index >= 0 && index < NumButtons() ? Buttons[static_cast<size_t>(index)] : nullptr;
+    return index >= 0 && index < NumButtons() ? Buttons[static_cast<size_t>(index)].Lock() : nullptr;
 }
 
 auto MCGuiToolBar::IsPushed(int32_t index) -> bool
@@ -106,30 +101,6 @@ auto MCGuiWindowBar::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t hei
     return result;
 }
 
-auto MCGuiWindowBar::Destroy() -> void
-{
-    Buttons.clear();
-    MCGuiObject::Destroy();
-}
-
-auto MCGuiWindowBar::InsertButton(MCGuiOwned<MCGuiButton> button, int32_t index) -> bool
-{
-    if (index < 0 || index > NumButtons())
-    {
-        return false;
-    }
-
-    AddChild(button);
-    Buttons.insert(Buttons.begin() + index, std::move(button));
-    PlaceButtons();
-    return true;
-}
-
-auto MCGuiWindowBar::AddButton(MCGuiOwned<MCGuiButton> button) -> void
-{
-    InsertButton(std::move(button), NumButtons());
-}
-
 auto MCGuiWindowBar::RemoveButton(int32_t index) -> bool
 {
     if (index < 0 || index >= NumButtons())
@@ -137,14 +108,22 @@ auto MCGuiWindowBar::RemoveButton(int32_t index) -> bool
         return false;
     }
 
+    // Taken off the bar, which destroys it.
+    const MCGuiHandle<MCGuiButton> button = Buttons[static_cast<size_t>(index)];
     Buttons.erase(Buttons.begin() + index);
+
+    if (const std::shared_ptr<MCGuiButton> removed = button.Lock(); removed != nullptr)
+    {
+        RemoveChild(*removed);
+    }
+
     PlaceButtons();
     return true;
 }
 
 auto MCGuiWindowBar::GetButton(int32_t index) -> std::shared_ptr<MCGuiButton>
 {
-    return index >= 0 && index < NumButtons() ? Buttons[static_cast<size_t>(index)] : nullptr;
+    return index >= 0 && index < NumButtons() ? Buttons[static_cast<size_t>(index)].Lock() : nullptr;
 }
 
 auto MCGuiWindowBar::SetHorizontal(bool on) -> void

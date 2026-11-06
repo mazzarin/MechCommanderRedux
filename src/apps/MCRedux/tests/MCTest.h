@@ -5,6 +5,7 @@
 #include <format>
 #include <functional>
 #include <optional>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -81,6 +82,53 @@ namespace MCTest
         Scope(const Scope&) = delete;
         Scope& operator=(const Scope&) = delete;
     };
+
+    /// <summary>
+    /// Expects the asserts whose report holds a text while it is alive: each one is counted instead of failing the
+    /// test, and when it ends the count must be the one given. Outside one, a failed <c>Assert</c> fails the test (the
+    /// runner sets the game's assert hook to <see cref="ReportAssert"/>).
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// {
+    ///     MCTest::ExpectAssert expected("bad targetId", 1);
+    ///     client.HandleMessage(packet);
+    /// }
+    /// </code>
+    /// </remarks>
+    class ExpectAssert
+    {
+    public:
+        /// <param name="text">What the report holds (ignoring case), e.g. the assert's message.</param>
+        /// <param name="count">How many such asserts must fail while it is alive.</param>
+        /// <param name="where">Where it was opened, for the failure; callers leave it out.</param>
+        ExpectAssert(std::string_view text, int32_t count,
+                     const std::source_location& where = std::source_location::current());
+        ~ExpectAssert();
+        ExpectAssert(const ExpectAssert&) = delete;
+        ExpectAssert& operator=(const ExpectAssert&) = delete;
+
+        /// <summary>How many asserts it has taken so far.</summary>
+        int32_t Seen() const { return _Seen; }
+
+    private:
+        friend void ReportAssert(std::string_view report, std::string_view file, int line);
+
+        /// <summary>The text an expected report holds, in lower case.</summary>
+        std::string _Text;
+        /// <summary>How many must fail.</summary>
+        int32_t _Count;
+        /// <summary>How many have.</summary>
+        int32_t _Seen = 0;
+        /// <summary>Where it was opened.</summary>
+        std::source_location _Where;
+    };
+
+    /// <summary>
+    /// A failed <c>Assert</c> at <paramref name="file"/>(<paramref name="line"/>): counted by the innermost open
+    /// <see cref="ExpectAssert"/> whose text the report holds, else a failure of the current test.
+    /// </summary>
+    void ReportAssert(std::string_view report, std::string_view file, int line);
 
     /// <summary>Records a failure against the current test, with the open scopes.</summary>
     /// <param name="file">Source file of the check.</param>

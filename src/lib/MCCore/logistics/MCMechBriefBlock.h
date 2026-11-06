@@ -1,9 +1,10 @@
 #pragma once
 
-#include "logistics/MCLogObject.h"
+#include "gui/MCListView.h"
 
 class MCGuiEvent;
 class MCLogMech;
+class MCLogPart;
 class MCLogVehicle;
 
 /// <summary>
@@ -12,33 +13,25 @@ class MCLogVehicle;
 /// whose number key is held).
 /// </summary>
 /// <remarks>
-/// Original source: <c>logistics\logbri.cpp</c> (<c>MechBriefBlock</c>). Its unit owns it (<c>BriefBlock</c>).
+/// Original source: <c>logistics\logbri.cpp</c> (<c>MechBriefBlock</c>). The original's unit owned its block, which
+/// moved between the deploy pane and the screen; the port's blocks are views the deploy pane (a row of its list) or the
+/// screen (a drop slot's, <see cref="MCBriefingScreen::ShowSlots"/>) makes over the unit. A drop changes the deploy
+/// data, and the views follow it.
 /// </remarks>
-class MCMechBriefBlock : public MCLogObject
+class MCMechBriefBlock : public MCListRow
 {
 public:
-    ~MCMechBriefBlock() override { Destroy(); }
+    /// <summary>Shows <paramref name="part"/> (a mech or a vehicle) at (<paramref name="xPos"/>, <paramref name="yPos"/>).</summary>
+    void Init(const std::shared_ptr<MCLogPart>& part, int32_t xPos, int32_t yPos);
 
-    /// <summary>
-    /// A block for <paramref name="mech"/> (its <c>BriefBlock</c>) at (<paramref name="xPos"/>, <paramref name="yPos"/>)
-    /// in <paramref name="parent"/>.
-    /// </summary>
-    static MCMechBriefBlock& Create(std::shared_ptr<MCLogMech> mech, MCLogObject& parent, int32_t xPos, int32_t yPos);
-
-    /// <summary>As the other overload, for <paramref name="vehicle"/>.</summary>
-    static MCMechBriefBlock& Create(std::shared_ptr<MCLogVehicle> vehicle, MCLogObject& parent, int32_t xPos,
-                                    int32_t yPos);
-
-    /// <summary>Frees a unit's block <paramref name="block"/> (if any) and clears it.</summary>
-    static void Discard(MCGuiOwned<MCMechBriefBlock>& block);
-
-    void Destroy() override;
+    /// <summary>Forgets the unit shown.</summary>
+    void OnDestroy() override;
 
     /// <summary>Drags the block and drops it into a slot (or back), updating the tonnage.</summary>
     void HandleEvent(MCGuiEvent& event) override;
 
-    /// <summary>Port: the block is drawn each frame by its parent; in a drop slot, the screen draws it there from now on.</summary>
-    void DrawBackground();
+    /// <summary>The deploy pane's row: the block unframed, at the row's place.</summary>
+    void DrawRow(MCLogPort& port, int32_t top) override;
 
     /// <summary>
     /// Port: draws the block's picture (the unit's picture and name, darkened when another player's, with a bevelled
@@ -57,15 +50,14 @@ public:
     std::shared_ptr<MCLogMech> Mech() const { return _Mech.lock(); }
     /// <summary>The vehicle shown, or null for a mech.</summary>
     std::shared_ptr<MCLogVehicle> Vehicle() const { return _Vehicle.lock(); }
+    /// <summary>The unit shown (the mech or the vehicle), or null once it is gone.</summary>
+    std::shared_ptr<MCLogPart> Part() const;
 
 private:
     /// <summary>The mech shown, or null for a vehicle.</summary>
     std::weak_ptr<MCLogMech> _Mech;
     /// <summary>The vehicle shown, or null for a mech.</summary>
     std::weak_ptr<MCLogVehicle> _Vehicle;
-
-    /// <summary>Places the block at (<paramref name="xPos"/>, <paramref name="yPos"/>) in <paramref name="parent"/>.</summary>
-    void Attach(MCLogObject& parent, int32_t xPos, int32_t yPos);
 
     /// <summary>A button went down on the block: its briefing shows, and (unless another player's) it is picked up.</summary>
     void PickUp(MCGuiEvent& event);
@@ -79,8 +71,10 @@ private:
     /// </summary>
     bool PlaceInEmptySlot(int32_t lance, int32_t slot) const;
 
-    /// <summary>Puts the block into the slot on the screen and recounts the tonnage.</summary>
-    void Settle(int32_t lance, int32_t slot);
+    /// <summary>
+    /// The unit is in its slot: the screen shows the slots again (a block of its own there) and recounts the tonnage.
+    /// </summary>
+    static void Settle();
 
     /// <summary>The right-button drop: the first free slot (of the lance whose key 1..3 is held); whether it was placed.</summary>
     bool DropInFreeSlot();

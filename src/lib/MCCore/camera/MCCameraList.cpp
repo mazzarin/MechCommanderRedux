@@ -34,7 +34,7 @@ MCCameraList::~MCCameraList()
     CurrentCamera.reset();
     PauseShape() = {};
     AskedShape() = {};
-    _MainHolder.reset();
+    CloseGuiObject(_MainHolder);
 }
 
 auto MCCameraList::Load(std::string_view fileName) -> std::expected<void, std::string>
@@ -97,17 +97,32 @@ auto MCCameraList::Add(std::shared_ptr<MCCamera> camera) -> void
     _Cameras.push_back(std::move(camera));
 }
 
+auto MCCameraList::MainHolder() const -> std::shared_ptr<MCMainWindow>
+{
+    return _MainHolder.Lock();
+}
+
 auto MCCameraList::EnsureMainHolder() -> std::expected<void, std::string>
 {
     if (_MainHolder == nullptr)
     {
-        _MainHolder = MCMakeGui<MCMainWindow>();
+        // On the screen, hidden until a camera in it first activates (the original added it to the screen then).
+        const std::expected<MCGuiHandle<MCMainWindow>, int32_t> holder = ScreenWindow()->TryCreateChild<MCMainWindow>(
+            [this](MCMainWindow& made)
+            {
+                _MainHolder = made.WeakAs<MCMainWindow>();
+                const int32_t result = made.Init();
+                made.ShowGuiWindow(false);
+                return result;
+            });
 
-        if (const int32_t result = _MainHolder->Init(); result != 0)
+        if (!holder.has_value())
         {
             return std::unexpected(
-                std::format("could not open the main window ({:#x})", static_cast<uint32_t>(result)));
+                std::format("could not open the main window ({:#x})", static_cast<uint32_t>(holder.error())));
         }
+
+        _MainHolder = *holder;
     }
 
     return {};

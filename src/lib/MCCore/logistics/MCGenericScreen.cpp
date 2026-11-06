@@ -45,11 +45,6 @@ namespace
 
 // MCGenericScreen
 
-MCGenericScreen::~MCGenericScreen()
-{
-    MCGenericScreen::Destroy();
-}
-
 auto MCGenericScreen::PaletteFromArt(std::string_view fileName) -> std::vector<uint8_t>
 {
     MCFile file;
@@ -97,8 +92,6 @@ auto MCGenericScreen::ReadElementCount(MCFitIniFile& file) -> void
     const int32_t count = ReadEntry<int32_t>(file, "NumElements", " Could not Find Elements number in Generic Screen ");
     // Element types the screen doesn't make leave their place empty.
     Elements.assign(static_cast<size_t>(std::max(count, 0)), {});
-    _Made.clear();
-    _Made.resize(Elements.size());
 }
 
 auto MCGenericScreen::ReadElement(MCFitIniFile& file, int32_t index) -> ElementHeader
@@ -181,7 +174,7 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
         case 5:
         {
             exec = ReplayCinema;
-            CinemaButton = button.SharedAs<MCLogButton>();
+            CinemaButton = button.WeakAs<MCLogButton>();
             break;
         }
         case 6:
@@ -194,21 +187,21 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
         case 9:
         {
             button.Callback().SetExec(callback == 8 ? LoadGame : SaveGame);
-            LoadSaveButton = button.SharedAs<MCLogButton>();
+            LoadSaveButton = button.WeakAs<MCLogButton>();
             button.Disabled = true;
             return true;
         }
         case 10:
         {
             button.Callback().SetExec(DeleteGame);
-            DeleteButton = button.SharedAs<MCLogButton>();
+            DeleteButton = button.WeakAs<MCLogButton>();
             button.Disabled = true;
             return true;
         }
         case 11:
         {
             button.Callback().SetExec(Cancel);
-            CancelButton = button.SharedAs<MCLogButton>();
+            CancelButton = button.WeakAs<MCLogButton>();
             return true;
         }
         default:
@@ -219,26 +212,38 @@ auto MCGenericScreen::SetScreenCallback(MCLogButton& button, int32_t callback) -
     return true;
 }
 
-auto MCGenericScreen::MakeTextEntry(int32_t index, const ElementHeader& header) -> MCGuiOwned<MCLogTextObject>
+auto MCGenericScreen::MakeTextEntry(MCGuiObject& parent, int32_t index, const ElementHeader& header, bool show)
+    -> MCGuiHandle<MCLogTextObject>
 {
-    MCGuiOwned<MCLogTextObject> entry = MakeElement<MCLogTextObject>(index);
-    entry->MCLogObject::Init(header.Left, header.Top, header.Width, header.Height);
-    entry->CursorPos = 0;
-    entry->CursorPixel = 0;
-    entry->BackgroundColor = 0x1f;
-    entry->Font = LgBlackFont;
-    return entry;
+    return MakeElement<MCLogTextObject>(parent, index,
+                                        [&](MCLogTextObject& entry)
+                                        {
+                                            entry.MCLogObject::Init(header.Left, header.Top, header.Width,
+                                                                    header.Height);
+                                            entry.CursorPos = 0;
+                                            entry.CursorPixel = 0;
+                                            entry.BackgroundColor = 0x1f;
+                                            entry.Font = LgBlackFont;
+
+                                            if (show)
+                                            {
+                                                entry.ShowGuiWindow(true);
+                                            }
+                                        });
 }
 
-auto MCGenericScreen::MakeFilePane(MCFitIniFile& file, int32_t index, const ElementHeader& header)
-    -> MCGuiOwned<MCFileScrollPane>
+auto MCGenericScreen::MakeFilePane(MCGuiObject& parent, MCFitIniFile& file, int32_t index, const ElementHeader& header)
+    -> MCGuiHandle<MCFileScrollPane>
 {
-    MCGuiOwned<MCFileScrollPane> pane = MakeElement<MCFileScrollPane>(index);
-    pane->Init(header.Left, header.Top, header.Width, header.Height);
-    pane->SavePane = file.Read<bool>("SavePane").value_or(false);
-    pane->SetStartDirectory(SavePath);
-    FilePane = pane;
-    return pane;
+    FilePane = MakeElement<MCFileScrollPane>(parent, index,
+                                             [&](MCFileScrollPane& pane)
+                                             {
+                                                 pane.Init(header.Left, header.Top, header.Width, header.Height);
+                                                 pane.SavePane = file.Read<bool>("SavePane").value_or(false);
+                                                 pane.SetStartDirectory(SavePath);
+                                                 pane.ShowGuiWindow(true);
+                                             });
+    return FilePane;
 }
 
 auto MCGenericScreen::InitBackground(MCFitIniFile& file, const ElementHeader& header) -> void
@@ -256,6 +261,55 @@ auto MCGenericScreen::InitBackground(MCFitIniFile& file, const ElementHeader& he
     Elements[0] = weak_from_this();
 }
 
+auto MCGenericScreen::MakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index, const ElementHeader& header)
+    -> bool
+{
+    switch (header.Type)
+    {
+        case 1:
+        {
+            MakeElement<MCLogButton>(
+                parent, index,
+                [&](MCLogButton& button)
+                {
+                    const int32_t result = button.Init(header.Left, header.Top, header.Width, header.Height, {});
+                    Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init new button ");
+
+                    if (const std::optional<int32_t> callback = ReadButton(file, button, header.Art, true);
+                        callback.has_value() && !SetScreenCallback(button, *callback))
+                    {
+                        Fatal(*callback, " Illegal callback value");
+                    }
+                });
+            return true;
+        }
+
+        case 4:
+        {
+            MakeTextEntry(parent, index, header, false);
+            return true;
+        }
+
+        case 5:
+        {
+            MakeFilePane(parent, file, index, header);
+            return true;
+        }
+
+        default:
+            return false;
+    }
+}
+
+auto MCGenericScreen::RemakeElementOn(MCGuiObject& parent, MCFitIniFile& file, int32_t index) -> void
+{
+    auto& element = Elements[static_cast<size_t>(index)];
+    CloseGuiObject(MCGuiHandle<MCGuiObject>(element));
+    element.reset();
+    const ElementHeader header = ReadElement(file, index);
+    MakeElementOn(parent, file, index, header);
+}
+
 auto MCGenericScreen::Init(MCFitIniFile& screenFile) -> int32_t
 {
     ReadElementCount(screenFile);
@@ -264,93 +318,30 @@ auto MCGenericScreen::Init(MCFitIniFile& screenFile) -> int32_t
     {
         const ElementHeader header = ReadElement(screenFile, i);
 
-        switch (header.Type)
+        if (header.Type == 0)
         {
-            case 0:
-            {
-                // The background: the screen itself.
-                Assert(i == 0, static_cast<uint32_t>(i), " Background MUST be first element ");
-                InitBackground(screenFile, header);
-                ArtPort = std::make_shared<MCLogPort>();
-                ArtPort->Load(header.Art);
-                break;
-            }
-
-            case 1:
-            {
-                const MCGuiOwned<MCLogButton> button = MakeElement<MCLogButton>(i);
-                const int32_t result = button->Init(header.Left, header.Top, header.Width, header.Height, {});
-                Assert(result == 0, static_cast<uint32_t>(result), " Couldn't init new button ");
-
-                if (const std::optional<int32_t> callback = ReadButton(screenFile, *button, header.Art, true);
-                    callback.has_value() && !SetScreenCallback(*button, *callback))
-                {
-                    Fatal(*callback, " Illegal callback value");
-                }
-
-                AddChild(button);
-                break;
-            }
-
-            case 4:
-            {
-                AddChild(MakeTextEntry(i, header));
-                break;
-            }
-
-            case 5:
-            {
-                const MCGuiOwned<MCFileScrollPane> pane = MakeFilePane(screenFile, i, header);
-                pane->ShowGuiWindow(true);
-                AddChild(pane);
-                break;
-            }
-
-            default:
-                break;
+            // The background: the screen itself.
+            Assert(i == 0, static_cast<uint32_t>(i), " Background MUST be first element ");
+            InitBackground(screenFile, header);
+            ArtPort = std::make_shared<MCLogPort>();
+            ArtPort->Load(header.Art);
+            continue;
         }
+
+        MakeElementOn(*this, screenFile, i, header);
     }
 
-    ScreenWindow()->AddChild(weak_from_this());
     ShowGuiWindow(false);
     return 0;
 }
 
-auto MCGenericScreen::Destroy() -> void
+auto MCGenericScreen::OnDestroy() -> void
 {
-    ScreenWindow()->RemoveChild(*this);
-
-    // Element 0 is the background (the screen itself).
-    for (size_t i = 1; i < Elements.size(); i++)
-    {
-        if (const std::shared_ptr<MCGuiObject> element = Elements[i].lock())
-        {
-            RemoveChild(*element);
-        }
-
-        _Made[i].reset();
-        Elements[i].reset();
-    }
-
+    // The elements are the screen's children (element 0 is the screen itself).
     Elements.clear();
-    _Made.clear();
-
-    // Port: the adopted children go with the screen (the original's drop-downs didn't exist; its leftovers leaked).
-    for (MCGuiOwned<MCGuiObject>& child : _Adopted)
-    {
-        RemoveChild(*child);
-    }
-
-    _Adopted.clear();
     Palette.clear();
-    FilePane.reset();
-    LoadSaveButton.reset();
-    DeleteButton.reset();
-    CancelButton.reset();
-    CinemaButton.reset();
-    ChildList.clear();
     ArtPort.reset();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCGenericScreen::Draw() -> void
@@ -384,9 +375,9 @@ auto MCGenericScreen::ShowGuiWindow(bool show) -> void
     if (!show)
     {
         // Hiding drops a half-typed save name.
-        if (FilePane != nullptr && FilePane->NameEntry != nullptr)
+        if (FilePane != nullptr)
         {
-            FilePane->NameEntry->Destroy();
+            CloseGuiObject(FilePane->NameEntry);
         }
 
         ShowWindow = false;
@@ -395,7 +386,7 @@ auto MCGenericScreen::ShowGuiWindow(bool show) -> void
 
     auto filesExist = [](std::string_view pattern) { return !MCFileSystem::FindFiles(pattern).empty(); };
 
-    if (this == GlobalLog()->MainScreen.get())
+    if (GlobalLog()->MainScreen.Is(*this))
     {
         // The main menu enables what the install and the campaign allow.
         const bool noMission = GlobalLog()->CurrentMission < 0;
@@ -417,7 +408,7 @@ auto MCGenericScreen::ShowGuiWindow(bool show) -> void
             Element<MCLogButton>(6)->Disabled = !filesExist(std::format("{}opening.smk", CDmoviePath));
         }
     }
-    else if (this == GlobalLog()->SaveScreen.get() || this == GlobalLog()->LoadScreen.get())
+    else if (GlobalLog()->SaveScreen.Is(*this) || GlobalLog()->LoadScreen.Is(*this))
     {
         if (FilePane->Multiplayer)
         {
@@ -450,10 +441,10 @@ auto MCGenericScreen::ShowGuiWindow(bool show) -> void
 
 // MCLogImage
 
-auto MCLogImage::Destroy() -> void
+auto MCLogImage::OnDestroy() -> void
 {
     Art.reset();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogImage::Draw() -> void

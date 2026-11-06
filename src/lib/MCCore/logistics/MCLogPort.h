@@ -4,8 +4,8 @@
 
 /// <summary>
 /// A logistics-screen drawing port: an <see cref="MCGuiPort"/> that makes a new bitmap on every
-/// <see cref="Init(int32_t, int32_t)"/>, keeps its size when destroyed, and loads its art without the planet's variant
-/// and without a fatal error for a missing file.
+/// <see cref="Init(int32_t, int32_t)"/> and loads its art without the planet's variant and without a fatal error for a
+/// missing file.
 /// </summary>
 /// <remarks>Original source: <c>logistics\lport.cpp</c> (<c>lPort</c>).</remarks>
 class MCLogPort : public MCGuiPort
@@ -20,9 +20,6 @@ public:
     /// path). A file that can't be read is fatal (<c>GeneralMsg</c>).
     /// </summary>
     void Load(std::string_view fileName);
-
-    /// <summary>Frees the bitmap and the pane; the size is kept.</summary>
-    void Destroy() override;
 };
 
 /// <summary>

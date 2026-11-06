@@ -70,18 +70,24 @@ MCGameSession::MCGameSession()
 
     if (DebugGameSystem)
     {
-        _GameSystemWindow = MCMakeGui<MCScrollingTextWindow>();
-        _GameSystemWindow->Init(10, 20, 250, 300, "Game System");
-        ScreenWindow()->AddChild(_GameSystemWindow);
+        _GameSystemWindow = ScreenWindow()->CreateChild<MCScrollingTextWindow>(
+            [this](MCScrollingTextWindow& window)
+            {
+                _GameSystemWindow = window.WeakAs<MCScrollingTextWindow>();
+                window.Init(10, 20, 250, 300, "Game System");
+            });
         GameSystemWindow = _GameSystemWindow;
     }
 
     if (AblDebuggerEnabled)
     {
         const MCDebuggerPlacement placement = ReadDebuggerPlacement();
-        _DebuggerWindow = MCMakeGui<MCAblDebuggerWindow>();
-        _DebuggerWindow->Init(placement.X, placement.Y, placement.Width, placement.Height, "ABL Developer Studio (tm)");
-        ScreenWindow()->AddChild(_DebuggerWindow);
+        _DebuggerWindow = ScreenWindow()->CreateChild<MCAblDebuggerWindow>(
+            [this, &placement](MCAblDebuggerWindow& window)
+            {
+                _DebuggerWindow = window.WeakAs<MCAblDebuggerWindow>();
+                window.Init(placement.X, placement.Y, placement.Width, placement.Height, "ABL Developer Studio (tm)");
+            });
         _DebuggerWindow->Input().SetEventRoutine(AblDebuggerEventRoutine);
     }
 
@@ -113,9 +119,14 @@ MCGameSession::MCGameSession()
     }
 }
 
+auto MCGameSession::DebuggerWindow() const -> std::shared_ptr<MCAblDebuggerWindow>
+{
+    return _DebuggerWindow.Lock();
+}
+
 MCGameSession::~MCGameSession()
 {
-    _DebuggerWindow.reset();
+    CloseGuiObject(_DebuggerWindow);
 
     if (Mission() != nullptr)
     {
@@ -142,7 +153,7 @@ MCGameSession::~MCGameSession()
     if (_GameSystemWindow != nullptr)
     {
         GameSystemWindow.reset();
-        _GameSystemWindow.reset();
+        CloseGuiObject(_GameSystemWindow);
     }
 }
 

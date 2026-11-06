@@ -88,7 +88,7 @@ namespace
 
         if (warrior.Status == PilotMissing)
         {
-            taken.Portrait = MCMakeGui<MCGuiPort>();
+            taken.Portrait = std::make_unique<MCGuiPort>();
             taken.Portrait->Init(std::string_view(warrior.Picture));
         }
 
@@ -99,7 +99,7 @@ namespace
     /// Draws an icon from <see cref="TakeIcon"/> at (<paramref name="x"/>, <paramref name="y"/>) of
     /// <paramref name="target"/>, without its frame: the icon draws itself in place, through a view cut to its inside.
     /// </summary>
-    void DrawPilotIcon(const std::optional<MCResultsIcon>& taken, const MCPane& target, int32_t x, int32_t y)
+    void DrawPilotIcon(std::optional<MCResultsIcon>& taken, const MCPane& target, int32_t x, int32_t y)
     {
         const std::shared_ptr<MCMechWarrior> warrior = taken.has_value() ? taken->Warrior.lock() : nullptr;
         const std::shared_ptr<MCFriendlyMechIcon> icon = warrior != nullptr ? IconOf(*warrior) : nullptr;
@@ -117,16 +117,18 @@ namespace
         inside.X1 = std::min(target.X1, inside.X0 + width - 2 * IconFrame - 1);
         inside.Y1 = std::min(target.Y1, inside.Y0 + height - 2 * IconFrame - 1);
         MCLogBlockPort view(inside, -IconFrame, -IconFrame, width, height, false);
-        MCGuiOwned<MCGuiPort> portrait = taken->Portrait;
+        // The pilot's portrait lent to the icon for the draw.
+        std::unique_ptr<MCGuiPort>& portrait = taken->Portrait;
+        const bool lent = portrait != nullptr;
 
-        if (portrait != nullptr)
+        if (lent)
         {
             std::swap(icon->PilotImage, portrait);
         }
 
         icon->DrawIcon(view);
 
-        if (portrait != nullptr)
+        if (lent)
         {
             std::swap(icon->PilotImage, portrait);
         }
@@ -207,33 +209,36 @@ auto MCMissionResultsScreen::Init() -> int32_t
     Assert(result == 0, static_cast<uint32_t>(result), " error initializing mission results screen display elements ");
 
     // The original drops this init's result.
-    _MoveOnPort = MCMakeGui<MCGuiPort>();
+    _MoveOnPort = std::make_unique<MCGuiPort>();
     _MoveOnPort->Init(const_cast<char*>("mr_ms00.tga"));
 
-    _MoveOnButton = MCMakeGui<MCGuiButton>();
-    _MoveOnButton->Init(0x1bc, 6, 0x6b, 0x12, {});
-    _MoveOnButton->SetUpPicture(const_cast<char*>("mr_ms01.tga"));
-    _MoveOnButton->SetDownPicture(const_cast<char*>("mr_ms02.tga"));
-    AddChild(_MoveOnButton);
+    _MoveOnButton = CreateChild<MCGuiButton>(
+        [](MCGuiButton& button)
+        {
+            button.Init(0x1bc, 6, 0x6b, 0x12, {});
+            button.SetUpPicture(const_cast<char*>("mr_ms01.tga"));
+            button.SetDownPicture(const_cast<char*>("mr_ms02.tga"));
+        });
     _MoveOnButton->SetEventRoutine(MoveOnButtonHandleEvent);
     _MoveOnButton->SetTransparent(true);
 
     if (MultiPlayer() != nullptr)
     {
-        MCGuiOwned<MCGuiToolButton> switchButton = MCMakeGui<MCGuiToolButton>();
-        switchButton->Init(0xe4, 0x1e, 0x148, 0xb, {});
-        switchButton->SetUpPicture(const_cast<char*>("mrm_bkgd00.tga"));
-        switchButton->SetDownPicture(const_cast<char*>("mrm_bkgd01.tga"));
-        switchButton->Framed = false;
-        switchButton->Draw();
-        switchButton->Draw();
-        AddChild(switchButton);
-        switchButton->SetEventRoutine(PilotSwitchHandleEvent);
-        _PilotSwitchButton = std::move(switchButton);
+        _PilotSwitchButton = CreateChild<MCGuiToolButton>(
+            [](MCGuiToolButton& button)
+            {
+                button.Init(0xe4, 0x1e, 0x148, 0xb, {});
+                button.SetUpPicture(const_cast<char*>("mrm_bkgd00.tga"));
+                button.SetDownPicture(const_cast<char*>("mrm_bkgd01.tga"));
+                button.Framed = false;
+                button.Draw();
+                button.Draw();
+            });
+        _PilotSwitchButton->SetEventRoutine(PilotSwitchHandleEvent);
     }
 
-    _SuccessPort = MCMakeGui<MCGuiPort>();
-    _FailurePort = MCMakeGui<MCGuiPort>();
+    _SuccessPort = std::make_unique<MCGuiPort>();
+    _FailurePort = std::make_unique<MCGuiPort>();
     result = _SuccessPort->Init(const_cast<char*>("guimr08.tga"));
     Assert(result == 0, static_cast<uint32_t>(result), " error initializing mission results screen display elements ");
     result = _FailurePort->Init(const_cast<char*>("guimr07.tga"));
@@ -245,12 +250,14 @@ auto MCMissionResultsScreen::Init() -> int32_t
         // (The original loaded the pictures into the objects' own ports.)
         const auto makeScrollButton = [this](std::string picture, int32_t x, int32_t y)
         {
-            MCGuiOwned<MCGuiObject> button = MCMakeGui<MCGuiObject>();
-            button->SetDrawsLive();
-            button->Init(0, 0, 0xb, 0xb, {});
-            button->SetBackground(picture.data());
-            button->ShowGuiWindow(false);
-            AddChild(button);
+            MCGuiHandle<MCGuiObject> button = CreateChild<MCGuiObject>(
+                [&picture](MCGuiObject& made)
+                {
+                    made.SetDrawsLive();
+                    made.Init(0, 0, 0xb, 0xb, {});
+                    made.SetBackground(picture.data());
+                    made.ShowGuiWindow(false);
+                });
             button->MoveTo(x, y, false);
             return button;
         };
@@ -265,7 +272,7 @@ auto MCMissionResultsScreen::Init() -> int32_t
     return result;
 }
 
-auto MCMissionResultsScreen::Destroy() -> void
+auto MCMissionResultsScreen::OnDestroy() -> void
 {
     EventsToMissionResultsScreen = 0;
     _Results = {};
@@ -275,56 +282,12 @@ auto MCMissionResultsScreen::Destroy() -> void
     _BestPilotIcon.reset();
     _PilotIcons.clear();
     _CommanderLines.clear();
-    _MoveOnButton.reset();
-    _ScrollUpButton.reset();
-    _ScrollDownButton.reset();
-    _PilotSwitchButton.reset();
-
-    // The debriefing text box belongs to the tactical map; it is only taken off the screen.
-    if (const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.lock(); text != nullptr)
-    {
-        RemoveChild(*text);
-    }
-
-    MCGuiObject::Destroy();
-    GuiSystem().CursorHidden = false;
-
-    if (!_ScenarioEnded && Scenario() != nullptr)
-    {
-        _ScenarioEnded = true;
-        std::shared_ptr<MCMission> mission = Mission();
-        mission->EndScenario();
-
-        if (GlobalGameSegment == 0)
-        {
-            if (!mission->GameOver)
-            {
-                GamePaused = false;
-                mission->State = MCMissionState::Logistics;
-                return;
-            }
-
-            if (InDemo != 0)
-            {
-                GamePaused = false;
-                mission->CurrentMovie = 2;
-                mission->State = MCMissionState::FeatureScreen;
-                mission->NextState = MCMissionState::FeatureScreen;
-                return;
-            }
-
-            mission->CurrentMovie = 3;
-            mission->State = MCMissionState::PlayMovie;
-            mission->NextState = MCMissionState::PlayMovie;
-        }
-
-        GamePaused = false;
-    }
+    MCGuiObject::OnDestroy();
 }
 
 auto MCMissionResultsScreen::MouseWheel(int32_t steps, int32_t xPos, int32_t yPos) -> bool
 {
-    const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.lock();
+    const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.Lock();
 
     if (MultiPlayer() != nullptr || text == nullptr)
     {
@@ -354,7 +317,7 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
                 GuiSystem().Grab(weak_from_this());
                 _ScrollUpButton->ShowGuiWindow(true);
                 GuiSystem().AddTimer(weak_from_this(), ScrollDelayTimer, TacticalInterface()->ScrollStart, 0, 0, false);
-                _TextObject.lock()->ReceiveClick(-1, 0);
+                _TextObject.Lock()->ReceiveClick(-1, 0);
                 return;
             }
 
@@ -363,7 +326,7 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
                 GuiSystem().Grab(weak_from_this());
                 _ScrollDownButton->ShowGuiWindow(true);
                 GuiSystem().AddTimer(weak_from_this(), ScrollDelayTimer, TacticalInterface()->ScrollStart, 0, 0, false);
-                _TextObject.lock()->ReceiveClick(1, 0);
+                _TextObject.Lock()->ReceiveClick(1, 0);
                 return;
             }
 
@@ -371,7 +334,7 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
             {
                 // Original behaviour (OB-057): the line is picked from the cursor's screen y, not its window y, so the
                 // click lands 15 pixels (the window's y) further down the text.
-                _TextObject.lock()->ReceiveClick(0, event.Y - _ScrollBarRect.top);
+                _TextObject.Lock()->ReceiveClick(0, event.Y - _ScrollBarRect.top);
                 return;
             }
             break;
@@ -428,13 +391,13 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
 
             if (PtInRect(_ScrollUpRect, point))
             {
-                _TextObject.lock()->ReceiveClick(-1, 0);
+                _TextObject.Lock()->ReceiveClick(-1, 0);
                 return;
             }
 
             if (PtInRect(_ScrollDownRect, point))
             {
-                _TextObject.lock()->ReceiveClick(1, 0);
+                _TextObject.Lock()->ReceiveClick(1, 0);
                 return;
             }
             break;
@@ -447,6 +410,13 @@ auto MCMissionResultsScreen::HandleEvent(MCGuiEvent& event) -> void
 
 auto MCMissionResultsScreen::Display() -> void
 {
+    // Port: the screen is on the screen window, hidden, from the scenario's start (the original added it when it
+    // showed it), so it draws nothing until shown.
+    if (!ShowWindow)
+    {
+        return;
+    }
+
     const std::optional<MCColorTable> hazePalette = GamePalette().GetHazePalette(-7);
     MCScreenVertex vertices[4] = {};
     vertices[1].X = GuiSystem().Width() - 1;
@@ -656,7 +626,7 @@ auto MCMissionResultsScreen::StepPilots() -> void
 
 auto MCMissionResultsScreen::StepDebriefing() -> void
 {
-    const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.lock();
+    const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.Lock();
     text->ShowGuiWindow(true);
 
     if (text->TextBuffer.empty())
@@ -1048,7 +1018,8 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     _StepIndex = 0;
     _Step = MCResultsStep::ResourcePoints;
     _NextDrawTime = MouseTicks;
-    ScreenWindow()->AddChild(weak_from_this());
+    // Shown in front (the original added it to the screen here).
+    ShowGuiWindow(true);
     SetDepth(0x5f);
 
     // The move-on button's label: "mission failed" when the scenario (or the home side) lost.
@@ -1056,7 +1027,7 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     {
         if (ScenarioResult < 3)
         {
-            _MoveOnPort->Destroy();
+            _MoveOnPort = std::make_unique<MCGuiPort>();
             _MoveOnPort->Init(const_cast<char*>("mr_mf00.tga"));
             _MoveOnButton->SetUpPicture(const_cast<char*>("mr_mf01.tga"));
             _MoveOnButton->SetDownPicture(const_cast<char*>("mr_mf02.tga"));
@@ -1064,7 +1035,7 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     }
     else
     {
-        _MoveOnPort->Destroy();
+        _MoveOnPort = std::make_unique<MCGuiPort>();
         _MoveOnPort->Init(
             const_cast<char*>(HomeSideLost(ScenarioResult, HomeTeam()->Alignment) ? "mr_mf00.tga" : "mrm_ms00.tga"));
     }
@@ -1080,12 +1051,18 @@ auto MCMissionResultsScreen::Activate() -> int32_t
         _PilotIcons.resize(_Results.Pilots.size());
         _ShownResourcePoints = -1;
 
-        // Borrow the tactical map's text box for the debriefing.
+        // The debriefing shows the tactical map's salvage text. The original moved the map's box onto this screen; the
+        // screen makes its own box like it, with the map's text, and the map's box is hidden (it left the map).
         const std::shared_ptr<MCTacticalMap> tacMap = TacticalMap();
-        tacMap->RemoveChild(*tacMap->SalvageText);
-        const std::shared_ptr<MCGuiScrollTextObject> text = tacMap->SalvageText;
-        _TextObject = text;
-        AddChild(text);
+        const std::shared_ptr<MCGuiScrollTextObject> salvage = tacMap->SalvageText.Lock();
+        _TextObject = CreateChild<MCGuiScrollTextObject>(
+            [&salvage](MCGuiScrollTextObject& made)
+            {
+                made.Init(salvage->X(), salvage->Y(), salvage->Width(), salvage->Height(), {});
+                made.CopyTextFrom(*salvage);
+            });
+        salvage->ShowGuiWindow(false);
+        const std::shared_ptr<MCGuiScrollTextObject> text = _TextObject.Lock();
         text->MoveTo(10, 0x15b, false);
         text->Resize(0xc4, 0x59);
         text->ShowGuiWindow(false);
@@ -1145,6 +1122,5 @@ auto MCMissionResultsScreen::Activate() -> int32_t
     }
 
     SomethingOnFire = 0;
-    _ScenarioEnded = false;
     return 0;
 }

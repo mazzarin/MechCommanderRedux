@@ -1,12 +1,9 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "lib/MCOptionalRef.h"
 
 // Original source: mcx\logistics.cpp (InventoryList and its records).
-
-class MCCompInventoryBlock;
-class MCCompPurchaseBlock;
 
 /// <summary>
 /// One copy of a component in an inventory: where it sits and its state. The copies of one component type are the
@@ -30,13 +27,11 @@ struct MCLogInventoryStat
 
 /// <summary>
 /// A component type in an inventory: its master component, how many copies there are (the <see cref="Stats"/>) and
-/// the widgets that show it on the purchase and inventory screens.
+/// where the inventory lists it. The purchase and inventory screens' lists make their own rows for it.
 /// </summary>
 struct MCLogInventoryItem : std::enable_shared_from_this<MCLogInventoryItem>
 {
     MCLogInventoryItem();
-    /// <summary>Frees the purchase widget, then the inventory widget, as the original did.</summary>
-    ~MCLogInventoryItem();
     MCLogInventoryItem(const MCLogInventoryItem&) = delete;
     MCLogInventoryItem& operator=(const MCLogInventoryItem&) = delete;
 
@@ -59,10 +54,13 @@ struct MCLogInventoryItem : std::enable_shared_from_this<MCLogInventoryItem>
     std::string Description;
     /// <summary>The copies.</summary>
     std::vector<std::shared_ptr<MCLogInventoryStat>> Stats;
-    /// <summary>The row on the purchase screen (null for a unit's inventory).</summary>
-    MCGuiOwned<MCCompPurchaseBlock> PurchaseBlock;
-    /// <summary>The row on the inventory screens (null for a unit's inventory).</summary>
-    MCGuiOwned<MCCompInventoryBlock> InventoryBlock;
+    /// <summary>
+    /// The item's index in the spare components (set when its inventory row is made); <see
+    /// cref="MCLogistics::ReIndexInventory"/> gives out the rows in this order.
+    /// </summary>
+    int32_t InventoryIndex = 0;
+    /// <summary>The row of the spare components list the item is shown at (-1 = none: no copies left).</summary>
+    int32_t ListIndex = 0;
 };
 
 /// <summary>A list of components, from the highest master id down, each with its copies.</summary>
@@ -75,8 +73,11 @@ public:
     MCInventoryList(const MCInventoryList&) = delete;
     MCInventoryList& operator=(const MCInventoryList&) = delete;
 
-    /// <summary>Gives <paramref name="item"/> a new inventory row (owned by the item), and returns it.</summary>
-    static MCCompInventoryBlock& MakeInventoryBlock(MCLogInventoryItem& item);
+    /// <summary>
+    /// Lists <paramref name="item"/> as a spare component: it starts on the inventory list's first row until the
+    /// inventory is reindexed (as the original's new inventory block did; the lists make the rows now).
+    /// </summary>
+    static void ListAsSpare(MCLogInventoryItem& item);
 
     /// <summary>
     /// Loads the description of <paramref name="item"/>, or of the item at <paramref name="index"/> when it is null,
@@ -94,12 +95,13 @@ public:
     /// <summary>Adds <paramref name="count"/> to the count of the item with master id <paramref name="masterID"/> (not below 0).</summary>
     void AddCountToItem(int32_t count, int32_t masterID);
 
-    /// <summary>Frees every item, its copies and its widgets.</summary>
+    /// <summary>Frees every item and its copies.</summary>
     void Clear();
 
     /// <summary>
-    /// Adds copy <paramref name="stat"/> of component <paramref name="masterID"/>; a new item gets purchase and
-    /// inventory widgets when <paramref name="widgets"/> is set.
+    /// Adds copy <paramref name="stat"/> of component <paramref name="masterID"/>; a new item is listed (its inventory
+    /// index and first row, where the original made its purchase and inventory widgets) when
+    /// <paramref name="widgets"/> is set.
     /// </summary>
     /// <returns>The copy's stat id.</returns>
     int32_t AddItem(uint8_t masterID, std::shared_ptr<MCLogInventoryStat> stat, bool widgets);

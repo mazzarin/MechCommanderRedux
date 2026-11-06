@@ -41,7 +41,7 @@ namespace
         Solo = false;
         LastLogisticsMissionState = 0;
         GlobalLog()->LoadCampaign(startFile, ".pkk", false, false);
-        GlobalLog()->BriefingScreen->BriefingBox.reset();
+        GlobalLog()->BriefingScreen->HideBriefing();
         GlobalLog()->SetUpBriefingScreen(false);
         GlobalLog()->MainScreen->ShowGuiWindow(false);
     }

@@ -2,7 +2,7 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiObject.h"
 
-MCGuiOwned<MCGuiObject> FeatureScreen;
+MCGuiHandle<MCGuiObject> FeatureScreen;
 int FeatureScreenDone = 0;
 int EscapedSmackerMovie = 0;
 std::shared_ptr<MCGuiFont> SystemFont;

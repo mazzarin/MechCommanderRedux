@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "GuiTree.h"
 #include "TestGame.h"
 #include "fakes/MCManualClock.h"
 #include "engine/MCFont.h"
@@ -16,6 +17,7 @@
 #include "gui/MCGuiSystem.h"
 #include "gui/MCGuiTextObject.h"
 #include "gui/MCGuiTimerManager.h"
+#include "gui/MCListView.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCPacketFile.h"
 #include "main/MCGamePaths.h"
@@ -125,20 +127,19 @@ namespace
         std::vector<int32_t> Types;
     };
 
-    /// <summary>A new object of type <typeparamref name="T"/> at (x, y) with the given size, on <paramref name="parent"/>.</summary>
-    template <typename T>
-    MCGuiOwned<T> Make(int32_t x, int32_t y, int32_t width, int32_t height,
-                       std::shared_ptr<MCGuiObject> parent = ScreenWindow())
+    /// <summary>
+    /// A new object of type <typeparamref name="T"/> made on <paramref name="parent"/> at (x, y) with the given size (the
+    /// parent owns it).
+    /// </summary>
+    template <typename T> MCGuiHandle<T> Make(int32_t x, int32_t y, int32_t width, int32_t height, MCGuiObject& parent)
     {
-        MCGuiOwned<T> object = MCMakeGui<T>();
-        object->Init(x, y, width, height, {});
+        return MCGuiTree::MakeChild<T>(parent, x, y, width, height);
+    }
 
-        if (parent != nullptr)
-        {
-            parent->AddChild(object);
-        }
-
-        return object;
+    /// <summary>A new object of type <typeparamref name="T"/> made on the screen window at (x, y) with the given size.</summary>
+    template <typename T> MCGuiHandle<T> Make(int32_t x, int32_t y, int32_t width, int32_t height)
+    {
+        return Make<T>(x, y, width, height, *ScreenWindow());
     }
 
     /// <summary>Gives <paramref name="object"/> an event of <paramref name="type"/> at screen point (x, y).</summary>
@@ -176,41 +177,6 @@ namespace
 
         return lines;
     }
-
-    /// <summary>
-    /// Counts the failed asserts SDL logs while it lives (MCFatal's Assert), keeping them out of the log (the test
-    /// expects them); every other line is passed on.
-    /// </summary>
-    struct AssertCounter
-    {
-        AssertCounter()
-        {
-            SDL_GetLogOutputFunction(&Original, &OriginalData);
-            SDL_SetLogOutputFunction(Count, this);
-        }
-
-        ~AssertCounter() { SDL_SetLogOutputFunction(Original, OriginalData); }
-
-        AssertCounter(const AssertCounter&) = delete;
-        AssertCounter& operator=(const AssertCounter&) = delete;
-
-        static void SDLCALL Count(void* data, int category, SDL_LogPriority priority, const char* message)
-        {
-            auto& counter = *static_cast<AssertCounter*>(data);
-
-            if (std::string_view(message).starts_with("Assert failed"))
-            {
-                counter.Failed++;
-                return;
-            }
-
-            counter.Original(counter.OriginalData, category, priority, message);
-        }
-
-        SDL_LogOutputFunction Original = nullptr;
-        void* OriginalData = nullptr;
-        int32_t Failed = 0;
-    };
 }
 
 // Text fields
@@ -219,7 +185,7 @@ TEST_CASE("gui: a text field takes printable characters only while it has the ke
 {
     ControlScreen screen;
     auto parent = Make<MCTypeRecorder>(0, 0, 200, 100);
-    auto field = Make<MCGuiTextObject>(10, 10, 100, 20, parent);
+    auto field = Make<MCGuiTextObject>(10, 10, 100, 20, *parent);
 
     Type(*field, "x");
     CHECK_EQ(field->Text, std::string());
@@ -277,7 +243,7 @@ TEST_CASE("gui: a text field has no length limit, a read-only one ignores the ke
     auto locked = Make<MCGuiTextObject>(10, 40, 100, 20);
     locked->ReadOnly = true;
     Send(*locked, MCGuiEventType::LeftButtonDown, 15, 45);
-    CHECK(screen.Gui->TextObject().get() != locked.get());
+    CHECK(!(locked == screen.Gui->TextObject()));
     screen.Gui->SetText(locked);
     Type(*locked, "abc");
     CHECK_EQ(locked->Text, std::string());
@@ -378,7 +344,7 @@ TEST_CASE("gui: dragging below a list box scrolls it a line and selects the bott
     }
 
     Send(*list, MCGuiEventType::LeftButtonDown, 20, list->GlobalY() + 2);
-    REQUIRE(screen.Gui->GrabbedObject().get() == list.get());
+    REQUIRE(list == screen.Gui->GrabbedObject());
     Send(*list, MCGuiEventType::MouseMove, 20, list->GlobalY() + 40);
     CHECK_EQ(list->TopItem, 1);
     CHECK_EQ(list->SelectedItem, 3);
@@ -463,55 +429,17 @@ TEST_CASE("gui: a menu's items keep their letters and data when one before them 
     CHECK_EQ(menu->Items[42].Text.size(), 50u);
 }
 
-// Children
-
-/// <summary>
-/// An object let go with the children it keeps (a button bar's buttons) reports none left: they go with it, too late to
-/// leave its list, so their entries there are expired. A child someone else still keeps is reported.
-/// </summary>
-TEST_CASE("gui: an object let go with its own children reports none left, but reports a child still kept")
-{
-    ControlScreen screen;
-    const AssertCounter asserts;
-
-    {
-        auto bar = Make<MCGuiWindowBar>(0, 0, 10, 10);
-
-        for (int32_t i = 0; i < 3; i++)
-        {
-            auto button = MCMakeGui<MCGuiButton>();
-            button->Init(0, 0, 4, 4, {});
-            bar->AddButton(std::move(button));
-        }
-
-        REQUIRE_EQ(bar->NumberOfChildren(), 3);
-    }
-
-    CHECK_EQ(asserts.Failed, 0);
-    std::shared_ptr<MCGuiObject> kept;
-
-    {
-        auto parent = Make<MCTypeRecorder>(0, 0, 10, 10);
-        kept = Make<MCGuiTextObject>(0, 0, 4, 4, parent);
-    }
-
-    CHECK(asserts.Failed > 0);
-}
-
 // Button bars
 
 TEST_CASE("gui: a button bar lays its buttons out in rows (or columns) of its length and sizes itself to them")
 {
     ControlScreen screen;
     auto bar = Make<MCGuiWindowBar>(0, 0, 10, 10);
-    std::vector<std::shared_ptr<MCGuiButton>> buttons;
+    std::vector<MCGuiHandle<MCGuiButton>> buttons;
 
     for (int32_t i = 0; i < 10; i++)
     {
-        auto button = MCMakeGui<MCGuiButton>();
-        button->Init(0, 0, 4, 4, {});
-        buttons.push_back(button);
-        bar->AddButton(std::move(button));
+        buttons.push_back(bar->AddButton([](MCGuiButton& made) { made.Init(0, 0, 4, 4, {}); }));
     }
 
     bar->SetMaxLength(4);
@@ -533,7 +461,9 @@ TEST_CASE("gui: a button bar lays its buttons out in rows (or columns) of its le
     CHECK(bar->RemoveButton(0));
     CHECK(!bar->RemoveButton(9));
     CHECK_EQ(bar->NumButtons(), 9);
-    CHECK(bar->GetButton(0) == buttons[1]);
+    CHECK(bar->GetButton(0) == buttons[1].Lock());
+    // The removed button went with its place on the bar.
+    CHECK(buttons[0] == nullptr);
     CHECK_EQ(buttons[1]->X(), 0);
     CHECK_EQ(buttons[5]->X(), 0);
     CHECK_EQ(buttons[5]->Y(), 32);
@@ -545,24 +475,24 @@ TEST_CASE("gui: a button bar takes more than 25 buttons, and removing from a ful
     ControlScreen screen;
     auto bar = Make<MCGuiWindowBar>(0, 0, 10, 10);
 
+    const auto makeButton = [](MCGuiButton& made) { made.Init(0, 0, 4, 4, {}); };
+
     for (int32_t i = 0; i < 30; i++)
     {
-        auto button = MCMakeGui<MCGuiButton>();
-        button->Init(0, 0, 4, 4, {});
-        bar->AddButton(std::move(button));
+        bar->AddButton(makeButton);
     }
 
     CHECK_EQ(bar->NumButtons(), 30);
     CHECK(bar->RemoveButton(29));
     CHECK(bar->Horizontal);
 
-    // Insert in the middle.
-    auto inserted = MCMakeGui<MCGuiButton>();
-    inserted->Init(0, 0, 4, 4, {});
-    const std::shared_ptr<MCGuiButton> raw = inserted;
-    CHECK(bar->InsertButton(std::move(inserted), 3));
-    CHECK(bar->GetButton(3) == raw);
-    CHECK_EQ(raw->X(), 96);
+    // Insert in the middle; past the end makes nothing.
+    const MCGuiHandle<MCGuiButton> inserted = bar->InsertButton(3, makeButton);
+    REQUIRE(inserted != nullptr);
+    CHECK(bar->GetButton(3) == inserted.Lock());
+    CHECK_EQ(inserted->X(), 96);
+    CHECK(bar->InsertButton(31, makeButton) == nullptr);
+    CHECK_EQ(bar->NumButtons(), 30);
 }
 
 // Scrolling text
@@ -700,7 +630,7 @@ TEST_CASE("game: a scroll bar's arrows step a line, its track a page of 10, with
     }
 
     auto parent = Make<MCTypeRecorder>(0, 0, 200, 200);
-    auto bar = Make<MCGuiScrollBar>(10, 10, 0, 100, parent);
+    auto bar = Make<MCGuiScrollBar>(10, 10, 0, 100, *parent);
     CHECK_EQ(bar->Width(), 0x12);
     bar->SetScrollMax(20);
 
@@ -883,8 +813,7 @@ TEST_CASE("game: a scroll pane's position is a percentage of its content, and th
     }
 
     // A pane 0x80 x 0x60 showing content four times its height.
-    auto pane = MCMakeGui<MCScrollPane>();
-    pane->Init(0x80, 0x60, 100, 100, std::string_view());
+    auto pane = MCGuiTree::MakeRoot<MCScrollPane>(0x80, 0x60, 100, 100);
     auto content = std::make_shared<MCLogPort>();
     content->Init(0x80 - 13, 0x180);
     pane->SetDisplayPort(std::move(content), true);
@@ -942,8 +871,7 @@ TEST_CASE("game: a scroll pane shares its content: content no one else keeps goe
         bool& Destroyed;
     };
 
-    auto pane = MCMakeGui<MCScrollPane>();
-    pane->Init(0x80, 0x60, 100, 100, std::string_view());
+    auto pane = MCGuiTree::MakeRoot<MCScrollPane>(0x80, 0x60, 100, 100);
     REQUIRE(pane->ContentPort != nullptr);
 
     bool givenGone = false;
@@ -971,6 +899,247 @@ TEST_CASE("game: a scroll pane shares its content: content no one else keeps goe
     CHECK(!keptGone);
 }
 
+namespace
+{
+    /// <summary>An item of a test list: a key it is drawn with, whether it gets a row and whether its row takes clicks.</summary>
+    struct TestListItem
+    {
+        int32_t Key = 0;
+        bool Listed = true;
+        bool Clickable = true;
+    };
+
+    /// <summary>What the test rows drew: each row's item key and its top, in drawing order.</summary>
+    std::vector<std::pair<int32_t, int32_t>> DrawnRows;
+
+    /// <summary>A test list's row: 0x40 x 0x10, it notes what it draws and how often it was refreshed.</summary>
+    class ListItemRow : public MCListRow
+    {
+    public:
+        void Init(std::shared_ptr<TestListItem> item)
+        {
+            _Item = std::move(item);
+            InitWithoutPort(0, 0, 0x40, 0x10);
+        }
+
+        void DrawRow(MCLogPort&, int32_t top) override { DrawnRows.emplace_back(_Item.lock()->Key, top); }
+        void OnRefresh() override { ++Refreshes; }
+
+        /// <summary>How many refreshes placed the row.</summary>
+        int32_t Refreshes = 0;
+
+    private:
+        std::weak_ptr<TestListItem> _Item;
+    };
+
+    /// <summary>A list over <paramref name="items"/>: the listed ones, by key; the row height 0x10, at least 0x30 tall.</summary>
+    void ShowItems(MCListView& list, std::vector<std::shared_ptr<TestListItem>>& items, bool resetScroll = true)
+    {
+        MCListSource<TestListItem> source;
+        source.Items = [&items]() -> const std::vector<std::shared_ptr<TestListItem>>& { return items; };
+        source.Filter = [](const TestListItem& item) { return item.Listed; };
+        source.Sort = [](const TestListItem& first, const TestListItem& second) { return first.Key < second.Key; };
+        source.Clickable = [](const TestListItem& item) { return item.Clickable; };
+        source.MakeRow = [](MCListView& view, std::shared_ptr<TestListItem> item)
+        { return view.CreateRow<ListItemRow>([&](ListItemRow& row) { row.Init(item); }); };
+        list.Show(std::move(source), MCListLayout{0x10, 0x40, 0x30, 0x10}, resetScroll);
+    }
+
+    /// <summary>The key of the item each of <paramref name="list"/>'s rows shows, in order.</summary>
+    std::vector<int32_t> RowKeys(const MCListView& list)
+    {
+        std::vector<int32_t> keys;
+
+        for (const MCGuiHandle<MCListRow>& row : list.Rows())
+        {
+            keys.push_back(std::static_pointer_cast<TestListItem>(row->ListItem().lock())->Key);
+        }
+
+        return keys;
+    }
+
+    /// <summary>Draws <paramref name="list"/>'s content into a picture; returns what the rows drew.</summary>
+    std::vector<std::pair<int32_t, int32_t>> DrawList(MCListView& list)
+    {
+        DrawnRows.clear();
+        MCLogPort picture;
+        picture.Init(0x40, 0x30);
+        list.DrawContentTo(picture.Frame(), 0, 0);
+        return std::exchange(DrawnRows, {});
+    }
+}
+
+TEST_CASE("game: a list view makes a row per listed item, in sort order, each placed at its row")
+{
+    ControlScreen screen;
+
+    if (!screen.LoadRetail())
+    {
+        return;
+    }
+
+    auto list = MCGuiTree::MakeRoot<MCListView>(0x4d, 0x30, 100, 100);
+    std::vector<std::shared_ptr<TestListItem>> items = {
+        std::make_shared<TestListItem>(TestListItem{3}), std::make_shared<TestListItem>(TestListItem{1}),
+        std::make_shared<TestListItem>(TestListItem{2, false}), std::make_shared<TestListItem>(TestListItem{0})};
+    ShowItems(*list, items);
+
+    // Item 2 isn't listed; the rest come by key, a row height apart, as children of the list.
+    CHECK((RowKeys(*list) == std::vector<int32_t>{0, 1, 3}));
+    REQUIRE_EQ(list->NumberOfChildren(), 3);
+
+    for (size_t index = 0; index < list->Rows().size(); ++index)
+    {
+        MCTest::Scope row(std::format("row {}", index));
+        const std::shared_ptr<MCListRow> shown = list->Rows()[index].Lock();
+        CHECK_EQ(shown->Y(), static_cast<int32_t>(index) * 0x10);
+        CHECK(shown->IsShowing());
+        CHECK(shown->ParentObject() == list.Pin());
+    }
+
+    // The content is as tall as the rows, or the smallest height: three rows fill 0x30, five need 0x50.
+    CHECK_EQ(list->ContentPort->Height(), 0x30);
+    items.push_back(std::make_shared<TestListItem>(TestListItem{4}));
+    items.push_back(std::make_shared<TestListItem>(TestListItem{5}));
+    list->Refresh(true);
+    CHECK_EQ(list->ContentPort->Height(), 0x50);
+    CHECK((RowKeys(*list) == std::vector<int32_t>{0, 1, 3, 4, 5}));
+
+    // A row is found by its item.
+    CHECK(list->RowOf<ListItemRow>(*items[1]) == list->Rows()[1].Lock());
+    CHECK(list->RowOf<ListItemRow>(*items[2]) == nullptr);
+}
+
+TEST_CASE("game: a list view's refresh keeps the rows of items still there and destroys the rows of items gone")
+{
+    ControlScreen screen;
+
+    if (!screen.LoadRetail())
+    {
+        return;
+    }
+
+    auto list = MCGuiTree::MakeRoot<MCListView>(0x4d, 0x30, 100, 100);
+    std::vector<std::shared_ptr<TestListItem>> items = {std::make_shared<TestListItem>(TestListItem{0}),
+                                                        std::make_shared<TestListItem>(TestListItem{1}),
+                                                        std::make_shared<TestListItem>(TestListItem{2})};
+    ShowItems(*list, items);
+    const MCGuiHandle<ListItemRow> kept = list->RowOf<ListItemRow>(*items[2]);
+    const MCGuiHandle<ListItemRow> gone = list->RowOf<ListItemRow>(*items[1]);
+    REQUIRE(kept != nullptr && gone != nullptr);
+
+    // Item 1 leaves, item 2 moves to the front, a new one comes in.
+    items[2]->Key = -1;
+    items.erase(items.begin() + 1);
+    items.push_back(std::make_shared<TestListItem>(TestListItem{7}));
+    list->Refresh(true);
+
+    CHECK((RowKeys(*list) == std::vector<int32_t>{-1, 0, 7}));
+    CHECK(gone == nullptr);
+    REQUIRE(kept != nullptr);
+    CHECK(list->Rows()[0].Lock() == kept.Lock());
+    CHECK_EQ(kept->Y(), 0);
+    CHECK_EQ(kept->Refreshes, 2);
+    CHECK_EQ(list->NumberOfChildren(), 3);
+
+    // An item filtered out loses its row the same way.
+    items[0]->Listed = false;
+    list->Refresh(true);
+    CHECK((RowKeys(*list) == std::vector<int32_t>{-1, 7}));
+
+    // Clear destroys every row.
+    list->Clear();
+    CHECK(kept == nullptr);
+    CHECK_EQ(list->NumberOfChildren(), 0);
+    CHECK(list->Rows().empty());
+}
+
+TEST_CASE("game: a list view draws every row from the source each frame; a row that takes no clicks is drawn, hidden")
+{
+    ControlScreen screen;
+
+    if (!screen.LoadRetail())
+    {
+        return;
+    }
+
+    auto list = MCGuiTree::MakeRoot<MCListView>(0x4d, 0x30, 100, 100);
+    std::vector<std::shared_ptr<TestListItem>> items = {std::make_shared<TestListItem>(TestListItem{0}),
+                                                        std::make_shared<TestListItem>(TestListItem{1, true, false}),
+                                                        std::make_shared<TestListItem>(TestListItem{2})};
+    ShowItems(*list, items);
+
+    // Every row is drawn at its place; the one that takes no clicks is hidden, so a click passes over it.
+    using Drawn = std::vector<std::pair<int32_t, int32_t>>;
+    CHECK((DrawList(*list) == Drawn{{0, 0}, {1, 0x10}, {2, 0x20}}));
+    CHECK(list->Rows()[0]->IsShowing());
+    CHECK(!list->Rows()[1]->IsShowing());
+
+    // A change in the model shows in the next frame, before a refresh: the order is the source's now and an item gone
+    // isn't drawn. An item with no row yet takes its place in the order, but nothing draws it.
+    items[0]->Key = 5;
+    items.erase(items.begin() + 1);
+    items.push_back(std::make_shared<TestListItem>(TestListItem{3}));
+    CHECK((DrawList(*list) == Drawn{{2, 0}, {5, 0x20}}));
+
+    // Scrolled to the end, the last row is drawn and the rows above the view aren't (the percentage can leave the
+    // offset a pixel short of a row, which shows a line of the row above).
+    items.push_back(std::make_shared<TestListItem>(TestListItem{4}));
+    list->Refresh(true);
+    CHECK_EQ(list->ContentPort->Height(), 0x40);
+    list->SetScrollPos(list->MaxScroll);
+    const int32_t offset = list->GetScrollOffset();
+    CHECK(offset == 0xf || offset == 0x10);
+    const Drawn drawn = DrawList(*list);
+    CHECK((drawn.back() == std::pair<int32_t, int32_t>{5, 0x30}));
+    CHECK_EQ(drawn.size(), offset == 0x10 ? size_t{3} : size_t{4});
+}
+
+TEST_CASE("game: a list view keeps a dragged row whose item leaves, hidden, until a refresh after the drag")
+{
+    ControlScreen screen;
+
+    if (!screen.LoadRetail())
+    {
+        return;
+    }
+
+    auto list = MCGuiTree::MakeRoot<MCListView>(0x4d, 0x30, 100, 100);
+    std::vector<std::shared_ptr<TestListItem>> items = {std::make_shared<TestListItem>(TestListItem{0}),
+                                                        std::make_shared<TestListItem>(TestListItem{1})};
+    ShowItems(*list, items);
+    const MCGuiHandle<ListItemRow> dragged = list->RowOf<ListItemRow>(*items[1]);
+    REQUIRE(dragged != nullptr);
+    screen.Gui->Grab(dragged);
+
+    // Picked up, the item leaves the list (as a pilot dragged off the inventory moves to the assigned list): its
+    // row lives on, hidden and out of the order, so the drag can end on it.
+    const std::shared_ptr<TestListItem> carried = items[1];
+    items.pop_back();
+    list->Refresh(false);
+    REQUIRE(dragged != nullptr);
+    CHECK(!dragged->IsShowing());
+    CHECK(list->IsRow(*dragged));
+    CHECK((RowKeys(*list) == std::vector<int32_t>{0}));
+    CHECK(list->RowOf<ListItemRow>(*carried) == dragged.Lock());
+
+    // Dropped back: its item returns, and the same row is in the order again.
+    items.push_back(carried);
+    list->Refresh(false);
+    CHECK((RowKeys(*list) == std::vector<int32_t>{0, 1}));
+    CHECK(list->Rows()[1].Lock() == dragged.Lock());
+    CHECK(dragged->IsShowing());
+
+    // Taken away again and let go: the first refresh after the drag destroys it.
+    items.pop_back();
+    list->Refresh(false);
+    REQUIRE(dragged != nullptr);
+    screen.Gui->Release();
+    list->Refresh(false);
+    CHECK(dragged == nullptr);
+    CHECK_EQ(list->NumberOfChildren(), 1);
+}
+
 TEST_CASE("game: a help tag sizes itself to its widest line and its line count")
 {
     ControlScreen screen;
@@ -986,8 +1155,7 @@ TEST_CASE("game: a help tag sizes itself to its widest line and its line count")
     const std::shared_ptr<MCFont> font = LineFont();
     REQUIRE(font != nullptr);
 
-    auto tag = MCMakeGui<MCFloatHelp>();
-    tag->Init(0, 0, 10, 10, {});
+    auto tag = MCGuiTree::MakeRoot<MCFloatHelp>(0, 0, 10, 10);
     tag->SetHelpText("Atlas AS7-D\nCaptain");
     font->Scale = 1.0f;
     font->Scaled = 0;

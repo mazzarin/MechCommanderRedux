@@ -17,9 +17,9 @@
 namespace
 {
     /// <summary>Loads one of the badge's images (fatal when it is missing).</summary>
-    MCGuiOwned<MCGuiPort> LoadLanceImage(const std::string& name, std::string_view failure)
+    std::unique_ptr<MCGuiPort> LoadLanceImage(const std::string& name, std::string_view failure)
     {
-        auto image = MCMakeGui<MCGuiPort>();
+        auto image = std::make_unique<MCGuiPort>();
         Assert(image->Init(const_cast<char*>(name.c_str())) == 0, 0, failure);
         return image;
     }
@@ -45,13 +45,14 @@ auto MCLanceIcon::Init(int16_t lanceNumber) -> int32_t
     return result;
 }
 
-auto MCLanceIcon::Destroy() -> void
+auto MCLanceIcon::OnDestroy() -> void
 {
     NumberImage.reset();
     FirstLinkImage.reset();
     ShortLinkImage.reset();
     LongLinkImage.reset();
     LastLinkImage.reset();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCLanceIcon::Display() -> void
@@ -164,7 +165,7 @@ auto MCLanceIcon::Enter() -> void
     {
         // The lance's movers, by their place in it: an active button's mover past the twelfth would have no tag.
         const std::shared_ptr<MCFloatHelp> tag = static_cast<uint8_t>(i) < iface->FloatingTags.size()
-                                                     ? iface->FloatingTags[static_cast<uint8_t>(i)]
+                                                     ? iface->FloatingTags[static_cast<uint8_t>(i)].Lock()
                                                      : nullptr;
         const std::shared_ptr<MCMover> member = Group.lock()->GetMover(i);
 
@@ -200,7 +201,7 @@ auto MCLanceIcon::ShowTest() -> void
 
 auto MCLanceIcon::GetNumActiveMovers() const -> int32_t
 {
-    return static_cast<int32_t>(std::ranges::count_if(TacticalInterface()->MechBar->Buttons,
+    return static_cast<int32_t>(std::ranges::count_if(TacticalInterface()->MechBar->Buttons(),
                                                       [this](const std::shared_ptr<MCFriendlyMechIcon>& button)
                                                       { return button->Lance == LanceId && button->Active; }));
 }

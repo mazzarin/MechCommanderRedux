@@ -96,7 +96,7 @@ TEST_CASE_ISOLATED("game: the debug console opens on Enter with -debug and blows
     DebugOn = true;
     MCScreenInput::RealKey(SDL_SCANCODE_RETURN);
     REQUIRE(GuiSystem().Console != nullptr);
-    CHECK(GuiSystem().TextObject() == GuiSystem().Console);
+    CHECK(GuiSystem().TextObject() == GuiSystem().Console.Lock());
     Type("destroyarm left");
     CHECK_EQ(GuiSystem().Console->Text, std::string("destroyarm left"));
     MCScreenInput::RealKey(SDL_SCANCODE_ESCAPE);

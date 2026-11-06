@@ -123,6 +123,19 @@ auto MCGuiTimerManager::RemoveTimer(const MCGuiObject& target, int16_t id) -> vo
     RemoveTimersOf(MCWeakSelf(target), id);
 }
 
+auto MCGuiTimerManager::HandTimersOver(const MCGuiObject& from, const std::weak_ptr<MCGuiObject>& to) -> void
+{
+    const auto source = MCWeakSelf(from);
+
+    for (const std::shared_ptr<MCGuiTimer>& timer : _Timers)
+    {
+        if (MCSameObject(timer->Target, source))
+        {
+            timer->Target = to;
+        }
+    }
+}
+
 auto MCGuiTimerManager::RemoveTimer(int32_t index) -> void
 {
     if (index < 0 || index >= NumTimers())

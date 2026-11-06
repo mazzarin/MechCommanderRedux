@@ -18,7 +18,7 @@ auto CloseListOnMousedown(MCGuiObject& obj, MCGuiEvent& event) -> void
 
 MCGuiComboBox::~MCGuiComboBox()
 {
-    MCGuiComboBox::Destroy();
+    Destroy();
 }
 
 auto MCGuiComboBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) -> int32_t
@@ -29,38 +29,33 @@ auto MCGuiComboBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heig
     }
 
     // The original uses each new part unchecked.
-    ListBox = MCMakeGui<MCGuiListBox>();
-    ListBox->Init(10, 10, width, height, {});
-    ListBox->ShowGuiWindow(false);
-    AddChild(ListBox);
+    ListBox = CreateChild<MCGuiListBox>(
+        [&](MCGuiListBox& made)
+        {
+            made.Init(10, 10, width, height, {});
+            made.ShowGuiWindow(false);
+        });
     ListBox->MoveTo(2, height + 2);
     ListBox->SetEventRoutine(CloseListOnMousedown);
 
     // The drop button is sized (height, width): its art sets the real size.
-    DropButton = MCMakeGui<MCGuiToolButton>();
-    DropButton->Init(10, 10, height, width, {});
-    DropButton->SetUpPicture(0xe);
-    DropButton->SetDownPicture(0xf);
-    DropButton->Callback().SetMessage(weak_from_this(), ToggleList);
-    AddChild(DropButton);
+    DropButton = CreateChild<MCGuiToolButton>(
+        [&](MCGuiToolButton& made)
+        {
+            made.Init(10, 10, height, width, {});
+            made.SetUpPicture(0xe);
+            made.SetDownPicture(0xf);
+            made.Callback().SetMessage(weak_from_this(), ToggleList);
+        });
     const int32_t buttonWidth = DropButton->Width();
     DropButton->MoveTo(Width() - (buttonWidth + 2), 2);
 
-    TextField = MCMakeGui<MCGuiTextObject>();
-    TextField->Init(10, 10, (width - (buttonWidth + 2)) - 2, height - 4, {});
-    AddChild(TextField);
+    TextField = CreateChild<MCGuiTextObject>([&](MCGuiTextObject& made)
+                                             { made.Init(10, 10, (width - (buttonWidth + 2)) - 2, height - 4, {}); });
     TextField->MoveTo(2, 2);
     TextField->ReadOnly = true;
     SetBackColor(3);
     return 0;
-}
-
-auto MCGuiComboBox::Destroy() -> void
-{
-    TextField.reset();
-    ListBox.reset();
-    DropButton.reset();
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiComboBox::HandleEvent(MCGuiEvent& event) -> void

@@ -31,10 +31,7 @@ namespace
 auto MCPurchaseScreen::Init() -> void
 {
     ChatBlinking = false;
-    PurMechPort.reset();
-    PurPilotPort.reset();
-    PurCompPort.reset();
-    PurVehiclePort.reset();
+    StoreLayouts = {};
     const int32_t result = MCLogObject::Init(0, 0, 0x280, 0x1e0);
     Assert(result == 0, static_cast<uint32_t>(result), "Unable to init purchase screen");
     // The original loaded the background (lspbk00) as the screen's picture and pasted the mech inventory header into
@@ -43,7 +40,6 @@ auto MCPurchaseScreen::Init() -> void
     Info.Header = 0;
     MakePanes(true);
     ShowGuiWindow(false);
-    ScreenWindow()->AddChild(weak_from_this());
 
     auto loadTab = [](std::string_view name)
     {
@@ -58,19 +54,14 @@ auto MCPurchaseScreen::Init() -> void
     VehicleTabPort = loadTab("lspbiv00.tga");
 }
 
-auto MCPurchaseScreen::Destroy() -> void
+auto MCPurchaseScreen::OnDestroy() -> void
 {
-    ScreenWindow()->RemoveChild(*this);
     MechTabPort.reset();
     PilotTabPort.reset();
     CompTabPort.reset();
     VehicleTabPort.reset();
-    PurMechPort.reset();
-    PurPilotPort.reset();
-    PurCompPort.reset();
-    PurVehiclePort.reset();
     FreePanes();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCPurchaseScreen::DrawBackground() -> void

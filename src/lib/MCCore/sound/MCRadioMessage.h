@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "sound/MCRadio.h"
 
 class MCGuiSmackerWindow;
@@ -43,7 +43,7 @@ struct MCRadioMessage
     /// <summary>The turn it was queued.</summary>
     int32_t TurnQueued = 0;
     /// <summary>The pilot's video window, if the message has a movie.</summary>
-    MCGuiOwned<MCGuiSmackerWindow> MovieWindow;
+    MCGuiHandle<MCGuiSmackerWindow> MovieWindow;
     /// <summary>The open Smacker video, until <see cref="MovieWindow"/> starts it.</summary>
     std::unique_ptr<MCSmackTag> Movie;
     /// <summary>The message type's priority: lower plays first.</summary>

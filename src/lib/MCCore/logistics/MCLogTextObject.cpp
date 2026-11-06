@@ -12,17 +12,12 @@ namespace
     constexpr int32_t BlinkTimer = 0;
 }
 
-MCLogTextObject::~MCLogTextObject()
+auto MCLogTextObject::OnDestroy() -> void
 {
-    MCLogTextObject::Destroy();
-}
-
-auto MCLogTextObject::Destroy() -> void
-{
-    MCLogObject::Destroy();
     BufferSize = 0;
     Buffer.clear();
     OriginalText.clear();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogTextObject::Text() const -> std::string_view

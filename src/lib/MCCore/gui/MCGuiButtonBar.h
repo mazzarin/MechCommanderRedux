@@ -17,7 +17,7 @@ struct MCGuiButtonLayout
     int32_t ButtonHeight = 32;
 
     /// <summary>Sizes <paramref name="bar"/> to <paramref name="buttons"/> and lays them out.</summary>
-    template <typename TButton> void LayOut(MCGuiObject& bar, const std::vector<MCGuiOwned<TButton>>& buttons) const;
+    template <typename TButton> void LayOut(MCGuiObject& bar, const std::vector<MCGuiHandle<TButton>>& buttons) const;
 };
 
 /// <summary>A title window (without the close button) holding tool buttons in rows; the bar sizes itself to them.</summary>
@@ -29,10 +29,22 @@ class MCGuiToolBar
 public:
     /// <summary>A title window without the close button, 8 buttons to a row.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
 
-    /// <summary>Adds <paramref name="button"/> at the end (the bar owns it) and lays the bar out.</summary>
-    void AddButton(MCGuiOwned<MCGuiToolButton> button);
+    /// <summary>
+    /// Makes a <typeparamref name="TButton"/> on the bar, set up by <paramref name="setup"/> (its <c>Init</c>), adds it
+    /// at the end and lays the bar out.
+    /// </summary>
+    /// <returns>A handle to the button (the bar owns it).</returns>
+    template <typename TButton = MCGuiToolButton, typename Setup>
+        requires std::derived_from<TButton, MCGuiToolButton>
+    MCGuiHandle<TButton> AddButton(Setup&& setup)
+    {
+        MCGuiHandle<TButton> button = CreateChild<TButton>(std::forward<Setup>(setup));
+        Buttons.emplace_back(button);
+        PlaceButtons();
+        return button;
+    }
+
     /// <summary>Removes and destroys button <paramref name="index"/>.</summary>
     /// <returns>Whether <paramref name="index"/> was a button.</returns>
     bool RemoveButton(int32_t index);
@@ -51,8 +63,8 @@ public:
     /// <summary>The number of buttons.</summary>
     int32_t NumButtons() const { return static_cast<int32_t>(Buttons.size()); }
 
-    /// <summary>The buttons, in layout order.</summary>
-    std::vector<MCGuiOwned<MCGuiToolButton>> Buttons;
+    /// <summary>The buttons (the bar's children), in layout order.</summary>
+    std::vector<MCGuiHandle<MCGuiToolButton>> Buttons;
 };
 
 /// <summary>A frameless bar of buttons, laid out like <see cref="MCGuiToolBar"/>.</summary>
@@ -67,13 +79,36 @@ public:
 
     /// <summary>Back colour 0, 8 buttons to a row.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
 
-    /// <summary>Inserts <paramref name="button"/> before button <paramref name="index"/> (the bar owns it).</summary>
-    /// <returns>Whether <paramref name="index"/> was at most the button count.</returns>
-    bool InsertButton(MCGuiOwned<MCGuiButton> button, int32_t index);
-    /// <summary>Adds <paramref name="button"/> at the end (the bar owns it) and lays the bar out.</summary>
-    void AddButton(MCGuiOwned<MCGuiButton> button);
+    /// <summary>
+    /// Makes a <typeparamref name="TButton"/> on the bar, set up by <paramref name="setup"/> (its <c>Init</c>), puts
+    /// it before button <paramref name="index"/> and lays the bar out. Nothing is made when <paramref name="index"/> is
+    /// past the button count.
+    /// </summary>
+    /// <returns>A handle to the button (the bar owns it), or an empty one.</returns>
+    template <typename TButton = MCGuiButton, typename Setup>
+        requires std::derived_from<TButton, MCGuiButton>
+    MCGuiHandle<TButton> InsertButton(int32_t index, Setup&& setup)
+    {
+        if (index < 0 || index > NumButtons())
+        {
+            return {};
+        }
+
+        MCGuiHandle<TButton> button = CreateChild<TButton>(std::forward<Setup>(setup));
+        Buttons.emplace(Buttons.begin() + index, button);
+        PlaceButtons();
+        return button;
+    }
+
+    /// <summary>Like <see cref="InsertButton"/>, at the end.</summary>
+    template <typename TButton = MCGuiButton, typename Setup>
+        requires std::derived_from<TButton, MCGuiButton>
+    MCGuiHandle<TButton> AddButton(Setup&& setup)
+    {
+        return InsertButton<TButton>(NumButtons(), std::forward<Setup>(setup));
+    }
+
     /// <summary>Removes and destroys button <paramref name="index"/>.</summary>
     /// <returns>Whether <paramref name="index"/> was a button.</returns>
     bool RemoveButton(int32_t index);
@@ -90,6 +125,6 @@ public:
     /// <summary>The number of buttons.</summary>
     int32_t NumButtons() const { return static_cast<int32_t>(Buttons.size()); }
 
-    /// <summary>The buttons, in layout order.</summary>
-    std::vector<MCGuiOwned<MCGuiButton>> Buttons;
+    /// <summary>The buttons (the bar's children), in layout order.</summary>
+    std::vector<MCGuiHandle<MCGuiButton>> Buttons;
 };

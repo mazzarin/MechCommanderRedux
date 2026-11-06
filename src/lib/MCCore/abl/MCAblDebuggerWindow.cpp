@@ -2,13 +2,6 @@
 #include "abl/MCAblDebuggerWindow.h"
 #include "gui/MCGuiTextObject.h"
 
-MCAblDebuggerWindow::~MCAblDebuggerWindow()
-{
-    _Input.reset();
-    _Output.reset();
-    MCGuiTitleWindow::Destroy();
-}
-
 auto MCAblDebuggerWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name)
     -> int32_t
 {
@@ -21,35 +14,36 @@ auto MCAblDebuggerWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_
 
     SetBackColor(10);
 
-    _Output = MCMakeGui<MCScrollingTextWindow>();
-    err = _Output->Init(0, 0, width, height - 40, "ABL Out");
+    const std::expected<MCGuiHandle<MCScrollingTextWindow>, int32_t> output = TryCreateChild<MCScrollingTextWindow>(
+        [&](MCScrollingTextWindow& made) { return made.Init(0, 0, width, height - 40, "ABL Out"); });
 
-    if (err != 0)
+    if (!output.has_value())
     {
-        return err;
+        return output.error();
     }
 
-    AddChild(_Output);
+    _Output = *output;
+    const std::expected<MCGuiHandle<MCGuiTextObject>, int32_t> input = TryCreateChild<MCGuiTextObject>(
+        [this](MCGuiTextObject& made)
+        {
+            const int32_t result = made.Init(0, Height() - 36, 260, 36, {});
 
-    _Input = MCMakeGui<MCGuiTextObject>();
-    err = _Input->Init(0, Height() - 36, 260, 36, {});
+            if (result == 0)
+            {
+                made.SetText(const_cast<char*>("\"?\" for help"));
+            }
 
-    if (err != 0)
+            return result;
+        });
+
+    if (!input.has_value())
     {
-        return err;
+        return input.error();
     }
 
-    _Input->SetText(const_cast<char*>("\"?\" for help"));
-    AddChild(_Input);
+    _Input = *input;
     Draw();
     return 0;
-}
-
-auto MCAblDebuggerWindow::Destroy() -> void
-{
-    _Input.reset();
-    _Output.reset();
-    MCGuiTitleWindow::Destroy();
 }
 
 auto MCAblDebuggerWindow::Resize(int32_t width, int32_t height) -> void

@@ -461,7 +461,7 @@ auto MCLogistics::DrawBodyLoc(std::span<const uint8_t> shapes, int32_t location,
     DrawDiagram(shapes, location, state, port, xPos, yPos);
 }
 
-auto MCLogistics::DrawPilotSkillBar(MCLogWarrior& warrior, int32_t skill, int32_t xPos, int32_t yPos, int32_t row,
+auto MCLogistics::DrawPilotSkillBar(const MCLogWarrior& warrior, int32_t skill, int32_t xPos, int32_t yPos, int32_t row,
                                     int32_t width, int32_t rowHeight, MCLogPort& port) -> void
 {
     DrawPilotSkillBar(warrior.Skills[skill], xPos, yPos, row, width, rowHeight, port);

@@ -268,7 +268,7 @@ auto MCTacticalInterface::HandleMouse(MCGuiEvent& event) -> void
                 const auto top = static_cast<int32_t>(std::min(box[1], box[3]));
                 const auto bottom = static_cast<int32_t>(box[3] < box[1] ? box[1] : box[3]);
 
-                for (const std::shared_ptr<MCFriendlyMechIcon>& button : MechBar->Buttons)
+                for (const std::shared_ptr<MCFriendlyMechIcon>& button : MechBar->Buttons())
                 {
                     const std::shared_ptr<MCBaseObject> member = LockObject(button->Mover);
 
@@ -320,7 +320,7 @@ auto MCTacticalInterface::HandleMouse(MCGuiEvent& event) -> void
                 HomeCommander()->SetNumLargeStrikes(HomeCommander()->NumLargeStrikes + 1);
                 CallArtillery(HomeCommander()->Id, 1, strikePos, 3, 0);
 
-                for (const MCGuiOwned<MCArtilleryButton>& button : TacticalMap()->ArtilleryButtons)
+                for (const MCGuiHandle<MCArtilleryButton>& button : TacticalMap()->ArtilleryButtons)
                 {
                     button->Draw();
                 }
@@ -705,7 +705,7 @@ auto MCTacticalInterface::HandleClick(MCGuiEvent& event) -> void
                         }
                     }
 
-                    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : MechBar->LanceIcons)
+                    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : MechBar->LanceIcons())
                     {
                         if (const std::shared_ptr<MCMoverGroup> group =
                                 lanceIcon != nullptr ? lanceIcon->Group.lock() : nullptr;

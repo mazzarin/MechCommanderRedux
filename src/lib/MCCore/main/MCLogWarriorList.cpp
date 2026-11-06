@@ -2,7 +2,6 @@
 #include "main/MCLogWarriorList.h"
 #include "lib/MCPacketFile.h"
 #include "logistics/MCMissionLogisticsBridge.h"
-#include "logistics/MCPilotInventoryBlock.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "main/MCLogisticsShared.h"
@@ -42,6 +41,9 @@ auto MCLogWarriorList::AddWarrior(std::string_view fileName, bool sorted) -> int
 
 namespace
 {
+    /// <summary>The row the next pilot read takes. Never reset, as in the original.</summary>
+    int32_t NextPilotRow = 0;
+
     /// <summary>The skill keys of the Skills, OriginalSkills and StartingSkills blocks, in skill order.</summary>
     constexpr std::array<std::string_view, MCLogWarrior::NumSkills> SkillNames = {"Piloting", "Jumping", "Sensors",
                                                                                   "Gunnery"};
@@ -209,8 +211,9 @@ auto MCLogWarriorList::AddWarrior(MCFitIniFile& file, bool sorted) -> int32_t
 
     const std::shared_ptr<MCLogWarrior> added = warrior;
     AddWarrior(std::move(warrior), sorted);
-    added->InventoryBlock = MCMakeGui<MCPilotInventoryBlock>();
-    added->InventoryBlock->Init(added);
+    // The pilot takes the next row, as its inventory block's init did in the original; the inventory screen numbers
+    // the rows again when it shows them.
+    added->ListIndex = NextPilotRow++;
     return 0;
 }
 

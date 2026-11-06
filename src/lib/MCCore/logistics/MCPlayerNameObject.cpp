@@ -17,10 +17,10 @@ auto MCPlayerNameObject::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t
     return result;
 }
 
-auto MCPlayerNameObject::Destroy() -> void
+auto MCPlayerNameObject::OnDestroy() -> void
 {
     PlayerName.clear();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCPlayerNameObject::Draw() -> void

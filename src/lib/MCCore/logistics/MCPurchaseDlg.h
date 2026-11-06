@@ -17,8 +17,6 @@ public:
     /// <summary>The spinner's repeat timer (its id, and every 200 ms).</summary>
     static constexpr int32_t RepeatTimer = 6;
 
-    ~MCPurchaseDlg() override { MCPurchaseDlg::Destroy(); }
-
     /// <summary>
     /// Sets up a purchase of <paramref name="purchaseType"/> (0/1 buy/sell mech, 2/3 pilot, 4/5 component, 6/7
     /// vehicle) at <paramref name="unitCost"/> each, at most <paramref name="maxQuantity"/> (negative =
@@ -27,7 +25,8 @@ public:
     void Init(int32_t purchaseType, int32_t unitCost, int32_t maxQuantity, std::string_view title,
               std::string_view subtitle, MCOptionalRef<const MCGuiPort> picture);
 
-    void Destroy() override;
+    /// <summary>Frees the title and subtitle.</summary>
+    void OnDestroy() override;
 
     /// <summary>The buttons, the spinner (with auto-repeat on its timer) and Enter/Escape.</summary>
     void HandleEvent(MCGuiEvent& event) override;

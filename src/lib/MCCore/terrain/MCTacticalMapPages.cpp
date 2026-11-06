@@ -314,7 +314,7 @@ auto MCTacticalMap::DrawInfoPage() -> void
     else
     {
         // Armor: the part diagram, over the home side's or the enemy's background.
-        const std::shared_ptr<MCGuiPort> background = InfoViewBackgrounds[obj->GetTeam() == HomeTeam() ? 0 : 2];
+        const std::unique_ptr<MCGuiPort>& background = InfoViewBackgrounds[obj->GetTeam() == HomeTeam() ? 0 : 2];
 
         if (background != nullptr)
         {

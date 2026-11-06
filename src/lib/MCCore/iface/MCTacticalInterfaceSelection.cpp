@@ -228,7 +228,7 @@ auto MCTacticalInterface::ClearMechSelection() -> void
 {
     if (Mission() != nullptr && Mission()->ScenarioCallback != nullptr)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& icon : MechBar->Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& icon : MechBar->Buttons())
         {
             if (const std::shared_ptr<MCBaseObject> mover = LockObject(icon->Mover); mover != nullptr)
             {

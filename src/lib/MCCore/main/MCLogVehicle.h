@@ -1,13 +1,9 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 // Original source: mcx\logistics.cpp (LogVehicle).
 
 #include "main/MCLogPart.h"
-
-class MCMechBriefBlock;
-class MCVehicleInventoryBlock;
-class MCVehicleRepairBlock;
 
 /// <summary>A vehicle in logistics.</summary>
 /// <remarks>Original source: <c>logistics.cpp</c>, 0xd0 bytes.</remarks>
@@ -38,10 +34,11 @@ public:
     int32_t VehicleResourcePoints = 0;
     /// <summary>The value of the bare vehicle.</summary>
     int32_t BaseVehicleResourcePoints = 0;
-    /// <summary>The row on the repair screen (null when read without widgets).</summary>
-    MCGuiOwned<MCVehicleRepairBlock> RepairBlock;
-    /// <summary>The row on the inventory screens (null when read without widgets).</summary>
-    MCGuiOwned<MCVehicleInventoryBlock> InventoryBlock;
-    /// <summary>The block in the briefing screen's deploy pane or a drop slot (<see cref="MCMechBriefBlock::Create"/>).</summary>
-    MCGuiOwned<MCMechBriefBlock> BriefBlock;
+    /// <summary>
+    /// The weight class shown (string table 0x4f..0x52 by tonnage), taken when the vehicle is listed with widgets
+    /// (the inventory block's init took it).
+    /// </summary>
+    std::string WeightClassName;
+    /// <summary>The armor rating shown (string table 0x4f/0x51/0x64..0x66 by armor tonnage), cut at 14 characters.</summary>
+    std::string ArmorClassName;
 };

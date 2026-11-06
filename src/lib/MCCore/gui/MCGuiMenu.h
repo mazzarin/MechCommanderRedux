@@ -34,7 +34,8 @@ public:
     /// <summary>Clears the items; the white font, back colour 0.</summary>
     /// <returns>0, or the base's error.</returns>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
+    /// <summary>Empties the menu.</summary>
+    void OnDestroy() override;
     /// <summary>Tracks the highlighted item; a release over an item runs its callback and hides the menu.</summary>
     void HandleEvent(MCGuiEvent& event) override;
     void Draw() override;

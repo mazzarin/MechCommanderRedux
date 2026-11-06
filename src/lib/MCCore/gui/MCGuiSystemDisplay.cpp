@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "gui/MCGuiSystem.h"
 #include "camera/MCMainWindow.h"
+#include "gui/MCGuiSmackerWindow.h"
 #include "iface/MCMechBar.h"
 #include "iface/MCTacticalInterface.h"
 #include "lib/MCFatal.h"

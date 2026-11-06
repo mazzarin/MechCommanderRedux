@@ -7,26 +7,15 @@
 #include "network/MCMultiPlayer.h"
 #include "vfx/MCVfxFunctions.h"
 
-MCInventoryBlock::~MCInventoryBlock()
-{
-    MCInventoryBlock::Destroy();
-}
-
 auto MCInventoryBlock::InitRow() -> void
 {
     MCLogObject::InitWithoutPort(0, 0, 0xad, 0x2b);
     Enabled = true;
 }
 
-auto MCInventoryBlock::Destroy() -> void
-{
-    MCLogInvScreen::ForgetInfoSource(*this);
-    MCLogObject::Destroy();
-}
-
 auto MCInventoryBlock::DrawBackground(MCLogPort& port) -> void
 {
-    VfxPaneCopy(GlobalLog()->InvBlockPort->Frame(), 0, 0, port.Frame(), 0, ListIndex * WinHeight, -1);
+    VfxPaneCopy(GlobalLog()->InvBlockPort->Frame(), 0, 0, port.Frame(), 0, ListIndex() * WinHeight, -1);
 }
 
 auto MCInventoryBlock::DrawDisabled() -> void
@@ -62,7 +51,7 @@ auto MCInventoryBlock::PreHandleEvent(const MCDragState& drag, MCGuiEvent& event
 
     if (drag.Idle())
     {
-        std::shared_ptr<MCGuiObject> pane = screen->InventoryPane;
+        std::shared_ptr<MCGuiObject> pane = screen->InventoryPane.Lock();
 
         if (event.Y < pane->GlobalY() || pane->GlobalY() + pane->Height() < event.Y)
         {
@@ -83,10 +72,9 @@ auto MCInventoryBlock::PreHandleEvent(const MCDragState& drag, MCGuiEvent& event
 auto MCInventoryBlock::MakeDragIcon(MCDragState& drag, MCGuiEvent& event) -> void
 {
     drag.X = 2;
-    drag.Y = ListIndex * WinHeight + 1;
-    std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-    icon->Begin(drag.X, drag.Y, 0x20, 0x20, [this](MCLogPort& surface) { OnBeginDrag(surface); });
-    Screen()->AddChild(icon->weak_from_this());
+    drag.Y = ListIndex() * WinHeight + 1;
+    const std::shared_ptr<MCDragIcon> icon =
+        MCDragIcon::Create(*Screen(), drag.X, drag.Y, 0x20, 0x20, [this](MCLogPort& surface) { OnBeginDrag(surface); });
     icon->MoveTo(event.X - 0xf, event.Y - 0xf, false);
 }
 

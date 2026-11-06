@@ -27,13 +27,13 @@ namespace
 
 MCLogScrollList::~MCLogScrollList()
 {
-    MCLogScrollList::Destroy();
+    Destroy();
 }
 
-auto MCLogScrollList::Destroy() -> void
+auto MCLogScrollList::OnDestroy() -> void
 {
     ReleaseThumb();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogScrollList::VisibleRows() -> int32_t

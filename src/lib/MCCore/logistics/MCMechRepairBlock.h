@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/MCListView.h"
 #include "gui/MCScrollPane.h"
 #include "logistics/MCLogObject.h"
 
@@ -13,8 +14,11 @@ struct MCLogInventoryStat;
 /// A mech's panel on the repair (refit) screen (0x19a x 0x70): damage diagram, battle rating, pilot, the three repair
 /// sliders (armor, internal structure, engine) and the weapon lists in a scroll pane.
 /// </summary>
-/// <remarks>Original source: <c>logistics\mrblock.cpp</c> (<c>MechRepairBlock</c>).</remarks>
-class MCMechRepairBlock : public MCLogObject
+/// <remarks>
+/// Original source: <c>logistics\mrblock.cpp</c> (<c>MechRepairBlock</c>). A row of the repair screen's force list
+/// (<see cref="MCRepairScreen::ShowForce"/>), or a panel of the briefing box (outside any list).
+/// </remarks>
+class MCMechRepairBlock : public MCListRow
 {
 public:
     /// <summary>Where a slider's knob is with nothing repaired: the left end of the 61-pixel track.</summary>
@@ -22,25 +26,25 @@ public:
     /// <summary>The right end of a slider's track (all repaired).</summary>
     static constexpr int32_t SliderRight = 0x127;
 
+    /// <summary>Destroys the block if nothing did (its cleanup takes it out of the info box).</summary>
     ~MCMechRepairBlock() override;
 
     /// <summary>
-    /// Shows <paramref name="logMech"/>: makes the weapon list's scroll pane and slider art, and records the mech's
-    /// armor and internal structure as the sliders' starting points.
+    /// Shows <paramref name="logMech"/>: makes the weapon list's scroll pane and slider art, and works out the
+    /// sliders' floors from what the mech arrived with (<see cref="MCLogMech::Arrived"/>). A
+    /// <paramref name="briefingLayout"/> panel is the briefing box's (<see cref="MCBriefingBox"/>): it is drawn in
+    /// the box's layout, never framed.
     /// </summary>
-    void Init(std::shared_ptr<MCLogMech> logMech);
+    void Init(std::shared_ptr<MCLogMech> logMech, bool briefingLayout = false);
 
-    /// <summary>Frees the scroll pane, the slider art and the weapon lists.</summary>
-    void Destroy() override;
+    /// <summary>Takes the block out of any info box showing it, and frees the slider art and the weapon lists.</summary>
+    void OnDestroy() override;
 
     /// <summary>
     /// Port: draws the mech's details into the repair screen's info box (see <c>MCInvInfoBox</c>): its diagram,
     /// tonnage, classes, speed and description.
     /// </summary>
     void DrawInfo(MCLogPort& port) const;
-
-    /// <summary>Takes the mech out of its drop slot.</summary>
-    void UndeployMech() const;
 
     /// <summary>Sliders, repair buttons, pilot and item drag and drop.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -57,7 +61,7 @@ public:
     /// Port: draws the row into <paramref name="port"/> (the repair screen's unit pane) with its top at
     /// <paramref name="top"/>, from the state: framed while selected, darkened while another mech is.
     /// </summary>
-    void DrawRow(MCLogPort& port, int32_t top);
+    void DrawRow(MCLogPort& port, int32_t top) override;
 
     /// <summary>
     /// Port: draws the picked-up pilot's drag icon into <paramref name="surface"/> (0x20 square): the row's square at
@@ -125,6 +129,13 @@ public:
     /// <summary>With <paramref name="value"/> &lt; 0, puts the armor slider at the current total.</summary>
     void SetArmorSlider(int32_t value);
 
+    /// <summary>
+    /// Puts <paramref name="mech"/>'s three knobs (<see cref="MCLogMech::RepairSliders"/>) at its engine damage, armor
+    /// and internal structure, as the original's block did when it was made (when the mech joins the lists). An
+    /// engine past damage level 3 is set to 3.
+    /// </summary>
+    static void PlaceSliders(MCLogMech& mech);
+
     /// <summary>Port: the pilot was picked up: its portrait's place shows blank until the next paint.</summary>
     void ClearPilot();
 
@@ -154,13 +165,17 @@ public:
                                                    uint8_t& itemNum) const;
 
     /// <summary>
-    /// Repairs <paramref name="points"/> armor points (all of it when negative): the head first, then one point at a
-    /// time to the location most damaged (the center torso, the rear and the cockpit count as more damaged).
+    /// Repairs <paramref name="points"/> of <paramref name="mech"/>'s armor points (all of it when negative): the head
+    /// first, then one point at a time to the location most damaged (the center torso, the rear and the cockpit count
+    /// as more damaged).
     /// </summary>
-    void RepairArmor(int32_t points) const;
+    static void RepairArmor(MCLogMech& mech, int32_t points);
 
-    /// <summary>Repairs <paramref name="points"/> internal structure points (all of it when negative), most damaged first.</summary>
-    void RepairInternal(int32_t points) const;
+    /// <summary>
+    /// Repairs <paramref name="points"/> of <paramref name="mech"/>'s internal structure points (all of it when
+    /// negative), most damaged first.
+    /// </summary>
+    static void RepairInternal(MCLogMech& mech, int32_t points);
 
     /// <summary>
     /// Makes the weapon list's content for <paramref name="target"/> (the block's own when absent): in multiplayer only for
@@ -192,14 +207,14 @@ public:
     /// </summary>
     void StripUnrepaired();
 
-    /// <summary>The force row the block stands for (set by the inventory screen).</summary>
-    int32_t SlotIndex = 0;
+    /// <summary>The mech's force row (<see cref="MCLogPart::SlotIndex"/>; 0 once the mech is gone).</summary>
+    int32_t SlotIndex() const;
     /// <summary>The mech (null once it is gone); the caller keeps it as its pin.</summary>
     std::shared_ptr<MCLogMech> Mech() const { return _Mech.lock(); }
     /// <summary>Points the block at <paramref name="mech"/> without the rest of <see cref="Init"/>.</summary>
     void SetMech(std::weak_ptr<MCLogMech> mech) { _Mech = std::move(mech); }
-    /// <summary>The weapon list's pane.</summary>
-    MCGuiOwned<MCScrollPane> InventoryPane;
+    /// <summary>The weapon list's pane (a child).</summary>
+    MCGuiHandle<MCScrollPane> InventoryPane;
     /// <summary>A copy of the mech's name index (also the inventory row of its <c>MCMechInventoryBlock</c>).</summary>
     int32_t ListPosition = 0;
     /// <summary>The inventory positions of the short-range weapons, one per copy.</summary>
@@ -218,21 +233,14 @@ public:
     bool CanRepairStructure = false;
     /// <summary>A weapon or piece of equipment is damaged (the item repair button is live).</summary>
     bool CanRepairItems = false;
-    /// <summary>The armor slider's knob (pixels).</summary>
-    int32_t ArmorSliderPos = 0;
     /// <summary>Slider pixels per armor point (61 over the total maximum armor).</summary>
     float ArmorPixelScale = 0.0f;
-    /// <summary>The armor of the 11 locations when the block was made.</summary>
-    std::array<int32_t, 11> StartArmor = {};
-    /// <summary>The armor slider's knob when the block was made.</summary>
+    /// <summary>The armor slider's knob for the armor the mech arrived with (<see cref="MCLogMech::Arrived"/>).</summary>
     int32_t ArmorSliderStart = 0;
-    int32_t InternalSliderPos = 0;
     float InternalPixelScale = 0.0f;
-    /// <summary>The internal structure of the 8 locations when the block was made.</summary>
-    std::array<int32_t, 8> StartInternal = {};
+    /// <summary>The internal structure slider's knob for what the mech arrived with.</summary>
     int32_t InternalSliderStart = 0;
-    /// <summary>The engine slider's knob: 0x127, 0x113, 0xff or 0xeb for engine damage 0..3.</summary>
-    int32_t EngineSliderPos = 0;
+    /// <summary>The engine slider's knob for the engine damage the mech arrived with.</summary>
     int32_t EngineSliderStart = 0;
     /// <summary>The engine's copy record (its hits are the damage level).</summary>
     std::shared_ptr<MCLogInventoryStat> EngineStat() const { return _EngineStat.lock(); }
@@ -281,4 +289,6 @@ private:
     bool _PilotLifted = false;
     /// <summary>Port: the repair button held while its repair runs: 0 none, 1 items, 2 structure.</summary>
     int32_t _PressedButton = 0;
+    /// <summary>Port: the briefing box's panel (see <see cref="Init"/>).</summary>
+    bool _BriefingLayout = false;
 };

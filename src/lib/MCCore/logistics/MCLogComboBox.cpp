@@ -22,7 +22,7 @@ namespace
 
 MCLogComboBox::~MCLogComboBox()
 {
-    MCLogComboBox::Destroy();
+    Destroy();
 }
 
 auto MCLogComboBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t& setting, std::vector<Item> items,
@@ -34,10 +34,10 @@ auto MCLogComboBox::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t& set
     _Changed = std::move(changed);
 }
 
-auto MCLogComboBox::Destroy() -> void
+auto MCLogComboBox::OnDestroy() -> void
 {
     Close();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogComboBox::LabelColors() -> MCColorTable
@@ -269,10 +269,10 @@ auto MCLogComboBox::RaiseOnScreen() -> void
 
     while (const std::shared_ptr<MCGuiObject> parent = object->ParentObject())
     {
-        std::vector<std::weak_ptr<MCGuiObject>>& siblings = parent->ChildList;
+        std::vector<MCGuiChild>& siblings = parent->ChildList;
         const auto last = siblings.end();
-        const auto at = std::ranges::find_if(siblings, [&](const std::weak_ptr<MCGuiObject>& sibling)
-                                             { return MCRefersTo(sibling, *object); });
+        const auto at = std::ranges::find_if(siblings, [&](const MCGuiChild& sibling)
+                                             { return MCRefersTo(sibling.Object, *object); });
 
         if (at != last)
         {
@@ -280,7 +280,7 @@ auto MCLogComboBox::RaiseOnScreen() -> void
             const int32_t depth = object->Depth();
             auto end = at + 1;
 
-            while (end != last && end->lock() != nullptr && end->lock()->Depth() <= depth)
+            while (end != last && end->Lock() != nullptr && end->Lock()->Depth() <= depth)
             {
                 ++end;
             }

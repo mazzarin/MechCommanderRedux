@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiSystem.h"
 #include "mission/MCMissionResults.h"
 
@@ -17,7 +17,7 @@ class MCMechWarrior;
 struct MCResultsIcon
 {
     std::weak_ptr<MCMechWarrior> Warrior;
-    MCGuiOwned<MCGuiPort> Portrait;
+    std::unique_ptr<MCGuiPort> Portrait;
 };
 
 /// <summary>The steps the single-player results screen counts through, each drawn a line at a time.</summary>
@@ -54,10 +54,10 @@ public:
     using MCGuiObject::Init;
 
     /// <summary>
-    /// Frees the screen's ports and buttons and, the first time, ends the scenario (<c>MCMission::EndScenario</c>) and
-    /// picks the mission's next state.
+    /// Frees the screen's ports and results and stops sending events to it. (The original also ended the scenario
+    /// here; <see cref="MCMission::CloseResultsScreen"/> does, once the screen is destroyed.)
     /// </summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>Scroll-button clicks and auto-repeat timers, Escape (skip the animation), and the multiplayer timeout.</summary>
     void HandleEvent(MCGuiEvent& event) override;
@@ -141,18 +141,21 @@ private:
     MCResultsStep _Step = MCResultsStep::ResourcePoints;
     /// <summary>The item within the current step (objective, statistic, pilot).</summary>
     int32_t _StepIndex = 0;
-    /// <summary>The debriefing text box (the tactical map's text object, borrowed while the screen is up).</summary>
-    std::weak_ptr<MCGuiScrollTextObject> _TextObject;
+    /// <summary>
+    /// The debriefing text box: the screen's own, showing the tactical map's salvage text as it was when the screen
+    /// came up (the original borrowed the map's box).
+    /// </summary>
+    MCGuiHandle<MCGuiScrollTextObject> _TextObject;
     /// <summary>The "objective succeeded" mark (<c>guimr08.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> _SuccessPort;
+    std::unique_ptr<MCGuiPort> _SuccessPort;
     /// <summary>The "objective failed" mark (<c>guimr07.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> _FailurePort;
+    std::unique_ptr<MCGuiPort> _FailurePort;
     /// <summary>The move-on button's label image, picked in <see cref="Activate"/>.</summary>
-    MCGuiOwned<MCGuiPort> _MoveOnPort;
+    std::unique_ptr<MCGuiPort> _MoveOnPort;
     /// <summary>The "move on" button (closes the screen).</summary>
-    MCGuiOwned<MCGuiButton> _MoveOnButton;
+    MCGuiHandle<MCGuiButton> _MoveOnButton;
     /// <summary>Multiplayer only: the button switching the pilot list's page.</summary>
-    MCGuiOwned<MCGuiButton> _PilotSwitchButton;
+    MCGuiHandle<MCGuiButton> _PilotSwitchButton;
     /// <summary>The scroll-up button's hot spot, in window coordinates.</summary>
     tagRECT _ScrollUpRect{};
     /// <summary>The scroll-down button's hot spot.</summary>
@@ -160,15 +163,13 @@ private:
     /// <summary>The scroll bar's hot spot (a click there scrolls to the clicked line).</summary>
     tagRECT _ScrollBarRect{};
     /// <summary>The scroll-up button's pressed image (shown while held).</summary>
-    MCGuiOwned<MCGuiObject> _ScrollUpButton;
+    MCGuiHandle<MCGuiObject> _ScrollUpButton;
     /// <summary>The scroll-down button's pressed image.</summary>
-    MCGuiOwned<MCGuiObject> _ScrollDownButton;
+    MCGuiHandle<MCGuiObject> _ScrollDownButton;
     /// <summary><c>MouseTicks</c> at which the next step is due; 0 when the steps are finished.</summary>
     uint32_t _NextDrawTime = 0;
     /// <summary>Set by Escape: the remaining steps are shown at once, without sounds.</summary>
     bool _SkipAnimation = false;
-    /// <summary>Set once <see cref="Destroy"/> has ended the scenario.</summary>
-    bool _ScenarioEnded = false;
     /// <summary>The resource points the count shows; -1 before the count starts.</summary>
     int32_t _ShownResourcePoints = -1;
     /// <summary>

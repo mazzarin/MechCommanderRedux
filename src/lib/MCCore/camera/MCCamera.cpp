@@ -140,8 +140,8 @@ MCCamera::MCCamera() = default;
 
 MCCamera::~MCCamera()
 {
-    _View.reset();
-    _TitleWindow.reset();
+    CloseGuiObject(_View);
+    CloseGuiObject(_TitleWindow);
 }
 
 auto MCCamera::GetPosition() const -> MCVector3D
@@ -222,22 +222,41 @@ auto MCCamera::Load(MCFitIniFile& cameraFile, bool objectCamera, int32_t cameraI
         }
 
         const bool mainWindow = Optional<int32_t>(cameraFile, "MainWindow", 0) != 0;
-        _View = MCMakeGui<MCViewWindow>();
         const auto left = static_cast<int32_t>(*windowLeft);
         const auto top = static_cast<int32_t>(*windowTop);
         const auto paneWidth = static_cast<int32_t>(*windowRight - *windowLeft);
         const auto paneHeight = static_cast<int32_t>(*windowBottom - *windowTop);
+        const auto setUpView = [&](MCViewWindow& view)
+        {
+            _View = view.WeakAs<MCViewWindow>();
+            const int32_t result = view.Init(left, top, paneWidth, paneHeight, {});
+            view.ObjectType = 4;
+            return result;
+        };
+
+        std::expected<MCGuiHandle<MCViewWindow>, int32_t> view;
 
         if (!mainWindow)
         {
-            // Its own titled window holding the view.
-            _TitleWindow = MCMakeGui<MCGuiEmptyTitleWindow>();
+            // Its own titled window holding the view: on the screen, hidden until the camera first activates (the
+            // original added it to the screen then).
+            const std::expected<MCGuiHandle<MCGuiEmptyTitleWindow>, int32_t> window =
+                ScreenWindow()->TryCreateChild<MCGuiEmptyTitleWindow>(
+                    [&](MCGuiEmptyTitleWindow& made)
+                    {
+                        _TitleWindow = made.WeakAs<MCGuiEmptyTitleWindow>();
+                        const int32_t result = made.Init(left, top, paneWidth, paneHeight, {});
+                        made.ShowGuiWindow(false);
+                        return result;
+                    });
 
-            if (const int32_t result = _TitleWindow->Init(left, top, paneWidth, paneHeight, {}); result != 0)
+            if (!window.has_value())
             {
-                return std::unexpected(
-                    std::format("could not open camera {}'s window ({:#x})", cameraId, static_cast<uint32_t>(result)));
+                return std::unexpected(std::format("could not open camera {}'s window ({:#x})", cameraId,
+                                                   static_cast<uint32_t>(window.error())));
             }
+
+            _TitleWindow = *window;
 
             if (_TitleWindow->TitleBar != nullptr)
             {
@@ -253,34 +272,56 @@ auto MCCamera::Load(MCFitIniFile& cameraFile, bool objectCamera, int32_t cameraI
             {
                 _TitleWindow->TitleBar->ShowCloseButton(true);
             }
-        }
-        else if (std::expected<void, std::string> holder = list.EnsureMainHolder(); !holder.has_value())
-        {
-            return std::unexpected(holder.error());
-        }
 
-        if (const int32_t result = _View->Init(left, top, paneWidth, paneHeight, {}); result != 0)
-        {
-            return std::unexpected(
-                std::format("could not open camera {}'s view ({:#x})", cameraId, static_cast<uint32_t>(result)));
-        }
+            view = _TitleWindow->TryCreatePane<MCViewWindow>(setUpView);
 
-        _View->ObjectType = 4;
-
-        if (!mainWindow)
-        {
-            _TitleWindow->AddPane(_View);
-            _View->MoveTo(0, 0, false);
+            if (view.has_value() && *view != nullptr)
+            {
+                (*view)->MoveTo(0, 0, false);
+                _ViewOnWindow = true;
+            }
         }
         else
         {
-            if (Ready)
+            if (std::expected<void, std::string> holder = list.EnsureMainHolder(); !holder.has_value())
             {
-                list.MainHolder()->AddPane(_View);
+                return std::unexpected(holder.error());
             }
 
-            _View->InterfaceWindow = true;
+            const std::shared_ptr<MCMainWindow> holder = list.MainHolder();
+
+            if (Ready && holder->HasFreePane())
+            {
+                view = holder->TryCreatePane<MCViewWindow>(setUpView);
+                _ViewOnWindow = view.has_value();
+            }
+            else
+            {
+                // Port: a view on no window (a main window camera that isn't ready, or a third one) is a hidden child
+                // of the main window, outside its panes. The original's camera kept it on nothing; no retail camera
+                // has one.
+                view = holder->TryCreateChild<MCViewWindow>(
+                    [&](MCViewWindow& made)
+                    {
+                        const int32_t result = setUpView(made);
+                        made.ShowGuiWindow(false);
+                        return result;
+                    });
+            }
+
+            if (view.has_value())
+            {
+                (*view)->InterfaceWindow = true;
+            }
         }
+
+        if (!view.has_value())
+        {
+            return std::unexpected(
+                std::format("could not open camera {}'s view ({:#x})", cameraId, static_cast<uint32_t>(view.error())));
+        }
+
+        _View = *view;
 
         CameraId = cameraId;
         _View->SetWindowCamera(shared_from_this());
@@ -767,9 +808,20 @@ auto MCCamera::Activate() -> int32_t
         Active = true;
     }
 
-    if (_View != nullptr && !_View->Parent.expired())
+    // The original added the view's window to the screen here (to the front). It is on the screen from the start:
+    // shown the first time, brought to the front every time.
+    if (const std::shared_ptr<MCViewWindow> view = _View.Lock(); view != nullptr && _ViewOnWindow)
     {
-        ScreenWindow()->AddChild(_View->Parent);
+        if (const std::shared_ptr<MCGuiObject> window = view->ParentObject(); window != nullptr)
+        {
+            if (!_WindowShown)
+            {
+                window->ShowGuiWindow(true);
+                _WindowShown = true;
+            }
+
+            window->BringToFront(true);
+        }
     }
 
     // Port fix: MCX.EXE draws the window unguarded; a camera without one ("WindowLeft" missing) would crash.

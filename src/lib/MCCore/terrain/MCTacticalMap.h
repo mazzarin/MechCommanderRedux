@@ -2,7 +2,7 @@
 
 #include "gui/MCGuiButton.h"
 #include "gui/MCGuiSystem.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "platform/MCRegisteredBlock.h"
 #include "platform/MCWin32Defs.h"
 #include "terrain/MCArtilleryButton.h"
@@ -103,8 +103,8 @@ public:
     /// <summary>Frees the watcher.</summary>
     ~MCTacticalMap() override;
 
-    /// <summary>Destroys every child, port and string table.</summary>
-    void Destroy() override;
+    /// <summary>Frees the ports and string tables (the base destroys the children).</summary>
+    void OnDestroy() override;
 
     /// <summary>Does nothing (the MFD has a fixed size).</summary>
     void Resize(int32_t w, int32_t h) override {}
@@ -270,23 +270,23 @@ public:
     /// <summary>Draw sensor/range circles around the units.</summary>
     bool ShowRanges = true;
     /// <summary>The map picture (<c>&lt;terrainName&gt;.tga</c>).</summary>
-    MCGuiOwned<MCGuiPort> MapPort;
+    std::unique_ptr<MCGuiPort> MapPort;
     /// <summary>The fog-of-war port: its bitmap is the visible bits of the home side.</summary>
-    MCGuiOwned<MCGuiPort> VisibilityPort;
+    std::unique_ptr<MCGuiPort> VisibilityPort;
     /// <summary>Background of the map page (mfdmwn00.tga).</summary>
-    MCGuiOwned<MCGuiPort> MapBackground;
+    std::unique_ptr<MCGuiPort> MapBackground;
     /// <summary>Background of the info page (mfddwn00.tga).</summary>
-    MCGuiOwned<MCGuiPort> InfoBackground;
+    std::unique_ptr<MCGuiPort> InfoBackground;
     /// <summary>Background of the mission page (mfdbwn00.tga).</summary>
-    MCGuiOwned<MCGuiPort> MissionBackground;
+    std::unique_ptr<MCGuiPort> MissionBackground;
     /// <summary>Ports of the info page's pilot/passenger pictures.</summary>
-    std::array<MCGuiOwned<MCGuiPort>, 4> InfoPorts;
+    std::array<std::unique_ptr<MCGuiPort>, 4> InfoPorts;
     /// <summary>The tab strip.</summary>
-    MCGuiOwned<MCGuiObject> TabStrip;
+    MCGuiHandle<MCGuiObject> TabStrip;
     /// <summary>The top tab.</summary>
-    MCGuiOwned<MCGuiObject> TabTop;
+    MCGuiHandle<MCGuiObject> TabTop;
     /// <summary>The bottom tab.</summary>
-    MCGuiOwned<MCGuiObject> TabBottom;
+    MCGuiHandle<MCGuiObject> TabBottom;
     /// <summary>The bottom tab shows its highlighted picture.</summary>
     bool TabHighlighted = false;
     /// <summary>The map area as a pane on the MFD's window.</summary>
@@ -294,35 +294,35 @@ public:
     /// <summary>The salvage objects (no limit: the original's list held 100, OB-052).</summary>
     MCSalvageList Salvage;
     /// <summary>The salvage page.</summary>
-    std::shared_ptr<MCGuiScrollTextObject> SalvageText;
+    MCGuiHandle<MCGuiScrollTextObject> SalvageText;
     /// <summary>The info/mission page text.</summary>
-    MCGuiOwned<MCGuiScrollTextObject> InfoText;
+    MCGuiHandle<MCGuiScrollTextObject> InfoText;
     /// <summary>The pilot video window.</summary>
-    MCGuiOwned<MCVideoWindow> VideoWindow;
+    MCGuiHandle<MCVideoWindow> VideoWindow;
     /// <summary>The unit shown on the info page.</summary>
     std::weak_ptr<MCGameObject> InfoObject;
     /// <summary>The support buttons.</summary>
-    std::array<MCGuiOwned<MCArtilleryButton>, 4> ArtilleryButtons;
+    std::array<MCGuiHandle<MCArtilleryButton>, 4> ArtilleryButtons;
     /// <summary>The palette toggle button.</summary>
-    MCGuiOwned<MCGuiToolButton> PaletteButton;
+    MCGuiHandle<MCGuiToolButton> PaletteButton;
     /// <summary>The command palette (the last one is the zoom/palette-toggle button).</summary>
-    std::array<MCGuiOwned<MCToolPalButton>, 8> ToolButtons;
+    std::array<MCGuiHandle<MCToolPalButton>, 8> ToolButtons;
     /// <summary>The scroll buttons (up, left, down, right) and zoom in/out.</summary>
-    std::array<MCGuiOwned<MCGuiButton>, 6> ScrollButtons;
+    std::array<MCGuiHandle<MCGuiButton>, 6> ScrollButtons;
     /// <summary>The command palette frame.</summary>
-    MCGuiOwned<MCGuiObject> PaletteFrame;
+    MCGuiHandle<MCGuiObject> PaletteFrame;
     /// <summary>The command palette's lower half.</summary>
-    MCGuiOwned<MCGuiObject> PaletteBottom;
+    MCGuiHandle<MCGuiObject> PaletteBottom;
     /// <summary>The info page's data buttons (armor front, rear, payload).</summary>
-    std::array<MCGuiOwned<MCGuiToolButton>, 3> DataButtons;
+    std::array<MCGuiHandle<MCGuiToolButton>, 3> DataButtons;
     /// <summary>Info page scroll markers.</summary>
-    MCGuiOwned<MCGuiObject> ScrollUpMarker;
-    MCGuiOwned<MCGuiObject> ScrollDownMarker;
+    MCGuiHandle<MCGuiObject> ScrollUpMarker;
+    MCGuiHandle<MCGuiObject> ScrollDownMarker;
     /// <summary>The chat tab's blinkers (multiplayer).</summary>
-    MCGuiOwned<MCGuiObject> ChatBlinkerOn;
-    MCGuiOwned<MCGuiObject> ChatBlinkerOff;
+    MCGuiHandle<MCGuiObject> ChatBlinkerOn;
+    MCGuiHandle<MCGuiObject> ChatBlinkerOff;
     /// <summary>The chat window (multiplayer).</summary>
-    MCGuiOwned<MCGuiChatWindow> ChatWindow;
+    MCGuiHandle<MCGuiChatWindow> ChatWindow;
     /// <summary>A chat message is unread (the tab blinks).</summary>
     bool ChatPending = false;
     /// <summary>The current page.</summary>
@@ -366,7 +366,7 @@ public:
     /// Port: the info page's data view backgrounds (mfddwn01.tga home armor, mfddwn02.tga payload, mfddwn03.tga
     /// enemy armor), which the original loaded each time it drew one.
     /// </summary>
-    std::array<MCGuiOwned<MCGuiPort>, 3> InfoViewBackgrounds;
+    std::array<std::unique_ptr<MCGuiPort>, 3> InfoViewBackgrounds;
     /// <summary>Port: the mission timer as last written (once a second), and whether it is red (time up).</summary>
     std::string MapTimeText;
     bool MapTimeRed = false;
@@ -400,7 +400,7 @@ private:
     void DrawMapPage();
 
     /// <summary>The background of the salvage page, owned in multiplayer.</summary>
-    MCGuiOwned<MCGuiPort> _OwnedSalvageBackground;
+    std::unique_ptr<MCGuiPort> _OwnedSalvageBackground;
 };
 
 /// <summary>Shows or hides the command palette.</summary>

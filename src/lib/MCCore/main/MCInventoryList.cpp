@@ -1,18 +1,10 @@
 #include "stdafx.h"
 #include "main/MCInventoryList.h"
-#include "logistics/MCCompInventoryBlock.h"
-#include "logistics/MCCompPurchaseBlock.h"
 #include "logistics/MCPurProfile.h"
 #include "main/MCLogistics.h"
 #include "object/MCMasterComponent.h"
 
 MCLogInventoryItem::MCLogInventoryItem() = default;
-
-MCLogInventoryItem::~MCLogInventoryItem()
-{
-    PurchaseBlock.reset();
-    InventoryBlock.reset();
-}
 
 MCInventoryList::~MCInventoryList()
 {
@@ -108,11 +100,9 @@ auto MCInventoryList::AddCountToItem(int32_t count, int32_t masterID) -> void
     }
 }
 
-auto MCInventoryList::MakeInventoryBlock(MCLogInventoryItem& item) -> MCCompInventoryBlock&
+auto MCInventoryList::ListAsSpare(MCLogInventoryItem& item) -> void
 {
-    item.InventoryBlock = MCMakeGui<MCCompInventoryBlock>();
-    item.InventoryBlock->Init(item.shared_from_this());
-    return *item.InventoryBlock;
+    item.ListIndex = 0;
 }
 
 auto MCInventoryList::Clear() -> void
@@ -124,8 +114,8 @@ auto MCInventoryList::Clear() -> void
 namespace
 {
     /// <summary>
-    /// A new inventory item for <paramref name="masterID"/> holding <paramref name="stat"/>, with its purchase and
-    /// inventory widgets when <paramref name="widgets"/> is set.
+    /// A new inventory item for <paramref name="masterID"/> holding <paramref name="stat"/>, listed (where the
+    /// original made its purchase and inventory widgets) when <paramref name="widgets"/> is set.
     /// </summary>
     std::shared_ptr<MCLogInventoryItem> NewInventoryItem(uint8_t masterID, std::shared_ptr<MCLogInventoryStat> stat,
                                                          bool widgets)
@@ -148,10 +138,8 @@ namespace
 
         if (widgets)
         {
-            item->PurchaseBlock = MCMakeGui<MCCompPurchaseBlock>();
-            item->PurchaseBlock->Init(item);
-            item->PurchaseBlock->SortOrder = item->SortOrder;
-            MCInventoryList::MakeInventoryBlock(*item).InventoryIndex = item->SortOrder;
+            item->InventoryIndex = item->SortOrder;
+            MCInventoryList::ListAsSpare(*item);
         }
 
         return item;

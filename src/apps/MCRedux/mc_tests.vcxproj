@@ -109,6 +109,7 @@
     <ClCompile Include="tests\GpuDrawingTests.cpp" />
     <ClCompile Include="tests\GroundVehicleTests.cpp" />
     <ClCompile Include="tests\GuiControlTests.cpp" />
+    <ClCompile Include="tests\GuiDestroyTests.cpp" />
     <ClCompile Include="tests\GuiObjectTests.cpp" />
     <ClCompile Include="tests\GuiTests.cpp" />
     <ClCompile Include="tests\HdArtTests.cpp" />
@@ -182,6 +183,7 @@
     <ClInclude Include="tests\fixtures\MCRetailData.h" />
     <ClInclude Include="tests\fixtures\MCTerrainGeometryScope.h" />
     <ClInclude Include="tests\fixtures\MCTinyMap.h" />
+    <ClInclude Include="tests\GuiTree.h" />
     <ClInclude Include="tests\MCContentFixture.h" />
     <ClInclude Include="tests\MCFakeUpdaterBackend.h" />
     <ClInclude Include="tests\MCFilePatchFixture.h" />

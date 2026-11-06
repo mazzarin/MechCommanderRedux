@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "logistics/MCUpdatePage.h"
 #include "gui/MCGuiEvent.h"
-#include "gui/MCGuiOwned.h"
 #include "gui/MCGuiFont.h"
 #include "gui/MCGuiGlobals.h"
 #include "logistics/MCGenericScreen.h"
@@ -805,9 +804,44 @@ namespace
         return {};
     }
 
-    std::weak_ptr<MCGuiObject> Page;
-    /// <summary>The main menu, the page's home: UPDATE shows it there, the session screen's line over that screen.</summary>
-    std::weak_ptr<MCGuiObject> Home;
+    /// <summary>
+    /// A screen's UPDATE page (the main menu's, and a lobby's session screen's): each shows the updater (the model);
+    /// it goes with its screen.
+    /// </summary>
+    struct MCUpdatePageView
+    {
+        MCGuiHandle<MCLogGroupBox> Page;
+        MCGuiHandle<MCLogUpdateNotes> Notes;
+        MCGuiHandle<MCLogTextButton> InstallButton;
+        MCGuiHandle<MCLogTextButton> SkipButton;
+        MCGuiHandle<MCLogTextButton> RestartButton;
+    };
+
+    /// <summary>The pages there are (a gone screen's are dropped as they are next looked at).</summary>
+    std::vector<MCUpdatePageView> Pages;
+    /// <summary>The main menu: UPDATE shows its page.</summary>
+    MCGuiHandle<MCGuiObject> Home;
+
+    /// <summary>The pages whose screen is still there.</summary>
+    std::vector<MCUpdatePageView>& LivePages()
+    {
+        std::erase_if(Pages, [](const MCUpdatePageView& view) { return view.Page == nullptr; });
+        return Pages;
+    }
+
+    /// <summary><paramref name="screen"/>'s page, if it has one.</summary>
+    MCOptionalRef<MCUpdatePageView> PageOn(const MCGuiObject& screen)
+    {
+        for (MCUpdatePageView& view : LivePages())
+        {
+            if (view.Page->ParentObject().get() == &screen)
+            {
+                return view;
+            }
+        }
+
+        return std::nullopt;
+    }
 
     /// <summary>
     /// The session screen's line: a field as the screen's own (the darkest grey, outlined as the page is), its text
@@ -881,35 +915,13 @@ namespace
         bool _OpensPage;
     };
 
-    /// <summary>Puts the page on <paramref name="screen"/>, in front of everything else on it (once there, it stays).</summary>
-    void MovePageTo(MCGuiObject& screen)
-    {
-        const std::shared_ptr<MCGuiObject> page = Page.lock();
-
-        if (page == nullptr)
-        {
-            return;
-        }
-
-        if (const std::shared_ptr<MCGuiObject> parent = page->ParentObject(); parent != nullptr)
-        {
-            parent->RemoveChild(*page);
-        }
-
-        screen.AddChild(page);
-    }
-
-    /// <summary>The UPDATE button, the page's list and its buttons.</summary>
-    std::weak_ptr<MCLogButton> MenuButton;
-    std::weak_ptr<MCLogUpdateNotes> Notes;
-    std::weak_ptr<MCLogTextButton> InstallButton;
-    std::weak_ptr<MCLogTextButton> SkipButton;
-    std::weak_ptr<MCLogTextButton> RestartButton;
+    /// <summary>The UPDATE button.</summary>
+    MCGuiHandle<MCLogButton> MenuButton;
 
     /// <summary>Shows <paramref name="button"/> when <paramref name="shown"/>, else hides it.</summary>
-    void ShowButton(const std::weak_ptr<MCLogTextButton>& button, bool shown)
+    void ShowButton(const MCGuiHandle<MCLogTextButton>& button, bool shown)
     {
-        if (const std::shared_ptr<MCLogTextButton> made = button.lock(); made != nullptr)
+        if (const std::shared_ptr<MCLogTextButton> made = button.Lock(); made != nullptr)
         {
             made->ShowGuiWindow(shown);
         }
@@ -918,7 +930,12 @@ namespace
     void ShowRestart(MCStage stage)
     {
         // In a lobby's room, only when every game there can rejoin, before the match (network/MCLobbyUpdate.h).
-        ShowButton(RestartButton, stage == MCStage::Ready && (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart()));
+        const bool shown = stage == MCStage::Ready && (!MCLobbyUpdate::InRoom() || MCLobbyUpdate::CanRestart());
+
+        for (const MCUpdatePageView& view : LivePages())
+        {
+            ShowButton(view.RestartButton, shown);
+        }
     }
 
     /// <summary>
@@ -927,14 +944,20 @@ namespace
     /// </summary>
     void Refresh()
     {
-        if (const std::shared_ptr<MCLogButton> button = MenuButton.lock(); button != nullptr)
+        if (const std::shared_ptr<MCLogButton> button = MenuButton.Lock(); button != nullptr)
         {
             button->Disabled = !MCUpdater::Waiting();
         }
 
         const MCStatus& status = MCUpdater::Status();
-        ShowButton(InstallButton, status.Stage == MCStage::Found || (status.Stage == MCStage::Failed && status.Retry));
-        ShowButton(SkipButton, status.Stage == MCStage::Found);
+
+        for (const MCUpdatePageView& view : LivePages())
+        {
+            ShowButton(view.InstallButton,
+                       status.Stage == MCStage::Found || (status.Stage == MCStage::Failed && status.Retry));
+            ShowButton(view.SkipButton, status.Stage == MCStage::Found);
+        }
+
         ShowRestart(status.Stage);
     }
 
@@ -959,6 +982,47 @@ namespace
         MCUpdater::Answer(MCAnswer::Skip);
         HideUpdatePage();
     }
+
+    /// <summary>Adds a page (hidden) to <paramref name="screen"/>: its list, INSTALL, SKIP, RESTART and DONE.</summary>
+    MCUpdatePageView& AddPageTo(MCGuiObject& screen)
+    {
+        constexpr std::array<MCPageButton, 3> buttons = {
+            MCPageButton{InstallLabel, Install},
+            MCPageButton{SkipLabel, Skip},
+            MCPageButton{RestartLabel, Restart},
+        };
+
+        std::vector<MCGuiHandle<MCLogTextButton>> made;
+        MCUpdatePageView& view = LivePages().emplace_back();
+        view.Page = AddPrefsPage(screen, Title, buttons, HideUpdatePage, made);
+        view.InstallButton = made.at(0);
+        view.SkipButton = made.at(1);
+        view.RestartButton = made.at(2);
+
+        // RESTART takes INSTALL's place: they never show together.
+        view.RestartButton->MoveTo(view.InstallButton->X(), view.InstallButton->Y());
+        view.Notes = view.Page->CreateChild<MCLogUpdateNotes>(
+            [](MCLogUpdateNotes& notes)
+            {
+                notes.InitAt(PageListLeft, PageListTop, PageListWidth, PageListHeight);
+                notes.ShowGuiWindow(true);
+            });
+
+        return view;
+    }
+
+    /// <summary>Shows <paramref name="view"/>'s page from its first line, the buttons as the updater stands.</summary>
+    void ShowPage(const MCUpdatePageView& view)
+    {
+        if (const std::shared_ptr<MCLogUpdateNotes> notes = view.Notes.Lock(); notes != nullptr)
+        {
+            notes->Reset();
+        }
+
+        view.Page->ShowGuiWindow(true);
+        view.Page->BringToFront(true);
+        Refresh();
+    }
 }
 
 MCMenuButtonPictures UpdateButtonPictures(std::span<const uint8_t> palette)
@@ -972,7 +1036,7 @@ MCMenuButtonPictures UpdateButtonPictures(std::span<const uint8_t> palette)
 
 void AddUpdatePage(MCGenericScreen& mainScreen)
 {
-    const std::shared_ptr<MCLogButton> cinema = mainScreen.CinemaButton;
+    const std::shared_ptr<MCLogButton> cinema = mainScreen.CinemaButton.Lock();
 
     if (cinema == nullptr)
     {
@@ -989,126 +1053,83 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     MenuButton = cinema;
 
     // The line under QUIT, in amber at its brightest.
-    auto notice = MCMakeGui<MCUpdateNotice>(Nearest(mainScreen.Palette, Amber), false);
-    const int32_t noticeHeight = WhiteFont->Height();
-    notice->Init(cinema->X(), cinema->Y() + 2 * MenuButtonStep + (RowsUnderQuit - noticeHeight) / 2, cinema->Width(),
-                 noticeHeight);
-    notice->SetTransparent(true);
-    notice->ShowGuiWindow(true);
-    mainScreen.AdoptChild(std::move(notice));
+    mainScreen.CreateChild<MCUpdateNotice>(
+        [&](MCUpdateNotice& notice)
+        {
+            const int32_t noticeHeight = WhiteFont->Height();
+            notice.Init(cinema->X(), cinema->Y() + 2 * MenuButtonStep + (RowsUnderQuit - noticeHeight) / 2,
+                        cinema->Width(), noticeHeight);
+            notice.SetTransparent(true);
+            notice.ShowGuiWindow(true);
+        },
+        Nearest(mainScreen.Palette, Amber), false);
 
-    constexpr std::array<MCPageButton, 3> buttons = {
-        MCPageButton{InstallLabel, Install},
-        MCPageButton{SkipLabel, Skip},
-        MCPageButton{RestartLabel, Restart},
-    };
-
-    std::vector<std::weak_ptr<MCLogTextButton>> made;
-    MCLogGroupBox& page = AddPrefsPage(mainScreen, Title, buttons, HideUpdatePage, made);
-    Page = page.weak_from_this();
+    AddPageTo(mainScreen);
     Home = mainScreen.weak_from_this();
-    InstallButton = made.at(0);
-    SkipButton = made.at(1);
-    RestartButton = made.at(2);
-
-    // RESTART takes INSTALL's place: they never show together.
-    if (const std::shared_ptr<MCLogTextButton> install = InstallButton.lock(), restart = RestartButton.lock();
-        install != nullptr && restart != nullptr)
-    {
-        restart->MoveTo(install->X(), install->Y());
-    }
-
-    auto notes = MCMakeGui<MCLogUpdateNotes>();
-    notes->InitAt(PageListLeft, PageListTop, PageListWidth, PageListHeight);
-    notes->ShowGuiWindow(true);
-    Notes = notes;
-    mainScreen.AdoptChildOf(page, std::move(notes));
     MCUpdater::SetListener(Refresh);
     Refresh();
 }
 
-MCGuiOwned<MCLogObject> MakeUpdateLine(std::span<const uint8_t> palette)
+MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint8_t> palette, int32_t xPos,
+                                       int32_t yPos, int32_t width, int32_t height)
 {
-    return MCMakeGui<MCUpdateNotice>(Nearest(palette, Amber), true);
+    return screen.CreateChild<MCUpdateNotice>(
+        [&](MCUpdateNotice& line)
+        {
+            line.Init(xPos, yPos, width, height);
+            line.SetTransparent(true);
+            line.ShowGuiWindow(true);
+        },
+        Nearest(palette, Amber), true);
 }
 
 void ShowUpdatePageOver(MCGuiObject& screen)
 {
-    MovePageTo(screen);
-    ShowUpdatePage();
+    const MCOptionalRef<MCUpdatePageView> shown = PageOn(screen);
+    ShowPage(shown ? shown->get() : AddPageTo(screen));
 }
 
 std::shared_ptr<MCGuiObject> UpdatePageFind(const MCGuiObject& screen, int32_t xPos, int32_t yPos)
 {
-    const std::shared_ptr<MCGuiObject> page = Page.lock();
+    const MCOptionalRef<MCUpdatePageView> view = PageOn(screen);
 
-    if (page == nullptr || !page->IsShowing() || page->ParentObject().get() != &screen)
+    if (!view || !view->get().Page->IsShowing())
     {
         return nullptr;
     }
 
     // The page takes every click on it, even between its buttons, so none reaches the screen's controls under it.
+    const std::shared_ptr<MCLogGroupBox> page = view->get().Page.Lock();
     std::shared_ptr<MCGuiObject> found = page->FindObject(xPos, yPos);
     return found != nullptr || !page->PointInside(xPos, yPos) ? found : page;
 }
 
-void UpdatePageLeaves(MCGuiObject& screen)
-{
-    const std::shared_ptr<MCGuiObject> page = Page.lock();
-
-    if (page == nullptr || page->ParentObject().get() != &screen)
-    {
-        return;
-    }
-
-    page->ShowGuiWindow(false);
-
-    if (const std::shared_ptr<MCGuiObject> home = Home.lock(); home != nullptr)
-    {
-        MovePageTo(*home);
-    }
-    else
-    {
-        screen.RemoveChild(*page);
-    }
-}
-
 void ShowUpdatePage()
 {
-    // From the main menu's UPDATE, the page goes back to the main menu.
-    if (const std::shared_ptr<MCGuiObject> home = Home.lock(), page = Page.lock();
-        home != nullptr && page != nullptr && page->ParentObject() != home && home->IsShowing())
+    // UPDATE: the main menu's page.
+    if (const std::shared_ptr<MCGuiObject> home = Home.Lock(); home != nullptr)
     {
-        MovePageTo(*home);
+        ShowUpdatePageOver(*home);
     }
-
-    if (const std::shared_ptr<MCLogUpdateNotes> notes = Notes.lock(); notes != nullptr)
-    {
-        notes->Reset();
-    }
-
-    if (const std::shared_ptr<MCGuiObject> page = Page.lock(); page != nullptr)
-    {
-        page->ShowGuiWindow(true);
-    }
-
-    Refresh();
 }
 
 void HideUpdatePage()
 {
-    if (const std::shared_ptr<MCGuiObject> page = Page.lock(); page != nullptr)
+    for (const MCUpdatePageView& view : LivePages())
     {
-        page->ShowGuiWindow(false);
+        view.Page->ShowGuiWindow(false);
     }
 }
 
 bool UpdatePageShown()
 {
-    // On a screen that has gone (the session screen as the match starts), it isn't.
-    const std::shared_ptr<MCGuiObject> page = Page.lock();
-    const std::shared_ptr<MCGuiObject> screen = page != nullptr ? page->ParentObject() : nullptr;
-    return page != nullptr && page->IsShowing() && (screen == nullptr || screen->IsShowing());
+    // A page on a screen that isn't showing (the session screen as the match starts) isn't.
+    return std::ranges::any_of(LivePages(),
+                               [](const MCUpdatePageView& view)
+                               {
+                                   const std::shared_ptr<MCGuiObject> screen = view.Page->ParentObject();
+                                   return view.Page->IsShowing() && (screen == nullptr || screen->IsShowing());
+                               });
 }
 
 std::string UpdatePageStatus()
@@ -1118,6 +1139,14 @@ std::string UpdatePageStatus()
 
 std::vector<std::string> UpdatePageLines()
 {
-    const std::shared_ptr<MCLogUpdateNotes> notes = Notes.lock();
-    return notes != nullptr ? notes->Lines() : std::vector<std::string>();
+    // Every page shows the same lines (the updater's notes, wrapped to the same width).
+    for (const MCUpdatePageView& view : LivePages())
+    {
+        if (const std::shared_ptr<MCLogUpdateNotes> notes = view.Notes.Lock(); notes != nullptr)
+        {
+            return notes->Lines();
+        }
+    }
+
+    return {};
 }

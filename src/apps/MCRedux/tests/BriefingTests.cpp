@@ -7,6 +7,7 @@
 #include "gui/MCScrollPane.h"
 #include "lib/MCFile.h"
 #include "lib/MCFitIniFile.h"
+#include "logistics/MCBriefingBox.h"
 #include "logistics/MCBriefingScreen.h"
 #include "logistics/MCConnectMenu.h"
 #include "logistics/MCFileScrollPane.h"
@@ -285,8 +286,14 @@ TEST_CASE_ISOLATED("game: the main menu offers LOAD MISSION while there are save
     std::shared_ptr<MCLogistics> logistics = GlobalLog();
     CHECK(!logistics->MainScreen->Element<MCLogButton>(MCTestGame::MainMenuLoadButton)->Disabled);
 
-    LoadScreen();
-    Settle();
+    {
+        // The pinned saves are empty files: reading each as the screen opens reports it, and lists it by name.
+        MCTest::ExpectAssert emptySaves("could not find packet 0 in save game file",
+                                        static_cast<int32_t>(Saves.size()));
+        LoadScreen();
+        Settle();
+    }
+
     REQUIRE(logistics->CurrentScreen() == logistics->LoadScreen);
     const std::vector<MCFileScrollPane::File>& files = logistics->LoadScreen->FilePane->Files;
     REQUIRE_EQ(files.size(), Saves.size());
@@ -309,10 +316,22 @@ namespace
     /// <summary>Drags <paramref name="mech"/>'s block (wherever it is) to (<paramref name="x"/>, <paramref name="y"/>).</summary>
     void DragMech(MCLogMech& mech, int32_t x, int32_t y)
     {
-        REQUIRE(mech.BriefBlock != nullptr);
-        MCMechBriefBlock& block = *mech.BriefBlock;
-        Drag(block.GlobalX() + block.Width() / 2, block.GlobalY() + block.Height() / 2, x, y);
+        const std::shared_ptr<MCMechBriefBlock> block = GlobalLog()->BriefingScreen->BlockOf(mech);
+        REQUIRE(block != nullptr);
+        const POINT from{block->GlobalX() + block->Width() / 2, block->GlobalY() + block->Height() / 2};
+        Drag(from.x, from.y, x, y);
         Settle();
+    }
+
+    /// <summary>The first unit the deploy pane lists, as a mech (null when it is a vehicle or the pane is empty).</summary>
+    std::shared_ptr<MCLogMech> FirstDeployMech(const MCBriefingScreen& briefing)
+    {
+        if (briefing.DeployUnits.empty() || briefing.DeployUnits.front()->PartType != 1)
+        {
+            return nullptr;
+        }
+
+        return std::static_pointer_cast<MCLogMech>(briefing.DeployUnits.front());
     }
 
     /// <summary>
@@ -329,9 +348,7 @@ namespace
             // Pinned only for the set-up: the launch takes logistics down.
             const std::shared_ptr<MCLogistics> pinned = GlobalLog();
             REQUIRE(pinned->CurrentScreen() == pinned->BriefingScreen);
-            MCScrollPane& pane = *pinned->BriefingScreen->DeployPane;
-            REQUIRE(pane.NumberOfChildren() > 0);
-            std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+            std::shared_ptr<MCLogMech> mech = FirstDeployMech(*pinned->BriefingScreen);
             REQUIRE(mech != nullptr);
             MaxDeployTonnage = CurDeployTonnage + static_cast<int32_t>(mech->CurTonnage);
             DragMech(*mech, SlotMiddle(0).x, SlotMiddle(0).y);
@@ -369,10 +386,11 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
     REQUIRE(logistics->CurrentScreen().get() == &briefing);
     REQUIRE(logistics->LocalDropSlot[0]);
     REQUIRE(!logistics->HammerDown);
-    MCScrollPane& pane = *briefing.DeployPane;
+    MCListView& pane = *briefing.DeployPane;
     REQUIRE(pane.NumberOfChildren() > 0);
-    std::shared_ptr<MCLogMech> mech = std::static_pointer_cast<MCMechBriefBlock>(pane.Child(0))->Mech();
+    std::shared_ptr<MCLogMech> mech = FirstDeployMech(briefing);
     REQUIRE(mech != nullptr);
+    REQUIRE(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) != nullptr);
     REQUIRE(mech->Deployed == 0);
     const auto tons = static_cast<int32_t>(mech->CurTonnage);
     const int32_t startTons = CurDeployTonnage;
@@ -387,8 +405,15 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
     CHECK(mech->Deployed != 0);
     CHECK_EQ(slot0.Unit, logistics->ForceMechList->GetMechIndex(mech));
     CHECK_EQ(CurDeployTonnage, startTons + tons);
-    CHECK(briefing.SlotBlocks[0].lock() == mech->BriefBlock);
-    CHECK(mech->BriefBlock->ParentObject().get() == &briefing);
+    const std::shared_ptr<MCBriefingBox> box = briefing.BriefingBox.Lock();
+    REQUIRE(box != nullptr);
+    CHECK(box->Mech() == mech);
+    CHECK(box->ParentObject().get() == &briefing);
+    const std::shared_ptr<MCMechBriefBlock> slotBlock = briefing.SlotBlocks[0].Lock();
+    REQUIRE(slotBlock != nullptr);
+    CHECK(slotBlock->Mech() == mech);
+    CHECK(slotBlock->ParentObject().get() == &briefing);
+    CHECK(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) == nullptr);
     CHECK(std::ranges::find(briefing.UndeployedMechs, logistics->ForceMechList->GetMechIndex(mech)) ==
           briefing.UndeployedMechs.end());
 
@@ -397,8 +422,9 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
     CHECK(mech->Deployed == 0);
     CHECK_EQ(slot0.Unit, -1);
     CHECK_EQ(CurDeployTonnage, startTons);
-    CHECK(briefing.SlotBlocks[0].expired());
-    CHECK(mech->BriefBlock->ParentObject().get() == &pane);
+    CHECK(briefing.SlotBlocks[0] == nullptr);
+    CHECK(briefing.BlockOf(*mech) == pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)));
+    CHECK(briefing.BlockOf(*mech) != nullptr);
 
     // A ton over the limit: refused with the message, the mech stays in the pane.
     MaxDeployTonnage = startTons + tons - 1;
@@ -407,7 +433,8 @@ TEST_CASE_ISOLATED("game: units dragged into the drop slots count against the dr
     CHECK_EQ(slot0.Unit, -1);
     CHECK_EQ(CurDeployTonnage, startTons);
     CHECK(logistics->MessageDialog->ShowWindow != 0);
-    CHECK(mech->BriefBlock->ParentObject().get() == &pane);
+    CHECK(briefing.SlotBlocks[0] == nullptr);
+    CHECK(pane.RowOf<MCMechBriefBlock>(static_cast<const MCLogPart&>(*mech)) != nullptr);
 }
 
 /// <summary>

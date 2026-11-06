@@ -72,7 +72,7 @@ auto GpuFellBack() -> bool
 
 auto ScreenWindow() -> std::shared_ptr<MCGuiObject>
 {
-    return HasGuiSystem() ? GuiSystem().Screen : nullptr;
+    return HasGuiSystem() ? GuiSystem().Screen.Pin() : nullptr;
 }
 
 auto ScreenPort() -> std::shared_ptr<MCGuiPort>
@@ -93,10 +93,10 @@ MCGuiSystem::MCGuiSystem()
 MCGuiSystem::~MCGuiSystem()
 {
     Session.reset();
-    _Retired.clear();
-    Console.reset();
-    VersionDialog.reset();
-    SmackerWindow.reset();
+    CloseRetired();
+    CloseGuiObject(Console);
+    CloseGuiObject(VersionDialog);
+    CloseGuiObject(SmackerWindow);
     Screen.reset();
     TimerManager.reset();
     FreeFonts();
@@ -127,7 +127,7 @@ auto MCGuiSystem::MakeScreen(int32_t width, int32_t height) -> void
 {
     ScreenPixels = std::make_shared<MCGuiPort>();
     ScreenPixels->InitScreen(width, height);
-    Screen = MCMakeGui<MCGuiObject>();
+    Screen = MCGuiRef<MCGuiObject>::Make();
     Screen->Init(0, 0, ScreenWidth, ScreenHeight, {});
     Screen->SetDepth(-100);
     Screen->ObjectType = 1;
@@ -335,9 +335,9 @@ auto MCGuiSystem::Stop() -> void
     MCGameContext::Current().SetTacticalInterface(nullptr);
 
     // The screen's last windows (the original left a version box or a movie window still open to its assert).
-    _Retired.clear();
-    Console.reset();
-    VersionDialog.reset();
+    CloseRetired();
+    CloseGuiObject(Console);
+    CloseGuiObject(VersionDialog);
 
     if (SmackerWindow != nullptr)
     {
@@ -368,27 +368,36 @@ auto MCGuiSystem::StartSmackerMovie(std::string_view fileName) -> int32_t
     // A window of the movie's size, centred on the screen.
     const int32_t movieWidth = movie->Player->Width();
     const int32_t movieHeight = movie->Player->Height();
-    auto window = MCMakeGui<MCGuiSmackerWindow>();
-    MCGuiObject& windowObject = *window;
-    int32_t result = windowObject.Init(static_cast<int32_t>(static_cast<uint32_t>(Width() - movieWidth) >> 1),
-                                       static_cast<int32_t>(static_cast<uint32_t>(Height() - movieHeight) >> 1),
-                                       movieWidth, movieHeight, "Movie Time");
+    auto window = ScreenWindow()->TryCreateChild<MCGuiSmackerWindow>(
+        [&](MCGuiSmackerWindow& made)
+        {
+            MCGuiObject& windowObject = made;
+            int32_t result = windowObject.Init(static_cast<int32_t>(static_cast<uint32_t>(Width() - movieWidth) >> 1),
+                                               static_cast<int32_t>(static_cast<uint32_t>(Height() - movieHeight) >> 1),
+                                               movieWidth, movieHeight, "Movie Time");
 
-    if (result != 0)
+            if (result != 0)
+            {
+                return result;
+            }
+
+            result = made.StartSmackerMovie(std::move(movie), true);
+
+            if (result != 0)
+            {
+                return result;
+            }
+
+            made.SetDepth(100);
+            return 0;
+        });
+
+    if (!window)
     {
-        return result;
+        return window.error();
     }
 
-    result = window->StartSmackerMovie(std::move(movie), true);
-
-    if (result != 0)
-    {
-        return result;
-    }
-
-    SmackerWindow = std::move(window);
-    SmackerWindow->SetDepth(100);
-    ScreenWindow()->AddChild(SmackerWindow);
+    SmackerWindow = *window;
     SmackerWindow->Draw();
     return 0;
 }
@@ -404,7 +413,7 @@ auto MCGuiSystem::CloseMovie() -> void
 
 auto MCGuiSystem::RunFrameCallbacks(bool includeAdded) -> void
 {
-    _Retired.clear();
+    CloseRetired();
 
     // The original's array: a callback removed while they run shifts the later ones down (the next one waits a frame),
     // and the slots past the end read null.
@@ -488,6 +497,7 @@ auto MCGuiSystem::Run() -> void
         {
             // Quitting while inactive: close the movie and the feature screen.
             CloseMovie();
+            CloseGuiObject(FeatureScreen);
             FeatureScreen.reset();
         }
 
@@ -693,6 +703,20 @@ auto MCGuiSystem::RemoveTimers(const MCGuiObject& target) const -> void
     }
 }
 
+auto MCGuiSystem::HandOver(const MCGuiObject& from, const std::weak_ptr<MCGuiObject>& to) -> void
+{
+    if (TimerManager != nullptr)
+    {
+        MCMouseThreadLock lock;
+        TimerManager->HandTimersOver(from, to);
+    }
+
+    if (HasText(from))
+    {
+        TextFocus = to;
+    }
+}
+
 auto MCGuiSystem::SetCurrentCursor(MCCursorType cursor) -> void
 {
     if (CursorHidden)
@@ -749,20 +773,27 @@ auto MCGuiSystem::SetCursorVisible(bool show) -> void
     CursorHidden = true;
 }
 
-auto MCGuiSystem::Retire(MCGuiOwned<MCGuiObject> object) -> void
+auto MCGuiSystem::Retire(MCGuiHandle<MCGuiObject> object) -> void
 {
     if (object == nullptr)
     {
         return;
     }
 
-    if (const std::shared_ptr<MCGuiObject> parent = object->ParentObject(); parent != nullptr)
-    {
-        parent->RemoveChild(*object);
-    }
-
+    // Hidden now, so it is no longer drawn or found by the mouse, as the original's taken off the screen.
     object->ShowGuiWindow(false);
     _Retired.push_back(std::move(object));
+}
+
+auto MCGuiSystem::CloseRetired() -> void
+{
+    // Taken out first: closing one may retire another.
+    const std::vector<MCGuiHandle<MCGuiObject>> retired = std::exchange(_Retired, {});
+
+    for (const MCGuiHandle<MCGuiObject>& object : retired)
+    {
+        CloseGuiObject(object);
+    }
 }
 
 // The screen as a whole.
@@ -829,6 +860,6 @@ auto DestroyVersion() -> void
     // The box goes from its own OK button's click: taken off the screen now, deleted after the click (OB-158).
     if (HasGuiSystem() && GuiSystem().VersionDialog != nullptr)
     {
-        GuiSystem().Retire(std::move(GuiSystem().VersionDialog));
+        GuiSystem().Retire(std::exchange(GuiSystem().VersionDialog, {}));
     }
 }

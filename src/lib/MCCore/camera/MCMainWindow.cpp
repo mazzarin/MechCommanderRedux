@@ -55,7 +55,7 @@ auto MCMainWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
         return result;
     }
 
-    ClockPane = MCMakeGui<MCGuiObject>();
+    ClockPane = MCGuiRef<MCGuiObject>::Make();
     LineFont()->Scale = 1.5f;
     LineFont()->Scaled = true;
     const int32_t clockHeight = WhiteFont == nullptr ? 24 : LineHeight(*LineFont()) + 4;
@@ -66,10 +66,10 @@ auto MCMainWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
     return 0;
 }
 
-auto MCMainWindow::Destroy() -> void
+auto MCMainWindow::OnDestroy() -> void
 {
     ClockPane.reset();
-    MCGuiHolderObject::Destroy();
+    MCGuiHolderObject::OnDestroy();
 }
 
 auto MCMainWindow::HandleEvent(MCGuiEvent& event) -> void

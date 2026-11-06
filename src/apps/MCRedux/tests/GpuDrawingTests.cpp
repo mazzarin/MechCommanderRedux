@@ -830,7 +830,7 @@ TEST_CASE_ISOLATED("game: a movie's frames go straight to the GPU, once each")
         MCTestGame::RunFrame(1.0f / 30.0f);
     }
 
-    const std::shared_ptr<MCGuiSmackerWindow> window = briefing.SmackerWindow;
+    const std::shared_ptr<MCGuiSmackerWindow> window = briefing.SmackerWindow.Lock();
     REQUIRE(window != nullptr && window->Movie != nullptr);
     const std::shared_ptr<MCTexture> texture = window->MovieWindow->Texture.lock();
     REQUIRE(texture != nullptr);

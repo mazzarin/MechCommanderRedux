@@ -32,10 +32,10 @@ auto MCMechBar::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, 
     return 0;
 }
 
-auto MCMechBar::Destroy() -> void
+auto MCMechBar::OnDestroy() -> void
 {
     CleanUp();
-    MCGuiObject::Destroy();
+    MCGuiObject::OnDestroy();
 }
 
 auto MCMechBar::Display() -> void
@@ -47,16 +47,18 @@ auto MCMechBar::Display() -> void
 
     for (size_t i = 0; i < ChildList.size(); i++)
     {
-        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].lock(); child != nullptr)
+        if (const std::shared_ptr<MCGuiObject> child = ChildList[i].Lock(); child != nullptr)
         {
             child->Display();
         }
     }
 
+    const std::vector<std::shared_ptr<MCFriendlyMechIcon>> buttons = Buttons();
+
     if (!Dancing)
     {
         // A separator after each lance icon shown, and around each button outside a lance.
-        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
         {
             if (lanceIcon != nullptr && lanceIcon->IsShowing() != 0)
             {
@@ -65,7 +67,7 @@ auto MCMechBar::Display() -> void
             }
         }
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : buttons)
         {
             button->DrawBox(0x35, -1, -1, -1, -1);
 
@@ -79,7 +81,7 @@ auto MCMechBar::Display() -> void
     }
 
     // Each button's frame: red on the video pilot, else yellow when selected, else white under the mouse.
-    for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+    for (const std::shared_ptr<MCFriendlyMechIcon>& button : buttons)
     {
         const int32_t buttonWidth = button->Width();
         const int32_t buttonHeight = button->Height();
@@ -132,40 +134,83 @@ auto MCMechBar::Resize(int32_t width, int32_t height) -> void
 auto MCMechBar::CleanUp() -> void
 {
     // Last to first, as the original removed them.
-    while (!Buttons.empty())
+    while (!_Buttons.empty())
     {
-        Buttons.pop_back();
+        CloseGuiObject(_Buttons.back());
+        _Buttons.pop_back();
     }
 
-    for (std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+    for (const MCGuiHandle<MCFriendlyMechIcon>& icon : _ReserveIcons)
     {
+        CloseGuiObject(icon);
+    }
+
+    _ReserveIcons.clear();
+
+    for (MCGuiHandle<MCLanceIcon>& lanceIcon : _LanceIcons)
+    {
+        CloseGuiObject(lanceIcon);
         lanceIcon.reset();
     }
 }
 
-auto MCMechBar::AddButton(MCGuiOwned<MCFriendlyMechIcon> button) -> bool
+auto MCMechBar::Buttons() const -> std::vector<std::shared_ptr<MCFriendlyMechIcon>>
 {
-    if (Buttons.size() >= MaxButtons)
+    std::vector<std::shared_ptr<MCFriendlyMechIcon>> buttons;
+    buttons.reserve(_Buttons.size());
+
+    for (const MCGuiHandle<MCFriendlyMechIcon>& button : _Buttons)
     {
-        return false;
+        if (std::shared_ptr<MCFriendlyMechIcon> pinned = button.Lock(); pinned != nullptr)
+        {
+            buttons.push_back(std::move(pinned));
+        }
     }
 
-    button->MoveTo((SpacingX + 1) * static_cast<int32_t>(Buttons.size()) + 2, 0xf, false);
-    AddChild(button);
-    Buttons.push_back(std::move(button));
-    return true;
+    return buttons;
+}
+
+auto MCMechBar::LanceIcons() const -> std::array<std::shared_ptr<MCLanceIcon>, NumLances>
+{
+    std::array<std::shared_ptr<MCLanceIcon>, NumLances> icons;
+
+    for (size_t i = 0; i < NumLances; i++)
+    {
+        icons[i] = _LanceIcons[i].Lock();
+    }
+
+    return icons;
 }
 
 auto MCMechBar::GetButton(size_t index) const -> std::shared_ptr<MCFriendlyMechIcon>
 {
-    return index < Buttons.size() ? Buttons[index] : nullptr;
+    return index < _Buttons.size() ? _Buttons[index].Lock() : nullptr;
 }
 
 auto MCMechBar::GetButtonFromID(int32_t partId) const -> std::shared_ptr<MCFriendlyMechIcon>
 {
-    const auto found = std::ranges::find_if(Buttons, [partId](const std::shared_ptr<MCFriendlyMechIcon>& button)
-                                            { return button->PartId == partId; });
-    return found != Buttons.end() ? *found : nullptr;
+    for (const MCGuiHandle<MCFriendlyMechIcon>& button : _Buttons)
+    {
+        if (std::shared_ptr<MCFriendlyMechIcon> pinned = button.Lock(); pinned != nullptr && pinned->PartId == partId)
+        {
+            return pinned;
+        }
+    }
+
+    return nullptr;
+}
+
+auto MCMechBar::GetReserveIcon(int32_t partId) const -> std::shared_ptr<MCFriendlyMechIcon>
+{
+    for (const MCGuiHandle<MCFriendlyMechIcon>& icon : _ReserveIcons)
+    {
+        if (std::shared_ptr<MCFriendlyMechIcon> pinned = icon.Lock(); pinned != nullptr && pinned->PartId == partId)
+        {
+            return pinned;
+        }
+    }
+
+    return nullptr;
 }
 
 auto MCMechBar::PlaceButtons(bool animate) -> void
@@ -210,7 +255,7 @@ auto MCMechBar::PlaceButtons(bool animate) -> void
                    return b.Key < a.Key ? 1 : -1;
                });
 
-    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
     {
         if (lanceIcon != nullptr)
         {
@@ -229,7 +274,7 @@ auto MCMechBar::PlaceButtons(bool animate) -> void
             continue;
         }
 
-        const std::shared_ptr<MCFriendlyMechIcon>& button = Buttons[entry.Index];
+        const std::shared_ptr<MCFriendlyMechIcon> button = _Buttons[entry.Index].Lock();
         const int32_t buttonLance = button->Lance;
         int32_t xPos = nextX;
 
@@ -242,9 +287,9 @@ auto MCMechBar::PlaceButtons(bool animate) -> void
 
             lastLance = buttonLance;
 
-            if (buttonLance < static_cast<int32_t>(NumLances) && LanceIcons[buttonLance] != nullptr)
+            if (buttonLance < static_cast<int32_t>(NumLances) && _LanceIcons[buttonLance] != nullptr)
             {
-                LanceIcons[buttonLance]->MoveTo(xPos, 2, false);
+                _LanceIcons[buttonLance]->MoveTo(xPos, 2, false);
             }
 
             xPos++;
@@ -257,14 +302,14 @@ auto MCMechBar::PlaceButtons(bool animate) -> void
 
     if (!animate)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
         {
             button->MoveTo(button->TargetX, button->Y(), false);
         }
 
         const int32_t linkWidth = SpacingX - 1;
 
-        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
         {
             lanceIcon->Resize(lanceIcon->GetNumActiveMovers() * linkWidth + 3, lanceIcon->Height());
         }
@@ -288,9 +333,7 @@ auto MCMechBar::InitLances() -> void
 {
     for (size_t i = 0; i < NumLances; i++)
     {
-        LanceIcons[i] = MCMakeGui<MCLanceIcon>();
-        LanceIcons[i]->Init(static_cast<int16_t>(i));
-        AddChild(LanceIcons[i]);
+        _LanceIcons[i] = CreateChild<MCLanceIcon>([i](MCLanceIcon& icon) { icon.Init(static_cast<int16_t>(i)); });
     }
 
     PlaceButtons(false);
@@ -298,7 +341,7 @@ auto MCMechBar::InitLances() -> void
 
 auto MCMechBar::GetLanceIconFromID(int32_t lanceId) const -> std::shared_ptr<MCLanceIcon>
 {
-    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+    for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
     {
         if (lanceIcon != nullptr && lanceIcon->LanceId == lanceId)
         {
@@ -313,7 +356,7 @@ auto MCMechBar::Dance() -> void
 {
     // Three phases: the lance icons drop out of sight while the buttons that move left rise; the buttons slide to
     // their places; then the lance icons come back up and the buttons drop into line.
-    const int32_t step = LanceIcons[0]->Height() / 3 + 1;
+    const int32_t step = _LanceIcons[0]->Height() / 3 + 1;
     const int16_t shuffleFrames = TacticalInterface()->ShuffleFrames;
 
     if (_DanceFrames == 3)
@@ -323,7 +366,7 @@ auto MCMechBar::Dance() -> void
 
     if (_DanceFrames == shuffleFrames + 3)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
         {
             button->MoveTo(button->TargetX, button->Y(), false);
         }
@@ -333,13 +376,13 @@ auto MCMechBar::Dance() -> void
 
     if (_DanceStep == 0)
     {
-        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
         {
             lanceIcon->MoveTo(lanceIcon->X(), lanceIcon->Y() + step, false);
             lanceIcon->SetDepth(-10);
         }
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
         {
             if (button->TargetX < button->X())
             {
@@ -350,19 +393,19 @@ auto MCMechBar::Dance() -> void
     }
     else if (_DanceStep == 1)
     {
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
         {
             button->MoveTo(button->X() + button->ShuffleStep, button->Y(), false);
         }
 
-        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
         {
             lanceIcon->ShowGuiWindow(false);
         }
     }
     else if (_DanceStep == 2)
     {
-        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+        for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
         {
             if (!lanceIcon->Group.expired())
             {
@@ -373,7 +416,7 @@ auto MCMechBar::Dance() -> void
             lanceIcon->ShowTest();
         }
 
-        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+        for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
         {
             if (button->Y() != 0xf)
             {
@@ -384,12 +427,12 @@ auto MCMechBar::Dance() -> void
         if (shuffleFrames + 6 <= _DanceFrames)
         {
             // Done: everything at rest, the lance icons sized to their lances.
-            for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons)
+            for (const std::shared_ptr<MCFriendlyMechIcon>& button : Buttons())
             {
                 button->SetDepth(0);
             }
 
-            for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons)
+            for (const std::shared_ptr<MCLanceIcon>& lanceIcon : LanceIcons())
             {
                 lanceIcon->SetDepth(0);
                 lanceIcon->MoveTo(lanceIcon->X(), 2, false);

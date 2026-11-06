@@ -9,20 +9,20 @@
 
 auto MCStoreRow::MakeDragIcon(const MCDragState& drag, const std::function<void(MCLogPort& surface)>& render) -> void
 {
-    std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-    icon->Begin(drag.X, drag.Y, 0x20, 0x20, render);
-    icon->ShowOn(*GlobalLog()->PurchaseScreen, drag.X, drag.Y);
+    const std::shared_ptr<MCDragIcon> icon =
+        MCDragIcon::Create(*GlobalLog()->PurchaseScreen, drag.X, drag.Y, 0x20, 0x20, render);
+    icon->ShowAt(drag.X, drag.Y);
 }
 
 auto MCStoreRow::OverInventory(MCGuiEvent& event) -> bool
 {
-    std::shared_ptr<MCScrollPane> size = GlobalLog()->RepairScreen->InventoryPane;
+    std::shared_ptr<MCScrollPane> size = GlobalLog()->RepairScreen->InventoryPane.Lock();
     return OverPaneInside(*GlobalLog()->PurchaseScreen->InventoryPane, *size, *size, event);
 }
 
 auto MCStoreRow::OverStore(MCGuiEvent& event) -> bool
 {
-    std::shared_ptr<MCScrollPane> size = GlobalLog()->RepairScreen->UnitPane;
+    std::shared_ptr<MCScrollPane> size = GlobalLog()->RepairScreen->UnitPane.Lock();
     return OverPaneInside(*GlobalLog()->PurchaseScreen->UnitPane, *size, *size, event);
 }
 

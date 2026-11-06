@@ -3,7 +3,6 @@
 #include "lib/MCFatal.h"
 #include "lib/MCFitIniFile.h"
 #include "logistics/MCPurProfile.h"
-#include "logistics/MCVehiclePurchaseBlock.h"
 #include "main/MCGamePaths.h"
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
@@ -83,8 +82,6 @@ auto MCPurVehicleList::AddVehicle(std::string_view fileName, int32_t count) -> v
     data.NumAvailable = count;
     data.FileName = fileName;
 
-    vehicle->Block = MCMakeGui<MCVehiclePurchaseBlock>();
-    vehicle->Block->Init(vehicle);
     vehicle->CalcVehicleCost();
     file.Close();
 

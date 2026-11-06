@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiButton.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCGuiFont;
 
@@ -26,7 +26,6 @@ class MCGuiTitleBar : public MCGuiObject
 public:
     /// <summary>Makes the four buttons; the title is <paramref name="name"/> (a space when null).</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
     void Draw() override;
     /// <summary>Port: draws itself each frame from its title and buttons.</summary>
     bool DrawsLive() override { return true; }
@@ -55,12 +54,12 @@ public:
     /// <summary>The title text.</summary>
     std::string Title;
     /// <summary>The close button, at the right end.</summary>
-    MCGuiOwned<MCGuiCloseButton> CloseButton;
+    MCGuiHandle<MCGuiCloseButton> CloseButton;
     /// <summary>The zoom buttons, at the left end (hidden by default).</summary>
-    MCGuiOwned<MCGuiButton> ZoomButton;
-    MCGuiOwned<MCGuiButton> ZoomOutButton;
+    MCGuiHandle<MCGuiButton> ZoomButton;
+    MCGuiHandle<MCGuiButton> ZoomOutButton;
     /// <summary>The swoopy button, left of the close button (hidden by default).</summary>
-    MCGuiOwned<MCGuiTitleButton> SwoopyButton;
+    MCGuiHandle<MCGuiTitleButton> SwoopyButton;
 };
 
 /// <summary>The paint routine of a title bar: its gradient lines.</summary>

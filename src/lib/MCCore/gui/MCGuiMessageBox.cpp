@@ -28,19 +28,28 @@ auto MCGuiMessageBox::Init(std::string_view text) -> int32_t
         return result;
     }
 
-    OkButton = MCMakeGui<MCGuiButton>();
-    result = OkButton->Init((boxWidth - 0x30) / 2, fontHeight + 0xe, 0x3c, 0x14, {});
+    auto button = TryCreateChild<MCGuiButton>(
+        [&](MCGuiButton& made)
+        {
+            if (const int32_t buttonResult = made.Init((boxWidth - 0x30) / 2, fontHeight + 0xe, 0x3c, 0x14, {});
+                buttonResult != 0)
+            {
+                return buttonResult;
+            }
 
-    if (result != 0)
+            made.SetUpPicture(0x10);
+            made.SetDownPicture(0x11);
+            made.Callback().SetExec(DestroyVersion);
+            made.SetDepth(100);
+            return 0;
+        });
+
+    if (!button)
     {
-        return result;
+        return button.error();
     }
 
-    OkButton->SetUpPicture(0x10);
-    OkButton->SetDownPicture(0x11);
-    OkButton->Callback().SetExec(DestroyVersion);
-    OkButton->SetDepth(100);
-    AddChild(OkButton);
+    OkButton = *button;
     // The box is drawn by Draw, each frame.
     Message = text;
     return 0;
@@ -53,12 +62,6 @@ auto MCGuiMessageBox::Draw() -> void
     WhiteFont->WriteString(pane, (Width() - WhiteFont->Width(Message)) / 2, 8, Message);
     DrawBox(0x1f, -1, -1, -1, -1);
     MCGuiObject::Draw();
-}
-
-auto MCGuiMessageBox::Destroy() -> void
-{
-    OkButton.reset();
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiMessageBox::HandleEvent(MCGuiEvent& event) -> void

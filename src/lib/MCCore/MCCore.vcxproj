@@ -135,6 +135,7 @@
     <ClCompile Include="gui\MCGuiTitleWindow.cpp" />
     <ClCompile Include="gui\MCGuiTransparentTextObject.cpp" />
     <ClCompile Include="gui\MCHardwareCursor.cpp" />
+    <ClCompile Include="gui\MCListView.cpp" />
     <ClCompile Include="gui\MCScrollPane.cpp" />
     <ClCompile Include="gui\MCUpdateDisplay.cpp" />
     <ClCompile Include="iface\MCCommandParser.cpp" />
@@ -187,6 +188,7 @@
     <ClCompile Include="logistics\MCInventoryBlock.cpp" />
     <ClCompile Include="logistics\MCLoadSaveMenu.cpp" />
     <ClCompile Include="logistics\MCLogButton.cpp" />
+    <ClCompile Include="logistics\MCLogChat.cpp" />
     <ClCompile Include="logistics\MCLogChatInput.cpp" />
     <ClCompile Include="logistics\MCLogChatWindow.cpp" />
     <ClCompile Include="logistics\MCLogComboBox.cpp" />
@@ -234,6 +236,7 @@
     <ClCompile Include="logistics\MCSplashScreen.cpp" />
     <ClCompile Include="logistics\MCStoreRow.cpp" />
     <ClCompile Include="logistics\MCTicker.cpp" />
+    <ClCompile Include="logistics\MCTickerLine.cpp" />
     <ClCompile Include="logistics\MCUnitLimits.cpp" />
     <ClCompile Include="logistics\MCUpdatePage.cpp" />
     <ClCompile Include="logistics\MCVehicleInventoryBlock.cpp" />
@@ -265,6 +268,7 @@
     <ClCompile Include="main\MCLogWarriorList.cpp" />
     <ClCompile Include="main\MCMissionGlobals.cpp" />
     <ClCompile Include="main\MCMPPlayerLights.cpp" />
+    <ClCompile Include="main\MCMPPlayerLightsView.cpp" />
     <ClCompile Include="main\MCSystemConfig.cpp" />
     <ClCompile Include="main\MCTelemetry.cpp" />
     <ClCompile Include="main\MCUpdater.cpp" />
@@ -583,8 +587,8 @@
     <ClInclude Include="gui\MCGuiMenu.h" />
     <ClInclude Include="gui\MCGuiMessageBox.h" />
     <ClInclude Include="gui\MCGuiObject.h" />
-    <ClInclude Include="gui\MCGuiOwned.h" />
     <ClInclude Include="gui\MCGuiPort.h" />
+    <ClInclude Include="gui\MCGuiRef.h" />
     <ClInclude Include="gui\MCGuiScrollBar.h" />
     <ClInclude Include="gui\MCGuiScrollTextObject.h" />
     <ClInclude Include="gui\MCGuiSmackerWindow.h" />
@@ -598,6 +602,7 @@
     <ClInclude Include="gui\MCGuiTitleWindow.h" />
     <ClInclude Include="gui\MCGuiTransparentTextObject.h" />
     <ClInclude Include="gui\MCHardwareCursor.h" />
+    <ClInclude Include="gui\MCListView.h" />
     <ClInclude Include="gui\MCScrollPane.h" />
     <ClInclude Include="gui\MCUpdateDisplay.h" />
     <ClInclude Include="iface\MCCommandParser.h" />
@@ -650,6 +655,7 @@
     <ClInclude Include="logistics\MCInventoryBlock.h" />
     <ClInclude Include="logistics\MCLoadSaveMenu.h" />
     <ClInclude Include="logistics\MCLogButton.h" />
+    <ClInclude Include="logistics\MCLogChat.h" />
     <ClInclude Include="logistics\MCLogChatInput.h" />
     <ClInclude Include="logistics\MCLogChatWindow.h" />
     <ClInclude Include="logistics\MCLogComboBox.h" />
@@ -697,6 +703,7 @@
     <ClInclude Include="logistics\MCSplashScreen.h" />
     <ClInclude Include="logistics\MCStoreRow.h" />
     <ClInclude Include="logistics\MCTicker.h" />
+    <ClInclude Include="logistics\MCTickerLine.h" />
     <ClInclude Include="logistics\MCUnitLimits.h" />
     <ClInclude Include="logistics\MCUpdatePage.h" />
     <ClInclude Include="logistics\MCVehicleInventoryBlock.h" />
@@ -724,6 +731,7 @@
     <ClInclude Include="main\MCLogWarriorList.h" />
     <ClInclude Include="main\MCMissionGlobals.h" />
     <ClInclude Include="main\MCMPPlayerLights.h" />
+    <ClInclude Include="main\MCMPPlayerLightsView.h" />
     <ClInclude Include="main\MCOriginalBugFixes.h" />
     <ClInclude Include="main\MCSystemConfig.h" />
     <ClInclude Include="main\MCTelemetry.h" />

@@ -59,11 +59,7 @@ auto MCGuiSpinnerButton::Draw() -> void
 
 // aSpinner
 
-MCGuiSpinner::~MCGuiSpinner()
-{
-    UpButton.reset();
-    DownButton.reset();
-}
+MCGuiSpinner::~MCGuiSpinner() = default;
 
 auto MCGuiSpinner::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
                         [[maybe_unused]] std::string_view name) -> int32_t
@@ -84,39 +80,44 @@ auto MCGuiSpinner::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t heigh
 
     // The base's init clears the parent; put it back.
     SetParent(owner);
-    UpButton = MCMakeGui<MCGuiSpinnerButton>();
-    result = UpButton->Init(1, 1, 10, 10, {});
-
-    if (result != 0)
+    // Each button is added once its art is set (the original added both after sizing the spinner, which doesn't
+    // touch its children).
+    const auto makeButton = [&](int32_t upArt, int32_t downArt)
     {
-        return result;
+        return TryCreateChild<MCGuiSpinnerButton>(
+            [&](MCGuiSpinnerButton& made)
+            {
+                if (const int32_t buttonResult = made.Init(1, 1, 10, 10, {}); buttonResult != 0)
+                {
+                    return buttonResult;
+                }
+
+                made.SetUpPicture(upArt);
+                made.SetDownPicture(downArt);
+                return 0;
+            });
+    };
+
+    auto up = makeButton(0xc, 0xd);
+
+    if (!up)
+    {
+        return up.error();
     }
 
-    DownButton = MCMakeGui<MCGuiSpinnerButton>();
-    result = DownButton->Init(1, 1, 10, 10, {});
+    UpButton = *up;
+    auto down = makeButton(0x25, 0x26);
 
-    if (result != 0)
+    if (!down)
     {
-        return result;
+        return down.error();
     }
 
-    UpButton->SetUpPicture(0xc);
-    UpButton->SetDownPicture(0xd);
-    DownButton->SetUpPicture(0x25);
-    DownButton->SetDownPicture(0x26);
+    DownButton = *down;
     Resize(std::max(UpButton->Width(), DownButton->Width()), UpButton->Height() + DownButton->Height());
-    AddChild(UpButton);
-    AddChild(DownButton);
     UpButton->MoveTo(0, 0);
     DownButton->MoveTo(0, UpButton->Height());
     UpButton->Callback().SetMessage(Parent, MCGuiEventType::SpinUp);
     DownButton->Callback().SetMessage(Parent, MCGuiEventType::SpinDown);
     return -1;
-}
-
-auto MCGuiSpinner::Destroy() -> void
-{
-    UpButton.reset();
-    DownButton.reset();
-    MCGuiObject::Destroy();
 }

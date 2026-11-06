@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "lib/MCVector2D.h"
 #include "lib/MCVector3D.h"
 #include "terrain/MCTerrainWindow.h"
@@ -132,8 +132,9 @@ public:
     std::unique_ptr<MCByteFlag> ISVisibleBits;
     /// <summary>What the Clans see this frame.</summary>
     std::unique_ptr<MCByteFlag> ClanVisibleBits;
-    /// <summary>The tactical map (the MFD) of the in-mission interface (destroyed by <see cref="MCGuiDestroy"/>).</summary>
-    std::shared_ptr<MCTacticalMap> TacticalMap;
+    /// <summary>The tactical map (the MFD) of the in-mission interface: a child of the screen window, closed with the
+    /// terrain.</summary>
+    MCGuiHandle<MCTacticalMap> TacticalMap;
     /// <summary>Screen x of every map vertex (by BlockOffsets[block] + vertex), 0x11111111 until it is projected.</summary>
     std::vector<int32_t> ScreenPosX;
     /// <summary>Screen y of every map vertex.</summary>

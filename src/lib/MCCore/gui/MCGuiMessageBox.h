@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiButton.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 /// <summary>A centred box with a line of text and an OK button (the version dialog).</summary>
 /// <remarks>Original source: <c>gui\asystem.cpp</c> (<c>aMessageBox</c>).</remarks>
@@ -18,7 +18,6 @@ public:
     int32_t Init(std::string_view text);
     using MCGuiObject::Init;
 
-    void Destroy() override;
     /// <summary>Passes events inside the box to the button.</summary>
     void HandleEvent(MCGuiEvent& event) override;
     /// <summary>Port: the box, its text and its outline (the original wrote them into the picture once, in init).</summary>
@@ -27,7 +26,7 @@ public:
     bool DrawsLive() override { return true; }
 
     /// <summary>The OK button.</summary>
-    MCGuiOwned<MCGuiButton> OkButton;
+    MCGuiHandle<MCGuiButton> OkButton;
     /// <summary>Port: the text shown.</summary>
     std::string Message;
 };

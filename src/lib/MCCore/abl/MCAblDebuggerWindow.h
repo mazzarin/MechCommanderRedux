@@ -1,7 +1,7 @@
 #pragma once
 
 #include "abl/MCScrollingTextWindow.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiTitleWindow.h"
 
 class MCGuiTextObject;
@@ -14,13 +14,8 @@ public:
     /// <summary>Port: its output window scrolls its picture, so it keeps one.</summary>
     bool DrawsLive() override { return false; }
 
-    ~MCAblDebuggerWindow() override;
-
     /// <summary>Creates the window, its output pane ("ABL Out") and its command box.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-
-    /// <summary>Destroys the command box and the output pane, then the window.</summary>
-    void Destroy() override;
 
     /// <summary>Resizes the output pane and moves the command box to the bottom.</summary>
     void Resize(int32_t width, int32_t height) override;
@@ -32,6 +27,8 @@ public:
     MCScrollingTextWindow& Output() const { return *_Output; }
 
 private:
-    MCGuiOwned<MCScrollingTextWindow> _Output;
-    MCGuiOwned<MCGuiTextObject> _Input;
+    /// <summary>The output pane (a child).</summary>
+    MCGuiHandle<MCScrollingTextWindow> _Output;
+    /// <summary>The command box (a child).</summary>
+    MCGuiHandle<MCGuiTextObject> _Input;
 };

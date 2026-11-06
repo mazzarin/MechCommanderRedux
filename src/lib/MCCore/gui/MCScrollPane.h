@@ -30,7 +30,8 @@ public:
         Down = 2
     };
 
-    ~MCScrollPane() override;
+    /// <summary>Destroys the pane if nothing did (its slider texture is the renderer's).</summary>
+    ~MCScrollPane() override { Destroy(); }
 
     /// <summary>
     /// Loads <paramref name="name"/> (when given) as the background image and inits the pane with it. Unlike the
@@ -45,7 +46,8 @@ public:
     /// from the art files.
     /// </summary>
     void Init(int32_t width, int32_t height, int32_t xPos, int32_t yPos, MCOptionalRef<const MCLogPort> background);
-    void Destroy() override;
+    /// <summary>Frees the content, slider and background ports and the slider's texture.</summary>
+    void OnDestroy() override;
 
     /// <summary>Scrolls to <paramref name="position"/> (clamped to 0..<see cref="MaxScroll"/>) and moves the slider.</summary>
     void SetScrollPos(float position);

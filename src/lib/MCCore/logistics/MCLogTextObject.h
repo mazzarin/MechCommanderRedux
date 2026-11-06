@@ -31,10 +31,8 @@ enum class MCLogInputType : int32_t
 class MCLogTextObject : public MCLogObject
 {
 public:
-    ~MCLogTextObject() override;
-
     /// <summary>Frees the text.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>
     /// Wipes the field, writes the text and draws the cursor when it has a valid position (lit, or in the field's

@@ -53,6 +53,11 @@ public:
     void RemoveTimer(const MCGuiObject& target, int16_t id);
     /// <summary>Removes timer number <paramref name="index"/>.</summary>
     void RemoveTimer(int32_t index);
+    /// <summary>
+    /// Port: hands <paramref name="from"/>'s timers to <paramref name="to"/> as they run (the same schedule and the same
+    /// place in the list), for an object that takes over from another (a view of shared state on the next screen).
+    /// </summary>
+    void HandTimersOver(const MCGuiObject& from, const std::weak_ptr<MCGuiObject>& to);
     /// <summary>Timer number <paramref name="index"/>, or null; the caller keeps it as its pin.</summary>
     std::shared_ptr<MCGuiTimer> GetTimer(int32_t index);
     /// <summary><paramref name="target"/>'s timer <paramref name="id"/>, or null; the caller keeps it as its pin.</summary>

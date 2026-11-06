@@ -225,13 +225,6 @@ auto MCGuiPort::Init(std::string_view fileName) -> int32_t
     return 0;
 }
 
-auto MCGuiPort::Destroy() -> void
-{
-    PortHeight = -1;
-    PortWidth = -1;
-    FreeBitmap();
-}
-
 auto MCGuiPort::Resize(int32_t width, int32_t height) -> int32_t
 {
     return ResizeBitmap(width, height);
@@ -332,19 +325,9 @@ auto MCGuiPort::CopyTo(const MCPane& dest, int32_t xPos, int32_t yPos, bool tran
 
 // aScrollPort
 
-MCGuiScrollPort::~MCGuiScrollPort()
-{
-    FreeBitmap();
-}
-
 auto MCGuiScrollPort::Init(int32_t width, int32_t height) -> int32_t
 {
     return MakeBitmap(width, height);
-}
-
-auto MCGuiScrollPort::Destroy() -> void
-{
-    FreeBitmap();
 }
 
 auto MCGuiScrollPort::Resize(int32_t width, int32_t height) -> int32_t

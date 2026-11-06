@@ -10,28 +10,46 @@ namespace
     constexpr int32_t RepeatDelayTimer = 4;
     constexpr int32_t RepeatTimer = 5;
 
-    /// <summary>Makes an arrow or area of a bar: placed, posting <paramref name="message"/>, added to the bar.</summary>
+    /// <summary>
+    /// Makes an arrow or area of a bar on <paramref name="bar"/>: placed, posting <paramref name="message"/>, moved to
+    /// (<paramref name="xPos"/>, <paramref name="yPos"/>) before (<paramref name="moveFirst"/>) or after it is added.
+    /// </summary>
     template <typename TPart>
-    std::expected<MCGuiOwned<TPart>, int32_t> MakePart(MCGuiScrollBar& bar, int32_t height, int32_t artPacket,
-                                                       int32_t message)
+    std::expected<MCGuiHandle<TPart>, int32_t> MakePart(MCGuiScrollBar& bar, int32_t height, int32_t artPacket,
+                                                        int32_t message, int32_t xPos, int32_t yPos, bool moveFirst)
     {
-        auto part = MCMakeGui<TPart>();
-
-        if (const int32_t result = part->Init(0, 0, 0x10, height, {}); result != 0)
-        {
-            return std::unexpected(result);
-        }
-
-        if (artPacket != 0)
-        {
-            if (const int32_t result = part->SetBackground(artPacket); result != 0)
+        auto part = bar.TryCreateChild<TPart>(
+            [&](TPart& made)
             {
-                return std::unexpected(result);
-            }
+                if (const int32_t result = made.Init(0, 0, 0x10, height, {}); result != 0)
+                {
+                    return result;
+                }
+
+                if (artPacket != 0)
+                {
+                    if (const int32_t result = made.SetBackground(artPacket); result != 0)
+                    {
+                        return result;
+                    }
+                }
+
+                made.Message = message;
+                made.SetEventRoutine(ScrollEventHandler);
+
+                if (moveFirst)
+                {
+                    made.MoveTo(xPos, yPos);
+                }
+
+                return 0;
+            });
+
+        if (part && !moveFirst)
+        {
+            (*part)->MoveTo(xPos, yPos);
         }
 
-        part->Message = message;
-        part->SetEventRoutine(ScrollEventHandler);
         return part;
     }
 }
@@ -143,59 +161,51 @@ auto MCGuiScrollBar::Init(int32_t xPos, int32_t yPos, int32_t, int32_t height, s
         return result;
     }
 
-    auto up = MakePart<MCGuiScrollButton>(*this, 8, 0x27, MCGuiScrollMessage::LineUp);
+    auto up = MakePart<MCGuiScrollButton>(*this, 8, 0x27, MCGuiScrollMessage::LineUp, 1, 1, false);
 
     if (!up)
     {
         return up.error();
     }
 
-    UpButton = std::move(*up);
-    AddChild(UpButton);
-    UpButton->MoveTo(1, 1);
-
-    auto down = MakePart<MCGuiScrollButton>(*this, 8, 0x28, MCGuiScrollMessage::LineDown);
+    UpButton = *up;
+    auto down = MakePart<MCGuiScrollButton>(*this, 8, 0x28, MCGuiScrollMessage::LineDown, 1, height - 9, false);
 
     if (!down)
     {
         return down.error();
     }
 
-    DownButton = std::move(*down);
-    AddChild(DownButton);
-    DownButton->MoveTo(1, height - 9);
-
-    auto upArea = MakePart<MCGuiScrollArea>(*this, 1, 0, MCGuiScrollMessage::PageUp);
+    DownButton = *down;
+    auto upArea = MakePart<MCGuiScrollArea>(*this, 1, 0, MCGuiScrollMessage::PageUp, 1, 9, false);
 
     if (!upArea)
     {
         return upArea.error();
     }
 
-    UpArea = std::move(*upArea);
-    AddChild(UpArea);
-    UpArea->MoveTo(1, 9);
-
-    auto downArea = MakePart<MCGuiScrollArea>(*this, 1, 0, MCGuiScrollMessage::PageDown);
+    UpArea = *upArea;
+    auto downArea = MakePart<MCGuiScrollArea>(*this, 1, 0, MCGuiScrollMessage::PageDown, 1, Height() - 1, true);
 
     if (!downArea)
     {
         return downArea.error();
     }
 
-    DownArea = std::move(*downArea);
-    DownArea->MoveTo(1, Height() - 1);
-    AddChild(DownArea);
+    DownArea = *downArea;
+    auto tab = TryCreateChild<MCGuiObject>(
+        [](MCGuiObject& made)
+        {
+            made.SetDrawsLive();
+            return made.Init(0, 0, 0x10, 0x10, {});
+        });
 
-    ScrollTab = MCMakeGui<MCGuiObject>();
-    ScrollTab->SetDrawsLive();
-
-    if (const int32_t result = ScrollTab->Init(0, 0, 0x10, 0x10, {}); result != 0)
+    if (!tab)
     {
-        return result;
+        return tab.error();
     }
 
-    AddChild(ScrollTab);
+    ScrollTab = *tab;
     ScrollTab->MoveTo(1, 8);
     ScrollTab->SetBackColor(6);
     ScrollTab->SetEventRoutine(ScrollTabHandler);
@@ -212,16 +222,6 @@ auto MCGuiScrollBar::Init(int32_t xPos, int32_t yPos, int32_t, int32_t height, s
     SetScrollMax(0);
     SetScrollPos(0);
     return 0;
-}
-
-auto MCGuiScrollBar::Destroy() -> void
-{
-    UpArea.reset();
-    DownArea.reset();
-    UpButton.reset();
-    DownButton.reset();
-    ScrollTab.reset();
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiScrollBar::HandleEvent(MCGuiEvent& event) -> void

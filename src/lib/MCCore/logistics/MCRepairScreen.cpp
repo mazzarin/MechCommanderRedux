@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "logistics/MCRepairScreen.h"
 #include "gui/MCGuiEvent.h"
+#include "gui/MCListView.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
 #include "logistics/MCTicker.h"
@@ -50,73 +51,11 @@ namespace
     /// <summary>The blink phase of the briefing button's highlight, flipped by each timer event.</summary>
     bool BriefingBlink = false;
 
-    /// <summary>
-    /// Draws the unit pane's rows into its view <paramref name="port"/>: every mech and vehicle of the force at its
-    /// block's row, over colour 0xff (what the blocks painted into the rows' picture).
-    /// </summary>
-    void DrawUnitRows(MCGuiPort& port)
-    {
-        MCLogPort& view = static_cast<MCLogPort&>(port);
-        VfxPaneWipe(view.Frame(), 0xff);
-        const MCView& place = view.View();
+    /// <summary>The depth the force's rows were put at in the unit pane.</summary>
+    constexpr int32_t UnitRowDepth = 100;
 
-        auto drawRow = [&](auto& block)
-        {
-            const int32_t top = block.SlotIndex * MCLogInvScreen::UnitBlockHeight;
-            const int32_t screenTop = place.OriginY + top;
-
-            if (screenTop <= place.Scissor.Y1 && place.Scissor.Y0 < screenTop + MCLogInvScreen::UnitBlockHeight)
-            {
-                block.DrawRow(view, top);
-            }
-        };
-
-        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
-        {
-            drawRow(*mech->RepairBlock);
-        }
-
-        for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->ForceVehicleList->Vehicles)
-        {
-            drawRow(*vehicle->RepairBlock);
-        }
-    }
-
-    /// <summary>
-    /// Puts the force's repair blocks in order down the unit pane (mechs, then vehicles), scrolled as the pane is.
-    /// </summary>
-    void PlaceUnitBlocks(MCScrollPane& pane)
-    {
-        int32_t row = 0;
-
-        auto place = [&](auto& block)
-        {
-            block.SlotIndex = row;
-            block.MoveTo(0, row * MCLogInvScreen::UnitBlockHeight - pane.GetScrollOffset(), false);
-            block.SetDepth(100);
-            ++row;
-        };
-
-        for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
-        {
-            place(*mech->RepairBlock);
-        }
-
-        for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->ForceVehicleList->Vehicles)
-        {
-            place(*vehicle->RepairBlock);
-        }
-    }
-
-    /// <summary>
-    /// Gives the unit pane a new rows view and puts the blocks at their rows (the original copied the rows about in a
-    /// new picture; the view draws each row where its block is).
-    /// </summary>
-    void RebuildUnitRows(MCScrollPane& pane)
-    {
-        pane.SetDisplayPort(MCRepairScreen::NewUnitRowsView(pane), false);
-        PlaceUnitBlocks(pane);
-    }
+    /// <summary>The colour under the force's rows (what the original wiped the rows' picture to).</summary>
+    constexpr uint8_t UnitRowsBackground = 0xff;
 
     /// <summary>Puts string <paramref name="id"/> on the ticker.</summary>
     void ShowHelp(uint32_t id)
@@ -136,13 +75,13 @@ auto MCRepairScreen::Init() -> void
     InitLive("lsrbk00.tga");
     MakePanes(false);
     ShowGuiWindow(false);
-    ScreenWindow()->AddChild(weak_from_this());
 }
 
-auto MCRepairScreen::Destroy() -> void
+auto MCRepairScreen::OnDestroy() -> void
 {
     FreePanes();
-    MCLogObject::Destroy();
+    _ShownUnits.clear();
+    MCLogObject::OnDestroy();
 }
 
 auto MCRepairScreen::SelectMech(std::shared_ptr<MCLogMech> mech) -> void
@@ -150,21 +89,21 @@ auto MCRepairScreen::SelectMech(std::shared_ptr<MCLogMech> mech) -> void
     std::shared_ptr<MCLogMech> oldMech = GlobalLog()->RepairScreen->SelectedMech();
     GlobalLog()->RepairScreen->_SelectedMech = mech;
 
-    if (SelectedVehicle() != nullptr)
-    {
-        MCVehicleRepairBlock& block = *SelectedVehicle()->RepairBlock;
-        _SelectedVehicle.reset();
-        block.DrawBackground(block.SlotIndex, std::nullopt);
-    }
+    // A vehicle row is drawn each frame and has nothing else to work out (its DrawBackground does nothing for a row).
+    _SelectedVehicle.reset();
 
-    if (mech != nullptr)
+    // The rows work out again what they show (the weapon lists, the battle rating, the repair buttons).
+    for (const std::shared_ptr<MCLogMech>& changed : {mech, oldMech})
     {
-        mech->RepairBlock->DrawBackground(mech->RepairBlock->SlotIndex, std::nullopt);
-    }
+        if (changed == nullptr)
+        {
+            continue;
+        }
 
-    if (oldMech != nullptr)
-    {
-        oldMech->RepairBlock->DrawBackground(oldMech->RepairBlock->SlotIndex, std::nullopt);
+        if (const std::shared_ptr<MCMechRepairBlock> row = RowOf(*changed); row != nullptr)
+        {
+            row->DrawBackground(changed->SlotIndex, std::nullopt);
+        }
     }
 
     if (GlobalLog()->CurrentInvTab == 1)
@@ -181,24 +120,17 @@ auto MCRepairScreen::SelectMech(std::shared_ptr<MCLogMech> mech) -> void
 
 auto MCRepairScreen::SelectVehicle(std::shared_ptr<MCLogVehicle> vehicle) -> void
 {
-    std::shared_ptr<MCLogVehicle> oldVehicle = GlobalLog()->RepairScreen->SelectedVehicle();
-    GlobalLog()->RepairScreen->_SelectedVehicle = vehicle;
+    GlobalLog()->RepairScreen->_SelectedVehicle = std::move(vehicle);
 
-    if (SelectedMech() != nullptr)
+    // The mech row deselected works out again what it shows (vehicle rows have nothing to work out).
+    if (const std::shared_ptr<MCLogMech> mech = SelectedMech(); mech != nullptr)
     {
-        MCMechRepairBlock& block = *SelectedMech()->RepairBlock;
         _SelectedMech.reset();
-        block.DrawBackground(block.SlotIndex, std::nullopt);
-    }
 
-    if (vehicle != nullptr)
-    {
-        vehicle->RepairBlock->DrawBackground(vehicle->RepairBlock->SlotIndex, std::nullopt);
-    }
-
-    if (oldVehicle != nullptr)
-    {
-        oldVehicle->RepairBlock->DrawBackground(oldVehicle->RepairBlock->SlotIndex, std::nullopt);
+        if (const std::shared_ptr<MCMechRepairBlock> row = RowOf(*mech); row != nullptr)
+        {
+            row->DrawBackground(mech->SlotIndex, std::nullopt);
+        }
     }
 
     if (GlobalLog()->CurrentInvTab == 1)
@@ -214,33 +146,95 @@ auto MCRepairScreen::SelectVehicle(std::shared_ptr<MCLogVehicle> vehicle) -> voi
 
 auto MCRepairScreen::AddMechToList([[maybe_unused]] MCLogMech& mech) -> void
 {
-    RebuildUnitRows(*UnitPane);
+    ShowForce(false);
 }
 
-auto MCRepairScreen::AddVehicleToList(MCLogVehicle& vehicle) -> void
+auto MCRepairScreen::AddVehicleToList([[maybe_unused]] MCLogVehicle& vehicle) -> void
 {
-    UnitPane->SetDisplayPort(NewUnitRowsView(*UnitPane), false);
-    vehicle.RepairBlock->DrawBackground(GlobalLog()->ForceMechList->GetMechCount(), std::nullopt);
-    PlaceUnitBlocks(*UnitPane);
+    // The original also painted the new vehicle's row (its DrawBackground, nothing for a row now).
+    ShowForce(false);
 }
 
 auto MCRepairScreen::RemoveMechFromList([[maybe_unused]] MCLogMech& mech) -> void
 {
-    RebuildUnitRows(*UnitPane);
+    ShowForce(false);
 }
 
 auto MCRepairScreen::RemoveVehicleFromList([[maybe_unused]] MCLogVehicle& vehicle) -> void
 {
-    RebuildUnitRows(*UnitPane);
+    ShowForce(false);
 }
 
-auto MCRepairScreen::NewUnitRowsView(MCScrollPane& pane) -> std::shared_ptr<MCLogPort>
+auto MCRepairScreen::ShowForce(bool resetScroll) -> void
 {
-    auto port = std::make_shared<MCLogPort>();
-    const int32_t rows = GlobalLog()->ForceVehicleList->GetVehicleCount() + GlobalLog()->ForceMechList->GetMechCount();
-    port->InitView(pane.Width() - 0xd, std::max(rows * UnitBlockHeight, pane.Height()));
-    port->DrawContent = DrawUnitRows;
-    return port;
+    // The original painted the rows into a new picture as tall as the force (at least the pane), over colour 0xff.
+    _ShownUnits.clear();
+    int32_t slot = 0;
+
+    for (const std::shared_ptr<MCLogMech>& mech : GlobalLog()->ForceMechList->Mechs)
+    {
+        mech->SlotIndex = slot++;
+        _ShownUnits.push_back(mech);
+    }
+
+    for (const std::shared_ptr<MCLogVehicle>& vehicle : GlobalLog()->ForceVehicleList->Vehicles)
+    {
+        vehicle->SlotIndex = slot++;
+        _ShownUnits.push_back(vehicle);
+    }
+
+    MCListSource<MCLogPart> source;
+    source.Items = []() -> const std::vector<std::shared_ptr<MCLogPart>>&
+    { return GlobalLog()->RepairScreen->_ShownUnits; };
+    source.MakeRow = [](MCListView& list, std::shared_ptr<MCLogPart> unit) -> MCGuiHandle<MCListRow>
+    {
+        if (std::shared_ptr<MCLogMech> mech = std::dynamic_pointer_cast<MCLogMech>(unit); mech != nullptr)
+        {
+            return list.CreateRow<MCMechRepairBlock>(
+                [&](MCMechRepairBlock& row)
+                {
+                    row.Init(std::move(mech));
+                    row.SetDepth(UnitRowDepth);
+                });
+        }
+
+        return list.CreateRow<MCVehicleRepairBlock>(
+            [&](MCVehicleRepairBlock& row)
+            {
+                row.Init(std::static_pointer_cast<MCLogVehicle>(unit));
+                row.SetDepth(UnitRowDepth);
+            });
+    };
+
+    const MCListLayout layout{UnitBlockHeight, UnitPane->Width() - 0xd, UnitPane->Height(), UnitRowsBackground};
+    UnitPane->Show(source, layout, resetScroll);
+}
+
+auto MCRepairScreen::HideUnitRow(const MCLogPart& unit) -> void
+{
+    const std::shared_ptr<MCListView> pane = UnitPane.Lock();
+
+    if (pane == nullptr)
+    {
+        return;
+    }
+
+    if (const std::shared_ptr<MCListRow> row = pane->RowOf<MCListRow>(unit); row != nullptr)
+    {
+        row->ShowGuiWindow(false);
+    }
+}
+
+auto MCRepairScreen::RowOf(const MCLogMech& mech) const -> std::shared_ptr<MCMechRepairBlock>
+{
+    const std::shared_ptr<MCListView> pane = UnitPane.Lock();
+    return pane != nullptr ? pane->RowOf<MCMechRepairBlock>(static_cast<const MCLogPart&>(mech)) : nullptr;
+}
+
+auto MCRepairScreen::RowOf(const MCLogVehicle& vehicle) const -> std::shared_ptr<MCVehicleRepairBlock>
+{
+    const std::shared_ptr<MCListView> pane = UnitPane.Lock();
+    return pane != nullptr ? pane->RowOf<MCVehicleRepairBlock>(static_cast<const MCLogPart&>(vehicle)) : nullptr;
 }
 
 auto MCRepairScreen::DrawBackground() -> void
@@ -249,9 +243,12 @@ auto MCRepairScreen::DrawBackground() -> void
     ScreenChrome.Clear();
     Info.Clear();
 
-    if (SelectedMech() != nullptr && SelectedMech()->RepairBlock != nullptr)
+    if (const std::shared_ptr<MCLogMech> mech = SelectedMech(); mech != nullptr)
     {
-        SelectedMech()->RepairBlock->DrawButtons(std::nullopt);
+        if (const std::shared_ptr<MCMechRepairBlock> row = RowOf(*mech); row != nullptr)
+        {
+            row->DrawButtons(std::nullopt);
+        }
     }
 }
 

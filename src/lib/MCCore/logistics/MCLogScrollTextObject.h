@@ -13,8 +13,6 @@ public:
     /// <summary>The highlight bars a list has (each lights one line).</summary>
     static constexpr int32_t HighlightCount = 4;
 
-    ~MCLogScrollTextObject() override;
-
     /// <summary>
     /// Places the list, makes the scroll tab, and prints <paramref name="text"/> if given (a list with no text
     /// doesn't grow its port to fit).
@@ -22,7 +20,7 @@ public:
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view text) override;
 
     /// <summary>Frees the scroll tab and the text.</summary>
-    void Destroy() override;
+    void OnDestroy() override;
 
     /// <summary>
     /// Draws the highlight bars and every line in its colour (a tab starts a second column, or prints as a space
@@ -84,8 +82,8 @@ public:
     /// The lines: a colour byte, the text, a newline. A colour of 0 ends the text as drawn (it was a C string).
     /// </summary>
     std::string Text;
-    /// <summary>The draggable scroll tab.</summary>
-    MCGuiOwned<MCLogObject> ScrollTab;
+    /// <summary>The draggable scroll tab (a child).</summary>
+    MCGuiHandle<MCLogObject> ScrollTab;
     int32_t NumLines = 0;
     /// <summary>The list scrolls: its port grows to fit the lines.</summary>
     bool Scrolling = true;

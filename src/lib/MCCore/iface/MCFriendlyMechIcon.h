@@ -14,7 +14,7 @@ public:
     ~MCFriendlyMechIcon() override = default;
 
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view bitmapName) override;
-    void Destroy() override;
+    void OnDestroy() override;
     /// <summary>Shows the pilot/mech tag, highlights the mover and sets the cursor for the current mode.</summary>
     void Enter() override;
     /// <summary>Draws the icon into its own port (<see cref="DrawIcon"/>).</summary>
@@ -50,7 +50,7 @@ public:
     /// <summary>Whether the mover is its lance's point (leader).</summary>
     bool IsPoint = false;
     /// <summary>The pilot portrait.</summary>
-    MCGuiOwned<MCGuiPort> PilotImage;
+    std::unique_ptr<MCGuiPort> PilotImage;
     /// <summary>Set once the portrait was switched to the dead pilot image.</summary>
     bool ShowingDeadPilot = false;
     /// <summary>Set once the portrait was switched to the wounded pilot image.</summary>
@@ -59,7 +59,7 @@ public:
     /// Port: the icon's background (<c>guiub00.tga</c>), which the original loaded into the icon's own picture and
     /// drew over.
     /// </summary>
-    MCGuiOwned<MCGuiPort> IconBackground;
+    std::unique_ptr<MCGuiPort> IconBackground;
 
 private:
     /// <summary>The pilot portrait, health bar and name, into <paramref name="target"/>.</summary>

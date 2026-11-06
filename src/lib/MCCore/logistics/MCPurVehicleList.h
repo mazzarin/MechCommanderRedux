@@ -1,9 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
-
 class MCInventoryList;
-class MCVehiclePurchaseBlock;
 
 /// <summary>A vehicle type for sale, read from its profile.</summary>
 /// <remarks>Original source: <c>logistics\purchase.cpp</c> (<c>PurVehicleData</c>).</remarks>
@@ -36,7 +33,7 @@ public:
     std::unique_ptr<MCInventoryList> Inventory;
 };
 
-/// <summary>A vehicle type for sale and the store row that shows it.</summary>
+/// <summary>A vehicle type for sale.</summary>
 /// <remarks>Original source: <c>logistics\purchase.cpp</c> (<c>PurVehicle</c>).</remarks>
 class MCPurVehicle
 {
@@ -45,7 +42,6 @@ public:
     void CalcVehicleCost() const;
 
     std::unique_ptr<MCPurVehicleData> Data;
-    MCGuiOwned<MCVehiclePurchaseBlock> Block;
 };
 
 /// <summary>The vehicles of the shop, sorted by tonnage.</summary>
@@ -53,7 +49,7 @@ public:
 class MCPurVehicleList
 {
 public:
-    /// <summary>Frees every vehicle, its data and its row.</summary>
+    /// <summary>Frees every vehicle and its data.</summary>
     void Clear();
 
     /// <summary>Adds <paramref name="delta"/> to the stock of vehicle <paramref name="fileName"/> (never below 0).</summary>
@@ -61,8 +57,7 @@ public:
     int32_t ModVehicle(std::string_view fileName, int32_t delta);
 
     /// <summary>
-    /// Reads vehicle profile <paramref name="fileName"/> with <paramref name="count"/> for sale, makes its row and
-    /// inserts it in tonnage order (before the first as heavy or heavier).
+    /// Reads vehicle profile <paramref name="fileName"/> with <paramref name="count"/> for sale and inserts it in tonnage order (before the first as heavy or heavier).
     /// </summary>
     /// <remarks>
     /// Port fix: a file without a General block is a raw record the original read over the 0xc-byte

@@ -5,7 +5,6 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCScrollPane.h"
 #include "lib/MCFatal.h"
-#include "logistics/MCMechBriefBlock.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogRows.h"
 #include "logistics/MCPurchaseScreen.h"
@@ -46,57 +45,22 @@ namespace
     }
 }
 
-MCVehicleRepairBlock::~MCVehicleRepairBlock()
-{
-    MCVehicleRepairBlock::Destroy();
-}
-
 auto MCVehicleRepairBlock::Init(std::shared_ptr<MCLogVehicle> logVehicle) -> void
 {
     _Vehicle = logVehicle;
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
 }
 
-auto MCVehicleRepairBlock::Destroy() -> void
+auto MCVehicleRepairBlock::SlotIndex() const -> int32_t
 {
-    MCLogObject::Destroy();
+    const std::shared_ptr<MCLogVehicle> vehicle = Vehicle();
+    return vehicle != nullptr ? vehicle->SlotIndex : 0;
 }
 
 auto MCVehicleRepairBlock::LeaveForce() const -> void
 {
-    const int32_t vehicleSlot = SlotIndex - GlobalLog()->ForceMechList->GetMechCount();
-
-    for (auto& lance : GlobalLog()->DeploySlots)
-    {
-        for (auto& slot : lance)
-        {
-            if (slot.Vehicle < 0)
-            {
-                continue;
-            }
-
-            if (slot.Vehicle == vehicleSlot)
-            {
-                Assert(Vehicle() != nullptr, 0, "Vehicle is NULL");
-                const std::shared_ptr<MCMechBriefBlock> brief = Vehicle()->BriefBlock;
-                Assert(brief != nullptr, 0, "vehicleBrief is NULL");
-
-                if (!brief->Parent.expired())
-                {
-                    brief->ParentObject()->RemoveChild(*brief);
-                }
-
-                brief->ShowGuiWindow(false);
-                slot.Vehicle = -1;
-            }
-            else
-            {
-                // Original behaviour: every other deployed vehicle moves up a row, even those before the one leaving.
-                --slot.Vehicle;
-            }
-        }
-    }
-
+    Assert(Vehicle() != nullptr, 0, "Vehicle is NULL");
+    GlobalLog()->RemoveVehicleFromSlots(SlotIndex() - GlobalLog()->ForceMechList->GetMechCount());
     std::shared_ptr<MCLogVehicle> leaving = Vehicle();
     leaving->Deployed = false;
     leaving->Assigned = false;
@@ -107,13 +71,7 @@ auto MCVehicleRepairBlock::LeaveForce() const -> void
     }
 
     GlobalLog()->ReorderVehicles();
-    MCVehicleRepairBlock& block = *leaving->RepairBlock;
-
-    if (!block.Parent.expired())
-    {
-        block.ParentObject()->RemoveChild(block);
-    }
-
+    // The new listing destroys this row (the original took the block out of the pane).
     RepairScreen().RemoveVehicleFromList(*leaving);
     MCRepairScreen::CreateVhclInvBlock();
     RepairScreen().SetUpVhclInv(true, true);
@@ -172,9 +130,9 @@ auto MCVehicleRepairBlock::HandleEvent(MCGuiEvent& event) -> void
             (eventType == 1 ? Drag.LeftDrag : Drag.RightHeld) = true;
             Drag.Y = event.Y - 0xf;
             Drag.X = event.X - 0xf;
-            std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create();
-            icon->Begin(Drag.X, Drag.Y, 0x1e, 0x1e, [this](MCLogPort& surface) { OnBeginDrag(surface); });
-            icon->ShowOn(RepairScreen(), Drag.X, Drag.Y);
+            const std::shared_ptr<MCDragIcon> icon = MCDragIcon::Create(
+                RepairScreen(), Drag.X, Drag.Y, 0x1e, 0x1e, [this](MCLogPort& surface) { OnBeginDrag(surface); });
+            icon->ShowAt(Drag.X, Drag.Y);
             return;
         }
 
@@ -215,6 +173,8 @@ auto MCVehicleRepairBlock::HandleEvent(MCGuiEvent& event) -> void
 
                 if (onInventory)
                 {
+                    // Leaving the force destroys this row: it lives until the drop is done.
+                    const std::shared_ptr<MCGuiObject> self = shared_from_this();
                     LeaveForce();
                 }
 
@@ -347,7 +307,7 @@ auto MCVehicleRepairBlock::PaintRow(MCLogPort& port, int32_t top, bool briefing,
         }
     }
 
-    const std::string& weightClass = Vehicle()->InventoryBlock->WeightClassText;
+    const std::string& weightClass = Vehicle()->WeightClassName;
     WriteText(*BlueFont, back, 6, 0x11,
               MCFormatPrintf(LoadGameString(0x53, 0xfe).c_str(), static_cast<double>(Vehicle()->CurTonnage),
                              weightClass.c_str()));

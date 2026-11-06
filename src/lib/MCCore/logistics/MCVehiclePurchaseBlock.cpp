@@ -20,39 +20,33 @@ namespace
     MCDragState VehicleDrag;
 }
 
-MCVehiclePurchaseBlock::~MCVehiclePurchaseBlock()
-{
-    MCVehiclePurchaseBlock::Destroy();
-}
-
 auto MCVehiclePurchaseBlock::Init(std::shared_ptr<MCPurVehicle> newPurVehicle) -> void
 {
     PicturePort.reset();
     _PurVehicle = newPurVehicle;
     MCLogObject::InitWithoutPort(0, 0, 0x19a, 0x70);
     const MCPurVehicleData& data = *PurVehicle()->Data;
-    NameIndex = data.NameIndex;
     WeightClassText = LoadGameString(WeightClassString(data.CurTonnage), 0xf);
     ArmorText = LoadGameString(ArmorClassString(data.ArmorTonnage), 0xf);
 }
 
-auto MCVehiclePurchaseBlock::Destroy() -> void
+auto MCVehiclePurchaseBlock::OnDestroy() -> void
 {
     _PurVehicle.reset();
     WeightClassText.clear();
     ArmorText.clear();
     PicturePort.reset();
-    MCLogObject::Destroy();
+    MCListRow::OnDestroy();
 }
 
-auto MCVehiclePurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) -> void
+auto MCVehiclePurchaseBlock::OnBuyConfirmed(MCPurVehicle& purVehicle, int32_t result, int32_t quantity) -> void
 {
     if (result == 0)
     {
         return;
     }
 
-    MCPurVehicleData& data = *PurVehicle()->Data;
+    MCPurVehicleData& data = *purVehicle.Data;
 
     for (int32_t count = quantity; count > 0; --count)
     {
@@ -63,7 +57,7 @@ auto MCVehiclePurchaseBlock::OnBuyConfirmed(int32_t result, int32_t quantity) ->
     MCPurchaseScreen::CreateVhclInvBlock();
     GlobalLog()->PurchaseScreen->SetUpVhclInv(true, true);
     data.NumAvailable -= quantity;
-    DrawBackground(Row);
+    MCLogInvScreen::RefreshStoreRow(purVehicle);
     ResourcePoints -= GlobalLog()->PurchaseDialog->UnitCost * quantity;
     CheckNumUnits();
 }
@@ -164,7 +158,13 @@ auto MCVehiclePurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
 
             PlayLogSound(0x34);
             OpenPurchaseDialog(6, data.Cost, MaxPurchase(data.NumAvailable), data.Name, {}, MCOptionalOf(PicturePort),
-                               [this](int32_t result, int32_t quantity) { OnBuyConfirmed(result, quantity); });
+                               [weak = _PurVehicle](int32_t result, int32_t quantity)
+                               {
+                                   if (const std::shared_ptr<MCPurVehicle> bought = weak.lock(); bought != nullptr)
+                                   {
+                                       OnBuyConfirmed(*bought, result, quantity);
+                                   }
+                               });
             return;
         }
 
@@ -193,7 +193,7 @@ auto MCVehiclePurchaseBlock::HandleEvent(MCGuiEvent& event) -> void
     PlayLogSound(0x33);
 }
 
-auto MCVehiclePurchaseBlock::DrawBackground(int32_t) -> void
+auto MCVehiclePurchaseBlock::OnRefresh() -> void
 {
     MCPurVehicleData& data = *PurVehicle()->Data;
 
@@ -213,7 +213,7 @@ auto MCVehiclePurchaseBlock::DrawBackground(int32_t) -> void
     PrepareInfoDescription(data.Description);
 }
 
-auto MCVehiclePurchaseBlock::DrawRow(MCLogPort& port, int32_t top) const -> void
+auto MCVehiclePurchaseBlock::DrawRow(MCLogPort& port, int32_t top) -> void
 {
     MCPurchaseScreen& screen = *GlobalLog()->PurchaseScreen;
     std::shared_ptr<MCLogBlockPort> work = RowPicture(*screen.VehicleTabPort, port, top, false);

@@ -44,9 +44,6 @@ public:
     /// <summary>Port: makes the screen port: a <paramref name="width"/> x <paramref name="height"/> window without pixels.</summary>
     void InitScreen(int32_t width, int32_t height);
 
-    /// <summary>Frees the bitmap and the pane; the size becomes -1.</summary>
-    virtual void Destroy();
-
     /// <summary>Reallocates the bitmap for a new size (the screen port and a view keep theirs).</summary>
     virtual int32_t Resize(int32_t width, int32_t height);
 
@@ -159,12 +156,8 @@ private:
 class MCGuiScrollPort : public MCGuiPort
 {
 public:
-    ~MCGuiScrollPort() override;
-
     /// <summary>Like <see cref="MCGuiPort::Init(int32_t, int32_t)"/>, but always reallocates, even at the same size.</summary>
     int32_t Init(int32_t width, int32_t height) override;
-    /// <summary>Like <see cref="MCGuiPort::Destroy"/>, but the size is left as it was.</summary>
-    void Destroy() override;
     int32_t Resize(int32_t width, int32_t height) override;
     using MCGuiPort::Init;
 };

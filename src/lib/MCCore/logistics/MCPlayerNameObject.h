@@ -33,11 +33,10 @@ public:
         Unchecked = 4,
     };
 
-    ~MCPlayerNameObject() override { Destroy(); }
-
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
 
-    void Destroy() override;
+    /// <summary>Frees the name.</summary>
+    void OnDestroy() override;
 
     /// <summary>
     /// Fills the box and writes the name (not while it is being dragged). Port: drawn each frame, over the player

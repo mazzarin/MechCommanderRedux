@@ -1,9 +1,5 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
-
-class MCPilotPurchaseBlock;
-
 /// <summary>A MechWarrior for hire, read from <c>&lt;WarriorPath&gt;&lt;name&gt;.fit</c>.</summary>
 /// <remarks>Original source: <c>logistics\purchase.cpp</c> (<c>PurPilotData</c>).</remarks>
 class MCPurPilotData
@@ -48,7 +44,6 @@ public:
     std::string Description;
     /// <summary><see cref="ForHire"/> .. <see cref="OffShop"/>.</summary>
     int32_t Status = ForHire;
-    MCGuiOwned<MCPilotPurchaseBlock> Block;
 };
 
 /// <summary>The pilots for hire, sorted by rank, then callsign.</summary>
@@ -56,10 +51,10 @@ public:
 class MCPurPilotList
 {
 public:
-    /// <summary>Frees every pilot and its row.</summary>
+    /// <summary>Frees every pilot.</summary>
     void Clear();
 
-    /// <summary>Reads pilot <paramref name="fileName"/> with <paramref name="status"/>, makes its row and inserts it.</summary>
+    /// <summary>Reads pilot <paramref name="fileName"/> with <paramref name="status"/> and inserts it.</summary>
     void AddPilot(std::string_view fileName, int32_t status);
 
     /// <summary>Inserts <paramref name="pilot"/>: after the pilots of a lower rank, then after those with a smaller callsign.</summary>

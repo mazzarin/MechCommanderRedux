@@ -4,7 +4,7 @@
 // and components, the screens that buy, repair and deploy them, campaign loading and saving, and the multiplayer
 // force exchange.
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "logistics/MCDragIcon.h"
 #include "logistics/MCLogObject.h"
 #include "main/MCDropSlot.h"
@@ -18,6 +18,7 @@
 class MCBriefingScreen;
 class MCFidpMessage;
 class MCFitIniFile;
+class MCLogChat;
 class MCLogChatWindow;
 class MCPacketFile;
 struct MCPane;
@@ -32,6 +33,7 @@ class MCReusableDialog;
 class MCSessionScreen;
 class MCSplashScreen;
 class MCTicker;
+class MCTickerLine;
 struct MCDeployForce;
 
 /// <summary>
@@ -174,6 +176,41 @@ public:
     /// </summary>
     void DrawScreenChrome(MCLogObject& screen, const MCPane& target);
 
+    /// <summary>
+    /// Shows the ticker on <paramref name="screen"/>: its line there shows, in front, and runs the scroll timer; the
+    /// other screens' lines hide (the original moved its one ticker onto the screen). Raised again with
+    /// <paramref name="shuffle"/>, as at the start.
+    /// </summary>
+    void ShowTickerOn(MCLogObject& screen, bool shuffle = false);
+
+    /// <summary>
+    /// Makes the ready lights, none shown yet, and their view on each screen that can show them (the session, purchase,
+    /// briefing and repair screens).
+    /// </summary>
+    void MakePlayerLights();
+
+    /// <summary>
+    /// Shows the ready lights on <paramref name="screen"/>, in front (at depth <paramref name="depth"/> when one is
+    /// given); the other screens' views hide (the original moved its one lights object onto the screen).
+    /// </summary>
+    void ShowLightsOn(MCLogObject& screen, std::optional<int32_t> depth);
+
+    /// <summary>Takes the ready lights and their views down (the original deleted its lights object).</summary>
+    void ResetPlayerLights();
+
+    /// <summary>The chat window on <paramref name="screen"/>, or null; the caller keeps it as its pin.</summary>
+    std::shared_ptr<MCLogChatWindow> ChatWindowOn(const MCLogObject& screen) const;
+
+    /// <summary>
+    /// Puts the chat on <paramref name="screen"/>: its window there takes over, in front, shown as the chat was, with
+    /// the team choice, the caret's blink and the text focus of the window before it; that one hides (the original
+    /// moved its one chat window onto the screen).
+    /// </summary>
+    void ShowChatOn(MCLogObject& screen);
+
+    /// <summary>Shows or hides the chat on the screen it is on (remembered while it is on none).</summary>
+    void ShowChat(bool show);
+
     /// <summary>Switches to the briefing screen (with the slide when <paramref name="animate"/>).</summary>
     int32_t SetUpBriefingScreen(bool animate);
 
@@ -201,6 +238,18 @@ public:
 
     /// <summary>Gives mech <paramref name="mechIndex"/> pilot <paramref name="pilotIndex"/> (a negative one takes it off).</summary>
     void SetPilot(int32_t mechIndex, int32_t pilotIndex) const;
+
+    /// <summary>
+    /// Takes a deployed <paramref name="mech"/> off its drop zone slot (telling the other players in a multiplayer
+    /// game); it is no longer deployed.
+    /// </summary>
+    void UndeployMech(MCLogMech& mech);
+
+    /// <summary>
+    /// Updates the drop zone slots for force vehicle <paramref name="forceIndex"/> leaving the force list: its slot is
+    /// cleared and the slots of the vehicles after it move up one place with them.
+    /// </summary>
+    void RemoveVehicleFromSlots(int32_t forceIndex);
 
     /// <summary>Moves assigned mechs into the force list and unassigned ones back, then renumbers their rows.</summary>
     void ReorderMechs() const;
@@ -280,7 +329,7 @@ public:
     void ProcessCheatCode(int16_t key);
 
     /// <summary>Draws the bar of the pilot's skill <paramref name="skill"/> (an index into its skills).</summary>
-    static void DrawPilotSkillBar(MCLogWarrior& warrior, int32_t skill, int32_t xPos, int32_t yPos, int32_t row,
+    static void DrawPilotSkillBar(const MCLogWarrior& warrior, int32_t skill, int32_t xPos, int32_t yPos, int32_t row,
                                   int32_t width, int32_t rowHeight, MCLogPort& port);
 
     /// <summary>
@@ -339,10 +388,12 @@ public:
         float Rotation = 0;
     };
 
-    /// <summary>The name ticker on the main screen.</summary>
-    MCGuiOwned<MCTicker> Ticker;
-    /// <summary>The multiplayer ready lights.</summary>
-    MCGuiOwned<MCMPPlayerLights> PlayerLights;
+    /// <summary>The ticker: the help line's text and scroll position, shown by a line on each screen.</summary>
+    std::shared_ptr<MCTicker> Ticker;
+    /// <summary>The ticker's lines, one on each screen that shows it (children of the screens).</summary>
+    std::vector<MCGuiHandle<MCTickerLine>> TickerLines;
+    /// <summary>The multiplayer ready lights (shown by a view on each multiplayer screen), or null.</summary>
+    std::shared_ptr<MCMPPlayerLights> PlayerLights;
     /// <summary>The current mission's number in the campaign (-1 = none).</summary>
     int32_t CurrentMission = 0;
     /// <summary>The campaign's purchase file (the save's "purchaseFile"; written to starting fits as PurchaseFile).</summary>
@@ -421,20 +472,20 @@ public:
 
     /// <summary>Makes <paramref name="screen"/> the screen being shown.</summary>
     void SetCurrentScreen(MCLogObject& screen) { _CurrentScreen = screen.WeakAs<MCLogObject>(); }
-    MCGuiOwned<MCSessionScreen> SessionScreen;
-    MCGuiOwned<MCSplashScreen> SerialScreen;
+    MCGuiHandle<MCSessionScreen> SessionScreen;
+    MCGuiHandle<MCSplashScreen> SerialScreen;
     /// <summary>The multiplayer connection screen (the one after the protocol choice).</summary>
-    MCGuiOwned<MCSplashScreen> ConnectScreen;
-    MCGuiOwned<MCSplashScreen> ModemScreen;
-    MCGuiOwned<MCSplashScreen> LanScreen;
-    MCGuiOwned<MCSplashScreen> MainScreen;
-    MCGuiOwned<MCSplashScreen> MultiplayerScreen;
-    MCGuiOwned<MCSplashScreen> LoadScreen;
-    MCGuiOwned<MCSplashScreen> SaveScreen;
-    MCGuiOwned<MCSplashScreen> PrefScreen;
-    MCGuiOwned<MCBriefingScreen> BriefingScreen;
-    MCGuiOwned<MCPurchaseScreen> PurchaseScreen;
-    MCGuiOwned<MCRepairScreen> RepairScreen;
+    MCGuiHandle<MCSplashScreen> ConnectScreen;
+    MCGuiHandle<MCSplashScreen> ModemScreen;
+    MCGuiHandle<MCSplashScreen> LanScreen;
+    MCGuiHandle<MCSplashScreen> MainScreen;
+    MCGuiHandle<MCSplashScreen> MultiplayerScreen;
+    MCGuiHandle<MCSplashScreen> LoadScreen;
+    MCGuiHandle<MCSplashScreen> SaveScreen;
+    MCGuiHandle<MCSplashScreen> PrefScreen;
+    MCGuiHandle<MCBriefingScreen> BriefingScreen;
+    MCGuiHandle<MCPurchaseScreen> PurchaseScreen;
+    MCGuiHandle<MCRepairScreen> RepairScreen;
     /// <summary>The preferences as they were when the preferences screen opened (restored by CancelPrefs).</summary>
     int32_t SavedPrefs0 = 0;
     int32_t SavedPrefs1 = 0;
@@ -448,7 +499,14 @@ public:
     /// 0 when it has none.
     /// </summary>
     int32_t Operation = 0;
-    MCGuiOwned<MCLogChatWindow> ChatWindow;
+    /// <summary>The multiplayer chat (its history and the line being typed), or null in the demo.</summary>
+    std::shared_ptr<MCLogChat> Chat;
+    /// <summary>The chat's windows, one on each screen that shows it (the session and briefing screens' children).</summary>
+    std::vector<MCGuiHandle<MCLogChatWindow>> ChatWindows;
+    /// <summary>The chat window on the screen the chat is on (<see cref="ShowChatOn"/>); empty before it is on one.</summary>
+    MCGuiHandle<MCLogChatWindow> ChatWindow;
+    /// <summary>Whether the chat shows, while it is on no screen (<see cref="ShowChat"/>).</summary>
+    bool ChatShown = false;
     /// <summary>The mech repair screen shapes (<c>mechrep##.shp</c>, by mech name index).</summary>
     std::array<MCRegisteredBlock, 24> MechRepShapes;
     /// <summary>The vehicle repair screen shapes (<c>vr1_##.shp</c>; none where the file is missing).</summary>
@@ -465,11 +523,6 @@ public:
     std::shared_ptr<MCLogPort> RepairBackPort;
     /// <summary>The inventory block background (<c>invblock.tga</c>).</summary>
     std::shared_ptr<MCLogPort> InvBlockPort;
-    /// <summary>
-    /// The inventory pane's contents per tab (mechs, pilots, components, vehicles), made by the
-    /// <c>MCLogInvScreen::Create*InvBlock</c> functions: views each tab's rows are drawn into.
-    /// </summary>
-    std::array<std::shared_ptr<MCLogPort>, 4> InvTabPorts;
     /// <summary>The box behind the resource figure at the top right.</summary>
     std::shared_ptr<MCLogPort> ResourceBackPort;
     /// <summary>The box behind the clock at the top right.</summary>
@@ -489,16 +542,16 @@ public:
     std::array<int32_t, 6> PlayerColors{};
     /// <summary>Each component's place in the logistics sort order (<c>objsort.rsp</c>; one per master id).</summary>
     std::array<int32_t, 256> ComponentSort{};
-    /// <summary>The icon following the mouse while an inventory row is dragged (<see cref="MCDragIcon::Create"/>, <see cref="MCDragIcon::Remove"/>).</summary>
-    MCGuiOwned<MCDragIcon> DragIcon;
+    /// <summary>The icon following the mouse while an inventory row is dragged, a child of its screen (<see cref="MCDragIcon::Create"/>, <see cref="MCDragIcon::Remove"/>).</summary>
+    MCGuiHandle<MCDragIcon> DragIcon;
     /// <summary>The id the next <see cref="MCLogWarrior"/> gets.</summary>
     int32_t NextWarriorID = 0;
-    MCGuiOwned<MCPurchaseDlg> PurchaseDialog;
+    MCGuiHandle<MCPurchaseDlg> PurchaseDialog;
     /// <summary>The one-button (or yes/no) message dialog.</summary>
-    MCGuiOwned<MCReusableDialog> MessageDialog;
+    MCGuiHandle<MCReusableDialog> MessageDialog;
     /// <summary>The yes/no dialog.</summary>
-    MCGuiOwned<MCReusableDialog> QuestionDialog;
-    MCGuiOwned<MCRefitDialog> RefitDialog;
+    MCGuiHandle<MCReusableDialog> QuestionDialog;
+    MCGuiHandle<MCRefitDialog> RefitDialog;
     /// <summary>The campaign's CampaignBriefing Filename (empty when it has none).</summary>
     std::string CampaignBriefingName;
     /// <summary>The mission's OperationCinema: the briefing movie played in <c>data\movies\</c> (empty when it has none).</summary>

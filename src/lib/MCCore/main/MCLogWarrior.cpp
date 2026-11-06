@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "main/MCLogWarrior.h"
-#include "logistics/MCPilotInventoryBlock.h"
 #include "logistics/MCPurProfile.h"
 #include "object/MCMoverGameSystem.h"
 

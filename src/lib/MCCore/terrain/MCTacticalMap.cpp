@@ -120,40 +120,34 @@ namespace
     }
 
     /// <summary>
-    /// A plain aObject showing a picture. (The original loaded the picture into the object's own port; it is the
-    /// object's background now, and the object draws itself.)
+    /// Sets up a plain aObject showing a picture. (The original loaded the picture into the object's own port; it is
+    /// the object's background now, and the object draws itself.)
     /// </summary>
-    MCGuiOwned<MCGuiObject> MakePicture(int32_t x, int32_t y, int32_t w, int32_t h, std::string_view picture)
+    void SetUpPicture(MCGuiObject& picture, int32_t x, int32_t y, int32_t w, int32_t h, std::string_view fileName)
     {
-        auto obj = MCMakeGui<MCGuiObject>();
-        obj->SetDrawsLive();
-        obj->Init(x, y, w, h, {});
-        obj->SetBackground(picture);
-        return obj;
+        picture.SetDrawsLive();
+        picture.Init(x, y, w, h, {});
+        picture.SetBackground(fileName);
     }
 
-    /// <summary>A button with its up, down and gray pictures.</summary>
-    template <typename Button>
-    MCGuiOwned<Button> MakeButton(int32_t x, int32_t y, int32_t w, int32_t h, std::string_view up,
-                                  std::string_view down, std::string_view gray)
+    /// <summary>Sets up a button with its up, down and gray pictures.</summary>
+    void SetUpButton(MCGuiButton& button, int32_t x, int32_t y, int32_t w, int32_t h, std::string_view up,
+                     std::string_view down, std::string_view gray)
     {
-        auto button = MCMakeGui<Button>();
-        button->Init(x, y, w, h, {});
-        button->SetUpPicture(up);
-        button->SetDownPicture(down);
+        button.Init(x, y, w, h, {});
+        button.SetUpPicture(up);
+        button.SetDownPicture(down);
 
         if (!gray.empty())
         {
-            button->SetGrayPicture(gray);
+            button.SetGrayPicture(gray);
         }
-
-        return button;
     }
 
     /// <summary>Loads a background port for one of the MFD pages.</summary>
-    MCGuiOwned<MCGuiPort> LoadBackground(std::string_view fileName, std::string_view error)
+    std::unique_ptr<MCGuiPort> LoadBackground(std::string_view fileName, std::string_view error)
     {
-        auto background = MCMakeGui<MCGuiPort>();
+        auto background = std::make_unique<MCGuiPort>();
         const int32_t result = background->Init(fileName);
         Assert(result == 0, static_cast<uint32_t>(result), error);
         return background;
@@ -644,7 +638,7 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     MapVertexSide = MCTerrain::VerticesBlockSide * MCTerrain::BlocksMapSide;
 
     // The map picture.
-    MapPort = MCMakeGui<MCGuiPort>();
+    MapPort = std::make_unique<MCGuiPort>();
     std::string pictureName = GamePath(TerrainPath, Terrain()->Name, ".tga");
     int32_t result = MapPort->Init(pictureName.data());
     Assert(result == 0, static_cast<uint32_t>(result), " could not start tacticalMap ");
@@ -652,7 +646,7 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     MapHeight = MapPort->Bitmap().YMax;
 
     // The fog of war: a port whose pixels are the home side's visible bits.
-    VisibilityPort = MCMakeGui<MCGuiPort>();
+    VisibilityPort = std::make_unique<MCGuiPort>();
     VisibilityPort->Init(MapVertexSide, MapVertexSide);
     MCRenderer::DestroyTexture(VisibilityPort->Bitmap());
     VisibilityPort->Bitmap().Pixels = Terrain()->HomeVisibleBits().Window().Pixels;
@@ -675,7 +669,7 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
 
     for (size_t i = 0; i < viewBackgroundNames.size(); i++)
     {
-        InfoViewBackgrounds[i] = MCMakeGui<MCGuiPort>();
+        InfoViewBackgrounds[i] = std::make_unique<MCGuiPort>();
 
         if (InfoViewBackgrounds[i]->Init(viewBackgroundNames[i]) != 0)
         {
@@ -696,9 +690,8 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     else
     {
         _OwnedSalvageBackground = LoadBackground("mfdswn01.tga", "Error reading salvage MFD background");
-        ChatWindow = MCMakeGui<MCGuiChatWindow>();
-        result = ChatWindow->Init(6, 0x22, 0x82, 0x99, {});
-        AddChild(ChatWindow);
+        ChatWindow =
+            CreateChild<MCGuiChatWindow>([&](MCGuiChatWindow& chat) { result = chat.Init(6, 0x22, 0x82, 0x99, {}); });
         Assert(result == 0, static_cast<uint32_t>(result), "Error initing chat object");
         result = 0;
     }
@@ -706,52 +699,60 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     ChatPending = false;
 
     // The tabs along the MFD's right edge.
-    TabTop = MakePicture(Width(), 0, 0xc, 4, "mfdmts00.tga");
-    TabTop->SetEventRoutine(TabTopEvent);
-    TabTop->SetTransparent(true);
-    AddChild(TabTop);
+    TabTop = CreateChild<MCGuiObject>(
+        [this](MCGuiObject& tab)
+        {
+            SetUpPicture(tab, Width(), 0, 0xc, 4, "mfdmts00.tga");
+            tab.SetEventRoutine(TabTopEvent);
+            tab.SetTransparent(true);
+        });
 
-    TabStrip = MCMakeGui<MCGuiObject>();
-    TabStrip->SetDrawsLive();
-    TabStrip->Init(Width(), 4, 0xc, 0xe7, {});
+    // The chat blinkers are the map's children, made (and added) while the strip is set up, before it is added.
+    TabStrip = CreateChild<MCGuiObject>(
+        [&](MCGuiObject& strip)
+        {
+            strip.SetDrawsLive();
+            strip.Init(Width(), 4, 0xc, 0xe7, {});
 
-    if (MultiPlayer() == nullptr)
-    {
-        TabStrip->SetBackground("mfdmts01.tga");
-    }
-    else
-    {
-        const int32_t blinkerTop = TabStrip->Bottom() - 0x3a;
-        TabStrip->SetBackground("mfdmts03.tga");
+            if (MultiPlayer() == nullptr)
+            {
+                strip.SetBackground("mfdmts01.tga");
+            }
+            else
+            {
+                const int32_t blinkerTop = strip.Bottom() - 0x3a;
+                strip.SetBackground("mfdmts03.tga");
 
-        ChatBlinkerOff = MCMakeGui<MCGuiObject>();
-        ChatBlinkerOff->SetDrawsLive();
-        result = ChatBlinkerOff->Init(Width() + 2, blinkerTop, 10, 0x3a, {});
-        Assert(result == 0, static_cast<uint32_t>(result), "Error initing chat blinker object");
-        ChatBlinkerOff->SetBackground("mfdsts05.tga");
-        ChatBlinkerOff->SetDepth(10);
-        AddChild(ChatBlinkerOff);
-        ChatBlinkerOff->ShowGuiWindow(false);
-        ChatBlinkerOff->SetEventRoutine(BlinkerHandleEvent);
+                const auto makeBlinker = [&](int32_t x, std::string_view picture)
+                {
+                    MCGuiHandle<MCGuiObject> blinker = CreateChild<MCGuiObject>(
+                        [&](MCGuiObject& made)
+                        {
+                            made.SetDrawsLive();
+                            result = made.Init(x, blinkerTop, 10, 0x3a, {});
+                            Assert(result == 0, static_cast<uint32_t>(result), "Error initing chat blinker object");
+                            made.SetBackground(picture);
+                            made.SetDepth(10);
+                        });
+                    blinker->ShowGuiWindow(false);
+                    blinker->SetEventRoutine(BlinkerHandleEvent);
+                    return blinker;
+                };
 
-        ChatBlinkerOn = MCMakeGui<MCGuiObject>();
-        ChatBlinkerOn->SetDrawsLive();
-        result = ChatBlinkerOn->Init(Width(), blinkerTop, 10, 0x3a, {});
-        Assert(result == 0, static_cast<uint32_t>(result), "Error initing chat blinker object");
-        ChatBlinkerOn->SetBackground("mfdsts04.tga");
-        ChatBlinkerOn->SetDepth(10);
-        AddChild(ChatBlinkerOn);
-        ChatBlinkerOn->ShowGuiWindow(false);
-        ChatBlinkerOn->SetEventRoutine(BlinkerHandleEvent);
-    }
+                ChatBlinkerOff = makeBlinker(Width() + 2, "mfdsts05.tga");
+                ChatBlinkerOn = makeBlinker(Width(), "mfdsts04.tga");
+            }
 
-    TabStrip->SetEventRoutine(TabStripEvent);
-    AddChild(TabStrip);
+            strip.SetEventRoutine(TabStripEvent);
+        });
 
-    TabBottom = MakePicture(Width(), 0xeb, 0xc, 4, "mfdmts02.tga");
-    TabBottom->SetEventRoutine(TabBottomEvent);
-    TabBottom->SetTransparent(true);
-    AddChild(TabBottom);
+    TabBottom = CreateChild<MCGuiObject>(
+        [this](MCGuiObject& tab)
+        {
+            SetUpPicture(tab, Width(), 0xeb, 0xc, 4, "mfdmts02.tga");
+            tab.SetEventRoutine(TabBottomEvent);
+            tab.SetTransparent(true);
+        });
 
     ObjectType = 6;
     ShowGuiWindow(false);
@@ -777,11 +778,13 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     for (size_t i = 0; i < supportButtons.size(); i++)
     {
         const SupportButton& spec = supportButtons[i];
-        ArtilleryButtons[i] =
-            MakeButton<MCArtilleryButton>(spec.X, 6, 0x1f, 0x16, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
-        ArtilleryButtons[i]->CommandId = spec.CommandId;
-        ArtilleryButtons[i]->HelpText = LoadHelpText(spec.HelpId);
-        AddChild(ArtilleryButtons[i]);
+        ArtilleryButtons[i] = CreateChild<MCArtilleryButton>(
+            [&spec](MCArtilleryButton& button)
+            {
+                SetUpButton(button, spec.X, 6, 0x1f, 0x16, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
+                button.CommandId = spec.CommandId;
+                button.HelpText = LoadHelpText(spec.HelpId);
+            });
     }
 
     // The info page's data buttons.
@@ -801,12 +804,13 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
 
     for (const DataButton& spec : dataButtonSpecs)
     {
-        MCGuiOwned<MCGuiToolButton>& button = DataButtons[spec.Index];
-        button =
-            MakeButton<MCGuiToolButton>(spec.X, 0xcc, 0x20, 0xc, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
-        button->Framed = false;
-        button->Callback().SetExec(spec.Callback);
-        AddChild(button);
+        DataButtons[spec.Index] = CreateChild<MCGuiToolButton>(
+            [&spec](MCGuiToolButton& button)
+            {
+                SetUpButton(button, spec.X, 0xcc, 0x20, 0xc, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
+                button.Framed = false;
+                button.Callback().SetExec(spec.Callback);
+            });
     }
 
     // The scroll buttons (disabled at 1x) and the zoom buttons.
@@ -828,19 +832,27 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     for (size_t i = 0; i < scrollSpecs.size(); i++)
     {
         const ScrollButton& spec = scrollSpecs[i];
-        ScrollButtons[i] =
-            MakeButton<MCGuiButton>(spec.X, spec.Y, 0xd, 0xb, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
-        ScrollButtons[i]->SetEventRoutine(spec.Routine);
-        AddChild(ScrollButtons[i]);
+        ScrollButtons[i] = CreateChild<MCGuiButton>(
+            [&spec](MCGuiButton& button)
+            {
+                SetUpButton(button, spec.X, spec.Y, 0xd, 0xb, spec.Pictures[0], spec.Pictures[1], spec.Pictures[2]);
+                button.SetEventRoutine(spec.Routine);
+            });
     }
 
-    ScrollButtons[5] = MakeButton<MCGuiButton>(0x74, 0xca, 0xd, 0xd, "mfdmbh04.tga", "mfdmbg04.tga", "mfdmbn04.tga");
-    ScrollButtons[5]->Callback().SetExec(ZoomOut);
-    ScrollButtons[5]->Disabled = true;
-    AddChild(ScrollButtons[5]);
-    ScrollButtons[4] = MakeButton<MCGuiButton>(0x74, 0xb6, 0xd, 0xd, "mfdmbh05.tga", "mfdmbg05.tga", "mfdmbn05.tga");
-    ScrollButtons[4]->Callback().SetExec(ZoomIn);
-    AddChild(ScrollButtons[4]);
+    ScrollButtons[5] = CreateChild<MCGuiButton>(
+        [](MCGuiButton& button)
+        {
+            SetUpButton(button, 0x74, 0xca, 0xd, 0xd, "mfdmbh04.tga", "mfdmbg04.tga", "mfdmbn04.tga");
+            button.Callback().SetExec(ZoomOut);
+            button.Disabled = true;
+        });
+    ScrollButtons[4] = CreateChild<MCGuiButton>(
+        [](MCGuiButton& button)
+        {
+            SetUpButton(button, 0x74, 0xb6, 0xd, 0xd, "mfdmbh05.tga", "mfdmbg05.tga", "mfdmbn05.tga");
+            button.Callback().SetExec(ZoomIn);
+        });
 
     for (size_t i = 0; i < 4; i++)
     {
@@ -848,31 +860,44 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     }
 
     // The command palette, hidden until the palette button opens it.
-    PaletteFrame = MCMakeGui<MCGuiObject>();
-    PaletteFrame->SetDrawsLive();
-    PaletteFrame->Init(0, 0xe9, 0x8c, 0x35, {});
-    PaletteFrame->SetDepth(10);
-    PaletteFrame->SetBackground("mfdcwn00.tga");
-    AddChild(PaletteFrame);
+    PaletteFrame = CreateChild<MCGuiObject>(
+        [](MCGuiObject& frame)
+        {
+            frame.SetDrawsLive();
+            frame.Init(0, 0xe9, 0x8c, 0x35, {});
+            frame.SetDepth(10);
+            frame.SetBackground("mfdcwn00.tga");
+        });
     PaletteFrame->ShowGuiWindow(false);
-    PaletteBottom = MCMakeGui<MCGuiObject>();
-    PaletteBottom->SetDrawsLive();
-    PaletteBottom->Init(PaletteFrame->Width(), 0, 2, 0x35, {});
-    PaletteBottom->SetBackground("mfdcwn01.tga");
-    PaletteBottom->SetTransparent(true);
-    PaletteFrame->AddChild(PaletteBottom);
+    PaletteBottom = PaletteFrame->CreateChild<MCGuiObject>(
+        [width = PaletteFrame->Width()](MCGuiObject& bottom)
+        {
+            bottom.SetDrawsLive();
+            bottom.Init(width, 0, 2, 0x35, {});
+            bottom.SetBackground("mfdcwn01.tga");
+            bottom.SetTransparent(true);
+        });
 
-    PaletteButton = MakeButton<MCGuiToolButton>(6, 0xe0, 9, 9, "mfdcwn02.tga", "mfdcwn03.tga", {});
-    PaletteButton->Framed = false;
-    PaletteButton->Callback().SetExec(::TogglePalette);
-    AddChild(PaletteButton);
+    PaletteButton = CreateChild<MCGuiToolButton>(
+        [](MCGuiToolButton& button)
+        {
+            SetUpButton(button, 6, 0xe0, 9, 9, "mfdcwn02.tga", "mfdcwn03.tga", {});
+            button.Framed = false;
+            button.Callback().SetExec(::TogglePalette);
+        });
 
-    ScrollUpMarker = MakePicture(0, 0, 0xb, 0xb, "mfddbg04.tga");
-    ScrollUpMarker->ShowGuiWindow(false);
-    AddChild(ScrollUpMarker);
-    ScrollDownMarker = MakePicture(0, 0, 0xb, 0xb, "mfddbg05.tga");
-    ScrollDownMarker->ShowGuiWindow(false);
-    AddChild(ScrollDownMarker);
+    const auto makeMarker = [this](std::string_view picture)
+    {
+        return CreateChild<MCGuiObject>(
+            [picture](MCGuiObject& marker)
+            {
+                SetUpPicture(marker, 0, 0, 0xb, 0xb, picture);
+                marker.ShowGuiWindow(false);
+            });
+    };
+
+    ScrollUpMarker = makeMarker("mfddbg04.tga");
+    ScrollDownMarker = makeMarker("mfddbg05.tga");
 
     LastMapTime = -999.0f;
 
@@ -882,44 +907,44 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
 
     for (size_t i = 0; i < ToolButtons.size(); i++)
     {
-        ToolButtons[i] = MCMakeGui<MCToolPalButton>();
-        MCToolPalButton& button = *ToolButtons[i];
-        button.Init(buttonX, buttonY, 0x1f, 0x16, {});
-        button.Callback().SetMessage(button.weak_from_this(), EventCallback);
-        button.SetEventRoutine(ToolPaletteButtonEvent);
-        const bool zoomButton = i == 7;
-        std::string pictureName = std::format("{}{:02}.tga", zoomButton ? "mfdcbn" : "mfdcbh", i);
-        button.SetUpPicture(pictureName.data());
-        pictureName = std::format("{}{:02}.tga", zoomButton ? "mfdcbh" : "mfdcbg", i);
-        button.SetDownPicture(pictureName.data());
-        pictureName = std::format("mfdcbn{:02}.tga", i);
-        button.SetGrayPicture(pictureName.data());
-        button.Framed = false;
-
-        if (zoomButton)
-        {
-            // The original also disabled zoom in multiplayer; the port allows it.
-            if (!Only45Pixel)
+        ToolButtons[i] = PaletteFrame->CreateChild<MCToolPalButton>(
+            [&](MCToolPalButton& button)
             {
-                button.Action = ActionToggleZoom;
-                button.HelpText = LoadHelpText(0x91);
-            }
-            else
-            {
-                // No zoom: only the 45-pixel art is loaded.
-                button.SetGrayPicture("mfdcbn07a.tga");
-                button.Disabled = true;
-                button.HelpText = LoadHelpText(0x92);
-            }
-        }
-        else
-        {
-            button.Action = ButtonActions[i];
-            button.HelpText = LoadHelpText(0x8a + static_cast<uint32_t>(i));
-        }
+                button.Init(buttonX, buttonY, 0x1f, 0x16, {});
+                button.Callback().SetMessage(button.weak_from_this(), EventCallback);
+                button.SetEventRoutine(ToolPaletteButtonEvent);
+                const bool zoomButton = i == 7;
+                std::string pictureName = std::format("{}{:02}.tga", zoomButton ? "mfdcbn" : "mfdcbh", i);
+                button.SetUpPicture(pictureName.data());
+                pictureName = std::format("{}{:02}.tga", zoomButton ? "mfdcbh" : "mfdcbg", i);
+                button.SetDownPicture(pictureName.data());
+                pictureName = std::format("mfdcbn{:02}.tga", i);
+                button.SetGrayPicture(pictureName.data());
+                button.Framed = false;
 
-        PaletteFrame->AddChild(button.weak_from_this());
-        buttonX += 1 + button.Width();
+                if (zoomButton)
+                {
+                    // The original also disabled zoom in multiplayer; the port allows it.
+                    if (!Only45Pixel)
+                    {
+                        button.Action = ActionToggleZoom;
+                        button.HelpText = LoadHelpText(0x91);
+                    }
+                    else
+                    {
+                        // No zoom: only the 45-pixel art is loaded.
+                        button.SetGrayPicture("mfdcbn07a.tga");
+                        button.Disabled = true;
+                        button.HelpText = LoadHelpText(0x92);
+                    }
+                }
+                else
+                {
+                    button.Action = ButtonActions[i];
+                    button.HelpText = LoadHelpText(0x8a + static_cast<uint32_t>(i));
+                }
+            });
+        buttonX += 1 + ToolButtons[i]->Width();
 
         if (i == 3)
         {
@@ -928,18 +953,17 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
         }
     }
 
-    VideoWindow = MCMakeGui<MCVideoWindow>();
-    VideoWindow->Init(6, 0xaa, 0x30, 0x30, {});
-    VideoWindow->SetBackground("mfdmwn01.tga");
-    AddChild(VideoWindow);
+    VideoWindow = CreateChild<MCVideoWindow>(
+        [](MCVideoWindow& video)
+        {
+            video.Init(6, 0xaa, 0x30, 0x30, {});
+            video.SetBackground("mfdmwn01.tga");
+        });
 
-    InfoText = MCMakeGui<MCGuiScrollTextObject>();
-    InfoText->Init(5, 0x22, 0x76, 0xb8, {});
-    AddChild(InfoText);
+    const auto initText = [](MCGuiScrollTextObject& text) { text.Init(5, 0x22, 0x76, 0xb8, {}); };
+    InfoText = CreateChild<MCGuiScrollTextObject>(initText);
     InfoText->ShowGuiWindow(false);
-    SalvageText = MCMakeGui<MCGuiScrollTextObject>();
-    SalvageText->Init(5, 0x22, 0x76, 0xb8, {});
-    AddChild(SalvageText);
+    SalvageText = CreateChild<MCGuiScrollTextObject>(initText);
     SalvageText->ShowGuiWindow(false);
 
     Salvage = {};
@@ -957,9 +981,9 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     ZoomInRect = {0x70, 0xb2, 0x89, 199};
     ZoomOutRect = {0x70, 199, 0xb2, 0xdb};
 
-    for (MCGuiOwned<MCGuiPort>& port : InfoPorts)
+    for (std::unique_ptr<MCGuiPort>& port : InfoPorts)
     {
-        port = MCMakeGui<MCGuiPort>();
+        port = std::make_unique<MCGuiPort>();
     }
 
     SetDataDisplayMode(0, -1);
@@ -983,7 +1007,7 @@ auto MCTacticalMap::Init(int32_t xPos, int32_t yPos) -> int32_t
     return result;
 }
 
-auto MCTacticalMap::Destroy() -> void
+auto MCTacticalMap::OnDestroy() -> void
 {
     MapPort.reset();
 
@@ -995,34 +1019,7 @@ auto MCTacticalMap::Destroy() -> void
         VisibilityPort.reset();
     }
 
-    for (MCGuiOwned<MCArtilleryButton>& button : ArtilleryButtons)
-    {
-        button.reset();
-    }
-
-    for (MCGuiOwned<MCGuiButton>& button : ScrollButtons)
-    {
-        button.reset();
-    }
-
-    for (MCGuiOwned<MCToolPalButton>& button : ToolButtons)
-    {
-        button.reset();
-    }
-
-    for (MCGuiOwned<MCGuiToolButton>& button : DataButtons)
-    {
-        button.reset();
-    }
-
-    PaletteButton.reset();
-    PaletteBottom.reset();
-    PaletteFrame.reset();
-    SalvageText.reset();
-    InfoText.reset();
-    VideoWindow.reset();
-
-    for (MCGuiOwned<MCGuiPort>& port : InfoPorts)
+    for (std::unique_ptr<MCGuiPort>& port : InfoPorts)
     {
         port.reset();
     }
@@ -1030,25 +1027,16 @@ auto MCTacticalMap::Destroy() -> void
     MapBackground.reset();
     InfoBackground.reset();
 
-    for (MCGuiOwned<MCGuiPort>& background : InfoViewBackgrounds)
+    for (std::unique_ptr<MCGuiPort>& background : InfoViewBackgrounds)
     {
         background.reset();
     }
 
     MissionBackground.reset();
     _OwnedSalvageBackground.reset();
-    TabTop.reset();
-    TabStrip.reset();
-    TabBottom.reset();
-    ScrollUpMarker.reset();
-    ScrollDownMarker.reset();
-    ChatWindow.reset();
-    ChatBlinkerOff.reset();
-    ChatBlinkerOn.reset();
     PartShapes = {};
     ColorRemap = {};
     MouseInside = false;
-    MCGuiObject::Destroy();
 
     for (std::string& text : TypeStrings)
     {
@@ -1059,6 +1047,8 @@ auto MCTacticalMap::Destroy() -> void
     {
         text.clear();
     }
+
+    MCGuiObject::OnDestroy();
 }
 
 auto MCTacticalMap::RefreshPage() -> void
@@ -1287,7 +1277,7 @@ auto MCTacticalMap::HandleEvent(MCGuiEvent& event) -> void
                 if (!ChatPending)
                 {
                     const std::shared_ptr<MCGuiObject> blinker =
-                        DisplayType == MCTacmapPage::Salvage ? ChatBlinkerOn : ChatBlinkerOff;
+                        (DisplayType == MCTacmapPage::Salvage ? ChatBlinkerOn : ChatBlinkerOff).Lock();
 
                     if (blinker != nullptr)
                     {
@@ -1298,7 +1288,7 @@ auto MCTacticalMap::HandleEvent(MCGuiEvent& event) -> void
                 }
                 else
                 {
-                    for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOff, ChatBlinkerOn})
+                    for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOff.Lock(), ChatBlinkerOn.Lock()})
                     {
                         if (blinker != nullptr)
                         {
@@ -1554,7 +1544,7 @@ auto MCTacticalMap::HideMe(bool hide) -> void
         // Shown: the chat tab stops blinking.
         GuiSystem().RemoveTimer(*this, ChatBlinkTimer);
 
-        for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOn, ChatBlinkerOff})
+        for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOn.Lock(), ChatBlinkerOff.Lock()})
         {
             if (blinker != nullptr)
             {
@@ -1681,7 +1671,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
     {
         ChatWindow->ShowGuiWindow(false);
 
-        if (GuiSystem().TextObject().get() == ChatWindow->ChatInput.get())
+        if (GuiSystem().TextObject().get() == ChatWindow->ChatInput.Lock().get())
         {
             GuiSystem().ReleaseText();
         }
@@ -1690,7 +1680,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
     InfoText->ShowGuiWindow(false);
     InfoText->Clear();
 
-    for (const MCGuiOwned<MCGuiButton>& button : ScrollButtons)
+    for (const MCGuiHandle<MCGuiButton>& button : ScrollButtons)
     {
         button->ShowGuiWindow(false);
     }
@@ -1698,7 +1688,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
     VideoWindow->ShowGuiWindow(false);
     StopVideo();
 
-    for (const MCGuiOwned<MCGuiToolButton>& button : DataButtons)
+    for (const MCGuiHandle<MCGuiToolButton>& button : DataButtons)
     {
         button->ShowGuiWindow(false);
     }
@@ -1716,7 +1706,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
             TabHighlighted = false;
             // (The original copied the page's background into the MFD's picture here; draw shows it each frame.)
 
-            for (const MCGuiOwned<MCGuiButton>& button : ScrollButtons)
+            for (const MCGuiHandle<MCGuiButton>& button : ScrollButtons)
             {
                 button->ShowGuiWindow(true);
             }
@@ -1727,7 +1717,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
 
         case MCTacmapPage::Info:
         {
-            for (const MCGuiOwned<MCGuiToolButton>& button : DataButtons)
+            for (const MCGuiHandle<MCGuiToolButton>& button : DataButtons)
             {
                 button->ShowGuiWindow(true);
             }
@@ -1792,7 +1782,7 @@ auto MCTacticalMap::SetDisplayType(MCTacmapPage type) -> void
             // Multiplayer: the chat window, and the tab stops blinking.
             GuiSystem().RemoveTimer(*this, ChatBlinkTimer);
 
-            for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOn, ChatBlinkerOff})
+            for (const std::shared_ptr<MCGuiObject>& blinker : {ChatBlinkerOn.Lock(), ChatBlinkerOff.Lock()})
             {
                 if (blinker != nullptr)
                 {
@@ -1952,11 +1942,12 @@ auto MCTacticalMap::SetID(int32_t partId) -> void
         return;
     }
 
-    for (const MCGuiOwned<MCGuiPort>& port : InfoPorts)
+    // The pictures of the unit shown before go: each port starts empty again.
+    for (std::unique_ptr<MCGuiPort>& port : InfoPorts)
     {
         if (port != nullptr)
         {
-            port->Destroy();
+            port = std::make_unique<MCGuiPort>();
         }
     }
 
@@ -2035,7 +2026,7 @@ auto MCTacticalMap::UpdateOrderPalette() -> void
 
     if (mode != MCInterfaceMode::None)
     {
-        for (const MCGuiOwned<MCToolPalButton>& button : ToolButtons)
+        for (const MCGuiHandle<MCToolPalButton>& button : ToolButtons)
         {
             if (button->Action == mode)
             {
@@ -2128,7 +2119,7 @@ auto MCTacticalMap::HandleChatMessage(uint32_t fromID, std::span<const uint8_t> 
         ChatPending = true;
         GuiSystem().AddTimer(weak_from_this(), ChatBlinkTimer, 500, 0, 0, false);
         const std::shared_ptr<MCGuiObject> blinker =
-            DisplayType == MCTacmapPage::Salvage ? ChatBlinkerOn : ChatBlinkerOff;
+            (DisplayType == MCTacmapPage::Salvage ? ChatBlinkerOn : ChatBlinkerOff).Lock();
 
         if (blinker != nullptr)
         {

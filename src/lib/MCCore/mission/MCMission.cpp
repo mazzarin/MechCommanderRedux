@@ -196,6 +196,8 @@ MCMission::MCMission()
 MCMission::~MCMission()
 {
     Shutdown();
+    // The scenario is gone by now, so this only closes the screen (the original's went with the mission).
+    CloseResultsScreen();
 }
 
 auto MCMission::ReadLists(MCFitIniFile& file, bool campaign, bool readInDemo) -> int32_t
@@ -780,19 +782,23 @@ auto MCMission::RunFeatureScreen() -> bool
         }
 
         GuiSystem().SetCursorVisible(false);
-        FeatureScreen = MCMakeGui<MCGuiObject>();
-        FeatureScreen->Init(0, 0, 640, 480, {});
-        // The picture is copied onto the screen's own (MCX.EXE never freed it).
-        MCGuiOwned<MCGuiPort> picturePort = MCMakeGui<MCGuiPort>();
-        picturePort->Init(const_cast<char*>("features.tga"));
-        picturePort->CopyTo(FeatureScreen->Port().Frame(), 0, 0, false);
-        ScreenWindow()->AddChild(FeatureScreen);
+        FeatureScreen = ScreenWindow()->CreateChild<MCGuiObject>(
+            [](MCGuiObject& screen)
+            {
+                FeatureScreen = screen.weak_from_this();
+                screen.Init(0, 0, 640, 480, {});
+                // The picture is copied onto the screen's own (MCX.EXE never freed it).
+                MCGuiPort picturePort;
+                picturePort.Init(const_cast<char*>("features.tga"));
+                picturePort.CopyTo(screen.Port().Frame(), 0, 0, false);
+            });
         FeatureScreen->ShowGuiWindow(true);
         GuiSystem().ActivatePalette(palette, 0, 0x100);
     }
 
     if (FeatureScreenDone != 0)
     {
+        CloseGuiObject(FeatureScreen);
         FeatureScreen.reset();
         State = MCMissionState::Quit;
     }
@@ -809,8 +815,14 @@ auto MCMission::StartScenario(std::string_view name) -> void
 
     SoundSystem()->PlayBettySample(0x13);
     EndScenarioRequested = 0;
-    ResultsScreen = MCMakeGui<MCMissionResultsScreen>();
-    ResultsScreen->Init();
+    // A child of the screen window, hidden until the scenario ends (Activate shows it).
+    ResultsScreen = ScreenWindow()->CreateChild<MCMissionResultsScreen>(
+        [this](MCMissionResultsScreen& screen)
+        {
+            ResultsScreen = screen.WeakAs<MCMissionResultsScreen>();
+            screen.Init();
+            screen.ShowGuiWindow(false);
+        });
 
     if (GlobalGameSegment == 0)
     {
@@ -888,12 +900,47 @@ auto MCMission::StopScenarioCallbacks() -> void
 
 auto MCMission::CloseResultsScreen() -> void
 {
-    if (ResultsScreen != nullptr)
+    if (ResultsScreen == nullptr)
     {
-        // Destroyed while still the mission's, as in the original (it ends the scenario).
-        ResultsScreen->Destroy();
-        ResultsScreen.reset();
+        return;
     }
+
+    CloseGuiObject(ResultsScreen);
+    ResultsScreen.reset();
+    GuiSystem().CursorHidden = false;
+
+    // The original's results screen did the rest in its destroy: end the scenario and pick the next state.
+    if (Scenario() == nullptr)
+    {
+        return;
+    }
+
+    EndScenario();
+
+    if (GlobalGameSegment == 0)
+    {
+        if (!GameOver)
+        {
+            GamePaused = false;
+            State = MCMissionState::Logistics;
+            return;
+        }
+
+        if (InDemo != 0)
+        {
+            GamePaused = false;
+            CurrentMovie = 2;
+            State = MCMissionState::FeatureScreen;
+            NextState = MCMissionState::FeatureScreen;
+            return;
+        }
+
+        CurrentMovie = 3;
+        State = MCMissionState::PlayMovie;
+        NextState = MCMissionState::PlayMovie;
+    }
+
+    GamePaused = false;
 }
 
 auto MCMission::StartLogistics() -> MCLogistics&

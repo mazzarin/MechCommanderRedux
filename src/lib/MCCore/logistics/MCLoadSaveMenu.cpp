@@ -23,18 +23,18 @@ namespace
     constexpr size_t MaxDefaultNameLength = 0x67;
 
     /// <summary>The file pane of the screen being shown (the load or save screen), or null.</summary>
-    MCGuiOwned<MCFileScrollPane> ShownFilePane()
+    std::shared_ptr<MCFileScrollPane> ShownFilePane()
     {
-        MCGuiOwned<MCFileScrollPane> pane;
+        std::shared_ptr<MCFileScrollPane> pane;
 
         if (GlobalLog()->CurrentScreen() == GlobalLog()->LoadScreen)
         {
-            pane = GlobalLog()->LoadScreen->FilePane;
+            pane = GlobalLog()->LoadScreen->FilePane.Lock();
         }
 
         if (GlobalLog()->CurrentScreen() == GlobalLog()->SaveScreen)
         {
-            pane = GlobalLog()->SaveScreen->FilePane;
+            pane = GlobalLog()->SaveScreen->FilePane.Lock();
         }
 
         return pane;
@@ -49,10 +49,7 @@ namespace
     /// <summary>Takes down the file pane's name entry, if it has one (its <c>destroy</c>).</summary>
     void DestroyNameEntry(MCFileScrollPane& pane)
     {
-        if (pane.NameEntry != nullptr)
-        {
-            pane.NameEntry->Destroy();
-        }
+        CloseGuiObject(pane.NameEntry);
     }
 
     /// <summary>Shows <paramref name="screen"/>'s file list (from the main menu), nothing selected.</summary>
@@ -113,7 +110,7 @@ void SoloLoadScreen()
 
 void LoadGame()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = GlobalLog()->LoadScreen->FilePane;
+    const std::shared_ptr<MCFileScrollPane> pane = GlobalLog()->LoadScreen->FilePane.Lock();
 
     if (!HasSelection(MCOptionalOf(pane)))
     {
@@ -122,7 +119,7 @@ void LoadGame()
 
     std::string fileName = pane->Files[pane->SelectedFile].Name;
     SoundSystem()->StopDigitalMusic();
-    GlobalLog()->BriefingScreen->BriefingBox.reset();
+    GlobalLog()->BriefingScreen->HideBriefing();
     const bool campaign = !LoadingSolo;
     LoadingSolo = false;
     Solo = !campaign;
@@ -139,7 +136,7 @@ void LoadGame()
 
 void LoadMPGame()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = GlobalLog()->LoadScreen->FilePane;
+    const std::shared_ptr<MCFileScrollPane> pane = GlobalLog()->LoadScreen->FilePane.Lock();
 
     if (HasSelection(MCOptionalOf(pane)))
     {
@@ -170,7 +167,7 @@ void SaveWorkedCallback(int32_t)
 void SaveGameCallback()
 {
     int32_t result = -1;
-    const MCGuiOwned<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane;
+    const std::shared_ptr<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane.Lock();
 
     if (HasSelection(MCOptionalOf(pane)))
     {
@@ -206,7 +203,7 @@ void SaveGameCallback()
 
 void ClearForSaveGameCallback()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane;
+    const std::shared_ptr<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane.Lock();
 
     // The original cleared the file's read-only attribute first.
     if (MCFileSystem::RemoveSave(GamePath(pane->StartDirectory, pane->Files[pane->SelectedFile].Name, ".sav")))
@@ -217,7 +214,7 @@ void ClearForSaveGameCallback()
 
 void SaveGame()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane;
+    const std::shared_ptr<MCFileScrollPane> pane = GlobalLog()->SaveScreen->FilePane.Lock();
 
     if (pane == nullptr || !pane->HasSelection())
     {
@@ -226,9 +223,9 @@ void SaveGame()
 
     std::string& slot = pane->Files[pane->SelectedFile].Name;
     // The name typed replaces the selected entry's.
-    const std::shared_ptr<MCLogTextObject> entry = pane->NameEntry;
+    const std::shared_ptr<MCLogTextObject> entry = pane->NameEntry.Lock();
 
-    if (entry != nullptr && entry->ParentObject() == pane)
+    if (entry != nullptr)
     {
         const std::string_view typed = entry->Text();
         slot = typed.empty() ? EmptyFile : std::string(typed);
@@ -266,7 +263,7 @@ void SaveGame()
 
 void DeleteCallbackTrue()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = ShownFilePane();
+    const std::shared_ptr<MCFileScrollPane> pane = ShownFilePane();
 
     if (!HasSelection(MCOptionalOf(pane)))
     {
@@ -291,7 +288,7 @@ void DeleteCallbackTrue()
 
 void DeleteCallbackFalse()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = ShownFilePane();
+    const std::shared_ptr<MCFileScrollPane> pane = ShownFilePane();
 
     if (pane != nullptr)
     {
@@ -301,7 +298,7 @@ void DeleteCallbackFalse()
 
 void DeleteGame()
 {
-    const MCGuiOwned<MCFileScrollPane> pane = ShownFilePane();
+    const std::shared_ptr<MCFileScrollPane> pane = ShownFilePane();
 
     if (!HasSelection(MCOptionalOf(pane)))
     {
@@ -326,7 +323,7 @@ void LoadSaveScreenHandleEvent(MCGuiObject& object, MCGuiEvent& event)
     {
         // A file was picked: it can be loaded (or saved over); deleted unless it is the empty entry.
         screen.LoadSaveButton->Disabled = false;
-        const MCGuiOwned<MCFileScrollPane> pane = screen.FilePane;
+        const std::shared_ptr<MCFileScrollPane> pane = screen.FilePane.Lock();
         screen.DeleteButton->Disabled =
             !(HasSelection(MCOptionalOf(pane)) && pane->Files[pane->SelectedFile].Name != EmptyFile);
     }
@@ -335,7 +332,7 @@ void LoadSaveScreenHandleEvent(MCGuiObject& object, MCGuiEvent& event)
         screen.LoadSaveButton->Disabled = true;
         screen.DeleteButton->Disabled = true;
     }
-    else if (message == 5 && &object == GlobalLog()->SaveScreen.get())
+    else if (message == 5 && GlobalLog()->SaveScreen.Is(object))
     {
         // Enter in the name entry: save.
         SoundSystem()->PlayInterfaceSample(screen.LoadSaveButton->PressSound);

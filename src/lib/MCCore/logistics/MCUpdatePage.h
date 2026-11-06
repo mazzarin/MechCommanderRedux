@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 class MCGenericScreen;
 class MCGuiObject;
@@ -36,21 +36,20 @@ MCMenuButtonPictures UpdateButtonPictures(std::span<const uint8_t> palette);
 /// </summary>
 void AddUpdatePage(MCGenericScreen& mainScreen);
 
-/// <summary>UPDATE: the page shows over the main menu (or over the screen it was last shown over, the main menu hidden).</summary>
+/// <summary>UPDATE: the main menu's page shows (each screen that shows the page has its own, all showing the updater).</summary>
 void ShowUpdatePage();
 
 /// <summary>
-/// The line saying an update waits, for the session screen of a game a lobby started (which never shows the main menu):
-/// a field in UPDATE's amber, <paramref name="palette"/> the screen's (6-bit RGB); a click on it opens the page over
-/// that screen. Shown while an update waits.
+/// Adds to <paramref name="screen"/> the line saying an update waits, for the session screen of a game a lobby started
+/// (which never shows the main menu), at (<paramref name="xPos"/>, <paramref name="yPos"/>), <paramref name="width"/> x
+/// <paramref name="height"/>: a field in UPDATE's amber, <paramref name="palette"/> the screen's (6-bit RGB); a click on
+/// it opens the page over that screen. Shown while an update waits.
 /// </summary>
-MCGuiOwned<MCLogObject> MakeUpdateLine(std::span<const uint8_t> palette);
+MCGuiHandle<MCLogObject> AddUpdateLine(MCGuiObject& screen, std::span<const uint8_t> palette, int32_t xPos,
+                                       int32_t yPos, int32_t width, int32_t height);
 
 /// <summary>The page shows over <paramref name="screen"/>, in front of what is on it.</summary>
 void ShowUpdatePageOver(MCGuiObject& screen);
-
-/// <summary>The page, hidden, leaves <paramref name="screen"/> (going away) for the main menu, if it is there.</summary>
-void UpdatePageLeaves(MCGuiObject& screen);
 
 /// <summary>
 /// What a click at (<paramref name="xPos"/>, <paramref name="yPos"/>) finds of the page shown over

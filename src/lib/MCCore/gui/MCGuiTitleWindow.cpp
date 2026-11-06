@@ -13,43 +13,57 @@ namespace
     /// <paramref name="parent"/> at (<paramref name="xPos"/>, <paramref name="yPos"/>).
     /// </summary>
     /// <returns>The part, or its init's error.</returns>
-    std::expected<MCGuiOwned<MCGuiObject>, int32_t> MakePart(MCGuiObject& parent, int32_t width, int32_t height,
-                                                             int32_t xPos, int32_t yPos,
-                                                             std::function<void(MCGuiObject&)> paint)
+    std::expected<MCGuiHandle<MCGuiObject>, int32_t> MakePart(MCGuiObject& parent, int32_t width, int32_t height,
+                                                              int32_t xPos, int32_t yPos,
+                                                              std::function<void(MCGuiObject&)> paint)
     {
-        auto part = MCMakeGui<MCGuiObject>();
-        // Port: a part only shows its paint routine or background, so it draws itself each frame.
-        part->SetDrawsLive();
+        auto part = parent.TryCreateChild<MCGuiObject>(
+            [&](MCGuiObject& made)
+            {
+                // Port: a part only shows its paint routine or background, so it draws itself each frame.
+                made.SetDrawsLive();
 
-        if (const int32_t result = part->Init(0, 0, width, height, {}); result != 0)
+                if (const int32_t result = made.Init(0, 0, width, height, {}); result != 0)
+                {
+                    return result;
+                }
+
+                if (paint)
+                {
+                    made.SetPaintRoutine(std::move(paint));
+                }
+
+                return 0;
+            });
+
+        if (part)
         {
-            return std::unexpected(result);
+            (*part)->MoveTo(xPos, yPos);
         }
 
-        if (paint)
-        {
-            part->SetPaintRoutine(std::move(paint));
-        }
-
-        parent.AddChild(part);
-        part->MoveTo(xPos, yPos);
         return part;
     }
 
-    /// <summary>Makes the 8x8 resize handle (art packet 0x29), driven by <see cref="HandleResizeButtonEvent"/>.</summary>
-    std::expected<MCGuiOwned<MCGuiObject>, int32_t> MakeResizeHandle()
+    /// <summary>
+    /// Makes the 8x8 resize handle (art packet 0x29) on <paramref name="parent"/>, driven by
+    /// <see cref="HandleResizeButtonEvent"/>.
+    /// </summary>
+    std::expected<MCGuiHandle<MCGuiObject>, int32_t> MakeResizeHandle(MCGuiObject& parent)
     {
-        auto handle = MCMakeGui<MCGuiObject>();
-        handle->SetDrawsLive();
+        return parent.TryCreateChild<MCGuiObject>(
+            [](MCGuiObject& made)
+            {
+                made.SetDrawsLive();
 
-        if (const int32_t result = handle->Init(0, 0, 8, 8, {}); result != 0)
-        {
-            return std::unexpected(result);
-        }
+                if (const int32_t result = made.Init(0, 0, 8, 8, {}); result != 0)
+                {
+                    return result;
+                }
 
-        handle->SetBackground(0x29);
-        handle->Draw();
-        return handle;
+                made.SetBackground(0x29);
+                made.Draw();
+                return 0;
+            });
     }
 
     /// <summary>Snaps a size to the 40-pixel grid of a grid-aligned window, rounding to the nearest step.</summary>
@@ -73,26 +87,6 @@ namespace
         }
 
         newHeight -= newHeight % 0x28;
-    }
-
-    /// <summary>Destroys a window's frame parts (in the original's order: the bar, the left bar, then the rest).</summary>
-    void DestroyFrame(MCGuiWindowFrame& frame, bool handleBeforeRightBar)
-    {
-        frame.TitleBar.reset();
-        frame.LeftBar.reset();
-
-        if (handleBeforeRightBar)
-        {
-            frame.ResizeButton.reset();
-            frame.RightBar.reset();
-            frame.BottomBar.reset();
-        }
-        else
-        {
-            frame.RightBar.reset();
-            frame.BottomBar.reset();
-            frame.ResizeButton.reset();
-        }
     }
 }
 
@@ -185,7 +179,7 @@ auto HandleResizeButtonEvent(MCGuiObject& object, MCGuiEvent& event) -> void
 
 MCGuiTitleWindow::~MCGuiTitleWindow()
 {
-    MCGuiTitleWindow::Destroy();
+    Destroy();
 }
 
 auto MCGuiTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) -> int32_t
@@ -196,14 +190,15 @@ auto MCGuiTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t h
     }
 
     SetTransparent(false);
-    TitleBar = MCMakeGui<MCGuiTitleBar>();
+    auto bar =
+        TryCreateChild<MCGuiTitleBar>([&](MCGuiTitleBar& made) { return made.Init(0, 0, width + 0xc, 0xd, name); });
 
-    if (const int32_t result = TitleBar->Init(0, 0, width + 0xc, 0xd, name); result != 0)
+    if (!bar)
     {
-        return result;
+        return bar.error();
     }
 
-    AddChild(TitleBar);
+    TitleBar = *bar;
     TitleBar->ShowCloseButton(true);
     TitleBar->MoveTo(-2, -0xd);
     TitleBar->SetZoomCallbacks();
@@ -227,7 +222,7 @@ auto MCGuiTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t h
     }
 
     RightBar = std::move(*right);
-    auto handle = MakeResizeHandle();
+    auto handle = MakeResizeHandle(*RightBar);
 
     if (!handle)
     {
@@ -235,18 +230,11 @@ auto MCGuiTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t h
     }
 
     ResizeButton = std::move(*handle);
-    RightBar->AddChild(ResizeButton);
     ResizeButton->MoveTo(2, RightBar->Height() - ResizeButton->Height());
     ResizeButton->SetEventRoutine(HandleResizeButtonEvent);
 
     MoveTo(xPos, yPos + 0xd);
     return 0;
-}
-
-auto MCGuiTitleWindow::Destroy() -> void
-{
-    DestroyFrame(*this, true);
-    MCGuiObject::Destroy();
 }
 
 auto MCGuiTitleWindow::Draw() -> void
@@ -306,7 +294,7 @@ auto MCGuiTitleWindow::SetTitle(std::string_view newTitle) -> void
 
 MCGuiEmptyTitleWindow::~MCGuiEmptyTitleWindow()
 {
-    MCGuiEmptyTitleWindow::Destroy();
+    Destroy();
 }
 
 auto MCGuiEmptyTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name)
@@ -317,14 +305,14 @@ auto MCGuiEmptyTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int3
         return result;
     }
 
-    TitleBar = MCMakeGui<MCGuiTitleBar>();
+    auto bar = TryCreateChild<MCGuiTitleBar>([&](MCGuiTitleBar& made) { return made.Init(0, 0, width + 4, 8, name); });
 
-    if (const int32_t result = TitleBar->Init(0, 0, width + 4, 8, name); result != 0)
+    if (!bar)
     {
-        return result;
+        return bar.error();
     }
 
-    AddChild(TitleBar);
+    TitleBar = *bar;
     TitleBar->SetDepth(1);
     TitleBar->ShowCloseButton(false);
     TitleBar->MoveTo(-2, -8);
@@ -349,7 +337,9 @@ auto MCGuiEmptyTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int3
     }
 
     RightBar = std::move(*right);
-    auto handle = MakeResizeHandle();
+    // Original bug (OB-066): the handle is the window's own child here, so HandleResizeButtonEvent resizes the
+    // window's parent (the screen window), not the window.
+    auto handle = MakeResizeHandle(*this);
 
     if (!handle)
     {
@@ -357,21 +347,12 @@ auto MCGuiEmptyTitleWindow::Init(int32_t xPos, int32_t yPos, int32_t width, int3
     }
 
     ResizeButton = std::move(*handle);
-    // Original bug (OB-066): the handle is the window's own child here, so HandleResizeButtonEvent resizes the
-    // window's parent (the screen window), not the window.
-    AddChild(ResizeButton);
     ResizeButton->MoveTo(2 - ResizeButton->Width() + Width(), 2 - ResizeButton->Height() + Height());
     ResizeButton->SetEventRoutine(HandleResizeButtonEvent);
     ResizeButton->SetDepth(1);
 
     MoveTo(xPos, yPos + 8);
     return 0;
-}
-
-auto MCGuiEmptyTitleWindow::Destroy() -> void
-{
-    DestroyFrame(*this, false);
-    MCGuiHolderObject::Destroy();
 }
 
 auto MCGuiEmptyTitleWindow::Resize(int32_t newWidth, int32_t newHeight) -> void

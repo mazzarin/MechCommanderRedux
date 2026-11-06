@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 #include "gui/MCGuiScrollBar.h"
 
 class MCGuiFont;
@@ -15,7 +15,8 @@ public:
 
     /// <summary>Like the base's init; rounds the height up to whole lines.</summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view name) override;
-    void Destroy() override;
+    /// <summary>Empties the list.</summary>
+    void OnDestroy() override;
     /// <summary>Draws the visible lines, the selected one highlighted.</summary>
     void Draw() override;
     /// <summary>Port: draws itself each frame from its items, top line and selection.</summary>
@@ -53,7 +54,7 @@ public:
     /// <summary>The items' font (the grey one).</summary>
     std::shared_ptr<MCGuiFont> ItemFont;
     /// <summary>The scroll bar, once <see cref="ActivateScrollbar"/> added it.</summary>
-    MCGuiOwned<MCGuiScrollBar> ScrollBar;
+    MCGuiHandle<MCGuiScrollBar> ScrollBar;
     /// <summary>The font's height + 8.</summary>
     int32_t ItemHeight = 0;
 

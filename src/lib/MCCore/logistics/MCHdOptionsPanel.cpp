@@ -6,6 +6,7 @@
 #include "logistics/MCLogOptionList.h"
 #include "logistics/MCLogTextButton.h"
 #include "logistics/MCPrefsPage.h"
+#include "logistics/MCReusableDialog.h"
 #include "main/MCHdSettings.h"
 #include "main/MCLogistics.h"
 #include "main/MCTelemetry.h"
@@ -43,7 +44,7 @@ namespace
     constexpr std::string_view StopLabel = "STOP";
     constexpr std::string_view RemoveLabel = "REMOVE";
     constexpr std::string_view RestartLabel = "RESTART";
-    std::vector<std::weak_ptr<MCLogTextButton>> HdPackButtons;
+    std::vector<MCGuiHandle<MCLogTextButton>> HdPackButtons;
 
     /// <summary>The button HD PACK shows: GET, STOP while it downloads, REMOVE, RESTART once a change is ready; none.</summary>
     std::string_view HdPackAction(const MCUpdater::MCHdPack& pack)
@@ -141,9 +142,9 @@ namespace
     {
         const std::string_view shown = centre.has_value() ? HdPackAction(MCUpdater::HdPack()) : std::string_view();
 
-        for (const std::weak_ptr<MCLogTextButton>& held : HdPackButtons)
+        for (const MCGuiHandle<MCLogTextButton>& held : HdPackButtons)
         {
-            const std::shared_ptr<MCLogTextButton> button = held.lock();
+            const std::shared_ptr<MCLogTextButton> button = held.Lock();
 
             if (button == nullptr)
             {
@@ -183,7 +184,7 @@ namespace
     }
 
     /// <summary>Adds HD PACK's buttons to <paramref name="page"/>, hidden until its row places one.</summary>
-    void AddHdPackButtons(MCGenericScreen& screen, MCGuiObject& page)
+    void AddHdPackButtons(MCGuiObject& page)
     {
         const std::array<std::pair<std::string_view, std::function<void()>>, 4> buttons = {{
             {GetLabel, [] { MCUpdater::ChooseHd(true); }},
@@ -195,11 +196,12 @@ namespace
 
         for (const auto& [label, clicked] : buttons)
         {
-            auto button = MCMakeGui<MCLogTextButton>();
-            button->InitWithLabel(0, 0, label, clicked);
-            button->ShowGuiWindow(false);
-            HdPackButtons.push_back(button);
-            screen.AdoptChildOf(page, std::move(button));
+            HdPackButtons.push_back(page.CreateChild<MCLogTextButton>(
+                [&](MCLogTextButton& button)
+                {
+                    button.InitWithLabel(0, 0, label, clicked);
+                    button.ShowGuiWindow(false);
+                }));
         }
     }
 
@@ -390,16 +392,16 @@ namespace
     constexpr std::array Rows = Without(RowsWithPack, HdPackRow);
 
     /// <summary>The panels.</summary>
-    std::weak_ptr<MCGuiObject> PrefsPanel;
-    std::weak_ptr<MCGuiObject> Page;
-    std::weak_ptr<MCLogOptionList> List;
+    MCGuiHandle<MCGuiObject> PrefsPanel;
+    MCGuiHandle<MCGuiObject> Page;
+    MCGuiHandle<MCLogOptionList> List;
 
     /// <summary>DEFAULTS: every HD setting to this build's default.</summary>
     void UseDefaults()
     {
         MCHdSettings::UseDefaults();
 
-        if (const std::shared_ptr<MCLogOptionList> list = List.lock(); list != nullptr)
+        if (const std::shared_ptr<MCLogOptionList> list = List.Lock(); list != nullptr)
         {
             list->SetNews(DefaultsNews);
         }
@@ -410,7 +412,7 @@ namespace
     {
         MCHdSettings::UseOriginal();
 
-        if (const std::shared_ptr<MCLogOptionList> list = List.lock(); list != nullptr)
+        if (const std::shared_ptr<MCLogOptionList> list = List.Lock(); list != nullptr)
         {
             list->SetNews(OriginalNews);
         }
@@ -421,28 +423,28 @@ void AddHdOptionsPanel(MCGenericScreen& screen, MCGuiObject& prefsPanel, MCGuiOb
                        int32_t buttonTop)
 {
     PrefsPanel = prefsPanel.weak_from_this();
-    AddPageButton(screen, box, ButtonLabel, buttonLeft, buttonTop, ShowHdOptions);
+    AddPageButton(box, ButtonLabel, buttonLeft, buttonTop, ShowHdOptions);
 
     constexpr std::array<MCPageButton, 2> buttons = {
         MCPageButton{"DEFAULTS", UseDefaults},
         MCPageButton{"ORIGINAL", UseOriginal},
     };
 
-    MCLogGroupBox& page = AddPrefsPage(screen, Title, buttons, HideHdOptions);
-    Page = page.weak_from_this();
-
-    auto newList = MCMakeGui<MCLogOptionList>();
+    const MCGuiHandle<MCLogGroupBox> page = AddPrefsPage(screen, Title, buttons, HideHdOptions);
+    Page = page;
     const bool managed = MCUpdater::HdPack().Managed;
-    newList->Init(PageListLeft, PageListTop, PageListWidth, PageListHeight,
-                  managed ? std::span<const Row>(RowsWithPack) : std::span<const Row>(Rows));
-    newList->ShowGuiWindow(true);
-    List = newList;
-    screen.AdoptChildOf(page, std::move(newList));
+    List = page->CreateChild<MCLogOptionList>(
+        [&](MCLogOptionList& list)
+        {
+            list.Init(PageListLeft, PageListTop, PageListWidth, PageListHeight,
+                      managed ? std::span<const Row>(RowsWithPack) : std::span<const Row>(Rows));
+            list.ShowGuiWindow(true);
+        });
 
     // Over the list, so they draw on it.
     if (managed)
     {
-        AddHdPackButtons(screen, page);
+        AddHdPackButtons(*page);
     }
 }
 
@@ -454,7 +456,7 @@ void ResetHdOptions()
         GHdAudio = HdAudioOn;
     }
 
-    if (const std::shared_ptr<MCLogOptionList> list = List.lock(); list != nullptr)
+    if (const std::shared_ptr<MCLogOptionList> list = List.Lock(); list != nullptr)
     {
         list->Reset();
     }
@@ -479,5 +481,5 @@ bool HdOptionsShown()
 
 std::shared_ptr<MCLogOptionList> HdOptionsList()
 {
-    return List.lock();
+    return List.Lock();
 }

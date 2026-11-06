@@ -9,11 +9,6 @@ MCLogSlider::MCLogSlider() : ThumbPort(std::make_shared<MCLogPort>())
     ThumbPort->Load(std::format("{}prefs_02.tga", ArtPath));
 }
 
-MCLogSlider::~MCLogSlider()
-{
-    MCLogSlider::Destroy();
-}
-
 auto MCLogSlider::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height,
                        [[maybe_unused]] std::string_view name) -> int32_t
 {
@@ -22,11 +17,11 @@ auto MCLogSlider::Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height
     return result;
 }
 
-auto MCLogSlider::Destroy() -> void
+auto MCLogSlider::OnDestroy() -> void
 {
     ThumbPort.reset();
     TrackArt.reset();
-    MCLogObject::Destroy();
+    MCLogObject::OnDestroy();
 }
 
 auto MCLogSlider::SetTrack(std::shared_ptr<MCLogPort> art, int32_t left, int32_t top, int32_t thumbInset) -> void

@@ -2,8 +2,9 @@
 #include "main/MCLogistics.h"
 #include "logistics/MCMechInventoryBlock.h"
 #include "logistics/MCMechRepairBlock.h"
-#include "logistics/MCPilotInventoryBlock.h"
+#include "logistics/MCRepairScreen.h"
 #include "logistics/MCVehicleInventoryBlock.h"
+#include "network/MCMultiPlayer.h"
 
 auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
 {
@@ -14,25 +15,89 @@ auto MCLogistics::SetPilot(int32_t mechIndex, int32_t pilotIndex) const -> void
         return;
     }
 
-    std::shared_ptr<MCLogWarrior> warrior;
-
+    // The mech's PilotIndex is the one record of who is in it (the original also kept the mech, unread, on the
+    // pilot's inventory block).
     if (pilotIndex >= 0)
     {
-        AssignedWarriorList->GetWarriorInfo(pilotIndex, warrior);
-        warrior->InventoryBlock->SetMech(mech);
+        // The repair block's pilot paint worked out the mech's condition (the row draws the pilot each frame).
         mech->PilotIndex = pilotIndex;
-        mech->RepairBlock->SetPilotStats(std::nullopt);
-        mech->RepairBlock->SetPilotHealth(std::nullopt);
+        mech->CalcStatus();
         mech->CalcPilotModifier();
         return;
     }
 
-    // A negative index takes the pilot off.
-    AssignedWarriorList->GetWarriorInfo(mech->PilotIndex, warrior);
-    warrior->InventoryBlock->SetMech({});
-    mech->RepairBlock->ClearPilot();
+    // A negative index takes the pilot off: the row shows the portrait's place blank until it is painted again.
+    if (RepairScreen != nullptr)
+    {
+        if (const std::shared_ptr<MCMechRepairBlock> row = RepairScreen->RowOf(*mech); row != nullptr)
+        {
+            row->ClearPilot();
+        }
+    }
+
     mech->PilotIndex = pilotIndex;
     mech->CalcPilotModifier();
+}
+
+auto MCLogistics::UndeployMech(MCLogMech& mech) -> void
+{
+    if (mech.Deployed == 0)
+    {
+        return;
+    }
+
+    for (int32_t lance = 0; lance < 3; ++lance)
+    {
+        for (int32_t slot = 0; slot < 4; ++slot)
+        {
+            int32_t& unit = DeploySlots[lance][slot].Unit;
+
+            if (unit < 0 || unit != mech.SlotIndex)
+            {
+                continue;
+            }
+
+            if (MultiPlayer() != nullptr)
+            {
+                SendRemoveForceMessage(lance, slot);
+            }
+
+            // (The original also took the mech's briefing block off the screen; the briefing screen shows the slots
+            // again from the deploy data.)
+            unit = -1;
+            mech.Deployed = false;
+            return;
+        }
+    }
+
+    mech.Deployed = false;
+}
+
+auto MCLogistics::RemoveVehicleFromSlots(int32_t forceIndex) -> void
+{
+    for (auto& lance : DeploySlots)
+    {
+        for (auto& slot : lance)
+        {
+            if (slot.Vehicle < 0)
+            {
+                continue;
+            }
+
+            if (slot.Vehicle == forceIndex)
+            {
+                // (The original also took the vehicle's briefing block off the screen; the briefing screen shows the
+                // slots again from the deploy data.)
+                slot.Vehicle = -1;
+            }
+            else if (slot.Vehicle > forceIndex)
+            {
+                // OB-183 fix: only the vehicles after the one leaving move up a place in the force list (the original
+                // lowered every other deployed vehicle's index, so earlier ones dropped the wrong vehicle or none).
+                --slot.Vehicle;
+            }
+        }
+    }
 }
 
 namespace
@@ -64,16 +129,34 @@ namespace
         }
     }
 
-    /// <summary>Gives each element's inventory row its place in <paramref name="list"/> (one read without widgets has none).</summary>
+    /// <summary>A mech is shown in the inventory's mech list unless it was read without widgets.</summary>
+    bool Listed(const MCLogMech& mech)
+    {
+        return mech.ReadWithWidgets;
+    }
+
+    /// <summary>A vehicle is shown in the inventory's vehicle list unless it was read without widgets.</summary>
+    bool Listed(const MCLogVehicle& vehicle)
+    {
+        return vehicle.ReadWithWidgets;
+    }
+
+    /// <summary>A pilot is always shown in the inventory's pilot list.</summary>
+    bool Listed(const MCLogWarrior&)
+    {
+        return true;
+    }
+
+    /// <summary>Gives each listed element's inventory row its place in <paramref name="list"/> (see <see cref="Listed"/>).</summary>
     template <typename T> void RenumberRows(const std::vector<std::shared_ptr<T>>& list)
     {
         int32_t index = 0;
 
         for (const std::shared_ptr<T>& element : list)
         {
-            if (element->InventoryBlock != nullptr)
+            if (Listed(*element))
             {
-                element->InventoryBlock->ListIndex = index;
+                element->ListIndex = index;
             }
 
             index++;

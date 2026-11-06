@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/MCGuiObject.h"
-#include "gui/MCGuiOwned.h"
+#include "gui/MCGuiRef.h"
 
 /// <summary>
 /// A scrolling text window: lines appended by <see cref="Print"/>, each in its colour, drawn into a port that grows
@@ -22,7 +22,8 @@ public:
     /// given.
     /// </summary>
     int32_t Init(int32_t xPos, int32_t yPos, int32_t width, int32_t height, std::string_view text) override;
-    void Destroy() override;
+    /// <summary>Frees the text.</summary>
+    void OnDestroy() override;
     /// <summary>Resizes the window, its port (at least as tall as the lines) and moves the thumb.</summary>
     void Resize(int32_t newWidth, int32_t newHeight) override;
     /// <summary>Draws the section highlights and the lines into the port.</summary>
@@ -41,6 +42,12 @@ public:
     /// <summary>Empties the text and the sections, and scrolls to the top.</summary>
     virtual void Clear();
 
+    /// <summary>
+    /// Takes <paramref name="other"/>'s text as it is now: its lines, sections, scroll position, tab stop and font,
+    /// with the port grown to the lines and the thumb placed. For a view of another box's text (the mission results'
+    /// debriefing shows the tactical map's salvage text).
+    /// </summary>
+    void CopyTextFrom(const MCGuiScrollTextObject& other);
     /// <summary>Grows the port to the lines.</summary>
     void ResetPortSize();
     /// <summary>The first visible pixel row for thumb position <paramref name="thumbY"/>.</summary>
@@ -71,8 +78,8 @@ public:
     /// C string did.
     /// </summary>
     std::string TextBuffer;
-    /// <summary>The scroll thumb.</summary>
-    MCGuiOwned<MCGuiObject> ScrollTab;
+    /// <summary>The scroll thumb (a child).</summary>
+    MCGuiHandle<MCGuiObject> ScrollTab;
     /// <summary>The number of lines printed.</summary>
     int32_t NumLines = 0;
     /// <summary>Set when init or a port resize failed.</summary>

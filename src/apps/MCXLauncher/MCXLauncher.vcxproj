@@ -39,20 +39,21 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <!-- Port-only (the personal build): MCX.EXE for a game folder Redux has taken over (the Windows setup installs it in
-       the original's place). Its version resource uses the game's version: it doesn't reference MCCore, so it writes
-       its own MCVersion.h into its intermediate folder, as the editor does. -->
+       the original's place). Built byte for byte the same each time (/Brepro: no timestamps; no debug file's path; its
+       own version, not the game's), so the setup can ship one pinned build release after release
+       (src/installer/windows/launcher). -->
   <PropertyGroup>
     <TargetName>MCX</TargetName>
-    <MCGenerateVersion>true</MCGenerateVersion>
-    <MCVersionDir>$(IntDir)generated\</MCVersionDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

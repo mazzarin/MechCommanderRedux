@@ -24,6 +24,35 @@
 
 namespace
 {
+    /// <summary>
+    /// How long a test waits for a connection to reach its listener's queue, and how often it looks: a connecting end
+    /// returns once its handshake is answered, and the connection is queued for the listener a moment later (longer on a
+    /// loaded machine), so an accept straight after a connect may find nothing yet.
+    /// </summary>
+    constexpr auto AcceptWait = std::chrono::seconds(5);
+    constexpr auto AcceptLook = std::chrono::milliseconds(1);
+
+    /// <summary>
+    /// The connection <paramref name="accept"/> (a non-blocking accept) takes within <see cref="AcceptWait"/>, or
+    /// MCSocket::InvalidHandle.
+    /// </summary>
+    MCSocket::Handle AcceptWaiting(const std::function<MCSocket::Handle()>& accept)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + AcceptWait;
+
+        for (;;)
+        {
+            const MCSocket::Handle handle = accept();
+
+            if (handle != MCSocket::InvalidHandle || std::chrono::steady_clock::now() >= deadline)
+            {
+                return handle;
+            }
+
+            std::this_thread::sleep_for(AcceptLook);
+        }
+    }
+
     /// <summary>A RIFF WAVE file: 22050 Hz, mono, 16-bit, <paramref name="samples"/> samples of silence.</summary>
     std::vector<uint8_t> SilentWave(uint32_t samples)
     {
@@ -310,7 +339,7 @@ TEST_CASE("services: the loopback transport connects, streams, broadcasts and cl
     const MCSocket::Handle client = MCSocket::ConnectTcp({MCSocket::LoopbackIp, 28800}, 100);
     REQUIRE(client != MCSocket::InvalidHandle);
     MCSocket::Address from;
-    const MCSocket::Handle server = MCSocket::AcceptTcp(listener, from);
+    const MCSocket::Handle server = AcceptWaiting([&] { return MCSocket::AcceptTcp(listener, from); });
     REQUIRE(server != MCSocket::InvalidHandle);
     CHECK_EQ(from.Port, MCSocket::LocalPort(client));
     MCSocket::Address none;
@@ -364,7 +393,7 @@ TEST_CASE("services: the operating system watches a kept-alive connection for th
     const MCSocket::Handle client = net.ConnectTcp({MCSocket::LoopbackIp, net.LocalPort(listener)}, connectMs);
     REQUIRE(client != MCSocket::InvalidHandle);
     MCSocket::Address from;
-    MCSocket::Handle server = net.AcceptTcp(listener, from);
+    const MCSocket::Handle server = AcceptWaiting([&] { return net.AcceptTcp(listener, from); });
     REQUIRE(server != MCSocket::InvalidHandle);
 
     CHECK(!MCSocketTransport::KeepAliveOf(client).has_value());

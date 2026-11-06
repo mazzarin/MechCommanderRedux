@@ -1004,7 +1004,7 @@ void AddUpdatePage(MCGenericScreen& mainScreen)
     };
 
     std::vector<std::weak_ptr<MCLogTextButton>> made;
-    MCLogGroupBox& page = AddPrefsPage(mainScreen, Title, buttons, HideUpdatePage, &made);
+    MCLogGroupBox& page = AddPrefsPage(mainScreen, Title, buttons, HideUpdatePage, made);
     Page = page.weak_from_this();
     Home = mainScreen.weak_from_this();
     InstallButton = made.at(0);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/MCAddressKey.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -93,11 +95,11 @@ namespace MCParticles
     void AddFire(const MCVfxAppearance& flame, const MCVector3D& position);
 
     /// <summary>
-    /// A unit (a mech, a vehicle) drawn this frame, known by <paramref name="unit"/> (its appearance), standing at
+    /// A unit (a mech, a vehicle) drawn this frame, known by <paramref name="unit"/> (its appearance's address), standing at
     /// <paramref name="position"/>, its sprite <paramref name="halfWidth"/> window pixels to each side: in water, it
     /// leaves ripples and foam, more as it goes faster.
     /// </summary>
-    void AddMover(const void* unit, const MCVector3D& position, float halfWidth);
+    void AddMover(MCAddressKey unit, const MCVector3D& position, float halfWidth);
 
     /// <summary>
     /// A unit's foot coming down at <paramref name="foot"/> (MCBattleMech's footprints, made or not: the water takes none),

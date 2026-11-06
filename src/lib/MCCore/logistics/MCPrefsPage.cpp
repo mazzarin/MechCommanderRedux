@@ -27,7 +27,7 @@ namespace
 }
 
 MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std::span<const MCPageButton> buttons,
-                            void (*done)(), std::vector<std::weak_ptr<MCLogTextButton>>* made)
+                            void (*done)(), MCOptionalRef<std::vector<std::weak_ptr<MCLogTextButton>>> made)
 {
     auto newPage = MCMakeGui<MCLogGroupBox>(PageOutlineColor, PageFillColor);
     newPage->Init(PageLeft, PageTop, PageWidth, PageHeight);
@@ -57,9 +57,9 @@ MCLogGroupBox& AddPrefsPage(MCGenericScreen& screen, std::string_view title, std
     {
         MCLogTextButton& placed = place(button.Label, button.Clicked, false);
 
-        if (made != nullptr)
+        if (made)
         {
-            made->push_back(placed.SharedAs<MCLogTextButton>());
+            made->get().push_back(placed.SharedAs<MCLogTextButton>());
         }
     }
 

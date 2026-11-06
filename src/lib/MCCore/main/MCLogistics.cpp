@@ -554,7 +554,7 @@ auto MCLogistics::AttachHdArt() -> void
 
             if (!repairs[i].Empty())
             {
-                lineArt.push_back({repairs[i].Bytes().data(), soldOut});
+                lineArt.push_back({MCAddressKey::OfData(repairs[i].Bytes()), soldOut});
             }
         }
     };
@@ -1221,13 +1221,13 @@ namespace
             // offset.
             if (Direction == 0)
             {
-                Paint(*From, 0, Width(), true);
-                Paint(*To, Offset - Width(), Offset, false);
+                Paint(From, 0, Width(), true);
+                Paint(To, Offset - Width(), Offset, false);
             }
             else
             {
-                Paint(*To, 0, Width(), true);
-                Paint(*From, -Offset, Width() - Offset, false);
+                Paint(To, 0, Width(), true);
+                Paint(From, -Offset, Width() - Offset, false);
             }
         }
 
@@ -1235,8 +1235,8 @@ namespace
         bool DrawsLive() override { return true; }
 
         /// <summary>The screen shown before the change, and the one after.</summary>
-        const MCLogistics::MCSlidePicture* From = nullptr;
-        const MCLogistics::MCSlidePicture* To = nullptr;
+        MCLogistics::MCSlidePicture From;
+        MCLogistics::MCSlidePicture To;
         /// <summary>
         /// Without a sharp screen, the two put together once in pictures, as the original's work pictures were (the
         /// GPU then draws the slide as it always did); with one, none: they are painted each frame, sharp.
@@ -1273,8 +1273,8 @@ auto MCLogistics::Transition(const MCSlidePicture& from, const MCSlidePicture& t
     // picture in from the right over the old one, any other slides the old one out to the left off the new one.
     const MCGuiOwned<MCTransitionWipe> wipe = MCMakeGui<MCTransitionWipe>();
     wipe->Init(SlideX, SlideY, SlideWidth, SlideHeight);
-    wipe->From = &from;
-    wipe->To = &to;
+    wipe->From = from;
+    wipe->To = to;
 
     if (!MCInput::Display()->SharpScreen())
     {

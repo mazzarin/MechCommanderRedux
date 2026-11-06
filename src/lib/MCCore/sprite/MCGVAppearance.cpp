@@ -298,7 +298,7 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
             MCSceneLights::AddHeadlight(*this, obj->Position, obj->GetFrame(), 0.0f, std::nullopt, depthFixup);
         }
 
-        MCParticles::AddMover(this, obj->Position, ShapeMaxX * 0.5f);
+        MCParticles::AddMover(MCAddressKey::Of(*this), obj->Position, ShapeMaxX * 0.5f);
     }
 
     if (Highlighting)

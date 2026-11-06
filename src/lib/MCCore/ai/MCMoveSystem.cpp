@@ -48,9 +48,14 @@ auto GameMap() -> MCScenarioMap&
     return *System().Map;
 }
 
-auto LoadedGameMap() -> const MCScenarioMap*
+auto LoadedGameMap() -> MCOptionalRef<const MCScenarioMap>
 {
-    return MCGameContext::Current().HasMoveSystem() ? System().Map.get() : nullptr;
+    if (!MCGameContext::Current().HasMoveSystem() || System().Map == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    return *System().Map;
 }
 
 auto GameObjectMap() -> MCObjectMap&

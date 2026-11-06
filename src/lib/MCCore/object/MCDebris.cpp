@@ -541,7 +541,7 @@ auto MCDebris::RenderWreck() -> void
     // The sprite cache lets go of a part its mech no longer draws, and with it the part's tie to the HD art pack.
     const std::span<const uint8_t> frames = WreckShape->FrameList();
 
-    if (!MCHdArt::Attached(frames.data()))
+    if (!MCHdArt::Attached(frames))
     {
         MCHdArt::AttachFolder(WreckShape);
     }

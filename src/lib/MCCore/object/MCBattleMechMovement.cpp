@@ -1093,9 +1093,7 @@ auto MCBattleMech::PlanStop(int32_t& newGestureStateGoal) -> void
 auto MCBattleMech::LastStepMargin() const -> float
 {
     // Port-only (MechBraking): a mech braking to a halt there counts as there within the slack its stop ends in.
-    const auto* actor = static_cast<const MCMechActor*>(Appearance.get());
-
-    if (actor != nullptr && actor->PlannedStop)
+    if (Appearance != nullptr && static_cast<const MCMechActor&>(*Appearance).PlannedStop)
     {
         return MoveMarginOfError[1] + BrakeArrivalSlack;
     }
@@ -1119,7 +1117,7 @@ auto MCBattleMech::MoveHeldUp() const -> bool
     }
 
     // Read as it stands: GetMovePath would swap in the next leg.
-    const MCMovePath* path = warrior->MoveOrders.Path[0].get();
+    const std::unique_ptr<MCMovePath>& path = warrior->MoveOrders.Path[0];
 
     if (path != nullptr && path->CurStep < path->NumStepsWhenNotPaused)
     {

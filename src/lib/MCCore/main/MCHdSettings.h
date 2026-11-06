@@ -4,6 +4,8 @@
 // setting each key holds, its choices, what it reads as when PREFS lacks it, and how it is read and written. The
 // preferences' HD OPTIONS page edits them (logistics/MCHdOptionsPanel.h).
 
+#include <functional>
+
 class MCFitIniFile;
 
 /// <summary>
@@ -21,7 +23,7 @@ namespace MCHdSettings
         /// <summary>The PREFS key.</summary>
         std::string_view Key;
         /// <summary>The setting.</summary>
-        int* Value = nullptr;
+        std::reference_wrapper<int> Value;
         /// <summary>Its choices, Least to Most (PREFS values outside them are clamped).</summary>
         int32_t Least = 0;
         int32_t Most = 1;

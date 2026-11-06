@@ -195,7 +195,7 @@ public:
     /// fades out over ThunderFadeOut seconds of the frames' time (FrameLength) under a newer one. Without the pack's
     /// thunder, none till the purge.
     /// </summary>
-    void UpdateThunder(float heard, const MCWeather::MCThunderClap* clap);
+    void UpdateThunder(float heard, MCOptionalRef<const MCWeather::MCThunderClap> clap);
     /// <summary>
     /// Port-only (HD weather): reads the pack's thunder for a mission whose weather shown strikes lightning, under its
     /// loading bar, so its first clap reads nothing (it is kept till the purge).

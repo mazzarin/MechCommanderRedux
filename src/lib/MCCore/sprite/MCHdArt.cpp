@@ -3,6 +3,7 @@
 #include "lib/MCFastFile.h"
 #include "lib/MCFitIniFile.h"
 #include "lib/MCInflate.h"
+#include "lib/MCOptionalRef.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCSdlHandle.h"
 #include "sprite/MCBc7.h"
@@ -143,7 +144,7 @@ namespace
         /// <summary>An archive holding a folder's frames, and the start of their entries' names in it.</summary>
         struct InArchive
         {
-            MCHdArchive* Archive = nullptr;
+            std::shared_ptr<MCHdArchive> Archive;
             std::string Prefix;
         };
 
@@ -200,7 +201,7 @@ namespace
         /// <summary>The folder set (empty: the default), and whether the folder in use exists (unknown: not looked).</summary>
         std::filesystem::path Folder;
         std::optional<bool> FolderExists;
-        std::unordered_map<const uint8_t*, Sequence> Sequences;
+        std::unordered_map<MCAddressKey, Sequence> Sequences;
         size_t Attached = 0;
         /// <summary>The folders frames were looked up in, and each one's index there.</summary>
         std::vector<FrameFolder> Folders;
@@ -242,9 +243,9 @@ namespace
         std::list<std::weak_ptr<MCFastFile>> OpenFiles;
         std::map<std::weak_ptr<MCFastFile>, std::list<std::weak_ptr<MCFastFile>>::iterator, std::owner_less<>> OpenAt;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
-        std::unordered_set<const uint8_t*> SmoothTables;
+        std::unordered_set<MCAddressKey> SmoothTables;
         /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
-        std::set<std::pair<const uint8_t*, int32_t>> LineArtFrames;
+        std::set<std::pair<MCAddressKey, int32_t>> LineArtFrames;
     };
 
     State& TheState()
@@ -254,11 +255,13 @@ namespace
     }
 
     /// <summary>The pack sequence the shape table starting at <paramref name="table"/> is tied to, if its owner lives.</summary>
-    const Sequence* AttachedSequence(const uint8_t* table)
+    MCOptionalRef<const Sequence> AttachedSequence(std::span<const uint8_t> table)
     {
         const State& state = TheState();
-        const auto found = state.Sequences.find(table);
-        return found == state.Sequences.end() || found->second.Owner.expired() ? nullptr : &found->second;
+        const auto found = state.Sequences.find(MCAddressKey::OfData(table));
+        return found == state.Sequences.end() || found->second.Owner.expired()
+                   ? std::nullopt
+                   : MCOptionalRef<const Sequence>(found->second);
     }
 
     /// <summary>Logs <paramref name="problem"/> with frames from <paramref name="folder"/>, once per folder.</summary>
@@ -427,13 +430,13 @@ namespace
     }
 
     /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
-    MCHdArchive* ArchiveFor(const std::filesystem::path& folder)
+    std::shared_ptr<MCHdArchive> ArchiveFor(const std::filesystem::path& folder)
     {
         auto [found, fresh] = TheState().Archives.try_emplace(folder);
 
         if (!fresh)
         {
-            return found->second.get();
+            return found->second;
         }
 
         const std::filesystem::path path = std::filesystem::path(folder).concat(ArchiveExtension);
@@ -463,7 +466,7 @@ namespace
         }
 
         found->second = std::move(archive);
-        return found->second.get();
+        return found->second;
     }
 
     /// <summary>
@@ -483,9 +486,9 @@ namespace
 
         for (std::filesystem::path at = folder.Path; at.has_relative_path() && at != pack; at = at.parent_path())
         {
-            if (MCHdArchive* archive = ArchiveFor(at); archive != nullptr)
+            if (std::shared_ptr<MCHdArchive> archive = ArchiveFor(at); archive != nullptr)
             {
-                found.Archive = archive;
+                found.Archive = std::move(archive);
 
                 if (at != folder.Path)
                 {
@@ -511,7 +514,7 @@ namespace
                                                                            int32_t width, int32_t height)
     {
         const FrameFolder::InArchive& archived = ArchiveOf(folder);
-        MCHdArchive* const archive = archived.Archive;
+        const std::shared_ptr<MCHdArchive>& archive = archived.Archive;
 
         if (archive != nullptr)
         {
@@ -580,7 +583,7 @@ namespace
         for (std::filesystem::path ancestor = folder.parent_path(); ancestor.has_relative_path() && ancestor != pack;
              ancestor = ancestor.parent_path())
         {
-            if (const MCHdArchive* archive = ArchiveFor(ancestor); archive != nullptr)
+            if (const std::shared_ptr<MCHdArchive> archive = ArchiveFor(ancestor); archive != nullptr)
             {
                 const std::filesystem::path rest = folder.lexically_relative(ancestor);
                 return !rest.empty() && archive->Folders.contains(Upper(MCFileSystem::ToUtf8(*rest.begin())));
@@ -1193,19 +1196,19 @@ const std::optional<std::array<uint8_t, MCHdArt::PaletteBytes>>& MCHdArt::MadeWi
     return state.MadeWith;
 }
 
-void MCHdArt::SetSmoothEdgeTables(std::span<const uint8_t* const> tables)
+void MCHdArt::SetSmoothEdgeTables(std::span<const MCAddressKey> tables)
 {
-    TheState().SmoothTables = std::unordered_set<const uint8_t*>(tables.begin(), tables.end());
+    TheState().SmoothTables = std::unordered_set<MCAddressKey>(tables.begin(), tables.end());
 }
 
-bool MCHdArt::SmoothEdges(const uint8_t* table)
+bool MCHdArt::SmoothEdges(std::span<const uint8_t> table)
 {
-    return GHdArt != 0 && TheState().SmoothTables.contains(table);
+    return GHdArt != 0 && TheState().SmoothTables.contains(MCAddressKey::OfData(table));
 }
 
 void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames)
 {
-    std::set<std::pair<const uint8_t*, int32_t>>& kept = TheState().LineArtFrames;
+    std::set<std::pair<MCAddressKey, int32_t>>& kept = TheState().LineArtFrames;
     kept.clear();
 
     for (const LineArtFrame& frame : frames)
@@ -1214,9 +1217,9 @@ void MCHdArt::SetLineArtFrames(std::span<const LineArtFrame> frames)
     }
 }
 
-bool MCHdArt::LineArt(const uint8_t* table, int32_t frame)
+bool MCHdArt::LineArt(std::span<const uint8_t> table, int32_t frame)
 {
-    return GHdArt != 0 && TheState().LineArtFrames.contains({table, frame});
+    return GHdArt != 0 && TheState().LineArtFrames.contains({MCAddressKey::OfData(table), frame});
 }
 
 uint64_t MCHdArt::PackVersion()
@@ -1413,7 +1416,7 @@ namespace
             std::erase_if(state.Sequences, [](const auto& entry) { return entry.second.Owner.expired(); });
         }
 
-        state.Sequences[table.data()] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
+        state.Sequences[MCAddressKey::OfData(table)] = Sequence{owner, FolderIndex(path, Naming::Number), keepsEdges};
     }
 }
 
@@ -1484,8 +1487,8 @@ void MCHdArt::Attach(std::span<const uint8_t> table, const std::shared_ptr<const
     AttachTo(table, owner, FolderOf(key), true);
 }
 
-std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
-                                                    int32_t step)
+std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(std::span<const uint8_t> table, int32_t frame, int32_t width,
+                                                    int32_t height, int32_t step)
 {
     if (!Active())
     {
@@ -1493,7 +1496,7 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::Find(const uint8_t* table, int32_
     }
 
     State& state = TheState();
-    const auto found = state.Sequences.find(table);
+    const auto found = state.Sequences.find(MCAddressKey::OfData(table));
 
     if (found == state.Sequences.end())
     {
@@ -1522,28 +1525,28 @@ std::shared_ptr<const MCHdArt::Frame> MCHdArt::FindInFolder(const std::filesyste
                  height);
 }
 
-bool MCHdArt::KeepsFrameEdges(const uint8_t* table)
+bool MCHdArt::KeepsFrameEdges(std::span<const uint8_t> table)
 {
     const State& state = TheState();
-    const auto found = state.Sequences.find(table);
+    const auto found = state.Sequences.find(MCAddressKey::OfData(table));
     return found != state.Sequences.end() && found->second.KeepsEdges;
 }
 
-bool MCHdArt::Attached(const uint8_t* table)
+bool MCHdArt::Attached(std::span<const uint8_t> table)
 {
-    return AttachedSequence(table) != nullptr;
+    return AttachedSequence(table).has_value();
 }
 
-std::optional<std::filesystem::path> MCHdArt::AttachedFolder(const uint8_t* table)
+std::optional<std::filesystem::path> MCHdArt::AttachedFolder(std::span<const uint8_t> table)
 {
-    const Sequence* sequence = AttachedSequence(table);
+    const MCOptionalRef<const Sequence> sequence = AttachedSequence(table);
 
-    if (sequence == nullptr)
+    if (!sequence)
     {
         return std::nullopt;
     }
 
-    return TheState().Folders[sequence->Folder].Path;
+    return TheState().Folders[sequence->get().Folder].Path;
 }
 
 uint64_t MCHdArt::PictureHash(std::span<const uint8_t> pixels, int32_t width, int32_t height)

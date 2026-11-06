@@ -158,7 +158,7 @@ void MCSoundRenderer::ServiceStreams(bool checkEnds)
 {
     // The fills are taken and ended under the lock, and written without it: decoding a stream's next bytes holds up no
     // sound start on the game's thread.
-    std::vector<std::pair<MCSoundChannel*, MCSoundChannel::MCStreamFill>> fills;
+    std::vector<std::pair<std::reference_wrapper<MCSoundChannel>, MCSoundChannel::MCStreamFill>> fills;
     std::optional<uint32_t> now;
 
     {
@@ -171,7 +171,7 @@ void MCSoundRenderer::ServiceStreams(bool checkEnds)
             {
                 if (std::optional<MCSoundChannel::MCStreamFill> fill = channel->BeginFill())
                 {
-                    fills.emplace_back(channel.get(), std::move(*fill));
+                    fills.emplace_back(*channel, std::move(*fill));
                 }
             }
         }
@@ -179,14 +179,14 @@ void MCSoundRenderer::ServiceStreams(bool checkEnds)
 
     for (auto& [channel, fill] : fills)
     {
-        channel->WriteFill(fill);
+        channel.get().WriteFill(fill);
     }
 
     std::scoped_lock lock(_Lock);
 
     for (const auto& [channel, fill] : fills)
     {
-        channel->EndFill(fill);
+        channel.get().EndFill(fill);
     }
 
     if (!checkEnds)

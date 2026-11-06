@@ -775,7 +775,7 @@ namespace
     };
 
     /// <summary>A shape table's frame, mirrored or not, by the table's place and length and the frame's number.</summary>
-    using FrameKey = std::tuple<const uint8_t*, size_t, int32_t, bool>;
+    using FrameKey = std::tuple<MCAddressKey, size_t, int32_t, bool>;
 
     /// <summary>
     /// A unit drawn this frame: its columns in the view (their tops; Left the first's x), its feet, footprint and parts'
@@ -943,13 +943,14 @@ namespace
     /// </summary>
     float BlockedShare(float x, float y)
     {
-        const MCScenarioMap* const map = LoadedGameMap();
+        const MCOptionalRef<const MCScenarioMap> loaded = LoadedGameMap();
 
-        if (map == nullptr)
+        if (!loaded)
         {
             return 0.0f;
         }
 
+        const MCScenarioMap& map = *loaded;
         // The point among the tiles' middles: tile (row, col)'s middle at (row + 0.5, col + 0.5) of the vertices.
         const double col = static_cast<double>(MCTerrain::OneOvermetersPerVertex) * x + VerticesMapSideDivTwo() - 0.5;
         const double row = (static_cast<double>(MetersMapSideDivTwo()) - y) * MCTerrain::OneOvermetersPerVertex - 0.5;
@@ -957,12 +958,12 @@ namespace
         const double firstRow = std::floor(row);
         const float acrossCols = static_cast<float>(col - firstCol);
         const float downRows = static_cast<float>(row - firstRow);
-        const auto share = [map](double tileR, double tileC)
+        const auto share = [&map](double tileR, double tileC)
         {
             const int32_t r = static_cast<int32_t>(tileR);
             const int32_t c = static_cast<int32_t>(tileC);
-            return map->OnMap(r, c) ? static_cast<float>(map->TileAt(r, c).BlockedCells()) / (MapCellDim * MapCellDim)
-                                    : 0.0f;
+            return map.OnMap(r, c) ? static_cast<float>(map.TileAt(r, c).BlockedCells()) / (MapCellDim * MapCellDim)
+                                   : 0.0f;
         };
 
         const float upper = std::lerp(share(firstRow, firstCol), share(firstRow, firstCol + 1.0), acrossCols);
@@ -1059,19 +1060,21 @@ namespace
     }
 
     /// <summary>A shape's frame's columns, measured once (mirrored when <paramref name="reverse"/>).</summary>
-    const FrameColumns* ColumnsOf(State& state, std::span<const uint8_t> table, int32_t frame, bool reverse)
+    MCOptionalRef<const FrameColumns> ColumnsOf(State& state, std::span<const uint8_t> table, int32_t frame,
+                                                bool reverse)
     {
         if (!VfxIsShapeTable(table) || frame < 0 || frame >= VfxShapeCount(table))
         {
-            return nullptr;
+            return std::nullopt;
         }
 
-        const auto [found, isNew] = state.Frames.try_emplace(FrameKey{table.data(), table.size(), frame, reverse});
+        const auto [found, isNew] =
+            state.Frames.try_emplace(FrameKey{MCAddressKey::OfData(table), table.size(), frame, reverse});
         FrameColumns& columns = found->second;
 
         if (!isNew)
         {
-            return &columns;
+            return columns;
         }
 
         std::vector<std::pair<int16_t, int16_t>> pixels;
@@ -1080,7 +1083,7 @@ namespace
 
         if (pixels.empty())
         {
-            return &columns;
+            return columns;
         }
 
         const auto [low, high] = std::ranges::minmax(pixels | std::views::keys);
@@ -1104,7 +1107,7 @@ namespace
             }
         }
 
-        return &columns;
+        return columns;
     }
 
     /// <summary>
@@ -1113,19 +1116,20 @@ namespace
     /// farthest from those before; the first, from their middle), each seed moved to its group's middle PrintRounds times;
     /// each circle reaching its group's farthest pixel. None for a frame without pixels.
     /// </summary>
-    const PrintShape* PrintShapeOf(State& state, std::span<const uint8_t> table, int32_t frame)
+    MCOptionalRef<const PrintShape> PrintShapeOf(State& state, std::span<const uint8_t> table, int32_t frame)
     {
         if (!VfxIsShapeTable(table) || frame < 0 || frame >= VfxShapeCount(table))
         {
-            return nullptr;
+            return std::nullopt;
         }
 
-        const auto [found, isNew] = state.Prints.try_emplace(FrameKey{table.data(), table.size(), frame, false});
+        const auto [found, isNew] =
+            state.Prints.try_emplace(FrameKey{MCAddressKey::OfData(table), table.size(), frame, false});
         std::optional<PrintShape>& shape = found->second;
 
         if (!isNew)
         {
-            return shape.has_value() ? &*shape : nullptr;
+            return shape.has_value() ? MCOptionalRef<const PrintShape>(*shape) : std::nullopt;
         }
 
         // The pixels' middles.
@@ -1135,7 +1139,7 @@ namespace
 
         if (pixels.empty())
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         const auto apart = [](const std::pair<float, float>& a, const std::pair<float, float>& b)
@@ -1212,7 +1216,7 @@ namespace
             circle.Radius = std::max(circle.Radius, apart(pixel, {circle.X, circle.Y}) + 0.5f);
         }
 
-        return &circles;
+        return circles;
     }
 
     /// <summary>
@@ -1587,13 +1591,13 @@ namespace
         const auto [east, north] = FlatGround(step.X, step.Y, step.Z);
         MCWeather::MCPuddleStep& puddle =
             state.PuddleSteps.emplace_back(MCWeather::MCPuddleStep{.East = east, .North = north, .Strength = strength});
-        const PrintShape* print = PrintShapeOf(state, step.Print, step.PrintFrame);
+        const MCOptionalRef<const PrintShape> print = PrintShapeOf(state, step.Print, step.PrintFrame);
         const float cosine = std::max(MCTerrain::ProjectionCos, MinProjection);
         const float sine = std::max(MCTerrain::ProjectionSin, MinProjection);
 
         for (size_t k = 0; k < puddle.Print.size(); ++k)
         {
-            if (print == nullptr)
+            if (!print)
             {
                 puddle.Print[k] = {east, north, PrintFallback};
                 continue;
@@ -1601,7 +1605,7 @@ namespace
 
             // The flat projection undone (GroundPointAt's): view pixels across and down to meters east and north; a
             // radius as wide as the view's.
-            const ViewCircle& circle = (*print)[k];
+            const ViewCircle& circle = print->get()[k];
             const float across = circle.X / cosine;
             const float down = circle.Y / sine;
             puddle.Print[k] = {east + 0.5f * (across + down), north - 0.5f * (down - across),
@@ -2646,21 +2650,24 @@ auto MCWeather::AddUnit(std::span<const MCSceneLights::MCSunShadowPart> parts, c
         .FeetY = feetY, .Depth = depth, .X = position.X, .Y = position.Y, .Z = position.Z, .FeetX = feetX};
     int32_t left = std::numeric_limits<int32_t>::max();
     int32_t right = std::numeric_limits<int32_t>::min();
-    std::vector<std::pair<const FrameColumns*, const MCSceneLights::MCSunShadowPart*>> shapes;
+    std::vector<std::pair<std::reference_wrapper<const FrameColumns>,
+                          std::reference_wrapper<const MCSceneLights::MCSunShadowPart>>>
+        shapes;
 
     for (const MCSceneLights::MCSunShadowPart& part : parts)
     {
-        const FrameColumns* columns = ColumnsOf(state, part.Frames, part.Frame, part.Reverse != 0);
+        const MCOptionalRef<const FrameColumns> found = ColumnsOf(state, part.Frames, part.Frame, part.Reverse != 0);
 
-        if (columns == nullptr || columns->Top.empty())
+        if (!found || found->get().Top.empty())
         {
             continue;
         }
 
-        const auto x = static_cast<int32_t>(std::floor(part.X)) + columns->Left;
+        const FrameColumns& columns = *found;
+        const auto x = static_cast<int32_t>(std::floor(part.X)) + columns.Left;
         left = std::min(left, x);
-        right = std::max(right, x + static_cast<int32_t>(columns->Top.size()) - 1);
-        shapes.emplace_back(columns, &part);
+        right = std::max(right, x + static_cast<int32_t>(columns.Top.size()) - 1);
+        shapes.emplace_back(columns, part);
     }
 
     if (shapes.empty())
@@ -2671,27 +2678,29 @@ auto MCWeather::AddUnit(std::span<const MCSceneLights::MCSunShadowPart> parts, c
     unit.Left = left;
     unit.Top.assign(static_cast<size_t>(right - left + 1), std::numeric_limits<float>::infinity());
 
-    for (const auto& [columns, part] : shapes)
+    for (const auto& [shape, kept] : shapes)
     {
-        const auto x0 = static_cast<int32_t>(std::floor(part->X)) + columns->Left - left;
-        const float y = std::floor(part->Y);
+        const FrameColumns& columns = shape;
+        const MCSceneLights::MCSunShadowPart& part = kept;
+        const auto x0 = static_cast<int32_t>(std::floor(part.X)) + columns.Left - left;
+        const float y = std::floor(part.Y);
 
-        for (size_t i = 0; i < columns->Top.size(); ++i)
+        for (size_t i = 0; i < columns.Top.size(); ++i)
         {
-            if (columns->Top[i] <= columns->Bottom[i])
+            if (columns.Top[i] <= columns.Bottom[i])
             {
                 float& top = unit.Top[static_cast<size_t>(x0) + i];
-                top = std::min(top, y + static_cast<float>(columns->Top[i]));
+                top = std::min(top, y + static_cast<float>(columns.Top[i]));
             }
         }
 
-        for (const auto& [ex, ey] : columns->LowerEdges)
+        for (const auto& [ex, ey] : columns.LowerEdges)
         {
             const float edgeY = y + static_cast<float>(ey);
 
             if (edgeY < feetY - static_cast<float>(DripAbove))
             {
-                unit.LowerEdges.emplace_back(std::floor(part->X) + static_cast<float>(ex), edgeY);
+                unit.LowerEdges.emplace_back(std::floor(part.X) + static_cast<float>(ex), edgeY);
             }
         }
     }

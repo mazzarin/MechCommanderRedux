@@ -132,12 +132,12 @@ namespace
 TEST_CASE("hd settings: each HD setting has its own key and global, off in the original, on in the personal build")
 {
     std::set<std::string_view> keys;
-    std::set<const int*> values;
+    std::set<MCAddressKey> values;
 
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
     {
         CHECK(keys.insert(setting.Key).second);
-        CHECK(values.insert(setting.Value).second);
+        CHECK(values.insert(MCAddressKey::Of(setting.Value.get())).second);
         CHECK(&MCHdSettings::Find(setting.Key) == &setting);
         CHECK_EQ(setting.Original, setting.Least);
         CHECK(setting.Personal >= setting.Least);
@@ -178,7 +178,7 @@ TEST_CASE("hd settings: PREFS keeps every HD setting and reads it back")
     // Each at its most: written and read back.
     for (const MCHdSettings::MCSetting& setting : MCHdSettings::All())
     {
-        *setting.Value = setting.Most;
+        setting.Value.get() = setting.Most;
     }
 
     const std::vector<int32_t> most = MCHdSettings::Now();
@@ -311,7 +311,7 @@ TEST_CASE_ISOLATED("game: PREFS keeps only what differs from the defaults, so a 
     {
         if (setting.Key != "HDLighting" && !setting.Player)
         {
-            CHECK_EQ(*setting.Value, setting.Personal);
+            CHECK_EQ(setting.Value.get(), setting.Personal);
         }
     }
 

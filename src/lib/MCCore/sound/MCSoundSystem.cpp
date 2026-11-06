@@ -851,7 +851,8 @@ void MCSoundSystem::Update()
     UpdateRain(heard.Heard);
     const std::optional<MCWeather::MCThunderClap> clap =
         UseSound != 0 && scenarioRuns ? MCWeather::TakeThunder() : std::nullopt;
-    UpdateThunder(heard.ThunderHeard, clap.has_value() ? &*clap : nullptr);
+    UpdateThunder(heard.ThunderHeard,
+                  clap.has_value() ? MCOptionalRef<const MCWeather::MCThunderClap>(*clap) : std::nullopt);
 
     if (UseSound == 0 || UseMusic == 0)
     {
@@ -1022,11 +1023,11 @@ void MCSoundSystem::StopRain()
     _RainLoop.reset();
 }
 
-void MCSoundSystem::UpdateThunder(float heard, const MCWeather::MCThunderClap* clap)
+void MCSoundSystem::UpdateThunder(float heard, MCOptionalRef<const MCWeather::MCThunderClap> clap)
 {
-    if (clap != nullptr && heard > 0.0f && !_ThunderMissing)
+    if (clap && heard > 0.0f && !_ThunderMissing)
     {
-        StartThunder(heard, *clap);
+        StartThunder(heard, clap->get());
     }
 
     const float fade = FrameLength / ThunderFadeOut;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
+
 class MCCamera;
 class MCTerrainWindow;
 struct MCTerrainMesh;
@@ -26,8 +28,8 @@ void MCTerrainReadHdTiles();
 /// <summary>Port: lets go of the ground mesh (the terrain is destroyed).</summary>
 void MCTerrainForgetMesh();
 
-/// <summary>Port: the ground mesh built last (its tiles, for tests and the HD art tools), or null.</summary>
-const MCTerrainMesh* MCTerrainMeshInUse();
+/// <summary>Port: the ground mesh built last (its tiles, for tests and the HD art tools), or none.</summary>
+MCOptionalRef<const MCTerrainMesh> MCTerrainMeshInUse();
 
 /// <summary>The fog of war's edge's levels: a tile with one, two or three of its corners seen (the haze tables).</summary>
 inline constexpr size_t MCTerrainFogEdgeLevels = 3;

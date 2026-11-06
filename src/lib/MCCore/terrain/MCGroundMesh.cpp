@@ -177,7 +177,7 @@ namespace
         mesh.CellTiles.resize(static_cast<size_t>(mesh.Cols) * mesh.Rows);
         mesh.CellElevations.resize(mesh.CellTiles.size());
         mesh.CellBlocked.resize(mesh.CellTiles.size());
-        const MCScenarioMap* const map = LoadedGameMap();
+        const MCOptionalRef<const MCScenarioMap> map = LoadedGameMap();
         std::unordered_map<int32_t, uint32_t> tiles;
 
         for (int32_t r = 0; r < mesh.Rows; ++r)
@@ -191,9 +191,9 @@ namespace
                                             static_cast<uint32_t>(built->Elevations[at + side + 1]) << 16 |
                                             static_cast<uint32_t>(built->Elevations[at + side]) << 24;
 
-                if (map != nullptr && map->OnMap(r - ring, c - ring))
+                if (map && map->get().OnMap(r - ring, c - ring))
                 {
-                    mesh.CellBlocked[cell] = static_cast<uint8_t>(map->TileAt(r - ring, c - ring).BlockedCells());
+                    mesh.CellBlocked[cell] = static_cast<uint8_t>(map->get().TileAt(r - ring, c - ring).BlockedCells());
                 }
 
                 // The tile MCTerrainBlock::Draw would draw: none for a negative number or a tile that can't be read.
@@ -576,9 +576,9 @@ std::array<std::array<float, 3>, MCTerrainFogEdgeLevels> MCTerrainFogEdgeShades(
     return FogEdgeShades;
 }
 
-const MCTerrainMesh* MCTerrainMeshInUse()
+MCOptionalRef<const MCTerrainMesh> MCTerrainMeshInUse()
 {
-    return GroundMesh != nullptr ? &GroundMesh->Mesh : nullptr;
+    return GroundMesh != nullptr ? MCOptionalRef<const MCTerrainMesh>(GroundMesh->Mesh) : std::nullopt;
 }
 
 std::optional<MCTerrainMeshSteps> MCTerrainMeshStepsInUse()

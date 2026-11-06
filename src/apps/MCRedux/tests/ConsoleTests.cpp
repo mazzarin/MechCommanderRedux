@@ -240,12 +240,12 @@ TEST_CASE_ISOLATED("game: the debug console's art command switches the art from 
     const std::shared_ptr<MCShape> shape = *loaded;
     std::filesystem::create_directories(pack / shape->HdFolder);
     MCHdArt::SetPackFolder(pack);
-    CHECK(!MCHdArt::AttachedFolder(shape->FrameList().data()).has_value());
+    CHECK(!MCHdArt::AttachedFolder(shape->FrameList()).has_value());
 
     REQUIRE_EQ(RunConsoleCommand("ART Dusk").error_or(""), std::string());
     CHECK_EQ(GHdArt, 1);
     CHECK_EQ(GHdLighting, static_cast<int>(HdLightingDusk));
-    CHECK(MCHdArt::AttachedFolder(shape->FrameList().data()).has_value());
+    CHECK(MCHdArt::AttachedFolder(shape->FrameList()).has_value());
     const std::vector<SDL_Color> dusk = frame();
     std::cout << std::format("  brightness: {:.1f} original, {:.1f} at dusk\n", Brightness(original), Brightness(dusk));
     CHECK(Brightness(dusk) < Brightness(original));

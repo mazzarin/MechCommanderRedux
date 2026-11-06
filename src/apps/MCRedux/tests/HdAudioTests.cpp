@@ -900,47 +900,47 @@ TEST_CASE(
 
     // The nearest clap from the middle: as loud as heard; it plays once and is done.
     const MCWeather::MCThunderClap near{.Far = 0.0f, .Side = 0.0f};
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
     const float nearLoudest = loudest();
     CHECK(nearLoudest >= ThunderLeft * nearest * 0.99f);
-    sound->UpdateThunder(Heard, nullptr);
+    sound->UpdateThunder(Heard, std::nullopt);
     CHECK_EQ(sound->ThunderRolls(), size_t{0});
     CHECK(loudest() == 0.0f);
 
     // The farthest is fainter.
     const MCWeather::MCThunderClap far{.Far = 1.0f, .Side = 0.0f};
-    sound->UpdateThunder(Heard, &far);
+    sound->UpdateThunder(Heard, far);
     const float farLoudest = loudest();
     CHECK(farLoudest > 0.0f);
     CHECK(farLoudest < nearLoudest * 0.8f);
-    sound->UpdateThunder(Heard, nullptr);
+    sound->UpdateThunder(Heard, std::nullopt);
 
     // A newer clap while one rolls: the older fades out under it (the frames before it is all heard).
-    sound->UpdateThunder(Heard, &far);
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, far);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{2});
 
     // The thunder's file was read once: with it gone, another clap still rolls.
     std::filesystem::remove(thunder);
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{3});
     Write(thunder, Flac());
 
     // None heard: no clap.
     sound->PurgeSoundSystem();
-    sound->UpdateThunder(0.0f, &near);
+    sound->UpdateThunder(0.0f, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{0});
 
     // Without the pack's thunder, none; one put in after isn't looked for till the purge.
     std::filesystem::remove(thunder);
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{0});
     Write(thunder, Flac());
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{0});
     sound->PurgeSoundSystem();
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
 
     // A mission whose weather strikes lightning reads the thunder as it loads: its first clap reads nothing.
@@ -950,7 +950,7 @@ TEST_CASE(
     sound->PrepareThunder();
     GHdWeather = shownWeather;
     std::filesystem::remove(thunder);
-    sound->UpdateThunder(Heard, &near);
+    sound->UpdateThunder(Heard, near);
     CHECK_EQ(sound->ThunderRolls(), size_t{1});
     sound->PurgeSoundSystem();
 

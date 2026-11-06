@@ -168,30 +168,31 @@ auto MCHasGestureArt(MCSpriteTree& tree, int32_t gesture) -> bool
 
 auto MCStopTransition(MCSpriteTree& tree, int32_t goal, int32_t state, int32_t step, bool braking) -> int32_t
 {
-    const StopSequence* sequence = nullptr;
+    MCOptionalRef<const StopSequence> sequence;
 
     if (braking && goal == MCStopState::Stand && state == MCStopState::Walk &&
         MCHasGestureArt(tree, MCStopGesture::WalkToStand))
     {
-        sequence = &WalkToStand;
+        sequence = WalkToStand;
     }
     else if (braking && goal == MCStopState::Stand && state == MCStopState::Run &&
              MCHasGestureArt(tree, MCStopGesture::WalkToStand))
     {
-        sequence = MCHasGestureArt(tree, MCStopGesture::RunToWalk) ? &RunToStand : &RunToStandWithoutArt;
+        sequence =
+            MCHasGestureArt(tree, MCStopGesture::RunToWalk) ? std::cref(RunToStand) : std::cref(RunToStandWithoutArt);
     }
     else if (braking && goal == MCStopState::Walk && state == MCStopState::Run &&
              MCHasGestureArt(tree, MCStopGesture::RunToWalk))
     {
-        sequence = &RunToWalk;
+        sequence = RunToWalk;
     }
 
-    if (sequence == nullptr)
+    if (!sequence)
     {
         return tree.Transition(step + (goal + state * GoalsPerState) * TransitionRow);
     }
 
-    return step >= 0 && step < std::ssize(*sequence) ? (*sequence)[static_cast<size_t>(step)] : -1;
+    return step >= 0 && step < std::ssize(sequence->get()) ? sequence->get()[static_cast<size_t>(step)] : -1;
 }
 
 auto MCRunToWalkFrame(const MCSpriteTree& tree, bool braking) -> std::optional<uint32_t>

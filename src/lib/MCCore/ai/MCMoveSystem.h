@@ -8,6 +8,7 @@
 #include "ai/MCMovePathManager.h"
 #include "ai/MCObjectMap.h"
 #include "ai/MCScenarioMap.h"
+#include "lib/MCOptionalRef.h"
 #include "lib/MCPriorityQueue.h"
 
 /// <summary>
@@ -52,8 +53,8 @@ public:
 
 /// <summary>The mission's scenario map.</summary>
 MCScenarioMap& GameMap();
-/// <summary>The mission's scenario map, or null when none is loaded (port helper).</summary>
-const MCScenarioMap* LoadedGameMap();
+/// <summary>The mission's scenario map, or none when none is loaded (port helper).</summary>
+MCOptionalRef<const MCScenarioMap> LoadedGameMap();
 /// <summary>The mission's object map.</summary>
 MCObjectMap& GameObjectMap();
 /// <summary>The mission's long-range map.</summary>

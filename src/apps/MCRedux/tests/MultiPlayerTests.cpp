@@ -1261,7 +1261,7 @@ namespace
         {
             for (size_t i = 0; i < Paths.size(); i++)
             {
-                _Saved[i] = std::exchange(*Paths[i], std::string(Retail[i]));
+                _Saved[i] = std::exchange(Paths[i].get(), std::string(Retail[i]));
             }
         }
 
@@ -1269,7 +1269,7 @@ namespace
         {
             for (size_t i = 0; i < Paths.size(); i++)
             {
-                *Paths[i] = std::move(_Saved[i]);
+                Paths[i].get() = std::move(_Saved[i]);
             }
         }
 
@@ -1278,8 +1278,8 @@ namespace
 
     private:
         static constexpr size_t Count = 7;
-        inline static const std::array<std::string*, Count> Paths = {
-            &ObjectPath, &MissionPath, &WarriorPath, &ProfilePath, &TerrainPath, &ShapesPath, &SavePath};
+        inline static const std::array<std::reference_wrapper<std::string>, Count> Paths = {
+            ObjectPath, MissionPath, WarriorPath, ProfilePath, TerrainPath, ShapesPath, SavePath};
         static constexpr std::array<std::string_view, Count> Retail = {"data\\objects\\",
                                                                        "data\\missions\\",
                                                                        "data\\missions\\warriors\\",

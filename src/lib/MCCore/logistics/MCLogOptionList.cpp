@@ -230,7 +230,7 @@ auto MCLogOptionList::Status() const -> std::string_view
 auto MCLogOptionList::Setting(int32_t row) const -> int&
 {
     const Row& option = _Rows[static_cast<size_t>(row)];
-    return option.Value != nullptr ? *option.Value : *MCHdSettings::Find(option.Key).Value;
+    return option.Value ? option.Value->get() : MCHdSettings::Find(option.Key).Value.get();
 }
 
 auto MCLogOptionList::RowOf(std::string_view key) const -> std::optional<int32_t>
@@ -270,7 +270,7 @@ auto MCLogOptionList::Lacks(int32_t row) const -> std::string_view
         return MCGpuRendererChoice;
     }
 
-    if (!option.Needs.empty() && *MCHdSettings::Find(option.Needs).Value == 0)
+    if (!option.Needs.empty() && MCHdSettings::Find(option.Needs).Value.get() == 0)
     {
         return option.NeedsLabel;
     }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/MCAddressKey.h"
 #include "sprite/MCBc7.h"
 
 class MCShape;
@@ -279,7 +280,7 @@ namespace MCHdArt
     /// <paramref name="step"/> asks for the frame's in-between of that step toward the next instead (MCInBetween,
     /// <c>&lt;frame&gt;_&lt;step&gt;</c>), whose bounds are the two frames' together.
     /// </summary>
-    std::shared_ptr<const Frame> Find(const uint8_t* table, int32_t frame, int32_t width, int32_t height,
+    std::shared_ptr<const Frame> Find(std::span<const uint8_t> table, int32_t frame, int32_t width, int32_t height,
                                       int32_t step = 0);
 
     /// <summary>
@@ -287,19 +288,19 @@ namespace MCHdArt
     /// (the mech bar's damage diagrams: the interface's pixel art), not the original's pixels' smoothed (the renderer's
     /// default for a frame that doesn't hold its blended pixels).
     /// </summary>
-    bool KeepsFrameEdges(const uint8_t* table);
+    bool KeepsFrameEdges(std::span<const uint8_t> table);
 
     /// <summary>
     /// Whether the shape table starting at <paramref name="table"/> is tied to the pack (and its owner lives): its frames
     /// are looked for there.
     /// </summary>
-    bool Attached(const uint8_t* table);
+    bool Attached(std::span<const uint8_t> table);
 
     /// <summary>
     /// For the tools: the pack folder the frames of the shape table starting at <paramref name="table"/> are read from;
     /// none when it isn't attached (or its owner is gone).
     /// </summary>
-    std::optional<std::filesystem::path> AttachedFolder(const uint8_t* table);
+    std::optional<std::filesystem::path> AttachedFolder(std::span<const uint8_t> table);
 
     /// <summary>
     /// For the tools: frame <paramref name="frame"/> (its original bounds <paramref name="width"/> x
@@ -374,15 +375,15 @@ namespace MCHdArt
     /// Sets the shape tables (the mechs' shadows: flat translucent shapes) whose edges are drawn smooth at the output's
     /// resolution while HD art is on, from the 1x shape's coverage; none needs a pack.
     /// </summary>
-    void SetSmoothEdgeTables(std::span<const uint8_t* const> tables);
+    void SetSmoothEdgeTables(std::span<const MCAddressKey> tables);
 
     /// <summary>Whether HD art is on and <paramref name="table"/> is one whose edges are drawn smooth.</summary>
-    bool SmoothEdges(const uint8_t* table);
+    bool SmoothEdges(std::span<const uint8_t> table);
 
-    /// <summary>A frame of a shape table (the table's first byte).</summary>
+    /// <summary>A frame of a shape table (where the table starts).</summary>
     struct LineArtFrame
     {
-        const uint8_t* Table = nullptr;
+        MCAddressKey Table;
         int32_t Frame = 0;
     };
 
@@ -394,7 +395,7 @@ namespace MCHdArt
     void SetLineArtFrames(std::span<const LineArtFrame> frames);
 
     /// <summary>Whether HD art is on and frame <paramref name="frame"/> of <paramref name="table"/> is line art.</summary>
-    bool LineArt(const uint8_t* table, int32_t frame);
+    bool LineArt(std::span<const uint8_t> table, int32_t frame);
 
     /// <summary>The bytes of a palette file: 256 colours, red, green and blue.</summary>
     inline constexpr size_t PaletteBytes = 256 * 3;

@@ -179,7 +179,7 @@ auto MCLogScrollList::PassToScreen(MCGuiEvent& event) -> void
 {
     for (std::shared_ptr<MCGuiObject> parent = ParentObject(); parent != nullptr; parent = parent->ParentObject())
     {
-        if (dynamic_cast<MCGenericScreen*>(parent.get()) != nullptr)
+        if (std::dynamic_pointer_cast<MCGenericScreen>(parent) != nullptr)
         {
             parent->HandleEvent(event);
             return;

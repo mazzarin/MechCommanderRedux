@@ -816,9 +816,10 @@ MCVulkanPresenter::~MCVulkanPresenter()
         Release(texture);
     }
 
-    for (std::vector<Texture>* textures : {&_Underlays, &_Blooms, &_Fields, &_Puddles, &_LightTiles})
+    for (std::vector<Texture>& textures :
+         {std::ref(_Underlays), std::ref(_Blooms), std::ref(_Fields), std::ref(_Puddles), std::ref(_LightTiles)})
     {
-        for (Texture& texture : *textures)
+        for (Texture& texture : textures)
         {
             Release(texture);
         }
@@ -1821,7 +1822,7 @@ void MCVulkanPresenter::PlaceUnderlays(const MCFrame& frame)
         // Port-only: a sharp screen is drawn at the same scale, as far as the view reaches.
         if (frame.SharpScreen)
         {
-            _Renderer->SetScreenScale(&frame.Screen.get(), scaleX, scaleY, frame.View.x + frame.View.w,
+            _Renderer->SetScreenScale(frame.Screen.get(), scaleX, scaleY, frame.View.x + frame.View.w,
                                       frame.View.y + frame.View.h);
             return;
         }
@@ -1831,7 +1832,7 @@ void MCVulkanPresenter::PlaceUnderlays(const MCFrame& frame)
         _Renderer->SetUnderlayScale(1.0f, 1.0f);
     }
 
-    _Renderer->SetScreenScale(nullptr, 1.0f, 1.0f, 0, 0);
+    _Renderer->SetScreenScale(std::nullopt, 1.0f, 1.0f, 0, 0);
 }
 
 MCViewport MCVulkanPresenter::Viewport(int viewWidth, int viewHeight) const

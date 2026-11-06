@@ -1349,7 +1349,7 @@ auto MCMechActor::LegsTurnMiddle(int32_t gesture, int32_t frameNow, float facing
     const MCInBetweenBounds bounds{static_cast<int32_t>(own.MinX - minX), static_cast<int32_t>(own.MinY - minY),
                                    static_cast<int32_t>(maxX - minX), static_cast<int32_t>(maxY - minY)};
 
-    if (MCHdArt::Find(table.data(), frame, bounds.Width, bounds.Height, middle->Step) == nullptr)
+    if (MCHdArt::Find(table, frame, bounds.Width, bounds.Height, middle->Step) == nullptr)
     {
         return std::nullopt;
     }
@@ -1471,10 +1471,10 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     // The shadow, one of 32 facings. Port-only (sun shadows): with HD art drawn by the GPU, the mech casts its parts'
     // own shadow instead, the sun's way (added once the parts' frames are known, below), when the pack has every part (a
     // mech it lacks, a mod's, keeps the blob) and the sun casts any (at night, the blob).
-    const bool sunShadow =
-        MCSceneLights::SunCasts() && MCHdArt::Active() && MCRenderer::GpuDrawing() == MCGpuDrawing::On &&
-        std::ranges::all_of(drawnShape, [](const auto& shape)
-                            { return shape == nullptr || MCHdArt::Attached(shape->FrameList().data()); });
+    const bool sunShadow = MCSceneLights::SunCasts() && MCHdArt::Active() &&
+                           MCRenderer::GpuDrawing() == MCGpuDrawing::On &&
+                           std::ranges::all_of(drawnShape, [](const auto& shape)
+                                               { return shape == nullptr || MCHdArt::Attached(shape->FrameList()); });
     const auto shadowDepth = static_cast<int16_t>(static_cast<int32_t>(std::floor(static_cast<double>(-y))));
     ElementList().OpenGroup(shadowDepth, true);
 
@@ -1670,7 +1670,7 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
                                     mech->CockpitPosition(), depthFixup);
     }
 
-    MCParticles::AddMover(this, mech->Position, ShapeMaxX * 0.5f);
+    MCParticles::AddMover(MCAddressKey::Of(*this), mech->Position, ShapeMaxX * 0.5f);
 
     if (Highlighting)
     {

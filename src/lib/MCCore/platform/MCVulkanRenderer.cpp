@@ -2319,13 +2319,14 @@ auto MCVulkanRenderer::SourceFor(uint16_t target, const MCWindow& window) -> std
 // Commands ---------------------------------------------------------------------------------------------------------
 
 MCVulkanRenderer::AuditScope::AuditScope(MCVulkanRenderer& renderer, std::string_view command, const MCWindow& target,
-                                         std::span<const uint8_t> data, int32_t frame, const MCWindow* from)
+                                         std::span<const uint8_t> data, int32_t frame,
+                                         MCOptionalRef<const MCWindow> from)
     : _Renderer(renderer)
 {
     if (renderer.Audit && !renderer._Audited.has_value())
     {
         _Outermost = true;
-        renderer._Audited = AuditedDraw{command, &target, false, data, frame, from, 0, false};
+        renderer._Audited = AuditedDraw{command, target, false, data, frame, from, 0, false};
     }
 }
 
@@ -2363,7 +2364,7 @@ void MCVulkanRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t color)
 
 void MCVulkanRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 {
-    const AuditScope audit(*this, "Copy", target, {}, -1, &command.Source.get());
+    const AuditScope audit(*this, "Copy", target, {}, -1, command.Source.get());
     const uint16_t surface = SurfaceFor(target);
     const MCRect& rect = command.SourceRect;
     const Quad at = {command.X, command.Y, command.X + rect.X1 - rect.X0, command.Y + rect.Y1 - rect.Y0};
@@ -2476,9 +2477,9 @@ std::shared_ptr<const MCHdArt::Frame> MCVulkanRenderer::HdShape(std::span<const 
         return nullptr;
     }
 
-    if (MCHdArt::AttachedFolder(table.data()).has_value())
+    if (MCHdArt::AttachedFolder(table).has_value())
     {
-        return MCHdArt::Find(table.data(), frame, width, height, step);
+        return MCHdArt::Find(table, frame, width, height, step);
     }
 
     // The table's bytes to the end of its block: the whole file or packet its loader read.
@@ -2798,14 +2799,13 @@ void MCVulkanRenderer::ShapeBlit(MCWindow& target, const MCShapeBlitCommand& com
         return;
     }
 
-    BlitPicture(target, command.Blit, width, height, ReadsOutside, picture,
-                MCHdArt::SmoothEdges(command.ShapeTable.data()));
+    BlitPicture(target, command.Blit, width, height, ReadsOutside, picture, MCHdArt::SmoothEdges(command.ShapeTable));
     indices();
 }
 
 auto MCVulkanRenderer::HdEdgesOf(const MCHdArt::Frame& frame, std::span<const uint8_t> table) -> HdEdges
 {
-    return frame.Blended || MCHdArt::KeepsFrameEdges(table.data()) ? HdEdges::Frame : HdEdges::Smooth;
+    return frame.Blended || MCHdArt::KeepsFrameEdges(table) ? HdEdges::Frame : HdEdges::Smooth;
 }
 
 std::optional<uint32_t> MCVulkanRenderer::HdPictureOf(const MCHdArt::Frame& frame)
@@ -2921,7 +2921,7 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
     // the first time one is missing; every layer is up before any is drawn.
     const size_t count = layers.has_value() ? layers->Bytes.size() : 1;
     std::optional<std::vector<std::vector<uint8_t>>> redrawn;
-    std::vector<Picture*> pictures;
+    std::vector<std::reference_wrapper<Picture>> pictures;
 
     for (size_t layer = 0; layer < count; ++layer)
     {
@@ -2937,14 +2937,14 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
             return layer < redrawn->size() ? (*redrawn)[layer] : std::vector<uint8_t>{};
         };
 
-        Picture* picture = SharpPicture((key ^ layer) * HashPrime, redrawLayer, columns, rows);
+        const MCOptionalRef<Picture> picture = SharpPicture((key ^ layer) * HashPrime, redrawLayer, columns, rows);
 
-        if (picture == nullptr)
+        if (!picture)
         {
             return false;
         }
 
-        pictures.push_back(picture);
+        pictures.push_back(*picture);
     }
 
     // Back to front, each blended over the one before: whether the layer runs on past the glyph's border, and the drawn
@@ -2953,7 +2953,7 @@ bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> 
 
     for (size_t layer = 0; layer < count; ++layer)
     {
-        DrawSharpPicture(surface, *pictures[layer], at, from, TableRow(table),
+        DrawSharpPicture(surface, pictures[layer], at, from, TableRow(table),
                          layers.has_value() && layers->RunsOn(layer) ? SharpGlyphRunsOn : 0u);
     }
 
@@ -2990,9 +2990,8 @@ uint64_t MCVulkanRenderer::SharpKey(SharpKind kind, std::span<const uint8_t> pix
     return key;
 }
 
-MCVulkanRenderer::Picture* MCVulkanRenderer::SharpPicture(uint64_t key,
-                                                          const std::function<std::vector<uint8_t>()>& redraw,
-                                                          int32_t columns, int32_t rows)
+MCOptionalRef<MCVulkanRenderer::Picture> MCVulkanRenderer::SharpPicture(
+    uint64_t key, const std::function<std::vector<uint8_t>()>& redraw, int32_t columns, int32_t rows)
 {
     BeginRecording();
     auto found = _SharpGlyphs.find(key);
@@ -3007,7 +3006,7 @@ MCVulkanRenderer::Picture* MCVulkanRenderer::SharpPicture(uint64_t key,
         if (redrawn.empty() || !EnsureTexture(picture.Texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
                                               SDL_GPU_TEXTUREUSAGE_SAMPLER, width, height))
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         std::ranges::copy(redrawn, QueueUpload(picture.Texture.Handle, 0, 0, width, height, HdRgbaBytes).begin());
@@ -3017,7 +3016,7 @@ MCVulkanRenderer::Picture* MCVulkanRenderer::SharpPicture(uint64_t key,
         _FrameUploads.PictureBytes += static_cast<int64_t>(redrawn.size());
     }
 
-    return &found->second;
+    return found->second;
 }
 
 void MCVulkanRenderer::DrawSharpPicture(uint16_t surface, Picture& picture, const Quad& at, const Quad& from,
@@ -3033,9 +3032,9 @@ bool MCVulkanRenderer::AddSharpPicture(uint16_t surface, uint64_t key,
                                        const std::function<std::vector<uint8_t>()>& redraw, int32_t columns,
                                        int32_t rows, const Quad& at, const Quad& from, uint32_t tableRow)
 {
-    Picture* picture = SharpPicture(key, redraw, columns, rows);
+    const MCOptionalRef<Picture> picture = SharpPicture(key, redraw, columns, rows);
 
-    if (picture == nullptr)
+    if (!picture)
     {
         return false;
     }
@@ -3216,7 +3215,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
     bool lineArt = false;
 
     if ((command.Op == MCShapeOp::Draw || command.Op == MCShapeOp::Xlat) && SharpScreenSurface(surface) &&
-        MCHdArt::LineArt(command.ShapeTable.data(), command.ShapeNum))
+        MCHdArt::LineArt(command.ShapeTable, command.ShapeNum))
     {
         std::vector<uint8_t> decoded(static_cast<size_t>(width) * static_cast<size_t>(rows) * DecodedBytes);
         DecodeShape(data, rows, width, decoded);
@@ -3388,7 +3387,7 @@ void MCVulkanRenderer::Shape(MCWindow& target, const MCShapeCommand& command)
 
     // Port-only: a shape with smooth edges (with HD art on: the mechs' shadows) writes its indices as always, then its
     // colour through the blend pipeline with its coverage taken between its own pixels.
-    if (command.Op == MCShapeOp::Draw && MCHdArt::SmoothEdges(command.ShapeTable.data()))
+    if (command.Op == MCShapeOp::Draw && MCHdArt::SmoothEdges(command.ShapeTable))
     {
         Add(surface, SourceKind::Atlas, place->Page, at, from, op | IndexOnly, 0, before, after);
         addSmooth(at, from, op | SmoothEdges);
@@ -3715,9 +3714,9 @@ namespace
         constexpr float Centre = 0.5f;
         constexpr float Flat = 1e-6f;
 
-        for (MappedPoint* point : {&c0, &c1, &c2})
+        for (MappedPoint& point : {std::ref(c0), std::ref(c1), std::ref(c2)})
         {
-            std::ranges::for_each(*point, [](float& value) { value += Centre; });
+            std::ranges::for_each(point, [](float& value) { value += Centre; });
         }
 
         const float x1 = c1[0] - c0[0];
@@ -5781,18 +5780,18 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         return r < rows && c <= columns && index < columns * rows ? static_cast<int32_t>(flags[index]) : 0;
     };
 
-    const auto shapeOf = [&mesh](int32_t row, int32_t col) -> const TerrainTileShape*
+    const auto shapeOf = [&mesh](int32_t row, int32_t col) -> MCOptionalRef<const TerrainTileShape>
     {
         const int32_t r = row - mesh.FirstRow;
         const int32_t c = col - mesh.FirstCol;
 
         if (r < 0 || c < 0 || r >= mesh.Rows || c >= mesh.Cols)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         const uint32_t tile = mesh.CellTiles[static_cast<size_t>(r) * mesh.Cols + c];
-        return tile < mesh.Shapes.size() ? &mesh.Shapes[tile] : nullptr;
+        return tile < mesh.Shapes.size() ? MCOptionalRef<const TerrainTileShape>(mesh.Shapes[tile]) : std::nullopt;
     };
 
     const auto cornerOf = [&mesh](int32_t row, int32_t col, size_t corner)
@@ -5814,10 +5813,9 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
     const auto drawOf = [&](const MCTerrainFrame& frame, std::span<const uint8_t> flags, int32_t row, int32_t col)
     {
         GroundCellDraw cell;
-        const TerrainTileShape* const shape = shapeOf(row, col);
+        const MCOptionalRef<const TerrainTileShape> shape = shapeOf(row, col);
 
-        if (shape == nullptr || row < frame.FirstRow || col < frame.FirstCol || row > frame.LastRow ||
-            col > frame.LastCol)
+        if (!shape || row < frame.FirstRow || col < frame.FirstCol || row > frame.LastRow || col > frame.LastCol)
         {
             return cell;
         }
@@ -5841,11 +5839,12 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
             return cell;
         }
 
-        const MCRect box = boxOf(frame, *shape, points[0][0], points[0][1]);
+        const MCRect box = boxOf(frame, shape->get(), points[0][0], points[0][1]);
         const MCRect firstBox{box.X0 + TerrainSeamReach, box.Y0 + TerrainSeamReach, box.X1 - TerrainSeamReach,
                               box.Y1 - TerrainSeamReach};
         cell.Seam = !Empty(Intersection(box, frame.Clip));
-        cell.First = firstBox.X0 > frame.Clip.X0 - shape->HeaderWidth && !Empty(Intersection(firstBox, frame.Clip));
+        cell.First =
+            firstBox.X0 > frame.Clip.X0 - shape->get().HeaderWidth && !Empty(Intersection(firstBox, frame.Clip));
         cell.Seen = frame.AllFilled ? AllHazed
                     : fogChanged    ? seenAt(flags, row, col) + seenAt(flags, row, col + 1) +
                                           seenAt(flags, row + 1, col + 1) + seenAt(flags, row + 1, col)
@@ -5860,15 +5859,15 @@ auto MCVulkanRenderer::PlanGround(uint16_t surfaceIndex, const TerrainDraw& draw
         {
             const GroundCellDraw before = drawOf(then, kept.Seen, row, col);
             const GroundCellDraw after = drawOf(now, seen, row, col);
-            const TerrainTileShape* const shape = shapeOf(row, col);
+            const MCOptionalRef<const TerrainTileShape> shape = shapeOf(row, col);
 
-            if (shape != nullptr &&
-                (before != after || (after.Seam && (shape->Colors & cycledColors).any()) ||
+            if (shape &&
+                (before != after || (after.Seam && (shape->get().Colors & cycledColors).any()) ||
                  (after.Seam && cycled && (after.Seen == 0 || after.Seen == AllHazed) && cycledColors.test(0x10))))
             {
                 const int32_t x = now.OriginX + (col - row) * now.StepX;
                 const int32_t y = now.OriginY + (row + col) * now.StepY - cornerOf(row, col, 0) * now.ElevStep;
-                parts.push_back(boxOf(now, *shape, x, y));
+                parts.push_back(boxOf(now, shape->get(), x, y));
             }
         }
     }
@@ -6034,9 +6033,10 @@ void MCVulkanRenderer::TakeCopy(SDL_GPUCommandBuffer& commands, Surface& surface
     SDL_EndGPUCopyPass(pass);
 }
 
-void MCVulkanRenderer::SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom)
+void MCVulkanRenderer::SetScreenScale(MCOptionalRef<const MCWindow> screen, float scaleX, float scaleY, int32_t right,
+                                      int32_t bottom)
 {
-    _ScaledScreen = screen != nullptr && (scaleX > 1.0f || scaleY > 1.0f) ? SurfaceKeyOf(*screen) : MCAddressKey();
+    _ScaledScreen = screen && (scaleX > 1.0f || scaleY > 1.0f) ? SurfaceKeyOf(screen->get()) : MCAddressKey();
     _ScreenScaleX = scaleX;
     _ScreenScaleY = scaleY;
     _ScreenRight = right;

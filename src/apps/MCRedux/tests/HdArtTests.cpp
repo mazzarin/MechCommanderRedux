@@ -8455,7 +8455,14 @@ namespace
     /// What the HD art audit tallies a draw by: the command, whether it was sharp, what it drew (data, or the window it
     /// copied from), and where.
     /// </summary>
-    using AuditKey = std::tuple<std::string, bool, const uint8_t*, const MCWindow*, const MCWindow*>;
+    using AuditKey = std::tuple<std::string, bool, MCAddressKey, MCAddressKey, MCAddressKey>;
+
+    /// <summary><paramref name="draw"/>'s <see cref="AuditKey"/>, drawn sharp or not (<paramref name="sharp"/>).</summary>
+    AuditKey AuditKeyOf(const MCVulkanRenderer::AuditedDraw& draw, bool sharp)
+    {
+        return {std::string(draw.Command), sharp, MCAddressKey::OfData(draw.Data),
+                draw.From ? MCAddressKey::Of(draw.From->get()) : MCAddressKey(), MCAddressKey::Of(draw.Window.get())};
+    }
 
     /// <summary>The draws of one <see cref="AuditKey"/>: how many, the window pixels they covered, their frames.</summary>
     struct AuditTally
@@ -8861,12 +8868,13 @@ namespace
 
         SingleStepMode = 1;
         MCTestGame::RunFrame(FrameSeconds);
-        const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-        REQUIRE(mesh != nullptr);
+        const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+        REQUIRE(inUse.has_value());
+        const MCTerrainMesh& mesh = *inUse;
         std::array<SDL_Color, 256> colors{};
         MCInput::Display()->GetShownColors(colors);
         HdGround ground;
-        ground.Tiles = WriteTerrainPack(scene->Pack, *mesh, colors);
+        ground.Tiles = WriteTerrainPack(scene->Pack, mesh, colors);
         REQUIRE(ground.Tiles > 0);
         ground.Before = ReadShown(scene->Scratch);
         const MCHdArtOn hdArt(scene->Pack);
@@ -8917,13 +8925,14 @@ TEST_CASE_ISOLATED("game: HD art's ground is read before the first frame needs i
 
     SingleStepMode = 1;
     MCTestGame::RunFrame(FrameSeconds);
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     // A pack of the ground alone: the scene's pack has the mech's frames, which a frame reads when it draws the mech.
     const std::filesystem::path pack = scene->Scratch / "ground";
-    const size_t tiles = WriteTerrainPack(pack, *mesh, colors);
+    const size_t tiles = WriteTerrainPack(pack, mesh, colors);
     REQUIRE(tiles > 0);
     const MCHdArtOn hdArt(pack);
     const size_t before = MCHdArt::FramesRead();
@@ -8960,13 +8969,14 @@ TEST_CASE_ISOLATED("game: the ground goes up to the GPU as the mission loads, an
     // The load put it up; the frames since, the mission's first among them, found the mesh they'd build there.
     CHECK_EQ(renderer->TerrainUploads(), uint64_t{1});
     CHECK_EQ(renderer->TerrainTileUploads(), 1);
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "mc_tests_hd_ground_upload";
     std::filesystem::remove_all(scratch);
-    REQUIRE(WriteTerrainPack(scratch / "pack", *mesh, colors) > 0);
+    REQUIRE(WriteTerrainPack(scratch / "pack", mesh, colors) > 0);
 
     {
         const MCHdArtOn hdArt(scratch / "pack");
@@ -9011,10 +9021,11 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter an
     }
 
     MCTestGame::RunFrame(FrameSeconds);
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
-    REQUIRE_EQ(mesh->CellBlocked.size(), mesh->CellTiles.size());
-    REQUIRE_EQ(mesh->CellBlockedRound.size(), mesh->CellTiles.size());
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
+    REQUIRE_EQ(mesh.CellBlocked.size(), mesh.CellTiles.size());
+    REQUIRE_EQ(mesh.CellBlockedRound.size(), mesh.CellTiles.size());
     const MCScenarioMap& map = GameMap();
     constexpr uint32_t AllCells = MapCellDim * MapCellDim;
     constexpr uint32_t CountMask = (1u << MCTerrainMesh::BlockedRoundBits) - 1u;
@@ -9025,15 +9036,15 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter an
     size_t walledOff = 0;
     size_t besideOpen = 0;
 
-    for (int32_t r = 0; r < mesh->Rows; ++r)
+    for (int32_t r = 0; r < mesh.Rows; ++r)
     {
-        for (int32_t c = 0; c < mesh->Cols; ++c)
+        for (int32_t c = 0; c < mesh.Cols; ++c)
         {
-            const int32_t row = mesh->FirstRow + r;
-            const int32_t col = mesh->FirstCol + c;
-            const size_t cell = static_cast<size_t>(r) * mesh->Cols + c;
-            const uint8_t carried = mesh->CellBlocked[cell];
-            const uint32_t round = mesh->CellBlockedRound[cell];
+            const int32_t row = mesh.FirstRow + r;
+            const int32_t col = mesh.FirstCol + c;
+            const size_t cell = static_cast<size_t>(r) * mesh.Cols + c;
+            const uint8_t carried = mesh.CellBlocked[cell];
+            const uint32_t round = mesh.CellBlockedRound[cell];
             matching += carried == blockedAt(row, col) ? 1 : 0;
             walledOff += carried == AllCells ? 1 : 0;
             bool roundMatches = true;
@@ -9059,8 +9070,8 @@ TEST_CASE_ISOLATED("game: the ground mesh carries the cells mechs can't enter an
         }
     }
 
-    CHECK_EQ(matching, mesh->CellBlocked.size());
-    CHECK_EQ(roundMatching, mesh->CellBlockedRound.size());
+    CHECK_EQ(matching, mesh.CellBlocked.size());
+    CHECK_EQ(roundMatching, mesh.CellBlockedRound.size());
     CHECK(walledOff > 0);
     CHECK(besideOpen > 0);
     std::filesystem::remove_all(scene->Scratch);
@@ -9208,15 +9219,16 @@ TEST_CASE_ISOLATED("game: relief lights the HD ground by the pack's relief maps,
         return;
     }
 
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     // A pack of the ground alone.
     const std::filesystem::path pack = scene->Scratch / "ground";
     constexpr int32_t Rise = 20;
-    REQUIRE(WriteTerrainPack(pack, *mesh, colors, Muted) > 0);
-    REQUIRE(WriteReliefPack(pack, *mesh, Rise) > 0);
+    REQUIRE(WriteTerrainPack(pack, mesh, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(pack, mesh, Rise) > 0);
     const MCHdArtOn hdArt(pack);
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
@@ -9329,8 +9341,9 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
         return;
     }
 
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     // The ground with its relief maps alone, and with the mech's standing frames (colours inverted) too.
@@ -9339,8 +9352,8 @@ TEST_CASE_ISOLATED("game: the relief maps light none of a mech's pixels, its mir
 
     for (const std::filesystem::path& pack : {ground, scene->Pack})
     {
-        REQUIRE(WriteTerrainPack(pack, *mesh, colors, Muted) > 0);
-        REQUIRE(WriteReliefPack(pack, *mesh, Rise) > 0);
+        REQUIRE(WriteTerrainPack(pack, mesh, colors, Muted) > 0);
+        REQUIRE(WriteReliefPack(pack, mesh, Rise) > 0);
     }
 
     const std::shared_ptr<MCDisplay> display = MCInput::Display();
@@ -9513,14 +9526,15 @@ TEST_CASE_ISOLATED("game: in a downpour a foot coming down in a puddle sprays an
         return;
     }
 
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     constexpr int32_t Rise = 20;
     const std::filesystem::path ground = scene->Scratch / "ground";
-    REQUIRE(WriteTerrainPack(ground, *mesh, colors, Muted) > 0);
-    REQUIRE(WriteReliefPack(ground, *mesh, Rise) > 0);
+    REQUIRE(WriteTerrainPack(ground, mesh, colors, Muted) > 0);
+    REQUIRE(WriteReliefPack(ground, mesh, Rise) > 0);
     const MCHdArtOn hdArt(ground);
     const int lightingWas = GHdLighting;
     GHdLighting = HdLightingOn;
@@ -9741,14 +9755,15 @@ namespace
             return nullptr;
         }
 
-        const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-        REQUIRE(mesh != nullptr);
+        const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+        REQUIRE(inUse.has_value());
+        const MCTerrainMesh& mesh = *inUse;
         std::array<SDL_Color, 256> colors{};
         MCInput::Display()->GetShownColors(colors);
         constexpr int32_t Rise = 20;
         const std::filesystem::path ground = scene->Scratch / "ground";
-        REQUIRE(WriteTerrainPack(ground, *mesh, colors, Muted) > 0);
-        REQUIRE(WriteReliefPack(ground, *mesh, Rise) > 0);
+        REQUIRE(WriteTerrainPack(ground, mesh, colors, Muted) > 0);
+        REQUIRE(WriteReliefPack(ground, mesh, Rise) > 0);
         auto made = std::make_unique<SnowScene>();
         made->Scene = std::move(*scene);
         made->HdArt = std::make_unique<MCHdArtOn>(ground);
@@ -10353,12 +10368,13 @@ TEST_CASE_ISOLATED("game: HD art's ground fades from tile to tile across their s
     RevealAll();
     SingleStepMode = 1;
     MCTestGame::RunFrame(FrameSeconds);
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
-    REQUIRE(mesh != nullptr);
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     std::array<SDL_Color, 256> colors{};
     MCInput::Display()->GetShownColors(colors);
     const std::filesystem::path pack = scene->Scratch / "ground";
-    REQUIRE(WriteTwoColourTerrain(pack, *mesh) > 0);
+    REQUIRE(WriteTwoColourTerrain(pack, mesh) > 0);
     WritePaletteRgb(pack, colors);
     const MCHdArtOn hdArt(pack);
     MCTestGame::RunFrame(FrameSeconds);
@@ -11741,8 +11757,7 @@ namespace
             }
         }
 
-        if (const std::optional<std::filesystem::path> folder = MCHdArt::AttachedFolder(data.data());
-            folder.has_value())
+        if (const std::optional<std::filesystem::path> folder = MCHdArt::AttachedFolder(data); folder.has_value())
         {
             return std::filesystem::relative(*folder, MCHdArt::PackFolder()).generic_string();
         }
@@ -11773,30 +11788,30 @@ namespace
     {
         return [&tally](const MCVulkanRenderer::AuditedDraw& draw)
         {
-            AuditTally& entry =
-                tally[{std::string(draw.Command), AuditSharp(draw), draw.Data.data(), draw.From, draw.Window}];
+            AuditTally& entry = tally[AuditKeyOf(draw, AuditSharp(draw))];
             const bool table = VfxIsShapeTable(draw.Data);
 
             if (entry.Count == 0)
             {
-                entry.WindowWidth = draw.Window->XMax + 1;
-                entry.WindowHeight = draw.Window->YMax + 1;
+                entry.WindowWidth = draw.Window.get().XMax + 1;
+                entry.WindowHeight = draw.Window.get().YMax + 1;
                 entry.Owner = AuditOwner(draw.Data);
                 entry.Label = AuditLabel;
                 MCInput::Display()->GetShownColors(entry.Colors);
 
-                if (const MCWindow* from = draw.From; from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+                if (draw.From && draw.From->get().Pixels != nullptr && draw.From->get().Size() > 0)
                 {
+                    const MCWindow& from = *draw.From;
                     DecodedFrame& picture = entry.Picture.emplace();
-                    picture.Width = from->XMax + 1;
-                    picture.Height = from->YMax + 1;
-                    picture.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
-                    picture.Drawn.assign(from->Size(), 1);
+                    picture.Width = from.XMax + 1;
+                    picture.Height = from.YMax + 1;
+                    picture.Index.assign(from.Pixels.get(), from.Pixels.get() + from.Size());
+                    picture.Drawn.assign(from.Size(), 1);
                 }
 
                 if (table)
                 {
-                    entry.Attached = MCHdArt::AttachedFolder(draw.Data.data());
+                    entry.Attached = MCHdArt::AttachedFolder(draw.Data);
                     entry.TableHash = MCHdArt::ShapeTableHash(draw.Data);
                 }
             }
@@ -11866,7 +11881,7 @@ namespace
                                           ? std::format("{}x{}", entry.Picture->Width, entry.Picture->Height)
                                           : entry.Owner;
             std::cout << std::format("  {:>3} {:<10} {} {:>4}x{:<4} {:>4} {:>8} {:>11} {} {}{}{}\n", rank, command,
-                                     static_cast<const void*>(data), entry.WindowWidth, entry.WindowHeight,
+                                     std::format("{:#x}", data - MCAddressKey()), entry.WindowWidth, entry.WindowHeight,
                                      entry.Frames.size(), entry.Count, entry.Pixels, entry.Scaled ? "scaled" : "1:1",
                                      owner, entry.Label.empty() ? "" : " on " + entry.Label, sharp ? " sharp" : "");
 
@@ -12066,8 +12081,7 @@ namespace
         {
             tallied(draw);
             const bool sharp = AuditSharp(draw);
-            AuditDetail::Entry& entry =
-                detail.Entries[{std::string(draw.Command), sharp, draw.Data.data(), draw.From, draw.Window}];
+            AuditDetail::Entry& entry = detail.Entries[AuditKeyOf(draw, sharp)];
 
             if (entry.Screens.empty())
             {
@@ -12078,21 +12092,20 @@ namespace
 
             entry.Screens.insert(detail.Screen);
 
-            if (const MCWindow* from = draw.From;
-                !sharp && from != nullptr && from->Pixels != nullptr && from->Size() > 0)
+            if (!sharp && draw.From && draw.From->get().Pixels != nullptr && draw.From->get().Size() > 0)
             {
+                const MCWindow& from = *draw.From;
                 DecodedFrame& latest = entry.Latest.emplace();
-                latest.Width = from->XMax + 1;
-                latest.Height = from->YMax + 1;
-                latest.Index.assign(from->Pixels.get(), from->Pixels.get() + from->Size());
+                latest.Width = from.XMax + 1;
+                latest.Height = from.YMax + 1;
+                latest.Index.assign(from.Pixels.get(), from.Pixels.get() + from.Size());
                 MCInput::Display()->GetShownColors(entry.LatestColors);
             }
 
             if (!sharp)
             {
-                AuditDetail::Site& site =
-                    detail
-                        .Sites[{std::string(draw.Command), draw.Window->XMax + 1, draw.Window->YMax + 1, AuditStack()}];
+                AuditDetail::Site& site = detail.Sites[{std::string(draw.Command), draw.Window.get().XMax + 1,
+                                                        draw.Window.get().YMax + 1, AuditStack()}];
                 site.Scaled |= draw.Scaled;
                 ++site.Count;
                 site.Pixels += draw.Pixels;
@@ -12301,17 +12314,18 @@ namespace
                                                                                                      : "made";
         };
 
-        std::vector<std::pair<const AuditKey*, const AuditTally*>> original;
+        std::vector<std::pair<std::reference_wrapper<const AuditKey>, std::reference_wrapper<const AuditTally>>>
+            original;
 
         for (const auto& [key, entry] : tally)
         {
             if (!std::get<1>(key))
             {
-                original.emplace_back(&key, &entry);
+                original.emplace_back(key, entry);
             }
         }
 
-        std::ranges::sort(original, std::ranges::greater{}, [](const auto& row) { return row.second->Pixels; });
+        std::ranges::sort(original, std::ranges::greater{}, [](const auto& row) { return row.second.get().Pixels; });
         // The characters drawn from the original's pixels in each font, pictured once the rows are written.
         std::map<std::string, std::set<int32_t>> fontCharacters;
         std::ofstream table(folder / "audit.tsv", std::ios::binary);
@@ -12321,88 +12335,93 @@ namespace
         table << "id\tcommand\twindow\tscaled\tdraws\tpixels\tper_draw\tper_frame\tframes\towner\tfont\tpack\tsource\t"
                  "screens\tstack\n";
 
-        for (const auto& [key, entry] : original)
+        for (const auto& [keyKept, entryKept] : original)
         {
-            const std::string& command = std::get<0>(*key);
-            const auto found = detail.Entries.find(*key);
-            const AuditDetail::Entry* extra = found != detail.Entries.end() ? &found->second : nullptr;
+            const AuditKey& key = keyKept;
+            const AuditTally& entry = entryKept;
+            const std::string& command = std::get<0>(key);
+            const auto found = detail.Entries.find(key);
+            const MCOptionalRef<const AuditDetail::Entry> extra =
+                found != detail.Entries.end() ? MCOptionalRef<const AuditDetail::Entry>(found->second) : std::nullopt;
             std::string id;
             std::string pack = "-";
             std::string source = "-";
 
-            if (entry->Picture.has_value())
+            if (entry.Picture.has_value())
             {
-                const DecodedFrame& picture = *entry->Picture;
+                const DecodedFrame& picture = *entry.Picture;
                 id = std::format("picture-{:016x}", AuditPictureHash(picture.Index, picture.Width, picture.Height));
                 pack = MCHdArt::FindPicture(picture.Index, picture.Width, picture.Height) != nullptr ? "has" : "lacks";
                 source = isSource(picture);
 
                 if (const std::filesystem::path path = items / (id + ".png"); !std::filesystem::exists(path))
                 {
-                    if (extra != nullptr && extra->Latest.has_value())
+                    if (extra.has_value() && extra->get().Latest.has_value())
                     {
-                        const DecodedFrame& latest = *extra->Latest;
-                        SaveAuditPicture(path, latest.Width, latest.Height, latest.Index, {}, extra->LatestColors);
+                        const DecodedFrame& latest = *extra->get().Latest;
+                        SaveAuditPicture(path, latest.Width, latest.Height, latest.Index, {},
+                                         extra->get().LatestColors);
                     }
                     else
                     {
                         SaveAuditPicture(path, picture.Width, picture.Height, picture.Index, {},
-                                         extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                                         extra.has_value() ? std::span<const SDL_Color, 256>(extra->get().Colors)
+                                                           : shown);
                     }
                 }
             }
-            else if (entry->TableHash.has_value())
+            else if (entry.TableHash.has_value())
             {
-                id = std::format("shape-{:016x}", *entry->TableHash);
+                id = std::format("shape-{:016x}", *entry.TableHash);
                 int32_t has = 0;
 
-                for (const auto& [frame, decoded] : entry->ShapeFrames)
+                for (const auto& [frame, decoded] : entry.ShapeFrames)
                 {
                     const std::shared_ptr<const MCHdArt::Frame> hd =
-                        entry->Attached.has_value()
-                            ? MCHdArt::FindInFolder(*entry->Attached, frame, decoded.Width, decoded.Height)
-                            : MCHdArt::FindShape(*entry->TableHash, frame, decoded.Width, decoded.Height);
+                        entry.Attached.has_value()
+                            ? MCHdArt::FindInFolder(*entry.Attached, frame, decoded.Width, decoded.Height)
+                            : MCHdArt::FindShape(*entry.TableHash, frame, decoded.Width, decoded.Height);
                     has += hd != nullptr ? 1 : 0;
                 }
 
-                const auto kept = static_cast<int32_t>(entry->ShapeFrames.size());
+                const auto kept = static_cast<int32_t>(entry.ShapeFrames.size());
                 pack = kept == 0     ? "?"
                        : has == kept ? "has"
                        : has == 0    ? "lacks"
                                      : std::format("part {}/{}", has, kept);
 
                 // Frames that show nothing (the audit counts their draws as sharp, so none should be listed here).
-                const auto blank = std::ranges::count_if(entry->ShapeFrames, [](const auto& frameKept)
+                const auto blank = std::ranges::count_if(entry.ShapeFrames, [](const auto& frameKept)
                                                          { return BlankFrame(frameKept.second); });
                 source = std::format("blank {}/{}", blank, kept);
 
                 if (const std::filesystem::path path = items / (id + ".png");
-                    !entry->ShapeFrames.empty() && !std::filesystem::exists(path))
+                    !entry.ShapeFrames.empty() && !std::filesystem::exists(path))
                 {
-                    const DecodedFrame& first = entry->ShapeFrames.begin()->second;
+                    const DecodedFrame& first = entry.ShapeFrames.begin()->second;
                     SaveAuditPicture(path, first.Width, first.Height, first.Index, first.Drawn,
-                                     extra != nullptr ? std::span<const SDL_Color, 256>(extra->Colors) : shown);
+                                     extra.has_value() ? std::span<const SDL_Color, 256>(extra->get().Colors) : shown);
                 }
             }
-            else if (extra != nullptr && !extra->Font.empty())
+            else if (extra.has_value() && !extra->get().Font.empty())
             {
-                id = std::format("font-{}", extra->Font);
+                id = std::format("font-{}", extra->get().Font);
                 pack = "font";
-                fontCharacters[extra->Font].insert(entry->Frames.begin(), entry->Frames.end());
+                fontCharacters[extra->get().Font].insert(entry.Frames.begin(), entry.Frames.end());
             }
             else
             {
-                id = std::format("{}-{}x{}", command, entry->WindowWidth, entry->WindowHeight);
+                id = std::format("{}-{}x{}", command, entry.WindowWidth, entry.WindowHeight);
             }
 
             table << std::format("{}\t{}\t{}x{}\t{}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", id, command,
-                                 entry->WindowWidth, entry->WindowHeight, entry->Scaled ? "scaled" : "1:1",
-                                 entry->Count, entry->Pixels, entry->Count > 0 ? entry->Pixels / entry->Count : 0,
-                                 frames > 0 ? static_cast<double>(entry->Pixels) / frames : 0.0,
-                                 AuditFramesText(*key, *entry), entry->Owner.empty() ? "-" : entry->Owner,
-                                 extra != nullptr && !extra->Font.empty() ? extra->Font : "-", pack, source,
-                                 extra != nullptr ? AuditJoined(extra->Screens) : "-",
-                                 extra != nullptr ? AuditStackText(extra->Stack) : "-");
+                                 entry.WindowWidth, entry.WindowHeight, entry.Scaled ? "scaled" : "1:1", entry.Count,
+                                 entry.Pixels, entry.Count > 0 ? entry.Pixels / entry.Count : 0,
+                                 frames > 0 ? static_cast<double>(entry.Pixels) / frames : 0.0,
+                                 AuditFramesText(key, entry), entry.Owner.empty() ? "-" : entry.Owner,
+                                 extra.has_value() && !extra->get().Font.empty() ? extra->get().Font : "-", pack,
+                                 source, extra.has_value() ? AuditJoined(extra->get().Screens) : "-",
+                                 extra.has_value() ? AuditStackText(extra->get().Stack) : "-");
         }
 
         for (const auto& [name, characters] : fontCharacters)
@@ -13326,20 +13345,20 @@ namespace
                 continue;
             }
 
-            const MCVector3D* nearest = nullptr;
+            MCOptionalRef<const MCVector3D> nearest;
 
             for (const MCVector3D& spot : fan)
             {
-                if (clear(spot) && (nearest == nullptr || std::hypot(spot.X - ideal.X, spot.Y - ideal.Y) <
-                                                              std::hypot(nearest->X - ideal.X, nearest->Y - ideal.Y)))
+                if (clear(spot) && (!nearest || std::hypot(spot.X - ideal.X, spot.Y - ideal.Y) <
+                                                    std::hypot(nearest->get().X - ideal.X, nearest->get().Y - ideal.Y)))
                 {
-                    nearest = &spot;
+                    nearest = spot;
                 }
             }
 
-            if (nearest != nullptr)
+            if (nearest)
             {
-                spots.push_back(*nearest);
+                spots.push_back(nearest->get());
             }
         }
 
@@ -13358,13 +13377,13 @@ namespace
     /// </summary>
     int32_t CloseIn(std::string_view names, const std::shared_ptr<MCMover>& mover, int32_t bring = 0,
                     const std::set<int32_t>& busy = {}, float behind = BehindMeters,
-                    std::vector<std::shared_ptr<MCMover>>* brought = nullptr, bool cut = false)
+                    MCOptionalRef<std::vector<std::shared_ptr<MCMover>>> brought = std::nullopt, bool cut = false)
     {
         // The second line walks in on a player's orders: under fire a pilot keeps to his alarm's over his
         // commander's, and would stand where he was set down.
         constexpr MCOrderOrigin SecondOrders = MCOrderOrigin::Player;
         const auto Second = [&](const std::shared_ptr<MCMover>& enemy)
-        { return brought != nullptr && std::ranges::find(*brought, enemy) != brought->end(); };
+        { return brought && std::ranges::find(brought->get(), enemy) != brought->get().end(); };
         const std::shared_ptr<MCTeam> team = mover->Team.lock();
         const MCVector3D at = mover->GetPosition();
         std::vector<std::pair<float, std::shared_ptr<MCMover>>> named;
@@ -13443,9 +13462,9 @@ namespace
 
             Engage(*enemy, mover, NooseMeters, SecondOrders);
 
-            if (brought != nullptr)
+            if (brought)
             {
-                brought->push_back(enemy);
+                brought->get().push_back(enemy);
             }
 
             std::cout << std::format(
@@ -13601,7 +13620,7 @@ namespace
     /// </summary>
     int32_t FireAt(const std::shared_ptr<MCMover>& victim, int32_t readyNearest, MCReadiedAt& readiedAt, float rest,
                    const std::set<int32_t>& skip = {}, std::optional<MCComponentForm> form = std::nullopt,
-                   std::vector<std::string>* names = nullptr)
+                   MCOptionalRef<std::vector<std::string>> names = std::nullopt)
     {
         const std::shared_ptr<MCTeam> team = victim->Team.lock();
         const MCVector3D at = victim->GetPosition();
@@ -13653,9 +13672,10 @@ namespace
                 {
                     ++fired;
 
-                    if (names != nullptr)
+                    if (names)
                     {
-                        names->push_back(MasterComponentList[shooter->Inventory[shooter->NumOther + i].MasterID].Name);
+                        names->get().push_back(
+                            MasterComponentList[shooter->Inventory[shooter->NumOther + i].MasterID].Name);
                     }
                 }
             }
@@ -14725,12 +14745,12 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
 
         std::vector<std::string> names;
         int32_t fired =
-            FireAt(victim, volley ? ReadiedShooters : 0, readiedAt, ShooterRestSeconds, skip, std::nullopt, &names);
+            FireAt(victim, volley ? ReadiedShooters : 0, readiedAt, ShooterRestSeconds, skip, std::nullopt, names);
 
         // None that has rested reaches it: those that do, readied again sooner (their weapons still nearly recycled).
         if (volley && fired == 0)
         {
-            fired = FireAt(victim, ReadiedShooters, readiedAt, 0.0f, skip, std::nullopt, &names);
+            fired = FireAt(victim, ReadiedShooters, readiedAt, 0.0f, skip, std::nullopt, names);
         }
 
         if (volley)
@@ -14988,40 +15008,43 @@ TEST_CASE_ISOLATED("tool: --showcase records a mission's battle, picture and sou
         }
 
         // The last --showcase-close's mech, those named closing in on it (on the camera's once it falls).
-        const MCShowcaseEvent* close = nullptr;
+        MCOptionalRef<const MCShowcaseEvent> close;
 
         for (const MCShowcaseEvent& event : closes)
         {
-            close = event.Frame <= frame ? &event : close;
+            if (event.Frame <= frame)
+            {
+                close = event;
+            }
         }
 
-        std::shared_ptr<MCMover> closeOn = close != nullptr ? ForceMech(close->Mech) : nullptr;
+        std::shared_ptr<MCMover> closeOn = close.has_value() ? ForceMech(close->get().Mech) : nullptr;
         closeOn = closeOn != nullptr && closeOn->IsDisabled() == 0 ? closeOn : followed;
         const bool closing =
-            close != nullptr && closeNames.has_value() && closeOn != nullptr && closeOn->IsDisabled() == 0;
+            close.has_value() && closeNames.has_value() && closeOn != nullptr && closeOn->IsDisabled() == 0;
 
-        if (closing && (frame - close->Frame) % CloseFrames == 0)
+        if (closing && (frame - close->get().Frame) % CloseFrames == 0)
         {
             // Those wearing a mech down stay on it.
             std::set<int32_t> busy = Runners(frame);
             busy.merge(Finishing(frame));
             busy.insert(wearing.begin(), wearing.end());
             // Its what: how many to bring and, after an @, how far behind (meters): n or n@meters.
-            const size_t split = close->What.find('@');
-            const int32_t bring = close->What.empty() ? Brought : std::stoi(close->What.substr(0, split));
+            const size_t split = close->get().What.find('@');
+            const int32_t bring = close->get().What.empty() ? Brought : std::stoi(close->get().What.substr(0, split));
             const float behind =
-                split == std::string::npos ? BehindMeters : std::strtof(close->What.c_str() + split + 1, nullptr);
+                split == std::string::npos ? BehindMeters : std::strtof(close->get().What.c_str() + split + 1, nullptr);
 
-            if (frame == close->Frame && bring > 0)
+            if (frame == close->get().Frame && bring > 0)
             {
                 brought.clear();
                 broughtFrame = frame;
             }
 
-            const int32_t closed = CloseIn(*closeNames, closeOn, frame == close->Frame ? bring : 0, busy, behind,
-                                           &brought, CameraSince(frame) == frame);
+            const int32_t closed = CloseIn(*closeNames, closeOn, frame == close->get().Frame ? bring : 0, busy, behind,
+                                           brought, CameraSince(frame) == frame);
 
-            if (frame == close->Frame)
+            if (frame == close->get().Frame)
             {
                 std::cout << std::format("  frame {}: {} enemies close in on {}, {} of the player's mechs left\n",
                                          frame, closed, closeOn->GetIfaceName(), lance.size());
@@ -18176,13 +18199,13 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
     // Whether a draw copies one of the logistics art pictures named.
     const auto fromArt = [](const MCVulkanRenderer::AuditedDraw& draw, const std::set<std::string>& names)
     {
-        return draw.Command == "Copy" && draw.From != nullptr &&
+        return draw.Command == "Copy" && draw.From.has_value() &&
                std::ranges::any_of(names,
                                    [&](const std::string& name)
                                    {
                                        const std::shared_ptr<MCTexture> art =
                                            LogScreenArt(name)->Bitmap().Texture.lock();
-                                       return art != nullptr && draw.From->Texture.lock() == art;
+                                       return art != nullptr && draw.From->get().Texture.lock() == art;
                                    });
     };
 
@@ -18196,8 +18219,8 @@ TEST_CASE_ISOLATED("game: HD art draws the logistics' composed pictures in place
         CheckSharpKeepsIndices(pack, *renderer,
                                [&](const MCVulkanRenderer::AuditedDraw& draw)
                                {
-                                   pictureCopies += draw.Command == "Copy" && draw.From != nullptr &&
-                                                            draw.From->XMax + 1 == MissionPictureWidth
+                                   pictureCopies += draw.Command == "Copy" && draw.From.has_value() &&
+                                                            draw.From->get().XMax + 1 == MissionPictureWidth
                                                         ? 1
                                                         : 0;
                                    glyphs += draw.Command == "Glyph" && draw.Sharp ? 1 : 0;
@@ -19085,14 +19108,15 @@ TEST_CASE_ISOLATED("tool: --hd-terrain-layout writes how a map lays its ground t
     REQUIRE(MCRenderer::GpuDrawing() == MCGpuDrawing::On);
     RevealAll();
     MCTestGame::RunFrame(FrameSeconds);
-    const MCTerrainMesh* mesh = MCTerrainMeshInUse();
+    const MCOptionalRef<const MCTerrainMesh> inUse = MCTerrainMeshInUse();
     const std::optional<MCTerrainMeshSteps> steps = MCTerrainMeshStepsInUse();
-    REQUIRE(mesh != nullptr);
+    REQUIRE(inUse.has_value());
+    const MCTerrainMesh& mesh = *inUse;
     REQUIRE(steps.has_value());
     const std::filesystem::path folder(*out);
     std::filesystem::create_directories(folder);
-    std::vector<std::string> names(mesh->Tiles.size());
-    std::ranges::transform(mesh->Tiles, names.begin(),
+    std::vector<std::string> names(mesh.Tiles.size());
+    std::ranges::transform(mesh.Tiles, names.begin(),
                            [](const std::vector<uint8_t>& tile) { return MCHdArt::TerrainTileName(tile); });
     std::ofstream layout(folder / std::format("mission_{}.tsv", mission));
     layout << std::format("steps\t{}\t{}\t{}\n", steps->Across, steps->Down, steps->Up);
@@ -19100,21 +19124,21 @@ TEST_CASE_ISOLATED("tool: --hd-terrain-layout writes how a map lays its ground t
     constexpr uint32_t ElevationMask = 0xff;
     size_t cells = 0;
 
-    for (int32_t r = 0; r < mesh->Rows; ++r)
+    for (int32_t r = 0; r < mesh.Rows; ++r)
     {
-        for (int32_t c = 0; c < mesh->Cols; ++c)
+        for (int32_t c = 0; c < mesh.Cols; ++c)
         {
-            const size_t cell = static_cast<size_t>(r) * mesh->Cols + c;
-            const uint32_t tile = mesh->CellTiles[cell];
+            const size_t cell = static_cast<size_t>(r) * mesh.Cols + c;
+            const uint32_t tile = mesh.CellTiles[cell];
 
             if (tile == MCTerrainMesh::NoTile)
             {
                 continue;
             }
 
-            const std::vector<uint8_t>& data = mesh->Tiles[tile];
-            const uint32_t e = mesh->CellElevations[cell];
-            layout << std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", mesh->FirstRow + r, mesh->FirstCol + c,
+            const std::vector<uint8_t>& data = mesh.Tiles[tile];
+            const uint32_t e = mesh.CellElevations[cell];
+            layout << std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", mesh.FirstRow + r, mesh.FirstCol + c,
                                   names[tile], data[0], data[1], e & ElevationMask,
                                   (e >> ElevationBits) & ElevationMask, (e >> (2 * ElevationBits)) & ElevationMask,
                                   e >> (3 * ElevationBits));

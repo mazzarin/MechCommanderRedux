@@ -321,37 +321,37 @@ namespace
         Row{.Label = "PLAY"},
         Row{.Label = "WEATHER",
             .Description = "RAIN OR SNOW HAMPERS THE FIGHT.",
-            .Value = &WeatherValue,
+            .Value = WeatherValue,
             .Choices = WeatherChoices,
             .Changed = WeatherChanged},
         Row{.Label = "TIME OF DAY",
             .Description = "DUSK OR NIGHT: UNITS SEE LESS.",
-            .Value = &TimeValue,
+            .Value = TimeValue,
             .Choices = TimeChoices,
             .Changed = TimeChanged},
         Row{.Label = "BRAKING",
             .Description = "MECHS BRAKE TO A HALT.",
-            .Value = &BrakingValue,
+            .Value = BrakingValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::MechBraking, true>},
         Row{.Label = "ARTILLERY",
             .Description = "COMMANDERS CALL IN STRIKES.",
-            .Value = &ArtilleryValue,
+            .Value = ArtilleryValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoArtillery, false>},
         Row{.Label = "PROBES",
             .Description = "SENSOR PROBES AND CAMERA DRONES.",
-            .Value = &ProbesValue,
+            .Value = ProbesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoProbes, false>},
         Row{.Label = "SENSORS",
             .Description = "UNITS SPOT FOES PAST SIGHT.",
-            .Value = &SensorsValue,
+            .Value = SensorsValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoSensors, false>},
         Row{.Label = "MINES",
             .Description = "MINEFIELDS, AND MINE LAYERS.",
-            .Value = &MinesValue,
+            .Value = MinesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoMines, false>},
     };
@@ -367,10 +367,17 @@ namespace
                                      RuleRow{3, MCMatchRule::MechBraking},  RuleRow{4, MCMatchRule::NoArtillery},
                                      RuleRow{5, MCMatchRule::NoProbes},     RuleRow{6, MCMatchRule::NoSensors},
                                      RuleRow{7, MCMatchRule::NoMines}};
-    static_assert(Rows[RuleRows[0].Row].Value == &WeatherValue && Rows[RuleRows[1].Row].Value == &TimeValue &&
-                  Rows[RuleRows[2].Row].Value == &BrakingValue && Rows[RuleRows[3].Row].Value == &ArtilleryValue &&
-                  Rows[RuleRows[4].Row].Value == &ProbesValue && Rows[RuleRows[5].Row].Value == &SensorsValue &&
-                  Rows[RuleRows[6].Row].Value == &MinesValue);
+
+    /// <summary>Whether <paramref name="row"/> edits <paramref name="value"/>.</summary>
+    constexpr bool Edits(const Row& row, const int& value)
+    {
+        return row.Value.has_value() && std::addressof(row.Value->get()) == std::addressof(value);
+    }
+
+    static_assert(Edits(Rows[RuleRows[0].Row], WeatherValue) && Edits(Rows[RuleRows[1].Row], TimeValue) &&
+                  Edits(Rows[RuleRows[2].Row], BrakingValue) && Edits(Rows[RuleRows[3].Row], ArtilleryValue) &&
+                  Edits(Rows[RuleRows[4].Row], ProbesValue) && Edits(Rows[RuleRows[5].Row], SensorsValue) &&
+                  Edits(Rows[RuleRows[6].Row], MinesValue));
 }
 
 auto MakeMatchTabs(MCSessionTab front) -> std::shared_ptr<MCLogPort>

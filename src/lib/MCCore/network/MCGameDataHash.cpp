@@ -329,9 +329,9 @@ namespace
         MCDataFiles files;
         const auto all = [](std::string_view) { return true; };
 
-        for (const std::string* folder : {&ObjectPath, &WarriorPath, &ProfilePath})
+        for (const std::string& folder : {std::cref(ObjectPath), std::cref(WarriorPath), std::cref(ProfilePath)})
         {
-            for (const std::string& path : FolderFiles(*folder, all))
+            for (const std::string& path : FolderFiles(folder, all))
             {
                 files.Add(path);
             }

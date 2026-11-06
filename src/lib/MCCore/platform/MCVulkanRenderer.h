@@ -105,7 +105,8 @@ public:
     /// its corner to the shown view's far corner (<paramref name="right"/>, <paramref name="bottom"/>, exclusive: a
     /// 640x480 screen draws only that much of the screen); scales of 1 (or no screen) draw it at its window's size.
     /// </summary>
-    void SetScreenScale(const MCWindow* screen, float scaleX, float scaleY, int32_t right, int32_t bottom);
+    void SetScreenScale(MCOptionalRef<const MCWindow> screen, float scaleX, float scaleY, int32_t right,
+                        int32_t bottom);
 
     /// <summary>
     /// Runs the commands recorded since the last call on <paramref name="commands"/>: uploads what they read, then
@@ -243,7 +244,7 @@ public:
     {
         std::string_view Command;
         /// <summary>The window drawn on, and whether its surface is drawn at more pixels than the window has.</summary>
-        const MCWindow* Window = nullptr;
+        std::reference_wrapper<const MCWindow> Window;
         bool Scaled = false;
         /// <summary>
         /// The data it drew (a shape table, a tile, a font...; to the end of its registered block) and the frame, or the
@@ -251,7 +252,7 @@ public:
         /// </summary>
         std::span<const uint8_t> Data;
         int32_t Frame = -1;
-        const MCWindow* From = nullptr;
+        MCOptionalRef<const MCWindow> From;
         /// <summary>The window pixels its draws covered.</summary>
         int64_t Pixels = 0;
         bool Sharp = false;
@@ -1198,7 +1199,8 @@ private:
     {
     public:
         AuditScope(MCVulkanRenderer& renderer, std::string_view command, const MCWindow& target,
-                   std::span<const uint8_t> data = {}, int32_t frame = -1, const MCWindow* from = nullptr);
+                   std::span<const uint8_t> data = {}, int32_t frame = -1,
+                   MCOptionalRef<const MCWindow> from = std::nullopt);
         ~AuditScope();
         AuditScope(const AuditScope&) = delete;
         AuditScope& operator=(const AuditScope&) = delete;
@@ -1233,10 +1235,10 @@ private:
 
     /// <summary>
     /// Port-only: the picture redrawn sharp kept by <paramref name="key"/> (<see cref="AddSharpPicture"/>'s), made by
-    /// <paramref name="redraw"/> the first time; null when it can't be put on the GPU.
+    /// <paramref name="redraw"/> the first time; none when it can't be put on the GPU.
     /// </summary>
-    Picture* SharpPicture(uint64_t key, const std::function<std::vector<uint8_t>()>& redraw, int32_t columns,
-                          int32_t rows);
+    MCOptionalRef<Picture> SharpPicture(uint64_t key, const std::function<std::vector<uint8_t>()>& redraw,
+                                        int32_t columns, int32_t rows);
     /// <summary>
     /// Port-only: draws <paramref name="picture"/>, redrawn sharp, over <paramref name="at"/>, read from
     /// <paramref name="from"/>, in the colours table row <paramref name="tableRow"/> gives its bytes, with

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "logistics/MCLogScrollList.h"
 
 #include <span>
@@ -43,7 +44,7 @@ public:
         /// <summary>The PREFS key of the setting it edits (<see cref="MCHdSettings::Find"/>).</summary>
         std::string_view Key;
         /// <summary>Port: the value it edits instead, with no PREFS key (none: the key's).</summary>
-        int* Value = nullptr;
+        MCOptionalRef<int> Value;
         /// <summary>Its choices, in the order a click steps through them.</summary>
         std::span<const Choice> Choices;
         /// <summary>Port: only the GPU renderer draws it (it shows nothing while the CPU draws the game).</summary>
@@ -63,7 +64,7 @@ public:
         /// </summary>
         void (*Place)(std::optional<std::pair<int32_t, int32_t>> centre) = nullptr;
 
-        bool IsHeading() const { return Key.empty() && Value == nullptr && Place == nullptr; }
+        bool IsHeading() const { return Key.empty() && !Value && Place == nullptr; }
     };
 
     /// <summary>The height of a row: a line for the name and one for what it does.</summary>

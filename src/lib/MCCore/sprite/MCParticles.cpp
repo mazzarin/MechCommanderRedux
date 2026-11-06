@@ -415,7 +415,7 @@ namespace
     /// <summary>A unit drawn this frame: which, where and how wide.</summary>
     struct PendingMover
     {
-        const void* Unit = nullptr;
+        MCAddressKey Unit;
         float X = 0.0f;
         float Y = 0.0f;
         float Z = 0.0f;
@@ -567,10 +567,10 @@ namespace
     };
 
     /// <summary>A shape table, by its place and length.</summary>
-    using TableKey = std::pair<const uint8_t*, size_t>;
+    using TableKey = std::pair<MCAddressKey, size_t>;
 
     /// <summary>A shape table's frame, by the table's place and length and the frame's number.</summary>
-    using FrameKey = std::tuple<const uint8_t*, size_t, int32_t>;
+    using FrameKey = std::tuple<MCAddressKey, size_t, int32_t>;
 
     /// <summary>A frame's fire's outline (MCSceneLights::FrameOutline's), and its middle (the mean of its pixels).</summary>
     struct Outline
@@ -586,7 +586,8 @@ namespace
         float X = 0.0f;
         float Y = 0.0f;
         float Z = 0.0f;
-        const Outline* Edge = nullptr;
+        /// <summary>Its frame's outline: its key in State::Outlines.</summary>
+        FrameKey Frame{};
         uint16_t Ramp = 0;
     };
 
@@ -605,7 +606,7 @@ namespace
         std::vector<PendingFire> Fires;
         std::vector<PendingMover> Movers;
         std::vector<PendingStep> Steps;
-        std::unordered_map<const void*, Track> Tracks;
+        std::unordered_map<MCAddressKey, Track> Tracks;
         std::vector<Shake> Shakes;
         std::map<TableKey, BurstLook> Looks;
         /// <summary>The fires' colours flecks are drawn in, brightest first (index 0 is FallbackFire, kept apart).</summary>
@@ -784,7 +785,7 @@ namespace
         }
 
         const std::span<const uint8_t> table = shape->FrameList();
-        const auto [found, isNew] = state.Looks.try_emplace(TableKey{table.data(), table.size()});
+        const auto [found, isNew] = state.Looks.try_emplace(TableKey{MCAddressKey::OfData(table), table.size()});
 
         if (!isNew)
         {
@@ -847,21 +848,22 @@ namespace
                                                       : std::span<const FleckColor>(state.Ramps[ramp - 1]);
     }
 
-    /// <summary>A particle at (x, y, z), made when there's room; null otherwise.</summary>
-    Particle* Make(State& state, MCParticleKind kind, float x, float y, float z)
+    /// <summary>Whether there's room for another particle (MCParticles::MaxParticles).</summary>
+    bool Room(const State& state)
     {
-        if (state.Particles.size() + state.Made.size() >= MCParticles::MaxParticles)
-        {
-            return nullptr;
-        }
+        return state.Particles.size() + state.Made.size() < MCParticles::MaxParticles;
+    }
 
+    /// <summary>A particle at (x, y, z), when there's <see cref="Room"/>.</summary>
+    Particle& Make(State& state, MCParticleKind kind, float x, float y, float z)
+    {
         Particle& made = state.Made.emplace_back();
         made.Kind = kind;
         made.X = x;
         made.Y = y;
         made.Z = z;
         made.Ground = GroundUnder(x, y);
-        return &made;
+        return made;
     }
 
     /// <summary>A unit direction with at least <paramref name="minUp"/> of it up, its way round at random.</summary>
@@ -911,14 +913,14 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* fleck = Make(state, MCParticleKind::Fleck, at.X + dice.Between(-spread, spread) / perUnit,
-                                   at.Y + dice.Between(-spread, spread) / perUnit,
-                                   at.Z + dice.Between(offGround ? 0.0f : -spread, spread));
-
-            if (fleck == nullptr)
+            if (!Room(state))
             {
                 return;
             }
+
+            Particle& fleck = Make(state, MCParticleKind::Fleck, at.X + dice.Between(-spread, spread) / perUnit,
+                                   at.Y + dice.Between(-spread, spread) / perUnit,
+                                   at.Z + dice.Between(offGround ? 0.0f : -spread, spread));
 
             const MCVector3D own = Upward(dice, minUp);
             const float wayX = own.X + lean.X * FallingLean;
@@ -926,13 +928,13 @@ namespace
             const float wayZ = own.Z + lean.Z * FallingLean;
             const float length = std::max(std::hypot(wayX, wayY, wayZ), 1e-3f);
             const float thrown = dice.Unit();
-            Launch(*fleck, MCVector3D(wayX / length, wayY / length, wayZ / length),
+            Launch(fleck, MCVector3D(wayX / length, wayY / length, wayZ / length),
                    (FallingSpeedLow + (FallingSpeedHigh - FallingSpeedLow) * thrown * thrown) * faster, 0.0f);
-            fleck->Age = -dice.Between(0.0f, FallingStagger);
-            fleck->Life = dice.Between(FallingLifeLow, FallingLifeHigh);
-            fleck->Size = dice.Between(FallingRadiusLow, FallingRadiusHigh);
-            fleck->Drag = FallingDrag;
-            fleck->Ramp = at.Ramp;
+            fleck.Age = -dice.Between(0.0f, FallingStagger);
+            fleck.Life = dice.Between(FallingLifeLow, FallingLifeHigh);
+            fleck.Size = dice.Between(FallingRadiusLow, FallingRadiusHigh);
+            fleck.Drag = FallingDrag;
+            fleck.Ramp = at.Ramp;
 
             // Its first colour: one of the fire's, as often as its pixels have it.
             auto pick = static_cast<int32_t>(dice.Unit() * static_cast<float>(pixels));
@@ -944,7 +946,7 @@ namespace
                 ++shade;
             }
 
-            fleck->Shade = static_cast<uint8_t>(std::min<size_t>(shade, std::numeric_limits<uint8_t>::max()));
+            fleck.Shade = static_cast<uint8_t>(std::min<size_t>(shade, std::numeric_limits<uint8_t>::max()));
         }
     }
 
@@ -976,13 +978,14 @@ namespace
     /// </summary>
     void Break(State& state, const PendingEdge& at, float step)
     {
-        const Outline& edge = *at.Edge;
+        const auto outline = state.Outlines.find(at.Frame);
 
-        if (edge.Pixels.empty())
+        if (outline == state.Outlines.end() || outline->second.Pixels.empty())
         {
             return;
         }
 
+        const Outline& edge = outline->second;
         MCDice& dice = state.Dice;
         const float across = UnitsPerPixelAcross();
         const std::span<const FleckColor> ramp = RampOf(state, at.Ramp);
@@ -996,29 +999,30 @@ namespace
             const MCSceneLights::MCGlowPixel& pixel = edge.Pixels[picked];
             const auto pixelX = static_cast<float>(pixel.X);
             const auto pixelY = static_cast<float>(pixel.Y);
-            Particle* fleck =
-                Make(state, MCParticleKind::Fleck, at.X + pixelX * across, at.Y + pixelX * across, at.Z - pixelY);
 
-            if (fleck == nullptr)
+            if (!Room(state))
             {
                 return;
             }
 
-            fleck->Z = std::max(fleck->Z, fleck->Ground);
+            Particle& fleck =
+                Make(state, MCParticleKind::Fleck, at.X + pixelX * across, at.Y + pixelX * across, at.Z - pixelY);
+
+            fleck.Z = std::max(fleck.Z, fleck.Ground);
             // Out from the fire's middle: across the screen along both axes, up it as height.
             const float outX = pixelX - edge.MiddleX;
             const float outY = pixelY - edge.MiddleY;
             const float length = std::max(std::hypot(outX, outY), 1e-3f);
             const float speed = dice.Between(EdgeSpeedLow, EdgeSpeedHigh);
-            fleck->VX = outX / length * speed * across;
-            fleck->VY = fleck->VX;
-            fleck->VZ = -outY / length * speed;
-            fleck->Life = dice.Between(EdgeLifeLow, EdgeLifeHigh);
-            fleck->Size = dice.Between(EdgeRadiusLow, EdgeRadiusHigh);
-            fleck->Drag = EdgeDrag;
-            fleck->Weight = EdgeWeight;
-            fleck->Ramp = at.Ramp;
-            fleck->Shade = NearestShade(ramp, pixel.Color);
+            fleck.VX = outX / length * speed * across;
+            fleck.VY = fleck.VX;
+            fleck.VZ = -outY / length * speed;
+            fleck.Life = dice.Between(EdgeLifeLow, EdgeLifeHigh);
+            fleck.Size = dice.Between(EdgeRadiusLow, EdgeRadiusHigh);
+            fleck.Drag = EdgeDrag;
+            fleck.Weight = EdgeWeight;
+            fleck.Ramp = at.Ramp;
+            fleck.Shade = NearestShade(ramp, pixel.Color);
         }
     }
 
@@ -1030,22 +1034,22 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* ember = Make(state, MCParticleKind::Ember, x + dice.Between(-spread, spread) / perUnit,
-                                   y + dice.Between(-spread, spread) / perUnit, z + dice.Between(-spread, spread));
-
-            if (ember == nullptr)
+            if (!Room(state))
             {
                 return;
             }
 
-            ember->Life = dice.Between(EmberLifeLow, EmberLifeHigh);
-            ember->Size = dice.Between(EmberRadiusLow, EmberRadiusHigh);
-            ember->Rise = dice.Between(EmberRiseLow, EmberRiseHigh);
-            ember->VZ = ember->Rise;
-            ember->Drift = EmberDrift;
-            ember->Drag = EmberDrag;
-            ember->Turn = dice.Between(0.0f, TwoPi);
-            ember->Spin = dice.Between(EmberFlickerLow, EmberFlickerHigh);
+            Particle& ember = Make(state, MCParticleKind::Ember, x + dice.Between(-spread, spread) / perUnit,
+                                   y + dice.Between(-spread, spread) / perUnit, z + dice.Between(-spread, spread));
+
+            ember.Life = dice.Between(EmberLifeLow, EmberLifeHigh);
+            ember.Size = dice.Between(EmberRadiusLow, EmberRadiusHigh);
+            ember.Rise = dice.Between(EmberRiseLow, EmberRiseHigh);
+            ember.VZ = ember.Rise;
+            ember.Drift = EmberDrift;
+            ember.Drag = EmberDrag;
+            ember.Turn = dice.Between(0.0f, TwoPi);
+            ember.Spin = dice.Between(EmberFlickerLow, EmberFlickerHigh);
         }
     }
 
@@ -1057,26 +1061,26 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* puff = Make(state, MCParticleKind::Smoke, x + dice.Between(-spread, spread) / perUnit,
-                                  y + dice.Between(-spread, spread) / perUnit, z + dice.Between(0.0f, spread));
-
-            if (puff == nullptr)
+            if (!Room(state))
             {
                 return;
             }
 
+            Particle& puff = Make(state, MCParticleKind::Smoke, x + dice.Between(-spread, spread) / perUnit,
+                                  y + dice.Between(-spread, spread) / perUnit, z + dice.Between(0.0f, spread));
+
             const float grey = dice.Around(look.Grey);
-            puff->Red = grey * (1.0f + look.Warmth);
-            puff->Green = grey;
-            puff->Blue = grey * (1.0f - look.Warmth);
-            puff->Alpha = dice.Around(look.Alpha);
-            puff->Size = dice.Around(look.Radius);
-            puff->Grow = dice.Around(look.Grow);
-            puff->Life = dice.Between(look.LifeLow, look.LifeHigh);
-            puff->Rise = dice.Around(look.Rise);
-            puff->VZ = puff->Rise;
-            puff->Drift = SmokeDrift;
-            puff->Drag = SmokeDrag;
+            puff.Red = grey * (1.0f + look.Warmth);
+            puff.Green = grey;
+            puff.Blue = grey * (1.0f - look.Warmth);
+            puff.Alpha = dice.Around(look.Alpha);
+            puff.Size = dice.Around(look.Radius);
+            puff.Grow = dice.Around(look.Grow);
+            puff.Life = dice.Between(look.LifeLow, look.LifeHigh);
+            puff.Rise = dice.Around(look.Rise);
+            puff.VZ = puff.Rise;
+            puff.Drift = SmokeDrift;
+            puff.Drag = SmokeDrag;
         }
     }
 
@@ -1087,25 +1091,25 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* chunk = Make(state, MCParticleKind::Debris, at.X, at.Y, at.Z);
-
-            if (chunk == nullptr)
+            if (!Room(state))
             {
                 return;
             }
 
-            Launch(*chunk, Upward(dice, DebrisMinUp), dice.Between(look.SpeedLow, look.SpeedHigh), 0.0f);
+            Particle& chunk = Make(state, MCParticleKind::Debris, at.X, at.Y, at.Z);
+
+            Launch(chunk, Upward(dice, DebrisMinUp), dice.Between(look.SpeedLow, look.SpeedHigh), 0.0f);
             const float shade = dice.Around(1.0f);
-            chunk->Red = look.Red * shade;
-            chunk->Green = look.Green * shade;
-            chunk->Blue = look.Blue * shade;
-            chunk->Size = dice.Between(look.SizeLow, look.SizeHigh);
-            chunk->Life = dice.Between(look.LifeLow, look.LifeHigh);
-            chunk->Drag = DebrisDrag;
-            chunk->Turn = dice.Between(0.0f, TwoPi);
-            chunk->Spin = dice.Between(-DebrisSpin, DebrisSpin);
-            chunk->Hot = dice.Unit() < look.HotShare;
-            chunk->Trail = dice.Unit() < look.TrailShare ? 0.0f : -1.0f;
+            chunk.Red = look.Red * shade;
+            chunk.Green = look.Green * shade;
+            chunk.Blue = look.Blue * shade;
+            chunk.Size = dice.Between(look.SizeLow, look.SizeHigh);
+            chunk.Life = dice.Between(look.LifeLow, look.LifeHigh);
+            chunk.Drag = DebrisDrag;
+            chunk.Turn = dice.Between(0.0f, TwoPi);
+            chunk.Spin = dice.Between(-DebrisSpin, DebrisSpin);
+            chunk.Hot = dice.Unit() < look.HotShare;
+            chunk.Trail = dice.Unit() < look.TrailShare ? 0.0f : -1.0f;
         }
     }
 
@@ -1115,19 +1119,18 @@ namespace
     /// </summary>
     void Ripple(State& state, float x, float y, float from, float to, float life, float alpha, float delay)
     {
-        Particle* ring = Make(state, MCParticleKind::Ripple, x, y, GroundUnder(x, y));
-
-        if (ring != nullptr)
+        if (Room(state))
         {
-            ring->Size = from;
-            ring->Grow = to;
-            ring->Life = life;
-            ring->Alpha = alpha;
-            ring->Age = -delay;
-            ring->Red = SprayRed;
-            ring->Green = SprayGreen;
-            ring->Blue = SprayBlue;
-            ring->Resting = true;
+            Particle& ring = Make(state, MCParticleKind::Ripple, x, y, GroundUnder(x, y));
+            ring.Size = from;
+            ring.Grow = to;
+            ring.Life = life;
+            ring.Alpha = alpha;
+            ring.Age = -delay;
+            ring.Red = SprayRed;
+            ring.Green = SprayGreen;
+            ring.Blue = SprayBlue;
+            ring.Resting = true;
         }
     }
 
@@ -1141,24 +1144,24 @@ namespace
 
         for (int32_t i = 0; i < count; ++i)
         {
-            Particle* drop = Make(state, MCParticleKind::Droplet, x, y, z);
-
-            if (drop == nullptr)
+            if (!Room(state))
             {
                 return;
             }
 
+            Particle& drop = Make(state, MCParticleKind::Droplet, x, y, z);
+
             const float around = dice.Between(0.0f, TwoPi);
             const float speed = dice.Between(DropletOutLow, DropletOutHigh) * out;
-            drop->VX = std::cos(around) * speed / perUnit;
-            drop->VY = std::sin(around) * speed / perUnit;
-            drop->VZ = dice.Between(DropletUpLow, DropletUpHigh) * up;
-            drop->Life = DropletLife;
-            drop->Size = dice.Between(DropletRadiusLow, DropletRadiusHigh);
-            drop->Red = SprayRed;
-            drop->Green = SprayGreen;
-            drop->Blue = SprayBlue;
-            drop->Alpha = DropletAlpha;
+            drop.VX = std::cos(around) * speed / perUnit;
+            drop.VY = std::sin(around) * speed / perUnit;
+            drop.VZ = dice.Between(DropletUpLow, DropletUpHigh) * up;
+            drop.Life = DropletLife;
+            drop.Size = dice.Between(DropletRadiusLow, DropletRadiusHigh);
+            drop.Red = SprayRed;
+            drop.Green = SprayGreen;
+            drop.Blue = SprayBlue;
+            drop.Alpha = DropletAlpha;
         }
     }
 
@@ -1776,7 +1779,7 @@ auto MCParticles::AddExplosionFrame(const MCVfxAppearance& appearance, const MCV
     }
 
     const auto [found, isNew] =
-        state.Outlines.try_emplace(FrameKey{drawn->Table.data(), drawn->Table.size(), drawn->Frame});
+        state.Outlines.try_emplace(FrameKey{MCAddressKey::OfData(drawn->Table), drawn->Table.size(), drawn->Frame});
     Outline& edge = found->second;
 
     if (isNew)
@@ -1794,7 +1797,7 @@ auto MCParticles::AddExplosionFrame(const MCVfxAppearance& appearance, const MCV
         edge.MiddleY /= pixels;
     }
 
-    state.Edges.push_back({position.X, position.Y, position.Z, &edge, LookOf(state, appearance).Ramp});
+    state.Edges.push_back({position.X, position.Y, position.Z, found->first, LookOf(state, appearance).Ramp});
 }
 
 auto MCParticles::AddBurst(const MCVector3D& position, MCBurstSize size, bool shakes) -> void
@@ -1819,7 +1822,7 @@ auto MCParticles::AddFire(const MCVfxAppearance& flame, const MCVector3D& positi
     }
 }
 
-auto MCParticles::AddMover(const void* unit, const MCVector3D& position, float halfWidth) -> void
+auto MCParticles::AddMover(MCAddressKey unit, const MCVector3D& position, float halfWidth) -> void
 {
     if (GHdParticles != 0)
     {

@@ -231,8 +231,8 @@ namespace
     /// </summary>
     MCInbox& Inbox()
     {
-        static auto* const inbox = new MCInbox;
-        return *inbox;
+        static MCInbox& inbox = *new MCInbox;
+        return inbox;
     }
 
     std::unique_ptr<MCBackend> Backend;
@@ -251,7 +251,7 @@ namespace
     float FrameWeather = 1.0f;
     /// <summary>The black box: in the backend's mapped file, or here without one.</summary>
     MCBlackBox MemoryBox{};
-    MCBlackBox* Box = &MemoryBox;
+    std::reference_wrapper<MCBlackBox> Box = MemoryBox;
 
     /// <summary>
     /// <paramref name="text"/> as a JSON string of ASCII, cut at <see cref="MaxTextLength"/> (other bytes are '?', so a
@@ -573,7 +573,7 @@ namespace
     void Tick()
     {
         Pump();
-        Box->Frames++;
+        Box.get().Frames++;
     }
 
     /// <summary>The computer, as a report holds it.</summary>
@@ -630,7 +630,7 @@ namespace
         {
             if (!setting.Player)
             {
-                settings.Integer(setting.Key, *setting.Value);
+                settings.Integer(setting.Key, setting.Value.get());
             }
         }
 
@@ -841,9 +841,9 @@ namespace
 
         if (kind == MCEventKind::MessageIn || kind == MCEventKind::MessageOut)
         {
-            for (uint32_t back = 1; back <= std::min(CoalesceEvents, Box->Written); back++)
+            for (uint32_t back = 1; back <= std::min(CoalesceEvents, Box.get().Written); back++)
             {
-                MCBlackBoxEvent& event = Box->Events[(Box->Written - back) % BlackBoxEvents];
+                MCBlackBoxEvent& event = Box.get().Events[(Box.get().Written - back) % BlackBoxEvents];
 
                 if (event.Kind == kind && event.Value == value)
                 {
@@ -855,13 +855,13 @@ namespace
             }
         }
 
-        Box->Events[Box->Written % BlackBoxEvents] = {milliseconds, kind, value, 1, addedBytes};
-        Box->Written++;
+        Box.get().Events[Box.get().Written % BlackBoxEvents] = {milliseconds, kind, value, 1, addedBytes};
+        Box.get().Written++;
     }
 
     void SetPhase(MCPhase phase)
     {
-        Box->Phase = phase;
+        Box.get().Phase = phase;
         Record(MCEventKind::Phase, static_cast<uint16_t>(phase));
     }
 
@@ -884,15 +884,15 @@ namespace
             }
 
             // The mapping is page-aligned plain memory: the box is written in place (its layout is trivially copyable).
-            Box = reinterpret_cast<MCBlackBox*>(mapped.data());
+            Box = *reinterpret_cast<MCBlackBox*>(mapped.data());
         }
 
-        *Box = {};
-        Box->Magic = BlackBoxMagic;
-        Box->Layout = BlackBoxLayout;
-        Box->Running = 1;
-        Box->Started = Backend->Now();
-        SetField(Box->App, Machine.AppVersion);
+        Box.get() = {};
+        Box.get().Magic = BlackBoxMagic;
+        Box.get().Layout = BlackBoxLayout;
+        Box.get().Running = 1;
+        Box.get().Started = Backend->Now();
+        SetField(Box.get().App, Machine.AppVersion);
         RunStart = Clock::now();
         SetPhase(MCPhase::Menus);
         return last;
@@ -941,7 +941,7 @@ namespace
 auto MCTelemetry::SetBackend(std::unique_ptr<MCBackend> backend) -> void
 {
     // The box leaves the old backend's mapping before the backend (and its mapping) goes.
-    Box = &MemoryBox;
+    Box = MemoryBox;
     MemoryBox = {};
     Backend = std::move(backend);
     Generation++;
@@ -994,7 +994,7 @@ auto MCTelemetry::Start() -> void
 
 auto MCTelemetry::Quit() -> void
 {
-    Box->Running = 0;
+    Box.get().Running = 0;
 }
 
 auto MCTelemetry::Prompt() -> MCPrompt
@@ -1084,7 +1084,7 @@ auto MCTelemetry::Frame(double milliseconds) -> void
     }
 
     tally.WorstMilliseconds = std::max(tally.WorstMilliseconds, milliseconds);
-    Box->PlaySeconds = static_cast<float>(tally.Seconds);
+    Box.get().PlaySeconds = static_cast<float>(tally.Seconds);
     Play.SincePower += milliseconds / MillisecondsPerSecond;
 
     if (Play.SincePower >= PowerSeconds)
@@ -1106,11 +1106,11 @@ auto MCTelemetry::PlayLoading(std::string_view mission, bool match) -> void
     Play.Match = match;
     Play.Mission = mission;
     Play.LoadStart = Clock::now();
-    SetField(Box->Mission, mission);
-    Box->Players = 0;
-    Box->Server = 0;
-    Box->PlayersLost = 0;
-    Box->PlaySeconds = 0.0f;
+    SetField(Box.get().Mission, mission);
+    Box.get().Players = 0;
+    Box.get().Server = 0;
+    Box.get().PlayersLost = 0;
+    Box.get().PlaySeconds = 0.0f;
     SetPhase(MCPhase::Loading);
 }
 
@@ -1129,8 +1129,8 @@ auto MCTelemetry::PlayStarted(int32_t players, bool server) -> void
     Play.Tally.LoadSeconds = std::chrono::duration<double>(Clock::now() - Play.LoadStart).count();
     // The frame the load took isn't play: the next frame measures from the next.
     LastFrame.reset();
-    Box->Players = static_cast<uint8_t>(std::clamp(players, 0, static_cast<int32_t>(UINT8_MAX)));
-    Box->Server = server ? 1 : 0;
+    Box.get().Players = static_cast<uint8_t>(std::clamp(players, 0, static_cast<int32_t>(UINT8_MAX)));
+    Box.get().Server = server ? 1 : 0;
     SetPhase(Play.Match ? MCPhase::Match : MCPhase::Mission);
 }
 
@@ -1177,7 +1177,7 @@ auto MCTelemetry::PlayerLost() -> void
         Play.PlayersLost++;
     }
 
-    Box->PlayersLost = static_cast<uint8_t>(std::min<int32_t>(Box->PlayersLost + 1, UINT8_MAX));
+    Box.get().PlayersLost = static_cast<uint8_t>(std::min<int32_t>(Box.get().PlayersLost + 1, UINT8_MAX));
     Record(MCEventKind::PlayerLost, 0);
 }
 

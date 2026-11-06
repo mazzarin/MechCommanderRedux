@@ -138,11 +138,11 @@ auto MCSpriteManager::Create(std::string_view spriteFileName, bool use90PixelPar
     manager->_MechShadows = LoadMechShadows();
 
     // Port-only: with HD art on, the shadows' edges are drawn smooth at the output's resolution.
-    std::vector<const uint8_t*> shadowTables;
+    std::vector<MCAddressKey> shadowTables;
 
     for (const MCRegisteredBlock& shadow : manager->_MechShadows)
     {
-        shadowTables.push_back(shadow.Bytes().data());
+        shadowTables.push_back(MCAddressKey::OfData(shadow.Bytes()));
     }
 
     MCHdArt::SetSmoothEdgeTables(shadowTables);

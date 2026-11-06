@@ -569,7 +569,7 @@ namespace
     /// </summary>
     void FindUnits(std::span<MCSceneLight> lights, std::span<const State::Caster> casters, float aspect)
     {
-        std::vector<std::pair<float, const State::Caster*>> inWay;
+        std::vector<std::pair<float, std::reference_wrapper<const State::Caster>>> inWay;
 
         for (MCSceneLight& light : lights)
         {
@@ -597,17 +597,17 @@ namespace
                 if (std::hypot(dx, dy) > caster.HalfWidth && along > caster.HalfWidth && along < light.Reach &&
                     across <= along * spread + caster.HalfWidth * CasterBody)
                 {
-                    inWay.emplace_back(along, &caster);
+                    inWay.emplace_back(along, caster);
                 }
             }
 
             const size_t taken = std::min(inWay.size(), light.Units.size());
             std::ranges::partial_sort(inWay, inWay.begin() + static_cast<std::ptrdiff_t>(taken), {},
-                                      &std::pair<float, const State::Caster*>::first);
+                                      &std::pair<float, std::reference_wrapper<const State::Caster>>::first);
 
             for (size_t k = 0; k < taken; ++k)
             {
-                const State::Caster& caster = *inWay[k].second;
+                const State::Caster& caster = inWay[k].second;
                 light.Units[k] = {caster.X, caster.Y, caster.HalfWidth * UnitBoxWider, caster.Height * UnitBoxTaller};
             }
         }
@@ -1215,31 +1215,32 @@ auto MCSceneLights::AddShadows() -> void
     }
 
     std::vector<MCShadowCommand> shadows;
-    std::vector<std::pair<const MCSceneLight*, Reaching>> reaching;
+    std::vector<std::pair<std::reference_wrapper<const MCSceneLight>, Reaching>> reaching;
 
     for (const State::Caster& caster : state.Casters)
     {
         reaching.clear();
         float total = 0.0f;
 
-        for (const std::vector<MCSceneLight>* lights : {&state.Adding, &state.Flashes})
+        for (const std::vector<MCSceneLight>& lights : {std::cref(state.Adding), std::cref(state.Flashes)})
         {
-            for (const MCSceneLight& light : *lights)
+            for (const MCSceneLight& light : lights)
             {
                 const Reaching reaches = LightReaching(light, caster.X, caster.Y, aspect);
                 total += reaches.Light;
-                reaching.emplace_back(&light, reaches);
+                reaching.emplace_back(light, reaches);
             }
         }
 
         const float width = caster.HalfWidth * CasterBody;
 
-        for (const auto& [light, reaches] : reaching)
+        for (const auto& [lit, reaches] : reaching)
         {
+            const MCSceneLight& light = lit;
+
             // None from a faint light, one within the unit's sprite (its own fire, its guns' flashes, its headlight), or a
             // spotlight whose units' shadows are the composite's.
-            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth ||
-                (unitsKnown && IsSpot(*light)))
+            if (reaches.Light < FaintestShadow || reaches.Distance <= caster.HalfWidth || (unitsKnown && IsSpot(light)))
             {
                 continue;
             }
@@ -1248,8 +1249,8 @@ auto MCSceneLights::AddShadows() -> void
             // the unit's height over the light's above that times the light's distance; a lower one, the longest.
             const float longest = ShadowLengthPerHeight * caster.Height;
             const float length =
-                light->Height > caster.Height
-                    ? std::min(reaches.Distance * caster.Height / (light->Height - caster.Height), longest)
+                light.Height > caster.Height
+                    ? std::min(reaches.Distance * caster.Height / (light.Height - caster.Height), longest)
                     : longest;
             const float awayX = (caster.X - reaches.X) / reaches.Distance;
             const float awayY = (caster.Y / aspect - reaches.Y) / reaches.Distance;

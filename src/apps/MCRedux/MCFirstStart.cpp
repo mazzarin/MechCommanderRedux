@@ -87,6 +87,13 @@ namespace
 
             const float scale = DrawingScale * SDL_GetWindowPixelDensity(open->Window);
             SDL_SetRenderScale(open->Renderer, scale, scale);
+
+            // In front of the window the player started it from (the setup's, Explorer's), not behind it.
+            if (!hidden && !SDL_RaiseWindow(open->Window))
+            {
+                SDL_Log("First start: the window can't be brought to the front: %s", SDL_GetError());
+            }
+
             return open;
         }
 

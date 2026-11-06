@@ -1,14 +1,14 @@
-// MCX.EXE's resources (the launcher, port-only): Redux's icon, so the original's shortcuts show it, and the version,
-// the game's (MechCommander.props writes MCVersion.h into the launcher's intermediate folder).
+// MCX.EXE's resources (the launcher, port-only): Redux's icon, so the original's shortcuts show it, and the launcher's
+// own version, not the game's. The launcher is built once and shipped unchanged from release to release
+// (src/installer/windows/launcher), so its bytes, and the trust antivirus programs come to give them, stay the same.
 
 #include <winres.h>
-#include "MCVersion.h"
 
 1 ICON "..\\..\\res\\MCRedux.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION MC_VERSION_COMMAS
-PRODUCTVERSION MC_VERSION_COMMAS
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS VS_FF_DEBUG
@@ -23,13 +23,13 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "Comments", "Starts MechCommander Redux HD in the original's place. Commit " MC_VERSION_COMMIT
+            VALUE "Comments", "Starts MechCommander Redux HD in the original's place."
             VALUE "FileDescription", "MechCommander Redux HD launcher"
-            VALUE "FileVersion", MC_VERSION
+            VALUE "FileVersion", "1.0"
             VALUE "InternalName", "MCX"
             VALUE "OriginalFilename", "MCX.EXE"
             VALUE "ProductName", "MechCommander Redux HD"
-            VALUE "ProductVersion", MC_VERSION_SHOWN
+            VALUE "ProductVersion", "1.0"
         END
     END
     BLOCK "VarFileInfo"

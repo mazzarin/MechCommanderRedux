@@ -1,8 +1,8 @@
 # Port-only (the personal build): builds the game, the editor and the tests on Windows and runs the tests, as
 # checks.yml's build job does for pull requests, on a push of the fork's windows-* branches (or by hand from the Actions
 # tab). HD itself doesn't run it: push HD's commit to windows-HD to check the Windows build. The exes (the launcher
-# MCX.exe and the tests' mc_tests.exe too, for the test laptop's content installs), the setup, the version header and
-# MSBuild's log are kept as the run's artifact.
+# MCX.exe, whose pinned build the setup ships, and the tests' mc_tests.exe too, for the test laptop's content
+# installs), the setup, the version header and MSBuild's log are kept as the run's artifact.
 #
 # A release's setup: the release script (the workspace's tools/release/make_release.py make) runs it by hand with the
 # commit to build and the release's sets' sizes, which the setup shows. That run builds the commit as a release is built
@@ -140,6 +140,13 @@ jobs:
       # reports' backend asks the live reports Worker its region and sends it a report it refuses (nothing kept).
       - name: Test
         run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev
+
+      # The setup ships the launcher pinned in src/installer/windows/launcher, never this build's: fails if the
+      # launcher's sources changed since the pin (printing the pin to make from this run's MCX.exe), and says whether
+      # this build is the pinned file byte for byte.
+      - name: Launcher
+        shell: pwsh
+        run: src\installer\windows\check_launcher.ps1 -Built src\build\bin\x64\Release\MCX.exe
 
       # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
       # built into them. Inno Setup 6 is on the runner's image. A work build's setup has no release's sizes, so it shows

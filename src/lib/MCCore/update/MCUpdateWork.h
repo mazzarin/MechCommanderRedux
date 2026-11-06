@@ -4,7 +4,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <deque>
 #include <expected>
 #include <functional>
 #include <memory>
@@ -120,43 +119,83 @@ namespace MCUpdateWork
     std::string TimeLeftText(std::chrono::seconds left);
 
     /// <summary>
-    /// A download's speed from the network bytes it has had (<see cref="MCProgress::Network"/>), sampled as the screen is
-    /// drawn and smoothed over the last <see cref="SpeedWindow"/>.
+    /// A download's speed and time left from the network bytes it has had (<see cref="MCProgress::Network"/>), for the
+    /// line under the first start's bar. Sampled a second at a time however often the window draws, and smoothed, so
+    /// the transfer's bursts and stalls don't jolt it: the speed is an average that follows the download's over
+    /// <see cref="SpeedSmoothing"/>; the time left counts down a second a second, from a slower average's estimate
+    /// (<see cref="TimeLeftSmoothing"/>), and takes a new estimate only once the speed has truly moved it (past
+    /// <see cref="TimeLeftTolerance"/>).
     /// </summary>
     class MCRate
     {
     public:
         using MCClock = std::chrono::steady_clock;
 
-        /// <summary>How far back the speed looks.</summary>
-        static constexpr std::chrono::seconds SpeedWindow{10};
+        /// <summary>How often the line changes: the samples are a second apart at least.</summary>
+        static constexpr std::chrono::seconds SampleEvery{1};
+        /// <summary>The speed shown's time constant: it follows a change of speed about two thirds of the way in this.</summary>
+        static constexpr std::chrono::seconds SpeedSmoothing{8};
+        /// <summary>The time constant of the speed the time left is worked out from: slower, so it holds steady.</summary>
+        static constexpr std::chrono::seconds TimeLeftSmoothing{20};
+        /// <summary>
+        /// How far the estimate may stray from the countdown before the countdown takes it: this share of the estimate,
+        /// and never under <see cref="TimeLeftToleranceFloor"/>.
+        /// </summary>
+        static constexpr double TimeLeftTolerance = 0.15;
+        static constexpr std::chrono::seconds TimeLeftToleranceFloor{20};
+        /// <summary>With no bytes for this long, the speed is 0 and there's no time left.</summary>
+        static constexpr std::chrono::seconds StalledAfter{10};
         /// <summary>How long the samples must span before the speed is told, and before a time left is.</summary>
         static constexpr std::chrono::seconds SpeedAfter{2};
         static constexpr std::chrono::seconds TimeLeftAfter{5};
 
-        /// <summary>The network bytes had in all by <paramref name="at"/>.</summary>
-        void Add(MCClock::time_point at, uint64_t networkBytes);
+        /// <summary>
+        /// The network bytes had in all by <paramref name="at"/>, with <paramref name="left"/> bytes still to come;
+        /// taken as a sample once <see cref="SampleEvery"/> has passed since the last.
+        /// </summary>
+        void Add(MCClock::time_point at, uint64_t networkBytes, uint64_t left);
 
         /// <summary>Forgets every sample: the bytes between now and the next one aren't a download's (a check).</summary>
-        void Reset() { _Samples.clear(); }
+        void Reset() { *this = MCRate(); }
 
-        /// <summary>The bytes a second over the last <see cref="SpeedWindow"/>; none until the samples span <see cref="SpeedAfter"/>.</summary>
+        /// <summary>The speed shown, in bytes a second; none until the samples span <see cref="SpeedAfter"/>.</summary>
         std::optional<double> BytesPerSecond() const;
 
         /// <summary>
-        /// The time <paramref name="left"/> bytes take at that speed; none until the samples span
-        /// <see cref="TimeLeftAfter"/>, or while nothing comes.
+        /// The time left shown; none until the samples span <see cref="TimeLeftAfter"/>, or while nothing comes.
         /// </summary>
-        std::optional<std::chrono::seconds> TimeLeft(uint64_t left) const;
+        std::optional<std::chrono::seconds> TimeLeft() const;
 
         /// <summary>The line the first start's window shows under its bar: "10.4 MB/S · ABOUT 8 MIN LEFT" (empty: nothing yet).</summary>
-        std::string Text(uint64_t left) const;
+        std::string Text() const;
 
     private:
+        /// <summary>An average of a value sampled over time, its older samples' weight falling by e every time constant.</summary>
+        struct MCAverage
+        {
+            double Sum = 0;
+            double Weight = 0;
+
+            void Add(double value, double seconds, std::chrono::seconds smoothing);
+
+            /// <summary>The average (the weight's sum divided out, so the first samples count fully).</summary>
+            double Value() const { return Weight > 0 ? Sum / Weight : 0; }
+        };
+
         /// <summary>How long the samples span.</summary>
         MCClock::duration Span() const;
 
-        std::deque<std::pair<MCClock::time_point, uint64_t>> _Samples;
+        /// <summary>Whether no bytes have come for <see cref="StalledAfter"/>.</summary>
+        bool Stalled() const;
+
+        std::optional<MCClock::time_point> _Start;
+        MCClock::time_point _Last;
+        MCClock::time_point _LastBytesAt;
+        uint64_t _Bytes = 0;
+        MCAverage _Speed;
+        MCAverage _SteadySpeed;
+        /// <summary>The time left shown, in seconds: counting down, or a new estimate taken.</summary>
+        std::optional<double> _Countdown;
     };
 
     /// <summary>

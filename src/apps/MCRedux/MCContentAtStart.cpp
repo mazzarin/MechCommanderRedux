@@ -22,12 +22,6 @@ namespace
     constexpr std::string_view HeldHeading = "THE GAME'S FILES ARE DOWNLOADED.";
     constexpr std::string_view HeldText = "ANOTHER COPY OF THE GAME IS RUNNING. CLOSE IT, THEN TRY AGAIN.";
 
-    /// <summary>A lock borrowed, as MCContentSwap takes it (none: no lock).</summary>
-    MCUpdateLock* LockOf(MCOptionalRef<MCUpdateLock> lock)
-    {
-        return lock ? &lock->get() : nullptr;
-    }
-
     /// <summary>A step that gets the content from the release's host: the first start's install, or a repair.</summary>
     using MCContentStep = std::expected<void, MCUpdateWork::MCFailure> (*)(const MCContentUpdater::MCSetup&,
                                                                            MCUpdateDisk&, MCContentStage::MCSource&,
@@ -46,12 +40,14 @@ namespace
         {
             const MCUpdateWork::MCWorkSource source(MCUpdateWork::Counted(maker, progress), stop);
 
-            if (source.Get() == nullptr)
+            const MCOptionalRef<MCContentStage::MCSource> transfer = source.Get();
+
+            if (!transfer)
             {
                 return std::unexpected(MCUpdateWork::MCFailure{.Reason = std::string(MCUpdateWork::NoSourceError)});
             }
 
-            return step(setup, *MakeDisk(), *source.Get(), MCUpdateWork::Reporter(progress, stop));
+            return step(setup, *MakeDisk(), transfer->get(), MCUpdateWork::Reporter(progress, stop));
         };
     }
 
@@ -145,7 +141,7 @@ namespace
 
             // The swap again, the lock taken exclusive (held already after a repair), then held shared to play.
             const MCContentSwap::MCResult result =
-                MCContentSwap::RunAtStart(*MakeDisk(), start.GameFolder, LockOf(lock), start.RunningBuild);
+                MCContentSwap::RunAtStart(*MakeDisk(), start.GameFolder, lock, start.RunningBuild);
 
             if (result.Outcome != MCContentSwap::MCOutcome::Stuck)
             {
@@ -175,7 +171,7 @@ bool MCContentAtStart::SwapStaged(const MCStart& start, std::string_view command
     }
 
     const MCContentSwap::MCResult result =
-        MCContentSwap::RunAtStart(*MakeDisk(), start.GameFolder, LockOf(lock), start.RunningBuild, deadline);
+        MCContentSwap::RunAtStart(*MakeDisk(), start.GameFolder, lock, start.RunningBuild, deadline);
 
     switch (result.Outcome)
     {

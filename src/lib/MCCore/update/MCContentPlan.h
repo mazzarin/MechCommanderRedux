@@ -86,8 +86,8 @@ namespace MCContentPlan
         /// <summary>Where the file is on disk, or goes (Fetch of a missing file: placed in the folders on disk).</summary>
         std::string OnDisk;
         /// <summary>The listed file (none removing), and the patch applied.</summary>
-        const MCContentList::MCFile* File = nullptr;
-        const MCContentList::MCPatch* Patch = nullptr;
+        std::optional<MCContentList::MCFile> File;
+        std::optional<MCContentList::MCPatch> Patch;
         /// <summary>The hash on disk (none: missing), and the file's size and time written as found.</summary>
         std::optional<MCSha256::MCDigest> Found;
         uint64_t FoundSize = 0;
@@ -100,7 +100,7 @@ namespace MCContentPlan
     {
         std::vector<MCStep> Steps;
         /// <summary>The zips to download, and the bytes downloaded (zips and patches).</summary>
-        std::vector<const MCContentList::MCZip*> Zips;
+        std::vector<MCContentList::MCZip> Zips;
         uint64_t DownloadBytes = 0;
         /// <summary>The bytes staged: each fetched or patched file written anew before the swap.</summary>
         uint64_t StagedBytes = 0;

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <memory>
+#include <optional>
+
 /// <summary>A reference that may be absent: what a one-call command or parameter borrows when it may borrow nothing.</summary>
 template <typename T> using MCOptionalRef = std::optional<std::reference_wrapper<T>>;
 

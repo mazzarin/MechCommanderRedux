@@ -64,7 +64,7 @@ private:
     /// The entries of <paramref name="folder"/> (as spelled on disk; empty is the root), none when it isn't there; or
     /// why it can't be listed. Only a whole listing is kept.
     /// </summary>
-    std::expected<const MCListing*, std::string> Listing(const std::string& folder);
+    std::expected<std::reference_wrapper<const MCListing>, std::string> Listing(const std::string& folder);
 
     std::filesystem::path _Root;
     std::map<std::string, MCListing, std::less<>> _Listings;

@@ -162,11 +162,11 @@ namespace
         /// </summary>
         std::string GiveUp(const std::vector<std::string>& setAside)
         {
-            std::map<std::string_view, const MCMove*> moves;
+            std::map<std::string_view, std::reference_wrapper<const MCMove>> moves;
 
             for (const MCMove& move : _Journal.Moves)
             {
-                moves.emplace(move.Path, &move);
+                moves.emplace(move.Path, move);
             }
 
             for (const std::string& path : setAside)
@@ -174,7 +174,7 @@ namespace
                 const auto found = moves.find(path);
                 const MCMove unknown{.Path = path, .Keep = MCKeep::Always};
 
-                if (std::string error = KeepOne(found != moves.end() ? *found->second : unknown); !error.empty())
+                if (std::string error = KeepOne(found != moves.end() ? found->second.get() : unknown); !error.empty())
                 {
                     return error;
                 }
@@ -235,14 +235,16 @@ namespace
         /// <summary>Moves the old files aside, flushes, then the new ones in, flushes; empty, or what failed.</summary>
         std::string MoveFiles()
         {
-            for (const MCMove& move : _Journal.Moves)
+            for (size_t index = 0; index < _Journal.Moves.size(); ++index)
             {
+                const MCMove& move = _Journal.Moves[index];
+
                 if (TooLate())
                 {
                     return std::string(TooLateError);
                 }
 
-                const auto at = Classify(move);
+                const auto at = Classify(index);
 
                 if (!at)
                 {
@@ -277,8 +279,8 @@ namespace
                     return Unmoved(std::format("{} can't be moved aside", move.Path), moved);
                 }
 
-                _MovedAside.push_back(&move);
-                _At.insert_or_assign(&move, MCAt::Missing);
+                _MovedAside.push_back(index);
+                _At.insert_or_assign(index, MCAt::Missing);
             }
 
             if (!FlushTouched())
@@ -286,8 +288,10 @@ namespace
                 return "the old files' folders can't be flushed";
             }
 
-            for (const MCMove& move : _Journal.Moves)
+            for (size_t index = 0; index < _Journal.Moves.size(); ++index)
             {
+                const MCMove& move = _Journal.Moves[index];
+
                 if (!move.New)
                 {
                     continue;
@@ -307,7 +311,7 @@ namespace
 
                 if (*inPlace)
                 {
-                    const auto at = Classify(move);
+                    const auto at = Classify(index);
 
                     if (!at)
                     {
@@ -344,8 +348,8 @@ namespace
                     return Unmoved(std::format("{} can't be moved into place", move.Path), moved);
                 }
 
-                _MovedIn.push_back(&move);
-                _At.insert_or_assign(&move, MCAt::New);
+                _MovedIn.push_back(index);
+                _At.insert_or_assign(index, MCAt::New);
             }
 
             if (!FlushTouched())
@@ -390,17 +394,20 @@ namespace
         /// </summary>
         std::string BackWhatMoved()
         {
-            // Both lists are in the journal's order, so the later of their last entries is the last move made.
+            // Both lists hold positions in the journal, in its order, so the later of their last entries is the last
+            // move made.
             auto in = _MovedIn.rbegin();
             auto aside = _MovedAside.rbegin();
 
             while (in != _MovedIn.rend() || aside != _MovedAside.rend())
             {
-                if (in != _MovedIn.rend() && (aside == _MovedAside.rend() || std::greater_equal()(*in, *aside)))
+                if (in != _MovedIn.rend() && (aside == _MovedAside.rend() || *in >= *aside))
                 {
-                    if (const auto moved = Move(Destination(**in), Staged(**in)); !moved)
+                    const MCMove& move = _Journal.Moves[*in];
+
+                    if (const auto moved = Move(Destination(move), Staged(move)); !moved)
                     {
-                        return Unmoved(std::format("{} can't be moved back to staged", (*in)->Path), moved);
+                        return Unmoved(std::format("{} can't be moved back to staged", move.Path), moved);
                     }
 
                     _At.insert_or_assign(*in, MCAt::Missing);
@@ -408,9 +415,11 @@ namespace
                     continue;
                 }
 
-                if (const auto moved = Move(Replaced(**aside), Destination(**aside)); !moved)
+                const MCMove& move = _Journal.Moves[*aside];
+
+                if (const auto moved = Move(Replaced(move), Destination(move)); !moved)
                 {
-                    return Unmoved(std::format("{} can't be put back", (*aside)->Path), moved, PutBackFailed);
+                    return Unmoved(std::format("{} can't be put back", move.Path), moved, PutBackFailed);
                 }
 
                 _At.erase(*aside);
@@ -423,12 +432,14 @@ namespace
         /// <summary>Back, a swap a crash stopped: each move's files looked at, last first.</summary>
         std::string BackEveryMove()
         {
-            for (const MCMove& move : std::views::reverse(_Journal.Moves))
+            for (size_t index = _Journal.Moves.size(); index-- > 0;)
             {
+                const MCMove& move = _Journal.Moves[index];
+
                 if (move.New)
                 {
                     // A new file in place goes back to staged/; anything else there is left as it is.
-                    const auto at = Classify(move);
+                    const auto at = Classify(index);
 
                     if (!at)
                     {
@@ -455,7 +466,7 @@ namespace
                             return Unmoved(std::format("{} can't be moved back to staged", move.Path), moved);
                         }
 
-                        _At.insert_or_assign(&move, MCAt::Missing);
+                        _At.insert_or_assign(index, MCAt::Missing);
                     }
                 }
 
@@ -473,7 +484,7 @@ namespace
                         return Unmoved(std::format("{} can't be put back", move.Path), moved, PutBackFailed);
                     }
 
-                    _At.erase(&move);
+                    _At.erase(index);
                 }
             }
 
@@ -496,18 +507,19 @@ namespace
         /// <summary>
         /// What's at the move's path (<see cref="What"/>), told once a run: the swap's own moves keep it up to date.
         /// </summary>
-        std::expected<MCAt, std::string> Classify(const MCMove& move)
+        std::expected<MCAt, std::string> Classify(size_t index)
         {
-            if (const auto known = _At.find(&move); known != _At.end())
+            if (const auto known = _At.find(index); known != _At.end())
             {
                 return known->second;
             }
 
+            const MCMove& move = _Journal.Moves.at(index);
             const auto at = What(Destination(move), move);
 
             if (at)
             {
-                _At.emplace(&move, *at);
+                _At.emplace(index, *at);
             }
 
             return at;
@@ -660,8 +672,9 @@ namespace
                         read.error().c_str());
             }
 
-            for (const MCMove& move : _Journal.Moves)
+            for (size_t index = 0; index < _Journal.Moves.size(); ++index)
             {
+                const MCMove& move = _Journal.Moves[index];
                 const auto entry = _Journal.Record.Files.find(MCContentList::FoldedPath(move.Path));
 
                 if (!move.New || entry == _Journal.Record.Files.end())
@@ -669,7 +682,7 @@ namespace
                     continue;
                 }
 
-                const auto at = Classify(move);
+                const auto at = Classify(index);
 
                 if (!at)
                 {
@@ -805,12 +818,14 @@ namespace
         std::set<std::filesystem::path> _Touched;
         /// <summary>When moving the files forward stops (<see cref="TooLate"/>).</summary>
         std::optional<std::chrono::steady_clock::time_point> _ForwardUntil;
-        /// <summary>Whether the swap began this run, and what it moved aside and in, in order.</summary>
+        /// <summary>
+        /// Whether the swap began this run, and what it moved aside and in, in order: each move's place in the journal.
+        /// </summary>
         bool _Fresh = false;
-        std::vector<const MCMove*> _MovedAside;
-        std::vector<const MCMove*> _MovedIn;
-        /// <summary>What's at each move's path, once told this run.</summary>
-        std::map<const MCMove*, MCAt> _At;
+        std::vector<size_t> _MovedAside;
+        std::vector<size_t> _MovedIn;
+        /// <summary>What's at each move's path, once told this run, by the move's place in the journal.</summary>
+        std::map<size_t, MCAt> _At;
         bool _Committed = false;
     };
 
@@ -1266,14 +1281,15 @@ MCContentSwap::MCResult MCContentSwap::Run(MCUpdateDisk& disk, const std::filesy
 }
 
 MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder,
-                                                  MCUpdateLock* lock, uint64_t runningBuild,
+                                                  MCOptionalRef<MCUpdateLock> lock, uint64_t runningBuild,
                                                   std::optional<std::chrono::steady_clock::time_point> deadline)
 {
-    if (lock == nullptr)
+    if (!lock)
     {
         return Run(disk, gameFolder, deadline, runningBuild);
     }
 
+    MCUpdateLock& gameLock = *lock;
     const auto now = std::chrono::steady_clock::now();
     const auto until = deadline.value_or(now + MidwayWait);
     MCResult result;
@@ -1289,7 +1305,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
     {
         // A copy quitting (RESTART starts this one as it closes) is waited for briefly; one midway through a swap or a
         // repair, whose files can't be played, up to the deadline.
-        if (lock->ExclusiveBy(std::min(until, now + QuittingWait)))
+        if (gameLock.ExclusiveBy(std::min(until, now + QuittingWait)))
         {
             result = Run(disk, gameFolder, deadline, runningBuild);
         }
@@ -1301,7 +1317,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
         {
             result = {MCOutcome::PutBack, "another copy of the game is running"};
         }
-        else if (lock->ExclusiveBy(until))
+        else if (gameLock.ExclusiveBy(until))
         {
             result = Run(disk, gameFolder, deadline, runningBuild);
         }
@@ -1313,7 +1329,7 @@ MCContentSwap::MCResult MCContentSwap::RunAtStart(MCUpdateDisk& disk, const std:
 
     // Held shared for the game's run. Another copy holding it exclusive is swapping (or removing the content): waited
     // for no longer than the deadline, then this start doesn't play the files.
-    if (!lock->SharedBy(until))
+    if (!gameLock.SharedBy(until))
     {
         SDL_Log("Updates: the game's lock can't be held shared: another copy holds it");
         return {MCOutcome::Stuck, std::string(AnotherSwappingError)};

@@ -62,7 +62,8 @@ namespace
     /// <summary>An open archive, and the first folders of its entries' names (upper-cased).</summary>
     struct MCHdArchive
     {
-        std::unique_ptr<MCFastFile> File;
+        /// <summary>Shared, so the files kept open (KeepOpen) can tell an archive that's gone.</summary>
+        std::shared_ptr<MCFastFile> File;
         std::unordered_set<std::string> Folders;
     };
 
@@ -238,8 +239,8 @@ namespace
         /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
         /// place there.
         /// </summary>
-        std::list<MCFastFile*> OpenFiles;
-        std::unordered_map<MCFastFile*, std::list<MCFastFile*>::iterator> OpenAt;
+        std::list<std::weak_ptr<MCFastFile>> OpenFiles;
+        std::map<std::weak_ptr<MCFastFile>, std::list<std::weak_ptr<MCFastFile>>::iterator, std::owner_less<>> OpenAt;
         /// <summary>The shape tables drawn with smooth edges (SetSmoothEdgeTables).</summary>
         std::unordered_set<const uint8_t*> SmoothTables;
         /// <summary>The shape frames redrawn as line art (SetLineArtFrames).</summary>
@@ -397,7 +398,7 @@ namespace
     /// Notes that <paramref name="file"/> was just opened or read, closing the least recently read of the archives' files
     /// past MaxOpenArchiveFiles.
     /// </summary>
-    void KeepOpen(MCFastFile* file)
+    void KeepOpen(const std::shared_ptr<MCFastFile>& file)
     {
         State& state = TheState();
 
@@ -413,8 +414,13 @@ namespace
 
         while (state.OpenFiles.size() > MaxOpenArchiveFiles)
         {
-            MCFastFile* const oldest = state.OpenFiles.back();
-            oldest->Release();
+            const std::weak_ptr<MCFastFile> oldest = state.OpenFiles.back();
+
+            if (const std::shared_ptr<MCFastFile> kept = oldest.lock())
+            {
+                kept->Release();
+            }
+
             state.OpenAt.erase(oldest);
             state.OpenFiles.pop_back();
         }
@@ -448,7 +454,7 @@ namespace
 
         auto archive = std::make_shared<MCHdArchive>();
         archive->File = std::move(*file);
-        KeepOpen(archive->File.get());
+        KeepOpen(archive->File);
 
         for (const MCFileEntry& entry : archive->File->GetEntries())
         {
@@ -525,7 +531,7 @@ namespace
             }
 
             std::vector<uint8_t> stored = archive->File->ReadStored(*index);
-            KeepOpen(archive->File.get());
+            KeepOpen(archive->File);
 
             if (stored.size() != static_cast<size_t>(entry.Size))
             {
@@ -1754,8 +1760,12 @@ size_t MCHdArt::ArchivesOpen()
 
 size_t MCHdArt::ArchiveFilesOpen()
 {
-    return static_cast<size_t>(
-        std::ranges::count_if(TheState().OpenFiles, [](const MCFastFile* file) { return file->IsOpen(); }));
+    return static_cast<size_t>(std::ranges::count_if(TheState().OpenFiles,
+                                                     [](const std::weak_ptr<MCFastFile>& kept)
+                                                     {
+                                                         const std::shared_ptr<MCFastFile> file = kept.lock();
+                                                         return file != nullptr && file->IsOpen();
+                                                     }));
 }
 
 std::chrono::nanoseconds MCHdArt::ReadTime()

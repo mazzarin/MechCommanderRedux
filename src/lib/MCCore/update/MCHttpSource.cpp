@@ -88,10 +88,14 @@ namespace
                 _Cancelled = true;
                 _Get.Cancel();
 
-                // Always this one's lock before a child's: a child takes none of its parent's while it holds its own.
-                for (MCStopper* child : _Children)
+                // Always this one's lock before a child's: a child takes none of its parent's while it holds its own. A
+                // child drops itself under this lock as its source goes, so every one still here is whole.
+                for (const std::weak_ptr<MCStopper>& kept : _Children)
                 {
-                    child->Cancel();
+                    if (const std::shared_ptr<MCStopper> child = kept.lock())
+                    {
+                        child->Cancel();
+                    }
                 }
             }
 
@@ -99,27 +103,28 @@ namespace
         }
 
         /// <summary>A source made from this one: cancelled with it (at once, when this one is already).</summary>
-        void Adopt(MCStopper& child)
+        void Adopt(const std::shared_ptr<MCStopper>& child)
         {
             bool cancelled = false;
 
             {
                 const std::scoped_lock lock(_Lock);
-                _Children.push_back(&child);
+                _Children.push_back(child);
                 cancelled = _Cancelled;
             }
 
             if (cancelled)
             {
-                child.Cancel();
+                child->Cancel();
             }
         }
 
-        /// <summary>A source made from this one, as it goes.</summary>
-        void Drop(MCStopper& child)
+        /// <summary>A source made from this one, as it goes (and any gone already).</summary>
+        void Drop(const std::shared_ptr<MCStopper>& child)
         {
             const std::scoped_lock lock(_Lock);
-            std::erase(_Children, &child);
+            std::erase_if(_Children, [&](const std::weak_ptr<MCStopper>& kept)
+                          { return kept.expired() || (!kept.owner_before(child) && !child.owner_before(kept)); });
         }
 
         bool Cancelled()
@@ -141,7 +146,7 @@ namespace
         std::condition_variable _Woken;
         bool _Cancelled = false;
         MCHttpSource::MCGet& _Get;
-        std::vector<MCStopper*> _Children;
+        std::vector<std::weak_ptr<MCStopper>> _Children;
     };
 
     /// <summary>
@@ -276,7 +281,7 @@ namespace
         {
             if (_Parent != nullptr)
             {
-                _Parent->Adopt(*_Stopper);
+                _Parent->Adopt(_Stopper);
             }
         }
 
@@ -284,7 +289,7 @@ namespace
         {
             if (_Parent != nullptr)
             {
-                _Parent->Drop(*_Stopper);
+                _Parent->Drop(_Stopper);
             }
         }
 

@@ -49,8 +49,8 @@ namespace
     /// kept in the plan's hashes.
     /// </summary>
     std::expected<MCHash, std::string> Hashed(const MCContentFolder& folder, const std::string& onDisk,
-                                              const MCInstalled::MCFile* had, const MCHashes& hashes, MCPlan& plan,
-                                              const std::function<bool()>& goOn)
+                                              MCOptionalRef<const MCInstalled::MCFile> had, const MCHashes& hashes,
+                                              MCPlan& plan, const std::function<bool()>& goOn)
     {
         const std::filesystem::path path = folder.Full(onDisk);
         std::error_code error;
@@ -62,9 +62,14 @@ namespace
             return std::unexpected(std::format("{} can't be looked at", MCFileSystem::ToUtf8(path)));
         }
 
-        if (had != nullptr && had->Path == onDisk && AsFound(had->Size, had->Written, size, *written))
+        if (had)
         {
-            return MCHash{size, *written, had->Sha256};
+            const MCInstalled::MCFile& recorded = *had;
+
+            if (recorded.Path == onDisk && AsFound(recorded.Size, recorded.Written, size, *written))
+            {
+                return MCHash{size, *written, recorded.Sha256};
+            }
         }
 
         MCHash found{.Size = size, .Written = *written};
@@ -92,21 +97,21 @@ namespace
     }
 
     /// <summary>Whether the file found, <paramref name="hash"/>, is the one an update placed (so it can go).</summary>
-    bool PlacedAsIs(const MCInstalled::MCFile* had, const MCSha256::MCDigest& hash)
+    bool PlacedAsIs(MCOptionalRef<const MCInstalled::MCFile> had, const MCSha256::MCDigest& hash)
     {
-        return had != nullptr && had->Placed && had->Sha256 == hash;
+        return had && had->get().Placed && had->get().Sha256 == hash;
     }
 
     /// <summary>Whether the file found, replaced or removed, is kept in Redux backup: when an update didn't place it.</summary>
-    MCContentSwap::MCKeep KeepUnlessPlaced(const MCInstalled::MCFile* had, const MCSha256::MCDigest& hash)
+    MCContentSwap::MCKeep KeepUnlessPlaced(MCOptionalRef<const MCInstalled::MCFile> had, const MCSha256::MCDigest& hash)
     {
         return PlacedAsIs(had, hash) ? MCContentSwap::MCKeep::IfChanged : MCContentSwap::MCKeep::Always;
     }
 
-    const MCInstalled::MCFile* Recorded(const MCInstalled::MCRecord& installed, std::string_view folded)
+    MCOptionalRef<const MCInstalled::MCFile> Recorded(const MCInstalled::MCRecord& installed, std::string_view folded)
     {
         const auto found = installed.Files.find(folded);
-        return found == installed.Files.end() ? nullptr : &found->second;
+        return found == installed.Files.end() ? std::nullopt : MCOptionalRef<const MCInstalled::MCFile>(found->second);
     }
 
     /// <summary>
@@ -135,7 +140,7 @@ namespace
             return {};
         }
 
-        const auto hashed = Hashed(folder, found->Path, &had, hashes, plan, goOn);
+        const auto hashed = Hashed(folder, found->Path, had, hashes, plan, goOn);
 
         if (!hashed)
         {
@@ -146,12 +151,12 @@ namespace
             MCStep{.Action = MCAction::Remove,
                    .Path = had.Path,
                    .OnDisk = found->Path,
-                   .File = nullptr,
-                   .Patch = nullptr,
+                   .File = std::nullopt,
+                   .Patch = std::nullopt,
                    .Found = hashed->Sha256,
                    .FoundSize = hashed->Size,
                    .FoundWritten = hashed->Written,
-                   .Keep = setTakenOut ? MCContentSwap::MCKeep::Never : KeepUnlessPlaced(&had, hashed->Sha256)});
+                   .Keep = setTakenOut ? MCContentSwap::MCKeep::Never : KeepUnlessPlaced(had, hashed->Sha256)});
         return {};
     }
 
@@ -219,7 +224,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
         const std::string folded = FoldedPath(file.Path);
         listed.insert(folded);
-        const MCInstalled::MCFile* const had = Recorded(installed, folded);
+        const MCOptionalRef<const MCInstalled::MCFile> had = Recorded(installed, folded);
         const auto found = folder.Find(file.Path);
 
         if (!found)
@@ -229,7 +234,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
 
         MCStep step;
         step.Path = file.Path;
-        step.File = &file;
+        step.File = file;
         MCInstalled::MCFile record{.Path = {}, .Set = file.Set, .Sha256 = file.Sha256, .Size = file.Size};
 
         switch (found->Kind)
@@ -274,7 +279,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
                 {
                     const auto patch = std::ranges::find(file.Patches, hashed->Sha256, &MCContentList::MCPatch::From);
                     step.Action = patch != file.Patches.end() ? MCAction::Patch : MCAction::Fetch;
-                    step.Patch = patch != file.Patches.end() ? &*patch : nullptr;
+                    step.Patch = patch != file.Patches.end() ? std::optional(*patch) : std::nullopt;
                     step.Keep = KeepUnlessPlaced(had, hashed->Sha256);
                 }
 
@@ -319,7 +324,7 @@ std::expected<MCPlan, std::string> MCContentPlan::Make(MCContentFolder& folder, 
     {
         if (zips.contains(zip.Name))
         {
-            plan.Zips.push_back(&zip);
+            plan.Zips.push_back(zip);
             plan.DownloadBytes += zip.Size;
         }
     }

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "update/MCUpdateJson.h"
+#include "lib/MCOptionalRef.h"
 #include "update/MCUpdateDisk.h"
 #include "platform/MCUtf8Path.h"
 
@@ -14,10 +15,10 @@ namespace
     using MCUpdateJson::MCJson;
 
     /// <summary>The member <paramref name="key"/>, or none.</summary>
-    const MCJson* Find(const MCJson& object, std::string_view key)
+    MCOptionalRef<const MCJson> Find(const MCJson& object, std::string_view key)
     {
         const auto found = object.find(key);
-        return found == object.end() ? nullptr : &*found;
+        return found == object.end() ? std::nullopt : MCOptionalRef<const MCJson>(*found);
     }
 }
 
@@ -45,14 +46,14 @@ const MCUpdateJson::MCJson& MCUpdateJson::Member(const MCJson& object, std::stri
         Fail("\"{}\" is in something that isn't an object", key);
     }
 
-    const MCJson* const member = Find(object, key);
+    const MCOptionalRef<const MCJson> member = Find(object, key);
 
-    if (member == nullptr)
+    if (!member)
     {
         Fail("\"{}\" is missing", key);
     }
 
-    return *member;
+    return member->get();
 }
 
 std::string MCUpdateJson::Text(const MCJson& object, std::string_view key)
@@ -69,12 +70,12 @@ std::string MCUpdateJson::Text(const MCJson& object, std::string_view key)
 
 std::string MCUpdateJson::TextOr(const MCJson& object, std::string_view key, std::string_view otherwise)
 {
-    return Find(object, key) == nullptr ? std::string(otherwise) : Text(object, key);
+    return !Find(object, key) ? std::string(otherwise) : Text(object, key);
 }
 
 uint64_t MCUpdateJson::CountOr(const MCJson& object, std::string_view key, uint64_t otherwise)
 {
-    return Find(object, key) == nullptr ? otherwise : Count(object, key);
+    return !Find(object, key) ? otherwise : Count(object, key);
 }
 
 uint64_t MCUpdateJson::Count(const MCJson& object, std::string_view key)
@@ -135,7 +136,7 @@ const MCUpdateJson::MCJson& MCUpdateJson::Array(const MCJson& object, std::strin
 {
     static const MCJson Empty = MCJson::array();
 
-    if (!required && Find(object, key) == nullptr)
+    if (!required && !Find(object, key))
     {
         return Empty;
     }

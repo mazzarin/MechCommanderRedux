@@ -1229,7 +1229,7 @@ TEST_CASE("content swap at a start: content whose list needs a newer program is 
         }
     }
 
-    const MCContentSwap::MCResult old = MCContentSwap::RunAtStart(*disk, game, lock.get(), OldProgram);
+    const MCContentSwap::MCResult old = MCContentSwap::RunAtStart(*disk, game, *lock, OldProgram);
     CHECK(old.Outcome == MCOutcome::Disarmed);
     CHECK(MCContentSwap::Waiting(*disk, game) == false);
     CHECK_EQ(MCContentFixture::Read(game / "data" / "changed.fit"), std::string("changed v1"));
@@ -1238,7 +1238,7 @@ TEST_CASE("content swap at a start: content whose list needs a newer program is 
     lock->Release();
 
     REQUIRE(MCContentStage::Arm(*disk, game, plan).has_value());
-    CHECK(MCContentSwap::RunAtStart(*disk, game, lock.get(), NewProgram).Outcome == MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(*disk, game, *lock, NewProgram).Outcome == MCOutcome::Swapped);
     release.CheckIsRelease2();
 }
 
@@ -1425,7 +1425,7 @@ TEST_CASE("content swap at a start: another copy holding the lock exclusive make
 
         const auto before = std::chrono::steady_clock::now();
         const MCContentSwap::MCResult result =
-            MCContentSwap::RunAtStart(*disk, game.Path(), starting.get(), NewProgram, before + wait);
+            MCContentSwap::RunAtStart(*disk, game.Path(), *starting, NewProgram, before + wait);
         const auto waited = std::chrono::steady_clock::now() - before;
         CHECK(result.Outcome == MCOutcome::Stuck);
         CHECK(result.Error.find("another copy") != std::string::npos);
@@ -1455,7 +1455,7 @@ TEST_CASE("content swap at a start: a journal that can't be looked at makes the 
     const std::unique_ptr<MCUpdateLock> other = MCUpdateLock::Open(Game, MCUpdateLock::GameLock);
     REQUIRE(starting != nullptr);
     REQUIRE(other != nullptr);
-    const MCContentSwap::MCResult unseen = MCContentSwap::RunAtStart(disk, Game, starting.get(), NewProgram);
+    const MCContentSwap::MCResult unseen = MCContentSwap::RunAtStart(disk, Game, *starting, NewProgram);
     CHECK(unseen.Outcome == MCOutcome::Stuck);
     CHECK(unseen.Error.find("can't be looked at") != std::string::npos);
     CHECK(other->TryExclusive());
@@ -1464,7 +1464,7 @@ TEST_CASE("content swap at a start: a journal that can't be looked at makes the 
 
     // Seen again: the swap finishes.
     disk.FailStat({});
-    CHECK(MCContentSwap::RunAtStart(disk, Game, starting.get(), NewProgram).Outcome == MCOutcome::Swapped);
+    CHECK(MCContentSwap::RunAtStart(disk, Game, *starting, NewProgram).Outcome == MCOutcome::Swapped);
     CHECK(update.IsNew(disk.Files()));
 }
 

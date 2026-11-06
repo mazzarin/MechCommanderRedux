@@ -94,7 +94,7 @@ std::optional<int32_t> MCFastFile::Find(std::string_view gamePath) const
     return std::nullopt;
 }
 
-MCDiskFile* MCFastFile::File()
+MCOptionalRef<MCDiskFile> MCFastFile::File()
 {
     if (!_Handle.has_value())
     {
@@ -104,7 +104,7 @@ MCDiskFile* MCFastFile::File()
 
         if (error || written != _Written)
         {
-            return nullptr;
+            return std::nullopt;
         }
 
         _Handle = MCDiskFile::Open(_Path, MCDiskFileMode::Read);
@@ -115,46 +115,48 @@ MCDiskFile* MCFastFile::File()
         }
     }
 
-    return _Handle.has_value() ? &*_Handle : nullptr;
+    return _Handle.has_value() ? MCOptionalRef<MCDiskFile>(*_Handle) : std::nullopt;
 }
 
 std::vector<uint8_t> MCFastFile::ReadStored(int32_t index)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
-    MCDiskFile* const file = File();
+    const MCOptionalRef<MCDiskFile> opened = File();
 
-    if (file == nullptr)
+    if (!opened)
     {
         return {};
     }
 
+    MCDiskFile& file = *opened;
     std::vector<uint8_t> stored(static_cast<size_t>(std::max(entry.Size, 0)));
-    stored.resize(file->ReadAt(static_cast<uint32_t>(entry.Offset), stored));
+    stored.resize(file.ReadAt(static_cast<uint32_t>(entry.Offset), stored));
     return stored;
 }
 
 int32_t MCFastFile::ReadEntry(int32_t index, std::span<uint8_t> data)
 {
     const MCFileEntry& entry = _Entries.at(static_cast<size_t>(index));
-    MCDiskFile* const file = File();
+    const MCOptionalRef<MCDiskFile> opened = File();
 
-    if (file == nullptr)
+    if (!opened)
     {
         return 0;
     }
 
+    MCDiskFile& file = *opened;
     data = data.first(std::min(data.size(), static_cast<size_t>(std::max(entry.RealSize, 0))));
     const auto offset = static_cast<uint32_t>(entry.Offset);
 
     if (entry.Size == entry.RealSize)
     {
-        return static_cast<int32_t>(file->ReadAt(offset, data));
+        return static_cast<int32_t>(file.ReadAt(offset, data));
     }
 
     // Packed: read the whole stored entry and unpack it (no more than the archive holds past the entry's start).
-    const uint32_t stored = file->Length() - std::min(file->Length(), offset);
+    const uint32_t stored = file.Length() - std::min(file.Length(), offset);
     std::vector<uint8_t> packed(std::min<size_t>(static_cast<size_t>(std::max(entry.Size, 0)), stored));
-    packed.resize(file->ReadAt(offset, packed));
+    packed.resize(file.ReadAt(offset, packed));
     const int32_t unpacked = LZDecomp(data, packed);
     return unpacked == entry.RealSize ? unpacked : 0;
 }

@@ -639,9 +639,9 @@ int main(int argc, char** argv)
     // its content, the HD options' defaults follow the HD answer: Redux HD's looks for a copy with HD (the installer's
     // answer, or HD OPTIONS'), the original's without.
     const MCInstalled::MCRecord noRecord;
-    const MCInstalled::MCRecord* const record = installed ? &*installed : &noRecord;
+    const MCInstalled::MCRecord& record = installed ? *installed : noRecord;
 
-    if (!contentUpdates || MCInstalled::Has(*record, options->DataFolder, MCContentList::HdSet))
+    if (!contentUpdates || MCInstalled::Has(record, options->DataFolder, MCContentList::HdSet))
     {
         UseHdByDefault();
     }
@@ -661,7 +661,7 @@ int main(int argc, char** argv)
     {
         // The record as the start read it (after any install it made), not read again.
         MCUpdater::SetContent(ContentSetup(*options, std::move(rootKeys)), MakeContentSource,
-                              installed ? &*installed : nullptr);
+                              installed ? MCOptionalRef<const MCInstalled::MCRecord>(*installed) : std::nullopt);
     }
 
     MCTelemetry::SetBackend(MCMakeTelemetryBackend(options->UserFolder));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "update/MCContentList.h"
 #include "update/MCInstalled.h"
 
@@ -187,7 +188,7 @@ namespace MCContentSwap
     /// waiting longer, and holds nothing. Without a lock (none could be opened) the swap runs as it is. The program
     /// starting is build <paramref name="runningBuild"/>: content needing a newer one is disarmed.
     /// </summary>
-    MCResult RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, MCUpdateLock* lock,
+    MCResult RunAtStart(MCUpdateDisk& disk, const std::filesystem::path& gameFolder, MCOptionalRef<MCUpdateLock> lock,
                         uint64_t runningBuild,
                         std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt);
 }

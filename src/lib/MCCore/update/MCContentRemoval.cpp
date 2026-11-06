@@ -21,11 +21,11 @@ namespace
         const auto begun = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::JournalFile));
         const auto repairing = IsThere(disk, gameFolder / MCFileSystem::FromUtf8(MCContentSwap::RepairFile));
 
-        for (const auto* seen : {&begun, &repairing})
+        for (const std::expected<bool, std::string>& seen : {std::cref(begun), std::cref(repairing)})
         {
-            if (!*seen)
+            if (!seen)
             {
-                return seen->error();
+                return seen.error();
             }
         }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lib/MCDiskFile.h"
+#include "lib/MCOptionalRef.h"
 
 /// <summary>
 /// One entry of a FastFile's directory, as stored in the file: where the data is, its stored and unpacked sizes and
@@ -86,8 +87,8 @@ public:
     explicit MCFastFile(Key) {}
 
 private:
-    /// <summary>The open archive, opened again after <see cref="Release"/>; null when it can't be.</summary>
-    MCDiskFile* File();
+    /// <summary>The open archive, opened again after <see cref="Release"/>; none when it can't be.</summary>
+    MCOptionalRef<MCDiskFile> File();
 
     /// <summary>The archive's path, as opened, and its length and time then (<see cref="File"/>).</summary>
     std::filesystem::path _Path;

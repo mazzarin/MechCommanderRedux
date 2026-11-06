@@ -35,18 +35,18 @@ namespace
     /// </summary>
     struct StopCheck
     {
-        const std::function<bool()>* GoOn = nullptr;
+        std::function<bool()> GoOn;
         bool Stopped = false;
 
         bool Stop()
         {
-            Stopped = Stopped || (GoOn != nullptr && *GoOn && !(*GoOn)());
+            Stopped = Stopped || (GoOn && !GoOn());
             return Stopped;
         }
     };
 
     /// <summary>Whether <paramref name="stop"/>, when given, says to stop.</summary>
-    bool Stops(StopCheck* stop)
+    bool Stops(const std::shared_ptr<StopCheck>& stop)
     {
         return stop != nullptr && stop->Stop();
     }
@@ -63,7 +63,7 @@ namespace
         /// <summary>Where the next read starts unless it seeks (none: unknown). A seek drops the stream's buffer.</summary>
         std::optional<hpatch_StreamPos_t> At;
         /// <summary>Asked before each read while the patch is applied (none: while its header is read).</summary>
-        StopCheck* Stop = nullptr;
+        std::shared_ptr<StopCheck> Stop;
     };
 
     /// <summary>
@@ -80,67 +80,67 @@ namespace
         MCNewFile File;
         bool WriteFailed = false;
         /// <summary>Asked before each read and write.</summary>
-        StopCheck* Stop = nullptr;
+        std::shared_ptr<StopCheck> Stop;
     };
 
     hpatch_BOOL ReadInput(const hpatch_TStreamInput* stream, hpatch_StreamPos_t from, unsigned char* data,
                           unsigned char* end)
     {
-        auto* const input = static_cast<InputFile*>(stream->streamImport);
+        InputFile& input = *static_cast<InputFile*>(stream->streamImport);
         const auto count = static_cast<std::streamsize>(end - data);
 
-        if (Stops(input->Stop))
+        if (Stops(input.Stop))
         {
             return hpatch_FALSE;
         }
 
-        input->File.clear();
+        input.File.clear();
 
-        if (input->At != from)
+        if (input.At != from)
         {
-            input->File.seekg(static_cast<std::streamoff>(from));
+            input.File.seekg(static_cast<std::streamoff>(from));
         }
 
-        input->File.read(reinterpret_cast<char*>(data), count);
+        input.File.read(reinterpret_cast<char*>(data), count);
 
-        if (input->File.gcount() != count)
+        if (input.File.gcount() != count)
         {
-            input->At.reset();
+            input.At.reset();
             return hpatch_FALSE;
         }
 
-        input->At = from + static_cast<hpatch_StreamPos_t>(count);
+        input.At = from + static_cast<hpatch_StreamPos_t>(count);
         return hpatch_TRUE;
     }
 
     hpatch_BOOL ReadWritten(const hpatch_TStreamOutput* stream, hpatch_StreamPos_t from, unsigned char* data,
                             unsigned char* end)
     {
-        auto* const output = static_cast<OutputFile*>(stream->streamImport);
+        OutputFile& output = *static_cast<OutputFile*>(stream->streamImport);
         const auto count = static_cast<size_t>(end - data);
 
-        if (Stops(output->Stop))
+        if (Stops(output.Stop))
         {
             return hpatch_FALSE;
         }
 
-        return output->File.ReadAt(from, std::span(reinterpret_cast<char*>(data), count)) ? hpatch_TRUE : hpatch_FALSE;
+        return output.File.ReadAt(from, std::span(reinterpret_cast<char*>(data), count)) ? hpatch_TRUE : hpatch_FALSE;
     }
 
     hpatch_BOOL WriteOutput(const hpatch_TStreamOutput* stream, hpatch_StreamPos_t to, const unsigned char* data,
                             const unsigned char* end)
     {
-        auto* const output = static_cast<OutputFile*>(stream->streamImport);
+        OutputFile& output = *static_cast<OutputFile*>(stream->streamImport);
         const auto count = static_cast<size_t>(end - data);
 
-        if (Stops(output->Stop))
+        if (Stops(output.Stop))
         {
             return hpatch_FALSE;
         }
 
-        if (!output->File.WriteAt(to, std::span(reinterpret_cast<const char*>(data), count)))
+        if (!output.File.WriteAt(to, std::span(reinterpret_cast<const char*>(data), count)))
         {
-            output->WriteFailed = true;
+            output.WriteFailed = true;
             return hpatch_FALSE;
         }
 
@@ -229,7 +229,7 @@ namespace
                            hpatch_BOOL* checkOld, hpatch_BOOL* checkDiff, unsigned char** cache,
                            unsigned char** cacheEnd)
     {
-        auto* const patching = static_cast<Patching*>(listener->import);
+        Patching& patching = *static_cast<Patching*>(listener->import);
         *decompress = nullptr;
         *checksum = &Xxh128Checksum;
         *checkNew = hpatch_TRUE;
@@ -239,14 +239,14 @@ namespace
         // From the patch's header: its window on the old file and its step's memory.
         if (info->maxWindowOldSize > MaxPatchMemory || info->maxStepMemSize > MaxPatchMemory)
         {
-            patching->Refused =
+            patching.Refused =
                 std::format("asks for {} and {} bytes of memory", info->maxWindowOldSize, info->maxStepMemSize);
             return hpatch_FALSE;
         }
 
-        patching->Cache.resize(static_cast<size_t>(info->maxWindowOldSize + info->maxStepMemSize) + IoCacheBytes);
-        *cache = patching->Cache.data();
-        *cacheEnd = patching->Cache.data() + patching->Cache.size();
+        patching.Cache.resize(static_cast<size_t>(info->maxWindowOldSize + info->maxStepMemSize) + IoCacheBytes);
+        *cache = patching.Cache.data();
+        *cacheEnd = patching.Cache.data() + patching.Cache.size();
         return hpatch_TRUE;
     }
 
@@ -283,11 +283,12 @@ namespace
             return std::unexpected(made.error());
         }
 
-        StopCheck stop{.GoOn = &goOn};
+        // Shared by the three files, which keep it for as long as they're kept.
+        const auto stop = std::make_shared<StopCheck>(StopCheck{.GoOn = goOn});
         OutputFile output(std::move(*made));
-        output.Stop = &stop;
-        old.Stop = &stop;
-        patch.Stop = &stop;
+        output.Stop = stop;
+        old.Stop = stop;
+        patch.Stop = stop;
 
         output.Stream.streamImport = &output;
         output.Stream.streamSize = info.newDataSize;
@@ -301,7 +302,7 @@ namespace
         const TWindowPatchResult result =
             patch_window_diff(&listener, &output.Stream, &old.Stream, &patch.Stream, 0, SingleThread);
 
-        if (stop.Stopped)
+        if (stop->Stopped)
         {
             return std::unexpected(std::string(MCFilePatch::StoppedError));
         }

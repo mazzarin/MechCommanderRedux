@@ -16,11 +16,13 @@
 #include <thread>
 #include <utility>
 
+#include "lib/MCOptionalRef.h"
+
 // Port-only: a piece of an update's work on a thread of its own (the updater's check, staging and arming, the first
 // start's download, a repair). Its progress and end are read from the main thread; asked to stop, its transfer to the
 // release's host is cancelled at once (MCContentStage::MCSource::Cancel), so the join that follows is quick and no
-// thread is ever left running as the game ends. Standard headers only: main/MCUpdater.h includes it, and the Mac's
-// Sparkle backend includes that without the precompiled header.
+// thread is ever left running as the game ends. Standard headers only, and lib/MCOptionalRef.h, which includes its own:
+// main/MCUpdater.h includes it, and the Mac's Sparkle backend includes that without the precompiled header.
 
 namespace MCContentStage
 {
@@ -187,7 +189,10 @@ namespace MCUpdateWork
         MCWorkSource& operator=(const MCWorkSource&) = delete;
 
         /// <summary>The transfer; none when the maker made none.</summary>
-        MCContentStage::MCSource* Get() const { return _Source.get(); }
+        MCOptionalRef<MCContentStage::MCSource> Get() const
+        {
+            return _Source != nullptr ? MCOptionalRef<MCContentStage::MCSource>(*_Source) : std::nullopt;
+        }
 
     private:
         std::unique_ptr<MCContentStage::MCSource> _Source;
@@ -204,12 +209,14 @@ namespace MCUpdateWork
     {
         const MCWorkSource source(maker, std::move(stop));
 
-        if (source.Get() == nullptr)
+        const MCOptionalRef<MCContentStage::MCSource> transfer = source.Get();
+
+        if (!transfer)
         {
             return std::unexpected(std::string(NoSourceError));
         }
 
-        return std::forward<Job>(job)(*source.Get());
+        return std::forward<Job>(job)(transfer->get());
     }
 
     /// <summary>What a work is handed: its progress, and its stop.</summary>

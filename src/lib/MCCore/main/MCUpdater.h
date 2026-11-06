@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lib/MCOptionalRef.h"
 #include "update/MCUpdateWork.h"
 
 #include <cstdint>
@@ -179,7 +180,7 @@ namespace MCUpdater
     /// copy's record as the start read it (none: it's read here).
     /// </summary>
     void SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source,
-                    const MCInstalled::MCRecord* installed = nullptr);
+                    MCOptionalRef<const MCInstalled::MCRecord> installed = std::nullopt);
 
     /// <summary>No content updater: any work under way stops.</summary>
     void ClearContent();

@@ -43,11 +43,12 @@ std::filesystem::path MCContentFolder::Full(std::string_view relative) const
     return _Root / MCFileSystem::FromUtf8(relative);
 }
 
-std::expected<const MCContentFolder::MCListing*, std::string> MCContentFolder::Listing(const std::string& folder)
+auto MCContentFolder::Listing(const std::string& folder)
+    -> std::expected<std::reference_wrapper<const MCListing>, std::string>
 {
     if (const auto found = _Listings.find(folder); found != _Listings.end())
     {
-        return &found->second;
+        return std::cref(found->second);
     }
 
     const std::filesystem::path path = Full(folder);
@@ -88,7 +89,7 @@ std::expected<const MCContentFolder::MCListing*, std::string> MCContentFolder::L
         return std::unexpected(std::format("{} can't be listed ({})", MCFileSystem::ToUtf8(path), error.message()));
     }
 
-    return &_Listings.emplace(folder, std::move(listing)).first->second;
+    return std::cref(_Listings.emplace(folder, std::move(listing)).first->second);
 }
 
 std::expected<MCContentFolder::MCFound, std::string> MCContentFolder::Find(std::string_view path)
@@ -105,9 +106,9 @@ std::expected<MCContentFolder::MCFound, std::string> MCContentFolder::Find(std::
             return std::unexpected(listing.error());
         }
 
-        const auto found = (*listing)->find(MCContentList::FoldedPath(parts[i]));
+        const auto found = listing->get().find(MCContentList::FoldedPath(parts[i]));
 
-        if (found == (*listing)->end())
+        if (found == listing->get().end())
         {
             return MCFound{MCKind::Missing, {}};
         }
@@ -151,8 +152,8 @@ std::expected<std::string, std::string> MCContentFolder::Place(std::string_view 
                 return std::unexpected(listing.error());
             }
 
-            if (const auto found = (*listing)->find(MCContentList::FoldedPath(name));
-                found != (*listing)->end() && found->second.Folder)
+            if (const auto found = listing->get().find(MCContentList::FoldedPath(name));
+                found != listing->get().end() && found->second.Folder)
             {
                 name = found->second.Name;
             }

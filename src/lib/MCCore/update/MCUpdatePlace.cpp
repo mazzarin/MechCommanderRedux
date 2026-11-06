@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "update/MCUpdatePlace.h"
+#include "lib/MCOptionalRef.h"
 #include "platform/MCFileSystem.h"
 #include "update/MCContentList.h"
 #include "update/MCContentStage.h"
@@ -61,18 +62,18 @@ std::expected<void, std::string> MCUpdatePlace::FitPaths(const std::filesystem::
             paths.push_back(in(MCContentList::BackupFolder, step.OnDisk));
         }
 
-        if (step.Patch != nullptr)
+        if (step.Patch)
         {
             paths.push_back(in(MCContentStage::DownloadFolder, step.Patch->Name));
         }
     }
 
-    for (const MCContentList::MCZip* zip : plan.Zips)
+    for (const MCContentList::MCZip& zip : plan.Zips)
     {
-        paths.push_back(in(MCContentStage::DownloadFolder, zip->Name));
+        paths.push_back(in(MCContentStage::DownloadFolder, zip.Name));
     }
 
-    const std::filesystem::path* longest = nullptr;
+    MCOptionalRef<const std::filesystem::path> longest;
     size_t longestLength = 0;
     // What's said of it: the file's length and limit, or its folder's when that's what's too long.
     size_t shownLength = 0;
@@ -86,18 +87,18 @@ std::expected<void, std::string> MCUpdatePlace::FitPaths(const std::filesystem::
         if ((length > fileLimit || folderLength > folderLimit) && length > longestLength)
         {
             const bool file = length > fileLimit;
-            longest = &path;
+            longest = path;
             longestLength = length;
             shownLength = file ? length : folderLength;
             shownLimit = file ? fileLimit : folderLimit;
         }
     }
 
-    if (longest != nullptr)
+    if (longest)
     {
         return std::unexpected(std::format("{}'s path is too long for Windows ({} characters, at most {}): install "
                                            "the game in a folder with a shorter path",
-                                           MCFileSystem::ToUtf8(*longest), shownLength, shownLimit));
+                                           MCFileSystem::ToUtf8(longest->get()), shownLength, shownLimit));
     }
 
     return {};

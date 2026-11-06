@@ -664,9 +664,9 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     MCSessionScreen& screen = *GlobalLog()->SessionScreen;
     const uint32_t hostId = MultiPlayer()->SessionManager->MyPlayer()->Id;
 
-    for (Guest* guest : {&ann, &cal, &dan})
+    for (Guest& guest : {std::ref(ann), std::ref(cal), std::ref(dan)})
     {
-        guest->SendRules(hostId, MCMatchRule::Supported);
+        guest.SendRules(hostId, MCMatchRule::Supported);
     }
 
     // The host and DAN on team 1, ANN and CAL on team 2.
@@ -678,11 +678,11 @@ TEST_CASE_ISOLATED("game: a lobby's START counts only the players there, and ask
     screen.CheckGoodToGo();
     REQUIRE(!screen.StartButton->Disabled);
 
-    for (Guest* guest : {&ann, &cal})
+    for (Guest& guest : {std::ref(ann), std::ref(cal)})
     {
-        guest->SendUpdating(hostId);
-        REQUIRE(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(guest->Id()); }));
-        guest->Leave();
+        guest.SendUpdating(hostId);
+        REQUIRE(SettleUntil([&] { return MCLobbyUpdate::LeftToUpdate(guest.Id()); }));
+        guest.Leave();
         Settle();
     }
 

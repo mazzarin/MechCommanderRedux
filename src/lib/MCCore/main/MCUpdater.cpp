@@ -207,13 +207,13 @@ namespace
     /// What the copy has of the HD pack, from its record (<paramref name="known"/>, the one the start read; none: read
     /// here), kept, and the sets chosen.
     /// </summary>
-    void ReadHd(const MCInstalled::MCRecord* known)
+    void ReadHd(MCOptionalRef<const MCInstalled::MCRecord> known)
     {
         const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
 
-        if (known != nullptr)
+        if (known)
         {
-            Record = *known;
+            Record = known->get();
         }
         else
         {
@@ -862,7 +862,7 @@ auto MCUpdater::SetBackend(std::unique_ptr<MCBackend> backend) -> void
 }
 
 auto MCUpdater::SetContent(const MCContentUpdater::MCSetup& setup, MCSourceMaker source,
-                           const MCInstalled::MCRecord* installed) -> void
+                           MCOptionalRef<const MCInstalled::MCRecord> installed) -> void
 {
     ResetContent();
     Content = setup;

@@ -79,16 +79,16 @@ namespace
                                      .Zip = std::move(zip)};
     }
 
-    const MCContentPlan::MCStep* StepFor(const MCContentPlan::MCPlan& plan, std::string_view path)
+    std::optional<MCContentPlan::MCStep> StepFor(const MCContentPlan::MCPlan& plan, std::string_view path)
     {
         const auto found = std::ranges::find(plan.Steps, path, &MCContentPlan::MCStep::Path);
-        return found == plan.Steps.end() ? nullptr : &*found;
+        return found == plan.Steps.end() ? std::nullopt : std::optional(*found);
     }
 
     std::optional<MCAction> ActionFor(const MCContentPlan::MCPlan& plan, std::string_view path)
     {
-        const MCContentPlan::MCStep* const step = StepFor(plan, path);
-        return step != nullptr ? std::optional(step->Action) : std::nullopt;
+        const std::optional<MCContentPlan::MCStep> step = StepFor(plan, path);
+        return step ? std::optional(step->Action) : std::nullopt;
     }
 
     const std::set<std::string, std::less<>> GameOnly = {std::string(MCContentList::GameSet)};
@@ -515,8 +515,8 @@ TEST_CASE("content plan: kept, patched, fetched, the player's replaced and kept,
 
     // Only the zips holding a fetched file: base-1.zip holds only what's kept; hd-1.zip a set not chosen.
     REQUIRE_EQ(plan->Zips.size(), size_t{2});
-    CHECK_EQ(plan->Zips[0]->Name, std::string("base-2.zip"));
-    CHECK_EQ(plan->Zips[1]->Name, std::string("update-2.zip"));
+    CHECK_EQ(plan->Zips[0].Name, std::string("base-2.zip"));
+    CHECK_EQ(plan->Zips[1].Name, std::string("update-2.zip"));
     CHECK_EQ(plan->DownloadBytes, uint64_t{2000 + 300 + 40});
     CHECK_EQ(plan->StagedBytes, uint64_t{std::string_view("patched v2").size() + std::string_view("fetched v2").size() +
                                          std::string_view("mod v2").size() + std::string_view("new").size()});
@@ -615,8 +615,8 @@ TEST_CASE("content plan: on Windows the program's own files are left to it, neve
     const auto windows = MCContentPlan::Make(windowsFolder, installed, list, MCSha256::Of("list"), GameOnly, {},
                                              MCReleaseFile::WindowsPlatform);
     REQUIRE(windows.has_value());
-    CHECK(StepFor(*windows, "MCX.EXE") == nullptr);
-    CHECK(StepFor(*windows, "mceditor.EXE") == nullptr);
+    CHECK(!StepFor(*windows, "MCX.EXE"));
+    CHECK(!StepFor(*windows, "mceditor.EXE"));
     CHECK(ActionFor(*windows, "data/m01.fit") == MCAction::Fetch);
     CHECK_EQ(windows->Steps.size(), size_t{1});
     CHECK(!windows->Record.Files.contains("MCX.EXE"));

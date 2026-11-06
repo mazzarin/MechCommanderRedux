@@ -74,7 +74,7 @@ jobs:
           $tools = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
           if (-not $tools) { throw "No MSVC tools version under $vs." }
           "MSVC $tools"
-          "prefix=windows-build-msvc-$tools-ltcg-" >> $env:GITHUB_OUTPUT
+          "prefix=windows-build-msvc-$tools-ltcg-x64-" >> $env:GITHUB_OUTPUT
 
       - name: Restore the last build
         if: ${{ !inputs.commit }}
@@ -117,13 +117,15 @@ jobs:
       # whole-program optimization, as a release's, so the tests run the code players get, and a full build is quicker
       # with it (MCCore 4 min, not 10: only the functions the programs reach get code). A work build's link redoes the
       # code only for what changed since the cached build's (MCIncrementalLtcg, /LTCG:INCREMENTAL); a release's
-      # links afresh, as upstream's releases do.
+      # links afresh, as upstream's releases do. The compiler and linker are the 64-bit ones: the 32-bit linker (the
+      # default) finds the biggest program too big for an incremental link and links it all again (2.5 min of a
+      # one-file change's 3.5).
       - name: Build
         shell: pwsh
         run: |
           $optimization = @()
           if (-not $env:RELEASE_COMMIT) { $optimization = @('-p:MCIncrementalLtcg=true') }
-          msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
+          msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -p:PreferredToolArchitecture=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
           if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE." }
 
       - name: Save the build

@@ -63,7 +63,8 @@
 #define GameExe "MCRedux.exe"
 #define SdlDll "SDL3.dll"
 #define EditorExe "MCEditor.exe"
-; The launcher (src/apps/MCXLauncher), in the original's place.
+; The launcher (src/apps/MCXLauncher), in the original's place: its pinned build, the same file release after release
+; (launcher\MCX.exe.pin), never this build's.
 #define LauncherExe "MCX.EXE"
 ; The original under another name: MechCommander Online's copy has its MCX.EXE patched for wider screens as
 ; MCX<width>x<height>.EXE (MCX1920x1080.EXE). Each becomes the launcher too, its original kept in the backup.
@@ -198,7 +199,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BinDir}\{#GameExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#SdlDll}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#EditorExe}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\MCX.exe"; DestDir: "{app}"; DestName: "{#LauncherExe}"; Flags: ignoreversion
+Source: "{#SourcePath}launcher\MCX.exe"; DestDir: "{app}"; DestName: "{#LauncherExe}"; Flags: ignoreversion
 Source: "{#DocsDir}\README.txt"; DestDir: "{app}"; DestName: "{#ReadmeName}"; Flags: ignoreversion
 Source: "{#LicencesFile}"; DestDir: "{app}"; DestName: "{#LicencesName}"; Flags: ignoreversion
 

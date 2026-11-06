@@ -1,0 +1,12 @@
+# Port-only (the personal build): the launcher the setup ships in the original's place (MCX.exe beside this file), one
+# build release after release so Defender's cloud learns one file once (src/installer/windows/check_launcher.ps1, run
+# by the Windows workflow after each build, holds the setup to it). Pin a new build only when the launcher's sources
+# change: the check fails then and prints the lines to put here.
+#
+# sources: git's tree id of src/apps/MCXLauncher; icon: the blob of src/res/MCRedux.ico; built: the commit and the
+# fork's Windows run that built it (a work build, without whole-program optimization, as the launcher's project sets).
+sha256=4996f824ef7db33fa7a062096407a4c894814fda773c07439ce020ea922514f3
+bytes=610304
+sources=b5a79e9e469b2f2c931bd0c23f1c41f0bbd18bb8
+icon=1576bcc4fb6149f30a13b4afa51e8ea6bb34b248
+built=33c1c4b05fef143abffbc0ddcdd31bae624e1296 run 42270588304

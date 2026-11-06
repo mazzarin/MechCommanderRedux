@@ -28,7 +28,9 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
     <UseDebugLibraries>false</UseDebugLibraries>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <!-- Never whole-program: a work build turns it off for every project, a release keeps each project's own, and the
+         launcher must be the same bytes from both (it gains nothing from it). -->
+    <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
@@ -41,7 +43,7 @@
   <!-- Port-only (the personal build): MCX.EXE for a game folder Redux has taken over (the Windows setup installs it in
        the original's place). Built byte for byte the same each time (/Brepro: no timestamps; no debug file's path; its
        own version, not the game's), so the setup can ship one pinned build release after release
-       (src/installer/windows/launcher). -->
+       (src/installer/windows/launcher, checked by the Windows workflow against each build). -->
   <PropertyGroup>
     <TargetName>MCX</TargetName>
   </PropertyGroup>

@@ -59,7 +59,8 @@ namespace
 
     /// <summary>
     /// The release's host for the game's own updater: the downloads Worker (tools/cloudflare/downloads in the
-    /// workspace), laid out as the release script writes it (SPEC-install-and-updates.md's Hosting).
+    /// workspace), laid out as the release script writes it (SPEC-install-and-updates.md's Hosting). The key list and
+    /// release.json come from it alone; the content from it and release.json's mirrors (update/MCHttpSource.h).
     /// </summary>
     constexpr std::string_view ContentHost = "https://mechcommander-redux-downloads.mazzarin.workers.dev";
 

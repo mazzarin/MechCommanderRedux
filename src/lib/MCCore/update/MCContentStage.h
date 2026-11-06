@@ -65,6 +65,23 @@ namespace MCContentStage
         /// never.
         /// </summary>
         virtual bool HostUnreachable() const { return false; }
+
+        /// <summary>
+        /// The mirrors (release.json's): other hosts serving the release's content as this one does. From now on each
+        /// file under lists/, zips/ and patches/ starts from one of the hosts, this one among them, picked at random,
+        /// and goes on from the next when one fails it (an error, a missing file, a connection lost midway), resuming
+        /// where its bytes stopped; any other file (the key list, release.json) still comes from this host alone. The
+        /// sources made from it later (Another) have them too. Here none: every file comes from this host.
+        /// </summary>
+        virtual void UseMirrors(std::span<const std::string> /*mirrors*/) {}
+
+        /// <summary>
+        /// The hosted file <paramref name="name"/>, as last fetched or read here, isn't as named (its size or hash):
+        /// the hosts that sent its bytes are passed over for it from now on, so it can be fetched again whole from
+        /// another. With none left, none is passed over (the next fetch may try them all again).
+        /// </summary>
+        /// <returns>Whether another host is left to fetch it from. Here none.</returns>
+        virtual bool PassOver(std::string_view /*name*/) { return false; }
     };
 
     /// <summary>Why a checked download (<see cref="FetchChecked"/>) failed.</summary>
@@ -88,8 +105,9 @@ namespace MCContentStage
     /// Downloads the hosted file <paramref name="name"/> into <paramref name="to"/> from <paramref name="source"/>,
     /// resuming a cut-off download (one longer than <paramref name="size"/> starts again), and checks it's <paramref
     /// name="size"/> bytes of SHA-256 <paramref name="sha256"/>: the bytes are hashed as they arrive, those already
-    /// here once first. One that isn't is deleted. <paramref name="received"/> gets the bytes already here, then each
-    /// count that arrives (0: asked whether to go on), and returns false to stop.
+    /// here once first. One that isn't is deleted, and fetched again whole from another host while the source has one
+    /// (MCSource::PassOver); the bytes of a copy given up aren't told again. <paramref name="received"/> gets the bytes
+    /// already here, then each count that arrives (0: asked whether to go on), and returns false to stop.
     /// </summary>
     /// <returns>Nothing, or what failed.</returns>
     std::expected<void, MCFetchError> FetchChecked(MCUpdateDisk& disk, MCSource& source, std::string_view name,

@@ -87,6 +87,10 @@ namespace
 
         bool HostUnreachable() const override { return _Inner->HostUnreachable(); }
 
+        void UseMirrors(std::span<const std::string> mirrors) override { _Inner->UseMirrors(mirrors); }
+
+        bool PassOver(std::string_view name) override { return _Inner->PassOver(name); }
+
     private:
         std::unique_ptr<MCContentStage::MCSource> _Inner;
         MCUpdateWork::MCProgress& _Progress;

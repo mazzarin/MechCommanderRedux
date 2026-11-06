@@ -1,9 +1,13 @@
 #include "stdafx.h"
 #include "../MCHttpGet.h"
+#include "MCContentFixture.h"
 #include "MCScratchFolder.h"
 #include "MCTest.h"
 #include "platform/MCSocket.h"
+#include "update/MCContentSwap.h"
+#include "update/MCContentUpdater.h"
 #include "update/MCHttpSource.h"
+#include "update/MCUpdateDisk.h"
 
 #include <thread>
 
@@ -118,6 +122,16 @@ namespace
             return _Ranges;
         }
 
+        /// <summary>Each request's file, as its name under /content/ (or its whole path when elsewhere), in order.</summary>
+        std::vector<std::string> Paths()
+        {
+            const std::scoped_lock lock(_Lock);
+            return _Paths;
+        }
+
+        /// <summary>How many requests asked for <paramref name="name"/>.</summary>
+        size_t Asked(std::string_view name) { return static_cast<size_t>(std::ranges::count(Paths(), name)); }
+
     private:
         void Serve()
         {
@@ -189,6 +203,7 @@ namespace
             {
                 const std::scoped_lock lock(_Lock);
                 _Ranges.push_back(range);
+                _Paths.push_back(path.starts_with(HostFolder) ? path.substr(HostFolder.size()) : path);
             }
 
             if (_FailCount.fetch_sub(1) > 0)
@@ -323,6 +338,7 @@ namespace
         std::atomic<int> _FailCount = 0;
         std::mutex _Lock;
         std::vector<std::string> _Ranges;
+        std::vector<std::string> _Paths;
     };
 
     std::unique_ptr<MCContentStage::MCSource> SourceAt(const MCTestHost& host)
@@ -776,4 +792,383 @@ TEST_CASE("content source: a small file is read whole, one too big refused; only
     CHECK(!MCHttpSource::RangeFirst("bytes */1000").has_value());
     CHECK(!MCHttpSource::RangeFirst("items 1-2/3").has_value());
     CHECK(!MCHttpSource::RangeFirst("").has_value());
+}
+
+namespace
+{
+    /// <summary>Quick waits between rounds of the hosts: three waits, so four rounds.</summary>
+    const MCHttpSource::MCRetries QuickRetries{.First = 10ms, .Longest = 20ms, .RideOut = 50ms};
+
+    /// <summary>Each file starts from the last host it may come from: the last mirror, while it isn't passed over.</summary>
+    const MCHttpSource::MCPick PickLast = [](size_t hosts) { return hosts - 1; };
+
+    constexpr int Unavailable = 503;
+    constexpr int Always = 1000;
+
+    /// <summary>A source of <paramref name="ours"/> with <paramref name="mirrors"/>, each file starting from the last.</summary>
+    std::unique_ptr<MCContentStage::MCSource> MirroredSource(MCTestHost& ours, std::vector<MCTestHost*> mirrors,
+                                                             const MCHttpSource::MCPick& pick = PickLast)
+    {
+        auto source = MCHttpSource::Make(ours.Address(), MCMakeHttpGet, QuickRetries, pick);
+        REQUIRE(source.has_value());
+        std::vector<std::string> addresses;
+
+        for (MCTestHost* mirror : mirrors)
+        {
+            addresses.push_back(mirror->Address());
+        }
+
+        (*source)->UseMirrors(addresses);
+        return std::move(*source);
+    }
+
+    /// <summary>A port on this machine nothing listens on: a connection to it is refused.</summary>
+    uint16_t ClosedPort()
+    {
+        MCSocketTransport net;
+        REQUIRE(net.Startup());
+        const MCSocket::Handle listener = net.ListenTcp(0);
+        REQUIRE(listener != MCSocket::InvalidHandle);
+        const uint16_t port = net.LocalPort(listener);
+        net.Close(listener);
+        return port;
+    }
+
+    /// <summary>Counts what a checked download tells.</summary>
+    struct MCCounted
+    {
+        uint64_t Received = 0;
+        std::function<bool(uint64_t)> Count = [this](uint64_t count)
+        {
+            Received += count;
+            return true;
+        };
+    };
+}
+
+TEST_CASE("content source: a file a mirror lacks comes from the next host; the key list and release.json, and any file "
+          "outside lists/, zips/ and patches/, from ours alone")
+{
+    const std::string zip = Bytes(ZipBytes);
+    const std::string list = R"({"files": []})";
+    const std::string signedFile = R"({"payloadType": "x"})";
+    MCTestHost ours({{std::string(ZipName), zip},
+                     {"lists/one.json", list},
+                     {"keys.json", signedFile},
+                     {"release.json", signedFile},
+                     {"setup.exe", zip}});
+    MCTestHost mirror({{"keys.json", "a mirror's"}, {"release.json", "a mirror's"}, {"setup.exe", "a mirror's"}});
+    const auto source = MirroredSource(ours, {&mirror});
+    const MCScratchFolder folder(TestGroup, "mirror-lacks");
+    uint64_t received = 0;
+
+    CHECK_EQ(Fetch(*source, ZipName, folder.Path() / "zip.zip", zip.size(), received).error_or(""), std::string());
+    CHECK(FileText(folder.Path() / "zip.zip") == zip);
+    CHECK_EQ(mirror.Asked(ZipName), size_t{1});
+    CHECK_EQ(ours.Asked(ZipName), size_t{1});
+    CHECK_EQ(ours.Ranges().back(), std::string());
+    CHECK_EQ(source->Read("lists/one.json", list.size()).value_or(""), list);
+    CHECK_EQ(mirror.Asked("lists/one.json"), size_t{1});
+
+    CHECK_EQ(source->Read("keys.json", signedFile.size()).value_or(""), signedFile);
+    CHECK_EQ(source->Read("release.json", signedFile.size()).value_or(""), signedFile);
+    CHECK_EQ(Fetch(*source, "setup.exe", folder.Path() / "setup.exe", zip.size(), received).error_or(""),
+             std::string());
+    CHECK_EQ(mirror.Paths().size(), size_t{2});
+    CHECK_EQ(ours.Asked("release.json"), size_t{1});
+
+    // Sources made from it have the mirrors too.
+    const auto another = source->Another();
+    REQUIRE(another != nullptr);
+    CHECK_EQ(Fetch(*another, ZipName, folder.Path() / "another.zip", zip.size(), received).error_or(""), std::string());
+    CHECK_EQ(mirror.Asked(ZipName), size_t{2});
+}
+
+TEST_CASE("content source: a download cut off at a mirror goes on from the next host, by range")
+{
+    const std::string zip = Bytes(ZipBytes);
+    MCTestHost ours({{std::string(ZipName), zip}});
+    MCTestHost mirror({{std::string(ZipName), zip}});
+    const auto source = MirroredSource(ours, {&mirror});
+    const MCScratchFolder folder(TestGroup, "mirror-cut");
+    const std::filesystem::path to = folder.Path() / "cut.zip";
+    constexpr int64_t CutBytes = 100'000;
+    mirror.CutAfter(CutBytes);
+    uint64_t received = 0;
+
+    const auto fetched = source->Fetch(ZipName, to, zip.size(),
+                                       [&](std::span<const char> bytes)
+                                       {
+                                           mirror.Passed(bytes.size());
+                                           received += bytes.size();
+                                           return true;
+                                       });
+    CHECK_EQ(fetched.error_or(""), std::string());
+    CHECK(FileText(to) == zip);
+    CHECK_EQ(received, uint64_t{ZipBytes});
+    REQUIRE_EQ(mirror.Ranges().size(), size_t{1});
+    CHECK_EQ(mirror.Ranges()[0], std::string());
+    REQUIRE_EQ(ours.Ranges().size(), size_t{1});
+    constexpr std::string_view RangeStart = "bytes=";
+    REQUIRE(ours.Ranges()[0].starts_with(RangeStart));
+    const uint64_t from = std::stoull(ours.Ranges()[0].substr(RangeStart.size()));
+    CHECK(from > 0);
+    CHECK(from <= static_cast<uint64_t>(CutBytes));
+}
+
+TEST_CASE(
+    "content source: a mirror's wrong bytes: the file comes again whole from another host, the mirror passed over "
+    "for it; wrong on every host, it fails as not as named")
+{
+    const std::string zip = Bytes(ZipBytes);
+    std::string wrong = zip;
+    wrong[ZipBytes / 2] ^= 1;
+    const MCSha256::MCDigest sha256 = MCSha256::Of(zip);
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const MCScratchFolder folder(TestGroup, "mirror-wrong");
+
+    MCTestHost ours({{std::string(ZipName), zip}});
+    MCTestHost mirror({{std::string(ZipName), wrong}});
+    const auto source = MirroredSource(ours, {&mirror});
+    MCCounted counted;
+    const std::filesystem::path to = folder.Path() / "first.zip";
+    CHECK(MCContentStage::FetchChecked(*disk, *source, ZipName, to, zip.size(), sha256, counted.Count).has_value());
+    CHECK(FileText(to) == zip);
+    CHECK_EQ(counted.Received, uint64_t{ZipBytes});
+    CHECK_EQ(mirror.Asked(ZipName), size_t{1});
+    REQUIRE_EQ(ours.Ranges().size(), size_t{1});
+    CHECK_EQ(ours.Ranges()[0], std::string());
+
+    // Passed over for that file: its next copy comes from ours, though the pick says the mirror.
+    CHECK(MCContentStage::FetchChecked(*disk, *source, ZipName, folder.Path() / "second.zip", zip.size(), sha256,
+                                       counted.Count)
+              .has_value());
+    CHECK_EQ(mirror.Asked(ZipName), size_t{1});
+    CHECK_EQ(ours.Asked(ZipName), size_t{2});
+
+    // Wrong everywhere: one whole try from each host, then it fails, and nothing of it stays.
+    MCTestHost badOurs({{std::string(ZipName), wrong}});
+    MCTestHost badMirror({{std::string(ZipName), wrong}});
+    const auto bad = MirroredSource(badOurs, {&badMirror});
+    MCCounted badCounted;
+    const std::filesystem::path badTo = folder.Path() / "bad.zip";
+    const auto refused =
+        MCContentStage::FetchChecked(*disk, *bad, ZipName, badTo, zip.size(), sha256, badCounted.Count);
+    REQUIRE(!refused.has_value());
+    CHECK(refused.error().Kind == MCContentStage::MCFetchError::MCKind::NotAsNamed);
+    CHECK(!std::filesystem::exists(badTo));
+    CHECK_EQ(badOurs.Asked(ZipName), size_t{1});
+    CHECK_EQ(badMirror.Asked(ZipName), size_t{1});
+    CHECK_EQ(badCounted.Received, uint64_t{ZipBytes});
+
+    // A read not as named: passed over, so it's read again from the other host; with none left, nothing's passed over.
+    const std::string list = R"({"files": []})";
+    std::string wrongList = list;
+    wrongList[1] = '!';
+    MCTestHost listOurs({{"lists/one.json", list}});
+    MCTestHost listMirror({{"lists/one.json", wrongList}});
+    const auto lists = MirroredSource(listOurs, {&listMirror});
+    CHECK_EQ(lists->Read("lists/one.json", list.size()).value_or(""), wrongList);
+    CHECK(lists->PassOver("lists/one.json"));
+    CHECK_EQ(lists->Read("lists/one.json", list.size()).value_or(""), list);
+    CHECK(!lists->PassOver("lists/one.json"));
+    CHECK_EQ(lists->Read("lists/one.json", list.size()).value_or(""), wrongList);
+}
+
+TEST_CASE("content source: every host failing: a file none has fails at once; busy hosts are tried in rounds until the "
+          "waits run out; hosts out of reach are told apart, and one answering isn't")
+{
+    const std::string zip = Bytes(ZipBytes);
+    const MCScratchFolder folder(TestGroup, "mirrors-fail");
+    uint64_t received = 0;
+
+    MCTestHost ours({{std::string(ZipName), zip}});
+    MCTestHost mirror({{std::string(ZipName), zip}});
+    const auto source = MirroredSource(ours, {&mirror});
+    const auto missing = Fetch(*source, "zips/none.zip", folder.Path() / "none.zip", zip.size(), received);
+    CHECK(missing.error_or("").find("404") != std::string::npos);
+    CHECK_EQ(ours.Paths().size(), size_t{1});
+    CHECK_EQ(mirror.Paths().size(), size_t{1});
+    CHECK(!source->HostUnreachable());
+
+    const size_t rounds = MCHttpSource::RetryWaits(QuickRetries).size() + 1;
+    ours.FailNext(Unavailable, Always);
+    mirror.FailNext(Unavailable, Always);
+    const auto busy = Fetch(*source, ZipName, folder.Path() / "busy.zip", zip.size(), received);
+    CHECK(busy.error_or("").find("503") != std::string::npos);
+    CHECK_EQ(ours.Paths().size(), 1 + rounds);
+    CHECK_EQ(mirror.Paths().size(), 1 + rounds);
+    CHECK(!source->HostUnreachable());
+
+    // The mirror lacks it and ours is busy: ours alone is tried in each round after the first.
+    MCTestHost lacking({});
+    MCTestHost busyOurs({{std::string(ZipName), zip}});
+    busyOurs.FailNext(Unavailable, Always);
+    const auto mixed = MirroredSource(busyOurs, {&lacking});
+    CHECK(!Fetch(*mixed, ZipName, folder.Path() / "mixed.zip", zip.size(), received).has_value());
+    CHECK_EQ(lacking.Paths().size(), size_t{1});
+    CHECK_EQ(busyOurs.Paths().size(), rounds);
+    CHECK(!mixed->HostUnreachable());
+
+    // Nothing listens at any host: out of reach. One that answers, even with a failure, isn't.
+    const auto nowhere = MCHttpSource::Make(std::format("http://127.0.0.1:{}{}", ClosedPort(), HostFolder),
+                                            MCMakeHttpGet, QuickRetries, PickLast);
+    REQUIRE(nowhere.has_value());
+    const std::vector<std::string> closed = {std::format("http://127.0.0.1:{}{}", ClosedPort(), HostFolder)};
+    (*nowhere)->UseMirrors(closed);
+    CHECK(!(*nowhere)->Read("lists/one.json", ZipBytes).has_value());
+    CHECK((*nowhere)->HostUnreachable());
+    const std::vector<std::string> answering = {mirror.Address()};
+    (*nowhere)->UseMirrors(answering);
+    CHECK(!(*nowhere)->Read("lists/one.json", ZipBytes).has_value());
+    CHECK(!(*nowhere)->HostUnreachable());
+}
+
+TEST_CASE("content source: mirrors that aren't https (nor http to this machine) or a folder's address, and ours again, "
+          "are left out; files are spread across the hosts at random")
+{
+    const std::string list = R"({"files": []})";
+    MCTestHost ours({{"lists/one.json", list}});
+    MCTestHost mirror({{"lists/one.json", list}});
+    auto source = MCHttpSource::Make(ours.Address(), MCMakeHttpGet, QuickRetries);
+    REQUIRE(source.has_value());
+    const std::vector<std::string> mirrors = {"http://example.com/content",
+                                              "https://user@example.com/content",
+                                              "https://example.com/content?mirror=1",
+                                              "ftp://example.com/content",
+                                              ours.Address(),
+                                              mirror.Address(),
+                                              mirror.Address() + "/"};
+    (*source)->UseMirrors(mirrors);
+    constexpr size_t Reads = 40;
+
+    for (size_t read = 0; read < Reads; ++read)
+    {
+        REQUIRE_EQ((*source)->Read("lists/one.json", list.size()).value_or(""), list);
+    }
+
+    // Only ours and the mirror were asked, each at least once (all 40 on one: one chance in 2^39).
+    CHECK_EQ(ours.Paths().size() + mirror.Paths().size(), Reads);
+    CHECK(ours.Paths().size() > 0);
+    CHECK(mirror.Paths().size() > 0);
+    CHECK(MCHttpSource::Mirrored("zips/base-1.zip"));
+    CHECK(MCHttpSource::Mirrored("patches/a.hdiff"));
+    CHECK(MCHttpSource::Mirrored("lists/a.json"));
+    CHECK(!MCHttpSource::Mirrored("release.json"));
+    CHECK(!MCHttpSource::Mirrored("keys.json"));
+    CHECK(!MCHttpSource::Mirrored("zipsa/b.zip"));
+}
+
+TEST_CASE(
+    "content updater: the content comes from release.json's mirrors and ours: a mirror's wrong list and zip, and a "
+    "patch it lacks, come from ours; the key list and release.json from ours alone; HD got later from the "
+    "mirrors kept")
+{
+    using namespace MCContentFixture;
+    constexpr uint64_t RunningBuild = 500;
+    MCRelease release(TestGroup, "mirrored");
+    const MCScratchFolder user(TestGroup, "mirrored-user");
+    const std::filesystem::path game = release.Game.Path();
+    Write(game / "Redux update" / "installed.json", MCInstalled::Text(release.Installed));
+    // A file the copy lost: fetched from the base zip, which the mirror has right.
+    std::filesystem::remove(game / "data" / "same.fit");
+
+    // The zips under zips/, as the release script names them.
+    MCContentList::MCList list = release.List;
+
+    for (MCContentList::MCZip& zip : list.Zips)
+    {
+        zip.Name = "zips/" + zip.Name;
+    }
+
+    for (MCContentList::MCFile& file : list.Files)
+    {
+        file.Zip = "zips/" + file.Zip;
+    }
+
+    const std::string listText = MCContentList::Write(list);
+    const std::string listName = std::format("lists/{}.json", MCSha256::Hex(MCSha256::Of(listText)));
+    std::string wrongList = listText;
+    wrongList[wrongList.size() / 2] ^= 1;
+    const std::string base = Read(release.Host.Path() / "base-1.zip");
+    const std::string update = Read(release.Host.Path() / "update-2.zip");
+    std::string wrongUpdate = update;
+    wrongUpdate[wrongUpdate.size() / 2] ^= 1;
+    const std::string patch = Read(release.Host.Path() / "patches" / "terrain-1-2.hdiff");
+    MCTestHost mirror({{listName, wrongList}, {"zips/base-1.zip", base}, {"zips/update-2.zip", wrongUpdate}});
+
+    const KeyPair root(40);
+    const KeyPair releaseKey(41);
+    MCReleaseFile::MCRelease two{
+        .Number = 2, .Version = "0.2.2", .List = MCSha256::Of(listText), .ListSize = listText.size()};
+    two.Programs["mac"] = {.Build = RunningBuild, .Size = 1};
+    const MCReleaseFile::MCReleases releases{.Format = 1, .Issue = 1, .Current = two, .Mirrors = {mirror.Address()}};
+    MCTestHost ours(
+        {{"keys.json", KeyList(root, 1, {releaseKey.Public})},
+         {"release.json", releaseKey.Envelope(MCSignedFile::ReleaseType, MCReleaseFile::ReleasesPayload(releases))},
+         {listName, listText},
+         {"zips/base-1.zip", base},
+         {"zips/update-2.zip", update},
+         {"patches/terrain-1-2.hdiff", patch}});
+
+    const MCContentUpdater::MCSetup setup{.GameFolder = game,
+                                          .UserFolder = user.Path(),
+                                          .RootKeys = {root.Public},
+                                          .Platform = "mac",
+                                          .RunningBuild = RunningBuild,
+                                          .RunningVersion = "0.2.1 (500)"};
+    // A source for each piece of work, as the updater makes them, the mirror first for every file.
+    const auto source = [&]
+    {
+        auto made = MCHttpSource::Make(ours.Address(), MCMakeHttpGet, QuickRetries, PickLast);
+        REQUIRE(made.has_value());
+        return std::move(*made);
+    };
+
+    const std::unique_ptr<MCUpdateDisk> disk = MakeDisk();
+    const auto offer = MCContentUpdater::Check(setup, *disk, *source());
+    REQUIRE(offer.has_value());
+    REQUIRE(offer->has_value());
+    CHECK((*offer)->Mirrors == std::vector{mirror.Address()});
+    REQUIRE(MCContentUpdater::Stage(setup, *disk, *source(), **offer, GoOn).has_value());
+    REQUIRE(MCContentUpdater::Arm(setup, *disk, **offer).has_value());
+    REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    release.CheckIsRelease2();
+
+    CHECK_EQ(mirror.Asked(listName), size_t{1});
+    CHECK_EQ(mirror.Asked("zips/base-1.zip"), size_t{1});
+    CHECK_EQ(mirror.Asked("zips/update-2.zip"), size_t{1});
+    CHECK_EQ(mirror.Asked("patches/terrain-1-2.hdiff"), size_t{1});
+    CHECK_EQ(mirror.Asked("keys.json") + mirror.Asked("release.json"), size_t{0});
+    CHECK_EQ(ours.Asked("keys.json"), size_t{1});
+    CHECK_EQ(ours.Asked("release.json"), size_t{1});
+    CHECK_EQ(ours.Asked(listName), size_t{1});
+    CHECK_EQ(ours.Asked("zips/base-1.zip"), size_t{0});
+    CHECK_EQ(ours.Asked("zips/update-2.zip"), size_t{1});
+    CHECK_EQ(ours.Asked("patches/terrain-1-2.hdiff"), size_t{1});
+    const auto kept = MCReleaseFile::ReadKept(Read(user.Path() / "update.json"));
+    REQUIRE(kept.has_value());
+    CHECK(kept->Mirrors == std::vector{mirror.Address()});
+
+    // HD taken out, then got again against the release installed, which reads no release.json: the mirrors kept.
+    const auto changeSets = [&](const MCContentUpdater::MCSets& sets)
+    {
+        REQUIRE(MCContentUpdater::Choose(*disk, game, sets).has_value());
+        const auto change = MCContentUpdater::CheckSets(setup, *disk, *source());
+        REQUIRE(change.has_value());
+        REQUIRE(change->has_value());
+        // Taking a set out alone fetches nothing; adding one plans with the mirrors kept.
+        CHECK((*change)->Mirrors == (sets.contains("hd") ? std::vector{mirror.Address()} : std::vector<std::string>{}));
+        REQUIRE(MCContentUpdater::Stage(setup, *disk, *source(), **change, GoOn).has_value());
+        REQUIRE(MCContentUpdater::Arm(setup, *disk, **change).has_value());
+        REQUIRE(MCContentSwap::Run(*disk, game).Outcome == MCContentSwap::MCOutcome::Swapped);
+    };
+
+    changeSets({"game"});
+    CHECK(!std::filesystem::exists(game / "HD" / "terrain.hda"));
+    changeSets({"game", "hd"});
+    CHECK(Read(game / "HD" / "terrain.hda") == Text(MCFilePatchFixture::PatchNew()));
+    CHECK_EQ(mirror.Asked("zips/update-2.zip"), size_t{2});
+    CHECK_EQ(ours.Asked("zips/update-2.zip"), size_t{2});
+    CHECK_EQ(ours.Asked("release.json"), size_t{1});
 }

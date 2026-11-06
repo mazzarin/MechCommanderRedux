@@ -33,6 +33,7 @@ namespace
     constexpr std::string_view SkippedKey = "skipped";
     constexpr std::string_view EpochKey = "epoch";
     constexpr std::string_view EdSignaturesKey = "edSignatures";
+    constexpr std::string_view MirrorsKey = "mirrors";
     /// <summary>A rollout's share runs from none to every copy.</summary>
     constexpr double NoShare = 0.0;
     constexpr double WholeShare = 100.0;
@@ -113,6 +114,27 @@ namespace
         }
 
         return release;
+    }
+
+    /// <summary>
+    /// <paramref name="json"/>'s mirrors (<paramref name="what"/> says whose): none without the key, else up to
+    /// MaxMirrors strings. Whether each is an address a source takes is the source's to say (update/MCHttpSource.h).
+    /// </summary>
+    std::vector<std::string> MirrorsOf(const MCJson& json, std::string_view what)
+    {
+        if (!json.contains(MirrorsKey))
+        {
+            return {};
+        }
+
+        std::vector<std::string> mirrors = Strings(json, MirrorsKey);
+
+        if (mirrors.size() > MaxMirrors)
+        {
+            Fail("{} names {} mirrors (at most {})", what, mirrors.size(), MaxMirrors);
+        }
+
+        return mirrors;
     }
 
     MCJson WriteRelease(const MCRelease& release)
@@ -231,6 +253,7 @@ std::expected<MCReleases, std::string> MCReleaseFile::ReadReleases(std::string_v
                         }
                     }
 
+                    releases.Mirrors = MirrorsOf(json, "release.json");
                     return releases;
                 });
 }
@@ -322,6 +345,7 @@ MCKept MCReleaseFile::Keep(const MCKept& kept, const MCTrusted& trusted)
 
     taken.KeyListIssue = std::max(kept.KeyListIssue, trusted.Keys.Issue);
     taken.ReleaseIssue = std::max(taken.ReleaseIssue, trusted.Releases.Issue);
+    taken.Mirrors = trusted.Releases.Mirrors;
     return taken;
 }
 
@@ -362,6 +386,7 @@ std::expected<MCKept, std::string> MCReleaseFile::ReadKept(std::string_view text
                         kept.Skipped = Count(json, SkippedKey);
                     }
 
+                    kept.Mirrors = MirrorsOf(json, KeptFile);
                     return kept;
                 });
 }
@@ -378,6 +403,11 @@ std::string MCReleaseFile::KeptText(const MCKept& kept)
     if (kept.Skipped != 0)
     {
         json[std::string(SkippedKey)] = kept.Skipped;
+    }
+
+    if (!kept.Mirrors.empty())
+    {
+        json[std::string(MirrorsKey)] = kept.Mirrors;
     }
 
     return json.dump(2);
@@ -464,6 +494,11 @@ std::string MCReleaseFile::ReleasesPayload(const MCReleases& releases)
         MCJson rollout = WriteRelease(*releases.Rollout);
         rollout[std::string(ShareKey)] = releases.RolloutShare;
         json[std::string(RolloutKey)] = std::move(rollout);
+    }
+
+    if (!releases.Mirrors.empty())
+    {
+        json[std::string(MirrorsKey)] = releases.Mirrors;
     }
 
     return json.dump(2);

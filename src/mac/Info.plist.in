@@ -6,7 +6,7 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>MechCommander Redux</string>
+  <string>MechCommander Redux HD</string>
   <key>CFBundleExecutable</key>
   <string>MechCommander Redux</string>
   <key>CFBundleIconFile</key>
@@ -16,7 +16,7 @@
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>MechCommander Redux</string>
+  <string>MechCommander Redux HD</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

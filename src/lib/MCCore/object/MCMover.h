@@ -502,6 +502,18 @@ public:
     /// <summary>Distance moved since the mover last marked what it sees (it marks again past
     /// Terrain::metersPerVertex).</summary>
     float DistanceSinceMarkSeen = 0.0f;
+    /// <summary>
+    /// Port-only (Redux HD, mission/MCNightLights.h): whether the unit's headlight is on: the player's LIGHTS turns it
+    /// off; the computer's units keep theirs on. It shines only at night while the unit runs.
+    /// </summary>
+    bool LightsOn = true;
+    /// <summary>Port-only: <see cref="LitMarkedAt"/> for a light that hasn't marked since it came on.</summary>
+    static constexpr float NeverLitMarked = -1.0f;
+    /// <summary>
+    /// Port-only: when (ActualTime) the unit's light last marked what it shows (MCNightLights::Mark), or
+    /// <see cref="NeverLitMarked"/>.
+    /// </summary>
+    float LitMarkedAt = NeverLitMarked;
     /// <summary>Used by needsRefit and TacticalOrder::status.</summary>
     std::weak_ptr<MCGameObject> RefitBuddy;
     /// <summary>The type's "CrashAvoidSelf".</summary>

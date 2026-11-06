@@ -20,6 +20,7 @@
 #include "lib/MCFitIniFile.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCAIControl.h"
@@ -1156,20 +1157,28 @@ auto MCBattleMech::Update() -> int32_t
     }
     else
     {
-        if (GetAwake() != 0 && IsDisabled() == 0 && Scenario()->GodMode == 0 &&
-            MCTerrain::MetersPerVertex <= DistanceSinceMarkSeen)
+        if (GetAwake() != 0 && IsDisabled() == 0 && Scenario()->GodMode == 0)
         {
-            // Every vertex travelled, the mech marks what it sees.
-            if (Alignment == 1)
+            const bool moved = MCTerrain::MetersPerVertex <= DistanceSinceMarkSeen;
+
+            if (moved)
             {
-                Terrain()->MarkSeen(Position, Frame.J, 360.0f, GetProbeEffect() + Scenario()->MaxVisualRange, 1);
-            }
-            else if (Alignment == -1)
-            {
-                Terrain()->MarkSeen(Position, Frame.J, 360.0f, GetProbeEffect() + Scenario()->MaxVisualRange, 2);
+                // Every vertex travelled, the mech marks what it sees.
+                if (Alignment == 1)
+                {
+                    Terrain()->MarkSeen(Position, Frame.J, 360.0f, GetProbeEffect() + Scenario()->MaxVisualRange, 1);
+                }
+                else if (Alignment == -1)
+                {
+                    Terrain()->MarkSeen(Position, Frame.J, 360.0f, GetProbeEffect() + Scenario()->MaxVisualRange, 2);
+                }
+
+                DistanceSinceMarkSeen = 0.0f;
             }
 
-            DistanceSinceMarkSeen = 0.0f;
+            // Port-only (Redux HD): at night its headlight shows the ground ahead, turned with its torso, and gives it
+            // away (mission/MCNightLights.h).
+            MCNightLights::Mark(*this, TorsoRotation, moved);
         }
 
         if (DeselectTime != 0.0f && DeselectTime < ScenarioTime)

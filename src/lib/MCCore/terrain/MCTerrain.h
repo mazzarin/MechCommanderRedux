@@ -92,6 +92,15 @@ public:
     void MarkRadiusSeen(const MCVector3D& looker, const MCVector3D& lookVector, float angle, float range,
                         uint8_t who) const;
 
+    /// <summary>
+    /// Port-only (mission/MCNightLights.h): marks what a headlight at <paramref name="looker"/> shows as visible for
+    /// <paramref name="who"/> (as MarkSeen's): a wedge along (<paramref name="facingX"/>, <paramref name="facingY"/>)
+    /// on the ground, <paramref name="halfDegrees"/> to each side, out to <paramref name="ranges"/>' radius for the
+    /// highest cell elevation around the looker (as MarkSeen's from VisualRangeTable).
+    /// </summary>
+    void MarkBeamSeen(const MCVector3D& looker, float facingX, float facingY, float halfDegrees,
+                      std::span<const int32_t> ranges, uint8_t who) const;
+
     /// <summary>The home team's visible-this-frame bits (the Clans' when the home team's alignment is -1).</summary>
     MCByteFlag& HomeVisibleBits() const;
 
@@ -174,6 +183,17 @@ public:
     static MCVector3D MapTopLeft3d100;
 
 private:
+    /// <summary>A looker's map vertex and the highest cell elevation level round it (the sight table's index).</summary>
+    struct MCLookerVertex
+    {
+        int32_t Row = 0;
+        int32_t Col = 0;
+        uint32_t Level = 0;
+    };
+
+    /// <summary>The vertex a looker at <paramref name="looker"/> stands on, and its level (MarkSeen's).</summary>
+    static MCLookerVertex LookerVertex(const MCVector3D& looker);
+
     /// <summary>The map blocks drawn this frame (no limit: the original's list held 324).</summary>
     std::vector<int32_t> _UsedBlocks;
 };

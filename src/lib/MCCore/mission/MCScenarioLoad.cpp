@@ -23,6 +23,7 @@
 #include "mission/MCDifficultySettings.h"
 #include "mission/MCMission.h"
 #include "mission/MCScenarioReading.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCWeatherPlay.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
@@ -238,6 +239,23 @@ auto MCScenario::Load(std::string_view scenarioName, std::string_view terrainNam
     if (weatherPlay.Sight != 1.0)
     {
         VisualRangeTable = MCSightCut(VisualRangeTable, weatherPlay.Sight);
+    }
+
+    // Port-only (Redux HD): at night, where the lights' rule is played (in a match whose every game has it, or a
+    // mission set at night), every unit sees half the day's sight all round and a lit unit further ahead
+    // (mission/MCNightLights.h), the weather's share on both. The day's is the game system's, as a match's time of day
+    // takes it: a night mission's own table (the editor's night cut of it) gives way.
+    const bool timeOfDaySight =
+        match.TimeOfDay.has_value() && (match.Rules.value_or(0) & MCMatchRule::TimeOfDaySight) != 0;
+    const MCTimeOfDay sightTime = timeOfDaySight ? *match.TimeOfDay : MCSceneLights::MissionTime();
+    const bool lightsRule = MultiPlayer() == nullptr || (match.Rules.value_or(0) & MCMatchRule::NightLights) != 0;
+    const std::optional<MCNightLights::MCLitSight> litSight =
+        MCNightLights::SightFor(lightsRule, sightTime, gameSystemSight, weatherPlay.Sight);
+    MCNightLights::SetSight(litSight);
+
+    if (litSight.has_value())
+    {
+        VisualRangeTable = litSight->Round;
     }
 
     LoadSensorContactShapes(file);

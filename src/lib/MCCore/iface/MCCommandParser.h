@@ -51,6 +51,12 @@ public:
     /// <returns>False when there was no subject.</returns>
     bool SendTacOrder(MCTacticalOrder order, bool sortMovers);
 
+    /// <summary>
+    /// Port-only: every mover ordered, the single subjects' then their lances', each once (the selection, for an
+    /// order sent as its units, as the LIGHTS are: mission/MCNightLights.h).
+    /// </summary>
+    std::vector<std::shared_ptr<MCMover>> SubjectMovers() const;
+
     /// <summary>Part ids of the single movers ordered.</summary>
     std::vector<int32_t> Subjects;
     /// <summary>The lances ordered.</summary>

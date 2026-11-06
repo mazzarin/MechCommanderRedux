@@ -7,6 +7,7 @@
 #include "engine/MCPolygonElement.h"
 #include "engine/MCVfxElement.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCNightLights.h"
 #include "object/MCArtillery.h"
 #include "object/MCArtilleryType.h"
 #include "object/MCArtilleryChunk.h"
@@ -288,12 +289,12 @@ auto MCGVAppearance::Render(int32_t depthFixup) -> int32_t
     }
 
     // Port-only (HD lighting): a vehicle casts shadows from the lights by it, and at night, while it runs, shines its
-    // headlight. (HD particles): it wades through water.
+    // headlight, unless its LIGHTS are off (mission/MCNightLights.h). (HD particles): it wades through water.
     if (objectClass == MCObjectClass::GroundVehicle)
     {
         MCSceneLights::AddCaster(*this, obj->Position);
 
-        if (MCSceneLights::HeadlightOn(obj->Status))
+        if (MCNightLights::Shines(static_cast<const MCMover&>(*obj)))
         {
             MCSceneLights::AddHeadlight(*this, obj->Position, obj->GetFrame(), 0.0f, std::nullopt, depthFixup);
         }

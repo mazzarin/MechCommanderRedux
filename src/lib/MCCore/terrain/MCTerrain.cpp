@@ -416,14 +416,8 @@ auto MCTerrain::UpdateAllObjects() const -> void
     ObjectBlocks->UpdateAllObjects();
 }
 
-auto MCTerrain::MarkSeen(const MCVector3D& looker, const MCVector3D& /*lookVector*/, float angle, float /*range*/,
-                         uint8_t who) const -> void
+auto MCTerrain::LookerVertex(const MCVector3D& looker) -> MCLookerVertex
 {
-    if (angle != 360.0f)
-    {
-        return;
-    }
-
     const float fromTop = MapTopLeft3d100.Y - looker.Y;
     const double gridX = std::floor(OneOvermetersPerVertex * (looker.X - MapTopLeft3d100.X));
     const double gridY = std::floor(OneOvermetersPerVertex * fromTop);
@@ -442,9 +436,65 @@ auto MCTerrain::MarkSeen(const MCVector3D& looker, const MCVector3D& /*lookVecto
     // The highest of the four corners sets the sight radius.
     const uint32_t level =
         std::max({(cellsA >> 7) & 0x3f, (cellsB >> 7) & 0x3f, (cellsC >> 7) & 0x3f, (cellsD >> 7) & 0x3f});
+    return {.Row = row, .Col = col, .Level = level};
+}
+
+auto MCTerrain::MarkSeen(const MCVector3D& looker, const MCVector3D& /*lookVector*/, float angle, float /*range*/,
+                         uint8_t who) const -> void
+{
+    if (angle != 360.0f)
+    {
+        return;
+    }
+
+    const MCLookerVertex at = LookerVertex(looker);
     MCByteFlag& visibleBits = who == 1 ? *ISVisibleBits : *ClanVisibleBits;
-    visibleBits.SetCircle(static_cast<uint32_t>(col), static_cast<uint32_t>(row),
-                          static_cast<uint32_t>(VisualRangeTable[level]));
+    visibleBits.SetCircle(static_cast<uint32_t>(at.Col), static_cast<uint32_t>(at.Row),
+                          static_cast<uint32_t>(VisualRangeTable[at.Level]));
+}
+
+auto MCTerrain::MarkBeamSeen(const MCVector3D& looker, float facingX, float facingY, float halfDegrees,
+                             std::span<const int32_t> ranges, uint8_t who) const -> void
+{
+    const MCLookerVertex at = LookerVertex(looker);
+    const float length = std::hypot(facingX, facingY);
+
+    if (at.Level >= ranges.size() || length <= 0.0f)
+    {
+        return;
+    }
+
+    // On the grid, columns run with x and rows down the map, against y.
+    const float alongCol = facingX / length;
+    const float alongRow = -facingY / length;
+    const float edgeCos = std::cos(halfDegrees * std::numbers::pi_v<float> / 180.0f);
+    const int32_t radius = ranges[at.Level];
+    MCByteFlag& visibleBits = who == 1 ? *ISVisibleBits : *ClanVisibleBits;
+
+    // A wedge narrower than half a turn crosses each row in one run: its first and last vertex inside.
+    for (int32_t dr = -radius; dr <= radius; dr++)
+    {
+        std::optional<int32_t> first;
+        int32_t last = 0;
+
+        for (int32_t dc = -radius; dc <= radius; dc++)
+        {
+            const float out = std::hypot(static_cast<float>(dc), static_cast<float>(dr));
+            const bool inside =
+                out <= static_cast<float>(radius) && (out == 0.0f || (dc * alongCol + dr * alongRow) >= out * edgeCos);
+
+            if (inside)
+            {
+                first = first.value_or(dc);
+                last = dc;
+            }
+        }
+
+        if (first.has_value())
+        {
+            visibleBits.SetRun(at.Row + dr, at.Col + *first, at.Col + last);
+        }
+    }
 }
 
 auto MCTerrain::MarkRadiusSeen(const MCVector3D& looker, const MCVector3D& /*lookVector*/, float angle, float range,

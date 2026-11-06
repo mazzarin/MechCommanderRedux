@@ -769,6 +769,9 @@
     <ClCompile Include="mission\MCMissionResultsScreen.cpp">
       <Filter>mission</Filter>
     </ClCompile>
+    <ClCompile Include="mission\MCNightLights.cpp">
+      <Filter>mission</Filter>
+    </ClCompile>
     <ClCompile Include="mission\MCScenario.cpp">
       <Filter>mission</Filter>
     </ClCompile>
@@ -2104,6 +2107,9 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCMissionResultsScreen.h">
+      <Filter>mission</Filter>
+    </ClInclude>
+    <ClInclude Include="mission\MCNightLights.h">
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="mission\MCScenario.h">

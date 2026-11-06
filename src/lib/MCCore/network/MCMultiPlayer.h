@@ -66,6 +66,13 @@ namespace MCMatchRule
     /// <summary>Commanders send no sensor probes or camera drones (PROBES OFF; MCCommander).</summary>
     inline constexpr uint32_t NoProbes = 256;
     /// <summary>
+    /// Port-only (Redux HD): at night, units' headlights change sight (mission/MCNightLights.h): half the day's all
+    /// round, a lit unit's beam and the enemy seeing it further, the player's LIGHTS turning them off
+    /// (MCMPMessageType::Lights). In the match's rules whenever every player's build plays it; it plays where the night
+    /// cuts sight.
+    /// </summary>
+    inline constexpr uint32_t NightLights = 1u << 25;
+    /// <summary>
     /// Not a rule the match plays by: the build's file report carries the hash of the mission's and the shared
     /// gameplay data (MCMissionDataHash), which the host checks against its own (MCMultiPlayer::CheckFileReport); a
     /// build without it sends the original's "checksum", which says only that the file is there.
@@ -84,7 +91,7 @@ namespace MCMatchRule
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
-                                          NoMines | NoProbes | DataHash | RejoinsHost;
+                                          NoMines | NoProbes | DataHash | RejoinsHost | NightLights;
 } // namespace MCMatchRule
 
 /// <summary>
@@ -377,6 +384,11 @@ public:
     int32_t SendEndScenario(int32_t result);
 
     /// <summary>Sends a player's tactical order for its movers or groups to the server.</summary>
+    /// <summary>
+    /// Port-only (Redux HD): player <paramref name="checkInId"/>'s <paramref name="units"/>' headlights
+    /// <paramref name="on"/> or off (MCMPMessageType::Lights): a client's to the server, the server's to everyone.
+    /// </summary>
+    int32_t SendLights(int32_t checkInId, std::span<const std::shared_ptr<MCMover>> units, bool on);
     int32_t SendPlayerOrder(MCTacticalOrder& order, bool queued, std::span<const int32_t> moverParts,
                             std::span<const std::weak_ptr<MCMoverGroup>> groups, bool fromGroup);
 

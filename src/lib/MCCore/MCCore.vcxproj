@@ -277,6 +277,7 @@
     <ClCompile Include="mission\MCMission.cpp" />
     <ClCompile Include="mission\MCMissionResults.cpp" />
     <ClCompile Include="mission\MCMissionResultsScreen.cpp" />
+    <ClCompile Include="mission\MCNightLights.cpp" />
     <ClCompile Include="mission\MCScenario.cpp" />
     <ClCompile Include="mission\MCScenarioLoad.cpp" />
     <ClCompile Include="mission\MCScenarioObjectives.cpp" />
@@ -742,6 +743,7 @@
     <ClInclude Include="mission\MCMission.h" />
     <ClInclude Include="mission\MCMissionResults.h" />
     <ClInclude Include="mission\MCMissionResultsScreen.h" />
+    <ClInclude Include="mission\MCNightLights.h" />
     <ClInclude Include="mission\MCScenario.h" />
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />

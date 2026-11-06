@@ -688,15 +688,16 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
 
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
-    // The time of day's rules come with the time of day, not with what the host wants; the weather's play with every
-    // player's build playing it, whatever the weather (the mission's own too).
+    // The time of day's rules come with the time of day, not with what the host wants; the weather's play and the
+    // night's lights with every player's build playing them, whatever the weather and time (the mission's own too).
     constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
     constexpr uint32_t weatherRules = MCMatchRule::WeatherRules;
+    constexpr uint32_t alwaysAgreed = MCMatchRule::WeatherPlay | MCMatchRule::NightLights;
     MCMatchOptions played;
     played.Weather = (agreed & weatherRules) == weatherRules ? chosen.Weather : std::nullopt;
     played.TimeOfDay = (agreed & timeRules) == timeRules ? chosen.TimeOfDay : std::nullopt;
-    played.Rules = (wantedRules & agreed & ~(timeRules | weatherRules)) |
-                   (played.TimeOfDay.has_value() ? timeRules : 0) | (agreed & MCMatchRule::WeatherPlay);
+    played.Rules = (wantedRules & agreed & ~(timeRules | weatherRules | alwaysAgreed)) |
+                   (played.TimeOfDay.has_value() ? timeRules : 0) | (agreed & alwaysAgreed);
     return played;
 }
 

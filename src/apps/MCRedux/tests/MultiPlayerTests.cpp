@@ -937,18 +937,23 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
     constexpr uint32_t braking = MCMatchRule::MechBraking;
     constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
     constexpr uint32_t weatherPlay = MCMatchRule::WeatherPlay;
+    constexpr uint32_t nightLights = MCMatchRule::NightLights;
     constexpr uint32_t firstOptions = braking | MCMatchRule::MatchWeather | MCMatchRule::MatchTimeOfDay;
     constexpr uint32_t sightOptions = braking | MCMatchRule::MatchWeather | timeRules;
     const MCMatchOptions chosen{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = braking};
     CHECK((MCPlayedOptions(chosen, braking, MCMatchRule::Supported) ==
            MCMatchOptions{.Weather = MCWeatherKind::Snow,
                           .TimeOfDay = MCTimeOfDay::Night,
-                          .Rules = braking | timeRules | weatherPlay}));
-    CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) == MCMatchOptions{.Weather = MCWeatherKind::Snow,
-                                                                                .TimeOfDay = MCTimeOfDay::Night,
-                                                                                .Rules = timeRules | weatherPlay}));
+                          .Rules = braking | timeRules | weatherPlay | nightLights}));
+    CHECK((MCPlayedOptions(chosen, 0, MCMatchRule::Supported) ==
+           MCMatchOptions{.Weather = MCWeatherKind::Snow,
+                          .TimeOfDay = MCTimeOfDay::Night,
+                          .Rules = timeRules | weatherPlay | nightLights}));
     CHECK((MCPlayedOptions(MCMatchOptions{}, braking | timeRules, MCMatchRule::Supported) ==
-           MCMatchOptions{.Rules = braking | weatherPlay}));
+           MCMatchOptions{.Rules = braking | weatherPlay | nightLights}));
+    // The night's lights come with every player's build playing them, whatever the host wants.
+    CHECK((MCPlayedOptions(chosen, braking, sightOptions | nightLights) ==
+           MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules | nightLights}));
     CHECK((MCPlayedOptions(chosen, braking, sightOptions) ==
            MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules}));
     CHECK(MCPlayedOptions(chosen, braking, firstOptions) == MCMatchOptions{.Rules = braking});
@@ -957,7 +962,7 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
     constexpr uint32_t bans =
         MCMatchRule::NoArtillery | MCMatchRule::NoProbes | MCMatchRule::NoSensors | MCMatchRule::NoMines;
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans, MCMatchRule::Supported) ==
-          MCMatchOptions{.Rules = bans | weatherPlay});
+          MCMatchOptions{.Rules = bans | weatherPlay | nightLights});
     CHECK(MCPlayedOptions(MCMatchOptions{}, bans, sightOptions | weatherPlay | MCMatchRule::NoMines) ==
           MCMatchOptions{.Rules = MCMatchRule::NoMines | weatherPlay});
     CHECK(MCPlayedOptions(chosen, braking, 0) == MCMatchOptions{.Rules = 0u});

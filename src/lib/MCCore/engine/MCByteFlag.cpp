@@ -45,6 +45,19 @@ auto MCByteFlag::SetGroup(uint32_t r, uint32_t c, uint32_t length) -> void
     }
 }
 
+auto MCByteFlag::SetRun(int32_t r, int32_t first, int32_t last) -> void
+{
+    const int32_t from = std::max(first, 0);
+    const int32_t to = std::min(last, static_cast<int32_t>(_Columns) - 1);
+
+    if (r < 0 || r >= static_cast<int32_t>(_Rows) || from > to)
+    {
+        return;
+    }
+
+    SetBytes(_Columns * static_cast<uint32_t>(r) + static_cast<uint32_t>(from), static_cast<uint32_t>(to - from + 1));
+}
+
 auto MCByteFlag::SetBytes(uint32_t first, uint32_t count) -> void
 {
     // Each row's part goes through the renderer; what runs past the grid (column == columns on the last row, or a

@@ -345,7 +345,8 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
     sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
 
-    // A build that plays them all: the host's choices, the time of day's sight and the weather's play with them.
+    // A build that plays them all: the host's choices, the time of day's sight, the weather's play and the night's
+    // lights with them.
     guest.SendRules(hostId, MCMatchRule::Supported);
     Settle();
 
@@ -357,7 +358,8 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.ChoiceName(WeatherRow) == "RAIN");
     CHECK(list.ChoiceName(TimeRow) == "NIGHT");
     sentIs(static_cast<int8_t>(MCWeatherKind::Rain), static_cast<int8_t>(MCTimeOfDay::Night),
-           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay);
+           MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules | MCMatchRule::WeatherPlay |
+               MCMatchRule::NightLights);
     // The guest heard every player's rules from the host (its own, and the host's).
     const std::optional<MCMPPlayersRulesMessage> players = guest.PlayersRules();
     REQUIRE(players.has_value());
@@ -378,7 +380,7 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(!game.MatchOptions.TimeOfDay.has_value());
     CHECK_EQ(game.WantedRules() & MCMatchRule::MechBraking, 0u);
     sentIs(static_cast<int8_t>(MCWeatherKind::Downpour), MissionOwn,
-           MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery);
+           MCMatchRule::WeatherPlay | MCMatchRule::NoArtillery | MCMatchRule::NightLights);
     SaveShot("match options 2 options in front", ScreenHash());
 
     // New chat while the options are in front: MULTIPLAYER CHAT blinks until it is in front again.

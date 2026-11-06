@@ -11,6 +11,7 @@
 #include "engine/MCPolygonElement.h"
 #include "engine/MCVfxElement.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
@@ -1661,10 +1662,11 @@ auto MCMechActor::Render(int32_t depthFixup) -> int32_t
     }
 
     // Port-only (HD lighting): the mech casts shadows from the lights by it, and at night, while it runs, shines its
-    // headlight from its cockpit, turned with its torso. (HD particles): it wades through water.
+    // headlight from its cockpit, turned with its torso, unless its LIGHTS are off (mission/MCNightLights.h). (HD
+    // particles): it wades through water.
     MCSceneLights::AddCaster(*this, mech->Position);
 
-    if (MCSceneLights::HeadlightOn(mech->Status))
+    if (MCNightLights::Shines(*mech))
     {
         MCSceneLights::AddHeadlight(*this, mech->Position, mech->GetFrame(), mech->TorsoRotation,
                                     mech->CockpitPosition(), depthFixup);

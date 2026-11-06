@@ -41,6 +41,11 @@ void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppEndScenario(uint32_t fromID, std::span<const uint8_t> msg);
+/// <summary>
+/// Port-only (Redux HD): a player's LIGHTS (MCMPLightsMessage): the server turns the sender's own units' lights and sends
+/// it on; a client takes it from the server.
+/// </summary>
+void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerMoverGroup(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerArtillery(uint32_t fromID, std::span<const uint8_t> msg);

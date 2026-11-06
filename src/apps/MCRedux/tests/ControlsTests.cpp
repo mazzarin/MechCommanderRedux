@@ -144,6 +144,9 @@ TEST_CASE("controls: the default keys are the original's")
     CHECK_EQ(key(MCKeyCommand::Unbound), MCKeyBindings::NoKey);
     CHECK_EQ(key(MCKeyCommand::Unused), 0u);
 
+    // Port-only (Redux HD): LIGHTS is N, free on both layouts.
+    CHECK_EQ(key(MCKeyCommand::Lights), 0x31u);
+
     // Before PREFS or the CONTROLS screen changes them, the player's are the defaults.
     CHECK(MCKeyBindings::Player() == MCKeyBindings::Defaults());
 }

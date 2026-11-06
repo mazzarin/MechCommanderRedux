@@ -33,6 +33,11 @@ public:
 
     /// <summary>Sets <paramref name="length"/> flags from (<paramref name="r"/>, <paramref name="c"/>).</summary>
     void SetGroup(uint32_t r, uint32_t c, uint32_t length);
+    /// <summary>
+    /// Port-only: sets row <paramref name="r"/>'s flags from column <paramref name="first"/> to <paramref name="last"/>
+    /// (both kept), the part on the grid.
+    /// </summary>
+    void SetRun(int32_t r, int32_t first, int32_t last);
 
     /// <summary>Whether the flag at (<paramref name="r"/>, <paramref name="c"/>) is set (false outside the grid).</summary>
     bool GetFlag(uint32_t r, uint32_t c) const;

@@ -141,6 +141,10 @@ set by day until you change it, as every mission of the original is.
 - With HD LIGHTING set to ON (on the HD OPTIONS page), Redux HD shows a dusk mission
   darker, and a night one dark with the mechs' and vehicles' headlights on. The
   player's DUSK and NIGHT choices show their own time whatever the mission's.
+- At night units see half as far as by day all round, and a lit unit's headlight shows
+  the ground ahead to 85% of the day's sight; the enemy sees a lit unit from as far.
+  LIGHTS (N) turns the selected units' headlights off, or on again. Sensors find dark
+  units as ever.
 
 In the mission's .FIT file this is [Environment]'s st TimeOfDay ("Day", "Dusk" or
 "Night"), and a VisualRangeTable of 256 entries in [GameScale]; the project's README.md

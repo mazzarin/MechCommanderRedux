@@ -26,6 +26,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "object/MCArtillery.h"
 #include "object/MCArtilleryChunk.h"
@@ -493,6 +494,52 @@ void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg)
 void HandleAppEndScenario(uint32_t, std::span<const uint8_t> msg)
 {
     Game().ScenarioResult = ReadLinkupMessage<MCMPLongMessage>(msg).Value;
+}
+
+void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg)
+{
+    if (msg.size() < sizeof(MCMPLightsMessage) || !InMultiplayerMission())
+    {
+        return;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPLightsMessage>(msg);
+    MCMultiPlayer& game = Game();
+
+    // A player's own units, from the player to the server; from the server to everyone, in a match that plays the rule.
+    if ((game.Played.Rules.value_or(0) & MCMatchRule::NightLights) == 0)
+    {
+        Dropped("lights in a match without them", fromID);
+        return;
+    }
+
+    if (game.IsServer ? !IsSendersOwn(fromID, message.CheckInId) : fromID != game.ServerID)
+    {
+        Dropped("lights for another player's units", fromID);
+        return;
+    }
+
+    std::vector<std::shared_ptr<MCMover>> units;
+
+    for (const uint16_t part : std::span(message.Parts).first(std::min<size_t>(message.Count, message.Parts.size())))
+    {
+        const auto unit = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(part));
+
+        if (unit == nullptr || unit->GetCommanderId() != message.CheckInId)
+        {
+            Dropped("lights for a unit not the player's", fromID);
+            return;
+        }
+
+        units.push_back(unit);
+    }
+
+    MCNightLights::SetLights(units, message.On != 0);
+
+    if (game.IsServer)
+    {
+        game.SendLights(message.CheckInId, units, message.On != 0);
+    }
 }
 
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg)
@@ -1499,6 +1546,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::PlayerOrder:
         {
             HandleAppPlayerOrder(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::Lights:
+        {
+            // Port-only (Redux HD): a player's LIGHTS (mission/MCNightLights.h).
+            HandleAppLights(fromID, bytes);
             break;
         }
 

@@ -796,6 +796,9 @@
     <ClCompile Include="network\MCGameDataHash.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCInternetCopy.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCLobbyUpdate.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -1162,6 +1165,12 @@
     <ClCompile Include="platform\MCFrameLog.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCIceLink.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCIceTransport.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCInput.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -1181,6 +1190,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCServices.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCServiceSignaling.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCSharpLines.cpp">
@@ -1205,6 +1217,9 @@
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCStringTable.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\MCTlsThreading.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="platform\MCVulkanPresenter.cpp">
@@ -1789,6 +1804,9 @@
     <ClInclude Include="lib\MCPriorityQueue.h">
       <Filter>lib</Filter>
     </ClInclude>
+    <ClInclude Include="lib\MCRandomId.h">
+      <Filter>lib</Filter>
+    </ClInclude>
     <ClInclude Include="lib\MCSha256.h">
       <Filter>lib</Filter>
     </ClInclude>
@@ -2145,6 +2163,9 @@
     <ClInclude Include="network\MCGameDataHash.h">
       <Filter>network</Filter>
     </ClInclude>
+    <ClInclude Include="network\MCInternetCopy.h">
+      <Filter>network</Filter>
+    </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">
       <Filter>network</Filter>
     </ClInclude>
@@ -2499,6 +2520,12 @@
     <ClInclude Include="platform\MCFrameLog.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCIceLink.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCIceTransport.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCInput.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2526,6 +2553,9 @@
     <ClInclude Include="platform\MCServices.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCServiceSignaling.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCSharpLines.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2544,6 +2574,9 @@
     <ClInclude Include="platform\MCStringTable.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCTlsThreading.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCUtf8Path.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2554,6 +2587,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCVulkanShaders.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCWebSocket.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCWin32Defs.h">

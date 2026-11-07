@@ -1,5 +1,8 @@
 #pragma once
 
+#include "platform/MCIceLink.h"
+
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -17,10 +20,10 @@
 // (the main menu shows it: logistics/MCReportsNotice.h), nor while REPORTS (HD OPTIONS) is off; a build without a
 // backend (upstream, the tests) sends nothing.
 //
-// Reports: a multiplayer match's at its end; single-player missions' at the end of the first, then of the first a week
-// or more after the last, covering every mission since; a crash's at the next start, with the black box: the last
-// moments' state and events (the match's phases, its messages by type and size, players lost), kept in a file mapped
-// into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
+// Reports: a multiplayer match's at its end; an internet game's link's as it ends (opened or not); single-player
+// missions' at the end of the first, then of the first a week or more after the last, covering every mission since; a
+// crash's at the next start, with the black box: the last moments' state and events (the match's phases, its messages
+// by type and size, players lost), kept in a file mapped into memory so a crash leaves it behind. Play under two minutes counts for nothing. No name, path or address is in
 // any report; the copy's random ID (made while REPORTS is on, dropped when it goes off) lets one copy's reports be
 // followed across updates. Everything runs on the main thread: the backend's replies wait for the next frame.
 
@@ -127,6 +130,50 @@ namespace MCTelemetry
         Ask,
     };
 
+    /// <summary>How an internet game's link ended (platform/MCIceTransport.h), for its report.</summary>
+    enum class MCLinkEnd : uint8_t
+    {
+        /// <summary>Unopened: the service has no such game (a guest's link).</summary>
+        NoGame,
+        /// <summary>Unopened: the host never answered (full, not hosting, or gone; a guest's link).</summary>
+        Unanswered,
+        /// <summary>Unopened: the guest left the service (a host's link).</summary>
+        GuestLeft,
+        /// <summary>Unopened: both ends answered, and ICE found no path in time.</summary>
+        NoPath,
+        /// <summary>Unopened: ICE found a path, and the encrypted channel never opened over it.</summary>
+        NoChannel,
+        /// <summary>The other end closed it.</summary>
+        Closed,
+        /// <summary>It broke open: the other end stopped answering (its game or its network gone).</summary>
+        Lost,
+        /// <summary>This end closed it: nothing used it any more.</summary>
+        Unused,
+        /// <summary>This end cut it: the other end sent what this game can't take (a flood, or not its frames).</summary>
+        CutOff,
+        /// <summary>This end's transport went: the game left the internet game, or quit.</summary>
+        Left,
+    };
+
+    /// <summary>An internet game's link as it ended: never an address, a code or a name.</summary>
+    struct MCLink
+    {
+        /// <summary>This game opened it, joining (a guest), or answered it (the host).</summary>
+        bool Guest = false;
+        bool Opened = false;
+        /// <summary>The path it opened on.</summary>
+        MCIceLink::Path Path = MCIceLink::Path::None;
+        /// <summary>Until it opened (opened), or until it ended (not).</summary>
+        std::chrono::milliseconds Setup{0};
+        /// <summary>How long it was open.</summary>
+        std::chrono::milliseconds Open{0};
+        MCIceLink::Traffic Carried;
+        /// <summary>The kinds of address this end offered, and the other end.</summary>
+        MCIceLink::Offered Here;
+        MCIceLink::Offered There;
+        MCLinkEnd End = MCLinkEnd::Left;
+    };
+
     /// <summary>The app's backend (before the game starts); none takes it away.</summary>
     void SetBackend(std::unique_ptr<MCBackend> backend);
 
@@ -180,6 +227,15 @@ namespace MCTelemetry
     /// fewer on a machine that can't keep up, sprite/MCWeatherPace.h).
     /// </summary>
     void WeatherDrawn(float share);
+
+    /// <summary>
+    /// An internet game's link ended: its report goes at once, as a player who can't join may quit next. At most a few
+    /// dozen a run, whatever a stranger with the game's code does.
+    /// </summary>
+    void LinkEnded(const MCLink& link);
+
+    /// <summary>A link's part of its report (LinkEnded's "link"), as JSON: the internet games' trial prints it too.</summary>
+    std::string LinkJson(const MCLink& link);
 
     /// <summary>A multiplayer message came in (<paramref name="type"/>, <paramref name="bytes"/>), for the black box.</summary>
     void MessageIn(uint16_t type, size_t bytes);

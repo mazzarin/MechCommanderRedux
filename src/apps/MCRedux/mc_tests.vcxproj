@@ -71,6 +71,9 @@
     <ClCompile Include="MCTelemetryWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCWebSocketWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -95,6 +98,7 @@
     <ClCompile Include="tests\EffectTests.cpp" />
     <ClCompile Include="tests\ElementalTests.cpp" />
     <ClCompile Include="tests\EngineTests.cpp" />
+    <ClCompile Include="tests\fakes\MCFakeSignaling.cpp" />
     <ClCompile Include="tests\fakes\MCLoopbackTransport.cpp" />
     <ClCompile Include="tests\fakes\MCManualClock.cpp" />
     <ClCompile Include="tests\fakes\MCMemoryFileSource.cpp" />
@@ -117,6 +121,11 @@
     <ClCompile Include="tests\HdMovieTests.cpp" />
     <ClCompile Include="tests\HdOptionsTests.cpp" />
     <ClCompile Include="tests\HdPackTests.cpp" />
+    <ClCompile Include="tests\IceChannelTests.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="tests\IceLinkTests.cpp" />
+    <ClCompile Include="tests\IceTransportTests.cpp" />
     <ClCompile Include="tests\IniFileTests.cpp" />
     <ClCompile Include="tests\InputTests.cpp" />
     <ClCompile Include="tests\InterfaceTests.cpp" />
@@ -144,6 +153,7 @@
     <ClCompile Include="tests\PurchaseTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />
+    <ClCompile Include="tests\ServiceSignalingTests.cpp" />
     <ClCompile Include="tests\ServicesTests.cpp" />
     <ClCompile Include="tests\SessionScreenTests.cpp" />
     <ClCompile Include="tests\SmackerTests.cpp" />
@@ -164,6 +174,7 @@
     <ClCompile Include="tests\VfxTransformTests.cpp" />
     <ClCompile Include="tests\VideoWindowTests.cpp" />
     <ClCompile Include="tests\WeatherPaceTests.cpp" />
+    <ClCompile Include="tests\WebSocketTests.cpp" />
     <ClCompile Include="tests\ZoomTests.cpp" />
     <ClInclude Include="MCConsole.h" />
     <ClInclude Include="MCContentAtStart.h" />
@@ -172,8 +183,10 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />
     <ClInclude Include="tests\fakes\MCManualClock.h" />
     <ClInclude Include="tests\fakes\MCMemoryFileSource.h" />

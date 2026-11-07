@@ -286,6 +286,7 @@
     <ClCompile Include="mission\MCScenarioPart.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
+    <ClCompile Include="network\MCInternetCopy.cpp" />
     <ClCompile Include="network\MCLobbyUpdate.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -408,6 +409,12 @@
     <ClCompile Include="platform\MCFileSystem.cpp" />
     <ClCompile Include="platform\MCFlac.cpp" />
     <ClCompile Include="platform\MCFrameLog.cpp" />
+    <ClCompile Include="platform\MCIceLink.cpp">
+      <!-- libdatachannel's headers include the system socket headers (winsock2.h drags in windows.h), which must
+           not meet the game's Win32 stand-ins in the precompiled header. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="platform\MCIceTransport.cpp" />
     <ClCompile Include="platform\MCInput.cpp" />
     <ClCompile Include="platform\MCPresenter.cpp" />
     <ClCompile Include="platform\MCRegisteredBlock.cpp" />
@@ -415,6 +422,7 @@
     <ClCompile Include="platform\MCRenderer.cpp" />
     <ClCompile Include="platform\MCSdlPresenter.cpp" />
     <ClCompile Include="platform\MCServices.cpp" />
+    <ClCompile Include="platform\MCServiceSignaling.cpp" />
     <ClCompile Include="platform\MCSharpLines.cpp" />
     <ClCompile Include="platform\MCSharpText.cpp" />
     <ClCompile Include="platform\MCSmacker.cpp" />
@@ -427,6 +435,7 @@
     <ClCompile Include="platform\MCSoftwareRendererPolygons.cpp" />
     <ClCompile Include="platform\MCSoftwareRendererShapes.cpp" />
     <ClCompile Include="platform\MCStringTable.cpp" />
+    <ClCompile Include="platform\MCTlsThreading.cpp" />
     <ClCompile Include="platform\MCVulkanPresenter.cpp" />
     <ClCompile Include="platform\MCVulkanRenderer.cpp" />
     <ClCompile Include="platform\MCVulkanShaders.cpp" />
@@ -635,6 +644,7 @@
     <ClInclude Include="lib\MCOptionalRef.h" />
     <ClInclude Include="lib\MCPacketFile.h" />
     <ClInclude Include="lib\MCPriorityQueue.h" />
+    <ClInclude Include="lib\MCRandomId.h" />
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
@@ -755,6 +765,7 @@
     <ClInclude Include="mission\MCScenarioReading.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
+    <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />
@@ -873,6 +884,8 @@
     <ClInclude Include="platform\MCFileSystem.h" />
     <ClInclude Include="platform\MCFlac.h" />
     <ClInclude Include="platform\MCFrameLog.h" />
+    <ClInclude Include="platform\MCIceLink.h" />
+    <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />
     <ClInclude Include="platform\MCNeverDestroyed.h" />
     <ClInclude Include="platform\MCPresenter.h" />
@@ -882,16 +895,19 @@
     <ClInclude Include="platform\MCSdlHandle.h" />
     <ClInclude Include="platform\MCSdlPresenter.h" />
     <ClInclude Include="platform\MCServices.h" />
+    <ClInclude Include="platform\MCServiceSignaling.h" />
     <ClInclude Include="platform\MCSharpLines.h" />
     <ClInclude Include="platform\MCSharpText.h" />
     <ClInclude Include="platform\MCSmacker.h" />
     <ClInclude Include="platform\MCSocket.h" />
     <ClInclude Include="platform\MCSoftwareRenderer.h" />
     <ClInclude Include="platform\MCStringTable.h" />
+    <ClInclude Include="platform\MCTlsThreading.h" />
     <ClInclude Include="platform\MCUtf8Path.h" />
     <ClInclude Include="platform\MCVulkanPresenter.h" />
     <ClInclude Include="platform\MCVulkanRenderer.h" />
     <ClInclude Include="platform\MCVulkanShaders.h" />
+    <ClInclude Include="platform\MCWebSocket.h" />
     <ClInclude Include="platform\MCWin32Defs.h" />
     <ClInclude Include="sound\MCHdAudio.h" />
     <ClInclude Include="sound\MCRadio.h" />
@@ -2458,6 +2474,2022 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
   </ItemGroup>
+  <!-- Begin: the internet games' networking (tools/vendor/ice_itemgroups.py writes this block). -->
+  <!-- Mbed TLS 3.6.7 (src\lib\mbedtls-3.6.7, Apache 2.0): the encryption of libdatachannel's links (DTLS) and of
+       its WebSockets (TLS). Every C file its library\CMakeLists.txt builds, with its default configuration and the
+       game's additions (mc\mc_mbedtls_config.h: its locks, the game's mutexes, MCTlsThreading), which every unit
+       including its headers reads (MBEDTLS_USER_CONFIG_FILE, MechCommander.props). Outside MCCore, so its own
+       ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\aes.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\aesce.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\aesni.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\aria.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\asn1parse.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\asn1write.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\base64.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\bignum.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\bignum_core.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\bignum_mod.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\bignum_mod_raw.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\block_cipher.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\camellia.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ccm.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\chacha20.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\chachapoly.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\cipher.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\cipher_wrap.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\cmac.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\constant_time.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ctr_drbg.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\debug.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\des.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\dhm.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ecdh.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ecdsa.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ecjpake.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ecp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ecp_curves.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\entropy.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\entropy_poll.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\error.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\gcm.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\hkdf.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\hmac_drbg.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\lmots.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\lms.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\md.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\md5.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\memory_buffer_alloc.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\mps_reader.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\mps_trace.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\net_sockets.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\nist_kw.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\oid.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\padlock.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pem.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pk.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pk_ecc.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pk_wrap.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pkcs12.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pkcs5.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pkcs7.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pkparse.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\pkwrite.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\platform.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\platform_util.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\poly1305.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_aead.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_cipher.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_client.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_driver_wrappers_no_static.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_ecp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_ffdh.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_hash.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_mac.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_pake.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_random.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_rsa.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_se.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_slot_management.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_crypto_storage.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_its_file.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\psa_util.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ripemd160.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\rsa.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\rsa_alt_helpers.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\sha1.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\sha256.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\sha3.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\sha512.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_cache.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_ciphersuites.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_client.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_cookie.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_debug_helpers_generated.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_msg.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_ticket.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls12_client.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls12_server.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls13_client.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls13_generic.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls13_keys.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\ssl_tls13_server.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\threading.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\timing.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\version.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\version_features.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509_create.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509_crl.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509_crt.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509_csr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509write.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509write_crt.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)mbedtls-3.6.7\library\x509write_csr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)mbedtls\library\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)mbedtls-3.6.7\library;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- usrsctp (src\lib\usrsctp-fec583d5, BSD 3-clause): SCTP in the program, which carries libdatachannel's data
+       channels (reliable and in order, as TCP) inside DTLS. Every C file, as libdatachannel builds it: over its own
+       links only (sctp_inet and sctp_inet6 off), with usrsctp's settings for Windows. Outside MCCore, so its own
+       ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_asconf.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_auth.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_bsd_addr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_callout.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_cc_functions.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_crc32.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_indata.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_input.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_output.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_pcb.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_peeloff.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_sha1.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_ss_functions.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_sysctl.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_timer.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_userspace.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctp_usrreq.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet\sctputil.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\netinet6\sctp6_usrreq.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\netinet6\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\user_environment.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\user_mbuf.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\user_recv_thread.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)usrsctp-fec583d5\usrsctplib\user_socket.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)usrsctp\usrsctplib\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)usrsctp-fec583d5\usrsctplib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;__Userspace__;SCTP_SIMPLE_ALLOCATOR;SCTP_PROCESS_LEVEL_LOCKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- libjuice 1.7.4 (src\lib\libjuice-1.7.4, MPL 2.0): ICE, which finds a UDP path between two games (direct
+       through their routers, or through a relay). Every C file its CMake builds, as libdatachannel builds it (its own
+       hashes, not Nettle's), without its STUN and TURN server (NO_SERVER). Outside MCCore, so its own ItemGroup, which
+       sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\addr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\agent.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\base64.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\conn.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\conn_mux.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\conn_poll.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\conn_thread.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\const_time.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\crc32.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\hash.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\hmac.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\ice.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\juice.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\log.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\random.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\server.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\stun.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\tcp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\timestamp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\turn.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libjuice-1.7.4\src\udp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libjuice\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)libjuice-1.7.4\include\juice;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;JUICE_STATIC;JUICE_EXPORTS;USE_NETTLE=0;NO_SERVER;RELEASE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- libdatachannel 0.24.6 (src\lib\libdatachannel-0.24.6, MPL 2.0): WebRTC's data channels, the internet games'
+       links, and the WebSockets to the service, over Mbed TLS, usrsctp, libjuice and plog (src\lib\plog-94899e0b, MIT,
+       header-only). Every C++ file its CMake builds, in C++17 as there, without audio and video (RTC_ENABLE_MEDIA=0,
+       MechCommander.props, with RTC_STATIC and RTC_ENABLE_WEBSOCKET=1, which its headers read). Outside MCCore, so its
+       own ItemGroup, which sync_projects.py leaves alone; src\mac\CMakeLists.txt reads the list from here. -->
+  <ItemGroup>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\av1rtppacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\candidate.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\capi.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\channel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\configuration.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\datachannel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\dependencydescriptor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\description.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\global.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\h264rtpdepacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\h264rtppacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\h265nalunit.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\h265rtpdepacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\h265rtppacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\iceudpmuxlistener.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\certificate.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\channel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\datachannel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\dtlssrtptransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\dtlstransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\http.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\httpproxytransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\icetransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\iceudpmuxlistener.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\init.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\logcounter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\peerconnection.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\pollinterrupter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\pollservice.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\processor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\sctptransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\sha.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\tcpserver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\tcptransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\threadpool.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\tls.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\tlstransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\track.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\transport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\verifiedtlstransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\websocket.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\websocketserver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\wshandshake.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\impl\wstransport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\impl\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\mediahandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\message.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\nalunit.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\pacinghandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\peerconnection.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\plihandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rembhandler.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtcpnackresponder.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtcpreceivingsession.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtcpsrreporter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtp.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtpdepacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtppacketizationconfig.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\rtppacketizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\track.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\websocket.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="$(MCLibDir)libdatachannel-0.24.6\src\websocketserver.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsCpp</CompileAs>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ObjectFileName>$(IntDir)libdatachannel\src\</ObjectFileName>
+      <AdditionalIncludeDirectories>$(MCLibDir)libdatachannel-0.24.6\include;$(MCLibDir)libdatachannel-0.24.6\include\rtc;$(MCLibDir)libdatachannel-0.24.6\src;$(MCLibDir)plog-94899e0b\include;$(MCLibDir)usrsctp-fec583d5\usrsctplib;$(MCLibDir)libjuice-1.7.4\include;$(MCLibDir)mbedtls-3.6.7\include;$(MCLibDir)mbedtls-3.6.7\mc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;RTC_EXPORTS;USE_MBEDTLS=1;USE_GNUTLS=0;USE_NICE=0;RTC_SYSTEM_JUICE=0;RTC_SYSTEM_SRTP=0;JUICE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <!-- End: the internet games' networking. -->
   <!-- dav1d 1.5.4 (src\lib\dav1d-1.5.4, BSD 2-clause): VideoLAN's AV1 decoder, for the HD art pack's movies
        (sprite\MCHdMovie). Here its C code alone (the Mac build adds its arm64 assembly), 8 bits a sample (its
        README.md); the template files are built with BITDEPTH=8, as dav1d's meson build does. Outside MCCore, so its

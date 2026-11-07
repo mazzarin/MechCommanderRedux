@@ -8,9 +8,11 @@
     <ClCompile Include="MCFirstStart.cpp" />
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
+    <ClCompile Include="MCIceTrial.cpp" />
     <ClCompile Include="MCRestart.cpp" />
     <ClCompile Include="MCSetupRunWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
+    <ClCompile Include="MCWebSocketWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -20,9 +22,11 @@
     <ClInclude Include="MCFirstStart.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
+    <ClInclude Include="MCIceTrial.h" />
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>

@@ -19,6 +19,7 @@
     <ClCompile Include="MCGameFolder.cpp" />
     <ClCompile Include="MCHttpGetWin.cpp" />
     <ClCompile Include="MCTelemetryWin.cpp" />
+    <ClCompile Include="MCWebSocketWin.cpp" />
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="tests\AblRuntimeTests.cpp">
       <Filter>tests</Filter>
@@ -82,6 +83,9 @@
     </ClCompile>
     <ClCompile Include="tests\EngineTests.cpp">
       <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\fakes\MCFakeSignaling.cpp">
+      <Filter>tests\fakes</Filter>
     </ClCompile>
     <ClCompile Include="tests\fakes\MCLoopbackTransport.cpp">
       <Filter>tests\fakes</Filter>
@@ -147,6 +151,15 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\HdPackTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\IceChannelTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\IceLinkTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\IceTransportTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\IniFileTests.cpp">
@@ -224,6 +237,9 @@
     <ClCompile Include="tests\ScreenInput.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ServiceSignalingTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ServicesTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -284,6 +300,9 @@
     <ClCompile Include="tests\WeatherPaceTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\WebSocketTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ZoomTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -296,8 +315,12 @@
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeSignaling.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>

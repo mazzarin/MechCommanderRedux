@@ -921,20 +921,23 @@ auto MCUpdater::Frame() -> void
         return;
     }
 
-    if (!Work->Finished())
-    {
-        const auto [received, expected] = Work->Progress().Get();
+    const bool finished = Work->Finished();
+    const auto [received, expected] = Work->Progress().Get();
 
+    // The HD pack's bytes are read once more as its change ends: one done between two frames still says what it fetched.
+    if (Step == MCStep::ChangingSets)
+    {
+        Hd.Received = received;
+        Hd.Expected = expected;
+    }
+
+    if (!finished)
+    {
         // Staging's whole is the plan's until its first bytes say more (a patch that fell back on its zip).
         if (Step == MCStep::StagingContent && Offer)
         {
             ShowProgress(received,
                          std::max(expected, Offer->ContentBytes()) + (Offer->ProgramBuild ? Offer->ProgramBytes : 0));
-        }
-        else if (Step == MCStep::ChangingSets)
-        {
-            Hd.Received = received;
-            Hd.Expected = expected;
         }
 
         return;

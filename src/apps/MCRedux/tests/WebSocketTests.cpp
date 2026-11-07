@@ -14,8 +14,8 @@
 // Port-only (the personal build): this platform's own WebSocket (MCWebSocketMac.mm, MCWebSocketWin.cpp), which the
 // internet games reach their service through because it checks the service's certificate against the system's roots
 // (libdatachannel's checks none on Windows). With --websocket-service <wss address> (the fork's Windows build passes
-// the trial service's), it opens that service, and refuses hosts whose certificates are bad: badssl.com's, kept broken
-// on purpose by its maintainers, each a TLS server that a socket must leave before any WebSocket is asked for.
+// the games service's list), it opens that service, and refuses hosts whose certificates are bad: badssl.com's, kept
+// broken on purpose by its maintainers, each a TLS server that a socket must leave before any WebSocket is asked for.
 
 namespace
 {
@@ -87,7 +87,7 @@ TEST_CASE("tool: --websocket-service <address> checks this platform's WebSocket 
         return;
     }
 
-    // The service: open, and its first message (the trial service's /host says "hosted").
+    // The service: open, and its first message (the games service's list says its games).
     const Outcome good = Try(*service);
     const MCTest::Scope goodScope(std::format("the service: opened {}, first message \"{}\", closed \"{}\"",
                                               good.Opened, good.FirstMessage, good.WhyClosed));

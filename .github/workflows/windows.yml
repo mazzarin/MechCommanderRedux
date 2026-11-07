@@ -139,10 +139,10 @@ jobs:
 
       # The game: tests need the retail install (--game), which the runner doesn't have; they pass with a note. The
       # reports' backend asks the live reports Worker its region and sends it a report it refuses (nothing kept). The
-      # internet games' WebSocket opens the trial service (a game hosted and left at once) and must refuse badssl.com's
-      # hosts with bad certificates.
+      # internet games' WebSocket opens the games service's list (it hosts nothing) and must refuse badssl.com's hosts
+      # with bad certificates.
       - name: Test
-        run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev --websocket-service wss://mechcommander-redux-trial.mazzarin.workers.dev/host
+        run: src\build\bin\x64\Release\mc_tests.exe --reports-server https://mechcommander-redux-reports.mazzarin.workers.dev --websocket-service wss://mechcommander-redux-games.mazzarin.workers.dev/list?proto=1
 
       # The setup (src/installer/windows), stamped with the version built into the exes, with the licences of the code
       # built into them. Inno Setup 6 is on the runner's image. A work build's setup has no release's sizes, so it shows

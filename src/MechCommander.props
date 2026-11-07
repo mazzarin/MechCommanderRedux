@@ -63,15 +63,6 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
-  <!-- A build kept for the next (MCIncrementalLtcg=true: the Windows workflow's work builds, which start from the last
-       run's build folder): whole-program optimization as a release's, its code generation at link time redone only for
-       what changed since the last link (/LTCG:INCREMENTAL, its .iobj and .ipdb beside each program). A release links
-       afresh. -->
-  <ItemDefinitionGroup Condition="'$(MCIncrementalLtcg)'=='true' and '$(WholeProgramOptimization)'=='true'">
-    <Link>
-      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
-    </Link>
-  </ItemDefinitionGroup>
 
   <!-- Version (personal build): version.json's major.minor.patch and the branch's count of commits as the build, the
        same on every platform ("0.2.1 (518)"; src/mac/version.cmake on the Mac). The updaters (Sparkle, WinSparkle)

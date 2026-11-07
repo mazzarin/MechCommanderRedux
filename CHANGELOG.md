@@ -12,16 +12,9 @@ only the characters on a keyboard. The release script takes the entry under the 
 
 ## 0.5.1
 
-From MechCommander Redux, a rework of how its screens are made, with fixes:
-
-- The store keeps its order, and the news ticker its place, from screen to screen.
-- A mech dropped in the repair screen shows in your force.
-- A vehicle leaving your force no longer moves the other vehicles' drop slots.
-- An empty drop slot in the briefing shows empty.
-- A chat message from a player who has left shows under a question mark.
-
-The Windows setup, when you choose your own copy of MechCommander Gold, now says that Redux HD takes it over, and how
-to leave it as it is.
+- An overhaul of the code underneath, with bug fixes, courtesy of RevenantBob.
+- The Windows setup, when you choose your own copy of MechCommander Gold, now says that Redux HD takes it over, and
+  how to leave it as it is.
 
 ## 0.5.0
 

@@ -303,10 +303,13 @@ namespace
         /// <summary>The archives looked for, by the folder each stands for (null: none there).</summary>
         std::map<std::filesystem::path, std::shared_ptr<MCHdArchive>> Archives;
         /// <summary>
-        /// Guards the archives' files (MCFastFile's reads, Release and IsOpen) and the two below, which the reading thread
-        /// uses too: a file's stream can't be read from two threads, and either thread's read may close another's file.
+        /// Guards the archives' files kept open (MCFastFile's reads, Release and IsOpen) and the three below: the reading
+        /// thread reads through a handle of its own (a file's stream can't be read from two threads), so it holds this
+        /// only to count that one, which may close one of these. Never held with ReadAhead::Lock.
         /// </summary>
         std::mutex ArchiveFiles;
+        /// <summary>The reading thread's own handles open (0 or 1: ReaderFile), counted against MaxOpenArchiveFiles.</summary>
+        size_t ReaderFiles = 0;
         /// <summary>
         /// The archives' files kept open, the most recently read first (at most MaxOpenArchiveFiles), and each one's
         /// place there.
@@ -473,6 +476,26 @@ namespace
     }
 
     /// <summary>
+    /// Closes the least recently read of the archives' files kept open past MaxOpenArchiveFiles, the reading thread's own
+    /// counted among them. Call with State::ArchiveFiles held.
+    /// </summary>
+    void TrimOpenFiles(State& state)
+    {
+        while (!state.OpenFiles.empty() && state.OpenFiles.size() + state.ReaderFiles > MaxOpenArchiveFiles)
+        {
+            const std::weak_ptr<MCFastFile> oldest = state.OpenFiles.back();
+
+            if (const std::shared_ptr<MCFastFile> kept = oldest.lock())
+            {
+                kept->Release();
+            }
+
+            state.OpenAt.erase(oldest);
+            state.OpenFiles.pop_back();
+        }
+    }
+
+    /// <summary>
     /// Notes that <paramref name="file"/> was just opened or read, closing the least recently read of the archives' files
     /// past MaxOpenArchiveFiles. Call with State::ArchiveFiles held.
     /// </summary>
@@ -490,18 +513,7 @@ namespace
             state.OpenAt.emplace(file, state.OpenFiles.begin());
         }
 
-        while (state.OpenFiles.size() > MaxOpenArchiveFiles)
-        {
-            const std::weak_ptr<MCFastFile> oldest = state.OpenFiles.back();
-
-            if (const std::shared_ptr<MCFastFile> kept = oldest.lock())
-            {
-                kept->Release();
-            }
-
-            state.OpenAt.erase(oldest);
-            state.OpenFiles.pop_back();
-        }
+        TrimOpenFiles(state);
     }
 
     /// <summary>The archive standing for <paramref name="folder"/> (its <c>.hda</c>), opened once; null when none.</summary>
@@ -587,11 +599,12 @@ namespace
     /// <summary>
     /// Entry <paramref name="index"/> of <paramref name="archive"/> (named <paramref name="name"/>, for what is wrong),
     /// a <c>.hdf</c> file, inflated when packed, as a frame for a shape of <paramref name="width"/> x
-    /// <paramref name="height"/> (0 x 0: any). From either thread: the file is read under State::ArchiveFiles, the rest
-    /// without it.
+    /// <paramref name="height"/> (0 x 0: any): read through the reading thread's handle <paramref name="own"/>, else the
+    /// archive's own, under State::ArchiveFiles.
     /// </summary>
     std::expected<MCHdArt::Frame, std::string> ReadEntry(const MCHdArchive& archive, int32_t index,
-                                                         std::string_view name, int32_t width, int32_t height)
+                                                         std::string_view name, int32_t width, int32_t height,
+                                                         MCOptionalRef<MCDiskFile> own = std::nullopt)
     {
         const MCFileEntry& entry = archive.File->GetEntries()[static_cast<size_t>(index)];
 
@@ -602,6 +615,11 @@ namespace
 
         std::vector<uint8_t> stored;
 
+        if (own)
+        {
+            stored = archive.File->ReadStored(index, *own);
+        }
+        else
         {
             std::scoped_lock lock(TheState().ArchiveFiles);
             stored = archive.File->ReadStored(index);
@@ -925,6 +943,61 @@ namespace
         return table.size() >= ShapeCountEnd && VfxIsShapeTable(table) ? VfxShapeCount(table) : 0;
     }
 
+    /// <summary>
+    /// The reading thread's own handle on an archive's file, opened for its first read and closed with it, counted among
+    /// the archives' files kept open (State::ReaderFiles) so that no more than MaxOpenArchiveFiles are open at once.
+    /// </summary>
+    class ReaderFile
+    {
+    public:
+        explicit ReaderFile(const MCHdArchive& archive) : _Archive(archive) {}
+        ReaderFile(const ReaderFile&) = delete;
+        ReaderFile& operator=(const ReaderFile&) = delete;
+
+        ~ReaderFile() { Close(); }
+
+        /// <summary>
+        /// The handle, opened the first time; none when the file can't be opened or changed since its directory was read
+        /// (the game's thread then reads, and logs, as it would have).
+        /// </summary>
+        MCOptionalRef<MCDiskFile> Get()
+        {
+            if (!_Counted)
+            {
+                _Counted = true;
+                Count(true);
+                _File = _Archive.File->OpenAnother();
+            }
+
+            return _File.has_value() ? MCOptionalRef<MCDiskFile>(*_File) : std::nullopt;
+        }
+
+        /// <summary>Closes the handle, if opened (Get opens it again).</summary>
+        void Close()
+        {
+            if (_Counted)
+            {
+                _Counted = false;
+                _File.reset();
+                Count(false);
+            }
+        }
+
+    private:
+        /// <summary>Counts the handle as open (making room for it) or closed.</summary>
+        static void Count(bool open)
+        {
+            State& state = TheState();
+            std::scoped_lock lock(state.ArchiveFiles);
+            state.ReaderFiles = open ? 1 : 0;
+            TrimOpenFiles(state);
+        }
+
+        const MCHdArchive& _Archive;
+        std::optional<MCDiskFile> _File;
+        bool _Counted = false;
+    };
+
     /// <summary>A frame for the reading thread to read: its name, its entry in the follow's archive and that's name.</summary>
     struct AheadEntry
     {
@@ -1002,9 +1075,10 @@ namespace
 
     /// <summary>
     /// The reading thread: takes the follows in turn and reads the frames drawn after each (NextFrames) that the game's
-    /// thread hasn't looked at and that aren't read already, one at a time, without the lock, as the game's thread
-    /// would for a shape of any size (taking one, it checks the size it asks for). A read that fails is left to the
-    /// game's thread, which logs why; a read begun before what was found was forgotten is dropped.
+    /// thread hasn't looked at and that aren't read already, one at a time, without the lock and through a handle of
+    /// its own on the archive's file (ReaderFile), as the game's thread would for a shape of any size (taking one, it
+    /// checks the size it asks for). A read that fails is left to the game's thread, which reads it again and logs why;
+    /// a read begun before what was found was forgotten is dropped.
     /// </summary>
     void ReadFramesAhead(std::stop_token stop)
     {
@@ -1020,6 +1094,7 @@ namespace
             lock.unlock();
             // The archive's directory never changes once read, so it is looked in without a lock.
             const std::vector<AheadEntry> next = NextFrames(follow);
+            ReaderFile file(*follow.Archive);
             lock.lock();
 
             for (const AheadEntry& entry : next)
@@ -1038,9 +1113,18 @@ namespace
 
                 ahead.Reading = key;
                 lock.unlock();
-                auto read = ReadEntry(*follow.Archive, entry.Index, entry.Entry, 0, 0);
-                std::shared_ptr<MCHdArt::Frame> frame =
-                    read.has_value() ? Finished(std::move(*read), follow.BakedShadows, 0) : nullptr;
+                const MCOptionalRef<MCDiskFile> handle = file.Get();
+                std::shared_ptr<MCHdArt::Frame> frame;
+
+                if (handle)
+                {
+                    if (auto read = ReadEntry(*follow.Archive, entry.Index, entry.Entry, 0, 0, handle);
+                        read.has_value())
+                    {
+                        frame = Finished(std::move(*read), follow.BakedShadows, 0);
+                    }
+                }
+
                 lock.lock();
                 ahead.Reading.reset();
 
@@ -1050,7 +1134,16 @@ namespace
                 }
 
                 ahead.Changed.notify_all();
+
+                if (!handle)
+                {
+                    break;
+                }
             }
+
+            lock.unlock();
+            file.Close();
+            lock.lock();
 
             ahead.Working = false;
             ahead.Changed.notify_all();
@@ -2279,12 +2372,13 @@ size_t MCHdArt::ArchiveFilesOpen()
 {
     State& state = TheState();
     std::scoped_lock lock(state.ArchiveFiles);
-    return static_cast<size_t>(std::ranges::count_if(state.OpenFiles,
-                                                     [](const std::weak_ptr<MCFastFile>& kept)
-                                                     {
-                                                         const std::shared_ptr<MCFastFile> file = kept.lock();
-                                                         return file != nullptr && file->IsOpen();
-                                                     }));
+    return state.ReaderFiles + static_cast<size_t>(std::ranges::count_if(state.OpenFiles,
+                                                                         [](const std::weak_ptr<MCFastFile>& kept)
+                                                                         {
+                                                                             const std::shared_ptr<MCFastFile> file =
+                                                                                 kept.lock();
+                                                                             return file != nullptr && file->IsOpen();
+                                                                         }));
 }
 
 std::chrono::nanoseconds MCHdArt::ReadTime()

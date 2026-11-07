@@ -463,7 +463,10 @@ namespace MCHdArt
     /// <summary>How many of the pack's archives are open (each opened once, the first time it is needed).</summary>
     size_t ArchivesOpen();
 
-    /// <summary>How many of the open archives' files are open now (at most 128: the rest open again when read).</summary>
+    /// <summary>
+    /// How many of the open archives' files are open now, the reading thread's own among them (at most 128: the rest open
+    /// again when read).
+    /// </summary>
     size_t ArchiveFilesOpen();
 }
 

@@ -1100,7 +1100,8 @@ namespace
 /// Port-only: once a numbered folder's frame is drawn the first time, the reading thread reads the frames drawn after it
 /// (the rest of its in-betweens, then the next frame's, looping round; a turn middle's likewise), and they are drawn as
 /// the game's thread would have read them: the same frames, refused at a size they weren't made for, one dropped for
-/// room and read ahead again keeping its Id. Nothing is read twice, and the archive's file is opened once.
+/// room and read ahead again keeping its Id. Nothing is read twice, and the reading thread's handle on the archive's
+/// file is closed once it has read.
 /// </summary>
 TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read when drawn")
 {
@@ -1147,6 +1148,8 @@ TEST_CASE("hd art: the frames drawn after one are read ahead, the same as read w
 
     CHECK_EQ(MCHdArt::FramesRead(), read + AheadFrames * AheadSteps);
     CHECK_EQ(MCHdArt::FramesReadAhead(), ahead + AheadFrames * AheadSteps - 1);
+    // The reading thread's own handle on the archive is closed once it has read.
+    MCHdArt::WaitForReadAhead();
     CHECK_EQ(MCHdArt::ArchiveFilesOpen(), size_t{1});
 
     // A turn middle: its in-between, then the next frame's turn middle and its in-between.

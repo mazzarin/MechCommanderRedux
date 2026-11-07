@@ -60,6 +60,19 @@ public:
     /// </summary>
     std::vector<uint8_t> ReadStored(int32_t index);
 
+    /// <summary>
+    /// Port-only: a handle of its own on the archive's file, for a reader on another thread (a file's stream can't be read
+    /// from two at once); none when it can't be opened, or the file changed since its directory was read (as a released
+    /// archive's reads fail).
+    /// </summary>
+    std::optional<MCDiskFile> OpenAnother() const;
+
+    /// <summary>
+    /// Port-only: entry <paramref name="index"/>'s stored bytes as <see cref="ReadStored(int32_t)"/> reads them, through
+    /// <paramref name="file"/> (a handle <see cref="OpenAnother"/> gave), from any thread.
+    /// </summary>
+    std::vector<uint8_t> ReadStored(int32_t index, MCDiskFile& file) const;
+
     /// <summary>The number of entries in the archive.</summary>
     int32_t GetNumFiles() const { return static_cast<int32_t>(_Entries.size()); }
 

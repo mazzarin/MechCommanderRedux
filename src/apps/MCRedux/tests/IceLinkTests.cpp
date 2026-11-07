@@ -173,6 +173,85 @@ TEST_CASE("ice: a link fails on a signal out of turn, one that doesn't parse, or
     CHECK(flooded->CutOff());
 }
 
+TEST_CASE("ice: a relay-only link fails on a description hiding addresses behind a carriage return")
+{
+    // libdatachannel keeps a line it doesn't know ("a=candi\rdate:...") and passes it on to libjuice, which reads past
+    // every carriage return: its checks would go to the addresses hidden there, which the relay-only filter never saw.
+    // The guest's offer carries its own candidates so hidden; the host, relay only, must never find a path to them.
+    const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);
+    MCIceLink::Settings relayOnly = OnThisMachine;
+    relayOnly.RelayOnly = true;
+    const std::unique_ptr<MCIceLink> host = MCIceLink::Answer(relayOnly);
+    REQUIRE(guest != nullptr && host != nullptr);
+
+    std::optional<MCIceLink::Signal> offer;
+    std::vector<MCIceLink::Signal> candidates;
+    const auto gathered = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+    while ((!offer.has_value() || candidates.empty()) && std::chrono::steady_clock::now() < gathered)
+    {
+        for (MCIceLink::Signal& signal : guest->TakeSignals())
+        {
+            if (signal.Kind == "offer")
+            {
+                offer = std::move(signal);
+            }
+            else if (signal.Kind == "candidate")
+            {
+                candidates.push_back(std::move(signal));
+            }
+        }
+
+        std::this_thread::sleep_for(PumpStep);
+    }
+
+    REQUIRE(offer.has_value());
+    REQUIRE(!candidates.empty());
+    constexpr std::string_view media = "\r\nm=";
+    const size_t at = offer->Text.find(media);
+    REQUIRE(at != std::string::npos);
+    std::string hidden;
+
+    for (const MCIceLink::Signal& candidate : candidates)
+    {
+        constexpr std::string_view name = "candidate";
+        const std::string_view text = std::string_view(candidate.Text).substr(candidate.Text.starts_with("a=") ? 2 : 0);
+        REQUIRE(text.starts_with(name));
+        hidden += std::format("\r\na=candi\rdate{}", text.substr(name.size()));
+    }
+
+    offer->Text.insert(at, hidden);
+    host->Heard(*offer);
+
+    // The host's answer reaches the guest, which answers the checks of a host that tried the hidden addresses.
+    const auto watched = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+    while (!host->FoundPath() && !host->CutOff() && std::chrono::steady_clock::now() < watched)
+    {
+        for (const MCIceLink::Signal& signal : host->TakeSignals())
+        {
+            guest->Heard(signal);
+        }
+
+        guest->TakeSignals();
+        std::this_thread::sleep_for(PumpStep);
+    }
+
+    CHECK(!host->FoundPath());
+    CHECK(host->GetState() == MCIceLink::State::Failed);
+    CHECK(host->CutOff());
+
+    // A candidate holding one, and a control character in a line, fail the same way.
+    const std::unique_ptr<MCIceLink> other = MCIceLink::Offer(OnThisMachine);
+    REQUIRE(other != nullptr);
+    other->Heard({"candidate", "candidate:1 1 UDP 2122317823 127.0.0.1 50000 typ\rhost", "0"});
+    CHECK(other->CutOff());
+    const std::unique_ptr<MCIceLink> tabbed = MCIceLink::Offer(OnThisMachine);
+    REQUIRE(tabbed != nullptr);
+    tabbed->Heard({"candidate", "candidate:1 1 UDP 2122317823 127.0.0.1 50000 typ\x01host", "0"});
+    CHECK(tabbed->CutOff());
+}
+
 TEST_CASE("ice: a link fails when the other end sends more than this end holds unread")
 {
     const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);

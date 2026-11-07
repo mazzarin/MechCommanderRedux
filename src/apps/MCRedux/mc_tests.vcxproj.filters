@@ -153,6 +153,9 @@
     <ClCompile Include="tests\HdPackTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\IceChannelTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\IceLinkTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

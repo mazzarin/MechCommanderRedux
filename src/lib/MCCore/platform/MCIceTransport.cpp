@@ -715,6 +715,12 @@ bool MCIceTransport::HearTransportSignal(uint32_t id, Link& link, const MCIceLin
             return true;
         }
 
+        // A link cut for what the other end sent stays cut (the next pump ends it): its word is worth no more here.
+        if (link.Ice->CutOff())
+        {
+            return true;
+        }
+
         // What this end sent over ICE's channel would be lost: the link ends, and the game asks again.
         if (link.Ice->OpenedAt().has_value())
         {

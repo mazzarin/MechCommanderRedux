@@ -121,6 +121,9 @@
     <ClCompile Include="tests\HdMovieTests.cpp" />
     <ClCompile Include="tests\HdOptionsTests.cpp" />
     <ClCompile Include="tests\HdPackTests.cpp" />
+    <ClCompile Include="tests\IceChannelTests.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="tests\IceLinkTests.cpp" />
     <ClCompile Include="tests\IceTransportTests.cpp" />
     <ClCompile Include="tests\IniFileTests.cpp" />

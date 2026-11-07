@@ -251,7 +251,8 @@ target_link_options(MCCore PUBLIC ${MC_EXPERIMENTAL_LIBRARY})
 set(MC_APP_NO_PCH ${MC_SRC}/apps/MCRedux/MCConsole.cpp ${MC_SRC}/apps/MCRedux/MCCrashTrace.cpp
                   ${MC_SRC}/apps/MCRedux/MCGameFolder.cpp ${MC_SRC}/apps/MCRedux/MCTelemetryWin.cpp
                   ${MC_SRC}/apps/MCRedux/MCHttpGetWin.cpp ${MC_SRC}/apps/MCRedux/MCRestart.cpp
-                  ${MC_SRC}/apps/MCRedux/MCSetupRunWin.cpp ${MC_SRC}/apps/MCRedux/MCWebSocketWin.cpp)
+                  ${MC_SRC}/apps/MCRedux/MCSetupRunWin.cpp ${MC_SRC}/apps/MCRedux/MCWebSocketWin.cpp
+                  ${MC_SRC}/apps/MCRedux/tests/IceChannelTests.cpp)
 set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # The game, as "MechCommander Redux.app": upstream's icon at the Mac's sizes (src/res/MCRedux.icns), and the

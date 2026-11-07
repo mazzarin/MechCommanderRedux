@@ -105,6 +105,52 @@ namespace
         return "unknown";
     }
 
+    /// <summary>
+    /// Whether the other end's <paramref name="text"/> holds only what a game's signals do: printable ASCII, lines
+    /// ending in a line feed, a carriage return only before one. libdatachannel and libjuice read anything else
+    /// differently: libdatachannel keeps a line it doesn't know ("a=candi\rdate:...") and passes it on, and libjuice reads
+    /// past every carriage return, so an address hidden there would be tried though this end never saw it.
+    /// </summary>
+    bool AsGamesSay(std::string_view text)
+    {
+        constexpr char FirstPrintable = ' ';
+        constexpr char LastPrintable = '~';
+
+        for (size_t i = 0; i < text.size(); i++)
+        {
+            const char c = text[i];
+            const bool printable = c >= FirstPrintable && c <= LastPrintable;
+            const bool lineEnd = c == '\n' || (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n');
+
+            if (!printable && !lineEnd)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the other end proved it holds the certificate its description named. libdatachannel checks a certificate
+    /// against the description's fingerprint as the encryption starts, but with Mbed TLS it lets a client that sends
+    /// none through unchecked (its certificates are optional there, as WebRTC's have no authority to check against).
+    /// Its check notes the fingerprint it saw, so a link whose far end showed none has none.
+    /// </summary>
+    bool ProvedCertificate(const std::shared_ptr<rtc::PeerConnection>& peer)
+    {
+        if (peer == nullptr)
+        {
+            return false;
+        }
+
+        const std::optional<rtc::Description> remote = peer->remoteDescription();
+        const std::optional<rtc::CertificateFingerprint> named = remote ? remote->fingerprint() : std::nullopt;
+        const rtc::CertificateFingerprint seen = peer->remoteFingerprint();
+        return named.has_value() && !seen.value.empty() && seen.algorithm == named->algorithm &&
+               seen.value == named->value;
+    }
+
     /// <summary>Notes the kind of address <paramref name="candidate"/> is in <paramref name="offered"/>.</summary>
     void NoteOffered(MCIceLink::Offered& offered, const rtc::Candidate& candidate)
     {
@@ -169,6 +215,27 @@ struct MCIceShared
         CutLocked(why);
     }
 
+    /// <summary>
+    /// The channel opened (under the lock): the link opens, if its far end <paramref name="proved"/> its certificate
+    /// (ProvedCertificate, asked out of the lock); otherwise it isn't the end the signals named, and it's cut.
+    /// </summary>
+    void OpenedLocked(bool proved)
+    {
+        if (State != MCIceLink::State::Connecting)
+        {
+            return;
+        }
+
+        if (!proved)
+        {
+            CutLocked("the other end's encryption showed no certificate, or not the one it named");
+            return;
+        }
+
+        State = MCIceLink::State::Open;
+        OpenedAt = std::chrono::steady_clock::now();
+    }
+
     /// <summary>End, under the lock.</summary>
     void EndLocked(MCIceLink::State state, std::string_view why)
     {
@@ -200,21 +267,21 @@ struct MCIceLink::Impl
     /// <summary>libdatachannel's counts as last read (the game's thread's).</summary>
     mutable Traffic Kept;
 
-    /// <summary>The channel's own callbacks, onto the shared queues (never onto this, which may be gone).</summary>
-    static void Watch(const std::shared_ptr<rtc::DataChannel>& channel, const std::weak_ptr<MCIceShared>& weak)
+    /// <summary>
+    /// The channel's own callbacks, onto the shared queues (never onto this, which may be gone); <paramref name="peer"/>
+    /// for the certificate's check as it opens.
+    /// </summary>
+    static void Watch(const std::shared_ptr<rtc::DataChannel>& channel, const std::weak_ptr<MCIceShared>& weak,
+                      const std::weak_ptr<rtc::PeerConnection>& peer)
     {
         channel->onOpen(
-            [weak]
+            [weak, peer]
             {
                 if (const std::shared_ptr<MCIceShared> shared = weak.lock())
                 {
+                    const bool proved = ProvedCertificate(peer.lock());
                     const std::scoped_lock lock(shared->Lock);
-
-                    if (shared->State == State::Connecting)
-                    {
-                        shared->State = State::Open;
-                        shared->OpenedAt = std::chrono::steady_clock::now();
-                    }
+                    shared->OpenedLocked(proved);
                 }
             });
         channel->onClosed(
@@ -335,23 +402,38 @@ struct MCIceLink::Impl
                 }
             });
 
+        const std::weak_ptr<rtc::PeerConnection> peer = Peer;
+
         if (Offers)
         {
-            // The offer comes of making the channel (its description is the first signal).
+            // The offer comes of making the channel (its description is the first signal). The offering end opens the
+            // link's one channel, so a channel the other end opens means it isn't this game: kept by libdatachannel
+            // until someone takes it, with whatever it's sent, outside the link's limit.
+            Peer->onDataChannel(
+                [weak](std::shared_ptr<rtc::DataChannel> channel)
+                {
+                    channel->close();
+
+                    if (const std::shared_ptr<MCIceShared> shared = weak.lock())
+                    {
+                        shared->Cut("the other end opened a channel of its own");
+                    }
+                });
             std::shared_ptr<rtc::DataChannel> channel = Peer->createDataChannel(std::string(ChannelLabel));
-            Watch(channel, weak);
+            Watch(channel, weak, peer);
             const std::scoped_lock lock(Shared->Lock);
             Shared->Channel = std::move(channel);
         }
         else
         {
             Peer->onDataChannel(
-                [weak](std::shared_ptr<rtc::DataChannel> channel)
+                [weak, peer](std::shared_ptr<rtc::DataChannel> channel)
                 {
                     const std::shared_ptr<MCIceShared> shared = weak.lock();
 
                     if (shared == nullptr)
                     {
+                        channel->close();
                         return;
                     }
 
@@ -370,20 +452,20 @@ struct MCIceLink::Impl
 
                     if (!taken)
                     {
-                        SDL_Log("MCIceLink: a second channel (\"%s\") refused", channel->label().c_str());
                         channel->close();
+                        shared->Cut("the other end opened a second channel, or not the game's");
                         return;
                     }
 
                     // Out of the lock: a callback set on a channel already open may run at once.
-                    Watch(channel, weak);
-                    const std::scoped_lock lock(shared->Lock);
+                    Watch(channel, weak, peer);
 
                     // It may have opened before its callbacks were set.
-                    if (channel->isOpen() && shared->State == State::Connecting)
+                    if (channel->isOpen())
                     {
-                        shared->State = State::Open;
-                        shared->OpenedAt = std::chrono::steady_clock::now();
+                        const bool proved = ProvedCertificate(peer.lock());
+                        const std::scoped_lock lock(shared->Lock);
+                        shared->OpenedLocked(proved);
                     }
                 });
         }
@@ -482,6 +564,13 @@ void MCIceLink::Heard(const Signal& signal)
     }
 
     Impl& impl = *_Impl;
+
+    if (!AsGamesSay(signal.Text) || !AsGamesSay(signal.Mid))
+    {
+        impl.Shared->Cut(std::format("the other end's {} held what no game's does", KindShown(signal.Kind)));
+        return;
+    }
+
     // The other end's description is the answer to this end's offer, or the offer this end answers.
     const std::string_view expected = impl.Offers ? AnswerKind : OfferKind;
 

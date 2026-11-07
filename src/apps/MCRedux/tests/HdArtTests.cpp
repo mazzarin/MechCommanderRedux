@@ -17443,13 +17443,32 @@ TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part 
 
 namespace
 {
+    /// <summary>The bytes a movie frame's random planes take: its Y's, and its U's and V's, lowest and highest.</summary>
+    struct PlaneBytes
+    {
+        int LumaLow = 0;
+        int LumaHigh = UINT8_MAX;
+        int ChromaLow = 0;
+        int ChromaHigh = UINT8_MAX;
+    };
+
     /// <summary>
-    /// A frame of a movie (<paramref name="movie"/>) of random planes in <paramref name="colorspace"/>, every byte as
-    /// likely (so the sums SDL's table can't hold come up too), <paramref name="width"/> x <paramref name="height"/> at
-    /// <paramref name="scale"/> HD pixels an original's, over the original's indices <paramref name="indices"/>.
+    /// Bytes whose sums SDL's table holds (its clampU8 takes -128 to 383 times 64) in every colour space: there its C
+    /// conversion and its SSE2 one (an x86 CPU's) make the same colours. A limited range's Y keeps to 16-235, the U and
+    /// V of all to 72-184 (a strong colour's); every byte is as likely otherwise, sums past SDL's table too.
+    /// </summary>
+    constexpr PlaneBytes InTableLimited{16, 235, 72, 184};
+    constexpr PlaneBytes InTableFull{0, UINT8_MAX, 72, 184};
+    constexpr PlaneBytes EveryByte{};
+
+    /// <summary>
+    /// A frame of a movie (<paramref name="movie"/>) of random planes of <paramref name="bytes"/> in
+    /// <paramref name="colorspace"/>, <paramref name="width"/> x <paramref name="height"/> at <paramref name="scale"/>
+    /// HD pixels an original's, over the original's indices <paramref name="indices"/>.
     /// </summary>
     std::shared_ptr<MCHdArt::Frame> RandomMovieFrame(std::mt19937& random, uint64_t movie, SDL_Colorspace colorspace,
-                                                     int32_t width, int32_t height, int32_t scale, uint8_t indices)
+                                                     const PlaneBytes& bytes, int32_t width, int32_t height,
+                                                     int32_t scale, uint8_t indices)
     {
         auto frame = std::make_shared<MCHdArt::Frame>();
         frame->Id = MCHdArt::NewFrameId();
@@ -17459,10 +17478,14 @@ namespace
         frame->Scale = scale;
         frame->Format = MCHdArt::ColorFormat::Yuv420;
         frame->Colorspace = colorspace;
+        const auto luma = static_cast<size_t>(width) * height;
         const auto chroma = static_cast<size_t>((width + 1) / 2) * ((height + 1) / 2);
-        frame->Colors.resize(static_cast<size_t>(width) * height + 2 * chroma);
-        std::uniform_int_distribution<int> bytes(0, UINT8_MAX);
-        std::ranges::generate(frame->Colors, [&] { return static_cast<uint8_t>(bytes(random)); });
+        frame->Colors.resize(luma + 2 * chroma);
+        std::uniform_int_distribution<int> lumaBytes(bytes.LumaLow, bytes.LumaHigh);
+        std::uniform_int_distribution<int> chromaBytes(bytes.ChromaLow, bytes.ChromaHigh);
+        const std::span<uint8_t> planes = frame->Colors;
+        std::ranges::generate(planes.first(luma), [&] { return static_cast<uint8_t>(lumaBytes(random)); });
+        std::ranges::generate(planes.subspan(luma), [&] { return static_cast<uint8_t>(chromaBytes(random)); });
 
         for (int32_t pixel = 0; pixel < frame->OriginalWidth() * frame->OriginalHeight(); ++pixel)
         {
@@ -17479,7 +17502,8 @@ namespace
 /// (SDL's conversion, <see cref="MCHdMovie::Rgba"/>), with each frame shown over a window copied onto a sharp screen:
 /// frames of random planes in each colour space SDL converts, of odd sizes (the last column and row take a half
 /// block's U and V), one after another in one movie's textures, then at another size; and the test movie's frames as
-/// dav1d decodes them.
+/// dav1d decodes them. Planes of every byte, whose sums SDL's table wraps, too where SDL converts with its C code
+/// (which the GPU follows, as the Mac converted): not on an x86 CPU, where its SSE2 conversion saturates them.
 /// </summary>
 TEST_CASE_ISOLATED("game: the GPU makes a movie's HD frame's colours from its planes as the CPU made them")
 {
@@ -17501,7 +17525,12 @@ TEST_CASE_ISOLATED("game: the GPU makes a movie's HD frame's colours from its pl
     constexpr int32_t FrameX = 4;
     constexpr int32_t FrameY = 2;
     constexpr uint8_t Color = 0x30;
+    constexpr int32_t OddWidth = 37;
+    constexpr int32_t OddHeight = 21;
     constexpr uint32_t Seed = 0x4d4f5649;
+    // Longer than the test movie's tiny frames take to decode however loaded the machine (the game waits a display
+    // frame, MCHdMovie::MaxWait).
+    constexpr auto DecodeWait = std::chrono::seconds(10);
     constexpr std::array<SDL_Colorspace, 5> Colorspaces = {SDL_COLORSPACE_BT601_LIMITED, SDL_COLORSPACE_BT601_FULL,
                                                            SDL_COLORSPACE_BT709_LIMITED, SDL_COLORSPACE_BT709_FULL,
                                                            SDL_COLORSPACE_BT2020_FULL};
@@ -17567,31 +17596,45 @@ TEST_CASE_ISOLATED("game: the GPU makes a movie's HD frame's colours from its pl
     std::mt19937 random(Seed);
     const uint64_t movie = MCHdArt::NewFrameId();
 
+    const bool everyByte = !SDL_HasSSE2();
+    int32_t frames = 0;
+
     for (const SDL_Colorspace colorspace : Colorspaces)
     {
-        compare(RandomMovieFrame(random, movie, colorspace, 37, 21, 1, Color));
+        const PlaneBytes& inTable = SDL_ISCOLORSPACE_LIMITED_RANGE(colorspace) ? InTableLimited : InTableFull;
+        compare(RandomMovieFrame(random, movie, colorspace, inTable, OddWidth, OddHeight, 1, Color));
+        frames += 1;
+
+        if (everyByte)
+        {
+            compare(RandomMovieFrame(random, movie, colorspace, EveryByte, OddWidth, OddHeight, 1, Color));
+            frames += 1;
+        }
     }
 
-    compare(RandomMovieFrame(random, movie, SDL_COLORSPACE_BT709_LIMITED, 38, 22, 2, Color));
+    compare(RandomMovieFrame(random, movie, SDL_COLORSPACE_BT709_LIMITED, InTableLimited, OddWidth + 1, OddHeight + 1,
+                             2, Color));
+    frames += 1;
 
     auto decoded = MCHdMovie::Open(scratch / "MOVIE.ivf");
     REQUIRE(decoded.has_value());
 
     for (uint32_t index = 0; index < MCHdMovieFixture::Frames; ++index)
     {
-        const auto frame = (*decoded)->Next(window->Bytes().subspan(static_cast<size_t>(FrameY) * Width + FrameX),
-                                            MCHdMovieFixture::Width / 2, MCHdMovieFixture::Height / 2, Width,
-                                            std::chrono::seconds(10));
+        const auto frame =
+            (*decoded)->Next(window->Bytes().subspan(static_cast<size_t>(FrameY) * Width + FrameX),
+                             MCHdMovieFixture::Width / 2, MCHdMovieFixture::Height / 2, Width, DecodeWait);
         REQUIRE(frame.has_value());
         compare(*frame);
+        frames += 1;
     }
 
     MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
     GamePaused = false;
-    std::cout << std::format("  {} frames, {} colour bytes: {} differ, the largest by {}\n", compared.Frames,
-                             compared.Bytes, compared.Differing, compared.Largest);
-    CHECK_EQ(compared.Frames,
-             static_cast<int32_t>(Colorspaces.size()) + 1 + static_cast<int32_t>(MCHdMovieFixture::Frames));
+    std::cout << std::format("  {} frames ({}), {} colour bytes: {} differ, the largest by {}\n", compared.Frames,
+                             everyByte ? "planes of every byte too" : "SSE2: no planes of every byte", compared.Bytes,
+                             compared.Differing, compared.Largest);
+    CHECK_EQ(compared.Frames, frames);
     CHECK_EQ(compared.Differing, size_t{0});
     MCRenderer::DestroyTexture(*window);
     std::filesystem::remove_all(scratch);

@@ -324,63 +324,155 @@ TEST_CASE("update work: a download's speed and time left read as the first start
     CHECK_EQ(MCUpdateWork::TimeLeftText(minutes(80)), std::string("ABOUT 1 HR 20 MIN LEFT"));
 }
 
-TEST_CASE(
-    "update work: the speed counts the network bytes of the last 10 seconds; the time left waits for 5 seconds of "
-    "them, and for bytes coming")
+namespace
 {
-    using MCClock = MCUpdateWork::MCRate::MCClock;
-    using std::chrono::seconds;
-    constexpr uint64_t PerSecond = 10'400'000;
-    constexpr uint64_t Left = 4'992'000'000;
-    constexpr std::string_view Separator = " \xC2\xB7 ";
-    const MCClock::time_point start = MCClock::now();
-    MCUpdateWork::MCRate rate;
-    uint64_t network = 0;
-    int64_t at = 0;
-
-    // A second each, at the speed given.
-    const auto secondsAt = [&](int64_t count, uint64_t speed)
+    /// <summary>A download fed to a rate a second at a time (or in parts of one, as the window draws).</summary>
+    struct MCRateFeed
     {
-        for (int64_t i = 0; i < count; ++i)
+        using MCClock = MCUpdateWork::MCRate::MCClock;
+
+        MCUpdateWork::MCRate Rate;
+        MCClock::time_point Start = MCClock::now();
+        std::chrono::milliseconds At{0};
+        uint64_t Network = 0;
+        uint64_t Left = 0;
+
+        explicit MCRateFeed(uint64_t left) : Left(left) { Rate.Add(Start, Network, Left); }
+
+        /// <summary>A second at <paramref name="speed"/> bytes, sampled <paramref name="draws"/> times through it.</summary>
+        void Second(uint64_t speed, int draws = 1)
         {
-            ++at;
-            network += speed;
-            rate.Add(start + seconds(at), network);
+            for (int draw = 1; draw <= draws; ++draw)
+            {
+                const uint64_t part = speed / static_cast<uint64_t>(draws);
+                At += std::chrono::milliseconds(1000) / draws;
+                Network += part;
+                Left -= std::min(Left, part);
+                Rate.Add(Start + At, Network, Left);
+            }
         }
+
+        double Speed() const { return Rate.BytesPerSecond().value_or(-1); }
+
+        int64_t SecondsLeft() const { return Rate.TimeLeft() ? Rate.TimeLeft()->count() : -1; }
     };
+}
 
-    rate.Add(start, network);
-    CHECK(!rate.BytesPerSecond().has_value());
-    CHECK_EQ(rate.Text(Left), std::string());
+TEST_CASE("update work: the speed waits for 2 seconds of samples and the time left for 5, then tells them")
+{
+    constexpr uint64_t PerSecond = 10'400'000;
+    constexpr std::string_view Separator = " \xC2\xB7 ";
+    MCRateFeed feed(PerSecond * 485);
+    CHECK(!feed.Rate.BytesPerSecond().has_value());
+    CHECK_EQ(feed.Rate.Text(), std::string());
 
-    // Under 2 seconds, nothing; then the speed alone; from 5 seconds the time left too.
-    secondsAt(1, PerSecond);
-    CHECK_EQ(rate.Text(Left), std::string());
-    secondsAt(1, PerSecond);
-    CHECK_EQ(rate.Text(Left), std::string("10.4 MB/S"));
-    CHECK(!rate.TimeLeft(Left).has_value());
-    secondsAt(3, PerSecond);
-    REQUIRE(rate.TimeLeft(Left).has_value());
-    CHECK_EQ(rate.TimeLeft(Left)->count(), int64_t{480});
-    CHECK_EQ(rate.Text(Left), std::format("10.4 MB/S{}ABOUT 8 MIN LEFT", Separator));
-
-    // Smoothed over the last 10 seconds: 5 seconds at nothing, after 20 at the speed, halve it.
-    secondsAt(15, PerSecond);
-    secondsAt(5, 0);
-    REQUIRE(rate.BytesPerSecond().has_value());
-    CHECK(*rate.BytesPerSecond() == static_cast<double>(PerSecond) / 2);
-    CHECK_EQ(rate.Text(Left), std::format("5.2 MB/S{}ABOUT 16 MIN LEFT", Separator));
-
-    // Nothing coming for 10 seconds: no time left.
-    secondsAt(5, 0);
-    CHECK_EQ(rate.Text(Left), std::string("0 KB/S"));
-    CHECK(!rate.TimeLeft(Left).has_value());
+    feed.Second(PerSecond);
+    CHECK_EQ(feed.Rate.Text(), std::string());
+    feed.Second(PerSecond);
+    CHECK_EQ(feed.Rate.Text(), std::string("10.4 MB/S"));
+    CHECK(!feed.Rate.TimeLeft().has_value());
+    feed.Second(PerSecond, 4);
+    feed.Second(PerSecond);
+    feed.Second(PerSecond);
+    CHECK_EQ(feed.SecondsLeft(), int64_t{480});
+    CHECK_EQ(feed.Rate.Text(), std::format("10.4 MB/S{}ABOUT 8 MIN LEFT", Separator));
 
     // Forgotten (a check of what's here): it starts again.
-    rate.Reset();
-    CHECK(!rate.BytesPerSecond().has_value());
-    rate.Add(start + seconds(at), network);
-    CHECK_EQ(rate.Text(Left), std::string());
+    feed.Rate.Reset();
+    CHECK(!feed.Rate.BytesPerSecond().has_value());
+    feed.Rate.Add(feed.Start + feed.At, feed.Network, feed.Left);
+    CHECK_EQ(feed.Rate.Text(), std::string());
+}
+
+TEST_CASE("update work: a download's ups and downs barely move the speed shown, and the time left just counts down")
+{
+    // A second at three times the other's, by turns: 10.4 MB a second on the whole, for 16 minutes.
+    constexpr uint64_t PerSecond = 10'400'000;
+    MCRateFeed feed(PerSecond * 960);
+    int64_t shownBefore = -1;
+
+    for (int second = 0; second < 300; ++second)
+    {
+        // Sampled as a window draws, 30 times a second: only whole seconds count.
+        feed.Second(second % 2 == 0 ? PerSecond * 3 / 2 : PerSecond / 2, 30);
+
+        if (second < 30)
+        {
+            continue;
+        }
+
+        CHECK(std::abs(feed.Speed() - PerSecond) < PerSecond * 0.15);
+        const int64_t shown = feed.SecondsLeft();
+        REQUIRE(shown >= 0);
+
+        // Down a second a second, never up.
+        if (shownBefore >= 0)
+        {
+            CHECK(shown <= shownBefore);
+            CHECK(shownBefore - shown <= 2);
+        }
+
+        shownBefore = shown;
+    }
+
+    // Still about right: 660 s of 10.4 MB a second left.
+    CHECK(std::abs(feed.SecondsLeft() - 660) < 60);
+}
+
+TEST_CASE("update work: a download that truly slows shows it: the speed in seconds, the time left within a minute")
+{
+    constexpr uint64_t PerSecond = 10'400'000;
+    MCRateFeed feed(PerSecond * 600);
+
+    for (int second = 0; second < 60; ++second)
+    {
+        feed.Second(PerSecond);
+    }
+
+    CHECK(std::abs(feed.SecondsLeft() - 540) <= 2);
+
+    // Half the speed from here.
+    for (int second = 0; second < 15; ++second)
+    {
+        feed.Second(PerSecond / 2);
+    }
+
+    CHECK(feed.Speed() < PerSecond * 0.7);
+
+    for (int second = 0; second < 45; ++second)
+    {
+        feed.Second(PerSecond / 2);
+    }
+
+    // 510 s at 10.4 MB a second left, so 1,020 s at half: told within 15%.
+    CHECK(std::abs(feed.Speed() - PerSecond / 2) < PerSecond * 0.05);
+    CHECK(std::abs(feed.SecondsLeft() - 1020) < 1020 * 15 / 100);
+}
+
+TEST_CASE("update work: nothing coming for 10 seconds shows 0 KB/S and no time left, until bytes come again")
+{
+    constexpr uint64_t PerSecond = 10'400'000;
+    MCRateFeed feed(PerSecond * 600);
+
+    for (int second = 0; second < 20; ++second)
+    {
+        feed.Second(PerSecond);
+    }
+
+    for (int second = 0; second < 9; ++second)
+    {
+        feed.Second(0);
+    }
+
+    CHECK(feed.Speed() > 0);
+    CHECK(feed.Rate.TimeLeft().has_value());
+    feed.Second(0);
+    CHECK_EQ(feed.Rate.Text(), std::string("0 KB/S"));
+    CHECK(!feed.Rate.TimeLeft().has_value());
+
+    feed.Second(PerSecond);
+    CHECK(feed.Speed() > 0);
+    CHECK(feed.Rate.TimeLeft().has_value());
 }
 
 /// <summary>

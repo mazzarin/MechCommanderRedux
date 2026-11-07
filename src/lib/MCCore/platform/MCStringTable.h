@@ -28,9 +28,36 @@ public:
     /// <returns>The characters copied (0 when there is no such string).</returns>
     int32_t LoadString(uint32_t id, std::span<char> buffer) const;
 
-    /// <summary>The game executable's table: MCX.EXE in the game folder, read on first use (empty if it can't be).
+    /// <summary>
+    /// The text file beside MCX.EXE holding its table, which every release writes from its own MCX.EXE
+    /// (tools/release/game_strings.py): the Windows setup puts the game, which holds no text, in MCX.EXE's place.
     /// </summary>
+    static constexpr std::string_view TextFileName = "MCX strings.txt";
+
+    /// <summary>
+    /// Reads a table written as <see cref="TextFileName"/> is: UTF-8 lines, comments starting with #, then a string a
+    /// line: its id in decimal, a tab and its text, with a backslash, new line, carriage return and tab written \\,
+    /// \n, \r and \t.
+    /// </summary>
+    /// <returns>The table in Windows-1252 (as <see cref="Parse"/> gives it), or which line couldn't be read.</returns>
+    static std::expected<MCStringTable, std::string> ParseText(std::string_view text);
+
+    /// <summary>Reads a table's text file on disk (<see cref="ParseText"/>).</summary>
+    static std::expected<MCStringTable, std::string> LoadText(const std::filesystem::path& path);
+
+    /// <summary>
+    /// The game's table: the executable's own when it holds any text (a player's copy in another language keeps its
+    /// own), else the text file's (Windows' game in MCX.EXE's place).
+    /// </summary>
+    /// <returns>The table, or why neither gave one.</returns>
+    static std::expected<MCStringTable, std::string> LoadGame(const std::filesystem::path& exe,
+                                                              const std::filesystem::path& text);
+
+    /// <summary>The game's table: MCX.EXE's in the game folder, or its text file's (<see cref="LoadGame"/>), read on
+    /// first use (empty, and logged, if neither can be).</summary>
     static const MCStringTable& Game();
+
+    bool operator==(const MCStringTable&) const = default;
 
 private:
     std::unordered_map<uint32_t, std::string> _Strings;

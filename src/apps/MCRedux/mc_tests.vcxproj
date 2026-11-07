@@ -119,7 +119,6 @@
     <ClCompile Include="tests\IniFileTests.cpp" />
     <ClCompile Include="tests\InputTests.cpp" />
     <ClCompile Include="tests\InterfaceTests.cpp" />
-    <ClCompile Include="tests\LauncherTests.cpp" />
     <ClCompile Include="tests\LibTests.cpp" />
     <ClCompile Include="tests\LinkupTests.cpp" />
     <ClCompile Include="tests\LobbyUpdateTests.cpp" />

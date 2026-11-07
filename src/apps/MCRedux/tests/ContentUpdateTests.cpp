@@ -596,15 +596,15 @@ TEST_CASE("content plan: on Windows the program's own files are left to it, neve
 {
     const ScratchFolder scratch("plan-program");
     const std::filesystem::path& root = scratch.Path();
-    // The Windows setup put the launcher in MCX.EXE's place and Redux's editor in MCEditor.exe's; the release lists the
-    // original's, and an earlier copy recorded the launcher as placed.
-    WriteText(root / "MCX.EXE", "the launcher");
+    // The Windows setup put the game in MCX.EXE's place and Redux's editor in MCEditor.exe's; the release lists the
+    // original's, and an earlier copy recorded the game's MCX.EXE as placed.
+    WriteText(root / "MCX.EXE", "the game");
     WriteText(root / "MCEditor.exe", "Redux's editor");
     WriteText(root / "data" / "m01.fit", "mission v1");
     MCInstalled::MCRecord installed;
     installed.Release = 1;
     installed.Sets = GameOnly;
-    installed.Files["MCX.EXE"] = {.Path = "MCX.EXE", .Set = "game", .Sha256 = MCSha256::Of("the launcher"), .Size = 12};
+    installed.Files["MCX.EXE"] = {.Path = "MCX.EXE", .Set = "game", .Sha256 = MCSha256::Of("the game"), .Size = 8};
     MCContentList::MCList list{.Format = 1, .Release = 2};
     list.Zips = {{"base-1.zip", 1000, MCSha256::Of("z1")}};
     list.Files.push_back(Listed("MCX.EXE", "the original", "base-1.zip"));

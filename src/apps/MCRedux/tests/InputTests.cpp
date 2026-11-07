@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "MCScratchFolder.h"
 #include "TestGame.h"
+#include "platform/MCFileSystem.h"
 #include "platform/MCInput.h"
 #include "platform/MCStringTable.h"
 
@@ -113,4 +115,136 @@ TEST_CASE("game: MCX.EXE string table loads")
 
     CHECK(found > 0);
     CHECK_EQ(static_cast<int>(std::strlen(buffer)), found);
+}
+
+namespace
+{
+    /// <summary>The string tests' scratch folders' group.</summary>
+    constexpr std::string_view StringsGroup = "mc_tests_strings";
+
+    void WriteFile(const std::filesystem::path& path, std::string_view bytes)
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    std::string Text(const MCStringTable& table, uint32_t id)
+    {
+        return table.Find(id).value_or("<none>");
+    }
+}
+
+TEST_CASE("strings: MCX.EXE's table read from its text file, escapes and all")
+{
+    // As tools/release/game_strings.py writes it, a comment first; a line ended as Windows' editors end them.
+    const auto table = MCStringTable::ParseText("# The original game's texts.\n"
+                                                "1\tObjective %i: %s --  \n"
+                                                "97\tPre-Release build\\nDo Not Distribute\r\n"
+                                                "\n"
+                                                "153\ta\\\\b\\tc\\rd\n"
+                                                "200\tcaf\xc3\xa9 \xe2\x82\xac \xe4\xb8\x80 \xff\n"
+                                                "201\t");
+    REQUIRE(table.has_value());
+    CHECK_EQ(table->Count(), 5u);
+    CHECK_EQ(Text(*table, 1), "Objective %i: %s --  ");
+    CHECK_EQ(Text(*table, 97), "Pre-Release build\nDo Not Distribute");
+    CHECK_EQ(Text(*table, 153), "a\\b\tc\rd");
+    // Windows-1252, as the executable's table is: e acute and the euro sign kept, what it lacks (and bad UTF-8) '?'.
+    CHECK_EQ(Text(*table, 200), "caf\xe9 \x80 ? ?");
+    CHECK_EQ(Text(*table, 201), "");
+
+    // No tab, no number, an unknown or cut-off escape, a text twice, a number past 32 bits, a NUL character.
+    constexpr std::array<std::string_view, 8> refused{
+        "x\ty",   "1 y",        "\tno number",         "1\ta\\q",
+        "1\ta\\", "1\ta\n1\tb", "4294967296\ttoo big", std::string_view("1\ta\0b", 5)};
+
+    for (const std::string_view line : refused)
+    {
+        if (MCStringTable::ParseText(line).has_value())
+        {
+            FAIL_CHECK(std::format("read, though it shouldn't be: {}", line));
+        }
+    }
+
+    CHECK_EQ(MCStringTable::ParseText("1\ta\n1\tb").error(), "line 2: text 1 again");
+}
+
+TEST_CASE("strings: the game reads MCX.EXE's texts, and the text file's when MCX.EXE holds none")
+{
+    const MCScratchFolder folder(StringsGroup, "game");
+    const std::filesystem::path exe = folder.Path() / "MCX.EXE";
+    const std::filesystem::path text = folder.Path() / MCStringTable::TextFileName;
+
+    // Neither: why not, both named.
+    const auto neither = MCStringTable::LoadGame(exe, text);
+    REQUIRE(!neither.has_value());
+    CHECK(neither.error().find("MCX.EXE") != std::string::npos);
+    CHECK(neither.error().find(MCStringTable::TextFileName) != std::string::npos);
+
+    // The Windows setup's launcher in MCX.EXE's place: a program without the game's texts.
+    WriteFile(exe, "MZ, a launcher");
+    WriteFile(text, "1\tfrom the text file\n");
+    const auto launcher = MCStringTable::LoadGame(exe, text);
+    REQUIRE(launcher.has_value());
+    CHECK_EQ(Text(*launcher, 1), "from the text file");
+
+    // A text file that can't be read says where.
+    WriteFile(text, "1\tfine\nnot a line\n");
+    const auto broken = MCStringTable::LoadGame(exe, text);
+    REQUIRE(!broken.has_value());
+    CHECK(broken.error().find("line 2") != std::string::npos);
+
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    // A real program holding no texts, as the launcher is (the original's MCCONFIG.DLL has no resources).
+    std::filesystem::copy_file(MCFileSystem::Resolve("MCCONFIG.DLL"), exe,
+                               std::filesystem::copy_options::overwrite_existing);
+    WriteFile(text, "1\tfrom the text file\n");
+    const auto program = MCStringTable::LoadGame(exe, text);
+    REQUIRE(program.has_value());
+    CHECK_EQ(program->Count(), 1u);
+
+    // The original's MCX.EXE: its own texts, whatever the text file holds (a copy in another language keeps its own).
+    const auto original = MCStringTable::Load(MCFileSystem::Resolve("MCX.EXE"));
+    REQUIRE(original.has_value());
+    std::filesystem::copy_file(MCFileSystem::Resolve("MCX.EXE"), exe,
+                               std::filesystem::copy_options::overwrite_existing);
+    WriteFile(text, "1\tnot the executable's\n");
+    const auto own = MCStringTable::LoadGame(exe, text);
+    REQUIRE(own.has_value());
+    CHECK(*own == *original);
+}
+
+/// <summary>
+/// Tool: <c>--strings-exe &lt;MCX.EXE&gt; --strings-text &lt;MCX strings.txt&gt;</c> reads the original's table from
+/// both with the game's code and checks they're the same: the release script's text file (tools/release/test_make.sh).
+/// </summary>
+TEST_CASE_ISOLATED("tool: --strings-exe and --strings-text hold the same texts")
+{
+    const std::optional<std::string_view> exe = MCTest::Option("strings-exe");
+
+    if (!exe.has_value())
+    {
+        return;
+    }
+
+    const std::optional<std::string_view> text = MCTest::Option("strings-text");
+    REQUIRE(text.has_value());
+    const auto fromExe = MCStringTable::Load(MCFileSystem::FromUtf8(*exe));
+    const auto fromText = MCStringTable::LoadText(MCFileSystem::FromUtf8(*text));
+
+    if (!fromExe || !fromText)
+    {
+        std::cout << std::format("  {}\n", !fromExe ? fromExe.error() : fromText.error());
+    }
+
+    REQUIRE(fromExe.has_value());
+    REQUIRE(fromText.has_value());
+    REQUIRE(fromExe->Count() > 0);
+    CHECK(*fromExe == *fromText);
+    std::cout << std::format("  {} texts, {}\n", fromExe->Count(),
+                             *fromExe == *fromText ? "the same in both" : "differing");
 }

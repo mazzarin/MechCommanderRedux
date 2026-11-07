@@ -7,11 +7,12 @@
 ; original's installer recorded); and HD, ticked. It puts the program in, leaves the answers for the game (Redux
 ; update\sets.json), and, shown, has the game download what the folder lacks before its Finish page (MCRedux
 ; --get-content, the game's own download in its own window; closed or cut off, the first start carries on): the setup
-; itself downloads and copies no content. Windows' Apps list then gets the folder's size. In a copy taken over, MCX.EXE
-; becomes a launcher that starts Redux HD, so whatever starts the original gets Redux HD; what the program replaces there
-; (the original's MCX.EXE and MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup". MechCommander Online's
-; copy holds the original at other resolutions too (MCX1920x1080.EXE): each goes into the backup, and comes back as the
-; launcher only where a shortcut, or the lobby's DirectPlay entry, starts it.
+; itself downloads and copies no content. Windows' Apps list then gets the folder's size. MCX.EXE is the game itself
+; under the original's name (a hard link to MCRedux.exe: one file, so Windows and its antivirus see no other program),
+; so whatever starts the original gets Redux HD; what the program replaces there (the original's MCX.EXE and
+; MCEditor.exe, a Redux copied in by hand) is kept in "Redux backup". MechCommander Online's copy holds the original at
+; other resolutions too (MCX1920x1080.EXE): each goes into the backup, and comes back as the game only where a shortcut,
+; or the lobby's DirectPlay entry, starts it.
 ;
 ; The uninstaller has the game remove its content first (MCRedux --remove-content: the files updates put there),
 ; then removes the program and puts back what's in the backup, so a copy taken over is as it was. When the game can't
@@ -63,13 +64,13 @@
 #define GameExe "MCRedux.exe"
 #define SdlDll "SDL3.dll"
 #define EditorExe "MCEditor.exe"
-; The launcher (src/apps/MCXLauncher), in the original's place.
-#define LauncherExe "MCX.EXE"
+; The original's program, which becomes the game under its name (MakeGameName), not one of [Files].
+#define OriginalExe "MCX.EXE"
 ; The original under another name: MechCommander Online's copy has its MCX.EXE patched for wider screens as
-; MCX<width>x<height>.EXE (MCX1920x1080.EXE). Each becomes the launcher too, its original kept in the backup.
-#define LauncherPrefix "MCX"
-#define LauncherSizeSign "x"
-#define LauncherExtension ".EXE"
+; MCX<width>x<height>.EXE (MCX1920x1080.EXE). Each becomes the game too, its original kept in the backup.
+#define ResolutionPrefix "MCX"
+#define ResolutionSizeSign "x"
+#define ResolutionExtension ".EXE"
 ; Not README.txt: the original's Readme.txt is in the same folder, and Windows doesn't tell the two names apart.
 #define ReadmeName AppName + " README.txt"
 #define LicencesName AppName + " licences.txt"
@@ -111,9 +112,13 @@
 ; its braces are the GUID's, not a constant's.
 #define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppIdGuid + "}_is1"
 #define SizeValue "EstimatedSize"
+; The setup's own mutex, so only one runs at a time.
+#define AppSetupMutex "MechCommanderReduxHDSetup-" + AppIdGuid
 
 [Setup]
 AppId={{{#AppIdGuid}}
+; One setup at a time: a second (a double click twice over) says Setup is already running.
+SetupMutex={#AppSetupMutex}
 AppName={#AppName}
 AppVersion={#AppVersionShown}
 AppVerName={#AppName} {#AppVersionShown}
@@ -194,7 +199,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BinDir}\{#GameExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#SdlDll}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\{#EditorExe}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\MCX.exe"; DestDir: "{app}"; DestName: "{#LauncherExe}"; Flags: ignoreversion
 Source: "{#DocsDir}\README.txt"; DestDir: "{app}"; DestName: "{#ReadmeName}"; Flags: ignoreversion
 Source: "{#LicencesFile}"; DestDir: "{app}"; DestName: "{#LicencesName}"; Flags: ignoreversion
 
@@ -242,6 +246,8 @@ const
   // The attribute of a file or folder that is a link to elsewhere (a junction, a symbolic link):
   // FILE_ATTRIBUTE_REPARSE_POINT.
   ReparsePointAttribute = $00000400;
+  // A file Windows won't delete as it is (FILE_ATTRIBUTE_READONLY): a copy of the CD's files can carry it.
+  ReadOnlyAttribute = $00000001;
   // GetFileAttributesW's answer when it can't look (INVALID_FILE_ATTRIBUTES), and the errors that say nothing is there:
   // ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND.
   InvalidFileAttributes = -1;
@@ -277,18 +283,23 @@ function CloseHandle(Handle: THandle): Integer;
   external 'CloseHandle@kernel32.dll stdcall';
 function GetUserNameExW(NameFormat: Integer; NameBuffer: String; var Size: Cardinal): Integer;
   external 'GetUserNameExW@secur32.dll stdcall';
+// A second name for a file (a hard link): MCX.EXE as the game.
+function CreateHardLinkW(FileName, ExistingFileName: String; SecurityAttributes: Cardinal): Integer;
+  external 'CreateHardLinkW@kernel32.dll stdcall';
 // A file's or folder's own attributes (a link's, not what it leads to).
 function GetFileAttributesW(FileName: String): Longint;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+function SetFileAttributesW(FileName: String; Attributes: Longint): Integer;
+  external 'SetFileAttributesW@kernel32.dll stdcall';
 
-// The names of the files [Files] puts in the game folder.
+// The names of the files the program puts in the game folder: [Files]' and MCX.EXE, the game under its name.
 function ProgramFileNames: TArrayOfString;
 begin
   SetArrayLength(Result, 6);
   Result[0] := '{#GameExe}';
   Result[1] := '{#SdlDll}';
   Result[2] := '{#EditorExe}';
-  Result[3] := '{#LauncherExe}';
+  Result[3] := '{#OriginalExe}';
   Result[4] := '{#ReadmeName}';
   Result[5] := '{#LicencesName}';
 end;
@@ -1129,15 +1140,15 @@ begin
 end;
 
 // MCX.EXE's path in Folder: the name its compatibility settings have under the Layers key.
-function LauncherPath(const Folder: String): String;
+function OriginalPath(const Folder: String): String;
 begin
-  Result := AddBackslash(RemoveBackslashUnlessRoot(Folder)) + '{#LauncherExe}';
+  Result := AddBackslash(RemoveBackslashUnlessRoot(Folder)) + '{#OriginalExe}';
 end;
 
 // Takes the player's compatibility settings for the original at Path (MCX.EXE, or a resolution's copy: Windows 98,
-// 256 colours, 640x480, run as administrator) off its path, now a launcher's or nothing's, and keeps them for the
-// uninstall: Windows would apply them to the launcher. Settings put on the launcher after an earlier install go too; the
-// kept ones stay the original's.
+// 256 colours, 640x480, run as administrator) off its path, now the game's or nothing's, and keeps them for the
+// uninstall: Windows would apply them to the game. Settings put on the game's MCX.EXE after an earlier install go too;
+// the kept ones stay the original's.
 procedure LiftCompatibility(const Path: String);
 var
   Layers, Kept: String;
@@ -1147,7 +1158,7 @@ begin
 
   if not RegQueryStringValue(HKCU, '{#KeptLayersKey}', Path, Kept) then
   begin
-    // Not kept, they stay on MCX.EXE: the launcher runs with them rather than the original losing them.
+    // Not kept, they stay on MCX.EXE: the game runs with them there rather than the original losing them.
     if not RegWriteStringValue(HKCU, '{#KeptLayersKey}', Path, Layers) then
     begin
       Log(Format('Couldn''t keep %s''s compatibility settings (%s); left on it', [Path, Layers]));
@@ -1189,15 +1200,15 @@ var
 begin
   Result := False;
 
-  if (Length(Name) <= Length('{#LauncherPrefix}') + Length('{#LauncherExtension}')) or
-     (CompareText(Copy(Name, 1, Length('{#LauncherPrefix}')), '{#LauncherPrefix}') <> 0) or
-     (CompareText(Copy(Name, Length(Name) - Length('{#LauncherExtension}') + 1, Length('{#LauncherExtension}')),
-                  '{#LauncherExtension}') <> 0) then
+  if (Length(Name) <= Length('{#ResolutionPrefix}') + Length('{#ResolutionExtension}')) or
+     (CompareText(Copy(Name, 1, Length('{#ResolutionPrefix}')), '{#ResolutionPrefix}') <> 0) or
+     (CompareText(Copy(Name, Length(Name) - Length('{#ResolutionExtension}') + 1, Length('{#ResolutionExtension}')),
+                  '{#ResolutionExtension}') <> 0) then
     Exit;
 
-  Middle := Copy(Name, Length('{#LauncherPrefix}') + 1,
-                 Length(Name) - Length('{#LauncherPrefix}') - Length('{#LauncherExtension}'));
-  Sign := Pos(Lowercase('{#LauncherSizeSign}'), Lowercase(Middle));
+  Middle := Copy(Name, Length('{#ResolutionPrefix}') + 1,
+                 Length(Name) - Length('{#ResolutionPrefix}') - Length('{#ResolutionExtension}'));
+  Sign := Pos(Lowercase('{#ResolutionSizeSign}'), Lowercase(Middle));
 
   // Digits on both sides of the sign, and nothing else.
   if (Sign < 2) or (Sign = Length(Middle)) then
@@ -1217,7 +1228,7 @@ var
 begin
   SetArrayLength(Result, 0);
 
-  if FindFirst(AddBackslash(Folder) + '{#LauncherPrefix}*{#LauncherExtension}', FindRec) then
+  if FindFirst(AddBackslash(Folder) + '{#ResolutionPrefix}*{#ResolutionExtension}', FindRec) then
   begin
     try
       repeat
@@ -1318,10 +1329,77 @@ begin
     end;
 end;
 
+// Deletes the file at Path, read-only or not (the original's, copied off the CD, may be).
+function DeleteAnyFile(const Path: String): Boolean;
+var
+  Attributes: Longint;
+begin
+  Attributes := GetFileAttributesW(Path);
+
+  if (Attributes <> InvalidFileAttributes) and ((Attributes and ReadOnlyAttribute) <> 0) then
+    SetFileAttributesW(Path, Attributes and not ReadOnlyAttribute);
+
+  Result := DeleteFile(Path);
+end;
+
+// Path (MCX.EXE, or a resolution's copy) becomes the game itself under that name: a hard link to MCRedux.exe, the same
+// file, so whatever starts the original starts Redux HD and Windows and its antivirus see no program but the game; a
+// copy where the drive holds no links (FAT32, exFAT). An update's MCRedux.exe is a new file, which the old link doesn't
+// follow, so every install makes them again. What was at Path is the backup's already, or an earlier install's.
+procedure MakeGameName(const Folder, Path: String);
+var
+  Game, NoLink: String;
+begin
+  Game := AddBackslash(Folder) + '{#GameExe}';
+
+  if FileExists(Path) and not DeleteAnyFile(Path) then
+  begin
+    Log(Format('Couldn''t delete %s to make it the game: left as it is', [Path]));
+    Exit;
+  end;
+
+  if CreateHardLinkW(Path, Game, 0) <> 0 then
+  begin
+    Log(Format('%s is the game: a link to %s', [Path, Game]));
+    Exit;
+  end;
+
+  NoLink := SysErrorMessage(DLLGetLastError);
+
+  if FileCopy(Game, Path, False) then
+    Log(Format('%s is the game: a copy of %s (no link: %s)', [Path, Game, NoLink]))
+  else
+    Log(Format('Couldn''t make %s the game: no link (%s), and no copy', [Path, NoLink]));
+end;
+
+// Before the uninstall puts the backup back: MCX.EXE, the game under the original's name, goes (the backup's comes
+// back).
+procedure DropGameName(const Path: String);
+begin
+  if FileExists(Path) and not DeleteFile(Path) then
+    Log(Format('Couldn''t delete %s, the game under its name', [Path]));
+end;
+
+// The game running under the original's names (MCX.EXE, a resolution's copy) is closed too before the program goes in,
+// by those names: [Files] gives Windows' Restart Manager MCRedux.exe's alone.
+procedure RegisterExtraCloseApplicationsResources;
+var
+  Folder: String;
+  Names: TArrayOfString;
+  I: Integer;
+begin
+  Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+  RegisterExtraCloseApplicationsResource(False, OriginalPath(Folder));
+  Names := ResolutionCopies(Folder);
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+    RegisterExtraCloseApplicationsResource(False, AddBackslash(Folder) + Names[I]);
+end;
+
 // MechCommander Online's copy holds the original at other resolutions too (IsResolutionCopy), which Redux supersedes:
-// each goes into the backup, and comes back as the launcher only where a shortcut or the lobby's entry starts it
+// each goes into the backup, and comes back as the game only where a shortcut or the lobby's entry starts it
 // (StartedPaths), so those still start the game, now Redux. The uninstall puts them all back (DropResolutionCopies).
-// Run again (an update), the backup holds the originals already, and the launchers are made again from the new one.
+// Run again (an update), the backup holds the originals already, and the game's names are made again for its new file.
 procedure TakeOverResolutionCopies(const Folder: String);
 var
   Names, Started: TArrayOfString;
@@ -1344,7 +1422,7 @@ begin
     begin
       if not DeleteFile(Path) then
       begin
-        Log(Format('Couldn''t delete %s, an earlier launcher: left as it is', [Path]));
+        Log(Format('Couldn''t delete %s, the game under an earlier install''s name: left as it is', [Path]));
         Continue;
       end;
     end
@@ -1360,15 +1438,13 @@ begin
 
     if IsStarted(Started, Path) then
     begin
-      if FileCopy(LauncherPath(Folder), Path, False) then
-        Log(Format('A shortcut starts %s: made it the launcher', [Path]))
-      else
-        Log(Format('Couldn''t make %s the launcher', [Path]));
+      Log(Format('A shortcut starts %s: it becomes the game', [Path]));
+      MakeGameName(Folder, Path);
     end;
   end;
 end;
 
-// Before the uninstall puts the backup back: the launchers made in the resolutions' places go (an original the backup
+// Before the uninstall puts the backup back: the game's names in the resolutions' places go (an original the backup
 // doesn't hold is left, never the setup's).
 procedure DropResolutionCopies(const Folder: String);
 var
@@ -1383,7 +1459,7 @@ begin
     Path := AddBackslash(Folder) + Names[I];
 
     if FileExists(AddBackslash(BackupFolder(Folder)) + Names[I]) and not DeleteFile(Path) then
-      Log(Format('Couldn''t delete the launcher %s', [Path]));
+      Log(Format('Couldn''t delete %s, the game under its name', [Path]));
   end;
 end;
 
@@ -1501,8 +1577,8 @@ begin
     Log(Format('Couldn''t write the answers for the game, %s', [Path]));
 end;
 
-// Once the program is in: the original's MCX.EXE, now the launcher, and its resolutions' copies taken over; a new
-// install's answers left; then, shown, the game's download; and the Apps list's size, the folder's with all that.
+// Once the program is in: the original's MCX.EXE, now the game under its name, and its resolutions' copies taken over;
+// a new install's answers left; then, shown, the game's download; and the Apps list's size, the folder's with all that.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Folder: String;
@@ -1511,7 +1587,8 @@ begin
   begin
     Installed := True;
     Folder := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
-    LiftCompatibility(LauncherPath(Folder));
+    LiftCompatibility(OriginalPath(Folder));
+    MakeGameName(Folder, OriginalPath(Folder));
     TakeOverResolutionCopies(Folder);
 
     if WizardForm.PrevAppDir = '' then
@@ -1682,6 +1759,7 @@ begin
       Abort;
 
     DropResolutionCopies(Folder);
+    DropGameName(OriginalPath(Folder));
     Exit;
   end;
 
@@ -1691,7 +1769,7 @@ begin
   Left := '';
   PutBackAll(Folder, '', Left);
   RemoveDir(BackupFolder(Folder));
-  RestoreCompatibility(LauncherPath(Folder));
+  RestoreCompatibility(OriginalPath(Folder));
   RestoreResolutionCompatibility(Folder);
 
   if Left <> '' then

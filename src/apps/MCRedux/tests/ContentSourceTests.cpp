@@ -9,6 +9,7 @@
 #include "update/MCHttpSource.h"
 #include "update/MCUpdateDisk.h"
 
+#include <functional>
 #include <thread>
 
 namespace
@@ -806,16 +807,17 @@ namespace
     constexpr int Always = 1000;
 
     /// <summary>A source of <paramref name="ours"/> with <paramref name="mirrors"/>, each file starting from the last.</summary>
-    std::unique_ptr<MCContentStage::MCSource> MirroredSource(MCTestHost& ours, std::vector<MCTestHost*> mirrors,
+    std::unique_ptr<MCContentStage::MCSource> MirroredSource(MCTestHost& ours,
+                                                             std::vector<std::reference_wrapper<MCTestHost>> mirrors,
                                                              const MCHttpSource::MCPick& pick = PickLast)
     {
         auto source = MCHttpSource::Make(ours.Address(), MCMakeHttpGet, QuickRetries, pick);
         REQUIRE(source.has_value());
         std::vector<std::string> addresses;
 
-        for (MCTestHost* mirror : mirrors)
+        for (const MCTestHost& mirror : mirrors)
         {
-            addresses.push_back(mirror->Address());
+            addresses.push_back(mirror.Address());
         }
 
         (*source)->UseMirrors(addresses);
@@ -858,7 +860,7 @@ TEST_CASE("content source: a file a mirror lacks comes from the next host; the k
                      {"release.json", signedFile},
                      {"setup.exe", zip}});
     MCTestHost mirror({{"keys.json", "a mirror's"}, {"release.json", "a mirror's"}, {"setup.exe", "a mirror's"}});
-    const auto source = MirroredSource(ours, {&mirror});
+    const auto source = MirroredSource(ours, {mirror});
     const MCScratchFolder folder(TestGroup, "mirror-lacks");
     uint64_t received = 0;
 
@@ -889,7 +891,7 @@ TEST_CASE("content source: a download cut off at a mirror goes on from the next 
     const std::string zip = Bytes(ZipBytes);
     MCTestHost ours({{std::string(ZipName), zip}});
     MCTestHost mirror({{std::string(ZipName), zip}});
-    const auto source = MirroredSource(ours, {&mirror});
+    const auto source = MirroredSource(ours, {mirror});
     const MCScratchFolder folder(TestGroup, "mirror-cut");
     const std::filesystem::path to = folder.Path() / "cut.zip";
     constexpr int64_t CutBytes = 100'000;
@@ -929,7 +931,7 @@ TEST_CASE(
 
     MCTestHost ours({{std::string(ZipName), zip}});
     MCTestHost mirror({{std::string(ZipName), wrong}});
-    const auto source = MirroredSource(ours, {&mirror});
+    const auto source = MirroredSource(ours, {mirror});
     MCCounted counted;
     const std::filesystem::path to = folder.Path() / "first.zip";
     CHECK(MCContentStage::FetchChecked(*disk, *source, ZipName, to, zip.size(), sha256, counted.Count).has_value());
@@ -949,7 +951,7 @@ TEST_CASE(
     // Wrong everywhere: one whole try from each host, then it fails, and nothing of it stays.
     MCTestHost badOurs({{std::string(ZipName), wrong}});
     MCTestHost badMirror({{std::string(ZipName), wrong}});
-    const auto bad = MirroredSource(badOurs, {&badMirror});
+    const auto bad = MirroredSource(badOurs, {badMirror});
     MCCounted badCounted;
     const std::filesystem::path badTo = folder.Path() / "bad.zip";
     const auto refused =
@@ -979,7 +981,7 @@ TEST_CASE(
     wrongList[1] = '!';
     MCTestHost listOurs({{"lists/one.json", list}});
     MCTestHost listMirror({{"lists/one.json", wrongList}});
-    const auto lists = MirroredSource(listOurs, {&listMirror});
+    const auto lists = MirroredSource(listOurs, {listMirror});
     CHECK_EQ(lists->Read("lists/one.json", list.size()).value_or(""), wrongList);
     CHECK(lists->PassOver("lists/one.json"));
     CHECK_EQ(lists->Read("lists/one.json", list.size()).value_or(""), list);
@@ -996,7 +998,7 @@ TEST_CASE("content source: every host failing: a file none has fails at once; bu
 
     MCTestHost ours({{std::string(ZipName), zip}});
     MCTestHost mirror({{std::string(ZipName), zip}});
-    const auto source = MirroredSource(ours, {&mirror});
+    const auto source = MirroredSource(ours, {mirror});
     const auto missing = Fetch(*source, "zips/none.zip", folder.Path() / "none.zip", zip.size(), received);
     CHECK(missing.error_or("").find("404") != std::string::npos);
     CHECK_EQ(ours.Paths().size(), size_t{1});
@@ -1016,7 +1018,7 @@ TEST_CASE("content source: every host failing: a file none has fails at once; bu
     MCTestHost lacking({});
     MCTestHost busyOurs({{std::string(ZipName), zip}});
     busyOurs.FailNext(Unavailable, Always);
-    const auto mixed = MirroredSource(busyOurs, {&lacking});
+    const auto mixed = MirroredSource(busyOurs, {lacking});
     CHECK(!Fetch(*mixed, ZipName, folder.Path() / "mixed.zip", zip.size(), received).has_value());
     CHECK_EQ(lacking.Paths().size(), size_t{1});
     CHECK_EQ(busyOurs.Paths().size(), rounds);

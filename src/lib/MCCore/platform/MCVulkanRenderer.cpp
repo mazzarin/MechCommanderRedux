@@ -1171,6 +1171,7 @@ MCVulkanRenderer::~MCVulkanRenderer()
     }
 
     _HdMovies.clear();
+    _RetiredMovies.clear();
 
     for (auto& [key, picture] : _SharpGlyphs)
     {
@@ -1361,8 +1362,26 @@ void MCVulkanRenderer::ForgetShownHd(const MCHdArt::Frame& shown, MCOptionalRef<
 
     if (!next || next->get().Movie != shown.Movie)
     {
-        _HdMovies.erase(shown.Movie);
+        ReleaseMovie(shown.Movie);
     }
+}
+
+void MCVulkanRenderer::ReleaseMovie(uint64_t movie)
+{
+    const auto found = _HdMovies.find(movie);
+
+    if (found == _HdMovies.end())
+    {
+        return;
+    }
+
+    // A frame drawn this frame still has its colours made as the frame runs (its textures go after).
+    if (found->second.Convert)
+    {
+        _RetiredMovies.push_back(std::move(found->second));
+    }
+
+    _HdMovies.erase(found);
 }
 
 void MCVulkanRenderer::TrimPictures(std::unordered_map<uint64_t, Picture>& pictures, size_t& bytes, size_t budget,
@@ -3005,7 +3024,7 @@ std::optional<uint32_t> MCVulkanRenderer::MoviePictureOf(const MCHdArt::Frame& f
             failed != made.end())
         {
             SDL_Log("MCVulkanRenderer: HD movie frame %ux%u: %s", width, height, failed->error().c_str());
-            _HdMovies.erase(frame.Movie);
+            ReleaseMovie(frame.Movie);
             _HdRefused.insert(frame.Id);
             return std::nullopt;
         }
@@ -3033,38 +3052,50 @@ void MCVulkanRenderer::ConvertMovies(SDL_GPUCommandBuffer& commands)
 {
     for (MoviePicture& movie : _HdMovies | std::views::values)
     {
-        if (!movie.Convert)
-        {
-            continue;
-        }
-
-        movie.Convert = false;
-        const Texture& colors = movie.Shown.HdColors;
-        const MCYuvFactors& factors = movie.Factors;
-        const QuadUniforms quad{{0.0f, 0.0f, static_cast<float>(colors.Width), static_cast<float>(colors.Height)},
-                                {static_cast<float>(colors.Width), static_cast<float>(colors.Height), 0.0f, 0.0f}};
-        const MovieUniforms uniforms{{factors.YShift, factors.YFactor, factors.VRed, factors.UGreen},
-                                     {factors.VGreen, factors.UBlue, 0, 0},
-                                     {static_cast<int32_t>(movie.Luma.Width), static_cast<int32_t>(movie.Luma.Height),
-                                      static_cast<int32_t>(movie.Blue.Width), static_cast<int32_t>(movie.Blue.Height)}};
-        const SDL_GPUTextureSamplerBinding planes[] = {{movie.Luma.Handle.get(), _Nearest.get()},
-                                                       {movie.Blue.Handle.get(), _Nearest.get()},
-                                                       {movie.Red.Handle.get(), _Nearest.get()}};
-        // Every pixel is drawn: what the colours held needn't be kept, and while a frame in flight still reads them
-        // SDL draws into another texture of the same (cycled).
-        SDL_GPUColorTargetInfo target{};
-        target.texture = colors.Handle.get();
-        target.load_op = SDL_GPU_LOADOP_DONT_CARE;
-        target.store_op = SDL_GPU_STOREOP_STORE;
-        target.cycle = true;
-        SDL_GPURenderPass* const pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
-        SDL_BindGPUGraphicsPipeline(pass, _MoviePipeline.get());
-        SDL_BindGPUFragmentSamplers(pass, 0, planes, static_cast<uint32_t>(std::size(planes)));
-        SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
-        SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
-        SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
-        SDL_EndGPURenderPass(pass);
+        ConvertMovie(commands, movie);
     }
+
+    for (MoviePicture& movie : _RetiredMovies)
+    {
+        ConvertMovie(commands, movie);
+    }
+
+    _RetiredMovies.clear();
+}
+
+void MCVulkanRenderer::ConvertMovie(SDL_GPUCommandBuffer& commands, MoviePicture& movie)
+{
+    if (!movie.Convert)
+    {
+        return;
+    }
+
+    movie.Convert = false;
+    const Texture& colors = movie.Shown.HdColors;
+    const MCYuvFactors& factors = movie.Factors;
+    const QuadUniforms quad{{0.0f, 0.0f, static_cast<float>(colors.Width), static_cast<float>(colors.Height)},
+                            {static_cast<float>(colors.Width), static_cast<float>(colors.Height), 0.0f, 0.0f}};
+    const MovieUniforms uniforms{{factors.YShift, factors.YFactor, factors.VRed, factors.UGreen},
+                                 {factors.VGreen, factors.UBlue, 0, 0},
+                                 {static_cast<int32_t>(movie.Luma.Width), static_cast<int32_t>(movie.Luma.Height),
+                                  static_cast<int32_t>(movie.Blue.Width), static_cast<int32_t>(movie.Blue.Height)}};
+    const SDL_GPUTextureSamplerBinding planes[] = {{movie.Luma.Handle.get(), _Nearest.get()},
+                                                   {movie.Blue.Handle.get(), _Nearest.get()},
+                                                   {movie.Red.Handle.get(), _Nearest.get()}};
+    // Every pixel is drawn: what the colours held needn't be kept, and while a frame in flight still reads them
+    // SDL draws into another texture of the same (cycled).
+    SDL_GPUColorTargetInfo target{};
+    target.texture = colors.Handle.get();
+    target.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+    target.cycle = true;
+    SDL_GPURenderPass* const pass = SDL_BeginGPURenderPass(&commands, &target, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, _MoviePipeline.get());
+    SDL_BindGPUFragmentSamplers(pass, 0, planes, static_cast<uint32_t>(std::size(planes)));
+    SDL_PushGPUVertexUniformData(&commands, 0, &quad, sizeof(quad));
+    SDL_PushGPUFragmentUniformData(&commands, 0, &uniforms, sizeof(uniforms));
+    SDL_DrawGPUPrimitives(pass, QuadVertices, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
 }
 
 bool MCVulkanRenderer::AddSharpGlyph(uint16_t surface, std::span<const uint8_t> font, std::span<const uint8_t> glyph,

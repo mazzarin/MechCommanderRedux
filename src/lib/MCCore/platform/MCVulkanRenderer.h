@@ -1239,8 +1239,19 @@ private:
         bool Convert = false;
     };
 
-    /// <summary>Port-only (HD movies): the movies' pictures, by their movies' numbers (MCHdArt::Frame::Movie).</summary>
+    /// <summary>
+    /// Port-only (HD movies): the movies' pictures, by their movies' numbers (MCHdArt::Frame::Movie), and those let go
+    /// whose colours this frame's draws still wait for (<see cref="ConvertMovies"/> makes them, then drops them).
+    /// </summary>
     std::unordered_map<uint64_t, MoviePicture> _HdMovies;
+    std::vector<MoviePicture> _RetiredMovies;
+    /// <summary>Port-only (HD movies): <see cref="ConvertMovies"/> for one picture.</summary>
+    void ConvertMovie(SDL_GPUCommandBuffer& commands, MoviePicture& movie);
+    /// <summary>
+    /// Port-only (HD movies): lets movie <paramref name="movie"/>'s picture go, kept till the frame runs when its draws
+    /// wait for its colours.
+    /// </summary>
+    void ReleaseMovie(uint64_t movie);
     /// <summary>Port-only: the glyphs redrawn sharp (RGBA8, MCSharpText), by their bytes' hash, and their bytes.</summary>
     std::unordered_map<uint64_t, Picture> _SharpGlyphs;
     size_t _SharpGlyphBytes = 0;

@@ -17308,7 +17308,8 @@ TEST_CASE_ISOLATED("game: HD art draws a picture from the pack on the screen's f
 /// A frame shown over a texture's pixels (<see cref="MCRenderer::ShowHdPicture"/>: a movie's HD frame over the window
 /// it decodes into) is drawn where a copy of the texture onto a sharp screen covers it, in its own colours (the test
 /// movie's red), and only there: the copy's other pixels show as they did, the screen's indices are the texture's
-/// throughout, and once taken away the copy shows the pixels alone again.
+/// throughout, and once taken away the copy shows the pixels alone again. A frame taken away after a copy drew it, before
+/// that frame runs, still shows in that copy (port-only, HD movies: its colours are made as the frame runs).
 /// </summary>
 TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part of its window a copy covers")
 {
@@ -17380,6 +17381,11 @@ TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part 
     const Copied shown = copy();
     MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
     const Copied after = copy();
+    MCTestGame::RunFrame(FrameSeconds);
+    MCRenderer::ShowHdPicture(*texture, *frame, FrameX, FrameY);
+    VfxPaneCopy(MCPane::Over(window), 0, 0, screen, left, top, VfxNoColor);
+    MCRenderer::ShowHdPicture(*texture, nullptr, 0, 0);
+    const Shown letGo = ReadShown(scratch);
     GamePaused = false;
 
     CHECK_EQ(plain.HdDrawn, 0);
@@ -17399,24 +17405,34 @@ TEST_CASE_ISOLATED("game: a sharp screen shows a movie's HD frame over the part 
     };
 
     const MCRect inside = place(FrameX, FrameY, FrameWidth, FrameHeight);
-    int32_t red = 0;
-
-    for (int32_t y = inside.Y0; y <= inside.Y1; ++y)
+    const auto redIn = [&](const Shown& seen)
     {
-        for (int32_t x = inside.X0; x <= inside.X1; ++x)
+        int32_t red = 0;
+
+        for (int32_t y = inside.Y0; y <= inside.Y1; ++y)
         {
-            const uint8_t* pixel = &shown.Seen.Pixels[(static_cast<size_t>(y) * shown.Seen.Width + x) * BytesPerPixel];
-            const std::array<uint8_t, 3>& wanted = MCHdMovieFixture::Colors[0];
-            red += std::abs(pixel[0] - wanted[0]) <= RedTolerance && std::abs(pixel[1] - wanted[1]) <= RedTolerance &&
-                           std::abs(pixel[2] - wanted[2]) <= RedTolerance
-                       ? 1
-                       : 0;
+            for (int32_t x = inside.X0; x <= inside.X1; ++x)
+            {
+                const uint8_t* pixel = &seen.Pixels[(static_cast<size_t>(y) * seen.Width + x) * BytesPerPixel];
+                const std::array<uint8_t, 3>& wanted = MCHdMovieFixture::Colors[0];
+                red += std::abs(pixel[0] - wanted[0]) <= RedTolerance &&
+                               std::abs(pixel[1] - wanted[1]) <= RedTolerance &&
+                               std::abs(pixel[2] - wanted[2]) <= RedTolerance
+                           ? 1
+                           : 0;
+            }
         }
-    }
+
+        return red;
+    };
 
     const int32_t area = (inside.X1 - inside.X0 + 1) * (inside.Y1 - inside.Y0 + 1);
-    std::cout << std::format("  {} of the frame's {} shown pixels in its colour\n", red, area);
+    const int32_t red = redIn(shown.Seen);
+    const int32_t redLetGo = redIn(letGo);
+    std::cout << std::format("  {} of the frame's {} shown pixels in its colour ({} taken away after the copy)\n", red,
+                             area, redLetGo);
     CHECK_EQ(red, area);
+    CHECK_EQ(redLetGo, area);
 
     // Beside the frame (the window's left columns, and its rows below the frame) the copy shows the pixels as it did.
     CHECK_EQ(Compare(plain.Seen, shown.Seen, place(0, 0, FrameX, Height)).Count, 0);

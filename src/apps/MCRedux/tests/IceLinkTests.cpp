@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MCTest.h"
 #include "platform/MCIceLink.h"
+#include "platform/MCSocket.h"
 
 // The internet games' links (platform/MCIceLink: libdatachannel's data channels over libjuice's ICE), two ends in one
 // process trading their signals directly, as the service will pass them. Both ends on the loopback (BindAddress), with
@@ -28,6 +29,43 @@ namespace
     constexpr std::string_view LoopbackName = "localhost";
     /// <summary>How long a link offered only names is watched: a link on one machine opens in well under a second.</summary>
     constexpr auto NamedLinkWatch = std::chrono::seconds(3);
+    /// <summary>Room for any datagram an ICE check makes (an Ethernet frame's payload).</summary>
+    constexpr size_t LargestDatagram = 1500;
+
+    /// <summary>
+    /// The other end's offer and the part name its candidates carry, taken from <paramref name="end"/> as it gathers
+    /// (its candidates dropped), or nothing when it has none within the watch.
+    /// </summary>
+    std::optional<std::pair<MCIceLink::Signal, std::string>> OfferAndMid(MCIceLink& end)
+    {
+        std::optional<MCIceLink::Signal> offer;
+        std::optional<std::string> mid;
+        const auto gathered = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+        while ((!offer.has_value() || !mid.has_value()) && std::chrono::steady_clock::now() < gathered)
+        {
+            for (MCIceLink::Signal& signal : end.TakeSignals())
+            {
+                if (signal.Kind == "offer")
+                {
+                    offer = std::move(signal);
+                }
+                else if (signal.Kind == "candidate")
+                {
+                    mid = signal.Mid;
+                }
+            }
+
+            std::this_thread::sleep_for(PumpStep);
+        }
+
+        if (!offer.has_value() || !mid.has_value())
+        {
+            return std::nullopt;
+        }
+
+        return std::pair{std::move(*offer), std::move(*mid)};
+    }
 
     /// <summary>
     /// Passes each end's signals to the other and reads what each received, until <paramref name="done"/> or the
@@ -250,6 +288,57 @@ TEST_CASE("ice: a relay-only link fails on a description hiding addresses behind
     REQUIRE(tabbed != nullptr);
     tabbed->Heard({"candidate", "candidate:1 1 UDP 2122317823 127.0.0.1 50000 typ\x01host", "0"});
     CHECK(tabbed->CutOff());
+}
+
+TEST_CASE("ice: a relay-only link never sends from its own address to a relay the other end made up")
+{
+    // A relay-only end (a public game's) reaches the other end through its own relay alone, so that end only ever sees
+    // the relay's address (the W3C's "relay" policy). A game that isn't this one can offer any address as its relay's:
+    // here a socket this test owns. With no relay of the host's own (no TURN server here), anything reaching that
+    // socket would come straight from the host's own socket, and a liar would learn the host's address. libjuice 1.7.4
+    // paired every address the other end offers with its own socket as well as with its relays (agent.c's
+    // agent_add_candidate_pairs_for_remote; libdatachannel issue #1587): the game carries libjuice's relay policy,
+    // pull request #363, until a release has it (tools/vendor/README.md).
+    MCSocketTransport net;
+    const MCSocket::Handle madeUp = net.OpenUdp(0);
+    REQUIRE(madeUp != MCSocket::InvalidHandle);
+    const uint16_t port = net.LocalPort(madeUp);
+
+    const std::unique_ptr<MCIceLink> liar = MCIceLink::Offer(OnThisMachine);
+    MCIceLink::Settings relayOnly = OnThisMachine;
+    relayOnly.RelayOnly = true;
+    const std::unique_ptr<MCIceLink> host = MCIceLink::Answer(relayOnly);
+    REQUIRE(liar != nullptr && host != nullptr);
+    std::optional<std::pair<MCIceLink::Signal, std::string>> offered = OfferAndMid(*liar);
+    REQUIRE(offered.has_value());
+    auto& [offer, mid] = *offered;
+
+    // The liar's offer (its own addresses in it are host ones, which a relay-only end never tries), then the made-up
+    // relay as its only candidate. Before the relay policy an ICE check reached it within 20 ms.
+    host->Heard(offer);
+    host->Heard({"candidate",
+                 std::format("candidate:1 1 UDP 16777215 127.0.0.1 {} typ relay raddr 0.0.0.0 rport 0", port), mid});
+
+    size_t arrived = 0;
+    MCSocket::Address from;
+    std::array<uint8_t, LargestDatagram> datagram{};
+    const auto watched = std::chrono::steady_clock::now() + NamedLinkWatch;
+
+    while (std::chrono::steady_clock::now() < watched)
+    {
+        host->TakeSignals();
+
+        while (net.ReceiveFrom(madeUp, datagram, from) > 0)
+        {
+            arrived++;
+        }
+
+        std::this_thread::sleep_for(PumpStep);
+    }
+
+    net.Close(madeUp);
+    CHECK(arrived == 0);
+    CHECK(!host->FoundPath());
 }
 
 TEST_CASE("ice: a link fails rather than say a signal longer than the service passes, as an offer's part name makes")

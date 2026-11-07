@@ -135,6 +135,13 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
 	juice_set_ice_tcp_mode(mAgent.get(), config.enableIceTcp ? JUICE_ICE_TCP_MODE_ACTIVE
 	                                                         : JUICE_ICE_TCP_MODE_NONE);
 
+	// Relay policy: relays only, with no checks from this end's own sockets (MechCommander Redux carries libjuice's
+	// pull request #363 for it until a release of libjuice has a relay policy; libdatachannel issue #1587)
+	if (config.iceTransportPolicy == TransportPolicy::Relay &&
+	    juice_set_ice_transport_policy(mAgent.get(), JUICE_ICE_TRANSPORT_POLICY_RELAY) !=
+	        JUICE_ERR_SUCCESS)
+		throw std::runtime_error("Failed to set the ICE transport policy");
+
 	// Add TURN servers
 	for (const auto &server : servers)
 		if (!server.hostname.empty() && server.type != IceServer::Type::Stun)

@@ -62,8 +62,7 @@ jobs:
       # A work build starts from the last run's build folder (GitHub's cache, one per branch), so only what changed
       # since compiles. The key starts with the compiler's version, since objects and precompiled headers from another
       # compiler can't be reused (not the runner image's: images roll out over days, so runners alternate between two
-      # and each would miss the other's), then the build's kind (whole-program optimization's objects can't serve a
-      # build without it), and ends with the commit the folder was built from. A release builds afresh.
+      # and each would miss the other's), and ends with the commit the folder was built from. A release builds afresh.
       - name: Name the build cache
         if: ${{ !inputs.commit }}
         id: cache-name
@@ -74,7 +73,7 @@ jobs:
           $tools = (Get-Content -Raw "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
           if (-not $tools) { throw "No MSVC tools version under $vs." }
           "MSVC $tools"
-          "prefix=windows-build-msvc-$tools-ltcg-x64-" >> $env:GITHUB_OUTPUT
+          "prefix=windows-build-msvc-$tools-" >> $env:GITHUB_OUTPUT
 
       - name: Restore the last build
         if: ${{ !inputs.commit }}
@@ -113,19 +112,16 @@ jobs:
           foreach ($file in $changed) { [IO.File]::SetLastWriteTimeUtc($file, $now) }
           "Built before at $cached ($restored files restored); $($changed.Count) of $($files.Count) files changed since."
 
-      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). Every build has
-      # whole-program optimization, as a release's, so the tests run the code players get, and a full build is quicker
-      # with it (MCCore 4 min, not 10: only the functions the programs reach get code). A work build's link redoes the
-      # code only for what changed since the cached build's (MCIncrementalLtcg, /LTCG:INCREMENTAL); a release's
-      # links afresh, as upstream's releases do. The compiler and linker are the 64-bit ones: the 32-bit linker (the
-      # default) finds the biggest program too big for an incremental link and links it all again (2.5 min of a
-      # one-file change's 3.5).
+      # The shaders' dxc is fetched by the build itself (MCFetchDxc in src/MechCommander.props). A work build goes
+      # without whole-program optimization, so a run after the first compiles only what changed and links quickly. A
+      # full build takes longer without it (MCCore 10 min, not 4: every function is compiled, not only those the
+      # programs reach). A release keeps each project's own setting, as upstream's releases do.
       - name: Build
         shell: pwsh
         run: |
           $optimization = @()
-          if (-not $env:RELEASE_COMMIT) { $optimization = @('-p:MCIncrementalLtcg=true') }
-          msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 -p:PreferredToolArchitecture=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
+          if (-not $env:RELEASE_COMMIT) { $optimization = @('-p:WholeProgramOptimization=false') }
+          msbuild src\MCRedux.slnx -p:Configuration=Release -p:Platform=x64 @optimization -m "-flp:logfile=msbuild.log;verbosity=normal"
           if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE." }
 
       - name: Save the build

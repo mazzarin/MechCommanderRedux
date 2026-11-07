@@ -236,6 +236,9 @@
     <ClCompile Include="tests\ScreenInput.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\ServiceSignalingTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\ServicesTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>

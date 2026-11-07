@@ -65,6 +65,16 @@ namespace
     constexpr size_t ReadChunkBytes = 16 * 1024;
     /// <summary>A link's first signal from a guest (MCIceLink's offer).</summary>
     constexpr std::string_view OfferKind = "offer";
+    /// <summary>
+    /// The transport's own signals on a link, which never reach ICE: the service carries the link from now (the
+    /// WebSocket path), and the sender closed a link the service carries.
+    /// </summary>
+    constexpr std::string_view ServiceKind = "service";
+    constexpr std::string_view CloseKind = "close";
+    /// <summary>The bytes the service carries in one message (its Worker takes 64 KB).</summary>
+    constexpr size_t ServicePieceBytes = 16 * 1024;
+    /// <summary>The bytes a link the service carries holds unread, as an ICE link holds (MCIceLink's 1 MB).</summary>
+    constexpr size_t MaxServiceUnreadBytes = 1u << 20;
 
     void PutU16(std::vector<uint8_t>& out, uint16_t value)
     {
@@ -114,6 +124,8 @@ namespace
                 return "direct, IPv4";
             case MCIceLink::Path::Relay:
                 return "through the relay";
+            case MCIceLink::Path::Service:
+                return "through the service";
             case MCIceLink::Path::None:
                 break;
         }
@@ -289,7 +301,7 @@ int MCIceTransport::Send(MCSocket::Handle socket, std::span<const uint8_t> data)
     }
 
     Link& link = found->second;
-    const size_t unsent = link.Ice->Unsent();
+    const size_t unsent = Unsent(link);
 
     if (unsent >= SendWindowBytes)
     {
@@ -480,16 +492,20 @@ void MCIceTransport::Pump()
 
         Link& link = found->second;
 
+        // The service carries it: its frames to read, and its end comes through the service (a close, or the peer gone).
+        if (link.ServiceSince.has_value())
+        {
+            if (!ReadFrames(id, link))
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "it sent what this game can't take");
+            }
+
+            continue;
+        }
+
         for (const MCIceLink::Signal& signal : link.Ice->TakeSignals())
         {
-            if (link.Guest)
-            {
-                _Signaling->ToHost(link.Peer, link.Number, signal);
-            }
-            else
-            {
-                _Signaling->ToGuest(link.Peer, link.Number, signal);
-            }
+            SendSignal(link, signal);
         }
 
         const MCIceLink::State state = link.Ice->GetState();
@@ -523,6 +539,16 @@ void MCIceTransport::Pump()
         {
             EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "it sent what this game can't take");
         }
+        else if (state == MCIceLink::State::Failed && _Deadlines.Service.has_value() && link.Heard &&
+                 !link.Ice->OpenedAt() && !link.Ice->FoundPath() && !link.Ice->CutOff())
+        {
+            ToService(link, true, "ICE found no path");
+        }
+        else if (state == MCIceLink::State::Connecting && _Deadlines.Service.has_value() && link.Heard &&
+                 !link.Ice->FoundPath() && now - link.HeardAt > *_Deadlines.Service)
+        {
+            ToService(link, true, "ICE found no path in time");
+        }
         else if (state == MCIceLink::State::Failed || state == MCIceLink::State::Closed)
         {
             const bool failed = state == MCIceLink::State::Failed;
@@ -545,14 +571,16 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 {
     const bool fromGuest = heard.Sender == MCIceSignaling::From::Guest;
 
-    if (!heard.Signal.has_value())
+    if (!heard.Signal.has_value() && heard.Bytes.empty())
     {
-        // The peer left the service, or the game was never there: its links still opening can't now.
+        // The peer left the service, or the game was never there: its links still opening can't now, and those the
+        // service carries are gone.
         std::vector<uint32_t> ended;
 
         for (const auto& [id, link] : _Links)
         {
-            if (link.Guest != fromGuest && link.Peer == heard.Peer && !link.Ice->OpenedAt())
+            if (link.Guest != fromGuest && link.Peer == heard.Peer &&
+                (!link.Ice->OpenedAt() || link.ServiceSince.has_value()))
             {
                 ended.push_back(id);
             }
@@ -560,7 +588,12 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         for (const uint32_t id : ended)
         {
-            if (fromGuest)
+            if (_Links.at(id).ServiceSince.has_value())
+            {
+                EndLink(id, MCTelemetry::MCLinkEnd::Lost,
+                        fromGuest ? "the guest left the service" : "the game left the service");
+            }
+            else if (fromGuest)
             {
                 EndLink(id, MCTelemetry::MCLinkEnd::GuestLeft, "the guest left the service");
             }
@@ -580,8 +613,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
 
         if (found != _Links.end() && found->second.Guest && found->second.Peer == heard.Peer)
         {
-            found->second.Heard = true;
-            found->second.Ice->Heard(*heard.Signal);
+            HearOnLink(found->first, found->second, heard);
         }
 
         return;
@@ -594,7 +626,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
     if (found == _Links.end())
     {
         // Only an offer starts a link, and only while this game listens: anything else is a closed link's last words.
-        if (heard.Signal->Kind != OfferKind || !Listening())
+        if (!heard.Signal.has_value() || heard.Signal->Kind != OfferKind || !Listening())
         {
             return;
         }
@@ -629,11 +661,156 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
         link.Number = heard.Link;
         link.Ip = _NextIp++;
         link.Started = std::chrono::steady_clock::now();
-        link.Heard = true;
         found = _Links.emplace(id, std::move(link)).first;
     }
 
-    found->second.Ice->Heard(*heard.Signal);
+    HearOnLink(found->first, found->second, heard);
+}
+
+void MCIceTransport::HearOnLink(uint32_t id, Link& link, const MCIceSignaling::Heard& heard)
+{
+    if (!heard.Signal.has_value())
+    {
+        // Bytes for a link the service doesn't carry are a closed link's last words.
+        if (link.ServiceSince.has_value() && !HearBytes(link, heard.Bytes))
+        {
+            EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "the service brought more than this game holds unread");
+        }
+
+        return;
+    }
+
+    if (!link.Heard)
+    {
+        link.Heard = true;
+        link.HeardAt = std::chrono::steady_clock::now();
+    }
+
+    // ICE's signals for a link the service carries came too late to matter.
+    if (!HearTransportSignal(id, link, *heard.Signal) && !link.ServiceSince.has_value())
+    {
+        link.Ice->Heard(*heard.Signal);
+    }
+}
+
+bool MCIceTransport::HearTransportSignal(uint32_t id, Link& link, const MCIceLink::Signal& signal)
+{
+    if (signal.Kind == ServiceKind)
+    {
+        if (link.ServiceSince.has_value())
+        {
+            return true;
+        }
+
+        // What this end sent over ICE's channel would be lost: the link ends, and the game asks again.
+        if (link.Ice->OpenedAt().has_value())
+        {
+            EndLink(id, MCTelemetry::MCLinkEnd::Lost, "the other end took the service's path after this end opened");
+            return true;
+        }
+
+        ToService(link, false, "the other end found no path");
+        return true;
+    }
+
+    if (signal.Kind == CloseKind)
+    {
+        // An ICE link's close is ICE's own.
+        if (link.ServiceSince.has_value())
+        {
+            EndLink(id, MCTelemetry::MCLinkEnd::Closed, "the other end closed it");
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+bool MCIceTransport::HearBytes(Link& link, std::span<const uint8_t> bytes)
+{
+    if (link.Input.size() + bytes.size() > MaxServiceUnreadBytes)
+    {
+        SDL_Log("MCIceTransport: %s through the service got over %zu bytes unread",
+                LinkName(link.Guest, link.Peer).c_str(), MaxServiceUnreadBytes);
+        return false;
+    }
+
+    link.Input.insert(link.Input.end(), bytes.begin(), bytes.end());
+    link.ServiceCarried.BytesReceived += bytes.size();
+    return true;
+}
+
+void MCIceTransport::ToService(Link& link, bool tell, std::string_view why)
+{
+    const auto now = std::chrono::steady_clock::now();
+    SDL_Log("MCIceTransport: the service carries %s from now: %.*s", LinkName(link.Guest, link.Peer).c_str(),
+            static_cast<int>(why.size()), why.data());
+
+    // The other end hears it before any of the link's bytes: the service keeps a player's signals and bytes in order.
+    if (tell)
+    {
+        SendSignal(link, {.Kind = std::string(ServiceKind)});
+    }
+
+    link.ServiceSince = now;
+    link.WasOpen = true;
+    link.IdleSince = now;
+    link.Path = MCIceLink::Path::Service;
+    link.Ice->Close();
+
+    if (!link.Early.empty())
+    {
+        SendBytes(link, link.Early);
+        link.Early.clear();
+    }
+}
+
+void MCIceTransport::SendSignal(const Link& link, const MCIceLink::Signal& signal)
+{
+    if (link.Guest)
+    {
+        _Signaling->ToHost(link.Peer, link.Number, signal);
+    }
+    else
+    {
+        _Signaling->ToGuest(link.Peer, link.Number, signal);
+    }
+}
+
+void MCIceTransport::SendBytes(Link& link, std::span<const uint8_t> bytes)
+{
+    if (!link.ServiceSince.has_value())
+    {
+        link.Ice->Send(bytes);
+        return;
+    }
+
+    for (size_t at = 0; at < bytes.size(); at += ServicePieceBytes)
+    {
+        const std::span<const uint8_t> piece = bytes.subspan(at, std::min(ServicePieceBytes, bytes.size() - at));
+
+        if (link.Guest)
+        {
+            _Signaling->BytesToHost(link.Peer, link.Number, piece);
+        }
+        else
+        {
+            _Signaling->BytesToGuest(link.Peer, link.Number, piece);
+        }
+    }
+
+    link.ServiceCarried.BytesSent += bytes.size();
+}
+
+bool MCIceTransport::IsOpen(const Link& link)
+{
+    return link.ServiceSince.has_value() || link.Ice->GetState() == MCIceLink::State::Open;
+}
+
+size_t MCIceTransport::Unsent(const Link& link)
+{
+    return link.ServiceSince.has_value() ? 0 : link.Ice->Unsent();
 }
 
 bool MCIceTransport::ReadFrames(uint32_t id, Link& link)
@@ -802,7 +979,7 @@ bool MCIceTransport::HandleFrame(uint32_t id, Link& link, uint8_t kind, std::spa
 void MCIceTransport::SendFrame(Link& link, uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes)
 {
     const size_t size = head.size() + bytes.size();
-    const bool open = link.Ice->GetState() == MCIceLink::State::Open;
+    const bool open = IsOpen(link);
 
     // Before the link opens a datagram waits only while there's room, as a system's UDP buffer; the rest always wait.
     if (!open && kind == DatagramFrame && link.Early.size() + FrameHeadBytes + size > MaxEarlyBytes)
@@ -820,7 +997,7 @@ void MCIceTransport::SendFrame(Link& link, uint8_t kind, std::span<const uint8_t
     // A send that fails has failed the link, which the next pump ends.
     if (open)
     {
-        link.Ice->Send(out);
+        SendBytes(link, out);
         out.clear();
     }
 }
@@ -839,15 +1016,17 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
     SDL_Log("MCIceTransport: %s ended: %.*s", LinkName(link.Guest, link.Peer).c_str(), static_cast<int>(why.size()),
             why.data());
     const auto now = std::chrono::steady_clock::now();
-    // Opened as libdatachannel saw it: a link can open and end between two pumps.
-    const std::optional<std::chrono::steady_clock::time_point> openedAt = link.Ice->OpenedAt();
+    const bool service = link.ServiceSince.has_value();
+    // Opened as libdatachannel saw it (a link can open and end between two pumps), or as the service took it.
+    const std::optional<std::chrono::steady_clock::time_point> openedAt =
+        service ? link.ServiceSince : link.Ice->OpenedAt();
     _Reports({
         .Guest = link.Guest,
         .Opened = openedAt.has_value(),
         .Path = link.WasOpen ? link.Path : link.Ice->GetPath(),
         .Setup = std::chrono::duration_cast<std::chrono::milliseconds>(openedAt.value_or(now) - link.Started),
         .Open = std::chrono::duration_cast<std::chrono::milliseconds>(now - openedAt.value_or(now)),
-        .Carried = link.Ice->Carried(),
+        .Carried = service ? link.ServiceCarried : link.Ice->Carried(),
         .Here = link.Ice->OfferedHere(),
         .There = link.Ice->OfferedThere(),
         .End = end,
@@ -860,6 +1039,12 @@ void MCIceTransport::EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::strin
         {
             socket.State = StreamState::Broken;
         }
+    }
+
+    // The other end of a link the service carries hears of its close only from this end (its ICE link closed already).
+    if (service)
+    {
+        SendSignal(link, {.Kind = std::string(CloseKind)});
     }
 
     link.Ice->Close();
@@ -895,7 +1080,7 @@ void MCIceTransport::DropUnused()
             link.UnusedSince = now;
         }
 
-        if (link.Ice->Unsent() == 0 || now - *link.UnusedSince > LingerDeadline)
+        if (Unsent(link) == 0 || now - *link.UnusedSince > LingerDeadline)
         {
             unused.emplace_back(id, idle         ? "it carried no connection for a while"
                                     : link.Guest ? "nothing here uses it"

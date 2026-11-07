@@ -28,6 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -55,8 +56,10 @@ public:
         std::string Peer;
         /// <summary>Which of the guest's links it is about (the guest numbers them).</summary>
         uint32_t Link = 0;
-        /// <summary>None: the peer left the service (a guest gone), or no game has that name.</summary>
+        /// <summary>A signal; or none and <see cref="Bytes"/>; or neither: the peer left the service (a guest gone), or no game has that name.</summary>
         std::optional<MCIceLink::Signal> Signal;
+        /// <summary>The link's bytes, for a link the service carries (see <see cref="BytesToHost"/>).</summary>
+        std::vector<uint8_t> Bytes;
     };
 
     virtual ~MCIceSignaling() = default;
@@ -69,6 +72,15 @@ public:
 
     /// <summary>To the guest <paramref name="guest"/>, about its link <paramref name="link"/>.</summary>
     virtual void ToGuest(std::string_view guest, uint32_t link, const MCIceLink::Signal& signal) = 0;
+
+    /// <summary>
+    /// A link's bytes through the service (the WebSocket path), for a link ICE couldn't open (a network that blocks UDP),
+    /// to the host of the game <paramref name="game"/>: they arrive whole and in order, after the signals said before.
+    /// </summary>
+    virtual void BytesToHost(std::string_view game, uint32_t link, std::span<const uint8_t> bytes) = 0;
+
+    /// <summary>A link's bytes through the service, to the guest <paramref name="guest"/> (see <see cref="BytesToHost"/>).</summary>
+    virtual void BytesToGuest(std::string_view guest, uint32_t link, std::span<const uint8_t> bytes) = 0;
 
     /// <summary>What was heard since the last call.</summary>
     virtual std::vector<Heard> Take() = 0;
@@ -88,6 +100,12 @@ public:
         /// host closes it, so idle links never keep players out. A game that asks again opens another.
         /// </summary>
         std::chrono::milliseconds Idle{30000};
+        /// <summary>
+        /// For a link that heard the other end to find a path before the service carries it (the WebSocket path; at
+        /// once if ICE fails). ICE finds a direct or relayed path in a second or two, or none where UDP is blocked.
+        /// None: the service never carries a link (a test's).
+        /// </summary>
+        std::optional<std::chrono::milliseconds> Service = std::chrono::milliseconds(5000);
     };
 
     /// <summary>
@@ -184,8 +202,15 @@ private:
         /// <summary>The other end's address here (the game's, or the guest link's).</summary>
         uint32_t Ip = 0;
         std::chrono::steady_clock::time_point Started;
-        /// <summary>A signal came from the other end (a host end's link starts with the guest's offer).</summary>
+        /// <summary>A signal came from the other end (a host end's link starts with the guest's offer), and when first.</summary>
         bool Heard = false;
+        std::chrono::steady_clock::time_point HeardAt;
+        /// <summary>
+        /// Since when the service has carried it (its WebSocket path): its ICE link closed then, kept for its report.
+        /// </summary>
+        std::optional<std::chrono::steady_clock::time_point> ServiceSince;
+        /// <summary>What the service carried for it.</summary>
+        MCIceLink::Traffic ServiceCarried;
         /// <summary>A pump saw it open (it may open and close between two: MCIceLink::OpenedAt says).</summary>
         bool WasOpen = false;
         /// <summary>The path it opened on, as the pump that saw it open read it.</summary>
@@ -206,12 +231,31 @@ private:
     /// <summary>Moves the service's signals and the links' bytes along (under the lock).</summary>
     void Pump();
     void Hear(const MCIceSignaling::Heard& heard);
+    /// <summary>What was heard about the link <paramref name="id"/>: a signal, or the service's bytes for it.</summary>
+    void HearOnLink(uint32_t id, Link& link, const MCIceSignaling::Heard& heard);
     /// <summary>Reads the frames <paramref name="link"/> received; false when one can't be taken (it can't be trusted).</summary>
     bool ReadFrames(uint32_t id, Link& link);
     /// <summary>Handles one frame; false when it can't be (the link can't be trusted).</summary>
     bool HandleFrame(uint32_t id, Link& link, uint8_t kind, std::span<const uint8_t> body);
     /// <summary>Sends a frame now, or once the link opens.</summary>
-    static void SendFrame(Link& link, uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes = {});
+    void SendFrame(Link& link, uint8_t kind, std::span<const uint8_t> head, std::span<const uint8_t> bytes = {});
+    /// <summary>Sends bytes on an open link: over ICE, or through the service.</summary>
+    void SendBytes(Link& link, std::span<const uint8_t> bytes);
+    /// <summary>Sends a signal about <paramref name="link"/> to its other end.</summary>
+    void SendSignal(const Link& link, const MCIceLink::Signal& signal);
+    /// <summary>
+    /// The service carries the link from now (the WebSocket path): its ICE link closes, and the other end is told unless
+    /// it said so.
+    /// </summary>
+    void ToService(Link& link, bool tell, std::string_view why);
+    /// <summary>A link's own signal to this transport (the WebSocket path's), not ICE's: true when it was one.</summary>
+    bool HearTransportSignal(uint32_t id, Link& link, const MCIceLink::Signal& signal);
+    /// <summary>The service's bytes for a link it carries; false when they can't be taken (too many unread).</summary>
+    bool HearBytes(Link& link, std::span<const uint8_t> bytes);
+    /// <summary>Whether the link carries bytes now (ICE's channel open, or the service carrying it).</summary>
+    static bool IsOpen(const Link& link);
+    /// <summary>What the link holds unsent (the service's path holds nothing here).</summary>
+    static size_t Unsent(const Link& link);
     /// <summary>Ends a link: its streams break, it goes, and the reports learn how it went.</summary>
     void EndLink(uint32_t id, MCTelemetry::MCLinkEnd end, std::string_view why);
     /// <summary>How a link that never opened ended: how far it got.</summary>

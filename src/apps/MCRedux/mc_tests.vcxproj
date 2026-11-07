@@ -148,6 +148,7 @@
     <ClCompile Include="tests\PurchaseTests.cpp" />
     <ClCompile Include="tests\ScenarioTests.cpp" />
     <ClCompile Include="tests\ScreenInput.cpp" />
+    <ClCompile Include="tests\ServiceSignalingTests.cpp" />
     <ClCompile Include="tests\ServicesTests.cpp" />
     <ClCompile Include="tests\SessionScreenTests.cpp" />
     <ClCompile Include="tests\SmackerTests.cpp" />

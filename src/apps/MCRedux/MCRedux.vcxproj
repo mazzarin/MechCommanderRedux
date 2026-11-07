@@ -73,6 +73,7 @@
     <ClCompile Include="MCHttpGetWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="MCIceTrial.cpp" />
     <ClCompile Include="MCRestart.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -80,6 +81,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="MCTelemetryWin.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="MCWebSocketWin.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="stdafx.cpp">
@@ -91,9 +95,11 @@
     <ClInclude Include="MCFirstStart.h" />
     <ClInclude Include="MCGameFolder.h" />
     <ClInclude Include="MCHttpGet.h" />
+    <ClInclude Include="MCIceTrial.h" />
     <ClInclude Include="MCRestart.h" />
     <ClInclude Include="MCSetupRun.h" />
     <ClInclude Include="MCTelemetryBackend.h" />
+    <ClInclude Include="MCWebSocketOpen.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>

@@ -6,7 +6,7 @@
 
 /// <summary>
 /// The service's signal passing, inside the process: endpoints (each a game's own view of the service) that host games
-/// by name and reach them, every signal passed at once and in order. Links start on the loopback only (the Mac's
+/// by name and reach them, every signal (and a link's bytes, its WebSocket path) passed at once and in order. Links start on the loopback only (the Mac's
 /// firewall: IceLinkTests.cpp). Thread-safe.
 /// </summary>
 class MCFakeSignalBoard

@@ -1183,6 +1183,9 @@
     <ClCompile Include="platform\MCServices.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCServiceSignaling.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCSharpLines.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2529,6 +2532,9 @@
     <ClInclude Include="platform\MCServices.h">
       <Filter>platform</Filter>
     </ClInclude>
+    <ClInclude Include="platform\MCServiceSignaling.h">
+      <Filter>platform</Filter>
+    </ClInclude>
     <ClInclude Include="platform\MCSharpLines.h">
       <Filter>platform</Filter>
     </ClInclude>
@@ -2560,6 +2566,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCVulkanShaders.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCWebSocket.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCWin32Defs.h">

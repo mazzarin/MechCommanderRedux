@@ -21,6 +21,10 @@ namespace
     constexpr auto ShortOpenDeadline = std::chrono::milliseconds(1000);
     /// <summary>The idle deadline of a host whose guests' links carry nothing.</summary>
     constexpr auto ShortIdleDeadline = std::chrono::milliseconds(1000);
+    /// <summary>How long a link that finds no path waits before the service carries it, in the tests that let it.</summary>
+    constexpr auto ShortServiceDeadline = std::chrono::milliseconds(300);
+    /// <summary>What a link the service carries takes each way: a lobby's worth and more.</summary>
+    constexpr size_t ServiceBytes = 200 * 1024;
     /// <summary>Frames as a game sends them (MCIceTransport.cpp's): a connection, and its bytes.</summary>
     constexpr uint8_t ConnectFrame = 2;
     constexpr uint8_t DataFrame = 5;
@@ -516,7 +520,8 @@ TEST_CASE(
     MCLinkLog links;
     MCFakeSignalBoard board;
     board.Host(GameCode, "host");
-    MCIceTransport host(board.Endpoint("host"), {.Open = ShortOpenDeadline}, links.Reports());
+    // The service never carries the host's links here, so a link with no path fails as it would with no service.
+    MCIceTransport host(board.Endpoint("host"), {.Open = ShortOpenDeadline, .Service = std::nullopt}, links.Reports());
     REQUIRE(host.ListenTcp(GamePort) != MCSocket::InvalidHandle);
     const auto refused = [&](MCIceTransport& guest)
     {
@@ -537,7 +542,7 @@ TEST_CASE(
     // (its checks would tell the host its address), so no path is found.
     {
         MCIceTransport guest(board.Endpoint("relayed", {.RelayOnly = true, .BindAddress = "127.0.0.1"}),
-                             {.Open = ShortOpenDeadline}, links.Reports());
+                             {.Open = ShortOpenDeadline, .Service = std::nullopt}, links.Reports());
         refused(guest);
     }
 
@@ -552,7 +557,8 @@ TEST_CASE(
     CHECK(links.Of(HostEnd)[0].End == MCLinkEnd::NoPath);
 
     // A service that changes the host's certificate's fingerprint on its way: ICE finds the path, the encryption
-    // refuses the certificate the host shows, and the channel never opens.
+    // refuses the certificate the host shows, and the channel never opens. Nor does the service carry it instead: a
+    // path was found, so what failed may be a lie.
     board.TamperToGuests(
         [](MCIceLink::Signal& signal)
         {
@@ -562,13 +568,116 @@ TEST_CASE(
             }
         });
     {
-        MCIceTransport guest(board.Endpoint("guest"), {.Open = ShortOpenDeadline}, links.Reports());
+        MCIceTransport guest(board.Endpoint("guest"), {.Open = ShortOpenDeadline, .Service = ShortServiceDeadline},
+                             links.Reports());
         refused(guest);
     }
 
     REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{2});
     CHECK(!links.Of(GuestEnd)[1].Opened);
     CHECK(links.Of(GuestEnd)[1].End == MCLinkEnd::NoChannel);
+}
+
+TEST_CASE("ice transport: a link that finds no path goes through the service, and carries the game as ICE's would")
+{
+    MCLinkLog links;
+    MCFakeSignalBoard board;
+    board.Host(GameCode, "host");
+    const MCIceTransport::Deadlines deadlines{.Service = ShortServiceDeadline};
+    MCIceTransport host(board.Endpoint("host"), deadlines, links.Reports());
+    // A guest whose ICE finds no path, as where UDP is blocked: the relays' path only, and no relay.
+    MCIceTransport guest(board.Endpoint("blocked", {.RelayOnly = true, .BindAddress = "127.0.0.1"}), deadlines,
+                         links.Reports());
+    const MCSocket::Handle listener = host.ListenTcp(GamePort);
+    const MCSocket::Handle hostUdp = host.OpenUdp(GamePort);
+    REQUIRE(listener != MCSocket::InvalidHandle);
+    REQUIRE(hostUdp != MCSocket::InvalidHandle);
+    const std::optional<uint32_t> game = guest.Resolve(GameCode);
+    REQUIRE(game.has_value());
+
+    // The datagram waits while ICE looks, then goes through the service, and the answer comes back the same way.
+    const MCSocket::Handle guestUdp = guest.OpenUdp(0);
+    REQUIRE(guest.SendTo(guestUdp, {*game, GamePort}, Bytes("query")));
+    MCSocket::Address asker;
+    std::string query;
+    REQUIRE(Until(
+        [&]
+        {
+            Pump(guest);
+            query = TakeDatagram(host, hostUdp, asker);
+            return !query.empty();
+        }));
+    CHECK_EQ(query, std::string("query"));
+    REQUIRE(host.SendTo(hostUdp, asker, Bytes("answer")));
+    MCSocket::Address answerer;
+    std::string answer;
+    REQUIRE(Until(
+        [&]
+        {
+            Pump(host);
+            answer = TakeDatagram(guest, guestUdp, answerer);
+            return !answer.empty();
+        }));
+    CHECK_EQ(answer, std::string("answer"));
+    CHECK((answerer == MCSocket::Address{*game, GamePort}));
+
+    // The connection, and bytes both ways in order.
+    const MCSocket::Handle stream = WithPumped(host, [&] { return guest.ConnectTcp({*game, GamePort}, ConnectMs); });
+    REQUIRE(stream != MCSocket::InvalidHandle);
+    MCSocket::Address connected;
+    const MCSocket::Handle accepted = host.AcceptTcp(listener, connected);
+    REQUIRE(accepted != MCSocket::InvalidHandle);
+    const std::vector<uint8_t> fromGuest = Pattern(ServiceBytes, 3);
+    const std::vector<uint8_t> fromHost = Pattern(ServiceBytes, 4);
+    std::vector<uint8_t> atHost;
+    std::vector<uint8_t> atGuest;
+    size_t sentByGuest = 0;
+    size_t sentByHost = 0;
+    bool failed = false;
+    REQUIRE(Until(
+        [&]
+        {
+            const int guestSent = SendPart(guest, stream, fromGuest, sentByGuest);
+            const int hostSent = SendPart(host, accepted, fromHost, sentByHost);
+            failed = guestSent < 0 || hostSent < 0 || !Drain(host, accepted, atHost) || !Drain(guest, stream, atGuest);
+            sentByGuest += static_cast<size_t>(std::max(guestSent, 0));
+            sentByHost += static_cast<size_t>(std::max(hostSent, 0));
+            return failed || (atHost.size() >= fromGuest.size() && atGuest.size() >= fromHost.size());
+        }));
+    CHECK(!failed);
+    CHECK(atHost == fromGuest);
+    CHECK(atGuest == fromHost);
+    CHECK_EQ(guest.Links(), size_t{1});
+    CHECK_EQ(host.Links(), size_t{1});
+
+    // Once nothing uses it, the guest closes it, and the service tells the host's end.
+    guest.Close(stream);
+    guest.Close(guestUdp);
+    CHECK(Until(
+        [&]
+        {
+            Pump(guest);
+            Pump(host);
+            return guest.Links() == 0 && host.Links() == 0;
+        }));
+
+    // Both ends report the service's path, what it carried, and no round trip (the service's isn't measured).
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{1});
+    REQUIRE_EQ(links.Of(HostEnd).size(), size_t{1});
+    const MCTelemetry::MCLink guestLink = links.Of(GuestEnd)[0];
+    const MCTelemetry::MCLink hostLink = links.Of(HostEnd)[0];
+    CHECK(guestLink.Opened);
+    CHECK(guestLink.Path == MCIceLink::Path::Service);
+    CHECK(guestLink.Setup >= ShortServiceDeadline);
+    CHECK(guestLink.Carried.BytesSent >= ServiceBytes);
+    CHECK(guestLink.Carried.BytesReceived >= ServiceBytes);
+    CHECK(!guestLink.Carried.RoundTrip.has_value());
+    CHECK((guestLink.Here == MCIceLink::Offered{}));
+    CHECK(guestLink.End == MCLinkEnd::Unused);
+    CHECK(hostLink.Opened);
+    CHECK(hostLink.Path == MCIceLink::Path::Service);
+    CHECK(hostLink.Carried.BytesReceived >= ServiceBytes);
+    CHECK(hostLink.End == MCLinkEnd::Closed);
 }
 
 TEST_CASE("ice transport: a host keeps two links to a guest at most, and closes those that carry no connection")

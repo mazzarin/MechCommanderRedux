@@ -762,6 +762,8 @@ namespace
                 return "direct4";
             case MCIceLink::Path::Relay:
                 return "relay";
+            case MCIceLink::Path::Service:
+                return "websocket";
             case MCIceLink::Path::None:
                 break;
         }
@@ -1288,6 +1290,11 @@ auto MCTelemetry::LinkEnded(const MCLink& link) -> void
     }
 
     LinkReports++;
+    SendReport(ReportStart("link", Machine.AppVersion).Raw("link", LinkJson(link)).Close());
+}
+
+auto MCTelemetry::LinkJson(const MCLink& link) -> std::string
+{
     MCJsonObject json;
     json.Text("role", link.Guest ? "guest" : "host").Flag("opened", link.Opened);
 
@@ -1307,7 +1314,7 @@ auto MCTelemetry::LinkEnded(const MCLink& link) -> void
     }
 
     json.Text("here", OfferedNames(link.Here)).Text("there", OfferedNames(link.There)).Text("end", EndName(link.End));
-    SendReport(ReportStart("link", Machine.AppVersion).Raw("link", json.Close()).Close());
+    return json.Close();
 }
 
 auto MCTelemetry::MessageIn(uint16_t type, size_t bytes) -> void

@@ -83,6 +83,8 @@ public:
         DirectIpv6,
         DirectIpv4,
         Relay,
+        /// <summary>The service's WebSocket (MCIceTransport's, for a link ICE couldn't open): never an ICE link's own.</summary>
+        Service,
     };
 
     /// <summary>The kinds of address an end offered the other (its candidates' types), for the reports: never the addresses.</summary>

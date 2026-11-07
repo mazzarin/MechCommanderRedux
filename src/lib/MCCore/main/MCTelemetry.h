@@ -234,6 +234,9 @@ namespace MCTelemetry
     /// </summary>
     void LinkEnded(const MCLink& link);
 
+    /// <summary>A link's part of its report (LinkEnded's "link"), as JSON: the internet games' trial prints it too.</summary>
+    std::string LinkJson(const MCLink& link);
+
     /// <summary>A multiplayer message came in (<paramref name="type"/>, <paramref name="bytes"/>), for the black box.</summary>
     void MessageIn(uint16_t type, size_t bytes);
 

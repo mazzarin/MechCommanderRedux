@@ -251,7 +251,7 @@ target_link_options(MCCore PUBLIC ${MC_EXPERIMENTAL_LIBRARY})
 set(MC_APP_NO_PCH ${MC_SRC}/apps/MCRedux/MCConsole.cpp ${MC_SRC}/apps/MCRedux/MCCrashTrace.cpp
                   ${MC_SRC}/apps/MCRedux/MCGameFolder.cpp ${MC_SRC}/apps/MCRedux/MCTelemetryWin.cpp
                   ${MC_SRC}/apps/MCRedux/MCHttpGetWin.cpp ${MC_SRC}/apps/MCRedux/MCRestart.cpp
-                  ${MC_SRC}/apps/MCRedux/MCSetupRunWin.cpp)
+                  ${MC_SRC}/apps/MCRedux/MCSetupRunWin.cpp ${MC_SRC}/apps/MCRedux/MCWebSocketWin.cpp)
 set_source_files_properties(${MC_APP_NO_PCH} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # The game, as "MechCommander Redux.app": upstream's icon at the Mac's sizes (src/res/MCRedux.icns), and the
@@ -266,9 +266,10 @@ set(MC_SPARKLE ${MC_SRC}/lib/Sparkle-2.10.1)
 set(MC_SPARKLE_UPDATER ${MC_SRC}/apps/MCRedux/MCSparkleUpdater.mm)
 set_source_files_properties(${MC_SPARKLE_UPDATER} PROPERTIES SKIP_PRECOMPILE_HEADERS ON
                             COMPILE_OPTIONS "-fobjc-arc;-F${MC_SPARKLE}")
-# Personal build: the reports' backend on the Mac (MCTelemetryMac.mm: IOKit for the machine and its power), and the
-# updates' downloads (MCHttpGetMac.mm: NSURLSession).
-set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm ${MC_SRC}/apps/MCRedux/MCHttpGetMac.mm)
+# Personal build: the reports' backend on the Mac (MCTelemetryMac.mm: IOKit for the machine and its power), the
+# updates' downloads (MCHttpGetMac.mm: NSURLSession) and the internet games' service (MCWebSocketMac.mm: NSURLSession).
+set(MC_TELEMETRY_BACKEND ${MC_SRC}/apps/MCRedux/MCTelemetryMac.mm ${MC_SRC}/apps/MCRedux/MCHttpGetMac.mm
+                         ${MC_SRC}/apps/MCRedux/MCWebSocketMac.mm)
 set_source_files_properties(${MC_TELEMETRY_BACKEND} PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS -fobjc-arc)
 add_executable(MCRedux MACOSX_BUNDLE ${MCREDUX_SOURCES} ${MC_SPARKLE_UPDATER} ${MC_TELEMETRY_BACKEND} ${MC_ICON})
 # The Info.plist is a link dependency, so a changed one (a new version, an edited template) relinks, which copies it.

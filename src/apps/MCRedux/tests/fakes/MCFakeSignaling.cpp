@@ -23,36 +23,31 @@ public:
 
     void ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal) override
     {
-        const std::scoped_lock lock(_Board->Lock);
-        const auto host = _Board->Hosts.find(game);
-
-        // No such game: the service says so, as it would to a code that matches nothing.
-        if (host == _Board->Hosts.end())
-        {
-            _Board->Inboxes[_Name].push_back({From::Host, std::string(game), link, std::nullopt});
-            return;
-        }
-
-        _Board->Inboxes[host->second].push_back({From::Guest, _Name, link, signal});
+        PassToHost(game, link, signal, {});
     }
 
     void ToGuest(std::string_view guest, uint32_t link, const MCIceLink::Signal& signal) override
     {
+        MCIceLink::Signal passed = signal;
         const std::scoped_lock lock(_Board->Lock);
-        const auto hosted =
-            std::ranges::find_if(_Board->Hosts, [&](const auto& entry) { return entry.second == _Name; });
 
-        if (hosted != _Board->Hosts.end())
+        if (_Board->TamperToGuests)
         {
-            MCIceLink::Signal passed = signal;
-
-            if (_Board->TamperToGuests)
-            {
-                _Board->TamperToGuests(passed);
-            }
-
-            _Board->Inboxes[std::string(guest)].push_back({From::Host, hosted->first, link, std::move(passed)});
+            _Board->TamperToGuests(passed);
         }
+
+        PassToGuest(guest, link, std::move(passed), {});
+    }
+
+    void BytesToHost(std::string_view game, uint32_t link, std::span<const uint8_t> bytes) override
+    {
+        PassToHost(game, link, std::nullopt, {bytes.begin(), bytes.end()});
+    }
+
+    void BytesToGuest(std::string_view guest, uint32_t link, std::span<const uint8_t> bytes) override
+    {
+        const std::scoped_lock lock(_Board->Lock);
+        PassToGuest(guest, link, std::nullopt, {bytes.begin(), bytes.end()});
     }
 
     std::vector<Heard> Take() override
@@ -62,6 +57,37 @@ public:
     }
 
 private:
+    /// <summary>A signal or bytes to the host of <paramref name="game"/>, through the board.</summary>
+    void PassToHost(std::string_view game, uint32_t link, std::optional<MCIceLink::Signal> signal,
+                    std::vector<uint8_t> bytes)
+    {
+        const std::scoped_lock lock(_Board->Lock);
+        const auto host = _Board->Hosts.find(game);
+
+        // No such game: the service says so, as it would to a code that matches nothing.
+        if (host == _Board->Hosts.end())
+        {
+            _Board->Inboxes[_Name].push_back({From::Host, std::string(game), link, std::nullopt, {}});
+            return;
+        }
+
+        _Board->Inboxes[host->second].push_back({From::Guest, _Name, link, std::move(signal), std::move(bytes)});
+    }
+
+    /// <summary>A signal or bytes from this endpoint's game to its guest (the board's lock held).</summary>
+    void PassToGuest(std::string_view guest, uint32_t link, std::optional<MCIceLink::Signal> signal,
+                     std::vector<uint8_t> bytes)
+    {
+        const auto hosted =
+            std::ranges::find_if(_Board->Hosts, [&](const auto& entry) { return entry.second == _Name; });
+
+        if (hosted != _Board->Hosts.end())
+        {
+            _Board->Inboxes[std::string(guest)].push_back(
+                {From::Host, hosted->first, link, std::move(signal), std::move(bytes)});
+        }
+    }
+
     std::shared_ptr<Board> _Board;
     std::string _Name;
     MCIceLink::Settings _Settings;

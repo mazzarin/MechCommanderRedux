@@ -419,6 +419,7 @@
     <ClCompile Include="platform\MCRenderer.cpp" />
     <ClCompile Include="platform\MCSdlPresenter.cpp" />
     <ClCompile Include="platform\MCServices.cpp" />
+    <ClCompile Include="platform\MCServiceSignaling.cpp" />
     <ClCompile Include="platform\MCSharpLines.cpp" />
     <ClCompile Include="platform\MCSharpText.cpp" />
     <ClCompile Include="platform\MCSmacker.cpp" />
@@ -887,6 +888,7 @@
     <ClInclude Include="platform\MCSdlHandle.h" />
     <ClInclude Include="platform\MCSdlPresenter.h" />
     <ClInclude Include="platform\MCServices.h" />
+    <ClInclude Include="platform\MCServiceSignaling.h" />
     <ClInclude Include="platform\MCSharpLines.h" />
     <ClInclude Include="platform\MCSharpText.h" />
     <ClInclude Include="platform\MCSmacker.h" />
@@ -898,6 +900,7 @@
     <ClInclude Include="platform\MCVulkanPresenter.h" />
     <ClInclude Include="platform\MCVulkanRenderer.h" />
     <ClInclude Include="platform\MCVulkanShaders.h" />
+    <ClInclude Include="platform\MCWebSocket.h" />
     <ClInclude Include="platform\MCWin32Defs.h" />
     <ClInclude Include="sound\MCHdAudio.h" />
     <ClInclude Include="sound\MCRadio.h" />

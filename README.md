@@ -202,7 +202,8 @@ MCRedux.exe -join 192.168.1.10:28800 -player Bob -session "Match42"
 When every player named by a `-slot` has joined, the host checks that they are exactly the roster and that every machine
 has the mission file, then takes everyone **straight from "Waiting for Players" to the mech bay**. The ready room, the map
 selector and the wait for the mission's settings are never loaded: the host fills in an `MPGameConfiguration` (mission,
-points, tech bases, roster) and sends it to the guests in one message. Guests need no extra options.
+points, tech bases, roster) and sends it to the guests in one message. Guests need no extra options. (**Redux HD:**
+there is no ready room: the players wait in the session screen, where the host can still start by hand.)
 
 | Option (host only)                    | Description                                                                          |
 |---------------------------------------|--------------------------------------------------------------------------------------|
@@ -211,7 +212,7 @@ points, tech bases, roster) and sends it to the guests in one message. Guests ne
 | `-team1tech <is\|clan>`, `-team2tech <is\|clan>` | The team's tech base. Without them the mission's are kept. |
 | `-slot <player> <team> <slot>`        | Puts the player named `-player` on team 1 or 2, in slot 0 to 2 (the slot decides the player's drop zones). One per player, up to six. |
 | `-matchweather <weather>`             | **Redux HD.** The match's weather: `clear`, `rain`, `downpour`, `lightsnow`, `snow` or `blizzard`. Without it (or with `mission`), the mission's own. It changes play as [A Mission's Weather](#a-missions-weather) says. |
-| `-matchtime <time>`                   | **Redux HD.** The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6. |
+| `-matchtime <time>`                   | **Redux HD.** The time of day every player sees: `day`, `dusk` or `night`. Without it (or with `mission`), the mission's own. Units see as far as in a mission set then: at dusk 0.8 of the day's sight, at night 0.6 (or 0.5 with the [lights](#a-missions-time-of-day), when every player's game has them). |
 | `-matchbraking <on\|off>`             | **Redux HD.** Whether mechs brake to a halt. Without it (or with `prefs`), the host's `MechBraking`. |
 | `-matchartillery <on\|off>`           | **Redux HD.** Off: commanders get no artillery strikes. On (the original's) without it. |
 | `-matchprobes <on\|off>`              | **Redux HD.** Off: commanders get no sensor probes or camera drones. On without it. |
@@ -315,13 +316,22 @@ untouched.
 **Redux HD.** **Mission > Time of Day** sets a mission at **Day**, **Dusk** or **Night**. Missions are set by day
 until you change it, as every mission of the original is.
 
-- **Sight.** At dusk units see 80% as far as by day, at night 60%. This works in the original game too.
+- **Sight.** At dusk units see 80% as far as by day, at night 60%. This works in the original game too; Redux HD
+  plays the night with its lights (below).
 - **Look.** With **HD LIGHTING** set to **ON** (on the HD OPTIONS page), Redux HD shows a dusk mission darker, and a
   night one dark with the mechs' and vehicles' headlights on. The player's **DUSK** and **NIGHT** choices show their
-  own time whatever the mission's. The original game shows every mission by day.
+  own time whatever the mission's. With HD LIGHTING off, or the CPU drawing (**SOFTWARE**), a night is dark too: the
+  world is dimmed through the original's own darkening tables (the pause screen's), and a lit unit's headlight shows
+  the ground it lights as drawn, with a fainter beam from its lamp. The original game shows every mission by day.
 - **Multiplayer.** A match's host can show another time of day to everyone on the session screen's **MATCH OPTIONS**
   tab (or with `-matchtime`) when every player's game has it, and units then see as far as in a mission set at that
   time (by day as far as by day, even in a night mission).
+- **Lights.** At night (a night mission, or a match at night when every player's game has them) units see half as far
+  as by day all round, and a lit mech's or vehicle's headlight shows the ground ahead of it to 85% of the day's sight;
+  the enemy sees a lit unit from as far, as it sees a unit that fires. **LIGHTS** (N, on the CONTROLS screen)
+  turns the selected units' headlights off, or on again: a dark unit is seen only where the enemy sees round itself or
+  lights up. Sensors find dark units as ever, and the computer's units keep their lights on. Units see this way
+  whatever the player's HD options.
 
 For a mission's `.FIT` file, the editor writes this for dusk or night (by day, neither):
 

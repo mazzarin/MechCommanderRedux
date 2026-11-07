@@ -453,6 +453,10 @@ struct MCDirectPlay::Impl
     /// <summary>Joiner: the answers the host sent to blocking requests (JoinReply, CreateReply) not yet taken.</summary>
     std::deque<std::pair<FrameType, std::vector<uint8_t>>> Replies;
     uint32_t NextToken = 1;
+    /// <summary>Host: its say on a joiner's players (MCDirectPlay::SetAdmission).</summary>
+    MCDirectPlay::Admission Admit;
+    /// <summary>Joiner: why the host refused its last player (MCDirectPlay::LastRefusal).</summary>
+    std::string Refusal;
 
     ~Impl()
     {
@@ -918,6 +922,15 @@ struct MCDirectPlay::Impl
                     result = DPERR_CANTCREATEPLAYER;
                 }
 
+                // Port: the host's game has its say on a player before anyone hears of it (SetAdmission).
+                std::optional<std::string> refusal;
+
+                if (result == DP_OK && entity.Type == DPPLAYERTYPE_PLAYER && Admit)
+                {
+                    refusal = Admit(entity.ShortName, entity.Data);
+                    result = refusal.has_value() ? DPERR_CANTCREATEPLAYER : DP_OK;
+                }
+
                 // The game's groups are the host's; a joiner gets a few, not as many as it asks for (issue #25).
                 if (result == DP_OK && entity.Type == DPPLAYERTYPE_GROUP &&
                     std::ranges::count_if(
@@ -938,6 +951,14 @@ struct MCDirectPlay::Impl
                 reply.U32(token);
                 reply.U32(result);
                 reply.U32(id);
+
+                // A refusal's reason after (an older joiner reads only the code), and the joiner's link closes.
+                if (refusal.has_value())
+                {
+                    reply.String(*refusal);
+                    link.CloseWhenFlushed = true;
+                }
+
                 Queue(link, FrameType::CreateReply, reply);
                 break;
             }
@@ -1747,6 +1768,16 @@ uint32_t MCDirectPlay::Close()
     return DP_OK;
 }
 
+std::string MCDirectPlay::LastRefusal() const
+{
+    return _Impl->Refusal;
+}
+
+void MCDirectPlay::SetAdmission(Admission admission)
+{
+    _Impl->Admit = std::move(admission);
+}
+
 uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std::span<const uint8_t> data,
                                     uint32_t flags)
 {
@@ -1779,6 +1810,7 @@ uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std:
     request.U32(token);
     entity.Write(request);
     Impl::Queue(impl.Server, FrameType::CreatePlayer, request);
+    impl.Refusal.clear();
     std::optional<std::vector<uint8_t>> reply = impl.WaitForReply(FrameType::CreateReply, token);
 
     if (!reply)
@@ -1793,6 +1825,12 @@ uint32_t MCDirectPlay::CreatePlayer(uint32_t& playerID, const DPNAME& name, std:
 
     if (result != DP_OK)
     {
+        // Port: the host's reason, if it gave one (an older host's reply ends here).
+        if (std::string refusal = in.String(); in.Ok)
+        {
+            impl.Refusal = std::move(refusal);
+        }
+
         return result;
     }
 

@@ -344,6 +344,20 @@ public:
     /// </summary>
     uint32_t CreatePlayer(uint32_t& playerID, const DPNAME& name, std::span<const uint8_t> data, uint32_t flags);
 
+    /// <summary>
+    /// Port, a joiner: the reason the host gave as it refused this machine's last player (DPERR_CANTCREATEPLAYER from
+    /// <see cref="CreatePlayer"/>); empty when it gave none (a full room's, or an older host's).
+    /// </summary>
+    std::string LastRefusal() const;
+
+    /// <summary>
+    /// Port, the host: its say on each player a joiner asks to create, before anyone hears of it: the player's name and
+    /// data in, the reason for refusing it out (none: it is created). A refused joiner's game is told the reason with
+    /// DPERR_CANTCREATEPLAYER (an older one reads only the code), and its link closes. None set: every player comes in.
+    /// </summary>
+    using Admission = std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data)>;
+    void SetAdmission(Admission admission);
+
     /// <summary>Creates a group; <paramref name="groupID"/> receives its id.</summary>
     uint32_t CreateGroup(uint32_t& groupID, const DPNAME& name, std::span<const uint8_t> data, uint32_t flags);
 

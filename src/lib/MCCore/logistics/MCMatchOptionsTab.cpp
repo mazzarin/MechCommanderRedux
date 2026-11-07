@@ -204,18 +204,36 @@ namespace
     int SensorsValue = 1;
     int MinesValue = 1;
 
+    /// <summary>
+    /// Whether the room plays <typeparamref name="Option"/>'s value <typeparamref name="Value"/> at some version (every
+    /// game in it has that version's rules: the capability map's): the host's click skips it otherwise.
+    /// </summary>
+    template <MCMatchOption Option, auto Value> bool RoomPlays()
+    {
+        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return game == nullptr || MCRoomVersion(MCCapabilityOf(Option), static_cast<int32_t>(Value),
+                                                game->AgreedRules(MCMatchRule::Supported))
+                                      .has_value();
+    }
+
+    /// <summary>A weather's or time of day's choice, offered while the room plays it.</summary>
+    template <MCMatchOption Option, auto Value> constexpr Choice ChoiceOf(std::string_view name)
+    {
+        return Choice{name, static_cast<int32_t>(Value), RoomPlays<Option, Value>};
+    }
+
     constexpr std::string_view MissionOwnName = "MISSION'S";
     constexpr std::array WeatherChoices = {Choice{MissionOwnName, MissionOwn},
-                                           Choice{"CLEAR", static_cast<int32_t>(MCWeatherKind::Clear)},
-                                           Choice{"RAIN", static_cast<int32_t>(MCWeatherKind::Rain)},
-                                           Choice{"DOWNPOUR", static_cast<int32_t>(MCWeatherKind::Downpour)},
-                                           Choice{"LIGHT SNOW", static_cast<int32_t>(MCWeatherKind::LightSnow)},
-                                           Choice{"SNOW", static_cast<int32_t>(MCWeatherKind::Snow)},
-                                           Choice{"BLIZZARD", static_cast<int32_t>(MCWeatherKind::Blizzard)}};
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::Clear>("CLEAR"),
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::Rain>("RAIN"),
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::Downpour>("DOWNPOUR"),
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::LightSnow>("LIGHT SNOW"),
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::Snow>("SNOW"),
+                                           ChoiceOf<MCMatchOption::Weather, MCWeatherKind::Blizzard>("BLIZZARD")};
     constexpr std::array TimeChoices = {Choice{MissionOwnName, MissionOwn},
-                                        Choice{"DAY", static_cast<int32_t>(MCTimeOfDay::Day)},
-                                        Choice{"DUSK", static_cast<int32_t>(MCTimeOfDay::Dusk)},
-                                        Choice{"NIGHT", static_cast<int32_t>(MCTimeOfDay::Night)}};
+                                        ChoiceOf<MCMatchOption::TimeOfDay, MCTimeOfDay::Day>("DAY"),
+                                        ChoiceOf<MCMatchOption::TimeOfDay, MCTimeOfDay::Dusk>("DUSK"),
+                                        ChoiceOf<MCMatchOption::TimeOfDay, MCTimeOfDay::Night>("NIGHT")};
     constexpr std::array OffOn = {Choice{"OFF", 0}, Choice{"ON", 1}};
 
     /// <summary>
@@ -293,11 +311,7 @@ namespace
         for (const uint32_t id : game.PlayersWithout(rule))
         {
             const std::shared_ptr<MCFidpPlayer> player = game.SessionManager->GetPlayer(id);
-            std::string name = player != nullptr ? player->Name : std::string(UnknownPlayer);
-            // Through unsigned char: a player's name may hold any byte, and toupper takes only those and EOF.
-            std::ranges::transform(name, name.begin(),
-                                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            names.push_back(std::move(name));
+            names.push_back(MCUpperText(player != nullptr ? std::string_view(player->Name) : UnknownPlayer));
         }
 
         return MatchTellToUpgrade(names);
@@ -319,54 +333,56 @@ namespace
 
     constexpr std::array Rows = {
         Row{.Label = "PLAY"},
-        Row{.Label = "WEATHER",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Weather).Name,
             .Description = "RAIN OR SNOW HAMPERS THE FIGHT.",
             .Value = WeatherValue,
             .Choices = WeatherChoices,
             .Changed = WeatherChanged},
-        Row{.Label = "TIME OF DAY",
+        Row{.Label = MCCapabilityOf(MCMatchOption::TimeOfDay).Name,
             .Description = "DUSK OR NIGHT: UNITS SEE LESS.",
             .Value = TimeValue,
             .Choices = TimeChoices,
             .Changed = TimeChanged},
-        Row{.Label = "BRAKING",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Braking).Name,
             .Description = "MECHS BRAKE TO A HALT.",
             .Value = BrakingValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::MechBraking, true>},
-        Row{.Label = "ARTILLERY",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Artillery).Name,
             .Description = "COMMANDERS CALL IN STRIKES.",
             .Value = ArtilleryValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoArtillery, false>},
-        Row{.Label = "PROBES",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Probes).Name,
             .Description = "SENSOR PROBES AND CAMERA DRONES.",
             .Value = ProbesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoProbes, false>},
-        Row{.Label = "SENSORS",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Sensors).Name,
             .Description = "UNITS SPOT FOES PAST SIGHT.",
             .Value = SensorsValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoSensors, false>},
-        Row{.Label = "MINES",
+        Row{.Label = MCCapabilityOf(MCMatchOption::Mines).Name,
             .Description = "MINEFIELDS, AND MINE LAYERS.",
             .Value = MinesValue,
             .Choices = OffOn,
             .Changed = RuleChanged<MCMatchRule::NoMines, false>},
     };
 
-    /// <summary>Each option's row and the rule a player's build must play by for the host to choose it.</summary>
+    /// <summary>Each option's row, and the option (what it needs of a game's build: MCOptionCapabilities).</summary>
     struct RuleRow
     {
         int32_t Row = 0;
-        uint32_t Rule = 0;
+        MCMatchOption Option = MCMatchOption::Weather;
     };
 
-    constexpr std::array RuleRows = {RuleRow{1, MCMatchRule::WeatherRules}, RuleRow{2, MCMatchRule::TimeOfDayRules},
-                                     RuleRow{3, MCMatchRule::MechBraking},  RuleRow{4, MCMatchRule::NoArtillery},
-                                     RuleRow{5, MCMatchRule::NoProbes},     RuleRow{6, MCMatchRule::NoSensors},
-                                     RuleRow{7, MCMatchRule::NoMines}};
+    constexpr std::array RuleRows = {RuleRow{1, MCMatchOption::Weather}, RuleRow{2, MCMatchOption::TimeOfDay},
+                                     RuleRow{3, MCMatchOption::Braking}, RuleRow{4, MCMatchOption::Artillery},
+                                     RuleRow{5, MCMatchOption::Probes},  RuleRow{6, MCMatchOption::Sensors},
+                                     RuleRow{7, MCMatchOption::Mines}};
+
+    static_assert(RuleRows.size() == MCOptionCapabilities.size(), "Every option of the capability map has its row");
 
     /// <summary>Whether <paramref name="row"/> edits <paramref name="value"/>.</summary>
     constexpr bool Edits(const Row& row, const int& value)
@@ -454,9 +470,11 @@ auto ShowMatchOptions(MCLogOptionList& list) -> void
     const bool host = game->IsHost != 0;
     list.SetLocked(!host, LockedHint);
 
+    // An option is held while a player's game plays none of its values (it hasn't the option's first version); a value
+    // the room plays at no version is skipped (its choice's RoomPlays).
     for (const RuleRow& option : RuleRows)
     {
-        list.SetHeld(option.Row, TellToUpgrade(*game, option.Rule));
+        list.SetHeld(option.Row, TellToUpgrade(*game, MCCapabilityOf(option.Option).Rules));
     }
 }
 
@@ -467,12 +485,5 @@ auto MatchTellToUpgrade(std::span<const std::string> names) -> std::string
         return {};
     }
 
-    std::string joined = names.front();
-
-    for (size_t i = 1; i < names.size(); i++)
-    {
-        joined += std::format("{}{}", i + 1 == names.size() ? " AND " : ", ", names[i]);
-    }
-
-    return std::format("TELL {} TO UPGRADE.", joined);
+    return std::format("TELL {} TO UPGRADE.", MCNamesJoined(names));
 }

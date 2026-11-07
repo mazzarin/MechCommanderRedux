@@ -17,6 +17,12 @@
 
 namespace MCTestGuest
 {
+    /// <summary>
+    /// What release 1's game (0.5.0 (724), 16543520) says it plays by, in its rules message once in the room: its join
+    /// says nothing (it came before the join card).
+    /// </summary>
+    inline constexpr uint32_t ReleaseOneRules = 0x18001ffu;
+
     /// <summary>Selects the TCP/IP connection to <paramref name="address"/> ("host:port").</summary>
     inline uint32_t Connect(MCDirectPlay& directPlay, std::string_view address)
     {
@@ -225,15 +231,27 @@ namespace MCTestGuest
     class Guest final : public Peer
     {
     public:
-        /// <summary>A guest who joins as <paramref name="name"/>.</summary>
-        explicit Guest(std::string name = "Guest") : _Name(std::move(name)) {}
+        /// <summary>
+        /// A guest who joins as <paramref name="name"/>, its join card saying its game plays by <paramref name="card"/>,
+        /// as this build's game's does (none: an older build's join, which says nothing).
+        /// </summary>
+        explicit Guest(std::string name = "Guest", std::optional<uint32_t> card = std::nullopt)
+            : _Name(std::move(name)), _Card(card)
+        {
+        }
 
         ~Guest() override { StopListening(); }
 
         Guest(const Guest&) = delete;
         Guest& operator=(const Guest&) = delete;
 
-        bool Join(MCDirectPlay& host, std::string_view address)
+        /// <summary>
+        /// Joins the session at <paramref name="address"/> (the game's <paramref name="host"/> pumped meanwhile), and
+        /// pings as a game's guest does once its room's screen is up (<see cref="Ping"/>), unless
+        /// <paramref name="pings"/> is false: a game still on its way to the room. A host that refuses it at the door
+        /// says why (<see cref="Refusal"/>), and the link is closed.
+        /// </summary>
+        bool Join(MCDirectPlay& host, std::string_view address, bool pings = true)
         {
             constexpr int32_t MostLooks = 40;
 
@@ -278,16 +296,36 @@ namespace MCTestGuest
             }
 
             const DPNAME name{_Name, std::nullopt};
+            const std::vector<uint8_t> card = _Card.has_value() ? MCJoinCard(*_Card) : std::vector<uint8_t>();
             uint32_t id = 0;
+            _Refusal.clear();
 
-            if (WhilePumping(host, [&] { return _DirectPlay.CreatePlayer(id, name, {}, 0); }) != DP_OK)
+            if (WhilePumping(host, [&] { return _DirectPlay.CreatePlayer(id, name, card, 0); }) != DP_OK)
             {
+                _Refusal = _DirectPlay.LastRefusal();
+                _DirectPlay.Close();
                 return false;
             }
 
             StartListening(id);
+
+            if (pings)
+            {
+                Ping();
+            }
+
             return true;
         }
+
+        /// <summary>
+        /// Pings every player for a while, as a game's guest does from its room's screen as it opens: the host then shows
+        /// it the room. Often, as the game's frames go by faster than the clock here: the first pings may reach the host
+        /// before it has taken in this guest's arrival, and go unheard.
+        /// </summary>
+        void Ping() { _PingUntil = std::chrono::steady_clock::now() + PingTime; }
+
+        /// <summary>What the host said its refusal at the door was for (the options' names), if it refused one.</summary>
+        const std::string& Refusal() const { return _Refusal; }
 
         /// <summary>The last match options message the host sent, if any.</summary>
         std::optional<MCMPMatchOptionsMessage> MatchOptions()
@@ -315,7 +353,7 @@ namespace MCTestGuest
             Send(hostId, message);
         }
 
-        /// <summary>The host's messages taking every player to the session screen (its GO, or its room shown again).</summary>
+        /// <summary>The host's messages taking every player to the session screen (its room shown again).</summary>
         int32_t SessionScreens() const { return _SessionScreens; }
 
         /// <summary>Leaves the session: the listener stops once what waits to be sent is out, and the link closes.</summary>
@@ -331,10 +369,30 @@ namespace MCTestGuest
         int32_t MissionsLoaded() const { return _MissionsLoaded; }
 
     private:
+        /// <summary>How long a guest pings (<see cref="Ping"/>), and how often.</summary>
+        static constexpr std::chrono::seconds PingTime{1};
+        static constexpr std::chrono::milliseconds PingEvery{5};
+
         void Take(uint32_t from, std::span<const uint8_t> message) override
         {
             Answer(from, message);
             Keep(message);
+        }
+
+        /// <summary>A ping, while <see cref="Ping"/>'s time lasts.</summary>
+        void EachPass() override
+        {
+            const auto now = std::chrono::steady_clock::now();
+
+            if (now >= _PingUntil.load() || now < _NextPing)
+            {
+                return;
+            }
+
+            _NextPing = now + PingEvery;
+            MCFIPingMessage ping;
+            ping.Header = LinkupHeader(MCLinkupMessageType::Ping);
+            Send(DPID_ALLPLAYERS, ping);
         }
 
         /// <summary>
@@ -390,9 +448,18 @@ namespace MCTestGuest
             _DirectPlay.Send(Id(), from, 0, bytes);
         }
 
-        /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
+        /// <summary>
+        /// Keeps <paramref name="message"/> if it is the host's match options or players' rules, the first time it comes:
+        /// the host sends a guaranteed message again, byte for byte, until it is acknowledged, so an older one's
+        /// re-send would stand for the newest.
+        /// </summary>
         void Keep(std::span<const uint8_t> message)
         {
+            if (!_Kept.emplace(message.begin(), message.end()).second)
+            {
+                return;
+            }
+
             if (message.size() >= sizeof(MCMPPlayersRulesMessage))
             {
                 const auto players = ReadLinkupMessage<MCMPPlayersRulesMessage>(message);
@@ -420,6 +487,10 @@ namespace MCTestGuest
         }
 
         std::string _Name;
+        /// <summary>The rules the guest's join card says, if it sends one.</summary>
+        std::optional<uint32_t> _Card;
+        /// <summary>The host's refusal at the door (the test's thread's own, as is the join).</summary>
+        std::string _Refusal;
         std::optional<MCMPMatchOptionsMessage> _MatchOptions;
         std::optional<MCMPPlayersRulesMessage> _PlayersRules;
         /// <summary>The host's messages taking every player to the session screen.</summary>
@@ -428,8 +499,12 @@ namespace MCTestGuest
         std::atomic<uint32_t> _FileAnswer = 0;
         /// <summary>The load missions the host sent.</summary>
         std::atomic<int32_t> _MissionsLoaded = 0;
-        /// <summary>The inquiries and load missions taken (the listener's own).</summary>
+        /// <summary>The inquiries and load missions taken, and the messages kept (the listener's own).</summary>
         std::set<std::vector<uint8_t>> _Taken;
+        std::set<std::vector<uint8_t>> _Kept;
+        /// <summary>Until when the guest pings (<see cref="Ping"/>), and its next ping (the listener's own).</summary>
+        std::atomic<std::chrono::steady_clock::time_point> _PingUntil{};
+        std::chrono::steady_clock::time_point _NextPing{};
     };
 
     /// <summary>
@@ -460,6 +535,14 @@ namespace MCTestGuest
                 return false;
             }
 
+            // The admission runs on the listener, which owns the connection once it is open.
+            _DirectPlay.SetAdmission(
+                [this](std::string_view, std::span<const uint8_t> data) -> std::optional<std::string>
+                {
+                    const std::lock_guard lock(_Mutex);
+                    _Cards.push_back(MCJoinCardRules(data));
+                    return _RefuseWith;
+                });
             DPSESSIONDESC2& desc = _Desc;
             desc.dwSize = sizeof(desc);
             desc.dwFlags = flags;
@@ -483,6 +566,25 @@ namespace MCTestGuest
 
         /// <summary>Opens the room to new players again, as a host's restart called off does (on the listener).</summary>
         void Unlock() { _AdmitWanted = Admit::Open; }
+
+        /// <summary>
+        /// Refuses every joiner at the door from now on, saying it lacks <paramref name="options"/> (the options' names),
+        /// as a host whose match its game can't play does.
+        /// </summary>
+        void RefuseWith(std::string options)
+        {
+            const std::lock_guard lock(_Mutex);
+            _RefuseWith = std::move(options);
+        }
+
+        /// <summary>
+        /// The rules each joiner's join card said, in the order they came to the door (none for a join without one).
+        /// </summary>
+        std::vector<std::optional<uint32_t>> Cards()
+        {
+            const std::lock_guard lock(_Mutex);
+            return _Cards;
+        }
 
         /// <summary>The players who joined, by id, as DirectPlay announced them.</summary>
         std::vector<uint32_t> Joined()
@@ -548,6 +650,9 @@ namespace MCTestGuest
         };
 
         std::vector<uint32_t> _Joined;
+        /// <summary>The joiners' cards' rules, and the refusal every joiner gets (none: each is let in).</summary>
+        std::vector<std::optional<uint32_t>> _Cards;
+        std::optional<std::string> _RefuseWith;
         /// <summary>The session as hosted, and what the test wants of its new players.</summary>
         DPSESSIONDESC2 _Desc{};
         std::atomic<Admit> _AdmitWanted = Admit::AsIs;
@@ -596,14 +701,22 @@ namespace MCTestGuest
         return true;
     }
 
+    /// <summary>Whether the game's session screen shows player <paramref name="id"/>.</summary>
+    inline bool RoomShows(uint32_t id)
+    {
+        return std::ranges::any_of(GlobalLog()->SessionScreen->PlayerNames, [id](const auto& name)
+                                   { return name != nullptr && name->ShowWindow && name->PlayerId == id; });
+    }
+
     /// <summary>
-    /// Boots the game as a lobby's host on <paramref name="port"/>, has <paramref name="guests"/> join it, and opens the
-    /// session screen (the host's GO, which closes the room).
+    /// Boots the game as a lobby's host on <paramref name="port"/> (straight into its room, the session screen) and has
+    /// <paramref name="guests"/> join it; whether the room came to show them all (the host shows it again for each).
     /// </summary>
     inline bool HostLobbyRoom(std::string_view port, std::initializer_list<std::reference_wrapper<Guest>> guests)
     {
         if (!MCTestGame::StartLobby(std::format("-host -port {} -player BOB", port)) || MultiPlayer() == nullptr ||
-            MultiPlayer()->SessionManager->DirectPlay == nullptr)
+            MultiPlayer()->SessionManager->DirectPlay == nullptr ||
+            GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
         {
             return false;
         }
@@ -616,9 +729,13 @@ namespace MCTestGuest
             }
         }
 
+        const bool shown = SettleUntil(
+            [&guests]
+            {
+                return std::ranges::all_of(guests, [](const Guest& guest) { return RoomShows(guest.Id()); }) &&
+                       std::ranges::all_of(guests, [](const Guest& guest) { return guest.SessionScreens() > 0; });
+            });
         Settle();
-        Go();
-        Settle();
-        return GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
+        return shown && GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen;
     }
 }

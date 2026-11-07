@@ -25,6 +25,7 @@
 #include "platform/MCRenderer.h"
 #include "sprite/MCParticles.h"
 #include "sprite/MCWeather.h"
+#include "sprite/MCPaletteNight.h"
 #include "sprite/MCSceneLights.h"
 #include "sprite/MCSpriteManager.h"
 #include "terrain/MCMapBlockManager.h"
@@ -739,6 +740,7 @@ auto MCCamera::Render() -> void
     ElementList().Reset();
     // Port-only (HD lighting): the shots, fires and explosions drawn now light the world they're drawn into.
     MCSceneLights::Begin(*GlobalPane);
+    MCPaletteNight::Begin();
     terrainWindow->Render(HazeLevel);
 
     if (DrawTerrainGrid != 0)
@@ -756,6 +758,13 @@ auto MCCamera::Render() -> void
     ElementList().Sort();
     ElementList().Draw();
     MCSceneLights::Finish();
+
+    // Port-only (Redux HD): where HD lighting doesn't draw the night, the palette does, over the world on its own
+    // surface (the units' overlays are on the screen, over the view, so they stay as bright).
+    if (_View != nullptr)
+    {
+        MCPaletteNight::Draw(*GlobalPane);
+    }
 
     // Port: the pause and asked shapes are drawn on the screen over the view, at its scale (centred as the original
     // centred them in the view).

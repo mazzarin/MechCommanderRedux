@@ -593,7 +593,8 @@ auto MCLogistics::Start() -> void
     }
     else
     {
-        // Started from a lobby: straight to the ready room, whose cancel button quits the game.
+        // Started from a lobby: straight to the ready room, whose cancel button quits the game. Port-only (the personal
+        // build): it shows while the lobby's join goes on; joined (or hosting), the session screen opens (MCMission).
         SetCurrentScreen(ConnectScreen);
         LogisticsState = 0xe;
         ScreenElement<MCLogButton>(*ConnectScreen, 1)->Callback().SetExec([] { KillTheGame(); });
@@ -811,20 +812,26 @@ auto MCLogistics::SetUpMainScreen(bool fromMenu) -> int32_t
         }
     }
 
-    if (Chat != nullptr)
-    {
-        Chat->Clear();
+    ClearChat();
+    return 0;
+}
 
-        for (const MCGuiHandle<MCLogChatWindow>& handle : ChatWindows)
-        {
-            if (const std::shared_ptr<MCLogChatWindow> window = handle.Lock(); window != nullptr)
-            {
-                window->ResetHistoryPane();
-            }
-        }
+auto MCLogistics::ClearChat() -> void
+{
+    if (Chat == nullptr)
+    {
+        return;
     }
 
-    return 0;
+    Chat->Clear();
+
+    for (const MCGuiHandle<MCLogChatWindow>& handle : ChatWindows)
+    {
+        if (const std::shared_ptr<MCLogChatWindow> window = handle.Lock(); window != nullptr)
+        {
+            window->ResetHistoryPane();
+        }
+    }
 }
 
 namespace

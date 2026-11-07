@@ -31,6 +31,7 @@
 #include "main/MCLogistics.h"
 #include "main/MCGameStrings.h"
 #include "network/MCLobbyUpdate.h"
+#include "network/MCMPGameConfiguration.h"
 #include "network/MCMultiPlayer.h"
 #include "sound/MCSoundSystem.h"
 #include "vfx/MCVfxFunctions.h"
@@ -62,6 +63,11 @@ namespace
     /// </summary>
     constexpr uint8_t WaitsLineField = 0x10;
     constexpr uint8_t WaitsLineOutline = 0x18;
+    /// <summary>
+    /// Port-only (the personal build): how long (the game clock) the host waits for a player who joined to ping (its
+    /// game up) before it shows that player the room anyway, its pings lost on the way.
+    /// </summary>
+    constexpr uint32_t ShowAnywayMs = 5000;
 
     MCSessionScreen& Screen()
     {
@@ -136,11 +142,28 @@ namespace
         loadScreen.CancelButton->Callback().SetExec(Cancel);
         loadScreen.LoadSaveButton->Callback().SetExec(LoadGame);
         loadScreen.FilePane->SetMultiplayer(false);
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(Screen());
-        GlobalLog()->LogisticsState = 8;
-        GlobalLog()->ShowLogScreen(true, true);
+
+        // Port-only (the personal build): the room shown again loads its mission on the session screen itself.
+        if (GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
+        {
+            GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
+            GlobalLog()->SetCurrentScreen(Screen());
+            GlobalLog()->LogisticsState = 8;
+            GlobalLog()->ShowLogScreen(true, true);
+        }
+
+        // Port-only (the personal build): a player who joined meanwhile wasn't asked for the file: the room is shown
+        // again first, which asks everyone (MCSessionScreen::WatchRoom).
+        if (!Screen().AllShown())
+        {
+            return;
+        }
+
         SendFileName(GuaranteedHeader(MCMPMessageType::LoadMission), Screen().MissionFile);
+        // Port-only (the personal build): then the points as the host has them: a guest's load sets the mission's own,
+        // and the host may have changed them since (or set them again as it showed the room again).
+        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), ReadPoints(*Screen().Team1RPText), 1);
+        SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), ReadPoints(*Screen().Team2RPText), 2);
     }
 
     /// <summary>The load-mission button: opens the load screen for a multiplayer mission.</summary>
@@ -161,6 +184,9 @@ namespace
     {
         std::string missionName = SplitFileName(Screen().MissionFile);
         std::string extension = ".MPK";
+        // Port-only (the personal build): the room takes players until here (the original locked it at the ready room's
+        // GO).
+        MultiPlayer()->SessionManager->LockSession();
         SendFileName(GuaranteedHeader(MCMPMessageType::Start), missionName);
         GuiSystem().RemoveTimer(Screen(), ScreenTimer);
         MultiPlayer()->SessionManager->SendLatencyInfo();
@@ -179,6 +205,14 @@ namespace
     /// </summary>
     void StartMission()
     {
+        // Port-only (the personal build): a player who joined since the button lit is shown the room first.
+        Screen().CheckGoodToGo();
+
+        if (Screen().StartButton->Disabled)
+        {
+            return;
+        }
+
         const std::string question = MCLobbyUpdate::StartQuestion();
 
         if (question.empty())
@@ -586,6 +620,8 @@ auto MCSessionScreen::HandleEvent(MCGuiEvent& event) -> void
                         SendTwoLongs(GuaranteedHeader(MCMPMessageType::RPUpdate), Team2RP, 2);
                     }
                 }
+
+                WatchRoom();
             }
         }
     }
@@ -683,8 +719,11 @@ auto MCSessionScreen::ShowGuiWindow(bool show) -> void
 auto MCSessionScreen::Activate(bool refresh) -> void
 {
     const bool isHost = MultiPlayer()->IsHost != 0;
+    // Port-only (the personal build): a host opens its room alone and waits for players (the original's ready room
+    // waited, and its GO took two); back from a match, or a guest, the room still takes two.
+    const size_t fewest = isHost && !refresh ? 1 : 2;
 
-    if (MultiPlayer()->SessionManager->GetPlayers(nullptr).size() < 2)
+    if (MultiPlayer()->SessionManager->GetPlayers(nullptr).size() < fewest)
     {
         Cancel();
         return;
@@ -697,11 +736,7 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     ExitButton->Disabled = false;
     StartButton->Disabled = true;
 
-    if (LaunchedFromLobby != 0)
-    {
-        ExitButton->Callback().SetExec(CancelToMPlayer);
-    }
-
+    ExitButton->Callback().SetExec(LaunchedFromLobby != 0 ? CancelToMPlayer : LeaveRoom);
     CancelMission();
     Team2RP = 0;
     Team1RP = 0;
@@ -764,6 +799,16 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     GlobalLog()->ShowLightsOn(*this, std::nullopt);
     lights.SetNumPlayers(NumPlayers);
     size_t index = 0;
+    // Port-only (the personal build): the host's guests whose games are up as they are shown the room (WatchRoom).
+    _ShownReady.clear();
+
+    for (const auto& player : players)
+    {
+        if (player->HeardPing)
+        {
+            _ShownReady.insert(player->Id);
+        }
+    }
 
     do
     {
@@ -814,8 +859,149 @@ auto MCSessionScreen::Activate(bool refresh) -> void
     // The ticker shows on this screen now.
     GlobalLog()->ShowTickerOn(*this);
 
-    GuiSystem().AddTimer(weak_from_this(), ScreenTimer, 500, 0, 0, false);
+    // Port-only (the personal build): unique, as the room shown again opens the screen again.
+    GuiSystem().AddUniqueTimer(weak_from_this(), ScreenTimer, 500, 0, 0, false);
     MultiPlayer()->ChatCallback = LogisticsChatCallback;
+}
+
+auto MCSessionScreen::ShowRoomAgain() -> void
+{
+    // The host's picks as they stand; the screen then starts afresh, for everyone.
+    const std::array<uint32_t, TeamSlots> team1 = Team1Players;
+    const std::array<uint32_t, TeamSlots> team2 = Team2Players;
+    const std::array<int8_t, 2> techBases = {Team1TechBase, Team2TechBase};
+    const std::array<int32_t, 2> points = {ReadPoints(*Team1RPText), ReadPoints(*Team2RPText)};
+    const std::string mission = MissionFile.empty() ? std::string() : _LoadedMission;
+    SDL_Log("Session screen: showing the room to %zu players again%s",
+            MultiPlayer()->SessionManager->GetPlayers(nullptr).size(),
+            mission.empty() ? "" : ", its mission asked of everyone again");
+    Activate(false);
+
+    // The mission first (every player asked for its file again, the newcomer too): its load sets its own points and,
+    // when it locks them, its tech bases.
+    if (!mission.empty())
+    {
+        LoadMission(mission);
+    }
+
+    // Each player still here back in its slot, told to everyone.
+    const auto placeAgain = [this](int8_t team, const std::array<uint32_t, TeamSlots>& players)
+    {
+        for (size_t slot = 0; slot < TeamSlots; ++slot)
+        {
+            if (players[slot] != NoPlayer && NameOf(players[slot]) != nullptr)
+            {
+                AssignPlayer(players[slot], team, static_cast<int8_t>(slot), false);
+            }
+        }
+    };
+
+    placeAgain(1, team1);
+    placeAgain(2, team2);
+
+    if (_MissionLocked)
+    {
+        return;
+    }
+
+    for (int8_t team = 1; team <= 2; ++team)
+    {
+        const int8_t techBase = techBases[static_cast<size_t>(team - 1)];
+        SetTeamTechBase(team, techBase);
+        SendTwoLongs(GuaranteedHeader(MCMPMessageType::TechbaseChange), team, techBase);
+    }
+
+    // The timer sends them (each team's last sent is 0 now); the mission's load sends them again after its own.
+    SetTeam1RP(points[0]);
+    SetTeam2RP(points[1]);
+}
+
+auto MCSessionScreen::AllShown() -> bool
+{
+    // A player leaving has lost its number (it is still listed while its leave is told).
+    return std::ranges::all_of(
+        MultiPlayer()->SessionManager->GetPlayers(nullptr), [this](const auto& player)
+        { return player == nullptr || !player->HasPlayerNumber || NameOf(player->Id) != nullptr; });
+}
+
+auto MCSessionScreen::WatchRoom() -> void
+{
+    MCMultiPlayer& game = *MultiPlayer();
+
+    if (game.IsHost == 0 || GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
+    {
+        return;
+    }
+
+    MCSessionManager& manager = *game.SessionManager;
+    const auto& players = manager.GetPlayers(nullptr);
+
+    // Port: a configured match (MPGameConfiguration) goes on as soon as every player it named has joined, straight to
+    // the mech bay: no map screen or settings wait. A problem leaves the host here, with START.
+    if (GameConfiguration.Active)
+    {
+        MPPollConfiguredMatch();
+
+        if (players.size() >= GameConfiguration.Roster.size() &&
+            std::ranges::all_of(GameConfiguration.Roster,
+                                [&players](const MPGamePlayer& wanted)
+                                {
+                                    return std::ranges::any_of(players, [&wanted](const auto& player)
+                                                               { return player->Name == wanted.Name; });
+                                }))
+        {
+            MPBeginConfiguredMatch();
+        }
+
+        if (GlobalLog()->CurrentScreen() != GlobalLog()->SessionScreen)
+        {
+            return;
+        }
+    }
+
+    // Who joined, and whether each game is up. A player gone is forgotten.
+    const uint32_t now = MCPort::Milliseconds();
+    std::erase_if(_SeenSince, [&manager](const auto& seen) { return manager.GetPlayer(seen.first) == nullptr; });
+    bool showAgain = false;
+
+    for (const auto& player : players)
+    {
+        if (player == nullptr || player->Id == manager.MyPlayerID || !player->HasPlayerNumber)
+        {
+            continue;
+        }
+
+        const uint32_t since = _SeenSince.try_emplace(player->Id, now).first->second;
+
+        if (NameOf(player->Id) == nullptr)
+        {
+            showAgain = showAgain || player->HeardPing || now - since >= ShowAnywayMs;
+        }
+        else if (player->HeardPing && !_ShownReady.contains(player->Id))
+        {
+            // Shown the room before its game was up: shown it again now that it is.
+            showAgain = true;
+        }
+    }
+
+    // START waits for a player who joined until it is shown.
+    if (!AllShown())
+    {
+        CheckGoodToGo();
+    }
+
+    // Nothing under way on the screen: a match, the wait for check-ins after one, a configured match's or a mission's
+    // wait for the players' files, a dialog.
+    const bool asking = std::ranges::any_of(PlayerNames, [](const auto& name)
+                                            { return name->FileStatus == MCPlayerNameObject::MCFileStatus::Waiting; });
+
+    if (!showAgain || game.InLogistics || game.InMission || asking || MPConfiguredMatchWaiting() ||
+        GlobalLog()->MessageDialog->IsShowing() || GlobalLog()->QuestionDialog->IsShowing())
+    {
+        return;
+    }
+
+    ShowRoomAgain();
 }
 
 auto MCSessionScreen::NameOf(uint32_t playerId) -> std::shared_ptr<MCPlayerNameObject>
@@ -993,7 +1179,17 @@ auto MCSessionScreen::RemovePlayer(uint32_t playerId) -> void
     nameObject->SetPlayerId(NoPlayer);
     NumPlayers = std::max(NumPlayers - 1, 0);
     LayOutUnassigned(NoPlayer, MaxPlayers, true);
+    _ShownReady.erase(playerId);
+    _SeenSince.erase(playerId);
     CheckGoodToGo();
+
+    // The mission's file asked of it: the answers go on without it (it may have been the last one waited for).
+    if (const MCPlayerNameObject::MCFileStatus asked =
+            std::exchange(nameObject->FileStatus, MCPlayerNameObject::MCFileStatus::NotAsked);
+        asked == MCPlayerNameObject::MCFileStatus::Waiting)
+    {
+        FilesAnswered();
+    }
 }
 
 auto MCSessionScreen::SetTeam1RP(int32_t resourcePoints) const -> void
@@ -1149,6 +1345,13 @@ auto MCSessionScreen::FileReport(uint32_t playerId, MCFileCheck check) -> void
 
         reporter->FileStatus = statusOf(check);
     }
+
+    FilesAnswered();
+}
+
+auto MCSessionScreen::FilesAnswered() -> void
+{
+    using Status = MCPlayerNameObject::MCFileStatus;
 
     // Port: the names of the players whose file is so.
     const auto named = [this](Status status)
@@ -1372,6 +1575,7 @@ auto MCSessionScreen::LoadMission(std::string_view fileName) -> void
             {
                 // Ask everyone whether they have the file, and wait for the answers.
                 MissionFile = path;
+                _LoadedMission = fileName;
                 MultiPlayer()->SendFileInquiry(MissionFile.data());
                 // The server has it already.
                 const uint32_t serverId = MultiPlayer()->SessionManager->ServerID;
@@ -1414,6 +1618,8 @@ auto MCSessionScreen::CancelMission() -> void
     SetMapName({});
     SetMap({});
     MissionFile.clear();
+    _LoadedMission.clear();
+    _MissionLocked = false;
     MissionLabel.clear();
     SetTeam1RP(0);
     SetTeam2RP(0);
@@ -1456,7 +1662,7 @@ auto MCSessionScreen::CheckGoodToGo() -> void
 
     const bool goodToGo = NumUnassigned == awayUnpicked && !MissionFile.empty() && homeTeam.has_value() &&
                           filled(*homeTeam) && enemyTeam.has_value() && filled(*enemyTeam) && filled(Team1Players) &&
-                          filled(Team2Players);
+                          filled(Team2Players) && AllShown();
 
     // Port-only: while a guest away updating has its place kept, its line is in the update's line's place, and START
     // asks before it starts without it.
@@ -1550,6 +1756,7 @@ auto MCSessionScreen::ControlsOff() -> void
 auto MCSessionScreen::LockControls(bool lock) -> void
 {
     SetTeamControls(!lock);
+    _MissionLocked = lock;
 
     if (lock)
     {

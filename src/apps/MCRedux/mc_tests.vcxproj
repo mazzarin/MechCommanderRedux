@@ -134,6 +134,7 @@
     <ClCompile Include="tests\MissionTests.cpp" />
     <ClCompile Include="tests\MoverTests.cpp" />
     <ClCompile Include="tests\MultiPlayerTests.cpp" />
+    <ClCompile Include="tests\NightLightsTests.cpp" />
     <ClCompile Include="tests\ObjectCoreTests.cpp" />
     <ClCompile Include="tests\ObjectQueueTests.cpp" />
     <ClCompile Include="tests\ObjectTypeTests.cpp" />

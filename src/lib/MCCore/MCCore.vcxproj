@@ -277,6 +277,7 @@
     <ClCompile Include="mission\MCMission.cpp" />
     <ClCompile Include="mission\MCMissionResults.cpp" />
     <ClCompile Include="mission\MCMissionResultsScreen.cpp" />
+    <ClCompile Include="mission\MCNightLights.cpp" />
     <ClCompile Include="mission\MCScenario.cpp" />
     <ClCompile Include="mission\MCScenarioLoad.cpp" />
     <ClCompile Include="mission\MCScenarioObjectives.cpp" />
@@ -442,6 +443,7 @@
     <ClCompile Include="sprite\MCHdMovie.cpp" />
     <ClCompile Include="sprite\MCMechActor.cpp" />
     <ClCompile Include="sprite\MCMechStops.cpp" />
+    <ClCompile Include="sprite\MCPaletteNight.cpp" />
     <ClCompile Include="sprite\MCParticles.cpp" />
     <ClCompile Include="sprite\MCPUAppearance.cpp" />
     <ClCompile Include="sprite\MCPUAppearanceType.cpp" />
@@ -742,6 +744,7 @@
     <ClInclude Include="mission\MCMission.h" />
     <ClInclude Include="mission\MCMissionResults.h" />
     <ClInclude Include="mission\MCMissionResultsScreen.h" />
+    <ClInclude Include="mission\MCNightLights.h" />
     <ClInclude Include="mission\MCScenario.h" />
     <ClInclude Include="mission\MCScenarioObjectives.h" />
     <ClInclude Include="mission\MCScenarioPart.h" />
@@ -902,6 +905,7 @@
     <ClInclude Include="sprite\MCInBetween.h" />
     <ClInclude Include="sprite\MCMechActor.h" />
     <ClInclude Include="sprite\MCMechStops.h" />
+    <ClInclude Include="sprite\MCPaletteNight.h" />
     <ClInclude Include="sprite\MCParticles.h" />
     <ClInclude Include="sprite\MCPUAppearance.h" />
     <ClInclude Include="sprite\MCPUAppearanceType.h" />

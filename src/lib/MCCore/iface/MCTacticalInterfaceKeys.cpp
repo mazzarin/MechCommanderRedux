@@ -8,6 +8,7 @@
 #include "iface/MCCommandParser.h"
 #include "iface/MCMechBar.h"
 #include "logistics/MCPreferencesMenu.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCForces.h"
@@ -343,6 +344,14 @@ auto MCTacticalInterface::HandleKeyDown(MCGuiEvent& event) -> void
         {
             SetMode(MCInterfaceMode::PowerDown);
             sendToSelection(MCTacticalOrderCode::PowerDown);
+        }
+        else if (is(MCKeyCommand::Lights))
+        {
+            // Port-only (Redux HD): the selection's headlights off, or on again if all are off (mission/MCNightLights.h).
+            if (CommandParser != nullptr)
+            {
+                MCNightLights::Toggle(CommandParser->SubjectMovers());
+            }
         }
         else if (is(MCKeyCommand::Eject))
         {

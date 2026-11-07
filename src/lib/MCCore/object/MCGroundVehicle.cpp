@@ -21,6 +21,7 @@
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
 #include "main/MCGameStrings.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCAIControl.h"
@@ -890,6 +891,8 @@ auto MCGroundVehicle::Update() -> int32_t
 
     if (IsDestroyed() == 0 || DeathTimer < 0.0)
     {
+        const bool moved = MCTerrain::MetersPerVertex <= DistanceSinceMarkSeen;
+
         if (GetAwake() == 0 || IsDisabled() != 0 || DistanceSinceMarkSeen < MCTerrain::MetersPerVertex)
         {
             if (IsDisabled() != 0 && DeathTimer != 0.0f && Smoke != nullptr)
@@ -910,6 +913,13 @@ auto MCGroundVehicle::Update() -> int32_t
             }
 
             DistanceSinceMarkSeen = 0.0f;
+        }
+
+        // Port-only (Redux HD): at night its headlight shows the ground ahead and gives it away
+        // (mission/MCNightLights.h).
+        if (GetAwake() != 0 && IsDisabled() == 0)
+        {
+            MCNightLights::Mark(*this, 0.0f, moved);
         }
     }
     else

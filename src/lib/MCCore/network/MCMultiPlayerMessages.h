@@ -82,7 +82,13 @@ enum class MCMPMessageType : uint16_t
     /// first): it stays, and the room no longer keeps its place (network/MCLobbyUpdate.h). A header alone; a build
     /// without it ignores it.
     /// </summary>
-    RestartOff = 52
+    RestartOff = 52,
+    /// <summary>
+    /// Port-only (Redux HD): a player's LIGHTS (<c>MCMPLightsMessage</c>), to the server, which turns them and sends it on
+    /// to everyone (mission/MCNightLights.h). Sent only in a match whose rules have MCMatchRule::NightLights, so every
+    /// game in it knows it.
+    /// </summary>
+    Lights = 53
 };
 
 /// <summary>The header word of a guaranteed game message of <paramref name="type"/>.</summary>
@@ -173,6 +179,23 @@ struct MCMPPlayersRulesMessage : public MCFIGuaranteedMessageHeader
 };
 
 static_assert(sizeof(MCMPPlayersRulesMessage) == 0x39);
+
+/// <summary>The most units a Lights message names: a player's movers (MCMultiPlayer::MaxLocalMovers).</summary>
+inline constexpr size_t MaxLightsParts = 12;
+
+/// <summary>Port-only: a player's units' headlights turned on or off (MCMPMessageType::Lights), the first Count used.</summary>
+struct MCMPLightsMessage : public MCFIGuaranteedMessageHeader
+{
+    /// <summary>The player whose units they are.</summary>
+    int8_t CheckInId = 0;
+    /// <summary>1: on; 0: off.</summary>
+    uint8_t On = 0;
+    uint8_t Count = 0;
+    /// <summary>The units' part ids.</summary>
+    std::array<uint16_t, MaxLightsParts> Parts{};
+};
+
+static_assert(sizeof(MCMPLightsMessage) == 0x23);
 
 /// <summary>Player order (guaranteed, to the server): a tactical order packed into two words.</summary>
 /// <remarks>Fixed layout.</remarks>

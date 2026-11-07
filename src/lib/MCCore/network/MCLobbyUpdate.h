@@ -12,12 +12,13 @@ enum class MCRoomRefusal : uint8_t;
 //   match.
 // - RESTART writes the rejoin note (network/MCRejoinNote.h) and tells the room (MCMPMessageType::Updating), then the
 //   game quits and the update goes in; the new version joins or hosts again as the note says. A guest's room keeps its
-//   place (no "has left the game", which ends a lobby's game), and its host opens the room to it again until it is
-//   back, half a minute at most; START meanwhile asks before it starts without the guest, and a match started lets the
-//   places go and closes the room. A room keeps a place only for a build that says it rejoins, and once a guest: a guest whose place it has
-//   kept (its restart called off, or back from its update) installs its next update after the match. A host's guests
-//   say so and join the same address again for up to half a minute: a new room there (the host's new version) has kept no
-//   one's place; the same room (the host's restart called off) still has.
+//   place (its name stays in its slot), half a minute at most, and takes it back as it takes any player who joins (the
+//   room takes players until START); START meanwhile asks before it starts without the guest, and a match started lets
+//   the places go. A room keeps a place only for a build that says it
+//   rejoins, and once a guest: a guest whose place it has kept (its restart called off, or back from its update)
+//   installs its next update after the match. A host's guests say so and join the same address again for up to half a
+//   minute: a new room there (the host's new version) has kept no one's place; the same room (the host's restart
+//   called off) still has.
 // - RESTART is off when the update fails after it (or the room's match starts before the update goes in): the note
 //   goes, and the room is told (MCMPMessageType::RestartOff), dropping the place it keeps; a host keeps its guests'
 //   places, as they left to wait for it.
@@ -37,8 +38,6 @@ namespace MCLobbyUpdate
     inline constexpr std::chrono::milliseconds SendTime{500};
     /// <summary>How often a guest waiting for its host tries to join again.</summary>
     inline constexpr std::chrono::milliseconds TryEvery{500};
-    /// <summary>How long the host lets a guest back in settle (numbered by the session) before showing it the room.</summary>
-    inline constexpr std::chrono::seconds SettleTime{1};
 
     /// <summary>A clock the room's waits go by.</summary>
     using MCClock = std::function<std::chrono::steady_clock::time_point()>;

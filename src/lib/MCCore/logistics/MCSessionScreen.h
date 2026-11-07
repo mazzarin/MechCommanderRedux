@@ -13,8 +13,9 @@ class MCGuiEvent;
 enum class MCFileCheck : uint8_t;
 
 /// <summary>
-/// The multiplayer session (ready room) screen: the players and the two teams, each team's resource points and
-/// tech base, the mission chosen by the host, and the load/start buttons.
+/// The multiplayer session screen: the players and the two teams, each team's resource points and tech base, the
+/// mission chosen by the host, and the load/start buttons. Port-only (the personal build): the game's room, which
+/// hosting and joining open (the original's ready room is gone); it takes players until START.
 /// </summary>
 /// <remarks>Original source: <c>logistics\logsession.cpp</c> (<c>SessionScreen</c>).</remarks>
 class MCSessionScreen : public MCLogObject
@@ -69,9 +70,21 @@ public:
 
     /// <summary>
     /// Fills the screen from the session: the players, the teams and the controls for host or guest;
-    /// <paramref name="refresh"/> (back from a mission) waits for everyone to check in again.
+    /// <paramref name="refresh"/> (back from a mission) waits for everyone to check in again. Port-only (the personal
+    /// build): a host opens it alone, waiting for players.
     /// </summary>
     void Activate(bool refresh);
+
+    /// <summary>
+    /// Port-only (the personal build): the host shows its room to every player again, as a player joining needs (the
+    /// original's GO did it once): each game's screen starts afresh (<c>SwitchScreen</c>) and the host sends its picks
+    /// again in the messages every build takes: the teams, the mission (every player asked for its file again), the
+    /// tech bases, the points and the match options.
+    /// </summary>
+    void ShowRoomAgain();
+
+    /// <summary>Port-only (the personal build): whether every player in the session is on the screen.</summary>
+    bool AllShown();
 
     /// <summary>
     /// The session's player ids for the name slots: <paramref name="ids"/> ascending, the empty slots
@@ -103,8 +116,8 @@ public:
     void FileReport(uint32_t playerId, MCFileCheck check);
 
     /// <summary>
-    /// Port-only (the personal build): player <paramref name="playerId"/> is gone from the room for good (a guest away
-    /// updating that didn't rejoin in time): its name and its place on a team go, here only.
+    /// Port-only (the personal build): player <paramref name="playerId"/> is gone from the room for good (it left before
+    /// the match, or a guest away updating didn't rejoin in time): its name and its place on a team go, here only.
     /// </summary>
     void RemovePlayer(uint32_t playerId);
 
@@ -123,8 +136,9 @@ public:
 
     /// <summary>
     /// Lights the start button when every player is on a team and a mission is loaded. Port-only (the personal build):
-    /// and no guest is away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is,
-    /// <see cref="StartWaits"/> says whom the room waits for, in the update's line's place.
+    /// and every player in the session is on the screen (a player who just joined is shown first), and no guest is
+    /// away updating, for a while at most in all (network/MCLobbyUpdate.h); while one is, <see cref="StartWaits"/>
+    /// says whom the room waits for, in the update's line's place.
     /// </summary>
     void CheckGoodToGo();
 
@@ -257,8 +271,34 @@ private:
     /// <summary>The name slot of <paramref name="playerId"/>, or null.</summary>
     std::shared_ptr<MCPlayerNameObject> NameOf(uint32_t playerId);
 
+    /// <summary>
+    /// Port-only (the personal build): the host's watch on its room, each tick: a configured match's start, and a player
+    /// who joined (or a guest whose game was not yet up when it was shown the room) shown the room
+    /// (<see cref="ShowRoomAgain"/>) once its game is up (it pinged, <c>MCFidpPlayer::HeardPing</c>), or after
+    /// <c>ShowAnywayMs</c>, as long as nothing is under way on the screen.
+    /// </summary>
+    void WatchRoom();
+
+    /// <summary>
+    /// The answers to the mission file's inquiry so far: when every player has the file, the load goes on (port: once
+    /// the host is told whose game couldn't check its data); when none is still waited for and some lack it, they are
+    /// named and the mission is called off.
+    /// </summary>
+    void FilesAnswered();
+
     /// <summary>Until when (the game clock) the screen keeps pinging after it opens.</summary>
     uint32_t _PingUntil = 0;
     /// <summary>The screen still pings.</summary>
     bool _Pinging = false;
+    /// <summary>Port-only (the personal build): the name the host loaded its mission by, while one is loaded.</summary>
+    std::string _LoadedMission;
+    /// <summary>Port-only (the personal build): the loaded mission fixes its points and tech bases (its Lock block).</summary>
+    bool _MissionLocked = false;
+    /// <summary>
+    /// Port-only (the personal build): the host's guests whose game was up (they had pinged) when they were last shown
+    /// the room; one shown before it was up is shown it again once it is.
+    /// </summary>
+    std::set<uint32_t> _ShownReady;
+    /// <summary>Port-only (the personal build): when (the game clock) the host first saw each player in the session.</summary>
+    std::map<uint32_t, uint32_t> _SeenSince;
 };

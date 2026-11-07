@@ -102,6 +102,8 @@ namespace
         {MCKeyCommand::InterfaceSizeDown, 0xc, KeyAlt},
         {MCKeyCommand::InterfaceSizeUpAlternate, 0x4e, KeyAlt},
         {MCKeyCommand::InterfaceSizeDownAlternate, 0x4a, KeyAlt},
+        // Port-only (Redux HD): the headlights, N (free on both layouts).
+        {MCKeyCommand::Lights, 0x31, 0},
     };
 
     /// <summary>
@@ -172,6 +174,7 @@ namespace
         {"LAY MINES", MCKeyCommand::LayMines, MCKeyCommand::LayMinesAlternate},
         {"POWER UP", MCKeyCommand::PowerUp},
         {"POWER DOWN", MCKeyCommand::PowerDown},
+        {"LIGHTS", MCKeyCommand::Lights},
         {"EJECT", MCKeyCommand::Eject},
         {"INFO", MCKeyCommand::Info},
         {"FORCE ORDER (HOLD)", MCKeyCommand::ForcedOrder, MCKeyCommand::ForcedOrderAlternate},
@@ -324,6 +327,7 @@ namespace
         {MCKeyCommand::InterfaceSizeDown, "InterfaceSizeDown"},
         {MCKeyCommand::InterfaceSizeUpAlternate, "InterfaceSizeUpAlternate"},
         {MCKeyCommand::InterfaceSizeDownAlternate, "InterfaceSizeDownAlternate"},
+        {MCKeyCommand::Lights, "Lights"},
     };
 
     /// <summary>A key's name (as PREFS keeps it), and the Mac keyboard's label for it when that differs.</summary>

@@ -25,6 +25,19 @@ public:
     /// <summary>Maps see-through pixel <paramref name="p"/> through <paramref name="table"/>.</summary>
     void Map(uint8_t& p, MCColorTable table);
 
+    /// <summary>Maps pixel <paramref name="p"/> through <paramref name="table"/>: a see-through one by <see cref="Map"/>.</summary>
+    void Translate(uint8_t& p, MCColorTable table)
+    {
+        if (At(p))
+        {
+            Map(p, table);
+        }
+        else
+        {
+            p = table[p];
+        }
+    }
+
     /// <summary>Blends <paramref name="color"/> over see-through pixel <paramref name="p"/> (its AlphaTable row).</summary>
     void Blend(uint8_t& p, uint8_t color);
 
@@ -176,6 +189,7 @@ public:
 
     void Clear(MCWindow& target, const MCRect& rect, uint8_t color) override;
     void Hash(MCWindow& target, const MCRect& rect, uint8_t color) override;
+    void Translate(MCWindow& target, const MCRect& rect, MCColorTable table) override;
     void Copy(MCWindow& target, const MCCopyCommand& command) override;
     void AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command) override;
     void ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command) override;

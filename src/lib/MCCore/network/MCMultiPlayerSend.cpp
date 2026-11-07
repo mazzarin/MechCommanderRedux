@@ -317,6 +317,39 @@ int32_t MCMultiPlayer::SendEndScenario(int32_t result)
     return 0;
 }
 
+int32_t MCMultiPlayer::SendLights(int32_t checkInId, std::span<const std::shared_ptr<MCMover>> units, bool on)
+{
+    static_assert(MaxLightsParts == static_cast<size_t>(MaxLocalMovers));
+
+    // Every field set: the buffer holds the last message's bytes past the header.
+    auto message = StartGuaranteedMessage<MCMPLightsMessage>(MCMPMessageType::Lights);
+    message.CheckInId = static_cast<int8_t>(checkInId);
+    message.On = on ? 1 : 0;
+    message.Count = 0;
+    message.Parts = {};
+
+    for (const std::shared_ptr<MCMover>& unit : units)
+    {
+        if (unit != nullptr && message.Count < message.Parts.size())
+        {
+            message.Parts[message.Count++] = static_cast<uint16_t>(unit->PartId);
+        }
+    }
+
+    PutMessage(message);
+
+    if (IsServer)
+    {
+        SessionManager->SendMessageToGroup(0, Outgoing(sizeof(MCMPLightsMessage)));
+    }
+    else
+    {
+        SessionManager->SendMessageToServerGuaranteed(Outgoing(sizeof(MCMPLightsMessage)));
+    }
+
+    return 0;
+}
+
 int32_t MCMultiPlayer::SendPlayerOrder(MCTacticalOrder& order, bool queued, std::span<const int32_t> moverParts,
                                        std::span<const std::weak_ptr<MCMoverGroup>> groups, bool fromGroup)
 {

@@ -20,6 +20,7 @@
 #include "logistics/MCPurVehicleList.h"
 #include "logistics/MCVehiclePurchaseBlock.h"
 #include "logistics/MCReusableDialog.h"
+#include "logistics/MCSessionScreen.h"
 #include "logistics/MCSplashScreen.h"
 #include "ai/MCTacticalOrder.h"
 #include "appear/MCAppearanceTypeList.h"
@@ -517,8 +518,9 @@ namespace MCTestGame
         {
             RunFrame(1.0f / 15.0f);
 
+            // The room (the session screen) once the lobby's join is done, or a dialog saying it failed.
             if (Mission()->State == MCMissionState::Logistics && GlobalLog() != nullptr &&
-                (GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen ||
+                (GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen ||
                  GlobalLog()->MessageDialog->IsShowing()) &&
                 GuiSystem().SmackerWindow == nullptr)
             {

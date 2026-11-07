@@ -16,6 +16,7 @@
 #include "network/MCWorldStateChunk.h"
 #include "object/MCWeaponHitChunk.h"
 #include "object/MCWeaponShotInfo.h"
+#include "sprite/MCSceneLights.h"
 
 class MCFidpMessage;
 class MCFitIniFile;
@@ -66,6 +67,13 @@ namespace MCMatchRule
     /// <summary>Commanders send no sensor probes or camera drones (PROBES OFF; MCCommander).</summary>
     inline constexpr uint32_t NoProbes = 256;
     /// <summary>
+    /// Port-only (Redux HD): at night, units' headlights change sight (mission/MCNightLights.h): half the day's all
+    /// round, a lit unit's beam and the enemy seeing it further, the player's LIGHTS turning them off
+    /// (MCMPMessageType::Lights). In the match's rules whenever every player's build plays it; it plays where the night
+    /// cuts sight.
+    /// </summary>
+    inline constexpr uint32_t NightLights = 1u << 25;
+    /// <summary>
     /// Not a rule the match plays by: the build's file report carries the hash of the mission's and the shared
     /// gameplay data (MCMissionDataHash), which the host checks against its own (MCMultiPlayer::CheckFileReport); a
     /// build without it sends the original's "checksum", which says only that the file is there.
@@ -84,7 +92,7 @@ namespace MCMatchRule
     inline constexpr uint32_t BrakingFromPrefs = 1u << 31;
     /// <summary>Every rule this build plays by, and what its file report carries (<see cref="DataHash"/>).</summary>
     inline constexpr uint32_t Supported = MechBraking | WeatherRules | TimeOfDayRules | NoArtillery | NoSensors |
-                                          NoMines | NoProbes | DataHash | RejoinsHost;
+                                          NoMines | NoProbes | DataHash | RejoinsHost | NightLights;
 } // namespace MCMatchRule
 
 /// <summary>
@@ -101,6 +109,148 @@ enum class MCFileCheck : uint8_t
     /// <summary>The player has the file; its build says nothing of its data (an older one, upstream's), so it plays.</summary>
     Unchecked,
 };
+
+/// <summary>Port: a MATCH OPTIONS option, by its row (MCOptionCapabilities says what each needs of a game).</summary>
+enum class MCMatchOption : uint8_t
+{
+    Weather,
+    TimeOfDay,
+    Braking,
+    Artillery,
+    Probes,
+    Sensors,
+    Mines,
+};
+
+/// <summary>
+/// Port: a version of a MATCH OPTIONS value: the rules a game plays it by at that version (MCMatchRule bits). A game
+/// plays every version whose rules it has, so a build that keeps an earlier version's play says that version's rules
+/// too, and one that doesn't, doesn't.
+/// </summary>
+struct MCValueVersion
+{
+    int32_t Version = 1;
+    uint32_t Rules = 0;
+};
+
+/// <summary>Port: a value of an option that a later version plays differently, with every version a game may play it at, oldest first.</summary>
+struct MCValueVersions
+{
+    int32_t Value = 0;
+    std::span<const MCValueVersion> Versions;
+};
+
+/// <summary>
+/// Port: an option of the capability map (<see cref="MCOptionCapabilities"/>): its name, as its row and the lines that
+/// name it say it; what every value of it needs at its first version; and the values a later version changed. A value
+/// is a weather or time of day (MCWeatherKind, MCTimeOfDay), or 1 for a rule row's rule played (braking on, ARTILLERY
+/// and the like off).
+/// </summary>
+struct MCOptionCapability
+{
+    MCMatchOption Option = MCMatchOption::Weather;
+    std::string_view Name;
+    uint32_t Rules = 0;
+    std::span<const MCValueVersions> Changed;
+};
+
+namespace MCOptionVersions
+{
+    /// <summary>
+    /// NIGHT: version 1 the look and the sight (Redux HD release 1); version 2 the headlights' sight too
+    /// (MCNightLights), whose games play version 1 with a game of version 1 in the room.
+    /// </summary>
+    inline constexpr std::array Night = {
+        MCValueVersion{.Version = 1, .Rules = MCMatchRule::TimeOfDayRules},
+        MCValueVersion{.Version = 2, .Rules = MCMatchRule::TimeOfDayRules | MCMatchRule::NightLights}};
+    inline constexpr std::array TimeOfDay = {
+        MCValueVersions{.Value = static_cast<int32_t>(MCTimeOfDay::Night), .Versions = Night}};
+}
+
+/// <summary>
+/// Port: the capability map, every MATCH OPTIONS option and its values' versions, gated by the value: the room plays the
+/// host's choice at the latest version every game in it plays (the rules a game's rules message or join card says,
+/// MCJoinCard), and a choice no version of which every game plays is held (the row greyed out, "TELL ... TO UPGRADE.",
+/// or the value skipped) and the match plays the mission's own (or the rule off). A value the host chose
+/// (MCChosenValue) is the room's setup: a joiner that can't play it at the room's version is refused at the door
+/// (MCMultiPlayer::RefusalFor), unless the room doesn't play it. What a version adds isn't checked part by part: a
+/// change to how a value plays is its next version.
+/// </summary>
+inline constexpr std::array MCOptionCapabilities = {
+    MCOptionCapability{.Option = MCMatchOption::Weather, .Name = "WEATHER", .Rules = MCMatchRule::WeatherRules},
+    MCOptionCapability{.Option = MCMatchOption::TimeOfDay,
+                       .Name = "TIME OF DAY",
+                       .Rules = MCMatchRule::TimeOfDayRules,
+                       .Changed = MCOptionVersions::TimeOfDay},
+    MCOptionCapability{.Option = MCMatchOption::Braking, .Name = "BRAKING", .Rules = MCMatchRule::MechBraking},
+    MCOptionCapability{.Option = MCMatchOption::Artillery, .Name = "ARTILLERY", .Rules = MCMatchRule::NoArtillery},
+    MCOptionCapability{.Option = MCMatchOption::Probes, .Name = "PROBES", .Rules = MCMatchRule::NoProbes},
+    MCOptionCapability{.Option = MCMatchOption::Sensors, .Name = "SENSORS", .Rules = MCMatchRule::NoSensors},
+    MCOptionCapability{.Option = MCMatchOption::Mines, .Name = "MINES", .Rules = MCMatchRule::NoMines},
+};
+
+/// <summary>Port: <paramref name="option"/>'s entry in the capability map.</summary>
+constexpr const MCOptionCapability& MCCapabilityOf(MCMatchOption option)
+{
+    return MCOptionCapabilities[static_cast<size_t>(option)];
+}
+
+static_assert(std::ranges::all_of(MCOptionCapabilities, [](const MCOptionCapability& entry)
+                                  { return &MCCapabilityOf(entry.Option) == &entry; }),
+              "The capability map lists the options in MCMatchOption's order");
+
+/// <summary>
+/// Port: the value of <paramref name="option"/> the host's <paramref name="chosen"/> options need of every game: one it
+/// set away from a room with no choices (a weather or time of day of its own, braking on when its PREFS,
+/// <paramref name="prefsBraking"/>, have it off, ARTILLERY and the like off); none when it chose nothing of it, or what
+/// every game plays (the rule off).
+/// </summary>
+std::optional<int32_t> MCChosenValue(const MCMatchOptions& chosen, const MCOptionCapability& option, bool prefsBraking);
+
+/// <summary>
+/// Port: the versions a game may play <paramref name="option"/>'s <paramref name="value"/> at, oldest first: its own
+/// if a later version changed it, else the option's first.
+/// </summary>
+std::vector<MCValueVersion> MCVersionsOf(const MCOptionCapability& option, int32_t value);
+
+/// <summary>
+/// Port: the version of <paramref name="option"/>'s <paramref name="value"/> a room plays whose games all play by
+/// <paramref name="roomRules"/>: the latest whose rules they have (none: the room can't play it).
+/// </summary>
+std::optional<MCValueVersion> MCRoomVersion(const MCOptionCapability& option, int32_t value, uint32_t roomRules);
+
+/// <summary>
+/// Port: of the values the host's <paramref name="chosen"/> options need of every game (MCChosenValue) that the room
+/// plays (<paramref name="roomRules"/>: MCRoomVersion), the options whose value a joining game with
+/// <paramref name="rules"/> can't play at the room's version: why it is refused (none: it may come in). The map is
+/// <paramref name="map"/> (the game's, or a test's).
+/// </summary>
+std::vector<MCMatchOption> MCOptionsRefusing(const MCMatchOptions& chosen, bool prefsBraking, uint32_t roomRules,
+                                             uint32_t rules,
+                                             std::span<const MCOptionCapability> map = MCOptionCapabilities);
+
+/// <summary>"BOB", "BOB AND ANN", "BOB, ANN AND SALLY": <paramref name="names"/> as a line names them.</summary>
+std::string MCNamesJoined(std::span<const std::string> names);
+
+/// <summary>
+/// Port: <paramref name="text"/> (a player's name, which may hold any byte) in capitals, as the game's letters show it.
+/// </summary>
+std::string MCUpperText(std::string_view text);
+
+/// <summary>
+/// Port: what a joining game puts in its player's data for the host's check at the door (MCSessionManager::PlayerData):
+/// a tag, then <paramref name="rules"/>, the rules it plays by. An older build's player has no data.
+/// </summary>
+std::vector<uint8_t> MCJoinCard(uint32_t rules);
+
+/// <summary>Port: the rules a joining player's data holds (<see cref="MCJoinCard"/>); none, if it holds no card.</summary>
+std::optional<uint32_t> MCJoinCardRules(std::span<const uint8_t> data);
+
+/// <summary>
+/// Port: what a game refused at the door says, the host's reason (<paramref name="options"/>, the options its game
+/// lacks, as the host names them) kept to the letters a line shows.
+/// </summary>
+std::string MCRefusedText(std::string_view options);
 
 /// <summary>
 /// Port: the names (<paramref name="nameOf"/>) of those of <paramref name="players"/> that <paramref name="wanted"/>
@@ -353,6 +503,19 @@ public:
     /// </summary>
     uint32_t AgreedRules(uint32_t wanted) const;
 
+    /// <summary>
+    /// Port, the host: why a game joining with <paramref name="rules"/> is refused at the door (MCOptionsRefusing among
+    /// the room's players), its options named as a line names them; none: it comes in.
+    /// </summary>
+    std::optional<std::string> RefusalFor(uint32_t rules) const;
+
+    /// <summary>
+    /// Port, the host: its say on player <paramref name="name"/> joining with <paramref name="data"/> (its join card, if
+    /// any; MCSessionManager::Admission): <see cref="RefusalFor"/> its rules (none without a card), and a refusal said in
+    /// the host's chat.
+    /// </summary>
+    std::optional<std::string> AdmitJoiner(std::string_view name, std::span<const uint8_t> data) const;
+
     /// <summary>Port: MCPlayersWithout among the session's other players (with a number).</summary>
     std::vector<uint32_t> PlayersWithout(uint32_t rule) const;
 
@@ -377,6 +540,11 @@ public:
     int32_t SendEndScenario(int32_t result);
 
     /// <summary>Sends a player's tactical order for its movers or groups to the server.</summary>
+    /// <summary>
+    /// Port-only (Redux HD): player <paramref name="checkInId"/>'s <paramref name="units"/>' headlights
+    /// <paramref name="on"/> or off (MCMPMessageType::Lights): a client's to the server, the server's to everyone.
+    /// </summary>
+    int32_t SendLights(int32_t checkInId, std::span<const std::shared_ptr<MCMover>> units, bool on);
     int32_t SendPlayerOrder(MCTacticalOrder& order, bool queued, std::span<const int32_t> moverParts,
                             std::span<const std::weak_ptr<MCMoverGroup>> groups, bool fromGroup);
 

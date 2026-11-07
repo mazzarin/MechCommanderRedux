@@ -130,6 +130,20 @@ adds are in the [README](README.md#what-redux-hd-adds).
 - **Redux HD.** A player whose computer drops out (switched off, asleep, off the network) leaves the game within half a minute, as
   DirectPlay dropped them. The players' computers check, not the games, so a slow or loading game never drops out.
 - Modem, serial cable, lobby (MPlayer, Zone) and host migration aren't supported.
+- **Redux HD.** MULTIPLAYER opens the local network's games straight away: the connection screen (modem, serial,
+  network, internet) and its IPX or TCP question are gone. CANCEL there goes back to the main menu, and a game's EXIT
+  back to the games.
+- **Redux HD.** No ready room: hosting or joining a game, from the menu or a launcher's `-host` and `-join`, goes
+  straight to the session screen, which takes players until START. A player who joins sees the room as it stands
+  (teams, mission, points, options) and the host's picks stay; one who leaves is taken off the screen and the game
+  goes on.
+- **Redux HD.** A room checks a game at the door. Before the host picks any match option, anyone joins, and an option
+  a player's game doesn't have is greyed out for the room. Once the host has picked one, the room plays it as far as
+  every game in it does (night with the headlights' sight, or without it while a game in the room hasn't it), and a
+  game that can't play the pick that way can't join, and is told which option ("YOUR GAME DOESN'T HAVE THIS MATCH'S
+  TIME OF DAY. UPDATE YOUR GAME TO JOIN."); the host's chat says so. A pick that plays the same in every version
+  (dusk) lets older games in. Games from before this check say nothing at the door, so they join only a room whose
+  host has picked no options.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
 - A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
@@ -156,6 +170,12 @@ adds are in the [README](README.md#what-redux-hd-adds).
   lack it. The guests see what the match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A
   launcher sets them with `-matchweather`, `-matchtime`, `-matchbraking`, `-matchartillery`, `-matchprobes`,
   `-matchsensors` and `-matchmines`.
+- **Redux HD.** At night the mechs' and vehicles' headlights change sight: units see half as far as by day all round, a
+  lit unit's headlight shows the ground ahead to 85% of the day's sight, and the enemy sees a lit unit from as far.
+  **LIGHTS** (N) turns the selected units' headlights off or on. In a night mission, and in a match at night when every
+  player's game has it (see the [README](README.md#a-missions-time-of-day)). Without HD LIGHTING (or with the SOFTWARE
+  renderer) the night still shows: the world dimmed through the original's own darkening tables, a lit unit's
+  headlight showing the ground it lights as drawn.
 
 ### Files and Saves
 

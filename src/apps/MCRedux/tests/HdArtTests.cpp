@@ -5015,8 +5015,8 @@ TEST_CASE("hd weather: the lights sorted into the window's tiles light the air e
 
 /// <summary>
 /// A mission's time of day (port-only), on the screen drawn by the GPU over mission 1, paused, where the world shows
-/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night shows as
-/// drawn; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
+/// clear of the interface: the original's missions load by day. With HD lighting off a mission set at night is dimmed
+/// through the palette's darkening tables (sprite/MCPaletteNight.h), well under the day's brightness; on, one set at dusk shows its world darker than by day, one set at night darker still (its unlit ground, the
 /// median) and bluer, and HD LIGHTING's DUSK shows a night mission just as a dusk one. At night, and only then, the
 /// units in view shine headlights: a spotlight each, which brighten the world; shut down, they shine none.
 /// </summary>
@@ -5163,7 +5163,7 @@ TEST_CASE_ISOLATED(
                              "{:.1f}, {:.1f}); blue per red {:.2f} by day, {:.2f} at night; {} headlights at night\n",
                              byDay.Luma, atDusk.Luma, atNight.Luma, byDay.MedianLuma, atDusk.MedianLuma,
                              atNight.MedianLuma, byDay.Blue / byDay.Red, atNight.Blue / atNight.Red, nightSpots);
-    CHECK_EQ(different(unlitNight, drawn), size_t{0});
+    CHECK(measure(unlitNight).Luma < 0.6 * measure(drawn).Luma);
     CHECK_EQ(different(duskChosen, dusk), size_t{0});
     CHECK(atDusk.Luma < 0.8 * byDay.Luma);
     CHECK(atNight.MedianLuma < 0.75 * atDusk.MedianLuma);
@@ -12508,46 +12508,25 @@ namespace
     void TourMultiplayer(const std::function<void(const std::string&)>& shoot)
     {
         constexpr std::string_view HostAddress = "127.0.0.1:28877";
-        // The logistics states of the LAN and session screens (as MCConnectMenu sets them).
-        constexpr int32_t LanState = 0xb;
-        constexpr int32_t SessionState = 8;
+        // MULTIPLAYER opens the LAN games (the personal build); the connection screen shows only without a network.
         ConnectScreen();
-        shoot("mp_connect");
-        ShowSerialScreen();
-        shoot("mp_serial");
-        CancelToConnect();
-        ShowModemScreen();
-        shoot("mp_modem");
-        CancelToConnect();
-        ShowLanScreen();
-        shoot("mp_protocol_question");
-        DismissMessage();
 
-        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr)
+        if (MultiPlayer() == nullptr || MultiPlayer()->SessionManager == nullptr ||
+            GlobalLog()->CurrentScreen() != GlobalLog()->LanScreen)
         {
-            std::cout << "  no multiplayer: the LAN, ready room and session screens are left out\n";
+            shoot("mp_connect");
+            std::cout << "  no network: the LAN and session screens are left out\n";
             return;
         }
 
         MultiPlayer()->SessionManager->ConnectTcp(HostAddress);
         MCSplashScreen& lan = *GlobalLog()->LanScreen;
-        GlobalLog()->MultiplayerScreen->ShowGuiWindow(false);
-        lan.ShowGuiWindow(true);
-        lan.ShowBlock(0);
-        GlobalLog()->SetCurrentScreen(lan);
-        GlobalLog()->LogisticsState = LanState;
         lan.Element<MCLogTextObject>(4)->SetStringBuffer("Commander");
         lan.Element<MCLogTextObject>(10)->SetStringBuffer("Audit game");
         lan.Element<MCLogTextObject>(11)->SetStringBuffer("6");
         shoot("mp_lan");
+        // Hosting opens the room (the session screen), the host alone in it (the personal build: no ready room).
         CreateSession();
-        shoot("mp_ready_room");
-        // The session screen as GO shows it (its activation sends a lone host back to the main menu, so its art
-        // shows without the players).
-        GlobalLog()->CurrentScreen()->ShowGuiWindow(false);
-        GlobalLog()->SetCurrentScreen(*GlobalLog()->SessionScreen);
-        GlobalLog()->ShowLogScreen(true, true);
-        GlobalLog()->LogisticsState = SessionState;
         shoot("mp_session");
         DoExit();
         shoot("main_menu_after_mp");

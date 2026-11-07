@@ -605,8 +605,8 @@ TEST_CASE_ISOLATED("game: the main menu shows the reports' notice once, and its 
 }
 
 /// <summary>
-/// A game a lobby starts never shows the main menu: its session screen shows the reports' notice instead, once, before
-/// the match (not on the room's waiting screen before it).
+/// A game a lobby starts never shows the main menu: its room (the session screen) shows the reports' notice instead,
+/// once: not again as the room is shown again for a player who joins.
 /// </summary>
 TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice once")
 {
@@ -621,21 +621,20 @@ TEST_CASE_ISOLATED("game: a lobby's session screen shows the reports' notice onc
     REQUIRE(MCTestGame::StartLobby("-host -port 28899 -player BOB"));
     REQUIRE_EQ(reports.Log->Requests.size(), size_t{1});
     reports.Reply(0, HttpOk, R"({"country":"US","ask":false})");
-    MCTestGame::RunFrame(1.0f / 15.0f);
+    MCTestGuest::Settle();
     MCReusableDialog& dialog = *GlobalLog()->MessageDialog;
-    CHECK(GlobalLog()->CurrentScreen() == GlobalLog()->ConnectScreen);
-    CHECK(!dialog.IsShowing());
-
-    REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
-    MCTestGuest::Settle();
-    Go();
-    MCTestGuest::Settle();
     REQUIRE(GlobalLog()->CurrentScreen() == GlobalLog()->SessionScreen);
     REQUIRE(dialog.IsShowing());
     CHECK_EQ(dialog.Text, std::string(ReportsText(MCPrompt::Notice)));
     MCScreenInput::SaveShot("reports notice session screen", MCScreenInput::ScreenHash());
     MCScreenInput::RealClick(dialog.OkButton->GlobalX() + dialog.OkButton->Width() / 2,
                              dialog.OkButton->GlobalY() + dialog.OkButton->Height() / 2);
+    MCTestGuest::Settle();
+    CHECK(!dialog.IsShowing());
+    CHECK_EQ(GReports, 1);
+
+    REQUIRE(guest.Join(*MultiPlayer()->SessionManager->DirectPlay, "127.0.0.1:28899"));
+    REQUIRE(MCTestGuest::SettleUntil([&] { return MCTestGuest::RoomShows(guest.Id()); }));
     MCTestGuest::Settle();
     CHECK(!dialog.IsShowing());
     CHECK_EQ(GReports, 1);

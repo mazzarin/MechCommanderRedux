@@ -197,6 +197,36 @@ auto SortMoverList(std::span<const std::shared_ptr<MCMover>> movers, MCVector3D 
     }
 }
 
+auto MCCommandParser::SubjectMovers() const -> std::vector<std::shared_ptr<MCMover>>
+{
+    std::vector<std::shared_ptr<MCMover>> movers;
+    const auto add = [&movers](const std::shared_ptr<MCMover>& mover)
+    {
+        if (mover != nullptr && std::ranges::find(movers, mover) == movers.end())
+        {
+            movers.push_back(mover);
+        }
+    };
+
+    for (const int32_t part : Subjects)
+    {
+        add(std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(part)));
+    }
+
+    for (const std::weak_ptr<MCMoverGroup>& subject : GroupSubjects)
+    {
+        if (const std::shared_ptr<MCMoverGroup> group = subject.lock(); group != nullptr)
+        {
+            for (const std::weak_ptr<MCMover>& mover : group->Movers)
+            {
+                add(mover.lock());
+            }
+        }
+    }
+
+    return movers;
+}
+
 auto MCCommandParser::SendTacOrder(MCTacticalOrder order, bool sortMovers) -> bool
 {
     if (Subjects.empty() && GroupSubjects.empty())

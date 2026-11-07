@@ -52,6 +52,7 @@ public:
 
     void Clear(MCWindow& target, const MCRect& rect, uint8_t color) override;
     void Hash(MCWindow& target, const MCRect& rect, uint8_t color) override;
+    void Translate(MCWindow& target, const MCRect& rect, MCColorTable table) override;
     void Copy(MCWindow& target, const MCCopyCommand& command) override;
     void AlphaBlit(MCWindow& target, const MCAlphaBlitCommand& command) override;
     void ShapeBlit(MCWindow& target, const MCShapeBlitCommand& command) override;

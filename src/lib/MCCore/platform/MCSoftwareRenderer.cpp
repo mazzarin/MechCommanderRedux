@@ -162,6 +162,22 @@ void MCSoftwareRenderer::Hash(MCWindow& target, const MCRect& rect, uint8_t colo
     }
 }
 
+void MCSoftwareRenderer::Translate(MCWindow& target, const MCRect& rect, MCColorTable table)
+{
+    const std::span<uint8_t> pixels = target.Bytes();
+    MCSeeThrough seeThrough(target);
+
+    for (int32_t y = rect.Y0; y <= rect.Y1; ++y)
+    {
+        const size_t row = IndexOf(target, rect.X0, y);
+
+        for (size_t p = row; p <= row + static_cast<size_t>(rect.X1 - rect.X0); ++p)
+        {
+            seeThrough.Translate(pixels[p], table);
+        }
+    }
+}
+
 void MCSoftwareRenderer::Copy(MCWindow& target, const MCCopyCommand& command)
 {
     const MCWindow& source = command.Source.get();

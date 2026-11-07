@@ -26,6 +26,7 @@
 #include "main/MCMissionGlobals.h"
 #include "mission/MCMission.h"
 #include "mission/MCMissionResultsScreen.h"
+#include "mission/MCNightLights.h"
 #include "mission/MCScenario.h"
 #include "object/MCArtillery.h"
 #include "object/MCArtilleryChunk.h"
@@ -182,9 +183,21 @@ MCWeaponHitChunk EmptyWeaponHitChunk()
     return chunk;
 }
 
-void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg)
+void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg, std::span<const uint8_t> message)
 {
     MCMultiPlayer& game = Game();
+
+    // Port: the host has a joiner's rules from its join card (its player's data, at dwDataOffset in the message),
+    // before its rules message, and tells everyone.
+    if (const size_t offset = msg.dwDataOffset, size = msg.dwDataSize;
+        game.IsHost != 0 && size != 0 && offset <= message.size() && size <= message.size() - offset)
+    {
+        if (const std::optional<uint32_t> rules = MCJoinCardRules(message.subspan(offset, size)); rules.has_value())
+        {
+            game.PlayerRules[msg.dpId] = *rules & MCMatchRule::Supported;
+            game.SendPlayersRules();
+        }
+    }
 
     if (game.SessionManager->CurrentConnection != MCNetProtocol::Lobby)
     {
@@ -493,6 +506,52 @@ void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg)
 void HandleAppEndScenario(uint32_t, std::span<const uint8_t> msg)
 {
     Game().ScenarioResult = ReadLinkupMessage<MCMPLongMessage>(msg).Value;
+}
+
+void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg)
+{
+    if (msg.size() < sizeof(MCMPLightsMessage) || !InMultiplayerMission())
+    {
+        return;
+    }
+
+    const auto message = ReadLinkupMessage<MCMPLightsMessage>(msg);
+    MCMultiPlayer& game = Game();
+
+    // A player's own units, from the player to the server; from the server to everyone, in a match that plays the rule.
+    if ((game.Played.Rules.value_or(0) & MCMatchRule::NightLights) == 0)
+    {
+        Dropped("lights in a match without them", fromID);
+        return;
+    }
+
+    if (game.IsServer ? !IsSendersOwn(fromID, message.CheckInId) : fromID != game.ServerID)
+    {
+        Dropped("lights for another player's units", fromID);
+        return;
+    }
+
+    std::vector<std::shared_ptr<MCMover>> units;
+
+    for (const uint16_t part : std::span(message.Parts).first(std::min<size_t>(message.Count, message.Parts.size())))
+    {
+        const auto unit = std::dynamic_pointer_cast<MCMover>(ObjectList()->FindObjectFromPart(part));
+
+        if (unit == nullptr || unit->GetCommanderId() != message.CheckInId)
+        {
+            Dropped("lights for a unit not the player's", fromID);
+            return;
+        }
+
+        units.push_back(unit);
+    }
+
+    MCNightLights::SetLights(units, message.On != 0);
+
+    if (game.IsServer)
+    {
+        game.SendLights(message.CheckInId, units, message.On != 0);
+    }
 }
 
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg)
@@ -1313,7 +1372,7 @@ void MultiPlayerSystemCallback(MCFidpMessage& msg)
 
             if (create.dwPlayerType == DPPLAYERTYPE_PLAYER)
             {
-                HandleSysCreatePlayer(create);
+                HandleSysCreatePlayer(create, buffer);
             }
 
             break;
@@ -1499,6 +1558,13 @@ void MultiPlayerApplicationCallback(MCFidpMessage& msg)
         case MCMPMessageType::PlayerOrder:
         {
             HandleAppPlayerOrder(fromID, bytes);
+            break;
+        }
+
+        case MCMPMessageType::Lights:
+        {
+            // Port-only (Redux HD): a player's LIGHTS (mission/MCNightLights.h).
+            HandleAppLights(fromID, bytes);
             break;
         }
 

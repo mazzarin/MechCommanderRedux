@@ -13,8 +13,11 @@ struct DPMSG_CREATEPLAYERORGROUP;
 /// <summary>An empty weapon-hit chunk as the original's locals start (hit location -1, the rest 0).</summary>
 MCWeaponHitChunk EmptyWeaponHitChunk();
 
-/// <summary>System message: a player was created (the server sends it its setup).</summary>
-void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg);
+/// <summary>
+/// System message: a player was created (the server sends it its setup; port: the host keeps the rules its join card
+/// holds, in <paramref name="message"/>'s data).
+/// </summary>
+void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg, std::span<const uint8_t> message);
 
 /// <summary>System message: a player was added to a group (its team is recorded).</summary>
 void HandleSysAddPlayerToGroup(const DPMSG_ADDPLAYERTOGROUP& msg);
@@ -41,6 +44,11 @@ void HandleAppMatchOptions(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayersRules(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppStartScenario(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppEndScenario(uint32_t fromID, std::span<const uint8_t> msg);
+/// <summary>
+/// Port-only (Redux HD): a player's LIGHTS (MCMPLightsMessage): the server turns the sender's own units' lights and sends
+/// it on; a client takes it from the server.
+/// </summary>
+void HandleAppLights(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerOrder(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerMoverGroup(uint32_t fromID, std::span<const uint8_t> msg);
 void HandleAppPlayerArtillery(uint32_t fromID, std::span<const uint8_t> msg);

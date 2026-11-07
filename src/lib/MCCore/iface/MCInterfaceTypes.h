@@ -296,10 +296,12 @@ enum class MCKeyCommand : int32_t
     /// <summary>Port-only, alt with the keypad's + and -: the same, on keys in the same place on every layout.</summary>
     InterfaceSizeUpAlternate = 79,
     InterfaceSizeDownAlternate = 80,
+    /// <summary>Port-only (Redux HD), N: the selection's headlights off, or on again (mission/MCNightLights.h).</summary>
+    Lights = 81,
 };
 
 /// <summary>How many key binding slots there are: the original's 77, then the port's.</summary>
-inline constexpr size_t NumKeyCommands = 81;
+inline constexpr size_t NumKeyCommands = 82;
 
 /// <summary>The modifier bits of a key binding: the key code is in bits 0-15.</summary>
 inline constexpr uint32_t KeyShift = 0x10000;

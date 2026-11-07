@@ -930,16 +930,7 @@ void MCSoftwareRenderer::Polygon(MCWindow& target, const MCPolygonCommand& comma
                            {
                                for (size_t p = at(span.X0, span.Y); p <= at(span.X1, span.Y); ++p)
                                {
-                                   uint8_t& pixel = pixels[p];
-
-                                   if (seeThrough.At(pixel))
-                                   {
-                                       seeThrough.Map(pixel, table);
-                                   }
-                                   else
-                                   {
-                                       pixel = table[pixel];
-                                   }
+                                   seeThrough.Translate(pixels[p], table);
                                }
                            });
             break;

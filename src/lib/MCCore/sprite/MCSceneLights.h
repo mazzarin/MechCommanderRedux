@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lib/MCVector2D.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -111,6 +113,8 @@ enum class MCTimeOfDay : uint8_t
 
 namespace MCSceneLights
 {
+    /// <summary>How many degrees off its middle a unit's headlight's beam reaches, to each side.</summary>
+    inline constexpr float HeadlightDegrees = 22.0f;
     /// <summary>The most lights a frame shows (the brightest; composite.pshader's MaxLights).</summary>
     inline constexpr size_t MaxLights = 64;
     /// <summary>The most fires whose air shimmers in a frame (the biggest; composite.pshader's MaxHeat).</summary>
@@ -285,6 +289,15 @@ namespace MCSceneLights
     /// </summary>
     MCTimeOfDay TimeOfDay();
 
+    /// <summary>
+    /// The time of day the mission plays at, whatever is drawn: the match's host's (<see cref="SetMatchTime"/>), else
+    /// the mission's own (<see cref="MissionTime"/>).
+    /// </summary>
+    MCTimeOfDay PlayedTime();
+
+    /// <summary>Whether HD lighting draws the world's light: HD LIGHTING on, and the GPU drawing (the CPU draws none).</summary>
+    bool LightingDrawn();
+
     /// <summary>The time of day named <paramref name="name"/> ("day", "dusk" or "night", in any case); none for another.</summary>
     std::optional<MCTimeOfDay> TimeOfDayNamed(std::string_view name);
 
@@ -425,9 +438,46 @@ namespace MCSceneLights
     /// </summary>
     std::optional<float> FeetRow(const MCAppearance& appearance, const MCVector3D& position);
 
+    /// <summary>A unit's headlight (<see cref="HeadlightOf"/>).</summary>
+    struct MCHeadlight
+    {
+        /// <summary>Its beam: a spotlight from the lamp, tipped down to meet the ground ahead.</summary>
+        MCSceneLight Beam;
+        /// <summary>The lamp on the screen, for a unit whose art has one (a mech's cockpit).</summary>
+        std::optional<MCVector2D> Lamp;
+        /// <summary>How far up the screen the unit faces: 1 straight up, -1 straight down.</summary>
+        float Up = 0.0f;
+    };
+
+    /// <summary>
+    /// A unit's headlight, as <see cref="AddHeadlight"/> shines it (its arguments' meanings), at any time of day; none
+    /// without a camera, or for a unit facing nowhere on the screen.
+    /// </summary>
+    std::optional<MCHeadlight> HeadlightOf(const MCAppearance& appearance, const MCVector3D& position,
+                                           const MCFrameOfRef& frame, float turn,
+                                           const std::optional<MCVector3D>& lamp);
+
+    /// <summary>
+    /// A unit's facing on the ground (a unit vector, world x and y), as <paramref name="frame"/> (MCMover::Frame) faces
+    /// turned an eighth of a turn (the facing its art is drawn at), then <paramref name="turn"/> degrees
+    /// counterclockwise (a mech's torso's).
+    /// </summary>
+    std::array<float, 2> FacingOnGround(const MCFrameOfRef& frame, float turn);
+
+    /// <summary>A headlight's light where its beam's middle meets the ground (before it fades with distance).</summary>
+    float HeadlightLight();
+
+    /// <summary>
+    /// The light <paramref name="light"/> casts on the ground at window point (<paramref name="x"/>,
+    /// <paramref name="y"/>) (distances along the ground, a screen height <paramref name="aspect"/> of one), as the
+    /// composite pools it, without the units in its way.
+    /// </summary>
+    float GroundLight(const MCSceneLight& light, float x, float y, float aspect);
+
     /// <summary>
     /// At night (<see cref="TimeOfDay"/>), a unit's headlight (a mech's, a vehicle's): a warm spotlight on the ground
-    /// ahead of it, widening as it goes. <paramref name="appearance"/> as it last placed itself on the screen, its owner
+    /// ahead of it, widening as it goes; where the palette draws the night (sprite/MCPaletteNight.h), its beam lifts the
+    /// night's dimming instead. <paramref name="appearance"/> as it last placed itself on the screen, its owner
     /// at <paramref name="position"/>, facing as <paramref name="frame"/> does (MCMover::Frame) turned
     /// <paramref name="turn"/> degrees counterclockwise (a mech's torso's, MCBattleMech::TorsoRotation). Its lamp at
     /// <paramref name="lamp"/> in the world (a mech's cockpit), a small light drawn just over the unit (its parts' draw

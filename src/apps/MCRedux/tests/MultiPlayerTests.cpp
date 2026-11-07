@@ -925,9 +925,10 @@ TEST_CASE("network: a guest keeps what the match plays of the host's options as 
 
 /// <summary>
 /// Port: a match plays its host's weather, time of day and rules only as far as every player's build plays them, as its
-/// rules message said: the host's time of day brings its sight's and lights' rules with it, and needs its version (the
-/// look, the sight and the lights) from every build; the weather's play comes with every build playing it (for the
-/// mission's own weather too), and the host's weather needs its look and its play from every build. A build of the time of day's sight (3 Nov) keeps the mission's own weather,
+/// rules message said: the host's time of day brings its version's rules with it (its sight's, and at night the lights'
+/// where every build has them), and needs its sight from every build; the weather's play comes with every build
+/// playing it (for the mission's own weather too), and the host's weather needs its look and its play from every
+/// build. A build of the time of day's sight (3 Nov) keeps the mission's own weather,
 /// one of the first match options (the looks alone) the mission's own time of day too, one of the braking's round
 /// (braking alone) both, one that said none (the original's) every option. The players without a rule are those whose
 /// message left it out or who sent none.
@@ -951,11 +952,12 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
                           .Rules = timeRules | weatherPlay | nightLights}));
     CHECK((MCPlayedOptions(MCMatchOptions{}, braking | timeRules, MCMatchRule::Supported) ==
            MCMatchOptions{.Rules = braking | weatherPlay | nightLights}));
-    // The host's time of day plays at its version (2: its look, its sight and the night's lights), so only with every
-    // player's build playing all three; release 1's (the look and the sight) keeps the mission's own.
+    // The host's night plays at the latest version every player's build plays: 2 (the night's lights with it) with
+    // every build at it, 1 (the look and the sight, release 1's) with one that isn't.
     CHECK((MCPlayedOptions(chosen, braking, sightOptions | nightLights) ==
            MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules | nightLights}));
-    CHECK(MCPlayedOptions(chosen, braking, sightOptions) == MCMatchOptions{.Rules = braking});
+    CHECK((MCPlayedOptions(chosen, braking, sightOptions) ==
+           MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules}));
     CHECK(MCPlayedOptions(chosen, braking, firstOptions) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, braking) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) == MCMatchOptions{.Rules = 0u});
@@ -978,13 +980,15 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
 }
 
 /// <summary>
-/// Port: the door's check (the personal build). A joiner is refused only for an option the host chose (a weather, a time
-/// of day, a rule turned on that a room without choices plays without) that every game in the room plays at its
-/// version and the joiner's game doesn't: never over a held option, a rule turned back off or braking the host's PREFS
-/// give anyway. An older build's join says nothing, so it counts as having no options: release 1's and upstream's are
-/// refused for whatever the host chose. The join card carries a build's rules (a later card may say more after them).
+/// Port: the door's check (the personal build). A joiner is refused only for a value the host chose (a weather, a time
+/// of day, a rule turned on that a room without choices plays without) that every game in the room plays at some
+/// version, when the joiner's game can't play it at the latest of those (the room's): never over a held option, a rule
+/// turned back off or braking the host's PREFS give anyway. A game that keeps an earlier version's play joins a room at
+/// that version. An older build's join says nothing, so it counts as having no options: release 1's and upstream's
+/// are refused for whatever the host chose. The join card carries a build's rules (a later card may say more after
+/// them).
 /// </summary>
-TEST_CASE("network: a joiner is refused at the door only for an option the host chose that the room plays")
+TEST_CASE("network: a joiner is refused at the door only for a value the host chose that the room plays")
 {
     using enum MCMatchOption;
     using Refusing = std::vector<MCMatchOption>;
@@ -998,6 +1002,7 @@ TEST_CASE("network: a joiner is refused at the door only for an option the host 
     const MCMatchOptions none{};
     const MCMatchOptions snow{.Weather = MCWeatherKind::Snow};
     const MCMatchOptions night{.TimeOfDay = MCTimeOfDay::Night};
+    const MCMatchOptions dusk{.TimeOfDay = MCTimeOfDay::Dusk};
     const MCMatchOptions snowNight{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night};
     const MCMatchOptions artilleryOff{.Rules = MCMatchRule::NoArtillery};
     const MCMatchOptions everyBan{.Rules = bans};
@@ -1013,7 +1018,8 @@ TEST_CASE("network: a joiner is refused at the door only for an option the host 
         CHECK(refusing(none, supported, joiner, true).empty());
     }
 
-    // A room of this build's games plays every choice at its version.
+    // A room of this build's games plays every choice at its latest version: night at 2, which release 1's game can't
+    // play; dusk is the same at every version.
     CHECK((refusing(snow, supported, older) == Refusing{Weather}));
     CHECK(refusing(snow, supported, releaseOne).empty());
     CHECK(refusing(snow, supported, timeBehind).empty());
@@ -1021,6 +1027,9 @@ TEST_CASE("network: a joiner is refused at the door only for an option the host 
     CHECK((refusing(night, supported, releaseOne) == Refusing{TimeOfDay}));
     CHECK((refusing(night, supported, timeBehind) == Refusing{TimeOfDay}));
     CHECK(refusing(night, supported, noArtillery).empty());
+    CHECK(refusing(dusk, supported, releaseOne).empty());
+    CHECK(refusing(dusk, supported, timeBehind).empty());
+    CHECK((refusing(dusk, supported, older) == Refusing{TimeOfDay}));
     CHECK((refusing(snowNight, supported, older) == Refusing{Weather, TimeOfDay}));
     CHECK((refusing(artilleryOff, supported, noArtillery) == Refusing{Artillery}));
     CHECK(refusing(artilleryOff, supported, timeBehind).empty());
@@ -1035,13 +1044,54 @@ TEST_CASE("network: a joiner is refused at the door only for an option the host 
     CHECK(refusing(brakingOff, supported, older, true).empty());
     CHECK(refusing(brakingOff, supported, older).empty());
 
-    // A choice the room doesn't play (held for a game in it) refuses no one: with release 1's game in the room, the
-    // host's night is held, the snow still played.
-    CHECK(refusing(night, releaseOne, older).empty());
+    // With release 1's game in the room, the host's night plays at version 1: this build's game, which keeps version
+    // 1's play, joins; a game that has no time of day doesn't. A choice the room doesn't play (held for a game in it:
+    // an older build's, that has none) refuses no one.
+    CHECK(refusing(night, releaseOne, supported).empty());
     CHECK(refusing(night, releaseOne, timeBehind).empty());
-    CHECK((refusing(snowNight, releaseOne, older) == Refusing{Weather}));
+    CHECK((refusing(night, releaseOne, older) == Refusing{TimeOfDay}));
     CHECK(refusing(snowNight, older, supported).empty());
+    CHECK(refusing(snowNight, older, older).empty());
     CHECK(refusing(artilleryOff, noArtillery, older).empty());
+    const MCOptionCapability& time = MCCapabilityOf(TimeOfDay);
+    const int32_t nightValue = static_cast<int32_t>(MCTimeOfDay::Night);
+    CHECK(MCRoomVersion(time, nightValue, supported)->Version == 2);
+    CHECK(MCRoomVersion(time, nightValue, releaseOne)->Version == 1);
+    CHECK(!MCRoomVersion(time, nightValue, MCMatchRule::MechBraking).has_value());
+    CHECK(MCRoomVersion(time, static_cast<int32_t>(MCTimeOfDay::Dusk), supported)->Version == 1);
+
+    // A later build's map: night at version 3 (a bit of its own), its build keeping version 2's play (saying its rules
+    // too) or not. With version 2's games in the room, a kept version 2 plays: a version 3 joiner that keeps it joins,
+    // one that doesn't is refused; a dropped one leaves the room no night (the host's click skips NIGHT, while DAY and
+    // DUSK play), so no one is refused for it. A room of version 3's games plays night at 3, refusing version 2's.
+    constexpr uint32_t nightThree = 1u << 26;
+    constexpr uint32_t keepsTwo = supported | nightThree;
+    constexpr uint32_t dropsTwo = (supported & ~MCMatchRule::NightLights) | nightThree;
+    constexpr std::array keptNight = {MCOptionVersions::Night[0], MCOptionVersions::Night[1],
+                                      MCValueVersion{.Version = 3, .Rules = MCMatchRule::TimeOfDayRules | nightThree}};
+    constexpr std::array droppedNight = {
+        MCValueVersion{.Version = 3, .Rules = MCMatchRule::TimeOfDayRules | nightThree}};
+
+    for (const std::span<const MCValueVersion> versions :
+         {std::span<const MCValueVersion>(keptNight), std::span<const MCValueVersion>(droppedNight)})
+    {
+        const std::array changed = {MCValueVersions{.Value = nightValue, .Versions = versions}};
+        std::array map = MCOptionCapabilities;
+        map[static_cast<size_t>(TimeOfDay)].Changed = changed;
+        const MCOptionCapability& laterTime = map[static_cast<size_t>(TimeOfDay)];
+        const bool kept = versions.size() > 1;
+        CHECK(MCOptionsRefusing(night, false, supported, keepsTwo, map).empty());
+        CHECK(MCOptionsRefusing(night, false, supported, dropsTwo, map).empty() == !kept);
+        CHECK((MCOptionsRefusing(night, false, keepsTwo, supported, map) == Refusing{TimeOfDay}));
+        CHECK(MCRoomVersion(laterTime, nightValue, keepsTwo)->Version == 3);
+        CHECK(MCRoomVersion(laterTime, nightValue, dropsTwo)->Version == 3);
+        CHECK(MCRoomVersion(laterTime, nightValue, supported).has_value() == kept);
+        CHECK(MCRoomVersion(laterTime, static_cast<int32_t>(MCTimeOfDay::Dusk), supported).has_value());
+    }
+
+    // The game's own map: a version 3 game that keeps version 2 joins a room of this build's; one that doesn't, not.
+    CHECK(refusing(night, supported, keepsTwo).empty());
+    CHECK((refusing(night, supported, dropsTwo) == Refusing{TimeOfDay}));
 
     // The card: its rules read back; anything else (none, too short, another tag) says nothing; a later card's added
     // bytes are left alone.

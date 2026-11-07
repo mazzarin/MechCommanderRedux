@@ -448,9 +448,18 @@ namespace MCTestGuest
             _DirectPlay.Send(Id(), from, 0, bytes);
         }
 
-        /// <summary>Keeps <paramref name="message"/> if it is the host's match options or players' rules.</summary>
+        /// <summary>
+        /// Keeps <paramref name="message"/> if it is the host's match options or players' rules, the first time it comes:
+        /// the host sends a guaranteed message again, byte for byte, until it is acknowledged, so an older one's
+        /// re-send would stand for the newest.
+        /// </summary>
         void Keep(std::span<const uint8_t> message)
         {
+            if (!_Kept.emplace(message.begin(), message.end()).second)
+            {
+                return;
+            }
+
             if (message.size() >= sizeof(MCMPPlayersRulesMessage))
             {
                 const auto players = ReadLinkupMessage<MCMPPlayersRulesMessage>(message);
@@ -490,8 +499,9 @@ namespace MCTestGuest
         std::atomic<uint32_t> _FileAnswer = 0;
         /// <summary>The load missions the host sent.</summary>
         std::atomic<int32_t> _MissionsLoaded = 0;
-        /// <summary>The inquiries and load missions taken (the listener's own).</summary>
+        /// <summary>The inquiries and load missions taken, and the messages kept (the listener's own).</summary>
         std::set<std::vector<uint8_t>> _Taken;
+        std::set<std::vector<uint8_t>> _Kept;
         /// <summary>Until when the guest pings (<see cref="Ping"/>), and its next ping (the listener's own).</summary>
         std::atomic<std::chrono::steady_clock::time_point> _PingUntil{};
         std::chrono::steady_clock::time_point _NextPing{};

@@ -696,34 +696,66 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
     return without;
 }
 
-bool MCOptionNeedsGames(const MCMatchOptions& chosen, MCMatchOption option, bool prefsBraking)
+std::optional<int32_t> MCChosenValue(const MCMatchOptions& chosen, const MCOptionCapability& option, bool prefsBraking)
 {
-    switch (option)
+    switch (option.Option)
     {
         case MCMatchOption::Weather:
-            return chosen.Weather.has_value();
+            return chosen.Weather.has_value() ? std::optional(static_cast<int32_t>(*chosen.Weather)) : std::nullopt;
         case MCMatchOption::TimeOfDay:
-            return chosen.TimeOfDay.has_value();
+            return chosen.TimeOfDay.has_value() ? std::optional(static_cast<int32_t>(*chosen.TimeOfDay)) : std::nullopt;
         default:
             break;
     }
 
     // A rule the host turned on that a room with no choices plays without (whose braking is its PREFS'); a rule turned
     // off is the original's, which every game plays.
-    const uint32_t rule = MCCapabilityOf(option).Rules;
-    return (MCWantedRules(chosen.Rules, prefsBraking) & rule) != 0 &&
-           (MCWantedRules(std::nullopt, prefsBraking) & rule) == 0;
+    const bool turnedOn = (MCWantedRules(chosen.Rules, prefsBraking) & option.Rules) != 0 &&
+                          (MCWantedRules(std::nullopt, prefsBraking) & option.Rules) == 0;
+    return turnedOn ? std::optional(1) : std::nullopt;
+}
+
+std::vector<MCValueVersion> MCVersionsOf(const MCOptionCapability& option, int32_t value)
+{
+    const auto changed =
+        std::ranges::find_if(option.Changed, [value](const MCValueVersions& entry) { return entry.Value == value; });
+
+    if (changed != option.Changed.end())
+    {
+        return {changed->Versions.begin(), changed->Versions.end()};
+    }
+
+    // Unchanged since its first version: what every value needs.
+    return {MCValueVersion{.Version = 1, .Rules = option.Rules}};
+}
+
+std::optional<MCValueVersion> MCRoomVersion(const MCOptionCapability& option, int32_t value, uint32_t roomRules)
+{
+    std::optional<MCValueVersion> played;
+
+    for (const MCValueVersion& version : MCVersionsOf(option, value))
+    {
+        if ((roomRules & version.Rules) == version.Rules)
+        {
+            played = version;
+        }
+    }
+
+    return played;
 }
 
 std::vector<MCMatchOption> MCOptionsRefusing(const MCMatchOptions& chosen, bool prefsBraking, uint32_t roomRules,
-                                             uint32_t rules)
+                                             uint32_t rules, std::span<const MCOptionCapability> map)
 {
     std::vector<MCMatchOption> refusing;
 
-    for (const MCOptionCapability& entry : MCOptionCapabilities)
+    for (const MCOptionCapability& entry : map)
     {
-        if (MCOptionNeedsGames(chosen, entry.Option, prefsBraking) && (roomRules & entry.Rules) == entry.Rules &&
-            (rules & entry.Rules) != entry.Rules)
+        const std::optional<int32_t> value = MCChosenValue(chosen, entry, prefsBraking);
+        const std::optional<MCValueVersion> room =
+            value.has_value() ? MCRoomVersion(entry, *value, roomRules) : std::nullopt;
+
+        if (room.has_value() && (rules & room->Rules) != room->Rules)
         {
             refusing.push_back(entry.Option);
         }
@@ -797,17 +829,34 @@ std::string MCRefusedText(std::string_view options)
 
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
-    // The time of day's rules come with the time of day, not with what the host wants, and the host's weather and time
-    // of day play only at their versions (the capability map's); the weather's play and the night's lights with every
-    // player's build playing them, whatever the weather and time (the mission's own too).
-    constexpr uint32_t timeRules = MCCapabilityOf(MCMatchOption::TimeOfDay).Rules;
-    constexpr uint32_t weatherRules = MCCapabilityOf(MCMatchOption::Weather).Rules;
+    // The host's weather and time of day play at the latest version every player's build plays (the capability map's),
+    // the time of day's rules with it, not with what the host wants; the weather's play and the night's lights with
+    // every player's build playing them, whatever the weather and time (the mission's own too).
+    const MCOptionCapability& weather = MCCapabilityOf(MCMatchOption::Weather);
+    const MCOptionCapability& time = MCCapabilityOf(MCMatchOption::TimeOfDay);
     constexpr uint32_t alwaysAgreed = MCMatchRule::WeatherPlay | MCMatchRule::NightLights;
+    uint32_t optionRules = weather.Rules | time.Rules;
+
+    for (const MCOptionCapability* option : {&weather, &time})
+    {
+        for (const MCValueVersions& changed : option->Changed)
+        {
+            for (const MCValueVersion& version : changed.Versions)
+            {
+                optionRules |= version.Rules;
+            }
+        }
+    }
+
+    const auto version = [agreed](const MCOptionCapability& option, std::optional<int32_t> value)
+    { return value.has_value() ? MCRoomVersion(option, *value, agreed) : std::nullopt; };
+    const std::optional<MCValueVersion> weatherPlayed = version(weather, MCChosenValue(chosen, weather, false));
+    const std::optional<MCValueVersion> timePlayed = version(time, MCChosenValue(chosen, time, false));
     MCMatchOptions played;
-    played.Weather = (agreed & weatherRules) == weatherRules ? chosen.Weather : std::nullopt;
-    played.TimeOfDay = (agreed & timeRules) == timeRules ? chosen.TimeOfDay : std::nullopt;
-    played.Rules = (wantedRules & agreed & ~(timeRules | weatherRules | alwaysAgreed)) |
-                   (played.TimeOfDay.has_value() ? timeRules : 0) | (agreed & alwaysAgreed);
+    played.Weather = weatherPlayed.has_value() ? chosen.Weather : std::nullopt;
+    played.TimeOfDay = timePlayed.has_value() ? chosen.TimeOfDay : std::nullopt;
+    played.Rules = (wantedRules & agreed & ~(optionRules | alwaysAgreed)) |
+                   (timePlayed.has_value() ? timePlayed->Rules : 0) | (agreed & alwaysAgreed);
     return played;
 }
 

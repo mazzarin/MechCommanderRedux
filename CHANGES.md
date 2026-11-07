@@ -138,10 +138,12 @@ adds are in the [README](README.md#what-redux-hd-adds).
   (teams, mission, points, options) and the host's picks stay; one who leaves is taken off the screen and the game
   goes on.
 - **Redux HD.** A room checks a game at the door. Before the host picks any match option, anyone joins, and an option
-  a player's game doesn't have is greyed out for the room. Once the host has picked one that every game in the room
-  has, a game without it can't join and is told which ("YOUR GAME DOESN'T HAVE THIS MATCH'S TIME OF DAY. UPDATE YOUR
-  GAME TO JOIN."), and the host's chat says so. Games from before this check say nothing at the door, so they join
-  only a room whose host has picked no options.
+  a player's game doesn't have is greyed out for the room. Once the host has picked one, the room plays it as far as
+  every game in it does (night with the headlights' sight, or without it while a game in the room hasn't it), and a
+  game that can't play the pick that way can't join, and is told which option ("YOUR GAME DOESN'T HAVE THIS MATCH'S
+  TIME OF DAY. UPDATE YOUR GAME TO JOIN."); the host's chat says so. A pick that plays the same in every version
+  (dusk) lets older games in. Games from before this check say nothing at the door, so they join only a room whose
+  host has picked no options.
 - Zoom works in multiplayer. The original locked multiplayer games to the zoomed-out view and greyed out the zoom
   button. Zoom only changes what is drawn, so players zooming independently doesn't affect the game itself.
 - A launcher can premake a match: the host's command line (`-host`) can name the mission, each team's resource points
@@ -163,8 +165,7 @@ adds are in the [README](README.md#what-redux-hd-adds).
   [README](README.md#a-missions-weather)). Each is played only if every player's game has it, as each says when the
   session screen opens: while one lacks it (a game that says nothing, as the original's, lacks them all), the match
   plays the mission's own (braking off; artillery, probes, sensors and mines on) and MATCH OPTIONS names whose games
-  lack it. The host's time of day needs the headlights' sight at night (below) from every game too. The guests see
-  what the match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A
+  lack it. The guests see what the match plays, and new chat makes MULTIPLAYER CHAT blink behind the options. A
   launcher sets them with `-matchweather`, `-matchtime`, `-matchbraking`, `-matchartillery`, `-matchprobes`,
   `-matchsensors` and `-matchmines`.
 - **Redux HD.** At night the mechs' and vehicles' headlights change sight: units see half as far as by day all round, a

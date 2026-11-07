@@ -343,15 +343,17 @@ TEST_CASE_ISOLATED("game: the session screen's MATCH OPTIONS tab sets the match'
     CHECK(list.HeldReason(TimeRow) == NotInGuests);
     sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
 
-    // A build of the time of day's first version (its sight, without the night's lights): neither.
+    // A build of the time of day's sight (night's first version, without the lights): the time of day at that
+    // version, not the weather.
     constexpr uint32_t sightRules = MCMatchRule::MechBraking | MCMatchRule::MatchWeather | MCMatchRule::TimeOfDayRules;
     guest.SendRules(hostId, sightRules);
     Settle();
     CHECK(list.HeldReason(WeatherRow) == NotInGuests);
-    CHECK(list.HeldReason(TimeRow) == NotInGuests);
-    sentIs(MissionOwn, MissionOwn, MCMatchRule::MechBraking);
+    CHECK(list.HeldReason(TimeRow).empty());
+    CHECK(list.ChoiceName(TimeRow) == "NIGHT");
+    sentIs(MissionOwn, static_cast<int8_t>(MCTimeOfDay::Night), MCMatchRule::MechBraking | MCMatchRule::TimeOfDayRules);
 
-    // A build of its version (the sight and the lights): the time of day, not the weather.
+    // A build of night's second version (the lights too): night at that version.
     guest.SendRules(hostId, sightRules | MCMatchRule::NightLights);
     Settle();
     CHECK(list.HeldReason(WeatherRow) == NotInGuests);
@@ -779,12 +781,14 @@ TEST_CASE_ISOLATED("game: a LAN room takes players until START, the host's picks
 /// The room's joiners (the personal build), checked at the door: this build's join says its rules, so the host knows
 /// them before the player is made. Before the host chooses anything a game joins whatever it lacks, the option it lacks
 /// held for it ("TELL ... TO UPGRADE."); an older build's join (release 1's, upstream's) says nothing, and its rules
-/// come once it is in, if ever. A game without an option the host chose, at the version the room plays, is refused
+/// come once it is in, if ever. The room plays the host's choice at the latest version every game in it plays (night
+/// at version 1 with release 1's game in the room), and a joiner that can't play that value at that version is refused
 /// before it is in the room, its game told which and the host's chat saying so, the room never showing it or telling
-/// anyone it left: a game whose time of day is a version behind the room's, and an older build's join for every option
-/// chosen (it can't say what it has). An option the room doesn't play (held for a player in it) refuses no one.
+/// anyone it left: a game whose night is a version behind, for night (not dusk, the same at every version); an older
+/// build's join for every option chosen (it can't say what it has). A game that keeps an earlier version's play joins
+/// a room at it. An option the room doesn't play (held for a player in it) refuses no one.
 /// </summary>
-TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game lacks an option the host chose")
+TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game can't play a value the host chose")
 {
     if (!MCTestGame::Available())
     {
@@ -809,9 +813,8 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game lac
     MCLogChat& chat = *GlobalLog()->Chat;
     const uint32_t hostId = manager.MyPlayer()->Id;
     constexpr uint32_t WithoutArtillery = MCMatchRule::Supported & ~MCMatchRule::NoArtillery;
-    constexpr uint32_t TimeOfDayRules = MCCapabilityOf(MCMatchOption::TimeOfDay).Rules;
-    // A game whose time of day is a version behind this build's: its sight, without the night's lights.
-    constexpr uint32_t TimeOfDayBehind = MCMatchRule::Supported & ~MCMatchRule::NightLights;
+    // A game whose night is a version behind this build's: its sight, without the lights.
+    constexpr uint32_t NightBehind = MCMatchRule::Supported & ~MCMatchRule::NightLights;
     // The chat's last line, its spaces and the breaks its history wraps it at left out.
     const auto squeezed = [](std::string text)
     {
@@ -822,10 +825,24 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game lac
     const auto lastLine = [&chat, &squeezed]
     { return squeezed(chat.Lines.empty() ? std::string() : chat.Lines.back().Text); };
     const auto players = [&manager] { return manager.GetPlayers(nullptr).size(); };
+    // What a guest was last sent: the time of day it plays, and whether with the night's lights.
+    const auto sentTime = [](Guest& guest, MCTimeOfDay time, bool lights)
+    {
+        const std::optional<MCMPMatchOptionsMessage> sent = guest.MatchOptions();
+        return sent.has_value() && sent->TimeOfDay == static_cast<int8_t>(time) &&
+               ((sent->Rules & MCMatchRule::NightLights) != 0) == lights;
+    };
+
+    const auto choose = [&game](MCMatchOptions options)
+    {
+        game.MatchOptions = options;
+        game.SendMatchOptions();
+    };
 
     // ANN joins before the host has chosen anything, its game without ARTILLERY: let in, its rules known from its join
     // (its game never sends them here). EVE's is release 1's, whose join says nothing: let in, and its rules known
-    // once its game says them in the room. TIME OF DAY is held for EVE, ARTILLERY for both.
+    // once its game says them in the room. ARTILLERY is held for ANN; TIME OF DAY isn't (release 1 plays night's first
+    // version).
     Guest ann("ANN", WithoutArtillery);
     REQUIRE(ann.Join(*manager.DirectPlay, JoinHostAddress));
     REQUIRE(SettleUntil([&] { return manager.GetPlayer(ann.Id()) != nullptr; }));
@@ -837,38 +854,44 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game lac
     CHECK(game.PlayersWithout(MCMatchRule::WeatherRules) == std::vector{eve.Id()});
     eve.SendRules(hostId, MCTestGuest::ReleaseOneRules);
     REQUIRE(SettleUntil([&] { return game.PlayersWithout(MCMatchRule::WeatherRules).empty(); }));
-    CHECK(game.PlayersWithout(TimeOfDayRules) == std::vector{eve.Id()});
-    CHECK(game.PlayersWithout(MCMatchRule::NoArtillery) == (std::vector{ann.Id()}));
+    CHECK(game.PlayersWithout(MCMatchRule::NightLights) == std::vector{eve.Id()});
     Click(TabX, OptionsTabY);
     Settle();
     REQUIRE(room.FrontTab == MCSessionTab::Options);
     MCLogOptionList& list = *room.MatchOptionsList;
-    CHECK_EQ(list.HeldReason(TimeRow), std::string("TELL EVE TO UPGRADE."));
+    CHECK(list.HeldReason(TimeRow).empty());
     CHECK(list.HeldReason(WeatherRow).empty());
     CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN TO UPGRADE."));
 
-    // EVE leaves. The host chooses snow and night, which every game in the room plays, and ARTILLERY OFF, held for ANN.
+    // The host chooses night: played at version 1 (no lights). FAY's game, this build's, keeps version 1's play: let in.
+    choose(MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night});
+    REQUIRE(SettleUntil([&] { return sentTime(eve, MCTimeOfDay::Night, false); }));
+    Guest fay("FAY", MCMatchRule::Supported);
+    REQUIRE(fay.Join(*manager.DirectPlay, JoinHostAddress));
+    CHECK(fay.Refusal().empty());
+    REQUIRE(SettleUntil([&] { return sentTime(fay, MCTimeOfDay::Night, false); }));
+
+    // EVE and FAY leave: the room plays night at version 2. The host chooses snow too, and ARTILLERY OFF, held for ANN.
     eve.Leave();
-    REQUIRE(SettleUntil([&] { return !MCTestGuest::RoomShows(eve.Id()); }));
-    game.MatchOptions = MCMatchOptions{
-        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::NoArtillery};
-    const auto annPlays = [&ann]
+    fay.Leave();
+    REQUIRE(SettleUntil([&] { return !MCTestGuest::RoomShows(eve.Id()) && !MCTestGuest::RoomShows(fay.Id()); }));
+    choose(MCMatchOptions{
+        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::NoArtillery});
+    const auto annPlays = [&]
     {
         const std::optional<MCMPMatchOptionsMessage> sent = ann.MatchOptions();
-        return sent.has_value() && sent->Weather == static_cast<int8_t>(MCWeatherKind::Snow) &&
-               sent->TimeOfDay == static_cast<int8_t>(MCTimeOfDay::Night) &&
+        return sentTime(ann, MCTimeOfDay::Night, true) && sent->Weather == static_cast<int8_t>(MCWeatherKind::Snow) &&
                (sent->Rules & MCMatchRule::NoArtillery) == 0;
     };
 
     REQUIRE(SettleUntil(annPlays));
-    CHECK(list.HeldReason(TimeRow).empty());
     const int32_t annScreens = ann.SessionScreens();
     const size_t linesBefore = chat.Lines.size();
     const size_t inRoom = players();
 
-    // BOB's time of day is a version behind: refused at the door, told why, never in the room; the room plays what it
-    // did and shows itself to no one again.
-    Guest bob("BOB", TimeOfDayBehind);
+    // BOB's night is a version behind: refused at the door, told why, never in the room; the room plays what it did
+    // and shows itself to no one again.
+    Guest bob("BOB", NightBehind);
     CHECK(!bob.Join(*manager.DirectPlay, JoinHostAddress));
     CHECK_EQ(bob.Refusal(), std::string("TIME OF DAY"));
     Settle();
@@ -886,21 +909,26 @@ TEST_CASE_ISOLATED("game: a LAN room refuses at the door a joiner whose game lac
     CHECK_EQ(players(), inRoom);
     CHECK_EQ(lastLine(), squeezed("CAL CAN'T JOIN: CAL'S GAME DOESN'T HAVE THIS MATCH'S WEATHER AND TIME OF DAY."));
 
+    // At dusk, the same at every version, GUS's game (its night a version behind, as BOB's) is let in; the host's
+    // night then plays at version 1.
+    choose(MCMatchOptions{
+        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Dusk, .Rules = MCMatchRule::NoArtillery});
+    REQUIRE(SettleUntil([&] { return sentTime(ann, MCTimeOfDay::Dusk, true); }));
+    Guest gus("GUS", NightBehind);
+    REQUIRE(gus.Join(*manager.DirectPlay, JoinHostAddress));
+    CHECK(gus.Refusal().empty());
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(gus.Id()) && sentTime(gus, MCTimeOfDay::Dusk, false); }));
+    choose(MCMatchOptions{
+        .Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night, .Rules = MCMatchRule::NoArtillery});
+    REQUIRE(SettleUntil([&] { return sentTime(ann, MCTimeOfDay::Night, false); }));
+
     // DAN's game lacks ARTILLERY too, which the room doesn't play (it is held for ANN): let in and shown the room, its
     // options with it, the picks kept.
     room.AssignPlayer(ann.Id(), 2, 0, false);
     Guest dan("DAN", WithoutArtillery);
     REQUIRE(dan.Join(*manager.DirectPlay, JoinHostAddress));
     CHECK(dan.Refusal().empty());
-    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && dan.SessionScreens() == 1; }));
-    CHECK_EQ(ann.SessionScreens(), annScreens + 1);
-    REQUIRE(SettleUntil(
-        [&]
-        {
-            const std::optional<MCMPMatchOptionsMessage> sent = dan.MatchOptions();
-            return sent.has_value() && sent->Weather == static_cast<int8_t>(MCWeatherKind::Snow) &&
-                   sent->TimeOfDay == static_cast<int8_t>(MCTimeOfDay::Night);
-        }));
+    REQUIRE(SettleUntil([&] { return MCTestGuest::RoomShows(dan.Id()) && sentTime(dan, MCTimeOfDay::Night, false); }));
     CHECK(room.Team2Players[0] == ann.Id());
     CHECK_EQ(list.HeldReason(ArtilleryRow), std::string("TELL ANN AND DAN TO UPGRADE."));
 }

@@ -4,11 +4,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <utility>
 
 class MCCamera;
+class MCTerrain;
+class MCTerrainWindow;
 class MCVector2D;
 class MCVector3D;
 class MCVfxAppearance;
@@ -123,6 +126,19 @@ namespace MCParticles
     /// </summary>
     void AddMarks(std::span<const MCParticleCommand> commands, std::span<const int32_t> depths);
 
+    /// <summary>Port-only (HD weather): a part of a frame's marks, made apart: each command at its depth.</summary>
+    struct MCMarkPart
+    {
+        std::span<const MCParticleCommand> Commands;
+        std::span<const int32_t> Depths;
+    };
+
+    /// <summary>
+    /// <see cref="AddMarks"/> of the marks <paramref name="parts"/> hold, one part's after another's, as if they were
+    /// made together in that order (the HD weather's marks, made in parts by MCWeather::Draw's helpers).
+    /// </summary>
+    void AddMarks(std::span<const MCMarkPart> parts);
+
     /// <summary>
     /// Moves the particles on to the game's time and adds those in <paramref name="camera"/>'s view to the frame's draw list
     /// (MCCamera::Render, once the objects have added theirs, before the list is sorted); makes what this frame's
@@ -180,6 +196,39 @@ namespace MCParticles
     /// </summary>
     void DrawnRound(float x, float y, float z, const MCCamera& camera,
                     std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCDrawnPixel> pixels);
+
+    /// <summary>
+    /// Port-only (HD weather): the ground a camera's view draws, as <see cref="GroundDrawnAt"/> and
+    /// <see cref="DrawnRound"/> find it, its terrain window and the terrain held once for many lookups rather than taken
+    /// at each. MCWeather finds the ground under a frame's landing drops through one on several threads at once: taken
+    /// at each lookup, their shared owners' counts went up and down on every thread, which held the threads up.
+    /// </summary>
+    class MCDrawnGround
+    {
+    public:
+        /// <summary>The ground <paramref name="camera"/>'s view draws now (its window as it stands).</summary>
+        explicit MCDrawnGround(const MCCamera& camera);
+
+        /// <summary><see cref="GroundDrawnAt"/> of world point (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>).</summary>
+        std::optional<uint8_t> At(float x, float y, float z) const;
+
+        /// <summary>
+        /// <see cref="DrawnRound"/> of world point (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>).
+        /// </summary>
+        void Round(float x, float y, float z, std::span<const std::pair<int32_t, int32_t>> offsets,
+                   std::span<MCDrawnPixel> pixels) const;
+
+        /// <summary>
+        /// Reads in every tile and overlay the window draws that isn't read yet (the tile cache reads them as they're
+        /// first looked up), so <see cref="At"/> and <see cref="Round"/> change nothing and only read from then on.
+        /// </summary>
+        void ReadTiles() const;
+
+    private:
+        const MCCamera& _Camera;
+        std::shared_ptr<MCTerrainWindow> _Window;
+        std::shared_ptr<MCTerrain> _Terrain;
+    };
 
     /// <summary>
     /// Whether a bridge spans the map's tile at world point (<paramref name="x"/>, <paramref name="y"/>): its road is

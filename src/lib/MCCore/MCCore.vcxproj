@@ -165,6 +165,7 @@
     <ClCompile Include="lib\MCPacketFile.cpp" />
     <ClCompile Include="lib\MCPriorityQueue.cpp" />
     <ClCompile Include="lib\MCSha256.cpp" />
+    <ClCompile Include="lib\MCWorkers.cpp" />
     <ClCompile Include="linkup\MCFidpGroup.cpp" />
     <ClCompile Include="linkup\MCFidpMessage.cpp" />
     <ClCompile Include="linkup\MCFidpNetworkProtocol.cpp" />
@@ -637,6 +638,7 @@
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
+    <ClInclude Include="lib\MCWorkers.h" />
     <ClInclude Include="linkup\MCFidpGroup.h" />
     <ClInclude Include="linkup\MCFidpMessage.h" />
     <ClInclude Include="linkup\MCFidpNetworkProtocol.h" />

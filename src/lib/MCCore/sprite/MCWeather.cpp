@@ -7,6 +7,7 @@
 #include "lib/MCFitIniFile.h"
 #include "lib/MCVector2D.h"
 #include "lib/MCVector3D.h"
+#include "lib/MCWorkers.h"
 #include "main/MCMissionGlobals.h"
 #include "platform/MCRenderer.h"
 #include "sprite/MCParticles.h"
@@ -554,6 +555,13 @@ namespace
     constexpr float SnowApartY = -7.9f;
     constexpr float ThickShare = 0.7f;
 
+    // The frame's marks are made in parts of PartPieces pieces (splashes or drops), and what the drops landing land on
+    // is found in parts of LandingPart drops, by the game's thread and at most MostHelpers threads helping it
+    // (AddMarks, Landings, MCWorkers::HelpersFor).
+    constexpr size_t PartPieces = 2048;
+    constexpr size_t LandingPart = 256;
+    constexpr size_t MostHelpers = 4;
+
     /// <summary>A value between 0 and 1 for a lattice point, the same every frame (composite.pshader's LatticeHash).</summary>
     float LatticeHash(float x, float y)
     {
@@ -829,6 +837,16 @@ namespace
     };
 
     /// <summary>
+    /// Marks of the frame's (all of them, or a part's: AddMarks), each at its depth, added to the draw list together once
+    /// all are made (MCParticles::AddMarks): drawn as each added alone would be.
+    /// </summary>
+    struct Marks
+    {
+        std::vector<MCParticleCommand> Commands;
+        std::vector<int32_t> Depths;
+    };
+
+    /// <summary>
     /// The weather's state: its settings and the mission's weather; the drops falling and the splashes showing, and the
     /// most there may be (for this frame's view); the units drawn, the feet come down and the drops landed by the tools
     /// this frame (Draw empties them each frame); the feet's puddles still reacting (the newest
@@ -877,6 +895,12 @@ namespace
         MCWeather::MCSpeckle Speckle;
         /// <summary>Port-only (HD weather's snow): falling snow drawn since MCWeather::TakeSnowDrawn.</summary>
         bool SnowDrawn = false;
+        /// <summary>
+        /// The marks of the frame's parts (AddMarks) and what the drops landing land on (Landings), kept from frame to
+        /// frame so their room is.
+        /// </summary>
+        std::vector<Marks> MarkParts;
+        std::vector<MCWeather::MCSplashGround> Grounds;
     };
 
     /// <summary>The weather's one state.</summary>
@@ -1280,21 +1304,39 @@ namespace
     }
 
     /// <summary>
-    /// Whether ground drawn in palette entry <paramref name="drawn"/> at world point (x, y, z) lies in a puddle,
-    /// <paramref name="margin"/> inside its level: where the composite lays them, with the wet look (the relief maps),
-    /// not on grass nor cliffs.
+    /// Where a look's puddles lie (PuddlesOf): none, or where their field is under Level (as the composite lays them).
     /// </summary>
-    bool InPuddle(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
-                  float z, float margin)
+    struct Puddles
     {
-        if (!drawn.has_value() || IsGrassIndex(*drawn) || look.Puddles <= 0.0f || !MCSceneLights::ReliefMapsOn() ||
-            BlockedShare(x, y) >= BlockedDryFrom)
+        bool Shown = false;
+        float Level = 0.0f;
+    };
+
+    /// <summary>
+    /// Where <paramref name="look"/>'s puddles lie: only with the wet look (the relief maps), on as much of the ground as
+    /// it says (PuddleLevel, its levels measured now if not yet).
+    /// </summary>
+    Puddles PuddlesOf(State& state, const MCWeather::MCWeatherLook& look)
+    {
+        return look.Puddles > 0.0f && MCSceneLights::ReliefMapsOn()
+                   ? Puddles{.Shown = true, .Level = PuddleLevel(state, look.Puddles)}
+                   : Puddles{};
+    }
+
+    /// <summary>
+    /// Whether ground drawn in palette entry <paramref name="drawn"/> at world point (x, y, z) lies in one of
+    /// <paramref name="puddles"/>, <paramref name="margin"/> inside its level: where the composite lays them, not on
+    /// grass nor cliffs.
+    /// </summary>
+    bool InPuddle(const Puddles& puddles, std::optional<uint8_t> drawn, float x, float y, float z, float margin)
+    {
+        if (!puddles.Shown || !drawn.has_value() || IsGrassIndex(*drawn) || BlockedShare(x, y) >= BlockedDryFrom)
         {
             return false;
         }
 
         const auto [east, north] = FlatGround(x, y, z);
-        return PuddleField(east, north) < PuddleLevel(state, look.Puddles) - margin;
+        return PuddleField(east, north) < puddles.Level - margin;
     }
 
     /// <summary>
@@ -1348,27 +1390,26 @@ namespace
 
     /// <summary>
     /// Whether ground drawn in palette entry <paramref name="drawn"/> (the ground's tile, MCParticles::GroundDrawnAt)
-    /// at world point (x, y, z) is wet: the water drawn, or a puddle (<paramref name="margin"/> inside its level);
-    /// never under a bridge, whose road is drawn over the water.
+    /// at world point (x, y, z) is wet: the water drawn, or one of <paramref name="puddles"/> (<paramref name="margin"/>
+    /// inside its level); never under a bridge, whose road is drawn over the water.
     /// </summary>
-    bool IsWet(State& state, const MCWeather::MCWeatherLook& look, std::optional<uint8_t> drawn, float x, float y,
-               float z, float margin)
+    bool IsWet(const Puddles& puddles, std::optional<uint8_t> drawn, float x, float y, float z, float margin)
     {
-        return !MCParticles::BridgedAt(x, y) && (InPuddle(state, look, drawn, x, y, z, margin) ||
-                                                 (drawn.has_value() && MCParticles::IsWaterColor(*drawn)));
+        return !MCParticles::BridgedAt(x, y) &&
+               (InPuddle(puddles, drawn, x, y, z, margin) || (drawn.has_value() && MCParticles::IsWaterColor(*drawn)));
     }
 
     /// <summary>
     /// What a drop landing at world point (x, y, z), not on a unit, splashes on (MCWeather::GroundAt), as
-    /// <paramref name="camera"/> shows it.
+    /// <paramref name="ground"/> is drawn, with <paramref name="puddles"/>.
     /// </summary>
-    MCWeather::MCSplashGround GroundUnder(State& state, const MCWeather::MCWeatherLook& look, float x, float y, float z,
-                                          const MCCamera& camera)
+    MCWeather::MCSplashGround GroundUnder(const Puddles& puddles, const MCParticles::MCDrawnGround& ground, float x,
+                                          float y, float z)
     {
         std::array<MCParticles::MCDrawnPixel, GroundVotes.size()> drawn;
-        MCParticles::DrawnRound(x, y, z, camera, GroundVotes, drawn);
+        ground.Round(x, y, z, GroundVotes, drawn);
 
-        if (IsWet(state, look, drawn[0].Ground, x, y, z, PuddleMargin))
+        if (IsWet(puddles, drawn[0].Ground, x, y, z, PuddleMargin))
         {
             return MCWeather::MCSplashGround::Water;
         }
@@ -1496,20 +1537,37 @@ namespace
     }
 
     /// <summary>
-    /// <paramref name="drop"/> landing: with MCWeatherSettings::Ground, as the ground there takes it (ThrowFitting);
-    /// else a dot where it lands; in water or a puddle, a ring (a near drop's two); on land or a unit, droplets thrown
-    /// up.
+    /// What <paramref name="drop"/> lands on, as <paramref name="ground"/> is drawn, with <paramref name="puddles"/>: a
+    /// flake, the water drawn (not under a bridge) or not (Hard, for any land or a unit's top); a drop, a unit's top
+    /// (Metal) or what GroundUnder takes the ground for. It changes nothing, and once the ground's tiles are read in
+    /// (MCParticles::MCDrawnGround::ReadTiles) it only reads, so the helpers find many at once (Landings).
     /// </summary>
-    void Throw(State& state, const Drop& drop, const MCCamera& camera)
+    MCWeather::MCSplashGround LandsOn(const Puddles& puddles, const MCParticles::MCDrawnGround& ground,
+                                      const Drop& drop)
+    {
+        if (drop.Flake)
+        {
+            const std::optional<uint8_t> drawn = drop.OnUnit ? std::nullopt : ground.At(drop.X, drop.Y, drop.Z);
+            return drawn.has_value() && MCParticles::IsWaterColor(*drawn) && !MCParticles::BridgedAt(drop.X, drop.Y)
+                       ? MCWeather::MCSplashGround::Water
+                       : MCWeather::MCSplashGround::Hard;
+        }
+
+        return drop.OnUnit ? MCWeather::MCSplashGround::Metal : GroundUnder(puddles, ground, drop.X, drop.Y, drop.Z);
+    }
+
+    /// <summary>
+    /// <paramref name="drop"/> landing on <paramref name="ground"/> (LandsOn's): with MCWeatherSettings::Ground, as the
+    /// ground there takes it (ThrowFitting); else a dot where it lands; in water or a puddle, a ring (a near drop's
+    /// two); on land or a unit, droplets thrown up.
+    /// </summary>
+    void Throw(State& state, const Drop& drop, MCWeather::MCSplashGround ground, const MCCamera& camera)
     {
         // A flake rests a moment where it lands, a pixel of it, lying on the ground (or on a unit's top); on the water
         // (not under a bridge) it's gone.
         if (drop.Flake)
         {
-            const std::optional<uint8_t> drawn =
-                drop.OnUnit ? std::nullopt : MCParticles::GroundDrawnAt(drop.X, drop.Y, drop.Z, camera);
-
-            if (!drawn.has_value() || !MCParticles::IsWaterColor(*drawn) || MCParticles::BridgedAt(drop.X, drop.Y))
+            if (ground != MCWeather::MCSplashGround::Water)
             {
                 state.Splashes.push_back(MarkOf(drop, SplashKind::Flake, FlakeDot, FlakeRest,
                                                 drop.Size == FarFlake ? FlakeWhite : FlakeBrightest, drop.Alpha,
@@ -1521,9 +1579,6 @@ namespace
 
         const DropSize& size = DropSizes[drop.Size];
         MCDice& dice = state.SplashDice;
-        const MCWeather::MCWeatherLook look = MCWeather::ShownLook();
-        const MCWeather::MCSplashGround ground =
-            drop.OnUnit ? MCWeather::MCSplashGround::Metal : GroundUnder(state, look, drop.X, drop.Y, drop.Z, camera);
 
         if (ThrowFitting(state, drop, ground, camera))
         {
@@ -1650,13 +1705,24 @@ namespace
         }
     }
 
-    /// <summary>The drops the tools and tests landed this frame (MCWeather::AddDrop), splashing at once.</summary>
-    void Land(State& state, const MCCamera& camera)
+    /// <summary>
+    /// The drops the tools and tests landed this frame (MCWeather::AddDrop), splashing at once under
+    /// <paramref name="look"/>.
+    /// </summary>
+    void Land(State& state, const MCWeather::MCWeatherLook& look, const MCCamera& camera)
     {
+        if (state.Landing.empty())
+        {
+            return;
+        }
+
+        const Puddles puddles = PuddlesOf(state, look);
+        const MCParticles::MCDrawnGround ground(camera);
+
         for (const PendingDrop& pending : state.Landing)
         {
             // In snow, a flake as strong as its size's strongest.
-            const bool flake = MCWeather::ShownLook().Snows;
+            const bool flake = look.Snows;
             Drop drop{.X = pending.Point.X,
                       .Y = pending.Point.Y,
                       .Z = pending.Point.Z,
@@ -1664,7 +1730,7 @@ namespace
                       .Flake = flake,
                       .Alpha = flake ? FlakeSizes[pending.Size].AlphaHigh : 0.0f};
             LandOnUnits(state, drop, camera);
-            Throw(state, drop, camera);
+            Throw(state, drop, LandsOn(puddles, ground, drop), camera);
         }
     }
 
@@ -1960,16 +2026,6 @@ namespace
     }
 
     /// <summary>
-    /// The frame's marks, each at its depth, added to the draw list together once all are made (MCParticles::AddMarks):
-    /// drawn as each added alone would be.
-    /// </summary>
-    struct Marks
-    {
-        std::vector<MCParticleCommand> Commands;
-        std::vector<int32_t> Depths;
-    };
-
-    /// <summary>
     /// Adds <paramref name="command"/> to <paramref name="marks"/> at <paramref name="depth"/> if it shows.
     /// </summary>
     void Mark(Marks& marks, const MCCamera& camera, const MCParticleCommand& command, int32_t depth)
@@ -2039,12 +2095,13 @@ namespace
     }
 
     /// <summary>
-    /// Adds the falling drops to <paramref name="marks"/>: hard-edged streaks, slanted, their tails toward the wind,
-    /// catching the light by the lights as <paramref name="catching"/> says; flakes as AddFlake draws them.
+    /// Adds falling <paramref name="drops"/> to <paramref name="marks"/>: hard-edged streaks, slanted, their tails toward
+    /// the wind, catching the light by the lights as <paramref name="catching"/> says; flakes as AddFlake draws them.
     /// </summary>
-    void AddDrops(Marks& marks, const State& state, const MCCamera& camera, const Catching& catching, float palest)
+    void AddDrops(Marks& marks, std::span<const Drop> drops, const MCCamera& camera, const Catching& catching,
+                  float palest)
     {
-        for (const Drop& drop : state.Drops)
+        for (const Drop& drop : drops)
         {
             if (drop.Flake)
             {
@@ -2074,12 +2131,14 @@ namespace
     }
 
     /// <summary>
-    /// Adds the splashes' pieces and the drips to <paramref name="marks"/>, hard edged, those in the air catching the
-    /// light by the lights as <paramref name="catching"/> says; their colours no paler than <paramref name="palest"/>.
+    /// Adds splashes' pieces and drips (<paramref name="splashes"/>) to <paramref name="marks"/>, hard edged, those in the
+    /// air catching the light by the lights as <paramref name="catching"/> says; their colours no paler than
+    /// <paramref name="palest"/>.
     /// </summary>
-    void AddSplashes(Marks& marks, const State& state, const MCCamera& camera, const Catching& catching, float palest)
+    void AddSplashes(Marks& marks, std::span<const Splash> splashes, const MCCamera& camera, const Catching& catching,
+                     float palest)
     {
-        for (const Splash& splash : state.Splashes)
+        for (const Splash& splash : splashes)
         {
             if (splash.Age < 0.0f)
             {
@@ -2263,10 +2322,121 @@ namespace
     }
 
     /// <summary>
-    /// Moves the drops and splashes on by <paramref name="step"/> seconds; those landed splash, on what
-    /// <paramref name="camera"/> shows drawn under them.
+    /// The threads that help the game's thread make the marks and find what the landed drops land on (AddMarks,
+    /// Landings), started with the first that do.
     /// </summary>
-    void Move(State& state, float step, const MCCamera& camera)
+    MCWorkers& Helpers()
+    {
+        static MCWorkers helpers(MCWorkers::HelpersFor(MostHelpers));
+        return helpers;
+    }
+
+    /// <summary>How many parts of <paramref name="size"/> <paramref name="pieces"/> make (the last the rest).</summary>
+    size_t PartsOf(size_t pieces, size_t size)
+    {
+        return (pieces + size - 1) / size;
+    }
+
+    /// <summary>
+    /// Part <paramref name="part"/> of <paramref name="pieces"/>, <paramref name="size"/> of them (the last part the
+    /// rest).
+    /// </summary>
+    template <typename T> std::span<T> PartOf(std::span<T> pieces, size_t part, size_t size)
+    {
+        const size_t first = part * size;
+        return pieces.subspan(first, std::min(size, pieces.size() - first));
+    }
+
+    /// <summary>
+    /// Adds the frame's marks to the draw list: the splashes' (AddSplashes) and then the drops' (AddDrops), made in parts
+    /// of PartPieces pieces by the helpers and this thread together (MCWorkers), each part's into its own of
+    /// State::MarkParts, and added in their order, so the list is as one thread making them all would make it. Nothing
+    /// they read changes while they run (the state, <paramref name="camera"/>, the lights <paramref name="catching"/>
+    /// holds, the terrain's projection): this thread only runs parts of its own until all are done.
+    /// </summary>
+    void AddMarks(State& state, const MCCamera& camera, const Catching& catching, float palest)
+    {
+        const size_t splashParts = PartsOf(state.Splashes.size(), PartPieces);
+        const size_t parts = splashParts + PartsOf(state.Drops.size(), PartPieces);
+
+        if (state.MarkParts.size() < parts)
+        {
+            state.MarkParts.resize(parts);
+        }
+
+        const std::span<Marks> made = std::span(state.MarkParts).first(parts);
+        const std::span<const Splash> splashes = state.Splashes;
+        const std::span<const Drop> drops = state.Drops;
+        Helpers().Run(parts,
+                      [&](size_t part)
+                      {
+                          Marks& marks = made[part];
+                          marks.Commands.clear();
+                          marks.Depths.clear();
+
+                          if (part < splashParts)
+                          {
+                              AddSplashes(marks, PartOf(splashes, part, PartPieces), camera, catching, palest);
+                          }
+                          else
+                          {
+                              AddDrops(marks, PartOf(drops, part - splashParts, PartPieces), camera, catching, palest);
+                          }
+                      });
+        std::vector<MCParticles::MCMarkPart> marks;
+        marks.reserve(parts);
+
+        for (const Marks& part : made)
+        {
+            marks.push_back({part.Commands, part.Depths});
+        }
+
+        MCParticles::AddMarks(marks);
+    }
+
+    /// <summary>
+    /// What each of the drops <paramref name="landed"/> lands on (LandsOn, as <paramref name="camera"/> shows the ground
+    /// under <paramref name="look"/>), in State::Grounds, found in parts of LandingPart drops by the helpers and this
+    /// thread together (MCWorkers). First, on this thread, the puddles' levels are measured if not yet (PuddlesOf) and
+    /// the view's tiles read in (MCParticles::MCDrawnGround::ReadTiles), so the parts change nothing they share and only
+    /// read what stays as it is while they run.
+    /// </summary>
+    std::span<const MCWeather::MCSplashGround> Landings(State& state, const MCWeather::MCWeatherLook& look,
+                                                        std::span<const Drop> landed, const MCCamera& camera)
+    {
+        state.Grounds.resize(landed.size());
+
+        if (landed.empty())
+        {
+            return {};
+        }
+
+        const Puddles puddles = PuddlesOf(state, look);
+        const MCParticles::MCDrawnGround ground(camera);
+        const size_t parts = PartsOf(landed.size(), LandingPart);
+
+        // Read in only for the helpers: this thread alone reads them in as it goes.
+        if (parts > 1 && Helpers().Helpers() > 0)
+        {
+            ground.ReadTiles();
+        }
+
+        const std::span<MCWeather::MCSplashGround> grounds = state.Grounds;
+        Helpers().Run(parts,
+                      [&](size_t part)
+                      {
+                          std::ranges::transform(PartOf(landed, part, LandingPart),
+                                                 PartOf(grounds, part, LandingPart).begin(),
+                                                 [&](const Drop& drop) { return LandsOn(puddles, ground, drop); });
+                      });
+        return grounds;
+    }
+
+    /// <summary>
+    /// Moves the drops and splashes on by <paramref name="step"/> seconds; those landed splash, on what
+    /// <paramref name="camera"/> shows drawn under them (under <paramref name="look"/>).
+    /// </summary>
+    void Move(State& state, const MCWeather::MCWeatherLook& look, float step, const MCCamera& camera)
     {
         for (Splash& splash : state.Splashes)
         {
@@ -2287,10 +2457,11 @@ namespace
         }
 
         std::erase_if(state.Drops, [](const Drop& drop) { return drop.Age * drop.Speed >= drop.Fall; });
+        const std::span<const MCWeather::MCSplashGround> grounds = Landings(state, look, landed, camera);
 
-        for (const Drop& drop : landed)
+        for (size_t i = 0; i < landed.size(); ++i)
         {
-            Throw(state, drop, camera);
+            Throw(state, landed[i], grounds[i], camera);
         }
     }
 
@@ -2720,8 +2891,8 @@ auto MCWeather::AddStep(const MCVector3D& foot, std::span<const uint8_t> print, 
 auto MCWeather::PuddleAt(const MCVector3D& point, const MCCamera& camera) -> bool
 {
     return !MCParticles::BridgedAt(point.X, point.Y) &&
-           InPuddle(TheState(), ShownLook(), MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, camera), point.X,
-                    point.Y, point.Z, StepMargin);
+           InPuddle(PuddlesOf(TheState(), ShownLook()), MCParticles::GroundDrawnAt(point.X, point.Y, point.Z, camera),
+                    point.X, point.Y, point.Z, StepMargin);
 }
 
 auto MCWeather::GroundOf(uint8_t index) -> MCSplashGround
@@ -2747,7 +2918,8 @@ auto MCWeather::GroundOf(uint8_t index) -> MCSplashGround
 
 auto MCWeather::GroundAt(const MCVector3D& point, const MCCamera& camera) -> MCSplashGround
 {
-    return GroundUnder(TheState(), ShownLook(), point.X, point.Y, point.Z, camera);
+    return GroundUnder(PuddlesOf(TheState(), ShownLook()), MCParticles::MCDrawnGround(camera), point.X, point.Y,
+                       point.Z);
 }
 
 auto MCWeather::AddDrop(const MCVector3D& point, uint8_t size) -> void
@@ -2835,7 +3007,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     // The drops fall and splash only as the game's time goes (no dice thrown while it holds).
     if (step > 0.0f)
     {
-        Move(state, step, camera);
+        Move(state, look, step, camera);
         AgePuddleSteps(state, step);
         Rain(state, camera, look, step, now, ShowersAt(Shown(), now).Rain);
         Drip(state, look, step);
@@ -2846,7 +3018,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
             Step(state, foot, camera);
         }
 
-        Land(state, camera);
+        Land(state, look, camera);
     }
 
     state.Units.clear();
@@ -2864,10 +3036,7 @@ auto MCWeather::Draw(const MCCamera& camera) -> void
     const bool night = state.Settings.Light > 0.0f && MCSceneLights::TimeOfDay() != MCTimeOfDay::Day;
     const float palest = night ? MCSceneLights::ShownLighting().SelfLit : 1.0f;
     state.Speckle = Specks(state, camera, look, now, palest);
-    Marks marks;
-    AddSplashes(marks, state, camera, catching, palest);
-    AddDrops(marks, state, camera, catching, palest);
-    MCParticles::AddMarks(marks.Commands, marks.Depths);
+    AddMarks(state, camera, catching, palest);
     state.SnowDrawn = state.SnowDrawn || (look.Snows && !state.Drops.empty());
 }
 

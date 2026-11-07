@@ -95,6 +95,7 @@
     <ClCompile Include="tests\EffectTests.cpp" />
     <ClCompile Include="tests\ElementalTests.cpp" />
     <ClCompile Include="tests\EngineTests.cpp" />
+    <ClCompile Include="tests\fakes\MCFakeSignaling.cpp" />
     <ClCompile Include="tests\fakes\MCLoopbackTransport.cpp" />
     <ClCompile Include="tests\fakes\MCManualClock.cpp" />
     <ClCompile Include="tests\fakes\MCMemoryFileSource.cpp" />
@@ -118,6 +119,7 @@
     <ClCompile Include="tests\HdOptionsTests.cpp" />
     <ClCompile Include="tests\HdPackTests.cpp" />
     <ClCompile Include="tests\IceLinkTests.cpp" />
+    <ClCompile Include="tests\IceTransportTests.cpp" />
     <ClCompile Include="tests\IniFileTests.cpp" />
     <ClCompile Include="tests\InputTests.cpp" />
     <ClCompile Include="tests\InterfaceTests.cpp" />
@@ -176,6 +178,7 @@
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeSignaling.h" />
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h" />
     <ClInclude Include="tests\fakes\MCManualClock.h" />
     <ClInclude Include="tests\fakes\MCMemoryFileSource.h" />

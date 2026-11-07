@@ -19,6 +19,8 @@ namespace
     constexpr size_t GuestBytes = 300 * 1024;
     constexpr size_t HostBytes = 70 * 1024;
     constexpr size_t LargestSend = 40 * 1024;
+    /// <summary>More than a link holds unread (8 MB).</summary>
+    constexpr size_t FloodBytes = 9u << 20;
 
     /// <summary>
     /// Passes each end's signals to the other and reads what each received, until <paramref name="done"/> or the
@@ -148,4 +150,27 @@ TEST_CASE("ice: a link fails on a signal out of turn or one that doesn't parse")
     REQUIRE(other != nullptr);
     other->Heard({"hello", "", {}});
     CHECK(other->GetState() == MCIceLink::State::Failed);
+}
+
+TEST_CASE("ice: a link fails when the other end sends more than this end holds unread")
+{
+    const std::unique_ptr<MCIceLink> guest = MCIceLink::Offer(OnThisMachine);
+    const std::unique_ptr<MCIceLink> host = MCIceLink::Answer(OnThisMachine);
+    REQUIRE(guest != nullptr && host != nullptr);
+    std::vector<uint8_t> atGuest;
+    std::vector<uint8_t> atHost;
+    REQUIRE(
+        Pump(*guest, *host, atGuest, atHost, [&]
+             { return guest->GetState() == MCIceLink::State::Open && host->GetState() == MCIceLink::State::Open; }));
+
+    // The host never reads.
+    REQUIRE(guest->Send(Pattern(FloodBytes, 3)));
+    const auto deadline = std::chrono::steady_clock::now() + LinkDeadline;
+
+    while (host->GetState() == MCIceLink::State::Open && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(PumpStep);
+    }
+
+    CHECK(host->GetState() == MCIceLink::State::Failed);
 }

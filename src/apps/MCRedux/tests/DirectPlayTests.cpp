@@ -1,9 +1,11 @@
 #include "stdafx.h"
 #include "MCTest.h"
+#include "fakes/MCFakeSignaling.h"
 #include "fakes/MCLoopbackTransport.h"
 #include "lib/MCOptionalRef.h"
 #include "main/MCGameContext.h"
 #include "platform/MCDirectPlay.h"
+#include "platform/MCIceTransport.h"
 #include "platform/MCSocket.h"
 
 // The port's DirectPlay stand-in, driven the way linkup drives DirectPlay 3, with a host and a joiner in one process
@@ -111,8 +113,12 @@ namespace
         return !Next(directPlay, other, 150).has_value();
     }
 
+    /// <summary>The searches a LAN game gets to find a session.</summary>
+    constexpr int SearchAttempts = 20;
+
     /// <summary>The sessions an enumeration reports.</summary>
-    std::vector<DPSESSIONDESC2> Enumerate(MCDirectPlay& directPlay, MCDirectPlay& host, uint32_t flags)
+    std::vector<DPSESSIONDESC2> Enumerate(MCDirectPlay& directPlay, MCDirectPlay& host, uint32_t flags,
+                                          int attempts = SearchAttempts)
     {
         struct Found
         {
@@ -125,7 +131,7 @@ namespace
         desc.guidApplication = TestApplication;
 
         // DirectPlay's enumeration is asynchronous: the host answers when it next pumps, and a later call lists it.
-        for (int attempt = 0; attempt < 20 && found.Sessions.empty(); attempt++)
+        for (int attempt = 0; attempt < attempts && found.Sessions.empty(); attempt++)
         {
             found = {};
             directPlay.EnumSessions(
@@ -299,6 +305,63 @@ TEST_CASE("directplay: a joiner finds, joins and plays with a host")
     CHECK_EQ(destroyed->SystemType(), uint32_t{DPSYS_DESTROYPLAYERORGROUP});
     CHECK_EQ(destroyed->As<DPMSG_DESTROYPLAYERORGROUP>().dpId, guestPlayer);
     CHECK(Listed(host, false) == (std::map<uint32_t, std::string>{{hostPlayer, "Commander"}}));
+}
+
+/// <summary>
+/// An internet game: the stand-in over ICE links (platform/MCIceTransport), the service's signals passed in the process
+/// (MCFakeSignalBoard), the host and the joiner on one transport as the other tests share the loopback. The search's
+/// first query opens the link, so a search finds the session once it has opened.
+/// </summary>
+TEST_CASE("directplay: an internet game, over ICE links, is found, joined and played as a LAN one")
+{
+    // A search a few hundred milliseconds long each time, for up to 15 s, as the link opens.
+    constexpr int linkSearchAttempts = 250;
+    // A link closed at one end is seen closed at the other within a second or two.
+    constexpr uint64_t closeSeenMs = 10000;
+    MCTestContextScope scope;
+    MCFakeSignalBoard board;
+    board.Host("K7QF", "this game");
+    scope.Context().SetNet(std::make_unique<MCIceTransport>(board.Endpoint("this game")));
+    MCDirectPlay host;
+    MCDirectPlay joiner;
+    REQUIRE_EQ(Connect(host, "K7QF:28881"), DP_OK);
+    REQUIRE_EQ(Host(host, "Over the internet", 6), DP_OK);
+    uint32_t hostPlayer = 0;
+    REQUIRE_EQ(NewPlayer(host, "Commander", hostPlayer), DP_OK);
+
+    REQUIRE_EQ(Connect(joiner, "K7QF:28881"), DP_OK);
+    const std::vector<DPSESSIONDESC2> sessions = Enumerate(joiner, host, DPENUMSESSIONS_AVAILABLE, linkSearchAttempts);
+    REQUIRE_EQ(sessions.size(), size_t{1});
+    CHECK(sessions[0].SessionName == std::optional<std::string>("Over the internet"));
+    CHECK_EQ(sessions[0].dwCurrentPlayers, 1u);
+    REQUIRE_EQ(WithHostRunning(host, [&] { return joiner.Open(sessions[0], DPOPEN_JOIN | DPOPEN_RETURNSTATUS); }),
+               DP_OK);
+    uint32_t guestPlayer = 0;
+    REQUIRE_EQ(WithHostRunning(host, [&] { return NewPlayer(joiner, "Guest", guestPlayer); }), DP_OK);
+
+    std::optional<Received> created = Next(host);
+    REQUIRE(created.has_value());
+    CHECK_EQ(created->SystemType(), uint32_t{DPSYS_CREATEPLAYERORGROUP});
+    CHECK_EQ(created->As<DPMSG_CREATEPLAYERORGROUP>().dpId, guestPlayer);
+    const std::map<uint32_t, std::string> expected{{hostPlayer, "Commander"}, {guestPlayer, "Guest"}};
+    CHECK(Listed(host, false) == expected);
+    CHECK(Listed(joiner, false) == expected);
+
+    REQUIRE_EQ(joiner.Send(guestPlayer, hostPlayer, 0, Bytes("hello")), DP_OK);
+    std::optional<Received> hello = Next(host);
+    REQUIRE(hello.has_value());
+    CHECK_EQ(hello->From, guestPlayer);
+    CHECK_EQ(hello->Text(), std::string("hello"));
+    REQUIRE_EQ(host.Send(hostPlayer, DPID_ALLPLAYERS, 0, Bytes("all")), DP_OK);
+    std::optional<Received> all = Next(joiner, host);
+    REQUIRE(all.has_value());
+    CHECK_EQ(all->From, hostPlayer);
+    CHECK_EQ(all->Text(), std::string("all"));
+
+    host.Close();
+    std::optional<Received> lost = Next(joiner, std::nullopt, closeSeenMs);
+    REQUIRE(lost.has_value());
+    CHECK_EQ(lost->SystemType(), uint32_t{DPSYS_SESSIONLOST});
 }
 
 TEST_CASE("directplay: joiners lose the session when the host leaves")

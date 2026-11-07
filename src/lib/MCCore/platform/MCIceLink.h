@@ -106,8 +106,14 @@ public:
     /// <summary>The path the open link took (None until it is open).</summary>
     Path GetPath() const;
 
-    /// <summary>Sends <paramref name="bytes"/> after everything sent before; false unless the link is open.</summary>
+    /// <summary>
+    /// Sends <paramref name="bytes"/> after everything sent before; false unless the link is open. The bytes the
+    /// network can't take yet wait in the link, however many: <see cref="Unsent"/> says how many.
+    /// </summary>
     bool Send(std::span<const uint8_t> bytes);
+
+    /// <summary>The bytes sent that the network hasn't taken yet (0 before the link opens).</summary>
+    size_t Unsent() const;
 
     /// <summary>
     /// Moves into <paramref name="into"/> as many of the bytes received as fit, in the order they were sent.

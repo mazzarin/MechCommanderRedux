@@ -411,6 +411,7 @@
            not meet the game's Win32 stand-ins in the precompiled header. -->
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="platform\MCIceTransport.cpp" />
     <ClCompile Include="platform\MCInput.cpp" />
     <ClCompile Include="platform\MCPresenter.cpp" />
     <ClCompile Include="platform\MCRegisteredBlock.cpp" />
@@ -876,6 +877,7 @@
     <ClInclude Include="platform\MCFlac.h" />
     <ClInclude Include="platform\MCFrameLog.h" />
     <ClInclude Include="platform\MCIceLink.h" />
+    <ClInclude Include="platform\MCIceTransport.h" />
     <ClInclude Include="platform\MCInput.h" />
     <ClInclude Include="platform\MCNeverDestroyed.h" />
     <ClInclude Include="platform\MCPresenter.h" />

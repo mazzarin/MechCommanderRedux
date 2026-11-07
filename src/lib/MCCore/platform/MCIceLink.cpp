@@ -34,6 +34,12 @@ namespace
     /// end's limit (libdatachannel's own is 256 KB; WebRTC's safe size is 16 KB).
     /// </summary>
     constexpr size_t MessageBytes = 16 * 1024;
+    /// <summary>
+    /// The bytes received and not yet read a link holds: as many as a game keeps for one peer before dropping it
+    /// (MCDirectPlay's own limit). libdatachannel hands on every message as it comes, so nothing slows the other end:
+    /// more than this, and it isn't this game, or is flooding it, and the link fails.
+    /// </summary>
+    constexpr size_t MaxReceivedBytes = 8u << 20;
     /// <summary>What libdatachannel logs into the game's log: its warnings and errors.</summary>
     constexpr rtc::LogLevel LoggedLevel = rtc::LogLevel::Warning;
 
@@ -88,7 +94,12 @@ struct MCIceShared
     void End(MCIceLink::State state, std::string_view why)
     {
         const std::scoped_lock lock(Lock);
+        EndLocked(state, why);
+    }
 
+    /// <summary>End, under the lock.</summary>
+    void EndLocked(MCIceLink::State state, std::string_view why)
+    {
         if (State == MCIceLink::State::Connecting || State == MCIceLink::State::Open)
         {
             SDL_Log("MCIceLink: the link %s: %.*s", state == MCIceLink::State::Failed ? "failed" : "closed",
@@ -154,6 +165,19 @@ struct MCIceLink::Impl
                 if (const rtc::binary* bytes = std::get_if<rtc::binary>(&message))
                 {
                     const std::scoped_lock lock(shared->Lock);
+
+                    if (shared->State != State::Open)
+                    {
+                        return;
+                    }
+
+                    if (shared->Received.size() + bytes->size() > MaxReceivedBytes)
+                    {
+                        shared->EndLocked(
+                            State::Failed,
+                            std::format("the other end sent over {} bytes this end hadn't read", MaxReceivedBytes));
+                        return;
+                    }
 
                     for (const std::byte byte : *bytes)
                     {
@@ -432,6 +456,19 @@ bool MCIceLink::Send(std::span<const uint8_t> bytes)
     }
 
     return true;
+}
+
+size_t MCIceLink::Unsent() const
+{
+    std::shared_ptr<rtc::DataChannel> channel;
+
+    {
+        const std::scoped_lock lock(_Impl->Shared->Lock);
+        channel = _Impl->Shared->Channel;
+    }
+
+    // Out of the lock: the channel takes its own.
+    return channel != nullptr ? channel->bufferedAmount() : 0;
 }
 
 size_t MCIceLink::Receive(std::span<uint8_t> into)

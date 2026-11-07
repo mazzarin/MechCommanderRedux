@@ -1159,6 +1159,9 @@
     <ClCompile Include="platform\MCIceLink.cpp">
       <Filter>platform</Filter>
     </ClCompile>
+    <ClCompile Include="platform\MCIceTransport.cpp">
+      <Filter>platform</Filter>
+    </ClCompile>
     <ClCompile Include="platform\MCInput.cpp">
       <Filter>platform</Filter>
     </ClCompile>
@@ -2494,6 +2497,9 @@
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCIceLink.h">
+      <Filter>platform</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\MCIceTransport.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="platform\MCInput.h">

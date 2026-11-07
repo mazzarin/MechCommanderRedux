@@ -83,6 +83,9 @@
     <ClCompile Include="tests\EngineTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\fakes\MCFakeSignaling.cpp">
+      <Filter>tests\fakes</Filter>
+    </ClCompile>
     <ClCompile Include="tests\fakes\MCLoopbackTransport.cpp">
       <Filter>tests\fakes</Filter>
     </ClCompile>
@@ -150,6 +153,9 @@
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\IceLinkTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\IceTransportTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\IniFileTests.cpp">
@@ -304,6 +310,9 @@
     <ClInclude Include="MCTelemetryBackend.h" />
     <ClInclude Include="MCWinHttp.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="tests\fakes\MCFakeSignaling.h">
+      <Filter>tests\fakes</Filter>
+    </ClInclude>
     <ClInclude Include="tests\fakes\MCLoopbackTransport.h">
       <Filter>tests\fakes</Filter>
     </ClInclude>

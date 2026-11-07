@@ -660,19 +660,19 @@ namespace
     }
 
     /// <summary>
-    /// What is drawn round world point (x, y, z) in <paramref name="camera"/>'s view: <paramref name="pixels"/>[k],
+    /// What is drawn round world point (x, y, z) in <paramref name="camera"/>'s view (its terrain window
+    /// <paramref name="window"/>, of <paramref name="terrain"/>; none without either): <paramref name="pixels"/>[k],
     /// the pixel <paramref name="offsets"/>[k] right and down of where the point is drawn. Its ground: the pixel there
     /// of the last tile its terrain window drew over it (each block's at its top-left corner, row by row, as
     /// MCTerrainBlock::Draw). Its surface, with <paramref name="overlays"/>: that of the last overlay drawn over the
     /// tiles there (MCTerrainBlock:: DrawOverlay, after them all) where one covers it, else its ground. None outside
     /// the window's tiles. The tiles round the point are looked up once for all the pixels.
     /// </summary>
-    void FindDrawn(float x, float y, float z, const MCCamera& camera, bool overlays,
+    void FindDrawn(const std::shared_ptr<MCTerrainWindow>& window, const std::shared_ptr<MCTerrain>& terrain, float x,
+                   float y, float z, const MCCamera& camera, bool overlays,
                    std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCParticles::MCDrawnPixel> pixels)
     {
         std::ranges::fill(pixels, MCParticles::MCDrawnPixel{});
-        const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
-        const std::shared_ptr<MCTerrain> terrain = Terrain();
 
         if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
             terrain->Tiles == nullptr)
@@ -1994,41 +1994,54 @@ auto MCParticles::GroundAt(float x, float y) -> float
 
 auto MCParticles::GroundDrawnAt(float x, float y, float z, const MCCamera& camera) -> std::optional<uint8_t>
 {
-    constexpr std::array<std::pair<int32_t, int32_t>, 1> here{};
-    std::array<MCDrawnPixel, 1> pixel;
-    FindDrawn(x, y, z, camera, false, here, pixel);
-    return pixel[0].Ground;
+    return MCDrawnGround(camera).At(x, y, z);
 }
 
 auto MCParticles::DrawnRound(float x, float y, float z, const MCCamera& camera,
                              std::span<const std::pair<int32_t, int32_t>> offsets, std::span<MCDrawnPixel> pixels)
     -> void
 {
-    FindDrawn(x, y, z, camera, true, offsets, pixels);
+    MCDrawnGround(camera).Round(x, y, z, offsets, pixels);
 }
 
-auto MCParticles::ReadDrawnTiles(const MCCamera& camera) -> void
+MCParticles::MCDrawnGround::MCDrawnGround(const MCCamera& camera)
+    : _Camera(camera), _Window(camera.TerrainWindow.lock()), _Terrain(Terrain())
 {
-    const std::shared_ptr<MCTerrainWindow> window = camera.TerrainWindow.lock();
-    const std::shared_ptr<MCTerrain> terrain = Terrain();
+}
 
-    if (window == nullptr || window->Vertices.empty() || terrain == nullptr || terrain->MapBlocks == nullptr ||
-        terrain->Tiles == nullptr)
+auto MCParticles::MCDrawnGround::At(float x, float y, float z) const -> std::optional<uint8_t>
+{
+    constexpr std::array<std::pair<int32_t, int32_t>, 1> here{};
+    std::array<MCDrawnPixel, 1> pixel;
+    FindDrawn(_Window, _Terrain, x, y, z, _Camera, false, here, pixel);
+    return pixel[0].Ground;
+}
+
+auto MCParticles::MCDrawnGround::Round(float x, float y, float z, std::span<const std::pair<int32_t, int32_t>> offsets,
+                                       std::span<MCDrawnPixel> pixels) const -> void
+{
+    FindDrawn(_Window, _Terrain, x, y, z, _Camera, true, offsets, pixels);
+}
+
+auto MCParticles::MCDrawnGround::ReadTiles() const -> void
+{
+    if (_Window == nullptr || _Window->Vertices.empty() || _Terrain == nullptr || _Terrain->MapBlocks == nullptr ||
+        _Terrain->Tiles == nullptr)
     {
         return;
     }
 
     // Every corner FindDrawn may look at: the window's rows and columns but its last.
-    const int32_t side = window->Side();
+    const int32_t side = _Window->Side();
 
     for (int32_t r = 0; r <= side - 2; ++r)
     {
         for (int32_t c = 0; c <= side - 2; ++c)
         {
             const MCPrecompVertex& vertex =
-                terrain->MapBlocks->Vertex(window->Vertices[static_cast<size_t>(r) * side + c].MapVertex);
-            std::ignore = terrain->Tiles->Lookup(vertex.TextureData);
-            std::ignore = terrain->Tiles->Lookup(vertex.OverlayData);
+                _Terrain->MapBlocks->Vertex(_Window->Vertices[static_cast<size_t>(r) * side + c].MapVertex);
+            std::ignore = _Terrain->Tiles->Lookup(vertex.TextureData);
+            std::ignore = _Terrain->Tiles->Lookup(vertex.OverlayData);
         }
     }
 }

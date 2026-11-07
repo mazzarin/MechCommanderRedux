@@ -652,11 +652,22 @@ TEST_CASE("ice transport: a link that finds no path goes through the service, an
     CHECK_EQ(guest.Links(), size_t{1});
     CHECK_EQ(host.Links(), size_t{1});
 
-    // A service holding a window's worth unsent holds the connection's sends, as a full ICE link does.
+    // A service holding a window's worth unsent holds the connection's sends, as a full ICE link does, and drops
+    // datagrams, as a full UDP buffer does.
     board.HoldUnsent(ServiceWindowBytes);
     CHECK_EQ(guest.Send(stream, Bytes("held")), 0);
+    REQUIRE(host.SendTo(hostUdp, asker, Bytes("dropped")));
     board.HoldUnsent(0);
     CHECK_EQ(guest.Send(stream, Bytes("goes")), 4);
+    REQUIRE(host.SendTo(hostUdp, asker, Bytes("kept")));
+    REQUIRE(Until(
+        [&]
+        {
+            Pump(host);
+            answer = TakeDatagram(guest, guestUdp, answerer);
+            return !answer.empty();
+        }));
+    CHECK_EQ(answer, std::string("kept"));
 
     // Once nothing uses it, the guest closes it, and the service tells the host's end.
     guest.Close(stream);
@@ -686,6 +697,37 @@ TEST_CASE("ice transport: a link that finds no path goes through the service, an
     CHECK(hostLink.Path == MCIceLink::Path::Service);
     CHECK(hostLink.Carried.BytesReceived >= ServiceBytes);
     CHECK(hostLink.End == MCLinkEnd::Closed);
+}
+
+TEST_CASE("ice transport: a link the other end takes nothing from is cut off")
+{
+    MCLinkLog links;
+    MCFakeSignalBoard board;
+    board.Host(GameCode, "host");
+    const MCIceTransport::Deadlines deadlines{.Service = ShortServiceDeadline};
+    MCIceTransport host(board.Endpoint("host"), deadlines, links.Reports());
+    MCIceTransport guest(board.Endpoint("blocked", {.RelayOnly = true, .BindAddress = "127.0.0.1"}), deadlines,
+                         links.Reports());
+    REQUIRE(host.ListenTcp(GamePort) != MCSocket::InvalidHandle);
+    const std::optional<uint32_t> game = guest.Resolve(GameCode);
+    REQUIRE(game.has_value());
+    const MCSocket::Handle stream = WithPumped(host, [&] { return guest.ConnectTcp({*game, GamePort}, ConnectMs); });
+    REQUIRE(stream != MCSocket::InvalidHandle);
+
+    // Past four windows unsent, the end that looks first (the guest's, pumped first) cuts its link off, and the other
+    // hears it closed.
+    board.HoldUnsent(4 * ServiceWindowBytes + 1);
+    CHECK(Until(
+        [&]
+        {
+            Pump(guest);
+            Pump(host);
+            return guest.Links() == 0 && host.Links() == 0;
+        }));
+    REQUIRE_EQ(links.Of(GuestEnd).size(), size_t{1});
+    REQUIRE_EQ(links.Of(HostEnd).size(), size_t{1});
+    CHECK(links.Of(GuestEnd)[0].End == MCLinkEnd::CutOff);
+    CHECK(links.Of(HostEnd)[0].End == MCLinkEnd::Closed);
 }
 
 TEST_CASE("ice transport: a host keeps two links to a guest at most, and closes those that carry no connection")

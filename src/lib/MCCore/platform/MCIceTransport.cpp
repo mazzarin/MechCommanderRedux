@@ -35,6 +35,11 @@ namespace
     /// by the sender's own limit (MCDirectPlay's), as over TCP.
     /// </summary>
     constexpr size_t SendWindowBytes = 1u << 20;
+    /// <summary>
+    /// A link holding this much unsent is cut off: the other end takes nothing, while its frames still bring answers (a
+    /// refusal for each connection asked for, the game's answers to datagrams) that would wait without end.
+    /// </summary>
+    constexpr size_t MaxUnsentBytes = 4 * SendWindowBytes;
     /// <summary>The datagrams a link keeps for the time it opens; more are lost, as UDP's.</summary>
     constexpr size_t MaxEarlyBytes = 64 * 1024;
     /// <summary>The datagrams a UDP socket keeps unread; more are lost, as UDP's.</summary>
@@ -491,6 +496,12 @@ void MCIceTransport::Pump()
         }
 
         Link& link = found->second;
+
+        if (Unsent(link) > MaxUnsentBytes)
+        {
+            EndLink(id, MCTelemetry::MCLinkEnd::CutOff, "the other end took too little of what this game sent");
+            continue;
+        }
 
         // The service carries it: its frames to read, and its end comes through the service (a close, or the peer gone).
         if (link.ServiceSince.has_value())
@@ -983,8 +994,10 @@ void MCIceTransport::SendFrame(Link& link, uint8_t kind, std::span<const uint8_t
     const size_t size = head.size() + bytes.size();
     const bool open = IsOpen(link);
 
-    // Before the link opens a datagram waits only while there's room, as a system's UDP buffer; the rest always wait.
-    if (!open && kind == DatagramFrame && link.Early.size() + FrameHeadBytes + size > MaxEarlyBytes)
+    // A datagram waits only while there's room, as a system's UDP buffer: before the link opens, its own; once open,
+    // the link's window. The rest always go (a link the other end stops taking from is cut off).
+    if (kind == DatagramFrame &&
+        (open ? Unsent(link) >= SendWindowBytes : link.Early.size() + FrameHeadBytes + size > MaxEarlyBytes))
     {
         return;
     }

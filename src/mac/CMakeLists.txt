@@ -25,6 +25,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Source paths the program holds (asserts' std::source_location, __FILE__) start at the checkout, not the folder it
+# was built in, so a release names no one's Mac or account.
+get_filename_component(MC_CHECKOUT ${MC_SRC}/.. ABSOLUTE)
+add_compile_options(-ffile-prefix-map=${MC_CHECKOUT}/=)
+
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)

@@ -183,9 +183,21 @@ MCWeaponHitChunk EmptyWeaponHitChunk()
     return chunk;
 }
 
-void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg)
+void HandleSysCreatePlayer(const DPMSG_CREATEPLAYERORGROUP& msg, std::span<const uint8_t> message)
 {
     MCMultiPlayer& game = Game();
+
+    // Port: the host has a joiner's rules from its join card (its player's data, at dwDataOffset in the message),
+    // before its rules message, and tells everyone.
+    if (const size_t offset = msg.dwDataOffset, size = msg.dwDataSize;
+        game.IsHost != 0 && size != 0 && offset <= message.size() && size <= message.size() - offset)
+    {
+        if (const std::optional<uint32_t> rules = MCJoinCardRules(message.subspan(offset, size)); rules.has_value())
+        {
+            game.PlayerRules[msg.dpId] = *rules & MCMatchRule::Supported;
+            game.SendPlayersRules();
+        }
+    }
 
     if (game.SessionManager->CurrentConnection != MCNetProtocol::Lobby)
     {
@@ -1360,7 +1372,7 @@ void MultiPlayerSystemCallback(MCFidpMessage& msg)
 
             if (create.dwPlayerType == DPPLAYERTYPE_PLAYER)
             {
-                HandleSysCreatePlayer(create);
+                HandleSysCreatePlayer(create, buffer);
             }
 
             break;

@@ -10,6 +10,7 @@
 #include "linkup/MCFidpMessage.h"
 #include "linkup/MCFidpPlayer.h"
 #include "linkup/MCFidpSession.h"
+#include "logistics/MCLogChat.h"
 #include "logistics/MCLogToolButton.h"
 #include "logistics/MCReusableDialog.h"
 #include "logistics/MCSessionScreen.h"
@@ -25,6 +26,7 @@
 #include "object/MCMechWarrior.h"
 #include "object/MCMover.h"
 #include "object/MCTurret.h"
+#include "sprite/MCMechStops.h"
 
 // The multiplayer game's life, its rosters and chunk queues, its session, and the server hand-over. The sends are in
 // MCMultiPlayerSend.cpp, the handlers of what arrives in MCMultiPlayerHandlers.cpp.
@@ -145,6 +147,14 @@ int32_t MCMultiPlayer::Start()
     // file-received handlers; the port has no file transfers.
     SessionManager->ApplicationCallback = MultiPlayerApplicationCallback;
     SessionManager->SystemCallback = MultiPlayerSystemCallback;
+    // Port: this game's rules go with its player as it joins, and as host it checks a joiner's at the door.
+    SessionManager->PlayerData = MCJoinCard(MCMatchRule::Supported);
+    SessionManager->Admission = [](std::string_view name, std::span<const uint8_t> data) -> std::optional<std::string>
+    {
+        const std::shared_ptr<MCMultiPlayer> game = MultiPlayer();
+        return game != nullptr ? game->AdmitJoiner(name, data) : std::nullopt;
+    };
+
     MsgBuffer.fill(0);
     return 0;
 }
@@ -686,12 +696,112 @@ std::vector<uint32_t> MCPlayersWithout(uint32_t rule, std::span<const uint32_t> 
     return without;
 }
 
+bool MCOptionNeedsGames(const MCMatchOptions& chosen, MCMatchOption option, bool prefsBraking)
+{
+    switch (option)
+    {
+        case MCMatchOption::Weather:
+            return chosen.Weather.has_value();
+        case MCMatchOption::TimeOfDay:
+            return chosen.TimeOfDay.has_value();
+        default:
+            break;
+    }
+
+    // A rule the host turned on that a room with no choices plays without (whose braking is its PREFS'); a rule turned
+    // off is the original's, which every game plays.
+    const uint32_t rule = MCCapabilityOf(option).Rules;
+    return (MCWantedRules(chosen.Rules, prefsBraking) & rule) != 0 &&
+           (MCWantedRules(std::nullopt, prefsBraking) & rule) == 0;
+}
+
+std::vector<MCMatchOption> MCOptionsRefusing(const MCMatchOptions& chosen, bool prefsBraking, uint32_t roomRules,
+                                             uint32_t rules)
+{
+    std::vector<MCMatchOption> refusing;
+
+    for (const MCOptionCapability& entry : MCOptionCapabilities)
+    {
+        if (MCOptionNeedsGames(chosen, entry.Option, prefsBraking) && (roomRules & entry.Rules) == entry.Rules &&
+            (rules & entry.Rules) != entry.Rules)
+        {
+            refusing.push_back(entry.Option);
+        }
+    }
+
+    return refusing;
+}
+
+std::string MCNamesJoined(std::span<const std::string> names)
+{
+    std::string joined = names.empty() ? std::string() : names.front();
+
+    for (size_t i = 1; i < names.size(); i++)
+    {
+        joined += std::format("{}{}", i + 1 == names.size() ? " AND " : ", ", names[i]);
+    }
+
+    return joined;
+}
+
+std::string MCUpperText(std::string_view text)
+{
+    std::string upper(text);
+    // Through unsigned char: toupper takes only those and EOF.
+    std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return upper;
+}
+
+namespace
+{
+    /// <summary>A join card's tag (MCJoinCard): "MCRJ" in a little-endian word.</summary>
+    constexpr uint32_t JoinCardTag = 0x4a52434d;
+    /// <summary>The most of a host's refusal a refused game shows (MCRefusedText): what the dialog's lines hold.</summary>
+    constexpr size_t MostRefusalText = 96;
+    /// <summary>The words round a refusal's options, as the refused game shows them (MCRefusedText).</summary>
+    constexpr std::string_view RefusedFormat = "YOUR GAME DOESN'T HAVE THIS MATCH'S {}. UPDATE YOUR GAME TO JOIN.";
+    /// <summary>The host's chat line for a game it refused (MCMultiPlayer::AdmitJoiner): the name twice, the options.</summary>
+    constexpr std::string_view CantJoinFormat = "{} CAN'T JOIN: {}'S GAME DOESN'T HAVE THIS MATCH'S {}.";
+}
+
+std::vector<uint8_t> MCJoinCard(uint32_t rules)
+{
+    std::vector<uint8_t> card(2 * sizeof(uint32_t));
+    std::memcpy(card.data(), &JoinCardTag, sizeof(uint32_t));
+    std::memcpy(card.data() + sizeof(uint32_t), &rules, sizeof(uint32_t));
+    return card;
+}
+
+std::optional<uint32_t> MCJoinCardRules(std::span<const uint8_t> data)
+{
+    uint32_t tag = 0;
+    uint32_t rules = 0;
+
+    if (data.size() < 2 * sizeof(uint32_t))
+    {
+        return std::nullopt;
+    }
+
+    std::memcpy(&tag, data.data(), sizeof(uint32_t));
+    std::memcpy(&rules, data.data() + sizeof(uint32_t), sizeof(uint32_t));
+    return tag == JoinCardTag ? std::optional(rules) : std::nullopt;
+}
+
+std::string MCRefusedText(std::string_view options)
+{
+    // The host's words, to the letters the game's font shows and no longer than the dialog holds.
+    std::string shown = MCUpperText(options.substr(0, MostRefusalText));
+    std::erase_if(shown, [](unsigned char c) { return c < ' ' || c > '~'; });
+    return std::format(RefusedFormat, shown.empty() ? std::string("OPTIONS") : shown);
+}
+
 MCMatchOptions MCPlayedOptions(const MCMatchOptions& chosen, uint32_t wantedRules, uint32_t agreed)
 {
-    // The time of day's rules come with the time of day, not with what the host wants; the weather's play and the
-    // night's lights with every player's build playing them, whatever the weather and time (the mission's own too).
-    constexpr uint32_t timeRules = MCMatchRule::TimeOfDayRules;
-    constexpr uint32_t weatherRules = MCMatchRule::WeatherRules;
+    // The time of day's rules come with the time of day, not with what the host wants, and the host's weather and time
+    // of day play only at their versions (the capability map's); the weather's play and the night's lights with every
+    // player's build playing them, whatever the weather and time (the mission's own too).
+    constexpr uint32_t timeRules = MCCapabilityOf(MCMatchOption::TimeOfDay).Rules;
+    constexpr uint32_t weatherRules = MCCapabilityOf(MCMatchOption::Weather).Rules;
     constexpr uint32_t alwaysAgreed = MCMatchRule::WeatherPlay | MCMatchRule::NightLights;
     MCMatchOptions played;
     played.Weather = (agreed & weatherRules) == weatherRules ? chosen.Weather : std::nullopt;
@@ -709,6 +819,43 @@ uint32_t MCMultiPlayer::AgreedRules(uint32_t wanted) const
 std::vector<uint32_t> MCMultiPlayer::PlayersWithout(uint32_t rule) const
 {
     return MCPlayersWithout(rule, OtherPlayers(*SessionManager), PlayerRules);
+}
+
+std::optional<std::string> MCMultiPlayer::RefusalFor(uint32_t rules) const
+{
+    // The joiner isn't in the session yet: the session's players are the room's.
+    std::vector<std::string> names;
+
+    for (const MCMatchOption option :
+         MCOptionsRefusing(MatchOptions, GMechBraking != 0, AgreedRules(MCMatchRule::Supported), rules))
+    {
+        names.emplace_back(MCCapabilityOf(option).Name);
+    }
+
+    return names.empty() ? std::nullopt : std::optional(MCNamesJoined(names));
+}
+
+std::optional<std::string> MCMultiPlayer::AdmitJoiner(std::string_view name, std::span<const uint8_t> data) const
+{
+    const std::optional<uint32_t> rules = MCJoinCardRules(data);
+    std::optional<std::string> refusal = RefusalFor(rules.value_or(0));
+
+    if (!refusal.has_value())
+    {
+        return std::nullopt;
+    }
+
+    const std::string player(name);
+    SDL_Log("MultiPlayer: refused %s at the door: its game (rules 0x%x%s) lacks the match's %s", player.c_str(),
+            rules.value_or(0), rules.has_value() ? "" : ", no card", refusal->c_str());
+
+    if (GlobalLog() != nullptr && GlobalLog()->Chat != nullptr)
+    {
+        const std::string upper = MCUpperText(name);
+        GlobalLog()->Chat->AddLine(std::format(CantJoinFormat, upper, upper, *refusal));
+    }
+
+    return refusal;
 }
 
 MCMatchOptions MCMultiPlayer::PlayedOptions() const

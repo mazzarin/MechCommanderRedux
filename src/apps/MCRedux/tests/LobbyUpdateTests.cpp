@@ -1263,3 +1263,75 @@ TEST_CASE_ISOLATED("game: a rejoin to a full room says so")
     REQUIRE(bob.Open("28895", std::string(HostName), std::string(RoomName), 0, 1));
     CHECK_EQ(RejoinFails("28895"), std::string("Couldn't join the room again: it is full."));
 }
+
+namespace
+{
+    /// <summary>What a game refused at the door for the time of day and the weather says.</summary>
+    constexpr std::string_view RefusedForTime =
+        "YOUR GAME DOESN'T HAVE THIS MATCH'S TIME OF DAY. UPDATE YOUR GAME TO JOIN.";
+    constexpr std::string_view RefusedForWeather =
+        "YOUR GAME DOESN'T HAVE THIS MATCH'S WEATHER. UPDATE YOUR GAME TO JOIN.";
+}
+
+/// <summary>
+/// A lobby's guest whose host refuses it at the door (its join saying this build's rules) says what its game lacks, as
+/// the host said; its OK ends the game, back to the lobby. It never joined.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest refused at the door says what its game lacks, and its OK ends the game")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    Host bob;
+    bob.RefuseWith("time of day");
+    REQUIRE(bob.Open("28927", std::string(HostName), std::string(RoomName)));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1:28927 -player ANN -session \"{}\"", RoomName)));
+    CHECK(!InSession());
+    CHECK_EQ(DialogText(), std::string(RefusedForTime));
+    CHECK((bob.Cards() == std::vector<std::optional<uint32_t>>{MCMatchRule::Supported}));
+    CHECK(bob.Joined().empty());
+    CHECK_EQ(MultiPlayer()->SessionManager->RefusalReason(), std::string("time of day"));
+
+    // A later join that fails otherwise (its room gone from the list) says nothing of that refusal.
+    CHECK(MultiPlayer()->SessionManager->JoinSession(_GUID{}, "ANN") != 0);
+    CHECK(MultiPlayer()->SessionManager->RefusalReason().empty());
+    CHECK(OkEndsTheGame());
+}
+
+/// <summary>
+/// A lobby's guest waiting for its host to come back from an update, whose new version refuses it at the door, says why
+/// at once: waiting out the half minute changes nothing.
+/// </summary>
+TEST_CASE_ISOLATED("game: a lobby's guest waiting for its host's new version, refused at the door, says why at once")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    constexpr std::string_view Port = "28929";
+    auto bob = std::make_unique<Host>();
+    REQUIRE(bob->Open(Port, std::string(HostName), std::string(RoomName)));
+    REQUIRE(MCTestGame::StartLobby(std::format("-join 127.0.0.1:{} -player ANN -session \"{}\"", Port, RoomName)));
+    REQUIRE(SettleUntil([&] { return !bob->Joined().empty(); }));
+    bob->Lock();
+    MultiPlayer()->ServerID = bob->Id();
+    bob->SendUpdating(MultiPlayer()->SessionManager->MyPlayerID);
+    REQUIRE(SettleUntil([] { return !InSession(); }));
+    CHECK_EQ(DialogText(), std::string("BOB IS UPDATING."));
+    bob->Close();
+    bob.reset();
+
+    Host newBob;
+    newBob.RefuseWith("WEATHER");
+    REQUIRE(newBob.Open(Port, std::string(HostName), std::string(RoomName)));
+    const auto opened = std::chrono::steady_clock::now();
+    REQUIRE(SettleUntil([] { return DialogText() == RefusedForWeather; }));
+    CHECK(std::chrono::steady_clock::now() - opened < MCLobbyUpdate::RejoinWait);
+    CHECK(!InSession());
+    CHECK(newBob.Joined().empty());
+    CHECK_EQ(newBob.Cards().size(), size_t{1});
+    CHECK(OkEndsTheGame());
+}

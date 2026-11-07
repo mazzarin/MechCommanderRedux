@@ -60,6 +60,11 @@ enum class MCRoomRefusal : uint8_t
     Full,
     /// <summary>The room is there, its match started (it takes no new players).</summary>
     Started,
+    /// <summary>
+    /// Port: the room's host refused this game at the door, as it lacks options the match plays
+    /// (MCSessionManager::RefusalReason names them).
+    /// </summary>
+    Lacks,
 };
 
 /// <summary>Port: what one try at joining the lobby's room came to (MCSessionManager::TryLobbyJoin).</summary>
@@ -178,6 +183,12 @@ public:
     /// full or started (listed whatever its state, the session's name as <see cref="TryLobbyJoin"/> picks it).
     /// </summary>
     MCRoomRefusal LobbyRoomRefusal();
+
+    /// <summary>
+    /// Port: why the host refused this machine's last join at the door (the options its game lacks, as the host names
+    /// them), kept past the stand-in's reset; empty when it didn't, or gave no reason.
+    /// </summary>
+    std::string RefusalReason() const;
     /// <summary>Port-only (the personal build): opens the hosted session to new players again, or closes it (rejoins).</summary>
     void AdmitNewPlayers(bool admit);
     /// <summary>
@@ -305,6 +316,16 @@ public:
     bool GameStarted = false;
     /// <summary>Port-only (the personal build): why the last lobby join that failed found no room (SetupLobbyConnection).</summary>
     MCRoomRefusal LastRoomRefusal = MCRoomRefusal::Gone;
+    /// <summary>
+    /// Port: what this machine's player carries as it is created (its data): the game's join card
+    /// (MCMultiPlayer::Start), which a host checks at the door.
+    /// </summary>
+    std::vector<uint8_t> PlayerData;
+    /// <summary>
+    /// Port: the game's say, as host, on each player joining (an MCDirectPlay::Admission), set on the stand-in as a
+    /// session is hosted; none: every player comes in.
+    /// </summary>
+    std::function<std::optional<std::string>(std::string_view name, std::span<const uint8_t> data)> Admission;
     /// <summary>Whether this machine's player has a player number (set at once on the host).</summary>
     bool HasPlayerNumber = false;
     /// <summary>Guards the player list and the outgoing queues.</summary>
@@ -437,6 +458,8 @@ private:
     std::array<uint32_t, MaxLinkupPlayers> _NewPlayerNumbers{};
     /// <summary>Set once the host locked the session (no new players).</summary>
     bool _SessionLocked = false;
+    /// <summary>Port: the host's reason for refusing the last join at the door (RefusalReason).</summary>
+    std::string _Refusal;
     /// <summary>RemovePlayerFromGame's re-entry guard.</summary>
     bool _RemovingPlayer = false;
     /// <summary>The modems found.</summary>

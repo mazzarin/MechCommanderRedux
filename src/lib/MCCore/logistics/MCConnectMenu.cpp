@@ -441,6 +441,13 @@ void JoinGame()
                     GlobalLog()->SetUpSessionScreen();
                     return;
                 }
+
+                // Port: this join's host refused this game at the door, saying why.
+                if (const std::string refusal = manager.RefusalReason(); !refusal.empty())
+                {
+                    ShowMenuMessage(MCRefusedText(refusal));
+                    return;
+                }
             }
         }
     }

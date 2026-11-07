@@ -316,6 +316,15 @@ namespace
             return;
         }
 
+        // A host's new version whose match this game can't play refused it at the door: waiting changes nothing.
+        if (tried == MCLobbyJoin::Refused && manager.LastRoomRefusal == MCRoomRefusal::Lacks)
+        {
+            SDL_Log("Lobby updates: the host's room refused this game: it lacks %s", manager.RefusalReason().c_str());
+            HostWait.reset();
+            ShowJoinFailed(MCLobbyUpdate::RejoinFailedText(MCRoomRefusal::Lacks));
+            return;
+        }
+
         // A room that refused the join (the host's old one, closed, still answering) is asked again afresh.
         if (tried == MCLobbyJoin::Refused)
         {
@@ -742,6 +751,8 @@ auto MCLobbyUpdate::RejoinFailedText(MCRoomRefusal refusal) -> std::string
             return std::string(RoomFullText);
         case MCRoomRefusal::Started:
             return std::string(RoomStartedText);
+        case MCRoomRefusal::Lacks:
+            return MCRefusedText(MultiPlayer()->SessionManager->RefusalReason());
         case MCRoomRefusal::Gone:
             break;
     }
@@ -751,7 +762,12 @@ auto MCLobbyUpdate::RejoinFailedText(MCRoomRefusal refusal) -> std::string
 
 auto MCLobbyUpdate::JoinFailed() -> void
 {
-    if (!LobbyLaunchArgs.Rejoin)
+    // Port: a host that refused this game at the door said why.
+    if (MultiPlayer()->SessionManager->LastRoomRefusal == MCRoomRefusal::Lacks)
+    {
+        ShowJoinFailed(RejoinFailedText(MCRoomRefusal::Lacks));
+    }
+    else if (!LobbyLaunchArgs.Rejoin)
     {
         ShowJoinFailed(LoadGameString(JoinFailedString, StringBuffer));
     }

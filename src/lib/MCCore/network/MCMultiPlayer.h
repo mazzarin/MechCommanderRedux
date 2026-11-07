@@ -109,6 +109,102 @@ enum class MCFileCheck : uint8_t
     Unchecked,
 };
 
+/// <summary>Port: a MATCH OPTIONS option, by its row (MCOptionCapabilities says what each needs of a game).</summary>
+enum class MCMatchOption : uint8_t
+{
+    Weather,
+    TimeOfDay,
+    Braking,
+    Artillery,
+    Probes,
+    Sensors,
+    Mines,
+};
+
+/// <summary>
+/// Port: an option of the capability map (<see cref="MCOptionCapabilities"/>): its name, as its row and the lines that
+/// name it say it; the version of it this build plays; and what a game must play by for that version (MCMatchRule bits:
+/// a later version adds its own to the earlier ones', so a game with them all has this version).
+/// </summary>
+struct MCOptionCapability
+{
+    MCMatchOption Option = MCMatchOption::Weather;
+    std::string_view Name;
+    int32_t Version = 1;
+    uint32_t Rules = 0;
+};
+
+/// <summary>
+/// Port: the capability map, every MATCH OPTIONS option at the version this build plays, gated whole: the host's choice
+/// of an option plays only while every game in the room has its version (the rules a game's rules message or join card
+/// says, MCJoinCard), else the option is held (greyed out, "TELL ... TO UPGRADE.") and the match plays the mission's own
+/// (or the rule off). An option the host chose (MCOptionNeedsGames) is the room's setup: a joiner without its version is
+/// refused at the door (MCMultiPlayer::RefusalFor), unless a game in the room already holds it back. What a version adds
+/// isn't checked part by part: a change to how an option plays is its next version.
+/// </summary>
+inline constexpr std::array MCOptionCapabilities = {
+    MCOptionCapability{.Option = MCMatchOption::Weather, .Name = "WEATHER", .Rules = MCMatchRule::WeatherRules},
+    // Version 1 the look and the sight (Redux HD release 1); version 2 the headlights at night (MCNightLights).
+    MCOptionCapability{.Option = MCMatchOption::TimeOfDay,
+                       .Name = "TIME OF DAY",
+                       .Version = 2,
+                       .Rules = MCMatchRule::TimeOfDayRules | MCMatchRule::NightLights},
+    MCOptionCapability{.Option = MCMatchOption::Braking, .Name = "BRAKING", .Rules = MCMatchRule::MechBraking},
+    MCOptionCapability{.Option = MCMatchOption::Artillery, .Name = "ARTILLERY", .Rules = MCMatchRule::NoArtillery},
+    MCOptionCapability{.Option = MCMatchOption::Probes, .Name = "PROBES", .Rules = MCMatchRule::NoProbes},
+    MCOptionCapability{.Option = MCMatchOption::Sensors, .Name = "SENSORS", .Rules = MCMatchRule::NoSensors},
+    MCOptionCapability{.Option = MCMatchOption::Mines, .Name = "MINES", .Rules = MCMatchRule::NoMines},
+};
+
+/// <summary>Port: <paramref name="option"/>'s entry in the capability map.</summary>
+constexpr const MCOptionCapability& MCCapabilityOf(MCMatchOption option)
+{
+    return MCOptionCapabilities[static_cast<size_t>(option)];
+}
+
+static_assert(std::ranges::all_of(MCOptionCapabilities, [](const MCOptionCapability& entry)
+                                  { return &MCCapabilityOf(entry.Option) == &entry; }),
+              "The capability map lists the options in MCMatchOption's order");
+
+/// <summary>
+/// Port: whether the host's <paramref name="chosen"/> options need <paramref name="option"/>'s version of every game:
+/// it set the option away from a room with no choices, to what only that version plays (a weather or time of day of its
+/// own, braking on when its PREFS have it off, ARTILLERY and the like off). Its PREFS' braking is
+/// <paramref name="prefsBraking"/>.
+/// </summary>
+bool MCOptionNeedsGames(const MCMatchOptions& chosen, MCMatchOption option, bool prefsBraking);
+
+/// <summary>
+/// Port: of the options the host's <paramref name="chosen"/> ones need of every game (MCOptionNeedsGames) that the room
+/// plays (every game in it has its version: <paramref name="roomRules"/>), those a joining game with
+/// <paramref name="rules"/> hasn't the version of: why it is refused (none: it may come in).
+/// </summary>
+std::vector<MCMatchOption> MCOptionsRefusing(const MCMatchOptions& chosen, bool prefsBraking, uint32_t roomRules,
+                                             uint32_t rules);
+
+/// <summary>"BOB", "BOB AND ANN", "BOB, ANN AND SALLY": <paramref name="names"/> as a line names them.</summary>
+std::string MCNamesJoined(std::span<const std::string> names);
+
+/// <summary>
+/// Port: <paramref name="text"/> (a player's name, which may hold any byte) in capitals, as the game's letters show it.
+/// </summary>
+std::string MCUpperText(std::string_view text);
+
+/// <summary>
+/// Port: what a joining game puts in its player's data for the host's check at the door (MCSessionManager::PlayerData):
+/// a tag, then <paramref name="rules"/>, the rules it plays by. An older build's player has no data.
+/// </summary>
+std::vector<uint8_t> MCJoinCard(uint32_t rules);
+
+/// <summary>Port: the rules a joining player's data holds (<see cref="MCJoinCard"/>); none, if it holds no card.</summary>
+std::optional<uint32_t> MCJoinCardRules(std::span<const uint8_t> data);
+
+/// <summary>
+/// Port: what a game refused at the door says, the host's reason (<paramref name="options"/>, the options its game
+/// lacks, as the host names them) kept to the letters a line shows.
+/// </summary>
+std::string MCRefusedText(std::string_view options);
+
 /// <summary>
 /// Port: the names (<paramref name="nameOf"/>) of those of <paramref name="players"/> that <paramref name="wanted"/>
 /// takes, a comma between: the players a message or the log names.
@@ -359,6 +455,19 @@ public:
     /// (MCMatchRule::Supported).
     /// </summary>
     uint32_t AgreedRules(uint32_t wanted) const;
+
+    /// <summary>
+    /// Port, the host: why a game joining with <paramref name="rules"/> is refused at the door (MCOptionsRefusing among
+    /// the room's players), its options named as a line names them; none: it comes in.
+    /// </summary>
+    std::optional<std::string> RefusalFor(uint32_t rules) const;
+
+    /// <summary>
+    /// Port, the host: its say on player <paramref name="name"/> joining with <paramref name="data"/> (its join card, if
+    /// any; MCSessionManager::Admission): <see cref="RefusalFor"/> its rules (none without a card), and a refusal said in
+    /// the host's chat.
+    /// </summary>
+    std::optional<std::string> AdmitJoiner(std::string_view name, std::span<const uint8_t> data) const;
 
     /// <summary>Port: MCPlayersWithout among the session's other players (with a number).</summary>
     std::vector<uint32_t> PlayersWithout(uint32_t rule) const;

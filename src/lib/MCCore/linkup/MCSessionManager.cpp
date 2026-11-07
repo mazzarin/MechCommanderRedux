@@ -456,13 +456,18 @@ MCLobbyJoin MCSessionManager::TryLobbyJoin(std::string_view playerName)
     if (joinResult != 0)
     {
         SDL_Log("SetupLobbyConnection: could not join \"%s\" (result %d)", targetSession->Name.c_str(), joinResult);
-        LastRoomRefusal = LobbyRoomRefusal();
+        LastRoomRefusal = !RefusalReason().empty() ? MCRoomRefusal::Lacks : LobbyRoomRefusal();
         return MCLobbyJoin::Refused;
     }
 
     IsHost = false;
     SDL_Log("SetupLobbyConnection: joined session \"%s\"", targetSession->Name.c_str());
     return MCLobbyJoin::Joined;
+}
+
+std::string MCSessionManager::RefusalReason() const
+{
+    return _Refusal;
 }
 
 MCRoomRefusal MCSessionManager::LobbyRoomRefusal()
@@ -648,6 +653,9 @@ int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_
         return -1;
     }
 
+    // Port: the game's say on each player who joins, at the door.
+    DirectPlay->SetAdmission(Admission);
+
     _CurrentSession = Sessions.emplace_back(std::make_shared<MCFidpSession>(session));
 
     if (CreatePlayer(playerName) != 0)
@@ -662,6 +670,8 @@ int32_t MCSessionManager::HostSession(const MCFidpSession& session, std::string_
 int32_t MCSessionManager::JoinSession(const _GUID& sessionGUID, std::string_view playerName)
 {
     Assert(DirectPlay != nullptr, 0);
+    // An earlier join's refusal says nothing of this one.
+    _Refusal.clear();
     const std::shared_ptr<MCFidpSession> session = FindMatchingSession(sessionGUID);
 
     if (session == nullptr)
@@ -679,6 +689,15 @@ int32_t MCSessionManager::JoinSession(const _GUID& sessionGUID, std::string_view
         if (result == 0)
         {
             SendSystemInformation();
+        }
+        else
+        {
+            // Port: refused at the door (or the room filled meanwhile): out of the session, free to join another, the
+            // host's reason kept.
+            _Refusal = DirectPlay->LastRefusal();
+            SDL_Log("MCSessionManager: the room refused this player (%s)", _Refusal.c_str());
+            DirectPlay->Close();
+            _CurrentSession.reset();
         }
     }
 
@@ -730,7 +749,7 @@ int32_t MCSessionManager::CreatePlayer(std::string_view playerName)
     const DPNAME dpName{std::string(playerName), std::nullopt};
     // Port: the original made two Win32 events here (DirectPlay signalled one on every arrival; nothing waited on
     // either).
-    const uint32_t result = DirectPlay->CreatePlayer(MyPlayerID, dpName, {}, 0);
+    const uint32_t result = DirectPlay->CreatePlayer(MyPlayerID, dpName, PlayerData, 0);
 
     if (result != DP_OK)
     {

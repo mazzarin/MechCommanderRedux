@@ -925,9 +925,9 @@ TEST_CASE("network: a guest keeps what the match plays of the host's options as 
 
 /// <summary>
 /// Port: a match plays its host's weather, time of day and rules only as far as every player's build plays them, as its
-/// rules message said: the host's time of day brings its sight's rule with it, and needs both from every build; the
-/// weather's play comes with every build playing it (for the mission's own weather too), and the host's weather needs
-/// its look and its play from every build. A build of the time of day's sight (3 Nov) keeps the mission's own weather,
+/// rules message said: the host's time of day brings its sight's and lights' rules with it, and needs its version (the
+/// look, the sight and the lights) from every build; the weather's play comes with every build playing it (for the
+/// mission's own weather too), and the host's weather needs its look and its play from every build. A build of the time of day's sight (3 Nov) keeps the mission's own weather,
 /// one of the first match options (the looks alone) the mission's own time of day too, one of the braking's round
 /// (braking alone) both, one that said none (the original's) every option. The players without a rule are those whose
 /// message left it out or who sent none.
@@ -951,11 +951,11 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
                           .Rules = timeRules | weatherPlay | nightLights}));
     CHECK((MCPlayedOptions(MCMatchOptions{}, braking | timeRules, MCMatchRule::Supported) ==
            MCMatchOptions{.Rules = braking | weatherPlay | nightLights}));
-    // The night's lights come with every player's build playing them, whatever the host wants.
+    // The host's time of day plays at its version (2: its look, its sight and the night's lights), so only with every
+    // player's build playing all three; release 1's (the look and the sight) keeps the mission's own.
     CHECK((MCPlayedOptions(chosen, braking, sightOptions | nightLights) ==
            MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules | nightLights}));
-    CHECK((MCPlayedOptions(chosen, braking, sightOptions) ==
-           MCMatchOptions{.TimeOfDay = MCTimeOfDay::Night, .Rules = braking | timeRules}));
+    CHECK(MCPlayedOptions(chosen, braking, sightOptions) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, firstOptions) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, braking) == MCMatchOptions{.Rules = braking});
     CHECK(MCPlayedOptions(chosen, braking, MCMatchRule::MatchWeather) == MCMatchOptions{.Rules = 0u});
@@ -975,6 +975,97 @@ TEST_CASE("network: a match plays the host's options as far as every player's bu
     CHECK((MCPlayersWithout(timeRules, players, said) == std::vector<uint32_t>{2, 3, 4}));
     CHECK(MCPlayersWithout(braking, players, said) == std::vector<uint32_t>{3});
     CHECK(MCPlayersWithout(braking, std::span(players).first(2), said).empty());
+}
+
+/// <summary>
+/// Port: the door's check (the personal build). A joiner is refused only for an option the host chose (a weather, a time
+/// of day, a rule turned on that a room without choices plays without) that every game in the room plays at its
+/// version and the joiner's game doesn't: never over a held option, a rule turned back off or braking the host's PREFS
+/// give anyway. An older build's join says nothing, so it counts as having no options: release 1's and upstream's are
+/// refused for whatever the host chose. The join card carries a build's rules (a later card may say more after them).
+/// </summary>
+TEST_CASE("network: a joiner is refused at the door only for an option the host chose that the room plays")
+{
+    using enum MCMatchOption;
+    using Refusing = std::vector<MCMatchOption>;
+    constexpr uint32_t supported = MCMatchRule::Supported;
+    const uint32_t older = MCJoinCardRules({}).value_or(0);
+    constexpr uint32_t timeBehind = supported & ~MCMatchRule::NightLights;
+    constexpr uint32_t noArtillery = supported & ~MCMatchRule::NoArtillery;
+    constexpr uint32_t releaseOne = 0x18001ffu;
+    constexpr uint32_t bans =
+        MCMatchRule::NoArtillery | MCMatchRule::NoProbes | MCMatchRule::NoSensors | MCMatchRule::NoMines;
+    const MCMatchOptions none{};
+    const MCMatchOptions snow{.Weather = MCWeatherKind::Snow};
+    const MCMatchOptions night{.TimeOfDay = MCTimeOfDay::Night};
+    const MCMatchOptions snowNight{.Weather = MCWeatherKind::Snow, .TimeOfDay = MCTimeOfDay::Night};
+    const MCMatchOptions artilleryOff{.Rules = MCMatchRule::NoArtillery};
+    const MCMatchOptions everyBan{.Rules = bans};
+    const MCMatchOptions brakingOn{.Rules = MCMatchRule::MechBraking};
+    const MCMatchOptions brakingOff{.Rules = 0u};
+    const auto refusing = [](const MCMatchOptions& chosen, uint32_t room, uint32_t joiner, bool prefsBraking = false)
+    { return MCOptionsRefusing(chosen, prefsBraking, room, joiner); };
+
+    // The host has chosen nothing: everyone joins.
+    for (const uint32_t joiner : {older, releaseOne, timeBehind, noArtillery, supported})
+    {
+        CHECK(refusing(none, supported, joiner).empty());
+        CHECK(refusing(none, supported, joiner, true).empty());
+    }
+
+    // A room of this build's games plays every choice at its version.
+    CHECK((refusing(snow, supported, older) == Refusing{Weather}));
+    CHECK(refusing(snow, supported, releaseOne).empty());
+    CHECK(refusing(snow, supported, timeBehind).empty());
+    CHECK((refusing(night, supported, older) == Refusing{TimeOfDay}));
+    CHECK((refusing(night, supported, releaseOne) == Refusing{TimeOfDay}));
+    CHECK((refusing(night, supported, timeBehind) == Refusing{TimeOfDay}));
+    CHECK(refusing(night, supported, noArtillery).empty());
+    CHECK((refusing(snowNight, supported, older) == Refusing{Weather, TimeOfDay}));
+    CHECK((refusing(artilleryOff, supported, noArtillery) == Refusing{Artillery}));
+    CHECK(refusing(artilleryOff, supported, timeBehind).empty());
+    CHECK((refusing(everyBan, supported, older) == Refusing{Artillery, Probes, Sensors, Mines}));
+    CHECK(refusing(snowNight, supported, supported).empty());
+    CHECK(refusing(everyBan, supported, supported).empty());
+
+    // Braking: the host's ON when its PREFS have it off; never its OFF (the original's), nor its ON when its PREFS
+    // give braking anyway (a room without choices plays it as far as every game does).
+    CHECK((refusing(brakingOn, supported, older) == Refusing{Braking}));
+    CHECK(refusing(brakingOn, supported, older, true).empty());
+    CHECK(refusing(brakingOff, supported, older, true).empty());
+    CHECK(refusing(brakingOff, supported, older).empty());
+
+    // A choice the room doesn't play (held for a game in it) refuses no one: with release 1's game in the room, the
+    // host's night is held, the snow still played.
+    CHECK(refusing(night, releaseOne, older).empty());
+    CHECK(refusing(night, releaseOne, timeBehind).empty());
+    CHECK((refusing(snowNight, releaseOne, older) == Refusing{Weather}));
+    CHECK(refusing(snowNight, older, supported).empty());
+    CHECK(refusing(artilleryOff, noArtillery, older).empty());
+
+    // The card: its rules read back; anything else (none, too short, another tag) says nothing; a later card's added
+    // bytes are left alone.
+    CHECK(MCJoinCardRules(MCJoinCard(supported)) == std::optional(supported));
+    CHECK(MCJoinCardRules(MCJoinCard(0)) == std::optional(0u));
+    std::vector<uint8_t> longer = MCJoinCard(timeBehind);
+    longer.insert(longer.end(), {1, 2, 3, 4});
+    CHECK(MCJoinCardRules(longer) == std::optional(timeBehind));
+    const std::vector<uint8_t> card = MCJoinCard(supported);
+    CHECK(!MCJoinCardRules(std::span(card).first(card.size() - 1)).has_value());
+    std::vector<uint8_t> otherTag = card;
+    otherTag[0] ^= 1;
+    CHECK(!MCJoinCardRules(otherTag).has_value());
+
+    // The refused game's words: the host's, upper-cased, to the font's letters and no longer than the dialog holds.
+    CHECK_EQ(MCRefusedText("time of day"),
+             std::string("YOUR GAME DOESN'T HAVE THIS MATCH'S TIME OF DAY. UPDATE YOUR GAME TO JOIN."));
+    CHECK_EQ(MCRefusedText(""), std::string("YOUR GAME DOESN'T HAVE THIS MATCH'S OPTIONS. UPDATE YOUR GAME TO JOIN."));
+    CHECK_EQ(MCRefusedText("MI\nNES\x01"),
+             std::string("YOUR GAME DOESN'T HAVE THIS MATCH'S MINES. UPDATE YOUR GAME TO JOIN."));
+    CHECK(MCRefusedText(std::string(1000, 'W')).size() < 200);
+    const std::array<std::string, 3> names = {"WEATHER", "TIME OF DAY", "MINES"};
+    CHECK_EQ(MCNamesJoined(names), std::string("WEATHER, TIME OF DAY AND MINES"));
+    CHECK_EQ(MCNamesJoined(std::span(names).first(2)), std::string("WEATHER AND TIME OF DAY"));
 }
 
 /// <summary>

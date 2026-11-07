@@ -294,29 +294,7 @@ auto MCBuilding::Render() -> void
     if (GetContactType(HomeTeam()->Id) == 2)
     {
         // A sensor contact: a blip sized by tonnage.
-        if (const std::span<uint8_t> shape = SensorBlipShape(GetTonnage()); !shape.empty())
-        {
-            if (VfxShapeCount(shape) < BlipFrame)
-            {
-                if (SoundSystem() != nullptr && UseSound != 0)
-                {
-                    SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-                }
-
-                BlipFrame = 0;
-            }
-
-            ElementList().OpenGroup(-100000, true);
-            ElementList().Add(
-                ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0));
-            BlipTime = FrameLength + BlipTime;
-
-            if (0.067 < BlipTime)
-            {
-                BlipFrame = static_cast<int32_t>(BlipTime * (1.0 / 0.067) + BlipFrame + 0.5);
-                BlipTime = 0.0f;
-            }
-        }
+        RenderSensorBlip(SensorBlipShape(GetTonnage()));
     }
 
     if (WindowsVisible != Turn)

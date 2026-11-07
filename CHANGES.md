@@ -317,6 +317,9 @@ adds are in the [README](README.md#what-redux-hd-adds).
   the end of its move, and with BRAKING a guest's mechs no longer quicken and slow their stride as they walk, braking
   for stops the host's don't make: they stop as on the host's. A mech made to wait for a unit in its way keeps its
   stride, as before, but in its move's last few steps a guest's screen shows it standing.
+- **Redux HD.** Sensor contacts' blips spin at the same pace at any frame rate, showing every frame of their art, and
+  ping once each time round. A turret's, train car's or elemental's spun and pinged four times as fast at 60 frames a
+  second, and the others' skipped frames or slowed with the frame rate.
 - Text shows ´ ¨ ° ¿ « » § ² º and ½, which the game's fonts listed but left blank: the marks are cut from the fonts'
   own é, ë and å, ¿ « » are made from ? < >, and the rest are drawn in the fonts' style.
 

@@ -1229,32 +1229,7 @@ auto MCGroundVehicle::Render() -> void
         else if (contactType == 2)
         {
             // A sensor contact: a blip sized by tonnage.
-            const std::span<uint8_t> shape = SensorBlipShape(GetTonnage());
-
-            if (!shape.empty())
-            {
-                if (VfxShapeCount(shape) <= BlipFrame)
-                {
-                    if (SoundSystem() != nullptr && UseSound != 0)
-                    {
-                        SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-                    }
-
-                    BlipFrame = 0;
-                }
-
-                ElementList().OpenGroup(-100000, true);
-                auto& element =
-                    ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0);
-                ElementList().Add(element);
-                BlipTime = FrameLength + BlipTime;
-
-                if (0.067 < BlipTime)
-                {
-                    BlipFrame = static_cast<int32_t>(BlipTime * (1.0 / 0.067) + BlipFrame + 0.5);
-                    BlipTime = 0.0f;
-                }
-            }
+            RenderSensorBlip(SensorBlipShape(GetTonnage()));
         }
     }
 

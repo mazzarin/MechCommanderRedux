@@ -670,38 +670,7 @@ auto MCElemental::Render() -> void
             else if (contactType == 2)
             {
                 // A sensor contact: a blip sized by tonnage.
-                std::span<uint8_t> shape;
-
-                if (50.0f < GetTonnage())
-                {
-                    shape = Scenario()->SensorContactShape(0);
-                }
-                else if (35.0f < GetTonnage())
-                {
-                    shape = Scenario()->SensorContactShape(2);
-                }
-                else
-                {
-                    shape = Scenario()->SensorContactShape(4);
-                }
-
-                if (!shape.empty())
-                {
-                    if (VfxShapeCount(shape) <= BlipFrame)
-                    {
-                        if (SoundSystem() != nullptr && UseSound != 0)
-                        {
-                            SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-                        }
-
-                        BlipFrame = 0;
-                    }
-
-                    ElementList().OpenGroup(-100000, true);
-                    ElementList().Add(ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0,
-                                                                       std::nullopt, 0));
-                    BlipFrame++;
-                }
+                RenderSensorBlip(SensorBlipShape(GetTonnage()));
             }
             else if (ElementalCanJump == 0)
             {

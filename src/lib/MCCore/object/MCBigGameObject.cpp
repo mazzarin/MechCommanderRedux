@@ -3,6 +3,8 @@
 #include "ai/MCMoveSystem.h"
 #include "camera/MCCamera.h"
 #include "camera/MCCameraList.h"
+#include "engine/MCElementBuffer.h"
+#include "engine/MCVfxElement.h"
 #include "lib/MCFatal.h"
 #include "lib/MCFile.h"
 #include "main/MCGameContext.h"
@@ -10,6 +12,8 @@
 #include "object/MCContactSystem.h"
 #include "object/MCObjectSystem.h"
 #include "object/MCObjectType.h"
+#include "sound/MCSoundSystem.h"
+#include "vfx/MCVfxFunctions.h"
 
 MCBigGameObject::~MCBigGameObject()
 {
@@ -98,6 +102,49 @@ auto MCBigGameObject::OnScreen() -> int
     }
 
     return 0;
+}
+
+auto MCSensorBlipPoses(float& carried, float seconds) -> int32_t
+{
+    // A frame a pose long moves it on a pose, whatever the float rounding: a thousandth of a pose's slack.
+    constexpr double PoseSlack = 1e-3;
+
+    if (!std::isfinite(seconds) || seconds <= 0.0f)
+    {
+        return 0;
+    }
+
+    const double poses = static_cast<double>(carried) + static_cast<double>(seconds) * SensorBlipPosesPerSecond;
+    const double whole = std::floor(poses + PoseSlack);
+    carried = static_cast<float>(std::max(0.0, poses - whole));
+    return static_cast<int32_t>(whole);
+}
+
+auto MCBigGameObject::RenderSensorBlip(std::span<uint8_t> shape) -> void
+{
+    // The blip's ping, each time round.
+    constexpr uint32_t SensorBlipSample = 0x14;
+    const int32_t poses = shape.empty() ? 0 : VfxShapeCount(shape);
+
+    if (poses <= 0)
+    {
+        return;
+    }
+
+    // Round to the first pose again, with the ping (only with sound on: the train car's ignored it).
+    if (poses <= BlipFrame)
+    {
+        if (SoundSystem() != nullptr && UseSound != 0)
+        {
+            SoundSystem()->PlayDigitalSample(SensorBlipSample, 1, *this, false, true);
+        }
+
+        BlipFrame %= poses;
+    }
+
+    ElementList().OpenGroup(-100000, true);
+    ElementList().Add(ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0));
+    BlipFrame += MCSensorBlipPoses(BlipTime, FrameLength);
 }
 
 auto MCBigGameObject::SetPotentialContact(int32_t contactType) -> void

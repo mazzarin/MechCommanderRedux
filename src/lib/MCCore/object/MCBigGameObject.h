@@ -3,6 +3,20 @@
 #include "object/MCGameObject.h"
 
 /// <summary>
+/// Port-only: the sensor blip's poses a second. OB-188 (fixed): the original moved mechs', vehicles', buildings' and
+/// fires' blips on by a clock that dropped what was left of a pose, and turrets', train cars' and elementals' a pose a
+/// frame drawn, so a blip spun by the frame rate (at 15 frames a second the first kind skipped every other pose; at 60
+/// it played 12 poses a second, the second kind 60) and pinged each time round.
+/// </summary>
+inline constexpr float SensorBlipPosesPerSecond = 15.0f;
+
+/// <summary>
+/// Port-only (OB-188): the whole poses a sensor blip moves on in <paramref name="seconds"/> more, at
+/// <see cref="SensorBlipPosesPerSecond"/>; <paramref name="carried"/> keeps the part of a pose left over.
+/// </summary>
+int32_t MCSensorBlipPoses(float& carried, float seconds);
+
+/// <summary>
 /// A game object with the full state the interface uses: tonnage, team, damage, sensor contact, screen position,
 /// awake/exists/use-me/captured flags, explosion, salvage, combat value and attackers. Buildings, turrets, gates and
 /// movers derive from it.
@@ -35,6 +49,12 @@ public:
     int32_t LoadProfile(MCFitIniFile& profileFile) override { return 0; }
     /// <summary>Projects the object through the main camera; on screen, remembers the turn.</summary>
     int OnScreen() override;
+    /// <summary>
+    /// Draws the object as a sensor contact: <paramref name="shape"/>'s poses (the blip sized by tonnage) at its screen
+    /// position, one after another (<see cref="MCSensorBlipPoses"/>; every pose shown at 15 frames a second or more),
+    /// pinging each time it goes round. Nothing without a shape.
+    /// </summary>
+    void RenderSensorBlip(std::span<uint8_t> shape);
     std::shared_ptr<MCTeam> GetTeam() override { return Team.lock(); }
     int IsPotentialContact() override { return PotentialContact.lock() != nullptr; }
     /// <summary>
@@ -162,9 +182,9 @@ public:
     int32_t MaxCV = 0;
     /// <summary>Current combat value.</summary>
     int32_t CurCV = 0;
-    /// <summary>The sensor blip's animation frame (BattleMech::render).</summary>
+    /// <summary>The sensor blip's pose (BattleMech::render; <see cref="RenderSensorBlip"/>).</summary>
     int32_t BlipFrame = 0;
-    /// <summary>Seconds since the sensor blip's last frame.</summary>
+    /// <summary>The part of a pose the sensor blip has left over (<see cref="MCSensorBlipPoses"/>).</summary>
     float BlipTime = 0;
     /// <summary>How many movers are attacking the object.</summary>
     int32_t NumAttackers = 0;

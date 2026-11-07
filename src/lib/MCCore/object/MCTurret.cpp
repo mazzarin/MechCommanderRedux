@@ -1171,43 +1171,7 @@ auto MCTurret::Render() -> void
     if (GetContactType(HomeTeam()->Id) == 2)
     {
         // A sensor contact: a blip sized by tonnage.
-        std::span<uint8_t> shape;
-        std::string_view shapeName;
-
-        if (50.0f < GetTonnage())
-        {
-            shape = Scenario()->SensorContactShape(0);
-            shapeName = "tblip1";
-        }
-        else if (35.0f < GetTonnage())
-        {
-            shape = Scenario()->SensorContactShape(2);
-            shapeName = "tblip2";
-        }
-        else
-        {
-            shape = Scenario()->SensorContactShape(4);
-            shapeName = "tblip3";
-        }
-
-        if (!shape.empty())
-        {
-            if (VfxShapeCount(shape) <= BlipFrame)
-            {
-                if (SoundSystem() != nullptr && UseSound != 0)
-                {
-                    SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-                }
-
-                BlipFrame = 0;
-            }
-
-            ElementList().OpenGroup(-100000, true);
-            auto& element =
-                ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0);
-            ElementList().Add(element);
-            BlipFrame++;
-        }
+        RenderSensorBlip(SensorBlipShape(GetTonnage()));
     }
 
     if (WindowsVisible != Turn)

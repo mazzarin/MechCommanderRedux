@@ -367,32 +367,7 @@ auto MCFire::Render() -> void
         return;
     }
 
-    const std::span<uint8_t> shape = SensorBlipShape(GetTonnage());
-
-    if (shape.empty())
-    {
-        return;
-    }
-
-    if (VfxShapeCount(shape) <= BlipFrame)
-    {
-        if (SoundSystem() != nullptr && UseSound != 0)
-        {
-            SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-        }
-
-        BlipFrame = 0;
-    }
-
-    ElementList().OpenGroup(-100000, true);
-    ElementList().Add(ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0));
-    BlipTime = FrameLength + BlipTime;
-
-    if (0.067 < BlipTime)
-    {
-        BlipFrame = static_cast<int32_t>(BlipTime * (1.0 / 0.067) + BlipFrame + 0.5);
-        BlipTime = 0.0f;
-    }
+    RenderSensorBlip(SensorBlipShape(GetTonnage()));
 }
 
 auto MCFire::Init(std::shared_ptr<MCObjectType> objType) -> int32_t

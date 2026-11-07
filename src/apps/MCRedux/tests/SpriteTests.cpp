@@ -16,6 +16,7 @@
 #include "main/MCGameContext.h"
 #include "main/MCGamePaths.h"
 #include "main/MCMissionGlobals.h"
+#include "mission/MCScenario.h"
 #include "network/MCMultiPlayer.h"
 #include "object/MCBattleMech.h"
 #include "object/MCBattleMechType.h"
@@ -39,6 +40,8 @@
 #include "sprite/MCSpriteTree.h"
 #include "sprite/MCVfxAppearance.h"
 #include "vfx/MCVfxFunctions.h"
+
+#include <random>
 
 namespace
 {
@@ -211,6 +214,71 @@ namespace
 
         return Pak(shapes);
     }
+}
+
+TEST_CASE("sprites: a sensor blip plays 15 poses a second at any frame rate, every pose shown at 15 frames a second "
+          "or more (OB-188)")
+{
+    // The poses a run of frames (their seconds) moves a blip on, and the most in one frame.
+    const auto play = [](const std::vector<float>& frames)
+    {
+        float carried = 0.0f;
+        int32_t poses = 0;
+        int32_t most = 0;
+
+        for (const float seconds : frames)
+        {
+            const int32_t moved = MCSensorBlipPoses(carried, seconds);
+            poses += moved;
+            most = std::max(most, moved);
+        }
+
+        return std::pair{poses, most};
+    };
+
+    constexpr int32_t Seconds = 10;
+    constexpr auto PosesPlayed = static_cast<int32_t>(SensorBlipPosesPerSecond) * Seconds;
+
+    for (const int32_t rate : {15, 30, 60, 144})
+    {
+        const std::vector<float> frames(static_cast<size_t>(rate * Seconds), 1.0f / static_cast<float>(rate));
+        const auto [poses, most] = play(frames);
+        CHECK(std::abs(poses - PosesPlayed) <= 1);
+        CHECK_EQ(most, 1);
+    }
+
+    // At the original's 15 frames a second, a pose every frame.
+    float carried = 0.0f;
+
+    for (int32_t frame = 0; frame < PosesPlayed; ++frame)
+    {
+        CHECK_EQ(MCSensorBlipPoses(carried, 1.0f / SensorBlipPosesPerSecond), 1);
+    }
+
+    // Uneven frames, from 200 to 16 a second.
+    constexpr uint32_t Seed = 188;
+    std::mt19937 random(Seed);
+    std::uniform_real_distribution<float> length(1.0f / 200.0f, 1.0f / 16.0f);
+    std::vector<float> frames;
+    double played = 0.0;
+
+    while (played < Seconds)
+    {
+        frames.push_back(length(random));
+        played += frames.back();
+    }
+
+    const auto [poses, most] = play(frames);
+    CHECK(std::abs(poses - played * SensorBlipPosesPerSecond) <= 1.0);
+    CHECK_EQ(most, 1);
+
+    // A hitch moves it on by the poses it took, the rest carried; a frame of no time, or none, moves nothing.
+    carried = 0.0f;
+    CHECK_EQ(MCSensorBlipPoses(carried, 0.5f), 7);
+    CHECK(std::abs(carried - 0.5f) < 1e-4f);
+    CHECK_EQ(MCSensorBlipPoses(carried, 0.0f), 0);
+    CHECK_EQ(MCSensorBlipPoses(carried, std::numeric_limits<float>::quiet_NaN()), 0);
+    CHECK_EQ(MCSensorBlipPoses(carried, 1.0f / 30.0f), 1);
 }
 
 TEST_CASE("sprites: a shape packet takes its table, after a gesture header if it has one")
@@ -1643,6 +1711,52 @@ TEST_CASE_ISOLATED("game: with HDStops a mech held up mid-stride holds its strid
 
     GHdStops = 0;
     GMechBraking = 0;
+}
+
+TEST_CASE_ISOLATED(
+    "game: a sensor contact's blip shows each pose of its art in turn, 15 a second, at 15 or 60 frames a "
+    "second (OB-188)")
+{
+    if (!MCTestGame::Available())
+    {
+        return;
+    }
+
+    REQUIRE(MCTestGame::StartMission(1));
+    const auto mech = std::static_pointer_cast<MCBattleMech>(GetMoverFromPartId(0x200));
+    REQUIRE(mech != nullptr);
+    const std::span<uint8_t> shape = SensorBlipShape(mech->GetTonnage());
+    const int32_t poses = VfxShapeCount(shape);
+    REQUIRE(poses > 1);
+    const float keptFrameLength = FrameLength;
+    constexpr int32_t Seconds = 4;
+    constexpr auto PosesPlayed = static_cast<int32_t>(SensorBlipPosesPerSecond) * Seconds;
+
+    for (const int32_t rate : {15, 60})
+    {
+        FrameLength = 1.0f / static_cast<float>(rate);
+        mech->BlipFrame = 0;
+        mech->BlipTime = 0.0f;
+        int32_t moved = 0;
+        int32_t most = 0;
+        int32_t last = 0;
+
+        for (int32_t frame = 0; frame < rate * Seconds; ++frame)
+        {
+            // The pose drawn: where the blip stands, round to the first again past the art's last.
+            const int32_t pose = mech->BlipFrame % poses;
+            const int32_t step = (pose - last + poses) % poses;
+            moved += step;
+            most = std::max(most, step);
+            last = pose;
+            mech->RenderSensorBlip(shape);
+        }
+
+        CHECK(std::abs(moved - PosesPlayed) <= 1);
+        CHECK_EQ(most, 1);
+    }
+
+    FrameLength = keptFrameLength;
 }
 
 /// <summary>

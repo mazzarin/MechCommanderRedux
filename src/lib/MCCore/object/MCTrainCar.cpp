@@ -291,23 +291,7 @@ auto MCTrainCar::Render() -> void
         if (contactType == 2)
         {
             // A sensor contact: a blip sized by tonnage.
-            if (const std::span<uint8_t> shape = SensorBlipShape(GetTonnage()); !shape.empty())
-            {
-                if (VfxShapeCount(shape) < BlipFrame)
-                {
-                    if (SoundSystem() != nullptr)
-                    {
-                        SoundSystem()->PlayDigitalSample(0x14, 1, *this, false, true);
-                    }
-
-                    BlipFrame = 0;
-                }
-
-                ElementList().OpenGroup(-100000, true);
-                ElementList().Add(
-                    ElementList().Make<MCVfxElement>(shape, ScreenPos.X, ScreenPos.Y, BlipFrame, 0, std::nullopt, 0));
-                BlipFrame++;
-            }
+            RenderSensorBlip(SensorBlipShape(GetTonnage()));
         }
         else if (contactType == 1)
         {

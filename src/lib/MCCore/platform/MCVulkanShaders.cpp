@@ -14,6 +14,7 @@
 #include "shaders/draw_terrain.msl.h"
 #include "shaders/ground.msl.h"
 #include "shaders/instance.msl.h"
+#include "shaders/movie.msl.h"
 #include "shaders/quad.msl.h"
 #include "shaders/terrain.msl.h"
 // A built-in shader's code in Format: the Mac build's MSL.
@@ -31,6 +32,7 @@
 #include "shaders/draw_terrain.spv.h"
 #include "shaders/ground.spv.h"
 #include "shaders/instance.spv.h"
+#include "shaders/movie.spv.h"
 #include "shaders/quad.spv.h"
 #include "shaders/terrain.spv.h"
 // A built-in shader's code in Format: dxc's SPIR-V.
@@ -53,6 +55,7 @@ namespace MCVulkanShaders
     const MCShaderInfo DrawTerrainFragment{MCShader::DrawTerrain, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo DrawHdFragment{MCShader::DrawHd, SDL_GPU_SHADERSTAGE_FRAGMENT, 9, 1};
     const MCShaderInfo GroundFragment{MCShader::Ground, SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1};
+    const MCShaderInfo MovieFragment{MCShader::Movie, SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1};
     const MCShaderInfo TerrainVertex{MCShader::Terrain, SDL_GPU_SHADERSTAGE_VERTEX, 1, 1, 2};
 
     std::string_view Name(MCShader shader)
@@ -87,6 +90,8 @@ namespace MCVulkanShaders
                 return "composite_puddle";
             case MCShader::CompositeUnspecked:
                 return "composite_unspecked";
+            case MCShader::Movie:
+                return "movie";
         }
 
         return {};
@@ -124,6 +129,8 @@ namespace MCVulkanShaders
                 return MC_BUILT_IN_SHADER(composite_puddle);
             case MCShader::CompositeUnspecked:
                 return MC_BUILT_IN_SHADER(composite_unspecked);
+            case MCShader::Movie:
+                return MC_BUILT_IN_SHADER(movie);
         }
 
         return {};

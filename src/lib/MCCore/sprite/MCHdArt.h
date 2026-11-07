@@ -68,6 +68,12 @@ namespace MCHdArt
         /// (<see cref="FindTerrainRelief"/>).
         /// </summary>
         Bc5,
+        /// <summary>
+        /// Port-only (HD movies): a movie's frame as dav1d decodes it, 8-bit 4:2:0 (IYUV): its Y plane, <c>Width</c>
+        /// bytes a row, then its U and V planes, <c>(Width + 1) / 2</c> bytes a row and <c>(Height + 1) / 2</c> rows
+        /// each, in the frame's <see cref="Frame::Colorspace"/>. The GPU makes its colours (opaque).
+        /// </summary>
+        Yuv420,
     };
 
     /// <summary>An HD frame as the GPU takes it.</summary>
@@ -101,6 +107,13 @@ namespace MCHdArt
         /// generator found in art that casts no shadow of its own (a forest's), not one MarkBakedShadows marked.
         /// </summary>
         bool PaintedShadow = false;
+        /// <summary>
+        /// Port-only (HD movies): a <see cref="ColorFormat::Yuv420"/> frame's colour space (its matrix and range), and
+        /// the movie it is a frame of: a number of the movie's own, which every frame of it has (the GPU keeps one set
+        /// of textures for a movie, each frame put in place of the one before); 0 for any other frame.
+        /// </summary>
+        SDL_Colorspace Colorspace = SDL_COLORSPACE_UNKNOWN;
+        uint64_t Movie = 0;
 
         /// <summary>The original's width and height.</summary>
         int32_t OriginalWidth() const { return Width / std::max(Scale, 1); }

@@ -1,0 +1,64 @@
+// Port-only (HD movies): a movie's frame turned into colours from its Y, U and V planes (MCVulkanRenderer's movie
+// pictures), drawn with quad.vshader over the whole of its colours' texture, one pixel a frame pixel. Each pixel comes
+// out as SDL's own conversion makes it (SDL_ConvertPixelsAndColorspace from IYUV: src/video/yuv2rgb's
+// yuv_rgb_std_func.h), which the frames went through on the CPU before: the U and V of its 2x2 block, each channel
+// ((Y - yShift) * yFactor + (U - 128) * uFactor + (V - 128) * vFactor) >> 6 in whole numbers, made a byte by SDL's
+// clampU8, and opaque.
+//
+// Bindings (SDL GPU, SPIR-V): fragment samplers in space2, fragment uniforms in space3.
+
+Texture2D<float> lumaTex : register(t0, space2);
+SamplerState lumaSampler : register(s0, space2);
+Texture2D<float> blueTex : register(t1, space2);
+SamplerState blueSampler : register(s1, space2);
+Texture2D<float> redTex : register(t2, space2);
+SamplerState redSampler : register(s2, space2);
+
+cbuffer Movie : register(b0, space3)
+{
+    // The fixed-point factors (MCHdMovie::MCYuvFactors): yShift, yFactor, vRed, uGreen.
+    int4 factors;
+    // vGreen, uBlue; zw unused.
+    int4 blueFactors;
+    // The Y plane's width and height (xy), and the U and V planes' (zw).
+    int4 sizes;
+};
+
+// SDL's fixed point (yuv_rgb_internal.h's PRECISION), and the U and V of no colour.
+static const int Precision = 6;
+static const int UvOffset = 128;
+// clampU8's table: a sum's byte is read at ((sum >> Precision) + TableOffset) & TableMask, from a table of TableOffset
+// zeros, the bytes 0-255, then 255s.
+static const int TableOffset = 128;
+static const int TableMask = 511;
+static const float ByteMax = 255.0;
+
+// The byte a plane's texel holds (R8: the byte over 255).
+int ByteOf(float texel)
+{
+    return int(texel * ByteMax + 0.5);
+}
+
+// Where a plane `size` big has `texel`'s middle.
+float2 Middle(int2 texel, int2 size)
+{
+    return (float2(texel) + 0.5) / float2(size);
+}
+
+// A channel's sum made a byte as clampU8 makes it, and as the target takes it.
+float Channel(int sum)
+{
+    const int entry = ((sum + (TableOffset << Precision)) >> Precision) & TableMask;
+    return float(clamp(entry - TableOffset, 0, 255)) / ByteMax;
+}
+
+float4 main(float4 position : SV_Position) : SV_Target0
+{
+    const int2 pixel = int2(position.xy);
+    const int2 chroma = pixel >> 1;
+    const int luma = (ByteOf(lumaTex.SampleLevel(lumaSampler, Middle(pixel, sizes.xy), 0)) - factors.x) * factors.y;
+    const int u = ByteOf(blueTex.SampleLevel(blueSampler, Middle(chroma, sizes.zw), 0)) - UvOffset;
+    const int v = ByteOf(redTex.SampleLevel(redSampler, Middle(chroma, sizes.zw), 0)) - UvOffset;
+    return float4(Channel(luma + v * factors.z), Channel(luma + u * factors.w + v * blueFactors.x),
+                  Channel(luma + u * blueFactors.y), 1.0);
+}

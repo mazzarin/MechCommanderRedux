@@ -198,7 +198,7 @@ namespace
         {
             for (size_t i = 0; i < links; i++)
             {
-                Links.push_back(MCIceLink::Offer(Signals->LinkSettings()));
+                Links.push_back(MCIceLink::Offer(Signals->LinkSettings("raw")));
             }
         }
 

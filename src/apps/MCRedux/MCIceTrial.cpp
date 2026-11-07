@@ -2,7 +2,9 @@
 #include "MCIceTrial.h"
 
 #include "MCConsole.h"
+#include "MCVersion.h"
 #include "MCWebSocketOpen.h"
+#include "lib/MCRandomId.h"
 #include "main/MCTelemetry.h"
 #include "platform/MCFileSystem.h"
 #include "platform/MCIceTransport.h"
@@ -25,8 +27,8 @@ namespace
 {
     using Clock = std::chrono::steady_clock;
 
-    /// <summary>The trial service (tools/cloudflare/trial in the workspace).</summary>
-    constexpr std::string_view DefaultService = "wss://mechcommander-redux-trial.mazzarin.workers.dev";
+    /// <summary>The internet games' service (tools/cloudflare/games in the workspace).</summary>
+    constexpr std::string_view DefaultService = "wss://mechcommander-redux-games.mazzarin.workers.dev";
     constexpr std::string_view HostWord = "host";
     constexpr std::string_view JoinWord = "join";
     constexpr std::string_view RelayOnlyOption = "--relay-only";
@@ -49,6 +51,8 @@ namespace
     constexpr auto PumpStep = std::chrono::milliseconds(5);
     /// <summary>How long an end waits for its links to end (and report) once it's done.</summary>
     constexpr auto EndWait = std::chrono::seconds(5);
+    /// <summary>How long the trial waits for its sockets' closes to go to the service (its leaving) before it ends.</summary>
+    constexpr auto CloseWait = std::chrono::milliseconds(500);
     constexpr double Median = 0.5;
     constexpr double Tail = 0.95;
 
@@ -409,7 +413,10 @@ int MCIceTrial::Run(std::span<const std::string_view> arguments)
     out.Line(std::format("{} {} through {}{}", options->Host ? "hosting" : "joining",
                          options->Host ? "a game" : options->Code, options->Service,
                          options->RelayOnly ? ", relays only" : ""));
-    const auto signaling = std::make_shared<MCServiceSignaling>(options->Service, MCOpenWebSocket, options->RelayOnly);
+    // A copy's ID of its own each trial: the trial runs before the game has a user folder to keep one in.
+    auto signaling = std::make_shared<MCServiceSignaling>(
+        options->Service, MCOpenWebSocket, MCServiceIdentity{.Copy = MCRandomId(), .Version = MC_VERSION_SHOWN},
+        options->RelayOnly);
     const auto report = [&](const MCTelemetry::MCLink& link) { out.Line("link " + MCTelemetry::LinkJson(link)); };
     int result = 1;
 
@@ -419,6 +426,10 @@ int MCIceTrial::Run(std::span<const std::string_view> arguments)
                                : RunGuest(*options, *signaling, transport, out);
     }
 
+    // The sockets close as their player leaving, so the service frees the places at once: the closes go before the
+    // process ends.
+    signaling.reset();
+    std::this_thread::sleep_for(CloseWait);
     out.Line(result == 0 ? "done" : "done, FAILED");
     return result;
 }

@@ -3,6 +3,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
 #include <format>
 #include <limits>
@@ -11,9 +14,13 @@ namespace
 {
     using Json = nlohmann::json;
 
+    /// <summary>The service's protocol this game speaks (its README's).</summary>
+    constexpr int ProtocolVersion = 1;
     /// <summary>A game's code: four characters with no lookalikes (no 0 and O, 1 and I), as the service makes them.</summary>
     constexpr std::string_view CodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     constexpr size_t CodeLength = 4;
+    /// <summary>A place's token: 128 random bits as hex.</summary>
+    constexpr size_t TokenLength = 32;
     /// <summary>A guest as the service names it: "g" and its number.</summary>
     constexpr char GuestPrefix = 'g';
     constexpr size_t Uint32Bytes = 4;
@@ -25,6 +32,8 @@ namespace
     constexpr size_t MaxIceServers = 8;
     constexpr size_t MaxIceText = 512;
     constexpr uint16_t LowestPort = 1;
+    /// <summary>The guests whose relays are kept: far past a room's, over a long evening of guests coming and going.</summary>
+    constexpr size_t MaxGuestSettings = 64;
     /// <summary>STUN before the service answers (and the service's own), as host:port.</summary>
     constexpr std::string_view DefaultStun = "stun.cloudflare.com:3478";
     /// <summary>The service's keep-alive, which it answers itself: an idle socket through a router or proxy stays open.</summary>
@@ -33,11 +42,38 @@ namespace
     constexpr auto PingEvery = std::chrono::seconds(30);
     constexpr std::string_view HostPath = "/host";
     constexpr std::string_view JoinPath = "/join/";
+    constexpr std::string_view BackPath = "/game/";
+
+    /// <summary>What the service's refusals and endings are called in its messages.</summary>
+    constexpr std::array<std::pair<std::string_view, MCServiceRefusal>, 10> Refusals{{
+        {"nogame", MCServiceRefusal::NoGame},
+        {"hostaway", MCServiceRefusal::HostAway},
+        {"battle", MCServiceRefusal::InBattle},
+        {"full", MCServiceRefusal::Full},
+        {"expired", MCServiceRefusal::PlaceGone},
+        {"gone", MCServiceRefusal::GameOver},
+        {"banned", MCServiceRefusal::Banned},
+        {"slow", MCServiceRefusal::TooManyTries},
+        {"update", MCServiceRefusal::Update},
+        {"refused", MCServiceRefusal::Refused},
+    }};
+
+    std::optional<MCServiceRefusal> RefusalNamed(std::string_view type)
+    {
+        const auto found = std::ranges::find(Refusals, type, &std::pair<std::string_view, MCServiceRefusal>::first);
+        return found != Refusals.end() ? std::optional(found->second) : std::nullopt;
+    }
 
     bool IsCode(std::string_view text)
     {
         return text.size() == CodeLength &&
                std::ranges::all_of(text, [](char c) { return CodeAlphabet.find(c) != std::string_view::npos; });
+    }
+
+    bool IsToken(std::string_view text)
+    {
+        return text.size() == TokenLength &&
+               std::ranges::all_of(text, [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
     }
 
     /// <summary>A guest's number from its name ("g3": 3), or none.</summary>
@@ -52,6 +88,28 @@ namespace
         const char* end = guest.data() + guest.size();
         const auto [at, error] = std::from_chars(guest.data() + 1, end, number);
         return error == std::errc() && at == end ? std::optional(number) : std::nullopt;
+    }
+
+    /// <summary>A URL's query value: unreserved characters as they are, every other byte %XX.</summary>
+    std::string Percent(std::string_view text)
+    {
+        std::string out;
+
+        for (const char c : text)
+        {
+            const auto byte = static_cast<unsigned char>(c);
+
+            if (std::isalnum(byte) != 0 || c == '-' || c == '.' || c == '_' || c == '~')
+            {
+                out += c;
+            }
+            else
+            {
+                out += std::format("%{:02X}", byte);
+            }
+        }
+
+        return out;
     }
 
     void PutU32(std::vector<uint8_t>& out, uint32_t value)
@@ -115,7 +173,7 @@ namespace
         return MCIceLink::Signal{.Kind = std::move(*kind), .Text = std::move(*text), .Mid = std::move(*mid)};
     }
 
-    /// <summary>The service's STUN servers and relays (its hosted or joined: "ice"), or none when they don't parse.</summary>
+    /// <summary>The service's STUN servers and relays (a message's "ice"), or none when they don't parse.</summary>
     std::optional<MCIceLink::Settings> IceIn(const Json& message)
     {
         const auto ice = message.find("ice");
@@ -200,19 +258,26 @@ namespace
     private:
         std::string _Why;
     };
+
+    /// <summary>A game's socket a code can't reach: closed at once, and refused as no game.</summary>
+    constexpr std::string_view NotACode = "not a game's code";
 }
 
-MCServiceSignaling::MCServiceSignaling(std::string service, MCWebSocketOpener open, bool relayOnly)
-    : _Service(std::move(service)), _Open(std::move(open))
+MCServiceSignaling::MCServiceSignaling(std::string service, MCWebSocketOpener open, MCServiceIdentity identity,
+                                       bool relayOnly, MCServiceComeback comeback)
+    : _Service(std::move(service))
+    , _Open(std::move(open))
+    , _Identity(std::move(identity))
+    , _RelayOnly(relayOnly)
+    , _Comeback(comeback)
 {
-    _Settings.Stun.emplace_back(DefaultStun);
-    _Settings.RelayOnly = relayOnly;
 }
 
 MCServiceSignaling::~MCServiceSignaling()
 {
     const std::scoped_lock lock(_Lock);
 
+    // A socket's own close is its player's leaving: the service frees its place (the host's ends its game).
     if (_Host.has_value())
     {
         _Host->Ws->Close();
@@ -224,21 +289,74 @@ MCServiceSignaling::~MCServiceSignaling()
     }
 }
 
+namespace
+{
+    /// <summary>Whether a socket is done with: ended by the service, or closed before it was ever in.</summary>
+    template <typename TSocket> bool Over(const TSocket& socket)
+    {
+        return socket.Refusal.has_value() ||
+               (socket.Ws->GetState() == MCWebSocket::State::Closed && socket.Token.empty());
+    }
+}
+
 void MCServiceSignaling::Host()
 {
     const std::scoped_lock lock(_Lock);
 
-    if (!_Host.has_value() || _Host->Ws->GetState() == MCWebSocket::State::Closed)
+    if (!_Host.has_value() || Over(*_Host))
     {
-        _HostedCode.reset();
-        _Host = Socket{.Ws = Opened(_Service + std::string(HostPath)), .LastPing = std::chrono::steady_clock::now()};
+        _Host = Socket{.Ws = Opened(HostPath), .LastPing = Clock::now()};
+        _Guests.clear();
+        _GuestSettings.clear();
+        _NameRefused = false;
     }
 }
 
 std::optional<std::string> MCServiceSignaling::HostedCode()
 {
     const std::scoped_lock lock(_Lock);
-    return _HostedCode;
+    return _Host.has_value() && !_Host->Code.empty() && !_Host->Refusal.has_value() ? std::optional(_Host->Code)
+                                                                                    : std::nullopt;
+}
+
+void MCServiceSignaling::SetRoom(const MCServiceRoom& room)
+{
+    const std::scoped_lock lock(_Lock);
+
+    if (_Room == room)
+    {
+        return;
+    }
+
+    if (!_Room.has_value() || _Room->Name != room.Name)
+    {
+        _NameRefused = false;
+    }
+
+    _Room = room;
+    SendRoom();
+}
+
+bool MCServiceSignaling::NameRefused()
+{
+    const std::scoped_lock lock(_Lock);
+    return _NameRefused;
+}
+
+void MCServiceSignaling::SendRoom()
+{
+    if (!_Room.has_value() || !_Host.has_value() || !_Host->In)
+    {
+        return;
+    }
+
+    _Host->Ws->SendText(Dumped({{"t", "room"},
+                                {"name", _Room->Name},
+                                {"public", _Room->Public},
+                                {"max", _Room->Max},
+                                {"players", _Room->Players},
+                                {"mission", _Room->Mission},
+                                {"battle", _Room->Battle}}));
 }
 
 bool MCServiceSignaling::Joined(std::string_view game)
@@ -252,13 +370,25 @@ void MCServiceSignaling::Join(std::string_view game)
 {
     const std::scoped_lock lock(_Lock);
 
-    if (const auto found = _Games.find(game);
-        found != _Games.end() && found->second.Ws->GetState() == MCWebSocket::State::Closed)
+    if (const auto found = _Games.find(game); found != _Games.end() && Over(found->second))
     {
         _Games.erase(found);
     }
 
     GameSocket(game);
+}
+
+std::optional<MCServiceRefusal> MCServiceSignaling::Refusal(std::string_view game)
+{
+    const std::scoped_lock lock(_Lock);
+
+    if (game.empty())
+    {
+        return _Host.has_value() ? _Host->Refusal : std::nullopt;
+    }
+
+    const auto found = _Games.find(game);
+    return found != _Games.end() ? found->second.Refusal : std::nullopt;
 }
 
 std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
@@ -279,10 +409,31 @@ std::optional<std::string> MCServiceSignaling::WhyClosed(std::string_view game)
     return found != _Games.end() ? why(found->second) : std::nullopt;
 }
 
-MCIceLink::Settings MCServiceSignaling::LinkSettings()
+MCIceLink::Settings MCServiceSignaling::WithPolicy(MCIceLink::Settings settings) const
+{
+    settings.RelayOnly = _RelayOnly;
+    return settings;
+}
+
+MCIceLink::Settings MCServiceSignaling::LinkSettings(std::string_view peer)
 {
     const std::scoped_lock lock(_Lock);
-    return _Settings;
+
+    if (const std::optional<uint32_t> guest = GuestNumber(peer))
+    {
+        if (const auto found = _GuestSettings.find(*guest); found != _GuestSettings.end())
+        {
+            return WithPolicy(found->second);
+        }
+    }
+    else if (const auto found = _Games.find(peer); found != _Games.end() && found->second.Settings.has_value())
+    {
+        return WithPolicy(*found->second.Settings);
+    }
+
+    MCIceLink::Settings settings;
+    settings.Stun.emplace_back(DefaultStun);
+    return WithPolicy(std::move(settings));
 }
 
 void MCServiceSignaling::ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal)
@@ -345,7 +496,7 @@ size_t MCServiceSignaling::Unsent()
 std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
 {
     const std::scoped_lock lock(_Lock);
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = Clock::now();
     std::vector<Heard> heard;
 
     if (_Host.has_value())
@@ -355,18 +506,7 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
             HearHost(message, heard);
         }
 
-        // The guests can't be reached through the service now: as far as the links it carries can tell, they're gone.
-        if (_Host->Ws->GetState() == MCWebSocket::State::Closed && !_Host->Told)
-        {
-            _Host->Told = true;
-            SDL_Log("MCServiceSignaling: the hosted game's socket closed: %s", _Host->Ws->WhyClosed().c_str());
-
-            for (const std::string& guest : std::exchange(_Guests, {}))
-            {
-                heard.push_back({.Sender = From::Guest, .Peer = guest});
-            }
-        }
-
+        Tend(*_Host, {}, now, heard);
         Ping(*_Host, now);
     }
 
@@ -377,19 +517,87 @@ std::vector<MCIceSignaling::Heard> MCServiceSignaling::Take()
             HearGame(game, socket, message, heard);
         }
 
-        // Its socket gone, the game is too, as far as this game's links can tell.
-        if (socket.Ws->GetState() == MCWebSocket::State::Closed && !socket.Told)
-        {
-            socket.Told = true;
-            SDL_Log("MCServiceSignaling: the socket to game \"%s\" closed: %s", game.c_str(),
-                    socket.Ws->WhyClosed().c_str());
-            heard.push_back({.Sender = From::Host, .Peer = game});
-        }
-
+        Tend(socket, game, now, heard);
         Ping(socket, now);
     }
 
     return heard;
+}
+
+void MCServiceSignaling::TellGone(std::string_view game, std::vector<Heard>& heard)
+{
+    if (game.empty())
+    {
+        // The guests can't be reached through the service now: as far as the links it carries can tell, they're gone.
+        for (const std::string& guest : std::exchange(_Guests, {}))
+        {
+            heard.push_back({.Sender = From::Guest, .Peer = guest});
+        }
+    }
+    else
+    {
+        heard.push_back({.Sender = From::Host, .Peer = std::string(game)});
+    }
+}
+
+void MCServiceSignaling::Tend(Socket& socket, std::string_view game, Clock::time_point now, std::vector<Heard>& heard)
+{
+    if (socket.Ws->GetState() != MCWebSocket::State::Closed)
+    {
+        return;
+    }
+
+    const std::string what =
+        game.empty() ? std::string("the hosted game's socket") : std::format("the socket to game \"{}\"", game);
+
+    if (!socket.Told)
+    {
+        socket.Told = true;
+        SDL_Log("MCServiceSignaling: %s closed: %s", what.c_str(), socket.Ws->WhyClosed().c_str());
+        TellGone(game, heard);
+    }
+
+    if (socket.Refusal.has_value())
+    {
+        return;
+    }
+
+    if (socket.Token.empty())
+    {
+        // Never in: there's no place to come back to.
+        socket.Refusal = socket.Ws->WhyClosed() == NotACode ? MCServiceRefusal::NoGame : MCServiceRefusal::Unreachable;
+        return;
+    }
+
+    if (!socket.DroppedAt.has_value())
+    {
+        socket.DroppedAt = now;
+        socket.NextTry = now + _Comeback.FirstTry;
+        socket.Tries = 0;
+        return;
+    }
+
+    if (now - *socket.DroppedAt >= _Comeback.PlaceKept)
+    {
+        SDL_Log("MCServiceSignaling: %s couldn't come back while its place waited", what.c_str());
+        socket.Refusal = MCServiceRefusal::Unreachable;
+        return;
+    }
+
+    if (now < socket.NextTry)
+    {
+        return;
+    }
+
+    // Back to its place: each try waits twice the last, up to the longest wait.
+    socket.Ws = Opened(std::format("{}{}", BackPath, socket.Code), socket.Token);
+    socket.In = false;
+    socket.Told = false;
+    socket.Tries++;
+    const auto wait = std::min<std::chrono::milliseconds>(_Comeback.FirstTry * (1LL << std::min(socket.Tries, 16)),
+                                                          _Comeback.LongestWait);
+    socket.NextTry = now + wait;
+    SDL_Log("MCServiceSignaling: %s coming back to its place (try %d)", what.c_str(), socket.Tries);
 }
 
 MCServiceSignaling::Socket& MCServiceSignaling::GameSocket(std::string_view game)
@@ -400,19 +608,27 @@ MCServiceSignaling::Socket& MCServiceSignaling::GameSocket(std::string_view game
     }
 
     // A name that isn't a code is no game on the service: a socket that's closed at once says so.
-    Socket socket{.Ws = IsCode(game) ? Opened(_Service + std::string(JoinPath) + std::string(game))
-                                     : std::make_unique<MCClosedWebSocket>("not a game's code"),
-                  .LastPing = std::chrono::steady_clock::now()};
+    Socket socket{.Ws = IsCode(game) ? Opened(std::format("{}{}", JoinPath, game))
+                                     : std::make_unique<MCClosedWebSocket>(std::string(NotACode)),
+                  .LastPing = Clock::now()};
     return _Games.emplace(std::string(game), std::move(socket)).first->second;
 }
 
-std::unique_ptr<MCWebSocket> MCServiceSignaling::Opened(const std::string& url)
+std::unique_ptr<MCWebSocket> MCServiceSignaling::Opened(std::string_view path, std::string_view token)
 {
+    std::string url = std::format("{}{}?proto={}&copy={}&v={}", _Service, path, ProtocolVersion,
+                                  Percent(_Identity.Copy), Percent(_Identity.Version));
+
+    if (!token.empty())
+    {
+        url += std::format("&token={}", Percent(token));
+    }
+
     std::unique_ptr<MCWebSocket> ws = _Open(url);
     return ws != nullptr ? std::move(ws) : std::make_unique<MCClosedWebSocket>("the system couldn't open the socket");
 }
 
-void MCServiceSignaling::Ping(Socket& socket, std::chrono::steady_clock::time_point now)
+void MCServiceSignaling::Ping(Socket& socket, Clock::time_point now)
 {
     if (socket.Ws->GetState() == MCWebSocket::State::Open && now - socket.LastPing >= PingEvery)
     {
@@ -452,18 +668,46 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
     const Json parsed = Json::parse(message.Data, nullptr, false);
     const std::optional<std::string> type = parsed.is_object() ? TextField(parsed, "t", MaxSignalKind) : std::nullopt;
 
-    if (type == "hosted")
+    if (type == "hosted" && !_Host->In)
     {
         const std::optional<std::string> code = TextField(parsed, "game", CodeLength);
-        const std::optional<MCIceLink::Settings> ice = IceIn(parsed);
+        const std::optional<std::string> token = TextField(parsed, "token", TokenLength);
 
-        if (code && IsCode(*code) && ice)
+        if (code && IsCode(*code) && token && IsToken(*token) && IceIn(parsed))
         {
-            _HostedCode = *code;
-            _Settings.Stun = ice->Stun;
-            _Settings.Relays = ice->Relays;
+            _Host->Code = *code;
+            _Host->Token = *token;
             _Host->In = true;
-            SDL_Log("MCServiceSignaling: hosting game \"%s\" (%zu relays)", code->c_str(), ice->Relays.size());
+            SDL_Log("MCServiceSignaling: hosting game \"%s\"", code->c_str());
+            SendRoom();
+            return;
+        }
+    }
+    else if (type == "back" && !_Host->In && !_Host->Token.empty())
+    {
+        _Host->In = true;
+        _Host->DroppedAt.reset();
+        _Host->Tries = 0;
+        SDL_Log("MCServiceSignaling: the hosted game's socket is back in its place");
+        SendRoom();
+        return;
+    }
+    else if (type == "guest")
+    {
+        const std::optional<std::string> guest = TextField(parsed, "guest", MaxSignalKind);
+        const std::optional<uint32_t> number = guest ? GuestNumber(*guest) : std::nullopt;
+        std::optional<MCIceLink::Settings> ice = IceIn(parsed);
+
+        if (number && ice)
+        {
+            _GuestSettings[*number] = std::move(*ice);
+
+            // The earliest guests' go first: they're long gone by now.
+            while (_GuestSettings.size() > MaxGuestSettings)
+            {
+                _GuestSettings.erase(_GuestSettings.begin());
+            }
+
             return;
         }
     }
@@ -490,6 +734,25 @@ void MCServiceSignaling::HearHost(const MCWebSocket::Message& message, std::vect
             heard.push_back({.Sender = From::Guest, .Peer = *guest});
             return;
         }
+    }
+    else if (type == "name")
+    {
+        SDL_Log("MCServiceSignaling: the service won't list the room by its name");
+        _NameRefused = true;
+        return;
+    }
+    else if (const std::optional<MCServiceRefusal> refusal = type ? RefusalNamed(*type) : std::nullopt)
+    {
+        SDL_Log("MCServiceSignaling: the service refused the hosted game: %s", type->c_str());
+        _Host->Refusal = refusal;
+
+        if (!_Host->Told)
+        {
+            _Host->Told = true;
+            TellGone({}, heard);
+        }
+
+        return;
     }
 
     SDL_Log("MCServiceSignaling: the hosted game's socket got a message it doesn't take (%zu bytes)",
@@ -526,17 +789,30 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
     const Json parsed = Json::parse(message.Data, nullptr, false);
     const std::optional<std::string> type = parsed.is_object() ? TextField(parsed, "t", MaxSignalKind) : std::nullopt;
 
-    if (type == "joined")
+    if (type == "joined" && !socket.In)
     {
-        if (const std::optional<MCIceLink::Settings> ice = IceIn(parsed))
+        const std::optional<std::string> token = TextField(parsed, "token", TokenLength);
+        std::optional<MCIceLink::Settings> ice = IceIn(parsed);
+
+        if (token && IsToken(*token) && ice)
         {
-            _Settings.Stun = ice->Stun;
-            _Settings.Relays = ice->Relays;
+            socket.Code = std::string(game);
+            socket.Token = *token;
+            socket.Settings = std::move(*ice);
             socket.In = true;
             SDL_Log("MCServiceSignaling: joined game \"%.*s\" (%zu relays)", static_cast<int>(game.size()), game.data(),
-                    ice->Relays.size());
+                    socket.Settings->Relays.size());
             return;
         }
+    }
+    else if (type == "back" && !socket.In && !socket.Token.empty())
+    {
+        socket.In = true;
+        socket.DroppedAt.reset();
+        socket.Tries = 0;
+        SDL_Log("MCServiceSignaling: the socket to game \"%.*s\" is back in its place", static_cast<int>(game.size()),
+                game.data());
+        return;
     }
     else if (type == "signal")
     {
@@ -550,17 +826,24 @@ void MCServiceSignaling::HearGame(std::string_view game, Socket& socket, const M
             return;
         }
     }
-    else if (type == "nogame" || type == "full" || type == "gone")
+    else if (type == "away" && socket.In)
     {
-        SDL_Log("MCServiceSignaling: game \"%.*s\": %s", static_cast<int>(game.size()), game.data(),
-                type == "nogame" ? "the service has no such game"
-                : type == "full" ? "the game is full"
-                                 : "its host left");
+        // The host's socket dropped: the links the service carried are gone, the others go on.
+        SDL_Log("MCServiceSignaling: game \"%.*s\"'s host is away from the service", static_cast<int>(game.size()),
+                game.data());
+        TellGone(game, heard);
+        return;
+    }
+    else if (const std::optional<MCServiceRefusal> refusal = type ? RefusalNamed(*type) : std::nullopt)
+    {
+        SDL_Log("MCServiceSignaling: game \"%.*s\": the service said %s", static_cast<int>(game.size()), game.data(),
+                type->c_str());
+        socket.Refusal = refusal;
 
         if (!socket.Told)
         {
             socket.Told = true;
-            heard.push_back({.Sender = From::Host, .Peer = std::string(game)});
+            TellGone(game, heard);
         }
 
         return;

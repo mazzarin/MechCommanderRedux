@@ -3,10 +3,10 @@
 #include "gui/MCGuiGlobals.h"
 #include "gui/MCGuiSystem.h"
 #include "lib/MCFitIniFile.h"
+#include "lib/MCRandomId.h"
 #include "main/MCHdSettings.h"
 #include "platform/MCDisplay.h"
 #include "sprite/MCHdArt.h"
-#include <random>
 
 int GReports = 0;
 
@@ -27,10 +27,6 @@ namespace
     constexpr std::string_view RegionPath = "region";
     constexpr std::string_view ReportPath = "report";
     constexpr int32_t HttpOk = 200;
-
-    /// <summary>A copy's ID: 128 random bits, as lowercase hex digits, from 32-bit words of the system's randomness.</summary>
-    constexpr size_t IdDigits = 32;
-    constexpr size_t IdWordDigits = 8;
 
     /// <summary>The frame times' histogram: half-millisecond buckets to 250 ms, the last holding the longer frames.</summary>
     constexpr double BucketMilliseconds = 0.5;
@@ -412,15 +408,6 @@ namespace
         return State.Seen > 0;
     }
 
-    /// <summary>Whether <paramref name="id"/> is a copy's ID as <see cref="KeepId"/> makes them.</summary>
-    bool ValidId(std::string_view id)
-    {
-        return id.size() == IdDigits &&
-               std::ranges::all_of(
-                   id, [](char digit)
-                   { return std::isdigit(static_cast<unsigned char>(digit)) || (digit >= 'a' && digit <= 'f'); });
-    }
-
     /// <summary>
     /// Gives this copy an ID while reports go (REPORTS on, and the player decided), and drops it when they don't.
     /// </summary>
@@ -438,12 +425,7 @@ namespace
 
         if (wanted)
         {
-            std::random_device random;
-
-            for (size_t digits = 0; digits < IdDigits; digits += IdWordDigits)
-            {
-                State.Id += std::format("{:0{}x}", random(), IdWordDigits);
-            }
+            State.Id = MCRandomId();
         }
 
         return true;
@@ -486,7 +468,7 @@ namespace
         State.Seen = file.Read<int32_t>("Seen").value_or(0);
         State.FirstSent = file.Read<bool>("FirstSent").value_or(false);
 
-        if (MCFitResult<std::string> id = file.Read<std::string>("Id"); id.has_value() && ValidId(*id))
+        if (MCFitResult<std::string> id = file.Read<std::string>("Id"); id.has_value() && MCIsRandomId(*id))
         {
             State.Id = std::move(*id);
         }

@@ -20,7 +20,7 @@ public:
     {
     }
 
-    MCIceLink::Settings LinkSettings() override { return _Settings; }
+    MCIceLink::Settings LinkSettings(std::string_view) override { return _Settings; }
 
     void ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal) override
     {

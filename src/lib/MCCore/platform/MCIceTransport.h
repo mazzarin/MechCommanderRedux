@@ -64,8 +64,11 @@ public:
 
     virtual ~MCIceSignaling() = default;
 
-    /// <summary>What a new link starts with: the service's STUN and relays, the relays' short-lived credentials.</summary>
-    virtual MCIceLink::Settings LinkSettings() = 0;
+    /// <summary>
+    /// What a new link with <paramref name="peer"/> (a guest, or the game reached) starts with: the service's STUN and
+    /// relays, the relays' short-lived credentials made for that peer's links.
+    /// </summary>
+    virtual MCIceLink::Settings LinkSettings(std::string_view peer) = 0;
 
     /// <summary>To the host of the game <paramref name="game"/>, about this game's link <paramref name="link"/> to it.</summary>
     virtual void ToHost(std::string_view game, uint32_t link, const MCIceLink::Signal& signal) = 0;

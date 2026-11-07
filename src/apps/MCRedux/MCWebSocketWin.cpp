@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <format>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -36,9 +38,18 @@ namespace
     /// </summary>
     constexpr size_t MaxUnsentBytes = size_t{8} << 20;
     constexpr DWORD SwitchingProtocols = 101;
-    /// <summary>The callback's notices: each step's end, its handles' closing, and why a secure connection failed.</summary>
-    constexpr DWORD CallbackNotices =
-        WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES | WINHTTP_CALLBACK_FLAG_SECURE_FAILURE;
+    /// <summary>
+    /// The game's own close of an open socket sends the service its close (1000, its player leaving) and waits this long
+    /// at most for it to go before the handles close.
+    /// </summary>
+    constexpr auto LeaveWait = std::chrono::seconds(1);
+    /// <summary>
+    /// The callback's notices: each step's end, the close sent, its handles' closing, and why a secure connection failed.
+    /// (A notice's flag is its status's bit.)
+    /// </summary>
+    constexpr DWORD CallbackNotices = WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS |
+                                      WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE | WINHTTP_CALLBACK_FLAG_HANDLES |
+                                      WINHTTP_CALLBACK_FLAG_SECURE_FAILURE;
 
     std::string Failed(std::string_view what, DWORD error)
     {
@@ -83,6 +94,7 @@ namespace
             case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
             case WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE:
+            case WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE:
             case WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
                 break;
             case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
@@ -160,6 +172,8 @@ namespace
         {
             {
                 const std::scoped_lock lock(_Lock);
+                // An open socket's close is sent first (Leaving): the service then knows its player left.
+                _Leaving = _State == State::Open;
                 End("this game closed it");
             }
 
@@ -181,7 +195,17 @@ namespace
 
                 {
                     std::unique_lock lock(_Events.Lock);
-                    _Events.Changed.wait(lock, [&] { return !_Events.Queue.empty() || _Events.Woken || Done(); });
+                    const auto heard = [&] { return !_Events.Queue.empty() || _Events.Woken || Done(); };
+
+                    if (_LeaveBy.has_value())
+                    {
+                        _Events.Changed.wait_until(lock, *_LeaveBy, heard);
+                    }
+                    else
+                    {
+                        _Events.Changed.wait(lock, heard);
+                    }
+
                     events = std::exchange(_Events.Queue, {});
                     _Events.Woken = false;
                 }
@@ -191,7 +215,7 @@ namespace
                     Handle(event);
                 }
 
-                if (!_HandlesClosed && GetState() == State::Closed)
+                if (!_HandlesClosed && GetState() == State::Closed && !Leaving())
                 {
                     CloseHandles();
                 }
@@ -206,6 +230,46 @@ namespace
                     SendNext();
                 }
             }
+        }
+
+        /// <summary>
+        /// The game's own close of an open socket, from the socket's thread: its close (1000) sent once no send is under
+        /// way (WinHTTP takes one at a time); true while it's going, up to <see cref="LeaveWait"/>.
+        /// </summary>
+        bool Leaving()
+        {
+            bool sending = false;
+
+            {
+                const std::scoped_lock lock(_Lock);
+
+                if (!_Leaving || _Socket == nullptr || _LeaveDone)
+                {
+                    return false;
+                }
+
+                sending = _Sending;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            _LeaveBy = _LeaveBy.value_or(now + LeaveWait);
+
+            if (!_LeaveSent && !sending)
+            {
+                const DWORD error =
+                    WinHttpWebSocketShutdown(_Socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+
+                if (error != NO_ERROR && error != ERROR_IO_PENDING)
+                {
+                    // The close can't be sent: the service takes the socket's end as a drop, and frees its place later.
+                    return false;
+                }
+
+                _LeaveSent = true;
+                _LeaveDone = error == NO_ERROR;
+            }
+
+            return !_LeaveDone && now < *_LeaveBy;
         }
 
         /// <summary>Every handle the callback follows has said its last: nothing calls back into this object again.</summary>
@@ -283,6 +347,11 @@ namespace
                 case WINHTTP_CALLBACK_STATUS_SECURE_FAILURE:
                 {
                     _SecureFailure = event.Error;
+                    return;
+                }
+                case WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE:
+                {
+                    _LeaveDone = true;
                     return;
                 }
                 case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
@@ -536,6 +605,8 @@ namespace
             close(_Connection);
             close(_Session);
             _HandlesClosed = true;
+            // Nothing more to wait for but the handles' last words.
+            _LeaveBy.reset();
         }
 
         /// <summary>The game's side, under the lock.</summary>
@@ -559,6 +630,11 @@ namespace
         int _Followed = 0;
         bool _HandlesClosed = false;
         DWORD _SecureFailure = 0;
+        /// <summary>The game closed it while open (under the lock); its close sent, and gone; the most it waits.</summary>
+        bool _Leaving = false;
+        bool _LeaveSent = false;
+        bool _LeaveDone = false;
+        std::optional<std::chrono::steady_clock::time_point> _LeaveBy;
         MCEvents _Events;
         /// <summary>Last, so it starts once everything it uses is made.</summary>
         std::thread _Worker;

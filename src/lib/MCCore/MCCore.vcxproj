@@ -284,6 +284,7 @@
     <ClCompile Include="mission\MCScenarioPart.cpp" />
     <ClCompile Include="mission\MCWeatherPlay.cpp" />
     <ClCompile Include="network\MCGameDataHash.cpp" />
+    <ClCompile Include="network\MCInternetCopy.cpp" />
     <ClCompile Include="network\MCLobbyUpdate.cpp" />
     <ClCompile Include="network\MCMPGameConfiguration.cpp" />
     <ClCompile Include="network\MCMultiPlayer.cpp" />
@@ -641,6 +642,7 @@
     <ClInclude Include="lib\MCOptionalRef.h" />
     <ClInclude Include="lib\MCPacketFile.h" />
     <ClInclude Include="lib\MCPriorityQueue.h" />
+    <ClInclude Include="lib\MCRandomId.h" />
     <ClInclude Include="lib\MCSha256.h" />
     <ClInclude Include="lib\MCVector2D.h" />
     <ClInclude Include="lib\MCVector3D.h" />
@@ -759,6 +761,7 @@
     <ClInclude Include="mission\MCScenarioReading.h" />
     <ClInclude Include="mission\MCWeatherPlay.h" />
     <ClInclude Include="network\MCGameDataHash.h" />
+    <ClInclude Include="network\MCInternetCopy.h" />
     <ClInclude Include="network\MCLobbyUpdate.h" />
     <ClInclude Include="network\MCMPGameConfiguration.h" />
     <ClInclude Include="network\MCMultiPlayer.h" />

@@ -790,6 +790,9 @@
     <ClCompile Include="network\MCGameDataHash.cpp">
       <Filter>network</Filter>
     </ClCompile>
+    <ClCompile Include="network\MCInternetCopy.cpp">
+      <Filter>network</Filter>
+    </ClCompile>
     <ClCompile Include="network\MCLobbyUpdate.cpp">
       <Filter>network</Filter>
     </ClCompile>
@@ -1795,6 +1798,9 @@
     <ClInclude Include="lib\MCPriorityQueue.h">
       <Filter>lib</Filter>
     </ClInclude>
+    <ClInclude Include="lib\MCRandomId.h">
+      <Filter>lib</Filter>
+    </ClInclude>
     <ClInclude Include="lib\MCSha256.h">
       <Filter>lib</Filter>
     </ClInclude>
@@ -2143,6 +2149,9 @@
       <Filter>mission</Filter>
     </ClInclude>
     <ClInclude Include="network\MCGameDataHash.h">
+      <Filter>network</Filter>
+    </ClInclude>
+    <ClInclude Include="network\MCInternetCopy.h">
       <Filter>network</Filter>
     </ClInclude>
     <ClInclude Include="network\MCLobbyUpdate.h">

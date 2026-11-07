@@ -671,7 +671,7 @@ void MCIceTransport::Hear(const MCIceSignaling::Heard& heard)
             return;
         }
 
-        std::unique_ptr<MCIceLink> ice = MCIceLink::Answer(_Signaling->LinkSettings());
+        std::unique_ptr<MCIceLink> ice = MCIceLink::Answer(_Signaling->LinkSettings(heard.Peer));
 
         if (ice == nullptr)
         {
@@ -1160,7 +1160,7 @@ std::optional<uint32_t> MCIceTransport::LinkToGame(uint32_t ip)
         }
     }
 
-    std::unique_ptr<MCIceLink> ice = MCIceLink::Offer(_Signaling->LinkSettings());
+    std::unique_ptr<MCIceLink> ice = MCIceLink::Offer(_Signaling->LinkSettings(name->second));
 
     if (ice == nullptr)
     {
